@@ -13,6 +13,10 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import type { BindingRegistryClient } from '../federation/registry-client.js'
 import { SUMMON_GATE_REFUSAL_EVENT } from '../federation/summon-gate.js'
 import { createHrcServer } from '../index.js'
+import {
+  type AspdObservationDouble,
+  startAspdObservationDouble,
+} from './fixtures/aspd-observation-doubles.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 function registryUnbound(): BindingRegistryClient {
@@ -50,14 +54,34 @@ function captureServerLog(): { lines: string[]; restore: () => void } {
 describe('T-06665 real placement policy in the live summon gate', () => {
   let fixture: HrcServerTestFixture
   let agentsRoot: string
+  let aspdDouble: AspdObservationDouble | undefined
+  let savedAspdSocket: string | undefined
 
   beforeEach(async () => {
     fixture = await createHrcTestFixture('hrc-t06665-policy-gate-')
     agentsRoot = join(fixture.tmpDir, 'agents')
     await mkdir(agentsRoot, { recursive: true })
+    // Fixture profiles are invisible to a real aspd: serve declarations from
+    // the observation double with disk lookup over the fixture agents root.
+    savedAspdSocket = process.env['HRC_ASPD_SOCKET']
+    const aspdSocket = join(fixture.tmpDir, 'aspd.sock')
+    aspdDouble = startAspdObservationDouble(
+      aspdSocket,
+      {
+        releaseId: 'asp-t06665',
+        sourceCommit: 'c'.repeat(40),
+        builtAt: '2026-09-18T00:00:00.000Z',
+      },
+      { agentsRoots: [agentsRoot] }
+    )
+    process.env['HRC_ASPD_SOCKET'] = aspdSocket
   })
 
   afterEach(async () => {
+    aspdDouble?.stop()
+    aspdDouble = undefined
+    if (savedAspdSocket === undefined) Reflect.deleteProperty(process.env, 'HRC_ASPD_SOCKET')
+    else process.env['HRC_ASPD_SOCKET'] = savedAspdSocket
     await fixture.cleanup()
   })
 

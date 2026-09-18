@@ -4,16 +4,20 @@
  * and the watch follows the enqueued RUN (the seat's next terminal may be the
  * turn it waits behind).
  */
-import { describe, expect, it } from 'bun:test'
+import { afterAll, describe, expect, it } from 'bun:test'
 import type { HrcLifecycleEvent } from 'hrc-core'
 import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
+import { installOldEngineDaemon } from '../../__tests__/old-engine-daemon.js'
 import {
   createTurnClient,
   makeLifecycleEvent,
   makeSteerResponse,
   runTurnCommand,
 } from './turn-test-harness.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 describe('hrc turn — steer downgraded to enqueue (T-08536)', () => {
   it('a steer downgraded to enqueue follows its own RUN and says so on stderr', async () => {

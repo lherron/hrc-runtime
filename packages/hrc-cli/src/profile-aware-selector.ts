@@ -5,11 +5,11 @@ import { resolveProfileAwareScopeInput, writePlacementWarnings } from 'hrc-sdk'
  * Enrich only unprefixed target handles. Object selectors and every prefixed
  * selector retain the pure parser's existing behavior.
  */
-export function parseProfileAwareSelector(input: unknown): HrcSelector {
+export async function parseProfileAwareSelector(input: unknown): Promise<HrcSelector> {
   const parsed = parseSelector(input)
   if (parsed.kind !== 'target' || typeof input !== 'string') return parsed
 
-  const resolved = resolveProfileAwareScopeInput(input, {
+  const resolved = await resolveProfileAwareScopeInput(input, {
     placement: { taskWorktreeAssociation: 'advisory' },
   })
   writePlacementWarnings('hrc', resolved.placement.warnings)

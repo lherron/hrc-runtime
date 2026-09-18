@@ -14,6 +14,10 @@ import { PeerToken } from '../federation/peer-token.js'
 import { resolveBindingRegistryPath } from '../federation/registry-endpoint.js'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
+import {
+  type AspdObservationDouble,
+  startAspdObservationDouble,
+} from './fixtures/aspd-observation-doubles.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import {
@@ -43,6 +47,9 @@ let fixture: HrcServerTestFixture
 let server: HrcServer | undefined
 let ledger: FakeWrkqLedger
 let restoreAgentHome: () => void
+let aspdDouble: AspdObservationDouble | undefined
+let savedAspdSocket: string | undefined
+let aspdAgentHome: string | undefined
 
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-kicker-foreign-d7-')
@@ -50,6 +57,21 @@ beforeEach(async () => {
   const home = await installMailKickerAgentHome(fixture.tmpDir, AGENT)
   await writeFile(join(home.agentsRoot, AGENT, 'SOUL.md'), `# ${AGENT}\n`)
   restoreAgentHome = home.restore
+  // Fixture homes are invisible to a real aspd: serve declarations from the
+  // observation double rooted at the fixture home.
+  aspdAgentHome = join(home.agentsRoot, AGENT)
+  savedAspdSocket = process.env['HRC_ASPD_SOCKET']
+  const aspdSocket = join(fixture.tmpDir, 'aspd.sock')
+  aspdDouble = startAspdObservationDouble(
+    aspdSocket,
+    {
+      releaseId: 'asp-kicker-fixture',
+      sourceCommit: 'c'.repeat(40),
+      builtAt: '2026-09-18T00:00:00.000Z',
+    },
+    { agentRoot: aspdAgentHome }
+  )
+  process.env['HRC_ASPD_SOCKET'] = aspdSocket
 })
 
 afterEach(async () => {
@@ -57,6 +79,10 @@ afterEach(async () => {
     await server.stop()
     server = undefined
   }
+  aspdDouble?.stop()
+  aspdDouble = undefined
+  if (savedAspdSocket === undefined) Reflect.deleteProperty(process.env, 'HRC_ASPD_SOCKET')
+  else process.env['HRC_ASPD_SOCKET'] = savedAspdSocket
   restoreAgentHome()
   await fixture.cleanup()
 })

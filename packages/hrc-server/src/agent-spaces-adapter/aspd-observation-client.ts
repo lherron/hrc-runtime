@@ -22,10 +22,17 @@ export type AspdObservationOperation =
   | 'inspectRuntimePlacement'
   | 'compileHarnessInvocation'
   | 'inspectRuntimePlacementPreparationCorrelation'
+  | 'observeRuntimeCapability'
+  | 'observeContinuationArtifact'
 
 export type AspdObservationClient = Pick<
   AspcUnixClient,
-  'resolveRuntimeDeclaration' | 'inspectRuntimePlacement' | 'compileHarnessInvocation' | 'close'
+  | 'resolveRuntimeDeclaration'
+  | 'inspectRuntimePlacement'
+  | 'compileHarnessInvocation'
+  | 'observeRuntimeCapability'
+  | 'observeContinuationArtifact'
+  | 'close'
 > & { readonly hello: AspcUnixClient['hello'] }
 
 export type AspdObservationConnect = (options: {

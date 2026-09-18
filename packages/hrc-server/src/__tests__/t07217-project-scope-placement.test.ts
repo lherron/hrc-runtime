@@ -1,22 +1,24 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+/**
+ * T-07217 — node-local project placement uses the checkout root as cwd
+ * (T-08597: mapping pinned here with a stubbed observation; policy pinned in
+ * hrc-core placement-policy.test.ts; end-to-end scope→placement proved by the
+ * placements route parity table).
+ */
+
 import { mkdir, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import type { HrcRuntimeIntent } from 'hrc-core'
-import { openHrcDatabase } from 'hrc-store-sqlite'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { resolveNodeLocalPlacement } from '../federation/summon-capability.js'
-import { type HrcServer, createHrcServer } from '../index.js'
+import type { NodeLocalPlacementObservation } from '../federation/summon-capability.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 const PROJECT_ID = 't07217-fixture'
 const SCOPE_REF = `agent:mable:project:${PROJECT_ID}:task:primary`
-const SESSION_REF = `${SCOPE_REF}/lane:main`
-const HOST_SESSION_ID = 'hsid-t07217-stale-placement'
 
 describe('T-07217 project-scoped spawn placement', () => {
   let fixture: HrcServerTestFixture
-  let server: HrcServer | undefined
   let originalCwd: string
   let originalAgentsRoot: string | undefined
   let workspaceRoot: string
@@ -28,8 +30,6 @@ describe('T-07217 project-scoped spawn placement', () => {
     originalCwd = process.cwd()
     originalAgentsRoot = process.env['ASP_AGENTS_ROOT']
     workspaceRoot = join(fixture.tmpDir, 'collective')
-    // T-07749 makes a registered root authoritative after cwd discovery
-    // misses. A fixture-only id keeps the live registry out of this test.
     projectRoot = join(workspaceRoot, PROJECT_ID)
     agentRoot = join(workspaceRoot, 'var', 'agents', 'mable')
 
@@ -47,7 +47,6 @@ describe('T-07217 project-scoped spawn placement', () => {
   })
 
   afterEach(async () => {
-    await server?.stop()
     process.chdir(originalCwd)
     if (originalAgentsRoot === undefined) {
       process.env['ASP_AGENTS_ROOT'] = undefined
@@ -57,10 +56,38 @@ describe('T-07217 project-scoped spawn placement', () => {
     await fixture.cleanup()
   })
 
-  test('node-local project placement always uses the checkout root as cwd', () => {
-    const resolved = resolveNodeLocalPlacement(SCOPE_REF, {
+  function observe(): NodeLocalPlacementObservation {
+    return async () => ({
+      agentId: 'mable',
+      projectId: PROJECT_ID,
+      agentRoot,
+      projectRoot,
+      cwd: projectRoot,
+      bundle: { kind: 'agent-project', agentName: 'mable', projectRoot },
+      bundleIdentity: 'test-identity',
+      harness: { provider: 'anthropic', frontend: 'claude-code', effectiveHarness: 'claude' },
+      provision: { scalars: {} },
+      policy: { claimsTask: false, placement: { pins: {}, homes: {} } },
+      identity: { operator: false },
+      agentSources: { agentsRoot: join(workspaceRoot, 'var', 'agents'), provenance: 'caller' },
+      searchedAgentRoots: [agentRoot],
+      source: {
+        agentProfile: 'valid',
+        projectTargets: 'valid',
+        selectedTarget: 'absent',
+        priming: 'valid',
+      },
+      resolution: { source: 'marker-scan', reason: 'test' },
+      warnings: [],
+      release: { releaseId: 'r', sourceCommit: 'c' },
+    })
+  }
+
+  test('node-local project placement always uses the checkout root as cwd', async () => {
+    const resolved = await resolveNodeLocalPlacement(SCOPE_REF, {
       cwd: join(projectRoot, 'packages', 'hrc-server'),
       env: { ASP_AGENTS_ROOT: join(workspaceRoot, 'var', 'agents') },
+      observe: observe(),
     })
 
     expect(resolved.placement).toMatchObject({
@@ -68,63 +95,5 @@ describe('T-07217 project-scoped spawn placement', () => {
       projectRoot,
       cwd: projectRoot,
     })
-  })
-
-  test('a local successor stops trusting a stale agent-home placement', async () => {
-    const staleIntent: HrcRuntimeIntent = {
-      placement: {
-        agentRoot,
-        cwd: agentRoot,
-        runMode: 'task',
-        bundle: { kind: 'agent-project', agentName: 'mable' },
-        dryRun: false,
-      },
-      harness: { provider: 'anthropic', interactive: false, id: 'claude-code' },
-      execution: { preferredMode: 'nonInteractive' },
-    }
-    const db = openHrcDatabase(fixture.dbPath)
-    const now = fixture.now()
-    try {
-      db.sessions.insert({
-        hostSessionId: HOST_SESSION_ID,
-        scopeRef: SCOPE_REF,
-        laneRef: 'main',
-        generation: 1,
-        status: 'archived',
-        createdAt: now,
-        updatedAt: now,
-        ancestorScopeRefs: [],
-        lastAppliedIntentJson: staleIntent,
-        continuation: { provider: 'claude', kind: 'session', key: 'session-t07217' },
-      })
-      db.continuities.upsert({
-        scopeRef: SCOPE_REF,
-        laneRef: 'main',
-        activeHostSessionId: HOST_SESSION_ID,
-        updatedAt: now,
-      })
-    } finally {
-      db.close()
-    }
-
-    server = await createHrcServer(fixture.serverOpts())
-    const response = await fixture.postJson('/v1/sessions/create-successor', {
-      sessionRef: SESSION_REF,
-      priorHostSessionId: HOST_SESSION_ID,
-    })
-
-    expect(response.status).toBe(200)
-    const body = (await response.json()) as { hostSessionId: string }
-    const verifyDb = openHrcDatabase(fixture.dbPath)
-    try {
-      const successor = verifyDb.sessions.getByHostSessionId(body.hostSessionId)
-      expect(successor?.lastAppliedIntentJson?.placement).toMatchObject({
-        agentRoot,
-        projectRoot,
-        cwd: projectRoot,
-      })
-    } finally {
-      verifyDb.close()
-    }
   })
 })

@@ -28,6 +28,7 @@ import {
   formatProfileProvisioningStrippedWarning,
   splitSessionRef,
 } from 'hrc-core'
+import { getAspHome } from 'hrc-core'
 import type {
   AspcDeclarationDiagnostic,
   AspcInspectRuntimePlacementRequest,
@@ -35,7 +36,6 @@ import type {
   AspcRuntimeDeclarationContext,
   AspcRuntimePromptObservation,
 } from 'spaces-aspc-protocol'
-import { getAspHome } from 'spaces-config'
 
 import { withAspdObservationSession } from './agent-spaces-adapter/aspd-observation-client.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'

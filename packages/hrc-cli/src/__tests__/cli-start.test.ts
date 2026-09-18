@@ -21,7 +21,7 @@
  *
  * Reference: T-00946 (parent), T-00957 (CLI implementation task)
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -42,10 +42,15 @@ import {
   serverOpts,
   setServer,
   setupCliFixture,
+  socketPath,
   teardownCliFixture,
   waitForContinuation,
   writeCodexAgentProfile,
 } from './fixtures/cli.fixture'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 beforeEach(setupCliFixture)
 afterEach(teardownCliFixture)
@@ -53,6 +58,8 @@ afterEach(teardownCliFixture)
 describe('hrc start', () => {
   beforeEach(async () => {
     setServer(await createHrcServer(serverOpts()))
+    oldEngineDaemon.setProxy(socketPath)
+    oldEngineDaemon.setProxy(socketPath)
     await seedRunRoots('rex', 'agent-spaces')
   })
 
@@ -60,6 +67,7 @@ describe('hrc start', () => {
     const result = await runCli(
       ['start', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_DEFAULT_TASK: 'primary',
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
@@ -94,6 +102,7 @@ describe('hrc start', () => {
     const result = await runCli(
       ['start', 'rex@agent-spaces', '--cwd', executionCwd, '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_DEFAULT_TASK: 'primary',
         ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
@@ -113,6 +122,7 @@ describe('hrc start', () => {
     const result = await runCli(
       ['resume', 'rex@agent-spaces', '--no-attach', '--cwd', executionCwd, '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_DEFAULT_TASK: 'primary',
         ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
@@ -126,6 +136,7 @@ describe('hrc start', () => {
 
   it('rejects relative and missing execution cwd paths', async () => {
     const env = cliEnv({
+      HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
       ASP_AGENTS_ROOT: agentsRoot,
       ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
     })
@@ -155,6 +166,7 @@ describe('hrc start', () => {
     const result = await runCli(
       ['start', 'rex@agent-spaces', '--on-conflict', 'reject', '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_DEFAULT_TASK: 'primary',
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
@@ -174,6 +186,7 @@ describe('hrc start', () => {
     const result = await runCli(
       ['start', 'rex@agent-spaces', '--on-conflict', 'clobber', '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_DEFAULT_TASK: 'primary',
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
@@ -199,6 +212,7 @@ describe('hrc start', () => {
     const result = await runCli(
       ['start', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
       })
@@ -222,6 +236,7 @@ describe('hrc start', () => {
     const result = await runCli(
       ['start', 'missing@agent-spaces', '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
       })
@@ -245,6 +260,7 @@ describe('hrc start', () => {
     const result = await runCli(
       ['start', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
       })
@@ -269,6 +285,7 @@ describe('hrc start', () => {
     const result = await runCli(
       ['start', 'rex@agent-spaces:T-00123'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         PATH: `${tmuxShimDir}:${process.env.PATH ?? ''}`,
@@ -292,6 +309,7 @@ describe('hrc start', () => {
     const result = await runCli(
       ['start', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
@@ -319,6 +337,7 @@ describe('hrc start', () => {
     })
     process.env.PATH = `${firstCodex.binDir}:${process.env.PATH ?? ''}`
     const firstEnv = cliEnv({
+      HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
       ASP_AGENTS_ROOT: agentsRoot,
       ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       PATH: `${firstCodex.binDir}:${process.env.PATH ?? ''}`,
@@ -342,6 +361,7 @@ describe('hrc start', () => {
     })
     process.env.PATH = `${secondCodex.binDir}:${process.env.PATH ?? ''}`
     const secondEnv = cliEnv({
+      HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
       ASP_AGENTS_ROOT: agentsRoot,
       ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       PATH: `${secondCodex.binDir}:${process.env.PATH ?? ''}`,
@@ -384,6 +404,7 @@ describe('hrc start', () => {
 describe('hrc run --dry-run', () => {
   beforeEach(async () => {
     setServer(await createHrcServer(serverOpts()))
+    oldEngineDaemon.setProxy(socketPath)
     await seedRunRoots('rex', 'agent-spaces')
     // A SOUL.md gives the compile something to materialize, so the preview has
     // a real system prompt to frame rather than an empty one.
@@ -401,6 +422,7 @@ describe('hrc run --dry-run', () => {
     const result = await runCli(
       ['run', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_DEFAULT_TASK: 'primary',
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
@@ -427,6 +449,7 @@ describe('hrc run --dry-run', () => {
     const result = await runCli(
       ['run', 'rex@agent-spaces', '--dry-run', '-p', 'probe the thing'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_DEFAULT_TASK: 'primary',
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
@@ -444,6 +467,7 @@ describe('hrc run --dry-run', () => {
 describe('hrc run --dry-run prompt parity across routes', () => {
   beforeEach(async () => {
     setServer(await createHrcServer(serverOpts()))
+    oldEngineDaemon.setProxy(socketPath)
     await seedRunRoots('rex', 'agent-spaces')
     await writeFile(join(agentsRoot, 'rex', 'SOUL.md'), '# Rex\n\nRex is a test agent.\n', 'utf8')
   })
@@ -454,12 +478,16 @@ describe('hrc run --dry-run prompt parity across routes', () => {
    * a codex agent while looking perfectly healthy for a claude one. Prompts
    * must come from the resolver, which is route-independent.
    */
-  it('renders the system prompt for a codex-route agent, which carries no prompt argv', async () => {
+  // T-08597: skipped — local prompt-zone inspection (spaces-runtime) is deleted with
+  // ASP interpretation; zones arrive via the daemon preview owned by T-08596
+  // (§2 routes CLI dry-run to POST /v1/previews/run). Re-enable with A.
+  it.skip('renders the system prompt for a codex-route agent, which carries no prompt argv', async () => {
     await writeCodexAgentProfile('rex')
 
     const result = await runCli(
       ['start', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })

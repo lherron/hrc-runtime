@@ -1,5 +1,6 @@
 import { CliUsageError } from 'cli-kit'
 import type { HrcRuntimeIntent } from 'hrc-core'
+import { inferProjectIdFromCwd } from 'hrc-core'
 import {
   type ProfileAwareResolvedScopeInput,
   buildHrcRuntimeIntent,
@@ -7,7 +8,6 @@ import {
   resolveProfileAwareScopeInput,
   writePlacementWarnings,
 } from 'hrc-sdk'
-import { inferProjectIdFromCwd } from 'spaces-config'
 
 /**
  * Target resolution for the live-runtime verbs `hrc` absorbed from `hrcchat`
@@ -31,10 +31,10 @@ function callerTaskId(): string | undefined {
   return /:task:([^:/]+)/.exec(raw)?.[1]
 }
 
-export function resolveTargetScope(
+export async function resolveTargetScope(
   input: string,
   options?: { withCallerTaskId?: boolean; worktreeAssociation?: 'strict' | 'advisory' }
-): ProfileAwareResolvedScopeInput {
+): Promise<ProfileAwareResolvedScopeInput> {
   const fallbackProjectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
   const fallbackTaskId = options?.withCallerTaskId ? callerTaskId() : undefined
   const scope = {
@@ -43,7 +43,7 @@ export function resolveTargetScope(
     ...(fallbackTaskId !== undefined ? { taskId: fallbackTaskId } : {}),
   }
   const projectOrigin = input.includes('@') || /(^|:)project:/.test(input) ? 'explicit' : 'inferred'
-  return resolveProfileAwareScopeInput(input, {
+  return await resolveProfileAwareScopeInput(input, {
     scope,
     projectOrigin,
     placement: { taskWorktreeAssociation: options?.worktreeAssociation ?? 'strict' },
@@ -51,8 +51,8 @@ export function resolveTargetScope(
 }
 
 /** Resolve an EXISTING target, where worktree drift must not block reachability. */
-export function resolveLiveTargetToSessionRef(input: string): string {
-  const resolved = resolveTargetScope(input, {
+export async function resolveLiveTargetToSessionRef(input: string): Promise<string> {
+  const resolved = await resolveTargetScope(input, {
     withCallerTaskId: true,
     worktreeAssociation: 'advisory',
   })
@@ -61,11 +61,11 @@ export function resolveLiveTargetToSessionRef(input: string): string {
 }
 
 /** Resolve a target that may have to be BORN, under strict placement. */
-export function resolveSummonTarget(input: string): {
+export async function resolveSummonTarget(input: string): Promise<{
   sessionRef: string
   runtimeIntent: HrcRuntimeIntent
-} {
-  const resolved = resolveTargetScope(input, { withCallerTaskId: true })
+}> {
+  const resolved = await resolveTargetScope(input, { withCallerTaskId: true })
   const paths = resolved.placement
   writePlacementWarnings('hrc', paths.warnings)
   const agentRoot = paths.agentRoot
@@ -74,7 +74,7 @@ export function resolveSummonTarget(input: string): {
   }
   return {
     sessionRef: `${resolved.scopeRef}/lane:${resolved.laneId}`,
-    runtimeIntent: buildHrcRuntimeIntent({
+    runtimeIntent: await buildHrcRuntimeIntent({
       agentId: resolved.parsed.agentId,
       agentRoot,
       ...(paths.projectRoot ? { projectRoot: paths.projectRoot } : {}),

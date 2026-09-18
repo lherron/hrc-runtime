@@ -20,14 +20,16 @@ import {
 
 import { resolveMessagingScope, resolveScope } from './normalize.js'
 
-export function resolveRuntimeIntentForTarget(targetInput: string): HrcRuntimeIntent {
-  const resolved = resolveScope(targetInput)
+export async function resolveRuntimeIntentForTarget(
+  targetInput: string
+): Promise<HrcRuntimeIntent> {
+  const resolved = await resolveScope(targetInput)
   return buildRuntimeIntentForResolvedScope(resolved)
 }
 
-function buildRuntimeIntentForResolvedScope(
+async function buildRuntimeIntentForResolvedScope(
   resolved: ProfileAwareResolvedScopeInput
-): HrcRuntimeIntent {
+): Promise<HrcRuntimeIntent> {
   const scope = resolved.parsed
 
   const paths = resolved.placement
@@ -37,7 +39,7 @@ function buildRuntimeIntentForResolvedScope(
     throw new CliUsageError(formatAgentNotFound(scope.agentId, paths.searchedAgentRoots))
   }
 
-  return buildHrcRuntimeIntent({
+  return await buildHrcRuntimeIntent({
     agentId: scope.agentId,
     agentRoot,
     ...(paths.projectRoot ? { projectRoot: paths.projectRoot } : {}),
@@ -77,14 +79,14 @@ export function directiveOnlyRuntimeIntent(
 }
 
 /** Resolve a messaging target once, with association drift advisory. */
-export function resolveMessagingTarget(
+export async function resolveMessagingTarget(
   targetInput: string,
   options?: { withCallerTaskId?: boolean }
-): {
+): Promise<{
   resolved: ProfileAwareResolvedScopeInput
   sessionRef: string
-} {
-  const resolved = resolveMessagingScope(targetInput, options)
+}> {
+  const resolved = await resolveMessagingScope(targetInput, options)
   return {
     resolved,
     sessionRef: `${resolved.scopeRef}/lane:${resolved.laneId}`,
@@ -92,15 +94,15 @@ export function resolveMessagingTarget(
 }
 
 /** Resolve a launch/turn target once under strict task-worktree placement. */
-export function resolveLaunchTarget(targetInput: string): {
+export async function resolveLaunchTarget(targetInput: string): Promise<{
   resolved: ProfileAwareResolvedScopeInput
   sessionRef: string
   runtimeIntent: HrcRuntimeIntent
-} {
-  const resolved = resolveScope(targetInput)
+}> {
+  const resolved = await resolveScope(targetInput)
   return {
     resolved,
     sessionRef: `${resolved.scopeRef}/lane:${resolved.laneId}`,
-    runtimeIntent: buildRuntimeIntentForResolvedScope(resolved),
+    runtimeIntent: await buildRuntimeIntentForResolvedScope(resolved),
   }
 }

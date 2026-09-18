@@ -4,9 +4,9 @@
 import { formatSessionHandle } from 'agent-scope'
 import { splitSessionRef } from 'hrc-core'
 import type { HrcMessageAddress } from 'hrc-core'
+import { inferProjectIdFromCwd } from 'hrc-core'
 import { resolveProfileAwareScopeInput, writePlacementWarnings } from 'hrc-sdk'
 import type { ProfileAwareResolvedScopeInput } from 'hrc-sdk'
-import { inferProjectIdFromCwd } from 'spaces-config'
 
 import { taskIdFromSessionRef } from './taskId.js'
 
@@ -30,10 +30,10 @@ function inferTaskIdFromCallerSession(): string | undefined {
  * HRC_SESSION_REF) is applied as the task fallback so a bare agent input resolves
  * into the caller's task scope.
  */
-export function resolveScope(
+export async function resolveScope(
   input: string,
   options?: { withCallerTaskId?: boolean; worktreeAssociation?: 'strict' | 'advisory' }
-): ProfileAwareResolvedScopeInput {
+): Promise<ProfileAwareResolvedScopeInput> {
   const fallbackProjectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
   const fallbackTaskId = options?.withCallerTaskId ? inferTaskIdFromCallerSession() : undefined
   const scope = {
@@ -43,7 +43,7 @@ export function resolveScope(
   }
   const projectOrigin = input.includes('@') || /(^|:)project:/.test(input) ? 'explicit' : 'inferred'
 
-  return resolveProfileAwareScopeInput(input, {
+  return await resolveProfileAwareScopeInput(input, {
     scope,
     projectOrigin,
     placement: { taskWorktreeAssociation: options?.worktreeAssociation ?? 'strict' },
@@ -51,11 +51,11 @@ export function resolveScope(
 }
 
 /** Resolve a messaging target without allowing worktree drift to block delivery. */
-export function resolveMessagingScope(
+export async function resolveMessagingScope(
   input: string,
   options?: { withCallerTaskId?: boolean }
-): ProfileAwareResolvedScopeInput {
-  const resolved = resolveScope(input, { ...options, worktreeAssociation: 'advisory' })
+): Promise<ProfileAwareResolvedScopeInput> {
+  const resolved = await resolveScope(input, { ...options, worktreeAssociation: 'advisory' })
   writePlacementWarnings('hrc', resolved.placement.warnings)
   return resolved
 }
@@ -69,14 +69,14 @@ export function resolveMessagingScope(
  * the canonical default `primary` is applied so the sessionRef is always
  * agent+project+task qualified.
  */
-export function resolveTargetToSessionRef(input: string): string {
-  const resolved = resolveScope(input, { withCallerTaskId: true })
+export async function resolveTargetToSessionRef(input: string): Promise<string> {
+  const resolved = await resolveScope(input, { withCallerTaskId: true })
   return `${resolved.scopeRef}/lane:${resolved.laneId}`
 }
 
 /** Resolve an existing messaging/read target without launch-placement enforcement. */
-export function resolveMessagingTargetToSessionRef(input: string): string {
-  const resolved = resolveMessagingScope(input, { withCallerTaskId: true })
+export async function resolveMessagingTargetToSessionRef(input: string): Promise<string> {
+  const resolved = await resolveMessagingScope(input, { withCallerTaskId: true })
   return `${resolved.scopeRef}/lane:${resolved.laneId}`
 }
 
@@ -84,10 +84,10 @@ export function resolveMessagingTargetToSessionRef(input: string): string {
  * Resolve a CLI address string to an HrcMessageAddress.
  * Accepts: "human", "system", "me", or a target handle.
  */
-export function resolveAddress(
+export async function resolveAddress(
   input: string,
   callerSessionRef?: string | undefined
-): HrcMessageAddress {
+): Promise<HrcMessageAddress> {
   const lower = input.toLowerCase()
 
   if (lower === 'human') {
@@ -107,7 +107,7 @@ export function resolveAddress(
 
   return {
     kind: 'session',
-    sessionRef: resolveMessagingTargetToSessionRef(input),
+    sessionRef: await resolveMessagingTargetToSessionRef(input),
   }
 }
 
@@ -136,9 +136,12 @@ export type ResolvedSender = {
  * `source` (2026-07-25 attribution ruling: four scripted node probes silently
  * went out as the human seat).
  */
-export function resolveSenderAddress(asInput?: string | undefined): ResolvedSender {
+export async function resolveSenderAddress(asInput?: string | undefined): Promise<ResolvedSender> {
   if (asInput !== undefined && asInput.trim().length > 0) {
-    return { address: resolveAddress(asInput, process.env['HRC_SESSION_REF']), source: 'explicit' }
+    return {
+      address: await resolveAddress(asInput, process.env['HRC_SESSION_REF']),
+      source: 'explicit',
+    }
   }
   const fromEnvelope = resolveCallerAddress()
   if (fromEnvelope.kind === 'session') {

@@ -1,28 +1,42 @@
-import { spawnSync } from 'node:child_process'
-import { readdirSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+/**
+ * T-08597 — daemon-backed agent placement resolution.
+ *
+ * `resolveHrcAgentPlacementPaths` keeps its name and result shape but no
+ * longer interprets ASP declarations in-process: placement policy runs on the
+ * installed daemon (`POST /v1/placements/resolve`) and profile/targets/catalog
+ * facts arrive via the daemon's aspd observation. A missing daemon socket (or
+ * an unreachable daemon) is a typed `runtime_unavailable` HrcDomainError —
+ * never a local fallback. The daemon reads its OWN environment and registry;
+ * caller-side `env`/`aspHome` overrides are not honored (documented delta from
+ * the local resolver; the parity table runs both sides on the same node).
+ */
 
 import {
+  HrcDomainError,
+  HrcErrorCode,
+  type ResolvePlacementRequest,
+  type ResolvePlacementResponse,
+  type ResolvedAgentHarness,
   type WrkqProjectRegistryEntry,
-  environmentWithoutGitOverrides,
-  findWrkqProjectEntry,
-  readWrkqProjectRegistry,
+  isCanonicalCheckout as isCanonicalCheckoutCore,
+  isLinkedCheckout as isLinkedCheckoutCore,
+  parseWorktreePorcelain as parseWorktreePorcelainCore,
+  resolveControlSocketPath,
+  taskTokens as taskTokensCore,
 } from 'hrc-core'
-import {
-  type ResolveAgentPlacementPathsOptions,
-  type ResolvedAgentPlacementPaths,
-  resolveAgentPlacementPaths,
-} from 'spaces-config'
 
+import { HrcClient } from './client.js'
+import { discoverSocket } from './discover.js'
 import type { ProjectOrigin } from './resolve-scope.js'
 
 export type ProjectPlacementSource =
   | 'explicit-override'
   | 'wrkq-registry'
   | 'marker-scan'
+  | 'sibling-fallback'
   | 'task-worktree'
   | 'inferred'
+  | 'projectless'
 
 export interface ProjectPlacementResolution {
   source: ProjectPlacementSource
@@ -33,7 +47,12 @@ export interface ProjectPlacementResolution {
   reason: string
 }
 
-export interface HrcResolvedAgentPlacementPaths extends ResolvedAgentPlacementPaths {
+export interface HrcResolvedAgentPlacementPaths {
+  agentRoot?: string | undefined
+  projectRoot?: string | undefined
+  cwd?: string | undefined
+  searchedAgentRoots?: string[] | undefined
+  warnings?: string[] | undefined
   resolution: ProjectPlacementResolution
 }
 
@@ -43,314 +62,210 @@ export interface HrcResolvedAgentPlacementPaths extends ResolvedAgentPlacementPa
  */
 export type ProjectRegistryEntry = WrkqProjectRegistryEntry
 
-export interface ResolveHrcAgentPlacementPathsOptions extends ResolveAgentPlacementPathsOptions {
+export interface ResolveHrcAgentPlacementPathsOptions {
+  agentId: string
+  projectId?: string | undefined
+  agentRoot?: string | undefined
+  projectRoot?: string | undefined
+  cwd?: string | undefined
   projectOrigin: ProjectOrigin
   taskId?: string | undefined
   /** Strict for launch placement; advisory for messaging/read selectors. */
   taskWorktreeAssociation?: 'strict' | 'advisory' | undefined
-  /** Test seam; production reads `wrkq projects --json`. */
+  /** Test seam; production leaves this undefined so the daemon reads its registry. */
   registryProjects?: ProjectRegistryEntry[] | undefined
-  /** Test/operator seam; production scans the canonical Praesidium source root. */
+  /** Test seam; production leaves this undefined so the daemon uses its search roots. */
   projectSearchRoots?: string[] | undefined
+  /** Test/operator seam for the scratch-daemon proof; production discovers the socket. */
+  socketPath?: string | undefined
 }
 
-type GitWorktree = {
-  path: string
-  branch?: string | undefined
-}
-
-function expandHome(path: string, env: Record<string, string | undefined>): string {
-  const home = env['HOME'] ?? homedir()
-  if (path === '~') return home
-  return path.startsWith('~/') ? join(home, path.slice(2)) : path
-}
-
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory()
-  } catch {
-    return false
-  }
-}
-
-function isCanonicalCheckout(path: string): boolean {
-  return isDirectory(join(path, '.git'))
-}
-
-function isLinkedCheckout(path: string): boolean {
-  try {
-    return statSync(join(path, '.git')).isFile()
-  } catch {
-    return false
-  }
-}
-
-function didYouMeanExplicitTaskProject(
-  projects: ProjectRegistryEntry[],
-  projectId: string
-): string | undefined {
-  const taskId = taskTokens(projectId)[0]
-  if (!taskId) return undefined
-  const knownProject = projects
-    .map((project) => project.slug ?? project.path ?? project.title)
-    .filter((candidate): candidate is string => Boolean(candidate))
-    .sort((left, right) => right.length - left.length)
-    .find((candidate) => projectId.startsWith(`${candidate}-`))
-  return knownProject ? `did you mean @${knownProject}:${taskId}` : undefined
-}
-
-function defaultProjectSearchRoots(env: Record<string, string | undefined>): string[] {
-  const configured = env['HRC_PROJECT_SEARCH_ROOTS']
-  if (configured) {
-    return configured
-      .split(':')
-      .map((path) => path.trim())
-      .filter(Boolean)
-      .map((path) => resolve(expandHome(path, env)))
-  }
-  return [join(env['HOME'] ?? homedir(), 'praesidium')]
-}
-
-function markerScanCandidates(
-  projectId: string,
-  registryEntry: ProjectRegistryEntry | undefined,
-  roots: string[]
-): string[] {
-  const relativeCandidates = new Set<string>([projectId])
-  if (registryEntry?.path) relativeCandidates.add(registryEntry.path)
-
-  const candidates = new Set<string>()
-  for (const root of roots) {
-    for (const relativePath of relativeCandidates) {
-      candidates.add(resolve(root, relativePath))
-    }
-
-    // Registry-free projects normally live one directory below the source root.
-    // Listing that level lets a marker whose directory name is the project id win
-    // without consulting the sender's cwd.
-    try {
-      for (const entry of readdirSync(root, { withFileTypes: true })) {
-        if (entry.isDirectory() && entry.name === projectId) {
-          candidates.add(resolve(root, entry.name))
-        }
-      }
-    } catch {
-      // Missing search roots are simply absent candidates.
-    }
-  }
-  return [...candidates]
-}
-
-function parseWorktreePorcelain(output: string): GitWorktree[] {
-  const worktrees: GitWorktree[] = []
-  let current: GitWorktree | undefined
-  for (const line of output.split('\n')) {
-    if (line.startsWith('worktree ')) {
-      if (current) worktrees.push(current)
-      current = { path: line.slice('worktree '.length) }
-      continue
-    }
-    if (line.startsWith('branch ') && current) {
-      current.branch = line.slice('branch '.length).replace(/^refs\/heads\//, '')
-      continue
-    }
-    if (line.length === 0 && current) {
-      worktrees.push(current)
-      current = undefined
-    }
-  }
-  if (current) worktrees.push(current)
-  return worktrees
-}
-
-function listGitWorktrees(
-  canonicalRoot: string,
-  explicitEnv: Record<string, string | undefined>
-): GitWorktree[] {
-  const ambientEnv = environmentWithoutGitOverrides()
-  const result = spawnSync('git', ['-C', canonicalRoot, 'worktree', 'list', '--porcelain'], {
-    encoding: 'utf8',
-    env: { ...ambientEnv, ...explicitEnv },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (result.status !== 0) {
-    const diagnostic = result.stderr.trim() || `git exited ${result.status ?? 'without status'}`
-    throw new Error(`cannot inspect worktrees for ${canonicalRoot}: ${diagnostic}`)
-  }
-  return parseWorktreePorcelain(result.stdout)
-}
-
-function taskTokens(value: string): string[] {
-  return [...value.matchAll(/(?<!\d)T-\d+(?!\d)/g)].map((match) => match[0])
-}
-
-function refineTaskWorktree(
-  canonicalRoot: string,
-  taskId: string | undefined,
-  explicitEnv: Record<string, string | undefined>
-): { path: string; branch?: string | undefined } | undefined {
-  if (!taskId || !/^T-\d+$/.test(taskId)) return undefined
-
-  const worktrees = listGitWorktrees(canonicalRoot, explicitEnv)
-  const matches = worktrees.filter(
-    (worktree) => worktree.branch && taskTokens(worktree.branch).includes(taskId)
+function missingSocketError(): HrcDomainError {
+  const socketPath = resolveControlSocketPath()
+  return new HrcDomainError(
+    HrcErrorCode.RUNTIME_UNAVAILABLE,
+    `HRC daemon socket not found at ${socketPath}. Is the HRC server running?`,
+    { code: 'hrc_daemon_missing_socket', socketPath }
   )
-  if (matches.length > 1) {
-    throw new Error(
-      `multiple worktrees match ${taskId}: ${matches
-        .map((worktree) => `${worktree.path} (${worktree.branch})`)
-        .join(', ')}`
-    )
-  }
-  if (matches.length === 1) return matches[0]
-
-  const suspicious = worktrees.find((worktree) => taskTokens(worktree.path).includes(taskId))
-  if (suspicious) {
-    const mismatch = suspicious.branch
-      ? `branch ${suspicious.branch} does not carry ${taskId}`
-      : 'is detached HEAD (no branch)'
-    throw new Error(
-      `worktree at ${suspicious.path} appears associated with ${taskId} but ${mismatch}`
-    )
-  }
-  return undefined
 }
 
-function appendPlacementWarning(
-  placement: HrcResolvedAgentPlacementPaths,
-  warning: string | undefined
-): HrcResolvedAgentPlacementPaths {
-  if (warning === undefined) return placement
-  return {
-    ...placement,
-    warnings: [...(placement.warnings ?? []), warning],
+function placementClient(socketPath: string | undefined): HrcClient {
+  if (socketPath !== undefined) return new HrcClient(socketPath)
+  try {
+    return new HrcClient(discoverSocket())
+  } catch {
+    throw missingSocketError()
   }
-}
-
-function withResolvedProject(
-  options: ResolveHrcAgentPlacementPathsOptions,
-  projectRoot: string,
-  resolution: ProjectPlacementResolution
-): HrcResolvedAgentPlacementPaths {
-  const paths = resolveAgentPlacementPaths({
-    ...options,
-    projectRoot,
-    cwd: projectRoot,
-  })
-  return { ...paths, resolution }
 }
 
 /**
- * HRC-owned placement policy layered over ASP's agent-root resolver.
- *
- * Inferred projects retain ASP's cwd walk-up unchanged. Explicit projects are
- * resolved from explicit override, wrkq registry, or a cwd-independent marker
- * scan, then optionally refined to the task's live git worktree.
+ * Build the placements/resolve request from wrapper options (pure; pinned by
+ * unit tests). The daemon reads its own environment and registry; test seams
+ * ride explicitly.
  */
-export function resolveHrcAgentPlacementPaths(
+export function buildPlacementRequest(
   options: ResolveHrcAgentPlacementPathsOptions
+): ResolvePlacementRequest {
+  return {
+    agentId: options.agentId,
+    ...(options.projectId !== undefined ? { projectId: options.projectId } : {}),
+    ...(options.taskId !== undefined ? { taskId: options.taskId } : {}),
+    ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+    ...(options.projectRoot !== undefined ? { projectRoot: options.projectRoot } : {}),
+    ...(options.agentRoot !== undefined ? { agentRoot: options.agentRoot } : {}),
+    projectOrigin: options.projectOrigin,
+    ...(options.taskWorktreeAssociation !== undefined
+      ? { taskWorktreeAssociation: options.taskWorktreeAssociation }
+      : {}),
+    ...(options.registryProjects !== undefined
+      ? { registryProjects: options.registryProjects }
+      : {}),
+    ...(options.projectSearchRoots !== undefined
+      ? { projectSearchRoots: options.projectSearchRoots }
+      : {}),
+  }
+}
+
+/**
+ * Map a daemon agent-miss (declaration_invalid + producerCode agent_not_found)
+ * to the local-equivalent placement: no agentRoot, searched roots, and the
+ * inferred resolution — never a throw.
+ */
+export function toMissedPaths(
+  options: Pick<ResolveHrcAgentPlacementPathsOptions, 'projectId'>,
+  detail:
+    | {
+        searchedAgentRoots?: string[] | undefined
+        projectRoot?: string | undefined
+        cwd?: string | undefined
+      }
+    | undefined
 ): HrcResolvedAgentPlacementPaths {
-  const env = options.env ?? process.env
-  if (options.projectOrigin === 'inferred' || !options.projectId) {
-    const paths = resolveAgentPlacementPaths(options)
-    return {
-      ...paths,
-      resolution: {
-        source: 'inferred',
-        ...(options.projectId ? { projectId: options.projectId } : {}),
-        ...(paths.cwd ? { cwd: paths.cwd } : {}),
-        reason: options.projectId
+  return {
+    ...(detail?.projectRoot !== undefined ? { projectRoot: detail.projectRoot } : {}),
+    ...(detail?.cwd !== undefined ? { cwd: detail.cwd } : {}),
+    ...(Array.isArray(detail?.searchedAgentRoots) && detail.searchedAgentRoots.length > 0
+      ? { searchedAgentRoots: detail.searchedAgentRoots }
+      : {}),
+    resolution: {
+      source: 'inferred',
+      ...(options.projectId !== undefined ? { projectId: options.projectId } : {}),
+      reason:
+        options.projectId !== undefined
           ? `cwd from inferred project ${options.projectId}`
           : 'cwd from agent root (project-less scope)',
-      },
-    }
+    },
   }
+}
 
-  const override = options.projectRoot ?? env['ASP_PROJECT_ROOT_OVERRIDE']
-  if (override) {
-    const projectRoot = resolve(expandHome(override, env))
-    if (!isDirectory(projectRoot)) {
-      throw new Error(`explicit project root does not exist or is not a directory: ${projectRoot}`)
-    }
-    return withResolvedProject(options, projectRoot, {
-      source: 'explicit-override',
-      projectId: options.projectId,
-      canonicalRoot: projectRoot,
-      cwd: projectRoot,
-      reason: `cwd from explicit project root ${projectRoot}`,
-    })
-  }
+/**
+ * SDK-internal: raw daemon placement observation (full response, including
+ * identity/harness facts resolve-scope needs). One socket round trip.
+ */
+export async function resolvePlacementObservation(
+  options: ResolveHrcAgentPlacementPathsOptions
+): Promise<ResolvePlacementResponse> {
+  return placementClient(options.socketPath).resolvePlacement(buildPlacementRequest(options))
+}
 
-  const projects = options.registryProjects ?? readWrkqProjectRegistry(env)
-  const registryEntry = findWrkqProjectEntry(projects, options.projectId)
-  let canonicalRoot: string | undefined
-  let canonicalSource: 'wrkq-registry' | 'marker-scan' | undefined
-  if (registryEntry?.root) {
-    canonicalRoot = resolve(expandHome(registryEntry.root, env))
-    if (!isCanonicalCheckout(canonicalRoot)) {
-      const kind = isLinkedCheckout(canonicalRoot)
-        ? 'is a linked worktree'
-        : 'is not a canonical git checkout'
-      throw new Error(
-        `registered root for ${options.projectId} ${canonicalRoot} ${kind}; repair it with: wrkq set ${options.projectId} --root <canonical>`
-      )
-    }
-    canonicalSource = 'wrkq-registry'
-  } else {
-    const roots = options.projectSearchRoots ?? defaultProjectSearchRoots(env)
-    canonicalRoot = markerScanCandidates(options.projectId, registryEntry, roots).find(
-      isCanonicalCheckout
-    )
-    canonicalSource = canonicalRoot ? 'marker-scan' : undefined
+export function toResolvedPaths(
+  response: ResolvePlacementResponse
+): HrcResolvedAgentPlacementPaths {
+  return {
+    ...(response.agentRoot !== undefined ? { agentRoot: response.agentRoot } : {}),
+    ...(response.projectRoot !== undefined ? { projectRoot: response.projectRoot } : {}),
+    ...(response.cwd !== undefined ? { cwd: response.cwd } : {}),
+    ...(response.searchedAgentRoots.length > 0
+      ? { searchedAgentRoots: response.searchedAgentRoots }
+      : {}),
+    ...(response.warnings.length > 0 ? { warnings: response.warnings } : {}),
+    resolution: {
+      source: response.resolution.source as ProjectPlacementSource,
+      ...(response.resolution.projectId !== undefined
+        ? { projectId: response.resolution.projectId }
+        : {}),
+      ...(response.resolution.canonicalRoot !== undefined
+        ? { canonicalRoot: response.resolution.canonicalRoot }
+        : {}),
+      ...(response.resolution.cwd !== undefined ? { cwd: response.resolution.cwd } : {}),
+      ...(response.resolution.branch !== undefined ? { branch: response.resolution.branch } : {}),
+      reason: response.resolution.reason,
+    },
   }
+}
 
-  if (!canonicalRoot || !canonicalSource) {
-    const suggestion = didYouMeanExplicitTaskProject(projects, options.projectId)
-    throw new Error(
-      `project root unknown for ${options.projectId}; register it with: wrkq set ${options.projectId} --root <path>${
-        suggestion ? `; ${suggestion}` : ''
-      }`
-    )
-  }
-
-  let worktree: GitWorktree | undefined
-  let taskWorktreeWarning: string | undefined
-  try {
-    worktree = refineTaskWorktree(canonicalRoot, options.taskId, options.env ?? {})
-  } catch (error) {
-    if (options.taskWorktreeAssociation !== 'advisory') throw error
-    const message = error instanceof Error ? error.message : String(error)
-    taskWorktreeWarning = `${message}; proceeding without task-worktree refinement`
-  }
-  if (worktree) {
-    return withResolvedProject(options, worktree.path, {
-      source: 'task-worktree',
-      projectId: options.projectId,
-      canonicalRoot,
-      cwd: worktree.path,
-      ...(worktree.branch ? { branch: worktree.branch } : {}),
-      reason: `cwd from task worktree ${worktree.path}, branch ${worktree.branch}`,
-    })
-  }
-
-  return appendPlacementWarning(
-    withResolvedProject(options, canonicalRoot, {
-      source: canonicalSource,
-      projectId: options.projectId,
-      canonicalRoot,
-      cwd: canonicalRoot,
-      reason:
-        canonicalSource === 'wrkq-registry'
-          ? `cwd from wrkq registry root ${canonicalRoot}`
-          : `cwd from marker scan ${canonicalRoot}`,
-    }),
-    taskWorktreeWarning
+/**
+ * The daemon reports an unknown agent as declaration_invalid + producerCode
+ * agent_not_found (detail carries searchedAgentRoots and any resolved
+ * projectRoot/cwd). Both placement entry points treat it as a lenient miss,
+ * exactly as the local resolver returned — never a throw.
+ */
+export function isAgentNotFoundError(error: unknown): error is HrcDomainError {
+  return (
+    error instanceof HrcDomainError &&
+    error.code === HrcErrorCode.DECLARATION_INVALID &&
+    (error.detail as { producerCode?: unknown } | undefined)?.producerCode === 'agent_not_found'
   )
 }
 
+/**
+ * HRC-owned placement resolution layered over the daemon's aspd-backed
+ * observation.
+ *
+ * Inferred projects retain the cwd walk-up; explicit projects resolve from
+ * explicit override, wrkq registry, marker scan, or sibling fallback, then
+ * optionally refine to the task's live git worktree. An unresolvable agent
+ * resolves to a placement WITHOUT agentRoot (with searchedAgentRoots), exactly
+ * as the local resolver returned; an unresolvable explicit project throws with
+ * the same message the local resolver threw.
+ */
+export async function resolveHrcAgentPlacementPaths(
+  options: ResolveHrcAgentPlacementPathsOptions
+): Promise<HrcResolvedAgentPlacementPaths> {
+  let response: ResolvePlacementResponse
+  try {
+    response = await resolvePlacementObservation(options)
+  } catch (error) {
+    if (isAgentNotFoundError(error)) {
+      return toMissedPaths(options, error.detail as { searchedAgentRoots?: string[] } | undefined)
+    }
+    throw error
+  }
+  return toResolvedPaths(response)
+}
+
+/**
+ * T-08597 — daemon-backed agent harness resolution (same name, same result
+ * shape, async over the socket). The provider, frontend harness, and
+ * provisioning baseline are observed from the agent's declaration; HRC
+ * performs no profile parsing or catalog lookup. `harness` is the observed
+ * frontend form (canonical `entry.frontend`); profiles that declare bare
+ * catalog ids surface here in frontend form — the one documented value-level
+ * delta from the local merge, listed in the parity table.
+ */
+export async function resolveAgentHarness(input: {
+  agentRoot: string
+  agentId: string
+  projectRoot?: string | undefined
+  socketPath?: string | undefined
+}): Promise<ResolvedAgentHarness> {
+  const observation = await resolvePlacementObservation({
+    agentId: input.agentId,
+    agentRoot: input.agentRoot,
+    ...(input.projectRoot !== undefined ? { projectRoot: input.projectRoot } : {}),
+    projectOrigin: 'explicit',
+    ...(input.socketPath !== undefined ? { socketPath: input.socketPath } : {}),
+  })
+  return {
+    provider: observation.harness.provider,
+    harness: observation.harness.frontend,
+    provision: observation.provision.scalars as ResolvedAgentHarness['provision'],
+  }
+}
+
 export const projectPlacementInternals = {
-  isCanonicalCheckout,
-  isLinkedCheckout,
-  parseWorktreePorcelain,
-  taskTokens,
+  isCanonicalCheckout: isCanonicalCheckoutCore,
+  isLinkedCheckout: isLinkedCheckoutCore,
+  parseWorktreePorcelain: parseWorktreePorcelainCore,
+  taskTokens: taskTokensCore,
 }

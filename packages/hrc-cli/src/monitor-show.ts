@@ -106,7 +106,7 @@ export async function cmdMonitorShow(args: string[]): Promise<void> {
 
   if (options.selectorInput !== undefined) {
     try {
-      selector = parseProfileAwareSelector(options.selectorInput)
+      selector = await parseProfileAwareSelector(options.selectorInput)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       throw new CliUsageError(`invalid selector: ${message}`)

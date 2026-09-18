@@ -117,7 +117,7 @@ async function resolvePreviousRuntimeArg(
 ): Promise<string> {
   let selector: HrcSelector
   try {
-    selector = parseProfileAwareSelector(
+    selector = await parseProfileAwareSelector(
       rawTarget.startsWith('agent:') ? `scope:${rawTarget}` : rawTarget
     )
   } catch {

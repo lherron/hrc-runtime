@@ -9,7 +9,7 @@ import {
   type StartRuntimeRosterClaim,
   type SuffixStartRuntimeRequest,
 } from 'hrc-core'
-import { ROSTER_SLOT_TOKENS } from 'spaces-config'
+import { ROSTER_SLOT_TOKENS } from 'hrc-core'
 
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 

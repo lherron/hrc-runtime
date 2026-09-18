@@ -15,6 +15,10 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { createSummonCapabilityObserver } from '../federation/summon-capability.js'
 import { SUMMON_GATE_REFUSAL_EVENT } from '../federation/summon-gate.js'
 import { type HrcServer, createHrcServer } from '../index.js'
+import {
+  type AspdObservationDouble,
+  startAspdObservationDouble,
+} from './fixtures/aspd-observation-doubles.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 const SCOPE_REF = 'agent:probe:project:agent-control-plane:task:jobruns-md'
@@ -25,6 +29,8 @@ describe('capability checkout resolution in a launchd-style isolated daemon', ()
   let fixture: HrcServerTestFixture
   let server: HrcServer | undefined
   let agentsRoot: string
+  let aspdDouble: AspdObservationDouble | undefined
+  let savedAspdSocket: string | undefined
 
   beforeEach(async () => {
     fixture = await createHrcTestFixture('h71-')
@@ -51,9 +57,26 @@ describe('capability checkout resolution in a launchd-style isolated daemon', ()
       JSON.stringify({ nodeId: 'svc-test', gate: { mode: 'advisory' } }),
       { mode: 0o600 }
     )
+    // Fixture homes are invisible to a real aspd: serve declarations from the
+    // observation double with disk lookup over the fixture agents root.
+    savedAspdSocket = process.env['HRC_ASPD_SOCKET']
+    const aspdSocket = join(fixture.tmpDir, 'aspd.sock')
+    aspdDouble = startAspdObservationDouble(
+      aspdSocket,
+      {
+        releaseId: 'asp-capability-fixture',
+        sourceCommit: 'c'.repeat(40),
+        builtAt: '2026-09-18T00:00:00.000Z',
+      },
+      { agentsRoots: [agentsRoot] }
+    )
+    process.env['HRC_ASPD_SOCKET'] = aspdSocket
   })
-
   afterEach(async () => {
+    aspdDouble?.stop()
+    aspdDouble = undefined
+    if (savedAspdSocket === undefined) Reflect.deleteProperty(process.env, 'HRC_ASPD_SOCKET')
+    else process.env['HRC_ASPD_SOCKET'] = savedAspdSocket
     await server?.stop()
     await fixture.cleanup()
   })

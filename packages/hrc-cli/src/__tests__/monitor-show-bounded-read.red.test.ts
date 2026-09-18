@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterAll, afterEach, describe, expect, it, spyOn } from 'bun:test'
 
 import { HrcClient } from 'hrc-sdk'
 import { MessageRepository } from '../../../hrc-store-sqlite/src/message-repository'
 import { HrcLifecycleEventRepository } from '../../../hrc-store-sqlite/src/repositories/event-repositories'
 import { cmdMonitorShow } from '../monitor-show'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 const SCOPE_REF = 'agent:test:project:hrc-runtime:task:status-summary'
 const SESSION_REF = `${SCOPE_REF}/lane:main`

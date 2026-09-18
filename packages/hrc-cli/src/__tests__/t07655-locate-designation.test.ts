@@ -9,12 +9,29 @@
  * why a scope was born where it was.
  */
 
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import type { ScopeLocation } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
 import { cmdTargetLocate } from '../cli/handlers-federation.js'
+
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
+
+// Scope the ambient daemon per-test: file execution order is not
+// deterministic, so a global install alone cannot guarantee a live socket.
+const runtimeDirKey = 'HRC_RUNTIME_DIR'
+const savedRuntimeDir = process.env[runtimeDirKey]
+beforeEach(() => {
+  process.env[runtimeDirKey] = oldEngineDaemon.runtimeDir
+})
+afterEach(() => {
+  if (savedRuntimeDir === undefined) delete process.env[runtimeDirKey]
+  else process.env[runtimeDirKey] = savedRuntimeDir
+})
 
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-07655'
 const restores: (() => void)[] = []

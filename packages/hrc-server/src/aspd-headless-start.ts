@@ -34,11 +34,11 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
+import { getAspHome } from 'hrc-core'
 import type {
   AspcCompileHarnessInvocationResponse,
   AspcExecutionRelease,
 } from 'spaces-aspc-protocol'
-import { getAspHome } from 'spaces-config'
 import type {
   BrokerLifecyclePolicyOverlay,
   InvocationStartRequest,

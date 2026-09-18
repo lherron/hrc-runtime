@@ -32,14 +32,16 @@ function instant(
   return new Date(millis).toISOString()
 }
 
-function targetFilter(raw: string | undefined): Partial<TranscriptSearchRequest> {
+async function targetFilter(raw: string | undefined): Promise<Partial<TranscriptSearchRequest>> {
   if (!raw) return {}
   if (raw.startsWith('invocation:')) return { invocationId: raw.slice('invocation:'.length) }
   if (raw.startsWith('inv-')) return { invocationId: raw }
   if (raw.startsWith('runtime:')) return { runtimeId: raw.slice('runtime:'.length) }
   if (raw.startsWith('rt-')) return { runtimeId: raw }
   try {
-    const selector = parseProfileAwareSelector(raw.startsWith('agent:') ? `scope:${raw}` : raw)
+    const selector = await parseProfileAwareSelector(
+      raw.startsWith('agent:') ? `scope:${raw}` : raw
+    )
     if ('scopeRef' in selector) return { scopeRef: selector.scopeRef }
   } catch (error) {
     fatal(error instanceof Error ? error.message : String(error))
@@ -137,7 +139,7 @@ export async function cmdTranscriptSearch(args: string[]): Promise<void> {
     agent: parseFlag(args, '--agent'),
     project: parseFlag(args, '--project'),
     task: parseFlag(args, '--task'),
-    ...targetFilter(parseFlag(args, '--target')),
+    ...(await targetFilter(parseFlag(args, '--target'))),
     since: instant('--since', parseFlag(args, '--since'), true),
     until: instant('--until', parseFlag(args, '--until'), false),
     limit: positive('--limit', parseFlag(args, '--limit'), 20),

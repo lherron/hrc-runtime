@@ -1,6 +1,10 @@
-import { expect, test } from 'bun:test'
+import { afterAll, expect, test } from 'bun:test'
 
 import { ServerShutdownTimeoutError, stopServerWithinDeadline } from '../cli/handlers-server'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 test('foreground shutdown rejects within its deadline when server.stop never settles', async () => {
   const timeoutMs = 25

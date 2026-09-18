@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, describe, expect, it } from 'bun:test'
 import type {
   HrcLifecycleEvent,
   HrcRuntimeIntent,
@@ -6,11 +6,15 @@ import type {
   HrcSubmissionResponse,
 } from 'hrc-core'
 
+import { installOldEngineDaemon } from '../../__tests__/old-engine-daemon.js'
 import {
   type StackedSummarizerOptions,
   type StackedSummaryClient,
   createStackedSummarizer,
 } from '../stacked-summary.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 function event(
   hrcSeq: number,

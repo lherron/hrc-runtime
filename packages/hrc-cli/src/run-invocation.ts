@@ -57,7 +57,7 @@ export async function cmdRunExport(args: string[]): Promise<void> {
 
   const db = openHrcDatabase(resolveDatabasePath(), { migrate: false })
   try {
-    const run = resolveRun(db, options.target)
+    const run = await resolveRun(db, options.target)
     const cursors = eventCursors(db, run.runId)
     const correlation = readCorrelation(db, run.runId)
     const exposure: HrcInvocationExposure = buildHrcInvocationExposure({
@@ -123,7 +123,7 @@ export async function cmdRunAnnotate(args: string[]): Promise<void> {
 
   const db = openHrcDatabase(resolveDatabasePath(), { migrate: false })
   try {
-    const run = resolveRun(db, options.target)
+    const run = await resolveRun(db, options.target)
     const existing = readCorrelation(db, run.runId)
     const incomingCanonical = canonicalCorrelationJson(incoming)
 
@@ -249,13 +249,13 @@ function parseCorrelationJson(raw: string): HrcRunCorrelation {
  * wins (a run id and a selector are two doors to one projection); otherwise the
  * selector resolves to the latest run for the matching runtime/session/scope.
  */
-function resolveRun(db: HrcDatabase, target: string): HrcRunRecord {
+async function resolveRun(db: HrcDatabase, target: string): Promise<HrcRunRecord> {
   const direct = db.runs.getByRunId(target)
   if (direct) return direct
 
   let selector: HrcSelector
   try {
-    selector = parseProfileAwareSelector(target)
+    selector = await parseProfileAwareSelector(target)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new CliUsageError(`no run "${target}" and not a valid selector: ${message}`)

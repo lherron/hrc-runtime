@@ -1,8 +1,25 @@
-import { describe, expect, expectTypeOf, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'bun:test'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
 import { cmdRuntimeList } from '../cli/handlers-runtime.js'
+
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
+
+// Scope the ambient daemon per-test: file execution order is not
+// deterministic, so a global install alone cannot guarantee a live socket.
+const runtimeDirKey = 'HRC_RUNTIME_DIR'
+const savedRuntimeDir = process.env[runtimeDirKey]
+beforeEach(() => {
+  process.env[runtimeDirKey] = oldEngineDaemon.runtimeDir
+})
+afterEach(() => {
+  if (savedRuntimeDir === undefined) delete process.env[runtimeDirKey]
+  else process.env[runtimeDirKey] = savedRuntimeDir
+})
 
 describe('T-06578 hrc runtime list statusChangedAt exposure', () => {
   it('surfaces statusChangedAt on HrcRuntimeSnapshot and renders missing legacy values as unknown', async () => {

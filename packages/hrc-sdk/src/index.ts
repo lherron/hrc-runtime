@@ -12,18 +12,31 @@ export {
   parseDotEnvContent,
   warnAutoLoadedCredentials,
 } from './dotenv-local.js'
-// Re-exported from hrc-core, where the assembly now lives so the daemon can
-// reach it too (T-07615). Every existing `from 'hrc-sdk'` import is unchanged.
-export {
-  applyProvisionDirectives,
-  buildHrcRuntimeIntent,
-  harnessFrontendToHrcHarness,
-  resolveAgentHarness,
-} from 'hrc-core'
+// Intent assembly + harness facts are daemon-backed (T-08597): same names and
+// result shapes as the local implementations, async over the installed daemon
+// socket. Every existing `from 'hrc-sdk'` import keeps working (await the
+// result); the pure directive/warning helpers stay in hrc-core.
+export { applyProvisionDirectives, harnessFrontendToHrcHarness } from 'hrc-core'
+export { buildHrcRuntimeIntent } from './intent.js'
+export { resolveAgentHarness } from './project-placement.js'
 export type {
   BuildHrcRuntimeIntentInput,
   ResolvedAgentHarness,
 } from 'hrc-core'
+export {
+  type HrcResolvedAgentPlacementPaths,
+  type ProjectPlacementResolution,
+  type ProjectPlacementSource,
+  type ProjectRegistryEntry,
+  type ResolveHrcAgentPlacementPathsOptions,
+  buildPlacementRequest,
+  isAgentNotFoundError,
+  projectPlacementInternals,
+  resolveHrcAgentPlacementPaths,
+  resolvePlacementObservation,
+  toMissedPaths,
+  toResolvedPaths,
+} from './project-placement.js'
 export { resolveProfileAwareScopeInput } from './resolve-scope.js'
 export type {
   ProfileAwareScopeDefaults,

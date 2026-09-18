@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, describe, expect, test } from 'bun:test'
 
 import type { FederationRuntimeProjectionReport, ScopeLocation } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
@@ -6,6 +6,10 @@ import { HrcClient } from 'hrc-sdk'
 import { cmdTargetLocate } from '../cli/handlers-federation.js'
 import { cmdRuntimeList } from '../cli/handlers-runtime.js'
 import { CliStatusExit } from '../cli/shared.js'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 const SCOPE = 'agent:mable:project:hrc-runtime:task:T-06613'
 const BINDING = {

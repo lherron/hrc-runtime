@@ -183,6 +183,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "agentHomeRelativeSibling",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|agentHomeRelativeSibling|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "APP_IDENTITY_ENV_KEYS",
       "kind": "value",
       "file": "packages/hrc-core/src/app-session-scope.ts",
@@ -283,6 +291,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|AspContractPackage|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "assembleHrcRuntimeIntent",
+      "kind": "value",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|assembleHrcRuntimeIntent|value",
       "count": 1
     },
     {
@@ -487,14 +503,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "buildHrcRuntimeIntent",
-      "kind": "value",
-      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
-      "hash": "hrc-core|buildHrcRuntimeIntent|value",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "BuildHrcRuntimeIntentInput",
       "kind": "type",
       "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
@@ -503,10 +511,26 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "buildInvalidProfileWarning",
+      "kind": "value",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|buildInvalidProfileWarning|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "canonicalCorrelationJson",
       "kind": "value",
       "file": "packages/hrc-core/src/invocation-exposure.ts",
       "hash": "hrc-core|canonicalCorrelationJson|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CanonicalProjectRoot",
+      "kind": "type",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|CanonicalProjectRoot|type",
       "count": 1
     },
     {
@@ -699,6 +723,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/declaration-contracts.ts",
       "hash": "hrc-core|DeclarationSourceState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "defaultAspHome",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|defaultAspHome|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "defaultProjectSearchRoots",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|defaultProjectSearchRoots|value",
       "count": 1
     },
     {
@@ -899,6 +939,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|ExactStartRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "expandHome",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|expandHome|value",
       "count": 1
     },
     {
@@ -1119,6 +1167,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "findProjectMarker",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|findProjectMarker|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "findWrkqProjectEntry",
       "kind": "value",
       "file": "packages/hrc-core/src/project-registry.ts",
@@ -1175,6 +1231,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "getAgentsRoot",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|getAgentsRoot|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "getAspHome",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|getAspHome|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "GetFirstTurnDiagnosticsResponse",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -1199,10 +1271,26 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "GitWorktree",
+      "kind": "type",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|GitWorktree|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "harnessFrontendToHrcHarness",
       "kind": "value",
       "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
       "hash": "hrc-core|harnessFrontendToHrcHarness|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HarnessTransport",
+      "kind": "type",
+      "file": "packages/hrc-core/src/declaration-contracts.ts",
+      "hash": "hrc-core|HarnessTransport|type",
       "count": 1
     },
     {
@@ -1515,6 +1603,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|HrcAttachDescriptor|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcAttachmentRef",
+      "kind": "type",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|HrcAttachmentRef|type",
       "count": 1
     },
     {
@@ -1915,6 +2011,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcHookBridgeConfig|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcHostCorrelation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|HrcHostCorrelation|type",
       "count": 1
     },
     {
@@ -2623,6 +2727,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcRunMode",
+      "kind": "type",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|HrcRunMode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcRunRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -2631,10 +2743,26 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcRunScaffoldPacket",
+      "kind": "type",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|HrcRunScaffoldPacket|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcRuntimeArtifactRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcRuntimeArtifactRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeBundleRef",
+      "kind": "type",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|HrcRuntimeBundleRef|type",
       "count": 1
     },
     {
@@ -2691,6 +2819,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcRuntimeOperationStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimePlacement",
+      "kind": "type",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|HrcRuntimePlacement|type",
       "count": 1
     },
     {
@@ -3087,6 +3223,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "inferProjectIdFromCwd",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|inferProjectIdFromCwd|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "InspectRuntimeRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -3127,6 +3271,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "isCanonicalCheckout",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|isCanonicalCheckout|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "isCodexAppOwnedScopeRef",
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
@@ -3155,6 +3307,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/monitor/index.ts",
       "hash": "hrc-core|isImmediateRoleChildScopeRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isLinkedCheckout",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|isLinkedCheckout|value",
       "count": 1
     },
     {
@@ -3407,6 +3567,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "markerScanCandidates",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|markerScanCandidates|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "MONITOR_EXIT_CODES",
       "kind": "value",
       "file": "packages/hrc-core/src/monitor/exit-codes.ts",
@@ -3451,6 +3619,22 @@
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|normalizeSessionRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ObservedRuntimeIntentPlacement",
+      "kind": "type",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|ObservedRuntimeIntentPlacement|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ObservedRuntimeIntentProvisioning",
+      "kind": "type",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|ObservedRuntimeIntentProvisioning|type",
       "count": 1
     },
     {
@@ -3527,6 +3711,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "parseWorktreePorcelain",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|parseWorktreePorcelain|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "PraesidiumBuild",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -3571,6 +3763,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|PrepareAttachedRunResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PROJECT_MARKER_FILENAME",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|PROJECT_MARKER_FILENAME|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ProjectMarker",
+      "kind": "type",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|ProjectMarker|type",
       "count": 1
     },
     {
@@ -3671,6 +3879,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "refineTaskWorktree",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|refineTaskWorktree|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "RegisterBridgeTargetRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -3719,10 +3935,10 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "resolveAgentHarness",
+      "symbol": "resolveCanonicalProjectRoot",
       "kind": "value",
-      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
-      "hash": "hrc-core|resolveAgentHarness|value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|resolveCanonicalProjectRoot|value",
       "count": 1
     },
     {
@@ -3783,6 +3999,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "ResolvePlacementRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/declaration-contracts.ts",
+      "hash": "hrc-core|ResolvePlacementRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ResolvePlacementResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/declaration-contracts.ts",
+      "hash": "hrc-core|ResolvePlacementResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "ResolveRuntimeIntentRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/declaration-contracts.ts",
@@ -3819,6 +4051,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|ResolveSessionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "resolveSiblingProjectRoot",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|resolveSiblingProjectRoot|value",
       "count": 1
     },
     {
@@ -3915,6 +4155,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|RetireRegistrationScopesResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ROSTER_SLOT_TOKENS",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-conventions.ts",
+      "hash": "hrc-core|ROSTER_SLOT_TOKENS|value",
       "count": 1
     },
     {
@@ -4079,6 +4327,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "siblingFallbackCandidates",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|siblingFallbackCandidates|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "splitSessionRef",
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
@@ -4227,6 +4483,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|TargetCapabilityView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "taskTokens",
+      "kind": "value",
+      "file": "packages/hrc-core/src/placement-policy.ts",
+      "hash": "hrc-core|taskTokens|value",
       "count": 1
     },
     {
@@ -4705,7 +4969,7 @@
       "package": "hrc-sdk",
       "symbol": "buildHrcRuntimeIntent",
       "kind": "value",
-      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "file": "packages/hrc-sdk/src/intent.ts",
       "hash": "hrc-sdk|buildHrcRuntimeIntent|value",
       "count": 1
     },
@@ -4715,6 +4979,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
       "hash": "hrc-sdk|BuildHrcRuntimeIntentInput|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "buildPlacementRequest",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|buildPlacementRequest|value",
       "count": 1
     },
     {
@@ -5103,6 +5375,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "HrcResolvedAgentPlacementPaths",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|HrcResolvedAgentPlacementPaths|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "HrcSubscriberAdmissionSnapshot",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -5115,6 +5395,14 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|InvocationEventEnvelope|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "isAgentNotFoundError",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|isAgentNotFoundError|value",
       "count": 1
     },
     {
@@ -5231,6 +5519,38 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "projectPlacementInternals",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|projectPlacementInternals|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ProjectPlacementResolution",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|ProjectPlacementResolution|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ProjectPlacementSource",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|ProjectPlacementSource|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ProjectRegistryEntry",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|ProjectRegistryEntry|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "RegisterBridgeTargetRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -5257,7 +5577,7 @@
       "package": "hrc-sdk",
       "symbol": "resolveAgentHarness",
       "kind": "value",
-      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
       "hash": "hrc-sdk|resolveAgentHarness|value",
       "count": 1
     },
@@ -5267,6 +5587,30 @@
       "kind": "type",
       "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
       "hash": "hrc-sdk|ResolvedAgentHarness|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "resolveHrcAgentPlacementPaths",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|resolveHrcAgentPlacementPaths|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ResolveHrcAgentPlacementPathsOptions",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|ResolveHrcAgentPlacementPathsOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "resolvePlacementObservation",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|resolvePlacementObservation|value",
       "count": 1
     },
     {
@@ -5555,6 +5899,22 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|TargetListFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "toMissedPaths",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|toMissedPaths|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "toResolvedPaths",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/project-placement.ts",
+      "hash": "hrc-sdk|toResolvedPaths|value",
       "count": 1
     },
     {

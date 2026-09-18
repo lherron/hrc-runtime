@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite'
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +7,23 @@ import { join } from 'node:path'
 import { HrcClient } from 'hrc-sdk'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import { MonitorWaitExit, cmdMonitorWait } from '../monitor-wait'
+
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
+
+// Scope the ambient daemon per-test: file execution order is not
+// deterministic, so a global install alone cannot guarantee a live socket.
+const runtimeDirKey = 'HRC_RUNTIME_DIR'
+const savedRuntimeDir = process.env[runtimeDirKey]
+beforeEach(() => {
+  process.env[runtimeDirKey] = oldEngineDaemon.runtimeDir
+})
+afterEach(() => {
+  if (savedRuntimeDir === undefined) delete process.env[runtimeDirKey]
+  else process.env[runtimeDirKey] = savedRuntimeDir
+})
 
 const TASK_ID = 'T-90001'
 const SCOPE_REF = `agent:test:project:hrc-runtime:task:${TASK_ID}`

@@ -1,22 +1,26 @@
 import { readSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve as resolvePath } from 'node:path'
 
-import type { HrcHarness, HrcRuntimeIntent } from 'hrc-core'
 import {
-  applyProvisionDirectives,
+  HrcDomainError,
+  HrcErrorCode,
+  type HrcHarness,
+  type HrcRuntimeIntent,
+  PROJECT_MARKER_FILENAME,
+  findProjectMarker,
+  getAgentsRoot,
+  inferProjectIdFromCwd,
+  resolveControlSocketPath,
+} from 'hrc-core'
+import {
+  HrcClient,
+  discoverSocket,
   harnessFrontendToHrcHarness,
+  resolveHrcAgentPlacementPaths,
   resolveProfileAwareScopeInput,
   resolveAgentHarness as resolveSdkAgentHarness,
 } from 'hrc-sdk'
 import type { ProfileAwareResolvedScopeInput, ResolvedAgentHarness } from 'hrc-sdk'
-import {
-  PROJECT_MARKER_FILENAME,
-  buildRuntimeBundleRef,
-  findProjectMarker,
-  getAgentsRoot,
-  inferProjectIdFromCwd,
-  resolveAgentPlacementPaths,
-} from 'spaces-config'
 
 import { fatal, formatAgentNotFound, writePlacementWarnings } from './shared.js'
 
@@ -55,7 +59,7 @@ export function resolveAgentHarness(
   agentRoot: string,
   agentName: string,
   projectRoot?: string
-): AgentHarnessResolution {
+): Promise<AgentHarnessResolution> {
   return resolveSdkAgentHarness({ agentRoot, agentId: agentName, projectRoot })
 }
 
@@ -158,10 +162,10 @@ function resolveDefaultProjectId(): string | undefined {
   return projectId
 }
 
-export function resolveManagedScopeContext(
+export async function resolveManagedScopeContext(
   scopeInput: string,
   options: ResolveManagedScopeOptions = {}
-): ManagedScopeContext {
+): Promise<ManagedScopeContext> {
   const cwdOverride = validateManagedCwdOverride(options.cwdOverride)
   // Compose projectId fallback in caller-spec order:
   //   explicit --project-id → ASP_PROJECT (caller env) → cwd inference → register prompt
@@ -203,7 +207,7 @@ export function resolveManagedScopeContext(
     options.projectRootOverride ??
     (options.projectIdOverride ? resolvePath(process.cwd()) : undefined)
 
-  const resolved = resolveProfileAwareScopeInput(scopeInput, {
+  const resolved = await resolveProfileAwareScopeInput(scopeInput, {
     scope: projectIdHint !== undefined ? { projectId: projectIdHint } : {},
     placement:
       projectRootOverride !== undefined
@@ -321,23 +325,41 @@ function readLineSync(): string {
   return chars.join('')
 }
 
-function buildManagedRuntimeIntent(
+function intentClient(): HrcClient {
+  try {
+    return new HrcClient(discoverSocket())
+  } catch {
+    const socketPath = resolveControlSocketPath()
+    throw new HrcDomainError(
+      HrcErrorCode.RUNTIME_UNAVAILABLE,
+      `HRC daemon socket not found at ${socketPath}. Is the HRC server running?`,
+      { code: 'hrc_daemon_missing_socket', socketPath }
+    )
+  }
+}
+
+export type ManagedIntentClient = Pick<HrcClient, 'resolveRuntimeIntent'>
+
+async function buildManagedRuntimeIntent(
   scope: ManagedScopeContext,
   options: {
     preferredMode?: 'headless' | 'interactive' | 'nonInteractive' | undefined
     prompt?: string | undefined
     debug?: boolean | undefined
+    /** Test seam; production resolves the installed daemon client. */
+    client?: ManagedIntentClient | undefined
   } = {}
-): HrcRuntimeIntent {
+): Promise<HrcRuntimeIntent> {
   const paths =
     scope.placement ??
-    resolveAgentPlacementPaths({
+    (await resolveHrcAgentPlacementPaths({
       agentId: scope.agentId,
       ...(scope.projectId !== undefined ? { projectId: scope.projectId } : {}),
+      projectOrigin: scope.projectOrigin,
       ...(scope.projectRootOverride !== undefined
         ? { projectRoot: scope.projectRootOverride, cwd: scope.projectRootOverride }
         : {}),
-    })
+    }))
   writePlacementWarnings(paths.warnings)
   const agentRoot = paths.agentRoot
   if (!agentRoot) {
@@ -345,27 +367,26 @@ function buildManagedRuntimeIntent(
   }
   const projectRoot = paths.projectRoot
   const cwd = paths.cwd ?? agentRoot
-  const bundle = buildRuntimeBundleRef({
-    agentName: scope.agentId,
+  const client = options.client ?? intentClient()
+  const response = await client.resolveRuntimeIntent({
+    agentId: scope.agentId,
     agentRoot,
-    projectRoot,
+    ...(projectRoot !== undefined ? { projectRoot } : {}),
+    cwd,
+    runMode: 'task',
+    interactive: true,
+    preferredMode: options.preferredMode ?? 'interactive',
+    ...(options.prompt !== undefined ? { initialPrompt: options.prompt } : {}),
+    ...(scope.directives !== undefined ? { provision: scope.directives } : {}),
   })
-  // T-07398: the directive overlay is the FINAL step, and the provider/harness
-  // id follow the OVERLAID harness — `+harness=codex` must actually change what
-  // launches. The rule itself lives once in hrc-sdk; this assembler only feeds
-  // it the merge and the handle's block.
-  const merged = resolveAgentHarness(agentRoot, scope.agentId, projectRoot)
-  const overlaid = applyProvisionDirectives(merged, scope.directives)
-  const provider = overlaid.provider
-  const harnessId = overlaid.harnessId ?? (provider === 'anthropic' ? 'claude-code' : 'codex-cli')
-
+  for (const warning of response.declaration.warnings) {
+    console.error(warning)
+  }
+  const intent = response.intent
   return {
+    ...intent,
     placement: {
-      agentRoot,
-      ...(projectRoot ? { projectRoot } : {}),
-      cwd,
-      runMode: 'task' as const,
-      bundle,
+      ...intent.placement,
       correlation: {
         sessionRef: {
           scopeRef: scope.scopeRef,
@@ -373,36 +394,25 @@ function buildManagedRuntimeIntent(
         },
       },
     },
-    harness: {
-      provider,
-      interactive: true,
-      ...(harnessId !== undefined ? { id: harnessId } : {}),
-    },
-    execution: {
-      preferredMode: options.preferredMode ?? ('interactive' as const),
-    },
-    ...(options.prompt !== undefined ? { initialPrompt: options.prompt } : {}),
     ...(options.debug ? { launch: { env: { HRC_DEBUG: '1' } } } : {}),
-    // No block at all when nothing was declared or directed, so an empty
-    // `provision` is never mistaken for a deliberate empty declaration.
-    ...(Object.keys(overlaid.provision).length === 0 ? {} : { provision: overlaid.provision }),
   }
 }
 
-export function buildManagedRunIntent(
+export async function buildManagedRunIntent(
   scope: ManagedScopeContext,
   options: {
     prompt?: string | undefined
     debug?: boolean | undefined
+    client?: ManagedIntentClient | undefined
   } = {}
-): HrcRuntimeIntent {
+): Promise<HrcRuntimeIntent> {
   return buildManagedRuntimeIntent(scope, {
     ...options,
     preferredMode: 'interactive',
   })
 }
 
-export function buildManagedStartIntent(
+export async function buildManagedStartIntent(
   scope: ManagedScopeContext,
   options: {
     prompt?: string | undefined
@@ -420,9 +430,10 @@ export function buildManagedStartIntent(
      * tmux-tui renderer viewer.
      */
     operatorPresentation?: 'none' | 'tmux-tui' | undefined
+    client?: ManagedIntentClient | undefined
   } = {}
-): HrcRuntimeIntent {
-  const intent = buildManagedRuntimeIntent(scope, {
+): Promise<HrcRuntimeIntent> {
+  const intent = await buildManagedRuntimeIntent(scope, {
     ...options,
     preferredMode: 'headless',
   })
@@ -449,8 +460,14 @@ export function buildManagedStartIntent(
   }
 }
 
-export function buildManagedAttachIntent(scope: ManagedScopeContext): HrcRuntimeIntent {
+export async function buildManagedAttachIntent(
+  scope: ManagedScopeContext,
+  options: {
+    client?: ManagedIntentClient | undefined
+  } = {}
+): Promise<HrcRuntimeIntent> {
   return buildManagedRuntimeIntent(scope, {
+    ...options,
     preferredMode: 'interactive',
   })
 }

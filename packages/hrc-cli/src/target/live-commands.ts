@@ -24,7 +24,7 @@ export async function cmdSummon(
 ): Promise<void> {
   const targetInput = positionals[0]
   if (!targetInput) throw new CliUsageError('summon requires <target>')
-  const { sessionRef, runtimeIntent } = resolveSummonTarget(targetInput)
+  const { sessionRef, runtimeIntent } = await resolveSummonTarget(targetInput)
 
   const result = await client.ensureTarget({ sessionRef, runtimeIntent })
 
@@ -58,7 +58,7 @@ export async function cmdSend(
   const body = consumeBody({ positional: positionals[1], file: opts.file })
   if (!body) throw new CliUsageError('send requires text (positional, -, or --file)')
 
-  const sessionRef = resolveLiveTargetToSessionRef(targetInput)
+  const sessionRef = await resolveLiveTargetToSessionRef(targetInput)
   // Commander's --no-enter sets opts.enter to false; the default is true.
   const enter = opts.enter !== false
 
@@ -85,7 +85,7 @@ export async function cmdPeek(
   const targetInput = positionals[0]
   if (!targetInput) throw new CliUsageError('peek requires <target>')
   const lines = Number.parseInt(opts.lines ?? '80', 10)
-  const sessionRef = resolveLiveTargetToSessionRef(targetInput)
+  const sessionRef = await resolveLiveTargetToSessionRef(targetInput)
 
   const result = await client.captureBySelector({ selector: { sessionRef }, lines })
 
@@ -114,7 +114,7 @@ export async function targetDoctorChecks(
   const checks: TargetCheck[] = []
   let sessionRef: string
   try {
-    sessionRef = resolveLiveTargetToSessionRef(targetInput)
+    sessionRef = await resolveLiveTargetToSessionRef(targetInput)
   } catch (err) {
     return [{ name: 'target-resolve', status: 'fail', detail: errDetail(err) }]
   }

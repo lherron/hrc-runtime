@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, describe, expect, it } from 'bun:test'
 import type { HrcLifecycleEvent } from 'hrc-core'
 import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
 import { CliUsageError } from 'cli-kit'
 
+import { installOldEngineDaemon } from '../../__tests__/old-engine-daemon.js'
 import {
   ATTACH_CATCH_UP_DEADLINE_MS,
   TURN_EXIT_INFRA,
@@ -16,6 +17,9 @@ import {
   cmdTurn,
 } from '../commands/turn.js'
 import { resolveMessagingScope as resolveMessagingScopeDefault } from '../normalize.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 const savedEnv = {
   ASP_PROJECT: process.env['ASP_PROJECT'],
@@ -207,11 +211,11 @@ describe('hrc turn --attach', () => {
       undefined,
       {
         ...fakeDependencies(),
-        resolveMessagingScope(input, options) {
+        async resolveMessagingScope(input, options) {
           process.stderr.write('hrc: warning: task worktree association is ambiguous\n')
           return resolveMessagingScopeDefault(input, options)
         },
-        resolveLaunchTarget() {
+        async resolveLaunchTarget() {
           launchCalls += 1
           throw new Error('attach constructed a launch intent')
         },
@@ -238,7 +242,7 @@ describe('hrc turn --attach', () => {
     expect(lines.at(-1)).toMatchObject({ flush: 'final', result: 'success' })
   })
 
-  it('uses the fixed 30 second catch-up deadline', () => {
+  it('uses the fixed 30 second catch-up deadline', async () => {
     expect(ATTACH_CATCH_UP_DEADLINE_MS).toBe(30_000)
   })
 

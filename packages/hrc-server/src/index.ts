@@ -192,6 +192,7 @@ import {
   type ParticipantRegistrationHandlersMethods,
   participantRegistrationHandlersMethods,
 } from './participant-registration-handlers.js'
+import { handleResolvePlacement } from './placements-resolve.js'
 import {
   type PresentationPublishMethods,
   presentationPublishMethods,
@@ -1100,6 +1101,7 @@ class HrcServerInstance implements HrcServer {
       this.handleMailHintDecision(request),
     [exactRouteKey('POST', '/v1/declarations/resolve')]: (request) =>
       handleResolveRuntimeIntent(request),
+    [exactRouteKey('POST', '/v1/placements/resolve')]: (request) => handleResolvePlacement(request),
     [exactRouteKey('POST', '/v1/previews/run')]: (request) => handleRunPreview(request),
     [exactRouteKey('POST', '/v1/app-sessions/ensure')]: (request) =>
       this.handleEnsureAppSession(request),
@@ -1256,7 +1258,7 @@ class HrcServerInstance implements HrcServer {
                   ? {}
                   : { provision: parsed.runtimeIntent.provision }),
               })
-              const localized = localizeFederatedRuntimeIntent(
+              const localized = await localizeFederatedRuntimeIntent(
                 family.baseScopeRef,
                 parsed.runtimeIntent
               )
@@ -1299,7 +1301,10 @@ class HrcServerInstance implements HrcServer {
                   ? {}
                   : { provision: parsed.runtimeIntent.provision }),
               })
-              const localized = localizeFederatedRuntimeIntent(scope.scopeRef, parsed.runtimeIntent)
+              const localized = await localizeFederatedRuntimeIntent(
+                scope.scopeRef,
+                parsed.runtimeIntent
+              )
               const { runtime, claim } = await this.startExactScopeRuntime({
                 ...parsed,
                 runtimeIntent: localized,

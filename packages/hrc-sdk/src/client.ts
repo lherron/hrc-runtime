@@ -31,6 +31,7 @@ import type {
 import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
 import type { ResolveRuntimeIntentRequest, ResolveRuntimeIntentResponse } from 'hrc-core'
+import type { ResolvePlacementRequest, ResolvePlacementResponse } from 'hrc-core'
 import type { RunPreviewRequest, RunPreviewResponse } from 'hrc-core'
 import type {
   FederationOutboxDeliveryRecord,
@@ -452,6 +453,60 @@ export class HrcClient {
       await this.throwTypedError(res)
     }
     return (await res.json()) as RunPreviewResponse
+  }
+
+  /**
+   * T-08597: resolve a scope into placement through the daemon
+   * (`POST /v1/placements/resolve`). HRC placement policy runs on the daemon;
+   * profile/targets/catalog facts arrive via aspd observation. No local
+   * declaration parsing and no fallback: an unreachable daemon socket is
+   * `runtime_unavailable`, and a daemon without the route is
+   * `unsupported_capability`.
+   */
+  async resolvePlacement(
+    request: ResolvePlacementRequest,
+    opts?: { timeoutMs?: number | undefined }
+  ): Promise<ResolvePlacementResponse> {
+    const path = '/v1/placements/resolve'
+    const timeoutMs = opts?.timeoutMs
+    const signal =
+      typeof timeoutMs === 'number' && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined
+    let res: Response
+    try {
+      res = await this.unixFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        ...(signal ? { signal } : {}),
+      })
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' || error.name === 'TimeoutError')
+      ) {
+        throw error
+      }
+      throw new HrcDomainError(
+        HrcErrorCode.RUNTIME_UNAVAILABLE,
+        `HRC daemon unreachable at ${this.socketPath}`,
+        {
+          code: 'hrc_daemon_unreachable',
+          socketPath: this.socketPath,
+          cause: error instanceof Error ? error.message : String(error),
+        }
+      )
+    }
+    if (res.status === 404) {
+      throw new HrcDomainError(
+        HrcErrorCode.UNSUPPORTED_CAPABILITY,
+        'HRC daemon does not serve placement resolution',
+        { capability: 'placements.resolve', route: path }
+      )
+    }
+    if (!res.ok) {
+      await this.throwTypedError(res)
+    }
+    return (await res.json()) as ResolvePlacementResponse
   }
 
   async resolveSession(request: ResolveSessionRequest): Promise<ResolveSessionResponse> {

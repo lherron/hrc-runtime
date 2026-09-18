@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type { HrcRuntimeIntent } from 'hrc-core'
 
 import { localizeFederatedRuntimeIntent } from '../federation/runtime-intent-localization.js'
+import type { NodeLocalPlacementObservation } from '../federation/summon-capability.js'
 
 const PROJECT_ID = 't06698-fixture'
 const SCOPE = `agent:clod:project:${PROJECT_ID}:task:t06698-localize`
@@ -18,9 +19,6 @@ describe('T-06698 federated runtime intent localization', () => {
       await mkdir(join(agentsRoot, 'clod'), { recursive: true })
       await writeFile(join(agentsRoot, 'clod', 'agent-profile.toml'), 'version = 3\n')
       const checkoutRoot = join(root, 'checkouts')
-      // T-07749 makes the wrkq registry authoritative when cwd discovery
-      // misses. Use a fixture-only project id so the operator's live registry
-      // cannot redirect this sibling-checkout test into a real checkout.
       const localProjectRoot = join(checkoutRoot, PROJECT_ID)
       await mkdir(join(localProjectRoot, '.git'), { recursive: true })
       const intent: HrcRuntimeIntent = {
@@ -40,9 +38,36 @@ describe('T-06698 federated runtime intent localization', () => {
         execution: { preferredMode: 'interactive' },
       }
 
-      const localized = localizeFederatedRuntimeIntent(SCOPE, intent, {
+      const agentRoot = join(agentsRoot, 'clod')
+      const observe: NodeLocalPlacementObservation = async () => ({
+        agentId: 'clod',
+        projectId: PROJECT_ID,
+        agentRoot,
+        projectRoot: localProjectRoot,
+        cwd: localProjectRoot,
+        bundle: { kind: 'agent-project', agentName: 'clod', projectRoot: localProjectRoot },
+        bundleIdentity: 'test-identity',
+        harness: { provider: 'anthropic', frontend: 'claude-code', effectiveHarness: 'claude' },
+        provision: { scalars: {} },
+        policy: { claimsTask: false, placement: { pins: {}, homes: {} } },
+        identity: { operator: false },
+        agentSources: { agentsRoot, provenance: 'caller' },
+        searchedAgentRoots: [agentRoot],
+        source: {
+          agentProfile: 'valid',
+          projectTargets: 'valid',
+          selectedTarget: 'absent',
+          priming: 'valid',
+        },
+        resolution: { source: 'marker-scan', reason: 'test' },
+        warnings: [],
+        release: { releaseId: 'r', sourceCommit: 'c' },
+      })
+
+      const localized = await localizeFederatedRuntimeIntent(SCOPE, intent, {
         cwd: checkoutRoot,
         env: { ASP_AGENTS_ROOT: agentsRoot },
+        observe,
       })
 
       expect(localized.placement.agentRoot).toBe(join(agentsRoot, 'clod'))

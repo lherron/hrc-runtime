@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +14,22 @@ import {
   fetchSelectorSnapshot,
   resolveSelectorTarget,
 } from '../selector-resolve'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
+
+// Scope the ambient daemon per-test: file execution order is not
+// deterministic, so a global install alone cannot guarantee a live socket.
+const runtimeDirKey = 'HRC_RUNTIME_DIR'
+const savedRuntimeDir = process.env[runtimeDirKey]
+beforeEach(() => {
+  process.env[runtimeDirKey] = oldEngineDaemon.runtimeDir
+})
+afterEach(() => {
+  if (savedRuntimeDir === undefined) delete process.env[runtimeDirKey]
+  else process.env[runtimeDirKey] = savedRuntimeDir
+})
 
 const scopeRef = 'agent:room-coordinator:project:taskboard:task:T-05967'
 
@@ -128,38 +144,40 @@ describe('implicit runtime selector availability', () => {
       'stale',
       'ready',
     ])
-    expect(
+    await expect(
       resolveSelectorTarget('room-coordinator@taskboard:T-05967', {
         expect: 'runtime',
         snapshot,
       })
-    ).toEqual({ kind: 'runtime', runtimeId: live.runtimeId })
+    ).resolves.toEqual({ kind: 'runtime', runtimeId: live.runtimeId })
 
     for (const historical of unavailable) {
-      expect(resolveSelectorTarget(historical.runtimeId, { expect: 'runtime', snapshot })).toEqual({
+      await expect(
+        resolveSelectorTarget(historical.runtimeId, { expect: 'runtime', snapshot })
+      ).resolves.toEqual({
         kind: 'runtime',
         runtimeId: historical.runtimeId,
       })
-      expect(
+      await expect(
         resolveSelectorTarget(`runtime:${historical.runtimeId}`, {
           expect: 'runtime',
           snapshot,
         })
-      ).toEqual({ kind: 'runtime', runtimeId: historical.runtimeId })
+      ).resolves.toEqual({ kind: 'runtime', runtimeId: historical.runtimeId })
     }
 
     const twoLiveSnapshot = {
       ...snapshot,
       runtimes: [...snapshot.runtimes, runtime('rt-selector-live-2', 'busy')],
     }
-    expect(() =>
+    await expect(
       resolveSelectorTarget('room-coordinator@taskboard:T-05967', {
         expect: 'runtime',
         snapshot: twoLiveSnapshot,
       })
-    ).toThrow(SelectorResolutionError)
+    ).rejects.toThrow(SelectorResolutionError)
     try {
-      resolveSelectorTarget('room-coordinator@taskboard:T-05967', {
+      await resolveSelectorTarget('room-coordinator@taskboard:T-05967', {
         expect: 'runtime',
         snapshot: twoLiveSnapshot,
       })

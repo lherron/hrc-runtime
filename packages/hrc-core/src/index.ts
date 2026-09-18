@@ -604,10 +604,10 @@ export type {
  */
 export {
   applyProvisionDirectives,
-  buildHrcRuntimeIntent,
+  assembleHrcRuntimeIntent,
+  buildInvalidProfileWarning,
   formatProfileProvisioningStrippedWarning,
   harnessFrontendToHrcHarness,
-  resolveAgentHarness,
 } from './runtime-intent-assembly.js'
 export type {
   BrokerRunPreview,
@@ -622,5 +622,48 @@ export type {
 } from './declaration-contracts.js'
 export type {
   BuildHrcRuntimeIntentInput,
+  ObservedRuntimeIntentPlacement,
+  ObservedRuntimeIntentProvisioning,
   ResolvedAgentHarness,
 } from './runtime-intent-assembly.js'
+export {
+  expandHome,
+  isCanonicalCheckout,
+  isLinkedCheckout,
+  markerScanCandidates,
+  defaultProjectSearchRoots,
+  parseWorktreePorcelain,
+  refineTaskWorktree,
+  resolveCanonicalProjectRoot,
+  resolveSiblingProjectRoot,
+  siblingFallbackCandidates,
+  agentHomeRelativeSibling,
+  taskTokens,
+} from './placement-policy.js'
+export type {
+  GitWorktree,
+  CanonicalProjectRoot,
+} from './placement-policy.js'
+export type {
+  HarnessTransport,
+  ResolvePlacementRequest,
+  ResolvePlacementResponse,
+} from './declaration-contracts.js'
+export {
+  PROJECT_MARKER_FILENAME,
+  ROSTER_SLOT_TOKENS,
+  defaultAspHome,
+  findProjectMarker,
+  getAgentsRoot,
+  getAspHome,
+  inferProjectIdFromCwd,
+} from './placement-conventions.js'
+export type {
+  HrcAttachmentRef,
+  HrcHostCorrelation,
+  HrcRunMode,
+  HrcRunScaffoldPacket,
+  HrcRuntimeBundleRef,
+  HrcRuntimePlacement,
+  ProjectMarker,
+} from './placement-conventions.js'

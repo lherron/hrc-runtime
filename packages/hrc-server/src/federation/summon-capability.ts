@@ -10,25 +10,52 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { join } from 'node:path'
 
 import { parseScopeRef } from 'agent-scope'
-import type { WrkqProjectRegistryEntry } from 'hrc-core'
 import {
-  type HarnessDetection,
-  type HarnessId,
-  type ResolvedPlacementContext,
-  type RuntimePlacement,
-  buildRuntimeBundleRef,
-  normalizeHarnessFrontend,
-  resolveAgentPlacementPaths,
-  resolvePlacementContext,
-} from 'spaces-config'
-import { harnessRegistry } from 'spaces-execution'
+  HrcDomainError,
+  HrcErrorCode,
+  type HrcRuntimePlacement,
+  type ResolvePlacementResponse,
+  type WrkqProjectRegistryEntry,
+} from 'hrc-core'
+import type { AspcObserveRuntimeCapabilityRequest } from 'spaces-aspc-protocol'
 
-import { resolveRegisteredProjectRoot } from './project-registry-roots.js'
+import { withAspdObservationSession } from '../agent-spaces-adapter/aspd-observation-client.js'
+import { resolvePlacementInProcess } from '../placements-resolve.js'
 
 import type { SummonCapabilityHint, SummonCapabilityObservation } from './summon-gate.js'
+
+/**
+ * Harness driver ids, mirroring spaces-config HarnessId. HRC never interprets
+ * the catalog: ids arrive either from the caller's hint or from aspd's
+ * declaration observation (effectiveHarness); this union only names the values
+ * the credential heuristics below switch over.
+ */
+export type HarnessId = 'claude' | 'claude-agent-sdk' | 'pi' | 'pi-sdk' | 'codex' | 'muse'
+
+const HARNESS_IDS: ReadonlySet<string> = new Set<string>([
+  'claude',
+  'claude-agent-sdk',
+  'pi',
+  'pi-sdk',
+  'codex',
+  'muse',
+])
+
+function isHarnessId(value: string | undefined): value is HarnessId {
+  return value !== undefined && HARNESS_IDS.has(value)
+}
+
+/** Structural copy of the harness availability report (was spaces-config HarnessDetection). */
+export type HarnessDetection = {
+  available: boolean
+  version?: string | undefined
+  path?: string | undefined
+  capabilities?: string[] | undefined
+  error?: string | undefined
+}
 
 export type SummonHarnessDetector = (harnessId: HarnessId) => Promise<HarnessDetection>
 
@@ -84,7 +111,7 @@ function hasClaudeOnboardingMarker(path: string): boolean {
 
 function adapterIdFor(
   hint: SummonCapabilityHint | undefined,
-  context: ResolvedPlacementContext
+  observedEffectiveHarness: string | undefined
 ): HarnessId | undefined {
   const hrcHarness = hint?.harness?.id
   if (hrcHarness !== undefined) {
@@ -105,20 +132,25 @@ function adapterIdFor(
     }
   }
 
-  const frontend = context.materialization.effectiveConfig?.harness
-  const normalized = normalizeHarnessFrontend(frontend)
-  switch (normalized) {
-    case 'agent-sdk':
-      return 'claude-agent-sdk'
-    case 'claude-code':
+  // The observed effective harness is already a catalog id (aspd resolves
+  // the entry server-side); HRC never maps names itself. Unknown values fall
+  // through to the incapable refusal below, never to a guessed driver.
+  if (!isHarnessId(observedEffectiveHarness)) return undefined
+  // Identity over HRC's own driver namespace: the observed id already names
+  // the driver (no catalog mapping performed here). Frontend spellings only
+  // arrive via the caller hint path above.
+  switch (observedEffectiveHarness) {
+    case 'claude':
       return 'claude'
-    case 'codex-cli':
-      return 'codex'
-    case 'pi-cli':
+    case 'claude-agent-sdk':
+      return 'claude-agent-sdk'
+    case 'pi':
       return 'pi'
     case 'pi-sdk':
       return 'pi-sdk'
-    case 'muse-cli':
+    case 'codex':
+      return 'codex'
+    case 'muse':
       return 'muse'
     default:
       return undefined
@@ -168,16 +200,75 @@ function credentialRefusal(
   }
 }
 
-async function defaultDetectHarness(harnessId: HarnessId): Promise<HarnessDetection> {
-  const adapter = harnessRegistry.get(harnessId)
-  if (adapter === undefined) {
-    return { available: false, error: `no registered adapter for ${harnessId}` }
+export type HarnessCapabilityContext = {
+  agentId: string
+  agentRoot: string
+  projectRoot?: string | undefined
+  projectId?: string | undefined
+  cwd: string
+}
+
+/**
+ * T-08597: driver availability comes from aspd's bounded capability
+ * observation, not an HRC-in-process adapter registry. `preparation: present`
+ * is the composite "this node can launch this harness" fact; anything else
+ * names its missing piece instead of launching into a crash.
+ */
+async function defaultDetectHarness(
+  harnessId: HarnessId,
+  context: HarnessCapabilityContext
+): Promise<HarnessDetection> {
+  try {
+    return await withAspdObservationSession(['observeRuntimeCapability'], async ({ client }) => {
+      const request: AspcObserveRuntimeCapabilityRequest = {
+        schemaVersion: 'aspc-observe-runtime-capability-request/v1',
+        harness: harnessId,
+        context: {
+          agentId: context.agentId,
+          project:
+            context.projectRoot !== undefined
+              ? {
+                  mode: 'root',
+                  projectRoot: context.projectRoot,
+                  ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
+                }
+              : { mode: 'infer-from-cwd' },
+          cwd: context.cwd,
+          runMode: 'task',
+        },
+      }
+      const observed = await client.observeRuntimeCapability(request)
+      if (!observed.ok) {
+        return { available: false, error: observed.failure.message }
+      }
+      const problems: string[] = []
+      if (observed.registration.state !== 'present')
+        problems.push(`registration:${observed.registration.code}`)
+      if (observed.nativeRuntime.state === 'absent')
+        problems.push(`runtime:${observed.nativeRuntime.code}`)
+      if (observed.credentials.state === 'absent')
+        problems.push(`credentials:${observed.credentials.code}`)
+      if (observed.preparation.state !== 'present')
+        problems.push(`preparation:${observed.preparation.code}`)
+      for (const diagnostic of observed.diagnostics) problems.push(diagnostic.message)
+      if (problems.length > 0) {
+        return { available: false, error: problems.join('; ') }
+      }
+      return { available: true }
+    })
+  } catch (error) {
+    if (error instanceof HrcDomainError) throw error
+    return {
+      available: false,
+      error: error instanceof Error ? error.message : String(error),
+    }
   }
-  return await adapter.detect()
 }
 
 export type NodeLocalPlacementResolution = {
-  placement?: RuntimePlacement
+  placement?: HrcRuntimePlacement
+  /** Observed effective harness id (aspd catalog id) behind the placement. */
+  effectiveHarness?: string | undefined
   unresolvableProjectPath?: string
   missingAgentPath?: string
 }
@@ -190,96 +281,125 @@ export type NodeLocalPlacementResolution = {
  * paths from its own agent home and checkout collection before launching a
  * runtime.  The agent root gives us a deterministic collective-root fallback
  * when the daemon itself was launched from HOME rather than from a checkout.
+ *
+ * T-08597: async over the daemon's in-process aspd observation. HRC policy
+ * (registry/marker/sibling/worktree) runs identically to the placements route;
+ * agent existence, bundle, and harness facts are observed, never parsed.
  */
-export function resolveNodeLocalPlacement(
+export type NodeLocalPlacementObservation = (
+  input: Parameters<typeof resolvePlacementInProcess>[0],
+  options?: { env?: Record<string, string | undefined> | undefined }
+) => Promise<ResolvePlacementResponse>
+
+export async function resolveNodeLocalPlacement(
   scopeRef: string,
   options: {
     env: Record<string, string | undefined>
     cwd: string
-    /** Test seam; production reads `wrkq projects --json`. */
+    /** Test seam; production reads the daemon registry. */
     registryProjects?: readonly WrkqProjectRegistryEntry[] | undefined
+    /** Test seam; production observes via the in-process placements resolver. */
+    observe?: NodeLocalPlacementObservation | undefined
   }
-): NodeLocalPlacementResolution {
+): Promise<NodeLocalPlacementResolution> {
   const parsed = parseScopeRef(scopeRef)
-  const placementInput = {
-    agentId: parsed.agentId,
-    ...(parsed.projectId === undefined ? {} : { projectId: parsed.projectId }),
-    cwd: options.cwd,
-    env: options.env,
-  }
-  let paths = resolveAgentPlacementPaths(placementInput)
-
-  if (parsed.projectId !== undefined && paths.projectRoot === undefined) {
-    // The registry first: it is the only authority that can name a checkout the
-    // cwd walk-up structurally cannot reach, and it is the same one `hrc start`
-    // consults, so honoring it here is what makes a ledger-born seat land where
-    // an operator-started one does (T-07749).
-    const registeredRoot = resolveRegisteredProjectRoot(parsed.projectId, {
-      env: options.env,
-      ...(options.registryProjects === undefined
-        ? {}
-        : { registryProjects: options.registryProjects }),
-    })
-    if (registeredRoot !== undefined) {
-      paths = resolveAgentPlacementPaths({ ...placementInput, projectRoot: registeredRoot })
-    }
-  }
-
-  if (parsed.projectId !== undefined && paths.projectRoot === undefined) {
-    const siblingCandidates = [join(options.cwd, parsed.projectId)]
-    if (paths.agentRoot !== undefined) {
-      const agentsRoot = dirname(paths.agentRoot)
-      const runtimeVarRoot = dirname(agentsRoot)
-      if (basename(agentsRoot) === 'agents' && basename(runtimeVarRoot) === 'var') {
-        siblingCandidates.push(join(dirname(runtimeVarRoot), parsed.projectId))
-      }
-    }
-
-    for (const siblingCandidate of siblingCandidates) {
-      paths = resolveAgentPlacementPaths({ ...placementInput, cwd: siblingCandidate })
-      if (paths.projectRoot !== undefined) break
-    }
-    if (paths.projectRoot === undefined) {
+  const observe = options.observe ?? resolvePlacementInProcess
+  let observed: Awaited<ReturnType<typeof resolvePlacementInProcess>>
+  try {
+    observed = await observe(
+      {
+        agentId: parsed.agentId,
+        ...(parsed.projectId === undefined ? {} : { projectId: parsed.projectId }),
+        ...(parsed.taskId === undefined ? {} : { taskId: parsed.taskId }),
+        cwd: options.cwd,
+        runMode: 'task',
+        // Advisory: capability observation reports checkout facts itself; a
+        // git inspection failure here must warn, never refuse.
+        taskWorktreeAssociation: 'advisory',
+        ...(options.registryProjects === undefined
+          ? {}
+          : { registryProjects: [...options.registryProjects] }),
+      },
+      { env: options.env }
+    )
+  } catch (error) {
+    if (
+      error instanceof HrcDomainError &&
+      error.code === HrcErrorCode.DECLARATION_INVALID &&
+      (error.detail as { producerCode?: unknown } | undefined)?.producerCode === 'agent_not_found'
+    ) {
+      const searched = (error.detail as { searchedAgentRoots?: string[] }).searchedAgentRoots
       return {
-        unresolvableProjectPath:
-          siblingCandidates[siblingCandidates.length - 1] ?? join(options.cwd, parsed.projectId),
+        missingAgentPath: searched?.join(', ') ?? `<unresolved agent home for ${parsed.agentId}>`,
       }
     }
+    // Infrastructure failures (aspd unreachable/unconfigured) and
+    // non-project declaration failures must not masquerade as an
+    // unresolvable project path: they are retryable or agent-scoped, while
+    // the path outcome is a checkout fact. Plain errors from the observation
+    // seam keep the historical collapse (the seam throws those only for
+    // project resolution failures).
+    if (error instanceof HrcDomainError && error.code === HrcErrorCode.RUNTIME_UNAVAILABLE) {
+      throw error
+    }
+    if (
+      error instanceof HrcDomainError &&
+      error.code === HrcErrorCode.DECLARATION_INVALID &&
+      (error.detail as { producerCode?: unknown } | undefined)?.producerCode !==
+        'agent_not_found' &&
+      (error.detail as { source?: unknown } | undefined)?.source !== 'project-targets'
+    ) {
+      throw error
+    }
+    if (parsed.projectId === undefined) throw error
+    return { unresolvableProjectPath: join(options.cwd, parsed.projectId) }
   }
-  if (paths.agentRoot === undefined) {
+  if (observed.agentRoot === undefined) {
     return {
       missingAgentPath:
-        paths.searchedAgentRoots?.join(', ') ?? `<unresolved agent home for ${parsed.agentId}>`,
+        observed.searchedAgentRoots.join(', ') || `<unresolved agent home for ${parsed.agentId}>`,
     }
   }
 
-  const projectRoot = paths.projectRoot
+  const projectRoot = observed.projectRoot
   // A project-bearing scope always launches at the checkout root. The input
   // cwd is only a discovery seed; preserving a nested cwd (or agent home) here
   // would split provider session storage from the project-scoped lineage.
-  const cwd = projectRoot ?? paths.cwd ?? paths.agentRoot
+  const cwd = projectRoot ?? observed.cwd ?? observed.agentRoot
   return {
     placement: {
-      agentRoot: paths.agentRoot,
+      agentRoot: observed.agentRoot,
       ...(projectRoot === undefined ? {} : { projectRoot }),
       cwd,
       runMode: 'task',
-      bundle: buildRuntimeBundleRef({
+      bundle: observed.bundle ?? {
+        kind: 'agent-project',
         agentName: parsed.agentId,
-        agentRoot: paths.agentRoot,
         ...(projectRoot === undefined ? {} : { projectRoot }),
-      }),
+      },
       dryRun: false,
     },
+    ...(observed.harness.effectiveHarness === undefined
+      ? {}
+      : { effectiveHarness: observed.harness.effectiveHarness }),
   }
 }
 
-function resolvedPlacement(
+async function resolvedPlacement(
   scopeRef: string,
   hint: SummonCapabilityHint | undefined,
-  options: { env: Record<string, string | undefined>; cwd: string }
-): NodeLocalPlacementResolution {
-  if (hint?.placement !== undefined) return { placement: hint.placement }
+  options: {
+    env: Record<string, string | undefined>
+    cwd: string
+    registryProjects?: readonly WrkqProjectRegistryEntry[] | undefined
+  }
+): Promise<NodeLocalPlacementResolution> {
+  if (hint?.placement !== undefined) {
+    return {
+      placement: hint.placement,
+      ...(hint.harness?.id === undefined ? {} : { effectiveHarness: hint.harness.id }),
+    }
+  }
   return resolveNodeLocalPlacement(scopeRef, options)
 }
 
@@ -293,12 +413,12 @@ export function createSummonCapabilityObserver(
   const env = options.env ?? process.env
   const userHome = options.userHome ?? env['HOME'] ?? homedir()
   const cwd = options.cwd ?? process.cwd()
-  const detectHarness = options.detectHarness ?? defaultDetectHarness
+  const detectHarness = options.detectHarness
 
   return async (scopeRef, hint) => {
-    let resolved: ReturnType<typeof resolvedPlacement>
+    let resolved: NodeLocalPlacementResolution
     try {
-      resolved = resolvedPlacement(scopeRef, hint, { env, cwd })
+      resolved = await resolvedPlacement(scopeRef, hint, { env, cwd })
     } catch (error) {
       return incapable(
         'agent-home-skills',
@@ -307,6 +427,15 @@ export function createSummonCapabilityObserver(
     }
 
     if (resolved.unresolvableProjectPath !== undefined) {
+      // An explicit override naming a missing checkout is a checkout fact
+      // with a real path — not an unresolvable root. Name the clone/sync fix.
+      const override = env['ASP_PROJECT_ROOT_OVERRIDE']
+      if (override !== undefined && !isDirectory(override)) {
+        return incapable(
+          'project-checkout',
+          `project checkout absent at ${override} — clone or sync the project checkout on this node`
+        )
+      }
       return incapable(
         'project-checkout',
         `project root could not be resolved from ${resolved.unresolvableProjectPath} — ensure the checkout has an asp-targets.toml or git root, or supply an explicit project placement`,
@@ -340,17 +469,13 @@ export function createSummonCapabilityObserver(
       )
     }
 
-    let context: ResolvedPlacementContext
-    try {
-      context = await resolvePlacementContext({ ...placement, dryRun: false })
-    } catch (error) {
+    const harnessId = adapterIdFor(hint, resolved.effectiveHarness)
+    if (harnessId === undefined && resolved.effectiveHarness !== undefined) {
       return incapable(
-        'agent-home-skills',
-        `agent home/skills at ${placement.agentRoot} cannot compose ${scopeRef}: ${error instanceof Error ? error.message : String(error)} — repair or sync the agent home and skills on this node`
+        'harness',
+        `harness unavailable for ${scopeRef}: observed harness "${resolved.effectiveHarness}" names no supported driver — configure and install a supported harness on this node`
       )
     }
-
-    const harnessId = adapterIdFor(hint, context)
     if (harnessId === undefined) {
       return incapable(
         'harness',
@@ -361,9 +486,18 @@ export function createSummonCapabilityObserver(
     const credentials = credentialRefusal(harnessId, env, userHome)
     if (credentials !== undefined) return credentials
 
+    const parsed = parseScopeRef(scopeRef)
     let detection: HarnessDetection
     try {
-      detection = await detectHarness(harnessId)
+      detection = await (detectHarness !== undefined
+        ? detectHarness(harnessId)
+        : defaultDetectHarness(harnessId, {
+            agentId: parsed.agentId,
+            agentRoot: placement.agentRoot,
+            ...(placement.projectRoot !== undefined ? { projectRoot: placement.projectRoot } : {}),
+            ...(parsed.projectId !== undefined ? { projectId: parsed.projectId } : {}),
+            cwd: placement.cwd ?? cwd,
+          }))
     } catch (error) {
       detection = {
         available: false,

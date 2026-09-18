@@ -64,13 +64,29 @@
  *
  * ─────────────────────────────────────────────────────────────────────────────
  */
-import { describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { CliUsageError } from 'cli-kit'
 
 // RED GATE: this import will fail until selector-resolve.ts is implemented
 import { SelectorResolutionError, resolveSelectorTarget } from '../selector-resolve'
 
 import type { SelectorSnapshot } from '../selector-resolve'
+import { startOldEngineDaemon } from './old-engine-daemon.js'
+
+// File-local fake: HRC_RUNTIME_DIR is scoped per-test so later files never
+// inherit a stopped socket (a global install here once killed the runner
+// via monitor-show exit 23).
+const unitDaemon = startOldEngineDaemon()
+const runtimeDirKey = 'HRC_RUNTIME_DIR'
+const savedRuntimeDir = process.env[runtimeDirKey]
+beforeEach(() => {
+  process.env[runtimeDirKey] = unitDaemon.runtimeDir
+})
+afterEach(() => {
+  if (savedRuntimeDir === undefined) delete process.env[runtimeDirKey]
+  else process.env[runtimeDirKey] = savedRuntimeDir
+})
+afterAll(() => unitDaemon.stop())
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -109,18 +125,18 @@ function snapshotWith(
 // ---------------------------------------------------------------------------
 
 describe('resolveSelectorTarget — raw runtimeId beats bare-handle parse', () => {
-  it('returns the runtime directly when rawArg matches an existing runtimeId in the snapshot', () => {
+  it('returns the runtime directly when rawArg matches an existing runtimeId in the snapshot', async () => {
     const snapshot = snapshotWith([RUNTIME_A])
-    const result = resolveSelectorTarget(RUNTIME_A.runtimeId, {
+    const result = await resolveSelectorTarget(RUNTIME_A.runtimeId, {
       expect: 'runtime',
       snapshot,
     })
     expect(result).toEqual({ kind: 'runtime', runtimeId: RUNTIME_A.runtimeId })
   })
 
-  it('raw hostSessionId beats bare-handle parse when expect is host-session', () => {
+  it('raw hostSessionId beats bare-handle parse when expect is host-session', async () => {
     const snapshot = snapshotWith([], [SESSION_A])
-    const result = resolveSelectorTarget(SESSION_A.hostSessionId, {
+    const result = await resolveSelectorTarget(SESSION_A.hostSessionId, {
       expect: 'host-session',
       snapshot,
     })
@@ -133,30 +149,30 @@ describe('resolveSelectorTarget — raw runtimeId beats bare-handle parse', () =
 // ---------------------------------------------------------------------------
 
 describe('resolveSelectorTarget — prefixed runtime: resolves', () => {
-  it('extracts runtimeId from runtime: prefix', () => {
+  it('extracts runtimeId from runtime: prefix', async () => {
     const runtimeId = 'rt-cccccccc-0000-0000-0000-000000000003'
     // The runtime is NOT in the snapshot — prefixed forms bypass snapshot lookup
     const snapshot = snapshotWith([])
-    const result = resolveSelectorTarget(`runtime:${runtimeId}`, {
+    const result = await resolveSelectorTarget(`runtime:${runtimeId}`, {
       expect: 'runtime',
       snapshot,
     })
     expect(result).toEqual({ kind: 'runtime', runtimeId })
   })
 
-  it('extracts runtimeId from runtime: prefix even when the same ID is in the snapshot', () => {
+  it('extracts runtimeId from runtime: prefix even when the same ID is in the snapshot', async () => {
     const snapshot = snapshotWith([RUNTIME_A])
-    const result = resolveSelectorTarget(`runtime:${RUNTIME_A.runtimeId}`, {
+    const result = await resolveSelectorTarget(`runtime:${RUNTIME_A.runtimeId}`, {
       expect: 'runtime',
       snapshot,
     })
     expect(result).toEqual({ kind: 'runtime', runtimeId: RUNTIME_A.runtimeId })
   })
 
-  it('extracts hostSessionId from host: prefix when expect is host-session', () => {
+  it('extracts hostSessionId from host: prefix when expect is host-session', async () => {
     const hostSessionId = 'hs-cccccccc-0000-0000-0000-000000000003'
     const snapshot = snapshotWith([])
-    const result = resolveSelectorTarget(`host:${hostSessionId}`, {
+    const result = await resolveSelectorTarget(`host:${hostSessionId}`, {
       expect: 'host-session',
       snapshot,
     })
@@ -169,14 +185,14 @@ describe('resolveSelectorTarget — prefixed runtime: resolves', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveSelectorTarget — type mismatch names accepted forms', () => {
-  it('throws SelectorResolutionError(code=type-mismatch) for msg: prefix when expect is runtime', () => {
+  it('throws SelectorResolutionError(code=type-mismatch) for msg: prefix when expect is runtime', async () => {
     const snapshot = snapshotWith([])
-    expect(() => resolveSelectorTarget('msg:m-aaaaa', { expect: 'runtime', snapshot })).toThrow(
-      SelectorResolutionError
-    )
+    await expect(
+      resolveSelectorTarget('msg:m-aaaaa', { expect: 'runtime', snapshot })
+    ).rejects.toThrow(SelectorResolutionError)
 
     try {
-      resolveSelectorTarget('msg:m-aaaaa', { expect: 'runtime', snapshot })
+      await resolveSelectorTarget('msg:m-aaaaa', { expect: 'runtime', snapshot })
     } catch (err) {
       expect(err).toBeInstanceOf(SelectorResolutionError)
       expect(err).toBeInstanceOf(CliUsageError)
@@ -189,10 +205,10 @@ describe('resolveSelectorTarget — type mismatch names accepted forms', () => {
     }
   })
 
-  it('throws SelectorResolutionError(code=type-mismatch) for seq: prefix when expect is runtime', () => {
+  it('throws SelectorResolutionError(code=type-mismatch) for seq: prefix when expect is runtime', async () => {
     const snapshot = snapshotWith([])
     try {
-      resolveSelectorTarget('seq:42', { expect: 'runtime', snapshot })
+      await resolveSelectorTarget('seq:42', { expect: 'runtime', snapshot })
     } catch (err) {
       expect(err).toBeInstanceOf(SelectorResolutionError)
       const resolveErr = err as SelectorResolutionError
@@ -201,10 +217,10 @@ describe('resolveSelectorTarget — type mismatch names accepted forms', () => {
     }
   })
 
-  it('throws SelectorResolutionError(code=type-mismatch) for runtime: prefix when expect is host-session', () => {
+  it('throws SelectorResolutionError(code=type-mismatch) for runtime: prefix when expect is host-session', async () => {
     const snapshot = snapshotWith([], [SESSION_A])
     try {
-      resolveSelectorTarget('runtime:rt-aaaa', { expect: 'host-session', snapshot })
+      await resolveSelectorTarget('runtime:rt-aaaa', { expect: 'host-session', snapshot })
     } catch (err) {
       expect(err).toBeInstanceOf(SelectorResolutionError)
       const resolveErr = err as SelectorResolutionError
@@ -219,7 +235,7 @@ describe('resolveSelectorTarget — type mismatch names accepted forms', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveSelectorTarget — ambiguous handle is a FATAL error', () => {
-  it('throws SelectorResolutionError(code=ambiguous) when two runtimes match the same bare handle', () => {
+  it('throws SelectorResolutionError(code=ambiguous) when two runtimes match the same bare handle', async () => {
     // Both RUNTIME_A and RUNTIME_B share scopeRef but differ only by laneRef.
     // A bare handle that resolves to the same scopeRef (no lane specified)
     // → both match → ambiguous.
@@ -240,16 +256,16 @@ describe('resolveSelectorTarget — ambiguous handle is a FATAL error', () => {
     }
     const ambiguousSnapshot = snapshotWith([RUNTIME_A2, RUNTIME_A3])
 
-    expect(() =>
+    await expect(
       // bare handle resolving to scopeRef that matches two different laneRefs
       resolveSelectorTarget('smokey@hrc-runtime', {
         expect: 'runtime',
         snapshot: ambiguousSnapshot,
       })
-    ).toThrow(SelectorResolutionError)
+    ).rejects.toThrow(SelectorResolutionError)
 
     try {
-      resolveSelectorTarget('smokey@hrc-runtime', {
+      await resolveSelectorTarget('smokey@hrc-runtime', {
         expect: 'runtime',
         snapshot: ambiguousSnapshot,
       })
@@ -262,7 +278,7 @@ describe('resolveSelectorTarget — ambiguous handle is a FATAL error', () => {
     }
   })
 
-  it('does NOT throw ambiguous when exactly one runtime matches the bare handle', () => {
+  it('does NOT throw ambiguous when exactly one runtime matches the bare handle', async () => {
     const RUNTIME_UNIQ = {
       runtimeId: 'rt-ffffffff-0000-0000-0000-000000000006',
       scopeRef: 'agent:smokey:project:hrc-runtime:task:primary',
@@ -271,22 +287,22 @@ describe('resolveSelectorTarget — ambiguous handle is a FATAL error', () => {
     const snapshot = snapshotWith([RUNTIME_UNIQ])
 
     // Should resolve successfully to RUNTIME_UNIQ
-    const result = resolveSelectorTarget('smokey@hrc-runtime', {
+    const result = await resolveSelectorTarget('smokey@hrc-runtime', {
       expect: 'runtime',
       snapshot,
     })
     expect(result).toEqual({ kind: 'runtime', runtimeId: RUNTIME_UNIQ.runtimeId })
   })
 
-  it('throws SelectorResolutionError(code=not-found) when bare handle has no matching runtime', () => {
+  it('throws SelectorResolutionError(code=not-found) when bare handle has no matching runtime', async () => {
     // Empty snapshot — no runtimes match cody@hrc-runtime
     const snapshot = snapshotWith([])
-    expect(() =>
+    await expect(
       resolveSelectorTarget('cody@hrc-runtime', { expect: 'runtime', snapshot })
-    ).toThrow(SelectorResolutionError)
+    ).rejects.toThrow(SelectorResolutionError)
 
     try {
-      resolveSelectorTarget('cody@hrc-runtime', { expect: 'runtime', snapshot })
+      await resolveSelectorTarget('cody@hrc-runtime', { expect: 'runtime', snapshot })
     } catch (err) {
       expect(err).toBeInstanceOf(SelectorResolutionError)
       const resolveErr = err as SelectorResolutionError
@@ -300,7 +316,7 @@ describe('resolveSelectorTarget — ambiguous handle is a FATAL error', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveSelectorTarget — scope: prefix resolves to active runtime', () => {
-  it('resolves scope: prefix to the single runtime with matching scopeRef', () => {
+  it('resolves scope: prefix to the single runtime with matching scopeRef', async () => {
     const RUNTIME_SCOPED = {
       runtimeId: 'rt-11111111-0000-0000-0000-000000000007',
       scopeRef: 'agent:larry:project:workboard:task:primary',
@@ -308,14 +324,14 @@ describe('resolveSelectorTarget — scope: prefix resolves to active runtime', (
     }
     const snapshot = snapshotWith([RUNTIME_SCOPED])
 
-    const result = resolveSelectorTarget('scope:agent:larry:project:workboard:task:primary', {
+    const result = await resolveSelectorTarget('scope:agent:larry:project:workboard:task:primary', {
       expect: 'runtime',
       snapshot,
     })
     expect(result).toEqual({ kind: 'runtime', runtimeId: RUNTIME_SCOPED.runtimeId })
   })
 
-  it('throws ambiguous when scope: matches multiple runtimes', () => {
+  it('throws ambiguous when scope: matches multiple runtimes', async () => {
     const RT1 = {
       runtimeId: 'rt-22222222-0000-0000-0000-000000000008',
       scopeRef: 'agent:larry:project:workboard:task:primary',
@@ -328,15 +344,15 @@ describe('resolveSelectorTarget — scope: prefix resolves to active runtime', (
     }
     const snapshot = snapshotWith([RT1, RT2])
 
-    expect(() =>
+    await expect(
       resolveSelectorTarget('scope:agent:larry:project:workboard:task:primary', {
         expect: 'runtime',
         snapshot,
       })
-    ).toThrow(SelectorResolutionError)
+    ).rejects.toThrow(SelectorResolutionError)
 
     try {
-      resolveSelectorTarget('scope:agent:larry:project:workboard:task:primary', {
+      await resolveSelectorTarget('scope:agent:larry:project:workboard:task:primary', {
         expect: 'runtime',
         snapshot,
       })

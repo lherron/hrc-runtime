@@ -405,12 +405,15 @@ async function closeAdmissionAndDrainForRestart(
   return { operationId, forceFallback: false }
 }
 
-function requireServerLifecycleAuthorization(args: string[]): {
+async function requireServerLifecycleAuthorization(args: string[]): Promise<{
   callerKind: ServerLifecycleCallerKind
   requestedBy: string | null
   reason: string | null
-} {
-  const result = evaluateServerLifecycleAuthorization(process.env, parseFlag(args, '--reason'))
+}> {
+  const result = await evaluateServerLifecycleAuthorization(
+    process.env,
+    parseFlag(args, '--reason')
+  )
   if (!result.allowed) {
     fatal(result.message)
   }
@@ -422,7 +425,7 @@ function requireServerLifecycleAuthorization(args: string[]): {
 }
 
 export async function cmdServerStop(args: string[]): Promise<void> {
-  const attribution = requireServerLifecycleAuthorization(args)
+  const attribution = await requireServerLifecycleAuthorization(args)
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
   const force = hasFlag(args, '--force')
   const before = await collectServerRuntimeStatus({ includeTmux: false })
@@ -448,7 +451,7 @@ export async function cmdServerStop(args: string[]): Promise<void> {
 }
 
 export async function cmdServerRestart(args: string[]): Promise<void> {
-  const attribution = requireServerLifecycleAuthorization(args)
+  const attribution = await requireServerLifecycleAuthorization(args)
   const mode = resolveServerMode(args, 'daemon')
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
   const proofTimeoutMs = parseIntegerFlag(args, '--proof-timeout-ms', {

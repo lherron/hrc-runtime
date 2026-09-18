@@ -13,6 +13,10 @@ import { PeerToken } from '../federation/peer-token.js'
 import { resolveBindingRegistryPath } from '../federation/registry-endpoint.js'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
+import {
+  type AspdObservationDouble,
+  startAspdObservationDouble,
+} from './fixtures/aspd-observation-doubles.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import {
@@ -55,6 +59,9 @@ let fixture: HrcServerTestFixture
 let server: HrcServer | undefined
 let ledger: FakeWrkqLedger
 let restoreAgentHome: () => void
+let aspd: AspdObservationDouble | undefined
+let savedAspdSocket: string | undefined
+let agentHome: string | undefined
 
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-kicker-unborn-birth-')
@@ -66,6 +73,17 @@ beforeEach(async () => {
   // proved to reach a refusal rather than a birth.
   await writeFile(join(home.agentsRoot, AGENT, 'SOUL.md'), `# ${AGENT}\n`)
   restoreAgentHome = home.restore
+  // Fixture homes are invisible to a real aspd: serve declarations from the
+  // observation double rooted at the fixture home.
+  agentHome = join(home.agentsRoot, AGENT)
+  savedAspdSocket = process.env['HRC_ASPD_SOCKET']
+  const aspdSocket = join(fixture.tmpDir, 'aspd.sock')
+  aspd = startAspdObservationDouble(
+    aspdSocket,
+    { releaseId: 'asp-t07661', sourceCommit: 'c'.repeat(40), builtAt: '2026-09-18T00:00:00.000Z' },
+    { agentRoot: agentHome }
+  )
+  process.env['HRC_ASPD_SOCKET'] = aspdSocket
 })
 
 afterEach(async () => {
@@ -73,6 +91,10 @@ afterEach(async () => {
     await server.stop()
     server = undefined
   }
+  aspd?.stop()
+  aspd = undefined
+  if (savedAspdSocket === undefined) Reflect.deleteProperty(process.env, 'HRC_ASPD_SOCKET')
+  else process.env['HRC_ASPD_SOCKET'] = savedAspdSocket
   restoreAgentHome()
   await fixture.cleanup()
 })

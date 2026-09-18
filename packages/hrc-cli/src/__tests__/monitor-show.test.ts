@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,6 +8,10 @@ import { createHrcServer } from 'hrc-server'
 import type { HrcServer, HrcServerOptions } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import { main } from '../cli'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
 
@@ -39,7 +43,9 @@ function serverOpts(): HrcServerOptions {
 
 function cliEnv(extra: Record<string, string> = {}): Record<string, string> {
   return {
-    HRC_RUNTIME_DIR: runtimeRoot,
+    // Bare-handle selectors resolve through the frozen old engine (this
+    // server has no aspd); every other route proxies to the booted server.
+    HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
     HRC_STATE_DIR: stateRoot,
     ...extra,
   }
@@ -253,6 +259,7 @@ describe('hrc monitor show acceptance (T-01289)', () => {
 
   it('prints the default snapshot with daemon, socket, event-log, tmux, runtime, and session counts', async () => {
     server = await createHrcServer(serverOpts())
+    oldEngineDaemon.setProxy(socketPath)
     const session = await resolveSession('clod@agent-spaces')
     seedHeadlessRuntime(session)
 
@@ -270,6 +277,7 @@ describe('hrc monitor show acceptance (T-01289)', () => {
 
   it('prints a selector snapshot for an agent project handle', async () => {
     server = await createHrcServer(serverOpts())
+    oldEngineDaemon.setProxy(socketPath)
     const session = await resolveSession('clod@agent-spaces')
     const runtimeId = seedHeadlessRuntime(session)
 
@@ -286,6 +294,7 @@ describe('hrc monitor show acceptance (T-01289)', () => {
 
   it('enriches a target handle from the project-local profile before monitor resolution', async () => {
     server = await createHrcServer(serverOpts())
+    oldEngineDaemon.setProxy(socketPath)
     const session = await resolveSession('clod@proj:T-12345/tester')
     const runtimeId = seedHeadlessRuntime(session)
     const projectRoot = join(tmpDir, 'project')
@@ -335,6 +344,7 @@ describe('hrc monitor show acceptance (T-01289)', () => {
 
   it('emits JSON with canonical scope/session refs plus display handles', async () => {
     server = await createHrcServer(serverOpts())
+    oldEngineDaemon.setProxy(socketPath)
     const session = await resolveSession('clod@agent-spaces')
     const runtimeId = seedHeadlessRuntime(session)
 
@@ -393,6 +403,7 @@ describe('hrc monitor show acceptance (T-01289)', () => {
 
   it('shows immediate role-child runtimes for a role-less scope selector', async () => {
     server = await createHrcServer(serverOpts())
+    oldEngineDaemon.setProxy(socketPath)
     const verify = await resolveSession('observer@hrc-runtime:T-05113/verify')
     const red = await resolveSession('observer@hrc-runtime:T-05113/red')
     const verifyRuntime = seedHeadlessRuntime(verify)
@@ -437,6 +448,8 @@ describe('hrc monitor show acceptance (T-01289)', () => {
   })
 
   it('exits 23 when the daemon is down or snapshot cannot be read', async () => {
+    // No proxy: the fake itself must refuse, simulating a down daemon.
+    oldEngineDaemon.setProxy(undefined)
     const result = await runCliSubprocess(['monitor', 'show', '--json'], cliEnv())
     expect(result.exitCode).toBe(23)
     expect(result.stdout).toBe('')

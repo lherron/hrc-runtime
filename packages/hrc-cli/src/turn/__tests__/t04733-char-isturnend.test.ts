@@ -23,7 +23,7 @@
  *   cd ~/praesidium/hrc-runtime && bun test packages/hrcchat-cli/src/__tests__/t04733-char-isturnend.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type {
   HrcLifecycleEvent,
   SemanticTurnHandoffResponse,
@@ -31,7 +31,11 @@ import type {
 } from 'hrc-core'
 import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
+import { installOldEngineDaemon } from '../../__tests__/old-engine-daemon.js'
 import { TurnExitError, type TurnOptions, cmdTurn } from '../commands/turn.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 // ── Shared env save/restore ───────────────────────────────────────────────────
 

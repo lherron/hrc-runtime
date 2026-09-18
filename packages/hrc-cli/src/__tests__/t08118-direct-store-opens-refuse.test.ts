@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite'
-import { afterEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import {
   mkdirSync,
   mkdtempSync,
@@ -30,6 +30,22 @@ import { cmdMonitorWait } from '../monitor/wait-command'
 import { cmdMonitorWatch } from '../monitor/watch-command'
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation'
 import { pruneCompletedTaskWorktrees } from '../worktree-prune'
+import { startOldEngineDaemon } from './old-engine-daemon.js'
+
+// File-local fake: cmdMonitorShow calls discoverSocket() outside its try, so
+// the socket file must EXIST even though getStatus is prototype-mocked.
+// Scoped per-test so later files never inherit a stopped socket.
+const schemaDaemon = startOldEngineDaemon()
+const schemaRuntimeDirKey = 'HRC_RUNTIME_DIR'
+const savedSchemaRuntimeDir = process.env[schemaRuntimeDirKey]
+beforeEach(() => {
+  process.env[schemaRuntimeDirKey] = schemaDaemon.runtimeDir
+})
+afterEach(() => {
+  if (savedSchemaRuntimeDir === undefined) delete process.env[schemaRuntimeDirKey]
+  else process.env[schemaRuntimeDirKey] = savedSchemaRuntimeDir
+})
+afterAll(() => schemaDaemon.stop())
 
 /**
  * T-08118 acceptance in miniature: between `just install` and

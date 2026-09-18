@@ -1,90 +1,43 @@
-import { afterAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+/**
+ * T-08597 — intent assembly from OBSERVED declaration facts.
+ *
+ * Profile/targets parsing moved aspd-side; these pin the pure HRC assembly:
+ * interaction semantics pass-through, deny-list stripping, scalar filtering,
+ * the harness-id allowlist, the directive-overlay compat rule, and the
+ * stripped-provisioning warning text (T-08128 byte contract).
+ */
+import { describe, expect, test } from 'bun:test'
 
-import { PROVISIONING_SCALAR_KEYS } from 'agent-scope'
-import { buildHrcRuntimeIntent, resolveAgentHarness } from './runtime-intent-assembly.js'
+import { HrcDomainError } from './errors.js'
+import {
+  applyProvisionDirectives,
+  assembleHrcRuntimeIntent,
+  buildInvalidProfileWarning,
+  formatProfileProvisioningStrippedWarning,
+  harnessFrontendToHrcHarness,
+} from './runtime-intent-assembly.js'
 
-const tempRoots: string[] = []
-
-function makeAgentDir(harness: string): { agentRoot: string; agentId: string } {
-  const root = mkdtempSync(join(tmpdir(), 'hrc-sdk-resolve-intent-'))
-  tempRoots.push(root)
-  writeFileSync(
-    join(root, 'agent-profile.toml'),
-    `version = 3\n\n[provisioning]\nharness = "${harness}"\n`
-  )
-  return { agentRoot: root, agentId: 'fixture-agent' }
+function observed(harness: string, provider: 'anthropic' | 'openai' = 'anthropic') {
+  return {
+    provisioning: {
+      provider,
+      frontend: harness,
+      effectiveHarness: harness,
+      scalars: { harness, model: 'sonnet' },
+    },
+    placement: {
+      agentRoot: '/agents/fixture-agent',
+      projectRoot: '/repo' as string | undefined,
+      cwd: '/repo',
+      runMode: 'task' as const,
+      bundle: { kind: 'agent-project' as const, agentName: 'fixture-agent', projectRoot: '/repo' },
+    },
+  }
 }
 
-afterAll(() => {
-  for (const root of tempRoots) {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-describe('resolveAgentHarness — provider/harness derived from the agent profile', () => {
-  test('codex profile resolves to openai', () => {
-    const { agentRoot, agentId } = makeAgentDir('codex')
-    expect(resolveAgentHarness({ agentRoot, agentId })).toMatchObject({
-      provider: 'openai',
-      harness: 'codex',
-    })
-  })
-
-  test('claude-code profile resolves to anthropic', () => {
-    const { agentRoot, agentId } = makeAgentDir('claude-code')
-    expect(resolveAgentHarness({ agentRoot, agentId })).toMatchObject({
-      provider: 'anthropic',
-      harness: 'claude-code',
-    })
-  })
-
-  test('muse profile resolves to meta (P-00522)', () => {
-    const { agentRoot, agentId } = makeAgentDir('muse')
-    expect(resolveAgentHarness({ agentRoot, agentId })).toMatchObject({
-      provider: 'meta',
-      harness: 'muse',
-    })
-  })
-
-  test('missing profile falls back to anthropic', () => {
-    const root = mkdtempSync(join(tmpdir(), 'hrc-sdk-resolve-intent-empty-'))
-    tempRoots.push(root)
-    expect(resolveAgentHarness({ agentRoot: root, agentId: 'x' })).toMatchObject({
-      provider: 'anthropic',
-      harness: undefined,
-    })
-  })
-
-  test('missing profile keeps the target-only provisioning branch structural', () => {
-    const agentRoot = mkdtempSync(join(tmpdir(), 'hrc-sdk-resolve-target-only-agent-'))
-    const projectRoot = mkdtempSync(join(tmpdir(), 'hrc-sdk-resolve-target-only-project-'))
-    tempRoots.push(agentRoot, projectRoot)
-    writeFileSync(
-      join(projectRoot, 'asp-targets.toml'),
-      ['schema = 1', '', '[targets.x]', '', '[targets.x.provisioning]', 'node = "svc"', ''].join(
-        '\n'
-      )
-    )
-
-    expect(resolveAgentHarness({ agentRoot, agentId: 'x', projectRoot })).toMatchObject({
-      provider: 'anthropic',
-      harness: undefined,
-      provision: { node: 'svc' },
-    })
-  })
-})
-
-describe('buildHrcRuntimeIntent — single authority for scoperef → HrcRuntimeIntent', () => {
-  test('codex agent → openai + codex-cli harness id', () => {
-    const { agentRoot, agentId } = makeAgentDir('codex')
-    const intent = buildHrcRuntimeIntent({
-      agentId,
-      agentRoot,
-      cwd: '/repo',
-      runMode: 'task',
+describe('assembleHrcRuntimeIntent — observed facts plus caller semantics', () => {
+  test('codex observation → openai + codex-cli harness id', () => {
+    const intent = assembleHrcRuntimeIntent(observed('codex-cli', 'openai'), {
       interactive: false,
       preferredMode: 'headless',
     })
@@ -94,31 +47,15 @@ describe('buildHrcRuntimeIntent — single authority for scoperef → HrcRuntime
       interactive: false,
     })
     expect(intent.execution).toEqual({ preferredMode: 'headless' })
-    expect(intent.placement).toMatchObject({ agentRoot, cwd: '/repo', runMode: 'task' })
-  })
-
-  test('claude-code agent → anthropic + claude-code harness id', () => {
-    const { agentRoot, agentId } = makeAgentDir('claude-code')
-    const intent = buildHrcRuntimeIntent({
-      agentId,
-      agentRoot,
+    expect(intent.placement).toMatchObject({
+      agentRoot: '/agents/fixture-agent',
       cwd: '/repo',
       runMode: 'task',
-      interactive: false,
-      preferredMode: 'headless',
-    })
-    expect(intent.harness).toMatchObject({
-      provider: 'anthropic',
-      id: 'claude-code',
-      interactive: false,
     })
   })
 
-  test('caller-supplied interaction semantics pass through; only provider/harness derive', () => {
-    const { agentRoot, agentId } = makeAgentDir('codex')
-    const intent = buildHrcRuntimeIntent({
-      agentId,
-      agentRoot,
+  test('caller-supplied interaction semantics pass through; only provider/harness observe', () => {
+    const intent = assembleHrcRuntimeIntent(observed('codex-cli', 'openai'), {
       interactive: false,
       preferredMode: 'nonInteractive',
     })
@@ -127,10 +64,7 @@ describe('buildHrcRuntimeIntent — single authority for scoperef → HrcRuntime
   })
 
   test('T-05177: allowInteractiveSurfaceReuse threads into execution only when supplied', () => {
-    const { agentRoot, agentId } = makeAgentDir('claude-code')
-    const off = buildHrcRuntimeIntent({
-      agentId,
-      agentRoot,
+    const off = assembleHrcRuntimeIntent(observed('claude-code'), {
       interactive: false,
       preferredMode: 'headless',
       allowInteractiveSurfaceReuse: false,
@@ -140,328 +74,129 @@ describe('buildHrcRuntimeIntent — single authority for scoperef → HrcRuntime
       allowInteractiveSurfaceReuse: false,
     })
 
-    // Omitted ⇒ field absent (HRC treats absence as the default-allow reuse).
-    const omitted = buildHrcRuntimeIntent({
-      agentId,
-      agentRoot,
+    const omitted = assembleHrcRuntimeIntent(observed('claude-code'), {
       interactive: false,
       preferredMode: 'headless',
     })
     expect(omitted.execution).toEqual({ preferredMode: 'headless' })
   })
-})
 
-/**
- * T-07398 Wave 2b — the directive overlay is the FINAL step of intent assembly.
- *
- * The profile (plus any project-target overlay) supplies the `[provisioning]`
- * baseline; a per-summon directive block overlays it last, so a directive can
- * change what the merge concluded — including the harness, which the provider
- * and harness id must then follow. The overlaid result is what rides the intent
- * as `provision`, verbatim.
- */
-describe('T-07398 buildHrcRuntimeIntent — provisioning directive overlay', () => {
-  function makeProvisioningAgentDir(): { agentRoot: string; agentId: string } {
-    const root = mkdtempSync(join(tmpdir(), 'hrc-sdk-provision-'))
-    tempRoots.push(root)
-    writeFileSync(
-      join(root, 'agent-profile.toml'),
-      [
-        'version = 3',
-        'priming = "private system prompt"',
-        '',
-        '[provisioning]',
-        'harness = "claude-code"',
-        'model = "opus"',
-        'reasoning = "high"',
-        'approval = "never"',
-        'remote = true',
-        'node = "agent-node"',
-        'viewer = "none"',
-        '',
-      ].join('\n')
+  test('deny-listed and non-scalar provisioning never rides the intent', () => {
+    const intent = assembleHrcRuntimeIntent(
+      {
+        provisioning: {
+          provider: 'anthropic',
+          frontend: 'claude-code',
+          effectiveHarness: 'claude',
+          scalars: { harness: 'claude-code', model: 'opus' },
+        },
+        placement: {
+          agentRoot: '/agents/a',
+          cwd: '/agents/a',
+          runMode: 'task',
+          bundle: { kind: 'agent-project', agentName: 'a' },
+        },
+      },
+      { interactive: true, preferredMode: 'interactive' }
     )
-    return { agentRoot: root, agentId: 'fixture-agent' }
-  }
+    expect(intent.provision).toMatchObject({ harness: 'claude-code', model: 'opus' })
+    expect(intent.harness).toMatchObject({ provider: 'anthropic', id: 'claude-code' })
+  })
 
-  function makeProjectTarget(source: string): string {
-    const root = mkdtempSync(join(tmpdir(), 'hrc-sdk-provision-project-'))
-    tempRoots.push(root)
-    writeFileSync(join(root, 'asp-targets.toml'), source)
-    return root
-  }
-
-  test('directives overlay the merged profile baseline and re-resolve the harness', () => {
-    const { agentRoot, agentId } = makeProvisioningAgentDir()
-
-    // No directives: the intent carries the merged profile baseline verbatim.
-    const baseline = buildHrcRuntimeIntent({
-      agentId,
-      agentRoot,
+  test('unadmitted frontend carries no id; HRC picks its default downstream', () => {
+    const intent = assembleHrcRuntimeIntent(observed('agent-harness-tui'), {
       interactive: false,
       preferredMode: 'headless',
     })
-    expect(baseline.provision).toMatchObject({
-      harness: 'claude-code',
-      model: 'opus',
-      reasoning: 'high',
-      approval: 'never',
-      remote: true,
-      node: 'agent-node',
-      viewer: 'none',
-    })
-    expect(
-      Object.keys(baseline.provision ?? {}).filter(
-        (key) => !(PROVISIONING_SCALAR_KEYS as readonly string[]).includes(key)
-      )
-    ).toEqual([])
-
-    // Directives applied LAST: they win over the merge, and the harness id and
-    // provider follow the overlaid harness rather than the profile's.
-    const directed = buildHrcRuntimeIntent({
-      agentId,
-      agentRoot,
-      interactive: false,
-      preferredMode: 'headless',
-      provision: { harness: 'codex', model: 'gpt-5.6-sol', reasoning: 'low' },
-    })
-    expect(directed.provision).toMatchObject({
-      harness: 'codex',
-      model: 'gpt-5.6-sol',
-      reasoning: 'low',
-      // Untouched keys survive the overlay.
-      approval: 'never',
-      remote: true,
-      node: 'agent-node',
-      viewer: 'none',
-    })
-    expect(directed.harness).toMatchObject({ provider: 'openai', id: 'codex-cli' })
-  })
-
-  test('canonical merge bag preserves target precedence for node and remote', () => {
-    const { agentRoot, agentId } = makeProvisioningAgentDir()
-    const projectRoot = makeProjectTarget(
-      [
-        'schema = 1',
-        '',
-        '[targets.fixture-agent]',
-        'description = "must not become a provisioning scalar"',
-        '',
-        '[targets.fixture-agent.provisioning]',
-        'node = "target-node"',
-        'remote = false',
-        '',
-      ].join('\n')
-    )
-
-    const intent = buildHrcRuntimeIntent({ agentId, agentRoot, projectRoot })
-
-    expect(intent.provision).toMatchObject({
-      harness: 'claude-code',
-      node: 'target-node',
-      remote: false,
-      viewer: 'none',
-    })
-    expect(
-      Object.keys(intent.provision ?? {}).filter(
-        (key) => !(PROVISIONING_SCALAR_KEYS as readonly string[]).includes(key)
-      )
-    ).toEqual([])
-  })
-
-  test('undeclared harness keeps its default while remote keeps its false default', () => {
-    const agentRoot = mkdtempSync(join(tmpdir(), 'hrc-sdk-provision-defaults-'))
-    tempRoots.push(agentRoot)
-    writeFileSync(join(agentRoot, 'agent-profile.toml'), 'version = 3\n')
-
-    const intent = buildHrcRuntimeIntent({ agentId: 'fixture-agent', agentRoot })
-
-    expect(intent.provision).toEqual({
-      remote: false,
-      harness: 'claude-code',
-    })
-    expect(Object.hasOwn(intent.provision ?? {}, 'viewer')).toBe(false)
+    expect(intent.harness).toMatchObject({ provider: 'anthropic', interactive: false })
+    expect(intent.harness).not.toHaveProperty('id')
   })
 })
 
-/**
- * T-08128. A profile that exists but cannot be parsed degrades to the SAME
- * value an absent profile degrades to, so the returned object cannot carry the
- * proof — these tests assert on the emission, which is the only place the two
- * states are still distinguishable.
- *
- * The must-not-fire half is load-bearing. A change that warns on both states is
- * indistinguishable from one that warns on neither to anyone reading a busy
- * log, so "absent stays silent" is pinned as hard as "broken speaks up".
- */
-function captureStderr(run: () => void): { warnings: string[] } {
-  const original = console.error
-  const warnings: string[] = []
-  console.error = (...parts: unknown[]) => {
-    warnings.push(parts.map((part) => String(part)).join(' '))
+describe('harnessFrontendToHrcHarness — frontend allowlist (T-08597 narrowing)', () => {
+  test.each([
+    ['agent-sdk', 'agent-sdk'],
+    ['claude-code', 'claude-code'],
+    ['codex-cli', 'codex-cli'],
+    ['pi-cli', 'pi-cli'],
+    ['pi-sdk', 'pi-sdk'],
+    ['muse-cli', 'muse-cli'],
+  ] as const)('passes %s through', (frontend, id) => {
+    expect(harnessFrontendToHrcHarness(frontend)).toBe(id)
+  })
+
+  test('bare catalog ids no longer normalize — observations are always frontend form', () => {
+    expect(harnessFrontendToHrcHarness('codex')).toBeUndefined()
+    expect(harnessFrontendToHrcHarness('pi')).toBeUndefined()
+    expect(harnessFrontendToHrcHarness('claude')).toBeUndefined()
+    expect(harnessFrontendToHrcHarness(undefined)).toBeUndefined()
+    expect(harnessFrontendToHrcHarness('not-a-harness')).toBeUndefined()
+  })
+})
+
+describe('applyProvisionDirectives — compat overlay', () => {
+  const merged = {
+    provider: 'anthropic' as const,
+    harness: 'claude-code',
+    provision: { harness: 'claude-code', model: 'opus' },
   }
-  try {
-    run()
-  } finally {
-    console.error = original
-  }
-  return { warnings }
-}
 
-function makeAgentDirWithProfile(source: string, label: string): string {
-  const root = mkdtempSync(join(tmpdir(), `hrc-core-profile-${label}-`))
-  tempRoots.push(root)
-  writeFileSync(join(root, 'agent-profile.toml'), source)
-  return root
-}
-
-const BROKEN_PROFILE = 'version = 3\n\n[provisioning\nharness = "claude-code"\nmodel = "sonnet"\n'
-const VALID_PROFILE = 'version = 3\n\n[provisioning]\nharness = "claude-code"\nmodel = "sonnet"\n'
-
-describe('resolveAgentHarness — an unparseable profile degrades LOUDLY (T-08128)', () => {
-  test('a profile with a syntax error warns, naming agent, path and error', () => {
-    const agentRoot = makeAgentDirWithProfile(BROKEN_PROFILE, 'broken')
-    let resolved: ReturnType<typeof resolveAgentHarness> | undefined
-    const { warnings } = captureStderr(() => {
-      resolved = resolveAgentHarness({ agentRoot, agentId: 'slugger' })
+  test('directives overlay scalars without moving provider or harness id', () => {
+    const overlaid = applyProvisionDirectives(merged, { model: 'sonnet', node: 'svc' })
+    expect(overlaid.provision).toMatchObject({
+      harness: 'claude-code',
+      model: 'sonnet',
+      node: 'svc',
     })
+    expect(overlaid.provider).toBe('anthropic')
+    expect(overlaid.harnessId).toBe('claude-code')
+  })
 
-    expect(warnings).toHaveLength(1)
-    const line = warnings[0] ?? ''
+  test('a directive that changes the harness throws toward the daemon route', () => {
+    expect(() => applyProvisionDirectives(merged, { harness: 'codex' })).toThrow(HrcDomainError)
+    expect(() => applyProvisionDirectives(merged, { harness: 'codex' })).toThrow(
+      /POST \/v1\/declarations\/resolve/
+    )
+  })
+})
+
+describe('stripped-provisioning warning text (T-08128 byte contract)', () => {
+  test('names agent, path, consequence, and error on one line', () => {
+    const line = buildInvalidProfileWarning({
+      agentId: 'slugger',
+      agentRoot: '/agents/slugger',
+      diagnosticMessages: ['TOML parse error at line 3\nunexpected end'],
+      survivingProvisionKeys: [],
+    })
     expect(line).toContain('agent.provisioning.stripped')
     expect(line).toContain('slugger')
-    expect(line).toContain(join(agentRoot, 'agent-profile.toml'))
-    // The error itself has to travel: without it the reader knows an edit broke
-    // the profile but not which edit.
-    expect(line).toMatch(/error=\S/)
-
-    // The birth still proceeds — degrading, not failing closed.
-    expect(resolved).toMatchObject({ provider: 'anthropic', harness: undefined, provision: {} })
-  })
-
-  test('the warning names the CONSEQUENCE, not just the cause', () => {
-    const agentRoot = makeAgentDirWithProfile(BROKEN_PROFILE, 'consequence')
-    const { warnings } = captureStderr(() => {
-      resolveAgentHarness({ agentRoot, agentId: 'slugger' })
-    })
-
-    // "failed to parse profile" reads as recoverable and gets skimmed past. The
-    // line has to say what the reader actually lost.
-    const line = warnings[0] ?? ''
+    expect(line).toContain('/agents/slugger/agent-profile.toml')
     expect(line).toContain('NO provisioning')
     expect(line).toContain('no model pin')
+    expect(line).toMatch(/error=\S/)
+    expect(line).toContain('TOML')
+    expect(line).not.toContain('\n')
   })
 
-  test('a broken profile with a project target reports what SURVIVED, not a blanket nothing', () => {
-    const agentRoot = makeAgentDirWithProfile(BROKEN_PROFILE, 'partial')
-    const projectRoot = mkdtempSync(join(tmpdir(), 'hrc-core-profile-partial-project-'))
-    tempRoots.push(projectRoot)
-    writeFileSync(
-      join(projectRoot, 'asp-targets.toml'),
-      [
-        'schema = 1',
-        '',
-        '[targets.slugger]',
-        '',
-        '[targets.slugger.provisioning]',
-        'node = "svc"',
-        '',
-      ].join('\n')
-    )
-
-    let resolved: ReturnType<typeof resolveAgentHarness> | undefined
-    const { warnings } = captureStderr(() => {
-      resolved = resolveAgentHarness({ agentRoot, agentId: 'slugger', projectRoot })
+  test('a surviving target pin reports what survived, not a blanket nothing', () => {
+    const line = buildInvalidProfileWarning({
+      agentId: 'slugger',
+      agentRoot: '/agents/slugger',
+      diagnosticMessages: ['broken'],
+      survivingProvisionKeys: ['node'],
     })
-
-    const line = warnings[0] ?? ''
     expect(line).toContain('WITHOUT')
     expect(line).toContain('node')
-    // A verdict that read "NO provisioning at all" here would be false: the
-    // target's pins are still on the agent.
     expect(line).not.toContain('NO provisioning at all')
-    expect(resolved).toMatchObject({ provision: { node: 'svc' } })
   })
 
-  test('an ABSENT profile stays silent — the quiet path is preserved', () => {
-    const agentRoot = mkdtempSync(join(tmpdir(), 'hrc-core-profile-absent-'))
-    tempRoots.push(agentRoot)
-
-    const { warnings } = captureStderr(() => {
-      resolveAgentHarness({ agentRoot, agentId: 'slugger' })
+  test('formatProfileProvisioningStrippedWarning collapses multi-line errors', () => {
+    const line = formatProfileProvisioningStrippedWarning({
+      agentId: 'slugger',
+      profilePath: '/agents/slugger/agent-profile.toml',
+      errorMessage: 'line one\nline two',
+      survivingProvisionKeys: [],
     })
-
-    expect(warnings).toEqual([])
-  })
-
-  test('an absent profile stays silent even with a project target supplying provisioning', () => {
-    const agentRoot = mkdtempSync(join(tmpdir(), 'hrc-core-profile-absent-target-'))
-    const projectRoot = mkdtempSync(join(tmpdir(), 'hrc-core-profile-absent-target-project-'))
-    tempRoots.push(agentRoot, projectRoot)
-    writeFileSync(
-      join(projectRoot, 'asp-targets.toml'),
-      [
-        'schema = 1',
-        '',
-        '[targets.slugger]',
-        '',
-        '[targets.slugger.provisioning]',
-        'node = "svc"',
-        '',
-      ].join('\n')
-    )
-
-    const { warnings } = captureStderr(() => {
-      resolveAgentHarness({ agentRoot, agentId: 'slugger', projectRoot })
-    })
-
-    expect(warnings).toEqual([])
-  })
-
-  test('a profile that parses cleanly stays silent', () => {
-    const agentRoot = makeAgentDirWithProfile(VALID_PROFILE, 'valid')
-
-    let resolved: ReturnType<typeof resolveAgentHarness> | undefined
-    const { warnings } = captureStderr(() => {
-      resolved = resolveAgentHarness({ agentRoot, agentId: 'slugger' })
-    })
-
-    expect(warnings).toEqual([])
-    expect(resolved).toMatchObject({ harness: 'claude-code', provision: { model: 'sonnet' } })
-  })
-
-  test('the emission is what separates the two states — the return value does not', () => {
-    const brokenRoot = makeAgentDirWithProfile(BROKEN_PROFILE, 'twin-broken')
-    const absentRoot = mkdtempSync(join(tmpdir(), 'hrc-core-profile-twin-absent-'))
-    tempRoots.push(absentRoot)
-
-    let broken: ReturnType<typeof resolveAgentHarness> | undefined
-    let absent: ReturnType<typeof resolveAgentHarness> | undefined
-    const { warnings } = captureStderr(() => {
-      broken = resolveAgentHarness({ agentRoot: brokenRoot, agentId: 'slugger' })
-      absent = resolveAgentHarness({ agentRoot: absentRoot, agentId: 'slugger' })
-    })
-
-    // This is the defect in one assertion: the two situations are byte-identical
-    // downstream, which is why no caller could ever have caught this.
-    expect(JSON.stringify(broken)).toEqual(JSON.stringify(absent))
-    // ...and exactly one of them speaks.
-    expect(warnings).toHaveLength(1)
-  })
-})
-
-describe('the T-08128 warning stays readable in a busy log', () => {
-  test('a multi-line parse error is collapsed onto ONE line', () => {
-    // TOML parse errors carry an embedded source excerpt across several lines.
-    // Emitted raw, the WARN greps as one hit plus orphaned noise.
-    const agentRoot = makeAgentDirWithProfile(BROKEN_PROFILE, 'oneline')
-    const { warnings } = captureStderr(() => {
-      resolveAgentHarness({ agentRoot, agentId: 'slugger' })
-    })
-
-    const line = warnings[0] ?? ''
     expect(line).not.toContain('\n')
-    // The error text still has to survive the collapsing.
-    expect(line).toContain('TOML')
   })
 })

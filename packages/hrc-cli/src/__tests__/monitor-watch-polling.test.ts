@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, describe, expect, test } from 'bun:test'
 
 import { cmdMonitorWatch } from '../monitor-watch'
 import {
@@ -13,6 +13,10 @@ import {
   invokeWatch,
   parseJsonLines,
 } from './fixtures/cli-test-fixture.js'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 describe('polling condition reader for --follow --until with deadline (T-01297)', () => {
   test('plain --follow polls for events after the initial snapshot', async () => {

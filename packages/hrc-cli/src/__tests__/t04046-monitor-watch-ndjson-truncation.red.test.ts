@@ -35,13 +35,17 @@
  * Tests monitor-watch.ts lines 107–122 (the CLI-mode process.exit call sites).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHrcServer } from 'hrc-server'
 import type { HrcServer, HrcServerOptions } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import { cmdMonitorWatch } from '../monitor-watch'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 // ---------------------------------------------------------------------------
 // Constants

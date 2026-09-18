@@ -122,12 +122,12 @@ function ambiguous(
   )
 }
 
-function parseCliSelector(rawArg: string): HrcSelector {
+async function parseCliSelector(rawArg: string): Promise<HrcSelector> {
   try {
     // A canonical ScopeRef starts with `agent:`. The generic monitor parser
     // otherwise treats `agent` as an unknown selector prefix, while operator
     // commands have historically accepted both scope:<ref> and the bare ref.
-    return parseProfileAwareSelector(rawArg.startsWith('agent:') ? `scope:${rawArg}` : rawArg)
+    return await parseProfileAwareSelector(rawArg.startsWith('agent:') ? `scope:${rawArg}` : rawArg)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new SelectorResolutionError('parse-error', `invalid selector "${rawArg}": ${message}`)
@@ -285,14 +285,14 @@ function resolveSessionTarget(
   typeMismatch(rawArg, expect, 'session')
 }
 
-export function resolveSelectorTarget(
+export async function resolveSelectorTarget(
   rawArg: string,
   opts: {
     expect: SelectorTargetKind
     snapshot: SelectorSnapshot
     latest?: boolean | undefined
   }
-): ResolvedTarget {
+): Promise<ResolvedTarget> {
   const raw = rawArg.trim()
   const exact = exactNativeMatch(raw, opts.expect, opts.snapshot)
   if (exact) {
@@ -301,7 +301,7 @@ export function resolveSelectorTarget(
 
   rejectOtherNativeId(raw, opts.expect, opts.snapshot)
 
-  const selector = parseCliSelector(raw)
+  const selector = await parseCliSelector(raw)
 
   switch (selector.kind) {
     case 'runtime':
@@ -377,13 +377,13 @@ export async function resolveRuntimeArg(
     return raw
   }
   if (raw.startsWith('runtime:')) {
-    const selector = parseCliSelector(raw)
+    const selector = await parseCliSelector(raw)
     if (selector.kind === 'runtime') {
       return selector.runtimeId
     }
   }
 
-  const target = resolveSelectorTarget(rawArg, {
+  const target = await resolveSelectorTarget(rawArg, {
     expect: 'runtime',
     snapshot: await fetchSelectorSnapshot(client),
     latest: options.latest,
@@ -395,7 +395,7 @@ export async function resolveRuntimeArg(
 }
 
 export async function resolveSessionArg(rawArg: string, client: HrcClient): Promise<string> {
-  const target = resolveSelectorTarget(rawArg, {
+  const target = await resolveSelectorTarget(rawArg, {
     expect: 'host-session',
     snapshot: await fetchSelectorSnapshot(client),
   })

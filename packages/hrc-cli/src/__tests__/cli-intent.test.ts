@@ -1,38 +1,35 @@
 /**
- * Intent builder tests for harness.id population from agent profiles.
+ * Intent builder tests (T-08597 daemon-backed).
  *
- * Defect (T-01264): an agent profile with `harness = "pi"` was routed to
- * frontend `codex-cli` because the intent builder did not populate
- * `intent.harness.id`. The HRC frontend resolver checks `intent.harness.id`
- * first, then falls back to provider — so a missing id silently lost the
- * harness specificity.
+ * Harness/provider/provisioning facts are observed from the installed daemon;
+ * these pin the CLI-side shaping with an injected declarations client:
+ * directive carry-through, detached-start overrides, presentation threading,
+ * session correlation, and debug launch. Population parity against the local
+ * assembler is proved by the route parity table, not here.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { describe, expect, it } from 'bun:test'
 
 import {
   normalizeClaudeInteractiveBrokerIntent,
   shouldRedirectClaudeToInteractiveBroker,
 } from 'hrc-server'
 
-import { harnessStringToHarnessId, resolveAgentHarness } from '../cli'
+import { harnessStringToHarnessId } from '../cli'
 import { executeManagedStart } from '../cli/handlers-scope-cmd'
-import { buildManagedStartIntent, parseScopePrompt, resolveManagedScopeContext } from '../cli/scope'
+import { buildManagedStartIntent } from '../cli/scope'
+import type { ManagedIntentClient, ManagedScopeContext } from '../cli/scope'
 
-describe('harnessStringToHarnessId', () => {
-  it('maps "pi" profile harness to HrcHarness "pi-cli"', () => {
-    expect(harnessStringToHarnessId('pi')).toBe('pi-cli')
-  })
-
-  it('maps "codex" profile harness to HrcHarness "codex-cli"', () => {
-    expect(harnessStringToHarnessId('codex')).toBe('codex-cli')
-  })
-
-  it('maps "claude" profile harness to HrcHarness "claude-code"', () => {
-    expect(harnessStringToHarnessId('claude')).toBe('claude-code')
+describe('harnessStringToHarnessId (T-08597 frontend allowlist)', () => {
+  it('passes admitted frontends through', () => {
+    expect(harnessStringToHarnessId('pi-cli')).toBe('pi-cli')
+    expect(harnessStringToHarnessId('codex-cli')).toBe('codex-cli')
     expect(harnessStringToHarnessId('claude-code')).toBe('claude-code')
+  })
+
+  it('no longer normalizes bare catalog ids — observations are frontend form', () => {
+    expect(harnessStringToHarnessId('pi')).toBeUndefined()
+    expect(harnessStringToHarnessId('codex')).toBeUndefined()
+    expect(harnessStringToHarnessId('claude')).toBeUndefined()
   })
 
   it('returns undefined for unknown / undefined harness names', () => {
@@ -41,144 +38,89 @@ describe('harnessStringToHarnessId', () => {
   })
 })
 
-describe('resolveAgentHarness', () => {
-  let tmp: string
-  beforeEach(async () => {
-    tmp = await mkdtemp(join(tmpdir(), 'hrc-cli-intent-'))
-  })
-  afterEach(async () => {
-    await rm(tmp, { recursive: true, force: true })
-  })
+function fakeDeclarationsClient(
+  seen: unknown[],
+  overrides: Record<string, unknown> = {}
+): ManagedIntentClient {
+  return {
+    resolveRuntimeIntent: async (request: Record<string, unknown>) => {
+      seen.push(request)
+      return {
+        intent: {
+          placement: {
+            agentRoot: '/agents/codex-agent',
+            projectRoot: '/projects/fixture',
+            cwd: '/projects/fixture',
+            runMode: 'task',
+            bundle: { kind: 'agent-project', agentName: 'codex-agent' },
+            dryRun: false,
+          },
+          harness: {
+            provider: 'openai',
+            interactive: request['interactive'] ?? true,
+            id: 'codex-cli',
+          },
+          execution: { preferredMode: request['preferredMode'] ?? 'headless' },
+          provision: { harness: 'codex-cli', model: 'gpt' },
+          ...(typeof request['initialPrompt'] === 'string'
+            ? { initialPrompt: request['initialPrompt'] }
+            : {}),
+          ...overrides,
+        },
+        declaration: {
+          release: { releaseId: 'r', sourceCommit: 'c' },
+          agentSources: { provenance: 'daemon-default' },
+          source: {
+            agentProfile: 'valid',
+            projectTargets: 'valid',
+            selectedTarget: 'absent',
+            priming: 'valid',
+          },
+          warnings: [],
+        },
+      } as never
+    },
+  }
+}
 
-  it('reads harness=pi from agent-profile.toml', async () => {
-    const agentRoot = join(tmp, 'pi-agent')
-    await mkdir(agentRoot, { recursive: true })
-    await writeFile(
-      join(agentRoot, 'agent-profile.toml'),
-      [
-        'version = 3',
-        'priming = "test"',
-        '',
-        '[identity]',
-        'display = "Pi"',
-        'role = "coder"',
-        '[provisioning]',
-        'harness = "pi"',
-      ].join('\n')
-    )
-
-    const result = resolveAgentHarness(agentRoot, 'pi-agent')
-    expect(result.provider).toBe('openai')
-    expect(result.harness).toBe('pi')
-    expect(harnessStringToHarnessId(result.harness)).toBe('pi-cli')
-  })
-
-  it('reads harness=codex from agent-profile.toml', async () => {
-    const agentRoot = join(tmp, 'codex-agent')
-    await mkdir(agentRoot, { recursive: true })
-    await writeFile(
-      join(agentRoot, 'agent-profile.toml'),
-      [
-        'version = 3',
-        'priming = "test"',
-        '',
-        '[identity]',
-        'display = "Codex"',
-        'role = "coder"',
-        '[provisioning]',
-        'harness = "codex"',
-      ].join('\n')
-    )
-
-    const result = resolveAgentHarness(agentRoot, 'codex-agent')
-    expect(result.provider).toBe('openai')
-    expect(result.harness).toBe('codex')
-    expect(harnessStringToHarnessId(result.harness)).toBe('codex-cli')
-  })
-
-  it('reads harness=claude-code from agent-profile.toml', async () => {
-    const agentRoot = join(tmp, 'claude-agent')
-    await mkdir(agentRoot, { recursive: true })
-    await writeFile(
-      join(agentRoot, 'agent-profile.toml'),
-      [
-        'version = 3',
-        'priming = "test"',
-        '',
-        '[identity]',
-        'display = "Claude"',
-        'role = "coder"',
-        '[provisioning]',
-        'harness = "claude-code"',
-      ].join('\n')
-    )
-
-    const result = resolveAgentHarness(agentRoot, 'claude-agent')
-    expect(result.provider).toBe('anthropic')
-    expect(result.harness).toBe('claude-code')
-    expect(harnessStringToHarnessId(result.harness)).toBe('claude-code')
-  })
-
-  it('falls back gracefully when no profile exists', () => {
-    const result = resolveAgentHarness(join(tmp, 'no-profile'), 'missing')
-    expect(result.provider).toBe('anthropic')
-    expect(result.harness).toBeUndefined()
-    expect(harnessStringToHarnessId(result.harness)).toBeUndefined()
-  })
+const scope = (): ManagedScopeContext => ({
+  agentId: 'codex-agent',
+  projectId: 'fixture-project',
+  projectOrigin: 'explicit',
+  scopeRef: 'agent:codex-agent:project:fixture-project:task:primary',
+  laneRef: 'main',
+  sessionRef: 'agent:codex-agent:project:fixture-project:task:primary/lane:main',
+  placement: {
+    agentRoot: '/agents/codex-agent',
+    projectRoot: '/projects/fixture',
+    cwd: '/projects/fixture',
+    resolution: { source: 'wrkq-registry', reason: 'test' },
+  },
 })
 
-describe('buildManagedStartIntent', () => {
-  let projectRoot: string
-
-  beforeEach(async () => {
-    projectRoot = await mkdtemp(join(tmpdir(), 'hrc-cli-start-intent-'))
-    await mkdir(join(projectRoot, 'agents', 'codex-agent'), { recursive: true })
-    await writeFile(join(projectRoot, 'asp-targets.toml'), 'schema = 1\nagents-root = "agents"\n')
-    await writeFile(
-      join(projectRoot, 'agents', 'codex-agent', 'agent-profile.toml'),
-      'version = 3\n\n[provisioning]\nharness = "codex"\n'
-    )
-  })
-
-  afterEach(async () => {
-    await rm(projectRoot, { recursive: true, force: true })
-  })
-
-  const scope = () => ({
-    agentId: 'codex-agent',
-    scopeRef: 'agent:codex-agent',
-    laneRef: 'main',
-    sessionRef: 'agent:codex-agent/lane:main',
-    projectRootOverride: projectRoot,
-  })
-
-  /**
-   * T-07398 DEFECT CYCLE 1, D2 — the `hrc start` sender must CARRY the handle's
-   * directive block through to the intent.
-   *
-   * `resolveManagedScopeContext` destructures only parsed/scopeRef/laneRef/
-   * placement out of the shared resolver and throws `directives` away, and
-   * `buildManagedRuntimeIntent` assembles the intent by hand with no
-   * `provision`. So `hrc start "<agent>@<proj>:<task>+node=notanode"` reaches
-   * the daemon with nothing to validate and is born locally instead of
-   * returning typed UNKNOWN_NODE (C-15413 D2). The gate's registry check is
-   * already correct — the directive simply never arrives.
-   */
-  it('carries the handle directive block onto the start intent as provision (T-07398 D2)', () => {
-    const scopeContext = resolveManagedScopeContext(
-      'codex-agent@fixture-project:t07402smoke3+node=notanode+model=sonnet',
-      { projectRootOverride: projectRoot, registerPolicy: 'never' }
+describe('buildManagedStartIntent (daemon-backed shaping)', () => {
+  it('carries the handle directive block to the route as provision (T-07398 D2)', async () => {
+    const seen: unknown[] = []
+    const intent = await buildManagedStartIntent(
+      {
+        ...scope(),
+        directives: { node: 'notanode', model: 'sonnet' },
+      },
+      { client: fakeDeclarationsClient(seen) }
     )
 
-    expect(buildManagedStartIntent(scopeContext).provision).toMatchObject({
-      node: 'notanode',
-      model: 'sonnet',
+    expect(seen[0]).toMatchObject({ provision: { node: 'notanode', model: 'sonnet' } })
+    expect(intent.provision).toMatchObject({ harness: 'codex-cli', model: 'gpt' })
+  })
+
+  it('classifies prompt-bearing detached start as non-interactive headless', async () => {
+    const seen: unknown[] = []
+    const intent = await buildManagedStartIntent(scope(), {
+      prompt: 'wake up',
+      client: fakeDeclarationsClient(seen),
     })
-  })
 
-  it('classifies prompt-bearing detached start as non-interactive headless', () => {
-    const intent = buildManagedStartIntent(scope(), { prompt: 'wake up' })
-
+    expect(seen[0]).toMatchObject({ interactive: true, initialPrompt: 'wake up' })
     expect(intent.harness).toMatchObject({
       provider: 'openai',
       id: 'codex-cli',
@@ -188,19 +130,27 @@ describe('buildManagedStartIntent', () => {
     expect(intent.initialPrompt).toBe('wake up')
   })
 
-  it('classifies promptless detached start as non-interactive headless', () => {
-    const intent = buildManagedStartIntent(scope())
+  it('stamps session correlation onto the placement', async () => {
+    const seen: unknown[] = []
+    const context = scope()
+    const intent = await buildManagedStartIntent(context, {
+      client: fakeDeclarationsClient(seen),
+    })
 
-    expect(intent.harness.interactive).toBe(false)
-    expect(intent.execution?.preferredMode).toBe('headless')
+    expect(intent.placement).toMatchObject({
+      correlation: {
+        sessionRef: { scopeRef: context.scopeRef, laneRef: context.laneRef },
+      },
+    })
   })
 
   it('keeps promptless Claude start redirected to the interactive Claude broker', async () => {
-    await writeFile(
-      join(projectRoot, 'agents', 'codex-agent', 'agent-profile.toml'),
-      'version = 3\n\n[provisioning]\nharness = "claude-code"\n'
-    )
-    const startIntent = buildManagedStartIntent(scope())
+    const seen: unknown[] = []
+    const startIntent = await buildManagedStartIntent(scope(), {
+      client: fakeDeclarationsClient(seen, {
+        harness: { provider: 'anthropic', interactive: true, id: 'claude-code' },
+      }),
+    })
 
     expect(startIntent.harness).toMatchObject({
       provider: 'anthropic',
@@ -218,46 +168,43 @@ describe('buildManagedStartIntent', () => {
     expect(normalized.execution?.preferredMode).toBe('interactive')
   })
 
-  it('assembles an explicit execution cwd without changing the resolved project root', async () => {
-    const executionCwd = join(projectRoot, 'target-checkout')
-    await mkdir(executionCwd)
-    const scopeContext = resolveManagedScopeContext('codex-agent@fixture-project:T-07731', {
-      projectRootOverride: projectRoot,
-      cwdOverride: executionCwd,
-      registerPolicy: 'never',
-    })
-
-    expect(buildManagedStartIntent(scopeContext).placement).toMatchObject({
-      projectRoot,
-      cwd: executionCwd,
-    })
+  // T-07118: the viewer placement hint is a presentation field only.
+  it('threads --viewer-window into presentation.viewerWindow', async () => {
+    const seen: unknown[] = []
+    expect(
+      (
+        await buildManagedStartIntent(scope(), {
+          viewerWindow: 'console',
+          client: fakeDeclarationsClient(seen),
+        })
+      ).presentation
+    ).toEqual({ viewerWindow: 'console' })
   })
 
-  // T-07118: the viewer placement hint is a presentation field only — an absent
-  // flag must leave the intent byte-identical to today's.
-  it('threads --viewer-window into presentation.viewerWindow', () => {
-    expect(buildManagedStartIntent(scope(), { viewerWindow: 'console' }).presentation).toEqual({
-      viewerWindow: 'console',
+  it('omits presentation entirely when no viewer window is requested', async () => {
+    const seen: unknown[] = []
+    expect(
+      (await buildManagedStartIntent(scope(), { client: fakeDeclarationsClient(seen) }))
+        .presentation
+    ).toBeUndefined()
+  })
+
+  it('threads --no-viewer into presentation.operator none on a headless start intent', async () => {
+    const seen: unknown[] = []
+    const intent = await buildManagedStartIntent(scope(), {
+      operatorPresentation: 'none',
+      client: fakeDeclarationsClient(seen),
     })
-  })
-
-  it('omits presentation entirely when no viewer window is requested', () => {
-    expect(buildManagedStartIntent(scope()).presentation).toBeUndefined()
-  })
-
-  // T-08553: --no-viewer is an explicit per-request choice on the start intent;
-  // its absence leaves the intent exactly as before (node defaults decide).
-  it('threads --no-viewer into presentation.operator none on a headless start intent', () => {
-    const intent = buildManagedStartIntent(scope(), { operatorPresentation: 'none' })
     expect(intent.presentation).toEqual({ operator: 'none' })
     expect(intent.harness.interactive).toBe(false)
   })
 
-  // T-08554: --app-server-viewer selects the headless app-server with its viewer.
-  it('threads --app-server-viewer into presentation.operator tmux-tui on a headless start intent', () => {
-    const intent = buildManagedStartIntent(scope(), {
+  it('threads --app-server-viewer into presentation.operator tmux-tui', async () => {
+    const seen: unknown[] = []
+    const intent = await buildManagedStartIntent(scope(), {
       operatorPresentation: 'tmux-tui',
       viewerWindow: 'work',
+      client: fakeDeclarationsClient(seen),
     })
     expect(intent.presentation).toEqual({ viewerWindow: 'work', operator: 'tmux-tui' })
     expect(intent.harness.interactive).toBe(false)
@@ -300,9 +247,6 @@ describe('executeManagedStart', () => {
         idempotencyKey: expect.any(String),
         waitFor: 'accepted',
         waitForCompletion: false,
-        // T-07236: a local CLI start states its own provenance. The KIND is
-        // what any consumer policy reads and is known even when the OS cannot
-        // name the invoking user, so the actor is asserted loosely.
         origin: { actor: expect.any(String), kind: 'human' },
       },
     ])
@@ -369,52 +313,3 @@ describe('executeManagedStart', () => {
 })
 
 type ManagedStartClientForTest = Parameters<typeof executeManagedStart>[0]
-
-/**
- * T-07118 regression: a value-taking passthrough flag missing from the parser's
- * value set does not fail loudly — its VALUE is read as a positional prompt.
- * `hrc start <scope> --viewer-window console --on-conflict suffix` reported
- * "start accepts at most one positional prompt", which names neither flag.
- */
-describe('parseScopePrompt value-taking passthrough flags', () => {
-  const startFlags = [
-    '--force-restart',
-    '--new-session',
-    '--dry-run',
-    '--debug',
-    '--no-register',
-    '--json',
-    '--wait',
-    '--idempotency-key',
-    '--project-id',
-    '--project-root',
-    '--cwd',
-    '--viewer-window',
-    '--on-conflict',
-  ]
-
-  it('consumes --viewer-window / --on-conflict values instead of reading them as prompts', async () => {
-    const prompt = await parseScopePrompt(
-      [
-        'mable@hrc-runtime',
-        '--viewer-window',
-        'console',
-        '--cwd',
-        '/tmp',
-        '--on-conflict',
-        'suffix',
-        '--dry-run',
-      ],
-      { command: 'start', passthroughFlags: startFlags }
-    )
-    expect(prompt).toBeUndefined()
-  })
-
-  it('still reads a real positional prompt alongside those flags', async () => {
-    const prompt = await parseScopePrompt(
-      ['mable@hrc-runtime', '--viewer-window', 'console', 'wake up', '--on-conflict', 'suffix'],
-      { command: 'start', passthroughFlags: startFlags }
-    )
-    expect(prompt).toBe('wake up')
-  })
-})

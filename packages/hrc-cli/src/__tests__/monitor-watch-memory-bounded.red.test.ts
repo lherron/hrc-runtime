@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +9,22 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 import { cmdMonitorWatch } from '../monitor-watch'
 import { parseMonitorSelectors } from '../monitor/selector-shape'
 import { createLiveMonitorStateSource } from '../monitor/wait-command'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
+
+// Scope the ambient daemon per-test: file execution order is not
+// deterministic, so a global install alone cannot guarantee a live socket.
+const runtimeDirKey = 'HRC_RUNTIME_DIR'
+const savedRuntimeDir = process.env[runtimeDirKey]
+beforeEach(() => {
+  process.env[runtimeDirKey] = oldEngineDaemon.runtimeDir
+})
+afterEach(() => {
+  if (savedRuntimeDir === undefined) delete process.env[runtimeDirKey]
+  else process.env[runtimeDirKey] = savedRuntimeDir
+})
 
 const TASK_ID = 'T-90002'
 const SCOPE_REF = `agent:test:project:hrc-runtime:task:${TASK_ID}`
@@ -219,7 +235,7 @@ describe('T-06587 monitor watch bounded memory', () => {
       )
     )
     const source = await createLiveMonitorStateSource({
-      selectorSpecs: parseMonitorSelectors([TASK_ID]),
+      selectorSpecs: await parseMonitorSelectors([TASK_ID]),
       condition: 'turn-finished',
     })
 

@@ -11,9 +11,10 @@ import type {
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
 
+import type { ProfileAwareResolvedScopeInput as ScopeInput } from 'hrc-sdk'
 import { printJson, printJsonLine } from '../../print.js'
 import { writeDeliveryOutcome, writeDeliveryWarnings } from '../delivery-warning.js'
-import { resolveMessagingScope, type resolveScope, resolveSenderAddress } from '../normalize.js'
+import { resolveMessagingScope, resolveSenderAddress } from '../normalize.js'
 import {
   type RenderFrameFormatInput,
   createTerminalFrameRenderer,
@@ -465,10 +466,7 @@ function resolveTurnOutputOptions(opts: TurnOptions): TurnOutputOptions {
   return { waitMode, waitTimeoutMs, stackedWindowMs }
 }
 
-function assertProjectResolved(
-  targetInput: string,
-  resolved: ReturnType<typeof resolveScope>
-): void {
+function assertProjectResolved(targetInput: string, resolved: ScopeInput): void {
   if (resolved.parsed.projectId) {
     return
   }
@@ -487,7 +485,7 @@ function assertProjectResolved(
 }
 
 type PreparedTurnObservation = {
-  resolved: ReturnType<typeof resolveScope>
+  resolved: ScopeInput
   handoff: StackedHandoff
   catchUpThroughSeq?: number | undefined
   /**
@@ -525,7 +523,7 @@ async function prepareDispatchedTurn(
   const { targetInput, body, bodyFromFile, bodyFromStdin } = input
   const { waitMode, stackedWindowMs } = output
   const resolveLaunch = dependencies.resolveLaunchTarget ?? resolveLaunchTarget
-  const { resolved, sessionRef, runtimeIntent } = resolveLaunch(targetInput)
+  const { resolved, sessionRef, runtimeIntent } = await resolveLaunch(targetInput)
 
   if (opts.dryRun) {
     printJson({
@@ -555,7 +553,7 @@ async function prepareDispatchedTurn(
   }
 
   assertProjectResolved(targetInput, resolved)
-  const sender = resolveSenderAddress(opts.as)
+  const sender = await resolveSenderAddress(opts.as)
   if (sender.source === 'human-fallback') {
     if (!process.stdout.isTTY) {
       throw new CliUsageError(
@@ -682,7 +680,7 @@ export async function cmdTurn(
     // Observe-only resolution intentionally uses the messaging seam: task
     // worktree drift warns, but never becomes a launch-eligibility check.
     const resolveMessaging = dependencies.resolveMessagingScope ?? resolveMessagingScope
-    const resolved = resolveMessaging(targetInput, { withCallerTaskId: true })
+    const resolved = await resolveMessaging(targetInput, { withCallerTaskId: true })
     const sessionRef = `${resolved.scopeRef}/lane:${resolved.laneId}`
     assertProjectResolved(targetInput, resolved)
     const observation = await resolveAttachObservation(client, targetInput, sessionRef)

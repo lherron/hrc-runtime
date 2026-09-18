@@ -7,7 +7,7 @@
  * by the task: filtered raw events, interleaved transcripts, stats, runtime
  * discovery, explicit post-mortem access, and live scope-selector resolution.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -21,6 +21,10 @@ import { createGitFixture } from '../../../../test-support/git-fixture.js'
 import { createHrcTestFixture } from '../../../hrc-server/src/__tests__/fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from '../../../hrc-server/src/__tests__/fixtures/hrc-test-fixture'
 import { main } from '../cli'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 type CliResult = {
   stdout: string
@@ -380,7 +384,9 @@ function cliEnv(fixture: HrcServerTestFixture): Record<string, string> {
     throw new Error('project search root fixture is not provisioned')
   }
   return {
-    HRC_RUNTIME_DIR: fixture.runtimeRoot,
+    // Placements/declarations resolve through the frozen old engine (this
+    // server has no aspd); every other route proxies to the booted server.
+    HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
     HRC_STATE_DIR: fixture.stateRoot,
     HRC_PROJECT_SEARCH_ROOTS: projectSearchRoot,
   }
@@ -403,6 +409,7 @@ beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-broker-forensics-')
   seedForensicsLedger(fixture)
   server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+  oldEngineDaemon.setProxy(fixture.socketPath)
 })
 
 afterEach(async () => {

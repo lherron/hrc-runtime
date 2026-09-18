@@ -24,6 +24,8 @@ import type {
   TerminateRuntimeRequest,
 } from 'hrc-core'
 
+import type { HrcRuntimePlacement } from 'hrc-core'
+
 import {
   isRecord,
   normalizeOptionalQuery,
@@ -187,7 +189,7 @@ export function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIn
   const provision = parseOptionalProvisionBlock(input['provision'])
 
   return {
-    placement: placement as import('spaces-config').RuntimePlacement,
+    placement: placement as HrcRuntimePlacement,
     harness: resolvedHarness,
     ...(provision === undefined ? {} : { provision }),
     ...(isRecord(execution) ? { execution: execution as HrcRuntimeIntent['execution'] } : {}),

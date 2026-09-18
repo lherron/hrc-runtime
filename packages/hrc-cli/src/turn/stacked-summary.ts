@@ -92,7 +92,7 @@ class SeatStackedSummarizer implements StackedSeatSummarizer {
     })
 
     try {
-      const target = this.resolveTarget()
+      const target = await this.resolveTarget()
       await this.ensureSession(target)
 
       // Live preflight on 2026-09-07 used the public `invoke` door against the
@@ -136,7 +136,7 @@ class SeatStackedSummarizer implements StackedSeatSummarizer {
     return this.cleanupPromise
   }
 
-  private resolveTarget(): SummaryTarget {
+  private async resolveTarget(): Promise<SummaryTarget> {
     if (this.target !== undefined) {
       return this.target
     }
@@ -145,7 +145,7 @@ class SeatStackedSummarizer implements StackedSeatSummarizer {
       this.target = this.options.resolveTarget(handle)
       return this.target
     }
-    const resolved = resolveLaunchTarget(handle)
+    const resolved = await resolveLaunchTarget(handle)
     this.target = {
       sessionRef: resolved.sessionRef,
       scopeRef: resolved.resolved.scopeRef,

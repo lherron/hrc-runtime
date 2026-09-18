@@ -5,12 +5,12 @@
  * composed env captured at the app birth boundary. The four correlation aliases are presence
  * markers only: valid scoped envelopes retain their existing authority and parse behavior.
  */
-import { describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
+import { afterAll, describe, expect, it } from 'bun:test'
 import { evaluateServerLifecycleAuthorization } from '../cli-runtime'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 const PARTIAL_ENVELOPE_MESSAGE =
   'refusing server lifecycle mutation: partial HRC/ASP session envelope; ' +
@@ -37,27 +37,11 @@ const APP_CORRELATION_ENV = {
   HRC_GENERATION: '1',
 } as const
 
-async function withAgentProfile<T>(
-  agentId: string,
-  profile: string,
-  run: (agentsRoot: string) => T | Promise<T>
-): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), 'hrc-lifecycle-app-envelope-'))
-  const agentsRoot = join(root, 'agents')
-  await mkdir(join(agentsRoot, agentId), { recursive: true })
-  await writeFile(join(agentsRoot, agentId, 'agent-profile.toml'), profile)
-  try {
-    return await run(agentsRoot)
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-}
-
-function expectPartialEnvelopeRefusal(
+async function expectPartialEnvelopeRefusal(
   env: Readonly<Record<string, string>>,
   reason?: string
-): void {
-  expect(evaluateServerLifecycleAuthorization(env, reason)).toEqual({
+): Promise<void> {
+  expect(await evaluateServerLifecycleAuthorization(env, reason)).toEqual({
     allowed: false,
     message: PARTIAL_ENVELOPE_MESSAGE,
   })
@@ -71,30 +55,30 @@ describe('T-08576 app correlation server-lifecycle envelope', () => {
     'AGENT_GENERATION',
   ] as const) {
     for (const reason of [undefined, 'governed maintenance'] as const) {
-      it(`R-L1 refuses ${key} alone ${reason === undefined ? 'without' : 'with'} --reason`, () => {
-        expectPartialEnvelopeRefusal({ [key]: APP_CORRELATION_ENV[key] }, reason)
+      it(`R-L1 refuses ${key} alone ${reason === undefined ? 'without' : 'with'} --reason`, async () => {
+        await expectPartialEnvelopeRefusal({ [key]: APP_CORRELATION_ENV[key] }, reason)
       })
     }
   }
 
   for (const reason of [undefined, 'governed maintenance'] as const) {
-    it(`R-L2 refuses the grantless app composite ${reason === undefined ? 'without' : 'with'} --reason`, () => {
-      expectPartialEnvelopeRefusal(APP_CORRELATION_ENV, reason)
+    it(`R-L2 refuses the grantless app composite ${reason === undefined ? 'without' : 'with'} --reason`, async () => {
+      await expectPartialEnvelopeRefusal(APP_CORRELATION_ENV, reason)
     })
   }
 
-  it('R-L3 keeps the granted app composite refused', () => {
-    expectPartialEnvelopeRefusal({ ...APP_CORRELATION_ENV, HRC_RUN_ID: 'run-t08576-granted' })
+  it('R-L3 keeps the granted app composite refused', async () => {
+    await expectPartialEnvelopeRefusal({ ...APP_CORRELATION_ENV, HRC_RUN_ID: 'run-t08576-granted' })
   })
 
-  it('R-L4 keeps a clean shell operator-authorized with an optional reason', () => {
-    expect(evaluateServerLifecycleAuthorization({}, undefined)).toEqual({
+  it('R-L4 keeps a clean shell operator-authorized with an optional reason', async () => {
+    expect(await evaluateServerLifecycleAuthorization({}, undefined)).toEqual({
       allowed: true,
       callerKind: 'operator',
       requestedBy: null,
       reason: null,
     })
-    expect(evaluateServerLifecycleAuthorization({}, '  planned maintenance  ')).toEqual({
+    expect(await evaluateServerLifecycleAuthorization({}, '  planned maintenance  ')).toEqual({
       allowed: true,
       callerKind: 'operator',
       requestedBy: null,
@@ -102,7 +86,7 @@ describe('T-08576 app correlation server-lifecycle envelope', () => {
     })
   })
 
-  it('R-L4 keeps primary authority and its mandatory reason', () => {
+  it('R-L4 keeps primary authority and its mandatory reason', async () => {
     const env = {
       ...APP_CORRELATION_ENV,
       HRC_SESSION_REF: PRIMARY_SESSION,
@@ -110,11 +94,11 @@ describe('T-08576 app correlation server-lifecycle envelope', () => {
       ASP_TASK_ID: 'primary',
       ASP_DEFAULT_TASK: 'primary',
     }
-    expect(evaluateServerLifecycleAuthorization(env, undefined)).toEqual({
+    expect(await evaluateServerLifecycleAuthorization(env, undefined)).toEqual({
       allowed: false,
       message: 'primary-scoped server lifecycle mutations require --reason <text>',
     })
-    expect(evaluateServerLifecycleAuthorization(env, '  primary maintenance  ')).toEqual({
+    expect(await evaluateServerLifecycleAuthorization(env, '  primary maintenance  ')).toEqual({
       allowed: true,
       callerKind: 'primary',
       requestedBy: PRIMARY_SESSION,
@@ -122,7 +106,7 @@ describe('T-08576 app correlation server-lifecycle envelope', () => {
     })
   })
 
-  it('R-L4 keeps standing-seat authority and its mandatory reason', () => {
+  it('R-L4 keeps standing-seat authority and its mandatory reason', async () => {
     const env = {
       ...APP_CORRELATION_ENV,
       HRC_SESSION_REF: SEAT_SESSION,
@@ -130,11 +114,11 @@ describe('T-08576 app correlation server-lifecycle envelope', () => {
       ASP_TASK_ID: 'minisvc',
       ASP_DEFAULT_TASK: 'minisvc',
     }
-    expect(evaluateServerLifecycleAuthorization(env, undefined)).toEqual({
+    expect(await evaluateServerLifecycleAuthorization(env, undefined)).toEqual({
       allowed: false,
       message: 'seat-scoped server lifecycle mutations require --reason <text>',
     })
-    expect(evaluateServerLifecycleAuthorization(env, '  node maintenance  ')).toEqual({
+    expect(await evaluateServerLifecycleAuthorization(env, '  node maintenance  ')).toEqual({
       allowed: true,
       callerKind: 'seat',
       requestedBy: SEAT_SESSION,
@@ -142,32 +126,36 @@ describe('T-08576 app correlation server-lifecycle envelope', () => {
     })
   })
 
-  it('R-L4 keeps profile-declared operator-agent authority and its mandatory reason', async () => {
-    await withAgentProfile('chief', 'version = 3\noperator = true\n', (agentsRoot) => {
-      const env = {
-        ...APP_CORRELATION_ENV,
-        ASP_AGENTS_ROOT: agentsRoot,
-        HRC_SESSION_REF: OPERATOR_SESSION,
-        ASP_SCOPE_REF: OPERATOR_SCOPE,
-        ASP_TASK_ID: 'T-08576',
-        ASP_DEFAULT_TASK: 'T-08576',
-      }
-      expect(evaluateServerLifecycleAuthorization(env, undefined)).toEqual({
+  it('R-L4 keeps daemon-observed operator-agent authority and its mandatory reason', async () => {
+    const resolveOperator = async () => true
+    const env = {
+      ...APP_CORRELATION_ENV,
+      HRC_SESSION_REF: OPERATOR_SESSION,
+      ASP_SCOPE_REF: OPERATOR_SCOPE,
+      ASP_TASK_ID: 'T-08576',
+      ASP_DEFAULT_TASK: 'T-08576',
+    }
+    expect(await evaluateServerLifecycleAuthorization(env, undefined, { resolveOperator })).toEqual(
+      {
         allowed: false,
         message: 'operator-agent server lifecycle mutations require --reason <text>',
+      }
+    )
+    expect(
+      await evaluateServerLifecycleAuthorization(env, '  governed activation  ', {
+        resolveOperator,
       })
-      expect(evaluateServerLifecycleAuthorization(env, '  governed activation  ')).toEqual({
-        allowed: true,
-        callerKind: 'operator-agent',
-        requestedBy: OPERATOR_SESSION,
-        reason: 'governed activation',
-      })
+    ).toEqual({
+      allowed: true,
+      callerKind: 'operator-agent',
+      requestedBy: OPERATOR_SESSION,
+      reason: 'governed activation',
     })
   })
 
-  it('R-L4 keeps ordinary task scopes denied with escalation guidance', () => {
+  it('R-L4 keeps ordinary task scopes denied with escalation guidance', async () => {
     expect(
-      evaluateServerLifecycleAuthorization(
+      await evaluateServerLifecycleAuthorization(
         {
           ...APP_CORRELATION_ENV,
           HRC_SESSION_REF: TASK_SESSION,
@@ -183,18 +171,18 @@ describe('T-08576 app correlation server-lifecycle envelope', () => {
     })
   })
 
-  it('R-L4 keeps malformed envelopes refused with the existing message', () => {
+  it('R-L4 keeps malformed envelopes refused with the existing message', async () => {
     expect(
-      evaluateServerLifecycleAuthorization(
+      await evaluateServerLifecycleAuthorization(
         { ...APP_CORRELATION_ENV, HRC_SESSION_REF: 'agent:smokey:broken' },
         'maintenance'
       )
     ).toEqual({ allowed: false, message: MALFORMED_ENVELOPE_MESSAGE })
   })
 
-  it('R-L4 keeps inconsistent envelopes refused with the existing message', () => {
+  it('R-L4 keeps inconsistent envelopes refused with the existing message', async () => {
     expect(
-      evaluateServerLifecycleAuthorization(
+      await evaluateServerLifecycleAuthorization(
         {
           ...APP_CORRELATION_ENV,
           HRC_SESSION_REF: PRIMARY_SESSION,

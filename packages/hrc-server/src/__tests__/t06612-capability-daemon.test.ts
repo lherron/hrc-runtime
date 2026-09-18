@@ -14,6 +14,10 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { createSummonCapabilityObserver } from '../federation/summon-capability.js'
 import { SUMMON_GATE_REFUSAL_EVENT } from '../federation/summon-gate.js'
 import { type HrcServer, createHrcServer } from '../index.js'
+import {
+  type AspdObservationDouble,
+  startAspdObservationDouble,
+} from './fixtures/aspd-observation-doubles.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 const SCOPE_REF = 'agent:probe:project:fixture-project:task:T-06612'
@@ -36,12 +40,18 @@ function captureServerLog(): { lines: string[]; restore: () => void } {
 describe('materialization capability on a live isolated daemon', () => {
   let fixture: HrcServerTestFixture
   let server: HrcServer | undefined
+  let aspdDouble: AspdObservationDouble | undefined
+  let savedAspdSocket: string | undefined
 
   beforeEach(async () => {
     fixture = await createHrcTestFixture('hrc-t06612-capability-daemon-')
   })
 
   afterEach(async () => {
+    aspdDouble?.stop()
+    aspdDouble = undefined
+    if (savedAspdSocket === undefined) Reflect.deleteProperty(process.env, 'HRC_ASPD_SOCKET')
+    else process.env['HRC_ASPD_SOCKET'] = savedAspdSocket
     await server?.stop()
     await fixture.cleanup()
   })
@@ -75,6 +85,21 @@ describe('materialization capability on a live isolated daemon', () => {
         '',
       ].join('\n')
     )
+
+    // Fixture homes are invisible to a real aspd: serve declarations from the
+    // observation double with disk lookup over the fixture agents root.
+    savedAspdSocket = process.env['HRC_ASPD_SOCKET']
+    const aspdSocket = join(fixture.tmpDir, 'aspd.sock')
+    aspdDouble = startAspdObservationDouble(
+      aspdSocket,
+      {
+        releaseId: 'asp-capability-fixture',
+        sourceCommit: 'c'.repeat(40),
+        builtAt: '2026-09-18T00:00:00.000Z',
+      },
+      { agentsRoots: [agentsRoot] }
+    )
+    process.env['HRC_ASPD_SOCKET'] = aspdSocket
 
     const captured = captureServerLog()
     try {

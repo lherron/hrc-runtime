@@ -6,6 +6,10 @@
  * observations. Keep the request ledger behavioral: the route tests use it to
  * prove project-mode/context forwarding and the single-connection preview law.
  */
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { parseAgentProfile, resolveHarnessCatalogEntry } from 'spaces-config'
 import type { HarnessInvocationSpec, InvocationStartRequest } from 'spaces-harness-broker-protocol'
 import {
   type RuntimeIdentityAllocation,
@@ -24,6 +28,20 @@ export type ResolveScript =
 export type PromptScript = 'present' | 'absent' | 'invalid'
 
 export type AspdObservationOptions = {
+  /**
+   * Fixture agent home: when the declaration context carries no caller
+   * agentRoot, resolve the agent here instead of the canned default. Lets
+   * kicker/summon tests birth fixture agents (homes invisible to a real
+   * aspd) while keeping every other fact canned per script.
+   */
+  agentRoot?: string
+  /**
+   * Fixture agents roots searched in order (real homes appended
+   * automatically): a profile hit resolves with the REAL agent home, a total
+   * miss answers agent_not_found. Lets negative tests (unknown agents) keep
+   * failing while fixture agents birth.
+   */
+  agentsRoots?: string[]
   resolve?: ResolveScript
   prompt?: PromptScript
   inspectNonOk?: boolean
@@ -441,6 +459,135 @@ function resolveAbsentProfileCallerRootResponse(
     },
     []
   )
+}
+
+const REAL_AGENTS_ROOT = '/Users/lherron/praesidium/var/agents'
+
+type FixtureAgentHit = {
+  agentRoot: string
+  role?: string | undefined
+  harnessProvider?: string | undefined
+  harnessFrontend?: string | undefined
+  harnessId?: string | undefined
+  declaredHarness?: string | undefined
+  claimsTask: boolean
+  provisioningNode?: string | undefined
+  pins: Record<string, string>
+  homes: Record<string, string>
+  profileInvalid: boolean
+  profileAbsent: boolean
+}
+
+type ParsedFixtureProfile = {
+  identity?: { role?: string }
+  operator?: boolean
+  claims_task?: boolean
+  provisioning?: { harness?: string; node?: string }
+  placement?: { pins?: Record<string, string>; homes?: Record<string, string> }
+}
+
+function readFixtureProfile(profilePath: string): ParsedFixtureProfile {
+  return parseAgentProfile(
+    readFileSync(profilePath, 'utf8'),
+    profilePath
+  ) as unknown as ParsedFixtureProfile
+}
+
+function lookupFixtureAgent(
+  agentId: string,
+  roots: string[]
+):
+  | FixtureAgentHit
+  | { invalid: true; agentRoot: string }
+  | { absentProfile: true; agentRoot: string }
+  | undefined {
+  for (const root of [...roots, REAL_AGENTS_ROOT]) {
+    const home = join(root, agentId)
+    const profilePath = join(home, 'agent-profile.toml')
+    if (!existsSync(home)) continue
+    if (!existsSync(profilePath)) return { absentProfile: true, agentRoot: home }
+    let profile: ParsedFixtureProfile
+    try {
+      profile = readFixtureProfile(profilePath)
+    } catch {
+      return { invalid: true, agentRoot: home }
+    }
+    const declared = profile.provisioning?.harness
+    const entry =
+      (typeof declared === 'string' ? resolveHarnessCatalogEntry(declared) : undefined) ?? undefined
+    const role = profile.identity?.role
+    const pins =
+      profile.placement?.pins !== undefined && typeof profile.placement.pins === 'object'
+        ? (profile.placement.pins as Record<string, string>)
+        : {}
+    const homes =
+      profile.placement?.homes !== undefined && typeof profile.placement.homes === 'object'
+        ? (profile.placement.homes as Record<string, string>)
+        : {}
+    const node = profile.provisioning?.node
+    return {
+      agentRoot: home,
+      ...(typeof role === 'string' ? { role } : {}),
+      ...(entry !== undefined
+        ? {
+            harnessProvider: entry.provider,
+            harnessFrontend: entry.frontend,
+            harnessId: entry.id,
+            ...(typeof declared === 'string' ? { declaredHarness: declared } : {}),
+          }
+        : {}),
+      claimsTask: profile.claims_task === true,
+      ...(typeof node === 'string' ? { provisioningNode: node } : {}),
+      pins,
+      homes,
+      profileInvalid: false,
+      profileAbsent: false,
+    }
+  }
+  return undefined
+}
+
+function resolveFixtureResponse(
+  context: Record<string, unknown>,
+  hit: FixtureAgentHit,
+  identityRole?: string
+): Record<string, unknown> {
+  const out = resolveOkResponse(
+    { ...context, agentRoot: hit.agentRoot },
+    hit.role ?? identityRole
+  ) as Record<string, unknown> & {
+    provisioning: Record<string, unknown> & { scalars: Record<string, unknown> }
+    source: Record<string, Record<string, unknown>>
+    policy: Record<string, unknown>
+  }
+  // Project the profile's real placement policy (mirrors ASP provisioning():
+  // claims_task, provisioning.node, placement pins/homes) instead of the
+  // canned baseline, so pin/default-home tests read fixture declarations.
+  out['policy'] = {
+    claimsTask: hit.claimsTask,
+    ...(hit.provisioningNode !== undefined ? { provisioningNode: hit.provisioningNode } : {}),
+    placement: { pins: { ...hit.pins }, homes: { ...hit.homes } },
+  }
+  if (hit.harnessId !== undefined) {
+    const provisioning = out.provisioning
+    provisioning['effectiveHarness'] = hit.harnessId
+    provisioning['frontend'] = hit.harnessFrontend
+    provisioning['provider'] = hit.harnessProvider
+    const scalars = provisioning['scalars']
+    if (hit.declaredHarness !== undefined) {
+      scalars['harness'] = hit.declaredHarness
+      provisioning['declaredHarness'] = hit.declaredHarness
+    }
+    const source = out.source
+    source['agentProfile'] = {
+      state: 'valid',
+      code: 'parsed',
+      contentHash: 'sha256:agent-profile',
+      ...(hit.declaredHarness !== undefined ? { declaredHarness: hit.declaredHarness } : {}),
+      ...(hit.harnessProvider !== undefined ? { declaredProvider: hit.harnessProvider } : {}),
+    }
+  }
+  return out
 }
 
 function resolveResponse(
@@ -889,6 +1036,24 @@ function helloResponse(
   }
 }
 
+/** Capability observation: every fixture harness is available (the gate's
+ * `preparation: present` composite). Presence of the harness binary itself is
+ * covered by the deterministic-start/fake-broker shims in kicker tests.
+ */
+function capabilityResponse(params: Record<string, unknown>): Record<string, unknown> {
+  const harness = typeof params['harness'] === 'string' ? (params['harness'] as string) : 'claude'
+  return {
+    schemaVersion: 'aspc-observe-runtime-capability-response/v1',
+    ok: true,
+    harness: { requested: harness },
+    registration: { state: 'present', code: 'registered' },
+    nativeRuntime: { state: 'present', code: 'native_available' },
+    credentials: { state: 'present', code: 'credentials_not_required' },
+    preparation: { state: 'present', code: 'preparation_ready' },
+    diagnostics: [],
+  }
+}
+
 /**
  * Copied from evidence/double-parity/real/inspect_present.json and
  * evidence/double-parity/real/inspect_absent.json `inspect_*.reply.result`.
@@ -905,6 +1070,50 @@ function inspectResponse(
     prompt: promptResponse(prompt),
     effectiveEnvironmentHash: 'sha256:t08564-environment',
   }
+}
+
+function resolveDeclarationResult(
+  context: Record<string, unknown>,
+  options: AspdObservationOptions
+): Record<string, unknown> {
+  if (options.agentRoot !== undefined && typeof context['agentRoot'] !== 'string') {
+    context['agentRoot'] = options.agentRoot
+  }
+  const agentName = String(context['agentId'] ?? '')
+  const fixtureHit =
+    options.agentsRoots !== undefined &&
+    typeof context['agentRoot'] !== 'string' &&
+    agentName.length > 0
+      ? lookupFixtureAgent(agentName, options.agentsRoots)
+      : undefined
+  if (fixtureHit !== undefined && 'pins' in fixtureHit) {
+    return resolveFixtureResponse(context, fixtureHit, options.identityRole)
+  }
+  if (fixtureHit !== undefined && 'invalid' in fixtureHit) {
+    return resolveInvalidProfileTargetOnlyResponse({
+      ...context,
+      agentRoot: fixtureHit.agentRoot,
+    })
+  }
+  if (fixtureHit !== undefined && 'absentProfile' in fixtureHit) {
+    return resolveAbsentProfileCallerRootResponse({
+      ...context,
+      agentRoot: fixtureHit.agentRoot,
+    })
+  }
+  if (
+    options.agentsRoots !== undefined &&
+    typeof context['agentRoot'] !== 'string' &&
+    agentName.length > 0
+  ) {
+    return resolveAbsentResponse(context)
+  }
+  if (options.nonexistentAgentRoot === true) return resolveNonexistentCallerRootResponse(context)
+  if (options.absentAgentProfile === true) return resolveAbsentProfileCallerRootResponse(context)
+  if (options.invalidAgentProfileNoTarget === true)
+    return resolveInvalidProfileNoTargetResponse(context)
+  if (options.invalidAgentProfile === true) return resolveInvalidProfileTargetOnlyResponse(context)
+  return resolveResponse(context, options.resolve ?? 'ok', options.identityRole)
 }
 
 export function startAspdObservationDouble(
@@ -924,6 +1133,7 @@ export function startAspdObservationDouble(
     resolveRuntimeDeclaration: true,
     inspectRuntimePlacement: true,
     compileHarnessInvocation: true,
+    observeRuntimeCapability: true,
     ...options.capabilities,
   }
   const buffers = new Map<unknown, string>()
@@ -985,17 +1195,10 @@ export function startAspdObservationDouble(
             reply(socket as never, message.id, helloResponse(serving, options, capabilities))
           } else if (message.method === 'aspc.resolveRuntimeDeclaration') {
             const context = (params['context'] ?? {}) as Record<string, unknown>
-            const result =
-              options.nonexistentAgentRoot === true
-                ? resolveNonexistentCallerRootResponse(context)
-                : options.absentAgentProfile === true
-                  ? resolveAbsentProfileCallerRootResponse(context)
-                  : options.invalidAgentProfileNoTarget === true
-                    ? resolveInvalidProfileNoTargetResponse(context)
-                    : options.invalidAgentProfile === true
-                      ? resolveInvalidProfileTargetOnlyResponse(context)
-                      : resolveResponse(context, options.resolve ?? 'ok', options.identityRole)
+            const result = resolveDeclarationResult(context, options)
             reply(socket as never, message.id, result)
+          } else if (message.method === 'aspc.observeRuntimeCapability') {
+            reply(socket as never, message.id, capabilityResponse(params))
           } else if (message.method === 'aspc.inspectRuntimePlacement') {
             const context = (params['context'] ?? {}) as Record<string, unknown>
             reply(

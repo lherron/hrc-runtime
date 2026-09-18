@@ -1,5 +1,11 @@
-import { checkContinuationArtifact } from 'agent-spaces'
-import type { ContinuationArtifactResult } from 'agent-spaces'
+import { withAspdObservationSession } from './agent-spaces-adapter/aspd-observation-client.js'
+
+/**
+ * T-08597: vendored shape of agent-spaces ContinuationArtifactResult — the
+ * presence projection HRC renders. The FACT comes from aspd's
+ * `observeContinuationArtifact`, never from a local probe.
+ */
+export type ContinuationArtifactResult = 'present' | 'missing' | 'unknown'
 import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type {
   HrcRuntimeSnapshot,
@@ -251,22 +257,54 @@ export async function toTargetViewWithArtifactProbe(
   }
 }
 
+/** Placement + bundle recorded on the session's last applied intent, if parseable. */
+function parseIntentPlacement(
+  intent: HrcSessionRecord['lastAppliedIntentJson']
+): { placement: Record<string, unknown>; bundle: Record<string, unknown> } | undefined {
+  if (intent === null || typeof intent !== 'object') return undefined
+  const placement = (intent as Record<string, unknown>)['placement']
+  if (placement === null || typeof placement !== 'object') return undefined
+  const bundle = (placement as Record<string, unknown>)['bundle']
+  if (bundle === null || typeof bundle !== 'object') return undefined
+  return {
+    placement: placement as Record<string, unknown>,
+    bundle: bundle as Record<string, unknown>,
+  }
+}
+
 async function probeContinuationArtifact(
   session: HrcSessionRecord,
-  mode: 'stat' | 'scan'
+  _mode: 'stat' | 'scan'
 ): Promise<ContinuationArtifactPresence> {
-  if (session.status !== 'archived' || !session.continuation?.key) {
+  const continuationRef = session.status === 'archived' ? session.continuation : undefined
+  const continuationKey = continuationRef?.key
+  if (!continuationKey) {
     return 'unknown'
   }
 
   try {
-    return await checkContinuationArtifact(
-      {
-        provider: session.continuation.provider,
-        key: session.continuation.key,
-      },
-      { mode }
-    )
+    return await withAspdObservationSession(['observeContinuationArtifact'], async ({ client }) => {
+      const lastApplied = parseIntentPlacement(session.lastAppliedIntentJson)
+      const observed = await client.observeContinuationArtifact({
+        schemaVersion: 'aspc-observe-continuation-artifact-request/v1',
+        continuation: {
+          provider: continuationRef.provider,
+          key: continuationKey,
+        },
+        ...(lastApplied === undefined
+          ? {}
+          : {
+              historicalExecution: {
+                recordedPlacement: {
+                  placement: lastApplied.placement,
+                  bundle: lastApplied.bundle,
+                },
+              },
+            }),
+      })
+      if (!observed.ok) return 'unknown' as const
+      return observed.artifact.state
+    })
   } catch {
     return 'unknown'
   }

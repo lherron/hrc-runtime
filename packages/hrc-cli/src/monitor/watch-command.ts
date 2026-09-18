@@ -100,7 +100,7 @@ export async function cmdMonitorWatch(
     // presentation receipt names BEFORE anything derives from the selector set,
     // so store filters and fan-in defaults never see a foreign grammar.
     args = applyFanInDefaults(await withResolvedEnvelopeSelectors(parsedArgs))
-    io = deps ?? defaultDeps(args)
+    io = deps ?? (await defaultDeps(args))
   } catch (error) {
     const io = deps ?? { stdout: process.stdout, stderr: process.stderr }
     if (error instanceof CliUsageError) {
@@ -184,7 +184,7 @@ async function runWatch(
   const rawSelectors = selectorArgs(args)
   let selectorSpecs: MonitorSelectorSpec[]
   try {
-    selectorSpecs = parseMonitorSelectors(rawSelectors)
+    selectorSpecs = await parseMonitorSelectors(rawSelectors)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new CliUsageError(`invalid selector: ${message}`)
@@ -360,8 +360,8 @@ function selectorArgs(args: MonitorWatchArgs): string[] {
 
 // -- Default deps (live mode) -------------------------------------------------
 
-function defaultDeps(args: MonitorWatchArgs): MonitorWatchDeps {
-  const storeFilters = deriveStoreFilters(args)
+async function defaultDeps(args: MonitorWatchArgs): Promise<MonitorWatchDeps> {
+  const storeFilters = await deriveStoreFilters(args)
   return {
     buildMonitorState: (signal) =>
       buildLiveMonitorState(storeFilters, signal, args.fromSeq, args.last),
@@ -812,9 +812,11 @@ function buildEventFilter(args: MonitorWatchArgs): ((event: MonitorOutputEvent) 
  * Derive the store-layer filter (server-side SQL narrowing) from CLI args.
  * Returns undefined when no filter is active so the unfiltered fast path is kept.
  */
-function deriveStoreFilters(args: MonitorWatchArgs): HrcLifecycleMonitorFilters | undefined {
+async function deriveStoreFilters(
+  args: MonitorWatchArgs
+): Promise<HrcLifecycleMonitorFilters | undefined> {
   const spec = normalizeEventFilterSpec(args)
-  const selectorSpecs = parseMonitorSelectors(selectorArgs(args))
+  const selectorSpecs = await parseMonitorSelectors(selectorArgs(args))
   const exactSelector =
     selectorSpecs.length === 1 && selectorSpecs[0]?.kind === 'exact'
       ? selectorSpecs[0].selector

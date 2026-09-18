@@ -32,7 +32,7 @@
  *
  * ─────────────────────────────────────────────────────────────────────────────
  */
-import { describe, expect, it, mock } from 'bun:test'
+import { afterAll, describe, expect, it, mock } from 'bun:test'
 
 import type { HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
@@ -44,6 +44,10 @@ import {
   resolveRuntimeArg,
   resolveSessionArg,
 } from '../selector-resolve'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 // ---------------------------------------------------------------------------
 // Mock HrcClient builder

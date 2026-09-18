@@ -87,10 +87,10 @@ export class MailKicker implements MailKickerContext {
     return this.dependencies.resolveForeignHome(scopeRef)
   }
 
-  resolveRuntimeIntent(
+  async resolveRuntimeIntent(
     scopeRef: string,
     materializationIntent: string | undefined
-  ): HrcRuntimeIntent | undefined {
+  ): Promise<HrcRuntimeIntent | undefined> {
     return this.dependencies.resolveRuntimeIntent(scopeRef, materializationIntent)
   }
 

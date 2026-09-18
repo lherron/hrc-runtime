@@ -173,7 +173,7 @@ describe('T-08576 app-session birth identity boundary', () => {
       AGENT_GENERATION: '1',
       HRC_GENERATION: '1',
     })
-    const authorization = evaluateServerLifecycleAuthorization(env, 'must not authorize')
+    const authorization = await evaluateServerLifecycleAuthorization(env, 'must not authorize')
     expect(authorization).toEqual({
       allowed: false,
       message: PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE,
@@ -214,7 +214,7 @@ describe('T-08576 app-session birth identity boundary', () => {
       generation: 1,
       runtimeId: response.body.runtimeId,
     })
-    const authorization = evaluateServerLifecycleAuthorization(env, 'must not authorize')
+    const authorization = await evaluateServerLifecycleAuthorization(env, 'must not authorize')
     expect(authorization).toEqual({
       allowed: false,
       message: PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE,

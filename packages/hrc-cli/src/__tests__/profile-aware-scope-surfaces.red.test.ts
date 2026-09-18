@@ -1,9 +1,19 @@
+/**
+ * T-08597: profile-aware managed scope resolution over the daemon-backed SDK.
+ *
+ * Role/harness/placement facts arrive from the daemon (fake socket server
+ * here); the CLI asserts end-to-end scope shaping across run/start/attach
+ * --dry-run. The fake stands in for aspd-backed observation with the same
+ * fixture semantics the old local parser read: the project-local agents root
+ * wins, and its profile role becomes the scope default.
+ */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { main } from '../cli.js'
+import { type FakeDaemon, startFakeDaemon } from './fake-daemon.js'
 
 type CliResult = {
   stdout: string
@@ -21,17 +31,7 @@ let tempRoot: string
 let projectRoot: string
 let canonicalAgentsRoot: string
 let localAgentRoot: string
-const CODEX_SHIM_PATH = join(
-  import.meta.dir,
-  '..',
-  '..',
-  '..',
-  '..',
-  'integration-tests',
-  'fixtures',
-  'codex-shim',
-  'codex'
-)
+let daemon: FakeDaemon | undefined
 
 function profile(defaultScopeRole: string): string {
   return [
@@ -58,9 +58,9 @@ async function runCli(args: string[], tty = false): Promise<CliResult> {
   const originalStdoutTty = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
   const env = {
     ASP_AGENTS_ROOT: canonicalAgentsRoot,
-    ASP_CODEX_PATH: CODEX_SHIM_PATH,
     ASP_PROJECT: 'proj',
     ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
+    HRC_RUNTIME_DIR: daemon!.runtimeDir,
   }
   const originalEnv = new Map<string, string | undefined>()
 
@@ -138,9 +138,65 @@ beforeEach(async () => {
   await writeFile(join(projectRoot, 'asp-targets.toml'), 'schema = 1\nagents-root = "agents"\n')
   await writeFile(join(localAgentRoot, 'agent-profile.toml'), profile('tester'))
   await writeFile(join(canonicalAgentRoot, 'agent-profile.toml'), profile('coordinator'))
+
+  // Project-local agents root wins (the fixture's asp-targets.toml declares
+  // agents-root = "agents"); its profile role becomes the scope default.
+  daemon = startFakeDaemon({
+    placement: () => ({
+      agentId: 'clod',
+      projectId: 'proj',
+      agentRoot: localAgentRoot,
+      projectRoot,
+      cwd: projectRoot,
+      bundle: { kind: 'agent-project', agentName: 'clod', projectRoot },
+      bundleIdentity: 'test-identity',
+      harness: { provider: 'openai', frontend: 'codex-cli', effectiveHarness: 'codex' },
+      provision: { scalars: {} },
+      policy: { claimsTask: false, placement: { pins: {}, homes: {} } },
+      identity: { role: 'tester', operator: false },
+      agentSources: { agentsRoot: join(projectRoot, 'agents'), provenance: 'project-marker' },
+      searchedAgentRoots: [localAgentRoot],
+      source: {
+        agentProfile: 'valid',
+        projectTargets: 'valid',
+        selectedTarget: 'absent',
+        priming: 'valid',
+      },
+      resolution: { source: 'explicit-override', reason: 'test' },
+      warnings: [],
+      release: { releaseId: 'r', sourceCommit: 'c' },
+    }),
+    declaration: () => ({
+      intent: {
+        placement: {
+          agentRoot: localAgentRoot,
+          projectRoot,
+          cwd: projectRoot,
+          runMode: 'task',
+          bundle: { kind: 'agent-project', agentName: 'clod', projectRoot },
+          dryRun: false,
+        },
+        harness: { provider: 'openai', interactive: true, id: 'codex-cli' },
+        execution: { preferredMode: 'headless' },
+      },
+      declaration: {
+        release: { releaseId: 'r', sourceCommit: 'c' },
+        agentSources: { provenance: 'daemon-default' },
+        source: {
+          agentProfile: 'valid',
+          projectTargets: 'valid',
+          selectedTarget: 'absent',
+          priming: 'valid',
+        },
+        warnings: [],
+      },
+    }),
+  })
 })
 
 afterEach(async () => {
+  daemon?.stop()
+  daemon = undefined
   await rm(tempRoot, { recursive: true, force: true })
 })
 
@@ -164,6 +220,33 @@ describe('profile-aware managed HRC scope resolution', () => {
 
   test('an invalid configured role fails visibly instead of falling back to an un-roled scope', async () => {
     await writeFile(join(localAgentRoot, 'agent-profile.toml'), profile('not/a/role'))
+    daemon?.stop()
+    daemon = startFakeDaemon({
+      placement: () => ({
+        agentId: 'clod',
+        projectId: 'proj',
+        agentRoot: localAgentRoot,
+        projectRoot,
+        cwd: projectRoot,
+        bundle: { kind: 'agent-project', agentName: 'clod', projectRoot },
+        harness: { provider: 'openai', frontend: 'codex-cli', effectiveHarness: 'codex' },
+        provision: { scalars: {} },
+        policy: { claimsTask: false, placement: { pins: {}, homes: {} } },
+        identity: { role: 'not/a/role', operator: false },
+        agentSources: { provenance: 'daemon-default' },
+        searchedAgentRoots: [localAgentRoot],
+        source: {
+          agentProfile: 'valid',
+          projectTargets: 'valid',
+          selectedTarget: 'absent',
+          priming: 'valid',
+        },
+        resolution: { source: 'explicit-override', reason: 'test' },
+        warnings: [],
+        release: { releaseId: 'r', sourceCommit: 'c' },
+      }),
+      declaration: () => ({}),
+    })
 
     const result = await runCli(['start', 'clod@proj:T-12345', '--dry-run'])
 

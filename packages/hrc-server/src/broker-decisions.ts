@@ -7,7 +7,7 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
 } from 'hrc-core'
-import { resolveHarnessFrontendForProvider } from 'spaces-config'
+import { harnessFrontendToHrcHarness } from 'hrc-core'
 import { type InvocationStartRequest, isCredentialEnvKey } from 'spaces-harness-broker-protocol'
 import type { BrokerExecutionProfile, RuntimeContinuationRef } from 'spaces-runtime-contracts'
 
@@ -74,9 +74,19 @@ export function deriveSdkHarness(
   if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
     return harness.id
   }
-  const frontend = resolveHarnessFrontendForProvider(harness.provider, 'sdk')
+  // HRC's SDK-executor routing (not catalog interpretation): the anthropic
+  // SDK lane serves anthropic, the pi SDK lane serves openai; anything else
+  // keeps the legacy SDK fallback. Matches resolveHarnessFrontendForProvider
+  // byte-for-byte over the admitted provider set.
+  const frontend =
+    harness.provider === 'anthropic'
+      ? 'agent-sdk'
+      : harness.provider === 'openai'
+        ? 'pi-sdk'
+        : undefined
+  const admitted = harnessFrontendToHrcHarness(frontend)
   // Only HRC-known harness ids pass through; anything else keeps the legacy SDK fallback.
-  return frontend !== undefined && isHrcHarness(frontend) ? frontend : 'agent-sdk'
+  return admitted !== undefined && isHrcHarness(admitted) ? admitted : 'agent-sdk'
 }
 
 const HRC_HARNESS_IDS: ReadonlySet<string> = new Set<HrcHarness>([

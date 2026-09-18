@@ -1,4 +1,4 @@
-import { getAspHome } from 'spaces-config'
+import { getAspHome } from 'hrc-core'
 
 /**
  * The `aspHome` / `spec` / `cwd` triad that the agent-spaces request types

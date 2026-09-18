@@ -1,9 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { installOldEngineDaemon } from '../../__tests__/old-engine-daemon.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 describe('resolveRuntimeIntentForTarget', () => {
   let tmp: string
@@ -50,7 +54,7 @@ describe('resolveRuntimeIntentForTarget', () => {
     )
     await writeFile(join(localAgentRoot, 'agent-profile.toml'), 'version = 3\n', 'utf8')
 
-    const intent = resolveRuntimeIntentForTarget('localbot@project')
+    const intent = await resolveRuntimeIntentForTarget('localbot@project')
 
     expect(intent.placement.agentRoot).toBe(localAgentRoot)
     expect(intent.placement.cwd).toBe(projectRoot)
@@ -78,7 +82,7 @@ describe('resolveRuntimeIntentForTarget', () => {
     )
     await writeFile(join(localAgentRoot, 'agent-profile.toml'), 'version = 3\n', 'utf8')
 
-    const intent = resolveRuntimeIntentForTarget(
+    const intent = await resolveRuntimeIntentForTarget(
       'localbot@project:t07402smoke3+node=lab+model=sonnet'
     )
 
@@ -94,7 +98,7 @@ describe('resolveRuntimeIntentForTarget', () => {
       'utf8'
     )
 
-    expect(() => resolveRuntimeIntentForTarget('missing@project')).toThrow(
+    await expect(resolveRuntimeIntentForTarget('missing@project')).rejects.toThrow(
       `agent "missing" not found; searched: ${join(localAgentsRoot, 'missing')}, ${join(canonicalAgentsRoot, 'missing')}`
     )
   })

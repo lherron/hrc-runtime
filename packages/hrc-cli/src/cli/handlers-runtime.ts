@@ -724,12 +724,15 @@ export async function cmdLaunchList(args: string[]): Promise<void> {
  * next kind"; any other resolution failure (ambiguous, parse-error) is fatal so
  * we never silently pick the wrong object.
  */
-function resolveShowTarget(rawArg: string, snapshot: SelectorSnapshot): ResolvedTarget {
+async function resolveShowTarget(
+  rawArg: string,
+  snapshot: SelectorSnapshot
+): Promise<ResolvedTarget> {
   const order: SelectorTargetKind[] = ['runtime', 'host-session', 'message']
   let lastTypeMismatch: SelectorResolutionError | undefined
   for (const expect of order) {
     try {
-      return resolveSelectorTarget(rawArg, { expect, snapshot })
+      return await resolveSelectorTarget(rawArg, { expect, snapshot })
     } catch (err) {
       if (err instanceof SelectorResolutionError && err.code === 'type-mismatch') {
         lastTypeMismatch = err
@@ -792,7 +795,7 @@ export async function cmdShow(args: string[]): Promise<void> {
   const client = createClient()
 
   const snapshot = await fetchSelectorSnapshot(client)
-  const target = resolveShowTarget(selectorArg, snapshot)
+  const target = await resolveShowTarget(selectorArg, snapshot)
 
   if (target.kind === 'runtime') {
     const result = await client.inspectRuntime({ runtimeId: target.runtimeId })

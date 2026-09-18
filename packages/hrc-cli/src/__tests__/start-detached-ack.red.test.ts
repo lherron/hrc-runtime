@@ -1,7 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
 const TASK_ID = 'T-07654'
@@ -26,6 +30,8 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
   let stub: ReturnType<typeof Bun.serve> | undefined
   let stubMode: StubMode
   let turnRequests: Array<Record<string, unknown>>
+  let savedAgentsRoot: string | undefined
+  let savedProjectRootOverride: string | undefined
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'hrc-start-detached-ack-'))
@@ -42,6 +48,17 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
     await mkdir(projectRoot, { recursive: true })
     await writeFile(join(agentsRoot, 'rex', 'agent-profile.toml'), 'version = 3\n')
     await writeFile(join(projectRoot, 'asp-targets.toml'), 'schema = 1\n')
+
+    // The subprocess CLI resolves scope through the daemon. Serve frozen
+    // placement/declaration semantics from the old engine (which reads the
+    // fixture roots from THIS process env) and proxy sessions/turns to the stub.
+    const agentsRootKey = 'ASP_AGENTS_ROOT'
+    const projectRootOverrideKey = 'ASP_PROJECT_ROOT_OVERRIDE'
+    savedAgentsRoot = process.env[agentsRootKey]
+    savedProjectRootOverride = process.env[projectRootOverrideKey]
+    process.env[agentsRootKey] = agentsRoot
+    process.env[projectRootOverrideKey] = projectRoot
+    oldEngineDaemon.setProxy(join(runtimeRoot, 'hrc.sock'))
 
     stub = Bun.serve({
       unix: join(runtimeRoot, 'hrc.sock'),
@@ -112,6 +129,13 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
   })
 
   afterEach(async () => {
+    oldEngineDaemon.setProxy(undefined)
+    const agentsRootKey = 'ASP_AGENTS_ROOT'
+    const projectRootOverrideKey = 'ASP_PROJECT_ROOT_OVERRIDE'
+    if (savedAgentsRoot === undefined) delete process.env[agentsRootKey]
+    else process.env[agentsRootKey] = savedAgentsRoot
+    if (savedProjectRootOverride === undefined) delete process.env[projectRootOverrideKey]
+    else process.env[projectRootOverrideKey] = savedProjectRootOverride
     stub?.stop(true)
     stub = undefined
     await rm(root, { recursive: true, force: true })
@@ -137,7 +161,7 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
         cwd: projectRoot,
         env: {
           ...cleanEnv,
-          HRC_RUNTIME_DIR: runtimeRoot,
+          HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
           HRC_STATE_DIR: stateRoot,
           ASP_AGENTS_ROOT: agentsRoot,
           ASP_PROJECT_ROOT_OVERRIDE: projectRoot,

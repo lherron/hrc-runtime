@@ -1,4 +1,4 @@
-import type { AttachmentRef } from 'spaces-runtime'
+import type { HrcAttachmentRef as AttachmentRef } from './placement-conventions.js'
 
 /**
  * Shared HTTP wire request/response DTOs consumed by both hrc-server and hrc-sdk.

@@ -1,7 +1,11 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, describe, expect, test } from 'bun:test'
 import type { HrcMonitorState } from 'hrc-core'
 
 import { cmdMonitorWatch } from '../monitor-watch.js'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 const BASE = 'agent:observer:project:hrc-runtime:task:T-05113'
 const VERIFY = `${BASE}:role:verify`

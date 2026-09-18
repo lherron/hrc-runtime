@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { createSummonCapabilityObserver } from '../federation/summon-capability.js'
 import type { SummonCapabilityHint } from '../federation/summon-gate.js'
+import {
+  type AspdObservationDouble,
+  startAspdObservationDouble,
+} from './fixtures/aspd-observation-doubles.js'
 
 const SCOPE = 'agent:probe:project:fixture-project:task:T-06612'
 
@@ -14,6 +18,9 @@ describe('node materialization capability observer', () => {
   let projectRoot: string
   let agentRoot: string
   let userHome: string
+  let aspdDouble: AspdObservationDouble | undefined
+  let savedAspdSocket: string | undefined
+  let aspdSocket: string
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'hrc-t06612-capability-'))
@@ -38,9 +45,27 @@ describe('node materialization capability observer', () => {
         '',
       ].join('\n')
     )
+    // Fixture homes are invisible to a real aspd: serve declarations from the
+    // observation double with disk lookup over the fixture agents root.
+    savedAspdSocket = process.env['HRC_ASPD_SOCKET']
+    aspdSocket = join(root, 'aspd.sock')
+    aspdDouble = startAspdObservationDouble(
+      aspdSocket,
+      {
+        releaseId: 'asp-capability-fixture',
+        sourceCommit: 'c'.repeat(40),
+        builtAt: '2026-09-18T00:00:00.000Z',
+      },
+      { agentsRoots: [join(root, 'agents')] }
+    )
+    process.env['HRC_ASPD_SOCKET'] = aspdSocket
   })
 
   afterEach(async () => {
+    aspdDouble?.stop()
+    aspdDouble = undefined
+    if (savedAspdSocket === undefined) Reflect.deleteProperty(process.env, 'HRC_ASPD_SOCKET')
+    else process.env['HRC_ASPD_SOCKET'] = savedAspdSocket
     await rm(root, { recursive: true, force: true })
   })
 

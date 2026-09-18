@@ -1,9 +1,8 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 
 import { parseScopeRef } from 'agent-scope'
 import { resolveRuntimeRoot, splitSessionRef } from 'hrc-core'
-import { getAgentsRoot, parseAgentProfile } from 'spaces-config'
+import { HrcClient, discoverSocket } from 'hrc-sdk'
 
 export type ServerLifecycleCallerKind = 'operator' | 'operator-agent' | 'primary' | 'seat'
 
@@ -58,18 +57,36 @@ function normalizedOptionalText(value: string | undefined): string | null {
   return normalized ? normalized : null
 }
 
-function callerAgentIsOperator(
-  agentId: string,
-  env: Readonly<Record<string, string | undefined>>
-): boolean {
-  const agentsRoot = getAgentsRoot({ env: { ...env } })
-  if (agentsRoot === undefined) return false
+export type OperatorResolver = (agentId: string) => Promise<boolean> | boolean
 
-  const profilePath = join(agentsRoot, agentId, 'agent-profile.toml')
-  if (!existsSync(profilePath)) return false
-
+/**
+ * T-08597: the operator flag is ASP profile interpretation — observed from the
+ * installed daemon (`POST /v1/placements/resolve` → identity.operator), never
+ * parsed from `agent-profile.toml` in-process. Unreachable daemon or unresoved
+ * agent fails closed to `false`: missing operator evidence grants no
+ * operator-agent exception (declaration-observation-consumer law).
+ */
+export async function defaultOperatorResolver(agentId: string): Promise<boolean> {
+  let client: HrcClient
   try {
-    return parseAgentProfile(readFileSync(profilePath, 'utf8'), profilePath).operator === true
+    client = new HrcClient(discoverSocket())
+  } catch {
+    return false
+  }
+  try {
+    const response = await client.resolvePlacement({ agentId, runMode: 'task' })
+    return response.identity.operator === true
+  } catch {
+    return false
+  }
+}
+
+async function callerAgentIsOperator(
+  agentId: string,
+  resolveOperator: OperatorResolver
+): Promise<boolean> {
+  try {
+    return (await resolveOperator(agentId)) === true
   } catch {
     return false
   }
@@ -80,10 +97,11 @@ function callerAgentIsOperator(
  * envelope. A wholly absent envelope is an operator shell. Any present but
  * unparseable or internally inconsistent envelope fails closed.
  */
-export function evaluateServerLifecycleAuthorization(
+export async function evaluateServerLifecycleAuthorization(
   env: Readonly<Record<string, string | undefined>>,
-  reason: string | undefined
-): ServerLifecycleAuthorization {
+  reason: string | undefined,
+  options: { resolveOperator?: OperatorResolver | undefined } = {}
+): Promise<ServerLifecycleAuthorization> {
   const requestedReason = normalizedOptionalText(reason)
   const sessionRef = env['HRC_SESSION_REF']
   const aspScopeRef = env['ASP_SCOPE_REF']
@@ -172,7 +190,12 @@ export function evaluateServerLifecycleAuthorization(
     }
   }
 
-  if (callerAgentIsOperator(parsedScope.agentId, env)) {
+  if (
+    await callerAgentIsOperator(
+      parsedScope.agentId,
+      options.resolveOperator ?? defaultOperatorResolver
+    )
+  ) {
     if (requestedReason === null) {
       return {
         allowed: false,

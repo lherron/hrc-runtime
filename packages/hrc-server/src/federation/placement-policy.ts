@@ -1,5 +1,5 @@
 /**
- * Declared placement policy, read from the agent profile (T-06613).
+ * Declared placement policy, observed from the agent's declaration (T-08597).
  *
  * `hrc target locate` has to answer "what does policy SAY" independently of
  * "what actually happened", because the whole point of skew is that those two
@@ -13,17 +13,22 @@
  * those failures so `evaluateSummonGate` emits `policy-unavailable` instead of
  * manufacturing an `undeclared-placement` refusal.
  *
- * NON-FATAL BY CONSTRUCTION. Every failure to read a profile becomes a typed
+ * NON-FATAL BY CONSTRUCTION. Every observation failure becomes a typed
  * outcome, never a throw: an operator running locate on a broken profile needs
  * to SEE "this profile is unreadable, here is why" alongside the ledger truth,
  * not lose the whole report to an exception.
+ *
+ * T-08597: the `[placement]` stanza (pins/homes), `claims_task`, and the
+ * provisioning node arrive via the daemon's in-process aspd declaration
+ * observation — HRC no longer parses `agent-profile.toml` itself. Agent-root
+ * discovery stays HRC policy (explicit override, then observation search).
  */
 
-import { readFileSync } from 'node:fs'
-
 import { parseScopeRef } from 'agent-scope'
-import { parseAgentProfile, resolveAgentPlacementPaths } from 'spaces-config'
+import { HrcDomainError, HrcErrorCode } from 'hrc-core'
+import type { ResolvePlacementResponse } from 'hrc-core'
 
+import { resolvePlacementInProcess } from '../placements-resolve.js'
 import type { SummonGatePolicy } from './summon-gate.js'
 
 /** Filename of the agent runtime profile, relative to an agent root. */
@@ -38,13 +43,21 @@ export type PlacementPolicyResolution =
   /** The profile exists but could not be read or parsed. Visible, never silent. */
   | { outcome: 'unreadable'; detail: string; profilePath?: string | undefined }
 
+export type PlacementPolicyObservation = (
+  input: Parameters<typeof resolvePlacementInProcess>[0]
+) => Promise<ResolvePlacementResponse>
+
 export type ResolvePlacementPolicyOptions = {
   /** Overrides agent-root discovery. Tests pass this; production omits it. */
   agentRoot?: string | undefined
   cwd?: string | undefined
   env?: Record<string, string | undefined> | undefined
-  /** Injected for tests; defaults to a real UTF-8 file read. */
-  readFile?: ((path: string) => string) | undefined
+  /** Test seam; production observes via the in-process placements resolver. */
+  observe?: PlacementPolicyObservation | undefined
+}
+
+function profilePathFor(agentRoot: string): string {
+  return `${agentRoot.replace(/\/+$/, '')}/${AGENT_PROFILE_FILENAME}`
 }
 
 /**
@@ -54,16 +67,18 @@ export type ResolvePlacementPolicyOptions = {
  * `project:task` inside one agent's profile, so the lookup is agent-scoped even
  * though the question is asked about a task scope.
  */
-export function resolvePlacementPolicy(
+export async function resolvePlacementPolicy(
   scopeRef: string,
   options: ResolvePlacementPolicyOptions = {}
-): PlacementPolicyResolution {
+): Promise<PlacementPolicyResolution> {
   let agentId: string | undefined
   let projectId: string | undefined
+  let taskId: string | undefined
   try {
     const parsed = parseScopeRef(scopeRef)
     agentId = parsed.agentId
     projectId = parsed.projectId
+    taskId = parsed.taskId
   } catch {
     return {
       outcome: 'not-an-agent-scope',
@@ -78,87 +93,81 @@ export function resolvePlacementPolicy(
     }
   }
 
-  let agentRoot = options.agentRoot
-  let searchedAgentRoots: readonly string[] = agentRoot === undefined ? [] : [agentRoot]
-  if (agentRoot === undefined) {
-    let paths: ReturnType<typeof resolveAgentPlacementPaths>
-    try {
-      paths = resolveAgentPlacementPaths({
-        agentId,
-        ...(projectId === undefined ? {} : { projectId }),
-        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-        ...(options.env === undefined ? {} : { env: options.env }),
-      })
-    } catch (error) {
-      return {
-        outcome: 'unreadable',
-        detail: `Could not locate an agent root for "${agentId}": ${errorText(error)}`,
-      }
-    }
-    agentRoot = paths.agentRoot
-    searchedAgentRoots = paths.searchedAgentRoots ?? []
-    if (agentRoot === undefined) {
+  let observation: ResolvePlacementResponse
+  const observe = options.observe ?? resolvePlacementInProcess
+  try {
+    observation = await observe({
+      agentId,
+      ...(projectId !== undefined ? { projectId } : {}),
+      ...(taskId !== undefined ? { taskId } : {}),
+      cwd: options.cwd ?? process.cwd(),
+      ...(options.agentRoot !== undefined ? { agentRoot: options.agentRoot } : {}),
+      runMode: 'task',
+    })
+  } catch (error) {
+    // The daemon searched and found no agent home: that is the no-profile
+    // outcome (same detail the local resolver produced), not an unreadable
+    // declaration.
+    if (
+      error instanceof HrcDomainError &&
+      error.code === HrcErrorCode.DECLARATION_INVALID &&
+      (error.detail as { producerCode?: unknown } | undefined)?.producerCode === 'agent_not_found'
+    ) {
+      const searched = error.detail as { searchedAgentRoots?: readonly string[] } | undefined
       return {
         outcome: 'no-profile',
         detail: `No agent root found for "${agentId}", so no [placement] stanza could be read.`,
-        searchedAgentRoots,
-      }
-    }
-  }
-
-  const profilePath = `${agentRoot.replace(/\/+$/, '')}/${AGENT_PROFILE_FILENAME}`
-  const read = options.readFile ?? ((path: string) => readFileSync(path, 'utf8'))
-
-  let content: string
-  try {
-    content = read(profilePath)
-  } catch (error) {
-    if (isNotFound(error)) {
-      return {
-        outcome: 'no-profile',
-        detail: `${profilePath} does not exist, so this agent declares no placement.`,
-        searchedAgentRoots,
+        searchedAgentRoots: searched?.searchedAgentRoots ?? [],
       }
     }
     return {
       outcome: 'unreadable',
-      detail: `Could not read ${profilePath}: ${errorText(error)}`,
-      profilePath,
+      detail: `Could not observe a declaration for "${agentId}": ${errorText(error)}`,
     }
   }
 
-  let profile: ReturnType<typeof parseAgentProfile>
-  try {
-    profile = parseAgentProfile(content, profilePath)
-  } catch (error) {
+  const agentRoot = observation.agentRoot
+  const searchedAgentRoots = observation.searchedAgentRoots
+  if (agentRoot === undefined) {
+    return {
+      outcome: 'no-profile',
+      detail: `No agent root found for "${agentId}", so no [placement] stanza could be read.`,
+      searchedAgentRoots,
+    }
+  }
+
+  const profilePath = profilePathFor(agentRoot)
+  const source = observation.source
+  if (source.agentProfile === 'absent') {
+    return {
+      outcome: 'no-profile',
+      detail: `${profilePath} does not exist, so this agent declares no placement.`,
+      searchedAgentRoots,
+    }
+  }
+  if (source.agentProfile === 'invalid' || source.projectTargets === 'invalid') {
+    const diagnostics = observation.warnings.join(' ')
+    const profilePath = profilePathFor(agentRoot)
     return {
       outcome: 'unreadable',
-      detail: `Could not parse ${profilePath}: ${errorText(error)}`,
+      detail: `Could not interpret the declaration for "${agentId}" at ${profilePath}: ${diagnostics || 'invalid source'}`,
       profilePath,
     }
   }
 
-  const v3Profile = profile as unknown as {
-    claims_task?: boolean
-    provisioning?: { node?: string }
-    placement?: { pins: Record<string, string>; homes: Record<string, string> }
-  }
-  const placement = v3Profile.placement
-  const node = v3Profile.provisioning?.node
+  const policy = observation.policy
   return {
     outcome: 'resolved',
     profilePath,
     policy: {
-      claimsTask: v3Profile.claims_task ?? false,
-      ...(node === undefined ? {} : { provisioning: { node } }),
-      ...(placement === undefined
+      claimsTask: policy.claimsTask,
+      ...(policy.provisioningNode === undefined
         ? {}
-        : {
-            placement: {
-              pins: { ...placement.pins },
-              homes: { ...placement.homes },
-            },
-          }),
+        : { provisioning: { node: policy.provisioningNode } }),
+      placement: {
+        pins: { ...policy.placement.pins },
+        homes: { ...policy.placement.homes },
+      },
     },
   }
 }
@@ -173,7 +182,7 @@ export function createPlacementPolicyResolver(
   options: ResolvePlacementPolicyOptions = {}
 ): (scopeRef: string) => Promise<SummonGatePolicy | undefined> {
   return async (scopeRef: string) => {
-    const resolution = resolvePlacementPolicy(scopeRef, options)
+    const resolution = await resolvePlacementPolicy(scopeRef, options)
     if (resolution.outcome === 'resolved') return resolution.policy
 
     // The gate has already filtered synthetic app scopes before consulting
@@ -182,17 +191,11 @@ export function createPlacementPolicyResolver(
     if (resolution.outcome === 'not-an-agent-scope') return undefined
 
     // A profile that exists and omits [placement] resolves successfully above
-    // with `policy.placement === undefined`; that is the one real
-    // undeclared-placement signal. Missing or unreadable materialization is a
-    // different fact and the gate's catch path makes it visibly retryable.
+    // with empty pins/homes; that is the one real undeclared-placement signal.
+    // Missing or unreadable materialization is a different fact and the gate's
+    // catch path makes it visibly retryable.
     throw new Error(resolution.detail)
   }
-}
-
-function isNotFound(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT'
-  )
 }
 
 function errorText(error: unknown): string {

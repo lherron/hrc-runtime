@@ -8,7 +8,7 @@ export async function deliverFailureNotices(
   if (presentationRuntimeIdFor(server, session) === undefined) return
   const intent =
     session.lastAppliedIntentJson ??
-    server.resolveRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, undefined)
+    (await server.resolveRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, undefined))
   if (intent === undefined) return
   const prompt = notices.map((notice) => notice.notice).join('\n\n')
   try {

@@ -13,18 +13,26 @@ export type MonitorSelectorSpec =
 
 const TASK_ID_PATTERN = /^T-\d+$/
 
-export function parseMonitorSelectors(rawSelectors: readonly string[]): MonitorSelectorSpec[] {
-  return rawSelectors.map((raw) => {
-    if (TASK_ID_PATTERN.test(raw)) {
-      return { kind: 'task', raw, taskId: raw }
-    }
-    if (raw.startsWith('scope:') && raw.endsWith(':*')) {
-      const prefix = raw.slice('scope:'.length, -1)
-      if (!prefix) throw new Error('scope prefix cannot be empty')
-      return { kind: 'scope-prefix', raw, prefix }
-    }
-    return { kind: 'exact', raw, selector: parseProfileAwareSelector(raw) }
-  })
+export async function parseMonitorSelectors(
+  rawSelectors: readonly string[]
+): Promise<MonitorSelectorSpec[]> {
+  return Promise.all(
+    rawSelectors.map(async (raw) => {
+      if (TASK_ID_PATTERN.test(raw)) {
+        return { kind: 'task', raw, taskId: raw } as MonitorSelectorSpec
+      }
+      if (raw.startsWith('scope:') && raw.endsWith(':*')) {
+        const prefix = raw.slice('scope:'.length, -1)
+        if (!prefix) throw new Error('scope prefix cannot be empty')
+        return { kind: 'scope-prefix', raw, prefix } as MonitorSelectorSpec
+      }
+      return {
+        kind: 'exact',
+        raw,
+        selector: await parseProfileAwareSelector(raw),
+      } as MonitorSelectorSpec
+    })
+  )
 }
 
 export function isFanInSelectorSet(specs: readonly MonitorSelectorSpec[]): boolean {

@@ -469,11 +469,11 @@ function isPrimaryScopeRef(scopeRef: string): boolean {
   return scopeRef.endsWith(':task:primary') || !scopeRef.includes(':task:')
 }
 
-function normalizeLocalProjectSuccessorIntent(
+async function normalizeLocalProjectSuccessorIntent(
   scopeRef: string,
   intent: HrcRuntimeIntent | undefined,
   origin: 'local' | 'federated-ingress'
-): HrcRuntimeIntent | undefined {
+): Promise<HrcRuntimeIntent | undefined> {
   if (
     intent === undefined ||
     origin === 'federated-ingress' ||
@@ -482,7 +482,7 @@ function normalizeLocalProjectSuccessorIntent(
     return intent
   }
 
-  const resolved = resolveNodeLocalPlacement(scopeRef, {
+  const resolved = await resolveNodeLocalPlacement(scopeRef, {
     env: process.env,
     cwd: process.cwd(),
   })
@@ -524,7 +524,7 @@ async function createNotifiedSessionSuccessor(
   // address belongs to its own incarnation whether or not one is attached, and
   // mail to an absent host stays a truthful open obligation (R-4.3.3).
   assertReservedAddressAllowsBirth(server, session.scopeRef, session.laneRef)
-  const capabilityIntent = normalizeLocalProjectSuccessorIntent(
+  const capabilityIntent = await normalizeLocalProjectSuccessorIntent(
     session.scopeRef,
     intent ?? session.lastAppliedIntentJson,
     origin

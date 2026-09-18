@@ -21,7 +21,7 @@
  *
  * Reference: T-00946 (parent), T-00957 (CLI implementation task)
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
 
 import { HrcClient } from 'hrc-sdk'
@@ -41,6 +41,10 @@ import {
   socketPath,
   teardownCliFixture,
 } from './fixtures/cli.fixture'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 beforeEach(setupCliFixture)
 afterEach(teardownCliFixture)
@@ -61,11 +65,11 @@ describe('hrc run', () => {
         { taskId: 'T-00123', prompt: undefined },
         { taskId: 'T-00124', prompt: 'Fix the bug' },
       ]) {
-        const scope = resolveManagedScopeContext(`rex@agent-spaces:${testCase.taskId}`, {
+        const scope = await resolveManagedScopeContext(`rex@agent-spaces:${testCase.taskId}`, {
           projectRootOverride: join(projectsRoot, 'agent-spaces'),
           registerPolicy: 'never',
         })
-        const intent = buildManagedRunIntent(scope, { prompt: testCase.prompt })
+        const intent = await buildManagedRunIntent(scope, { prompt: testCase.prompt })
         const resolved = await client.resolveSession({
           sessionRef: scope.sessionRef,
           runtimeIntent: intent,

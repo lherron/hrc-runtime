@@ -8,8 +8,8 @@ import { formatCaptureState } from './handlers-runtime.js'
 import { localCliDispatchOrigin } from './handlers-scope-cmd.js'
 import { createClient, fatal } from './shared.js'
 
-function requireOperatorPrincipal(): string {
-  const authorization = evaluateServerLifecycleAuthorization(process.env, undefined)
+async function requireOperatorPrincipal(): Promise<string> {
+  const authorization = await evaluateServerLifecycleAuthorization(process.env, undefined)
   if (!authorization.allowed || authorization.callerKind !== 'operator') {
     fatal(
       authorization.allowed
@@ -75,7 +75,7 @@ export async function cmdCaptureRelease(args: string[]): Promise<void> {
   const note = parseFlag(args, '--note')
   const response = await client.brokerCaptureRelease({
     runtimeId,
-    operatorPrincipal: requireOperatorPrincipal(),
+    operatorPrincipal: await requireOperatorPrincipal(),
     rawRecordId,
     disposition,
     ...(normalizedAs !== undefined ? { normalizedAs } : {}),

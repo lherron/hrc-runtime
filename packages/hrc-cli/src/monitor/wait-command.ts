@@ -98,7 +98,7 @@ async function runMonitorWait(
 
   let selectorSpecs: MonitorSelectorSpec[]
   try {
-    selectorSpecs = parseMonitorSelectors(options.selectorRaws)
+    selectorSpecs = await parseMonitorSelectors(options.selectorRaws)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new CliUsageError(`invalid selector: ${message}`)

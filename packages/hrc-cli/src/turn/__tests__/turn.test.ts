@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, describe, expect, it } from 'bun:test'
 import type {
   EnqueueSubmissionRequest,
   HrcLifecycleEvent,
@@ -10,6 +10,7 @@ import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
 import { TURN_EXIT_RUNTIME_DEAD, TURN_EXIT_SIGINT, TURN_EXIT_STALL } from '../commands/turn.js'
 
+import { installOldEngineDaemon } from '../../__tests__/old-engine-daemon.js'
 import {
   createTurnClient,
   fakeTurnDependencies,
@@ -18,6 +19,9 @@ import {
   makeSteerResponse,
   runTurnCommand,
 } from './turn-test-harness.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 // -- Tests --------------------------------------------------------------------
 

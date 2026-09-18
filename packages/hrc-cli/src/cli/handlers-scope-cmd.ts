@@ -268,13 +268,13 @@ export async function cmdRun(
 
   let sessionRef: string | undefined
   try {
-    const scope = resolveManagedScopeContext(scopeInput, {
+    const scope = await resolveManagedScopeContext(scopeInput, {
       projectIdOverride,
       projectRootOverride,
       registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
     })
     sessionRef = scope.sessionRef
-    const intent = buildManagedRunIntent(scope, { prompt, debug })
+    const intent = await buildManagedRunIntent(scope, { prompt, debug })
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
 
     if (dryRun) {
@@ -456,14 +456,14 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
 
   let sessionRef: string | undefined
   try {
-    const scope = resolveManagedScopeContext(scopeInput, {
+    const scope = await resolveManagedScopeContext(scopeInput, {
       projectIdOverride,
       projectRootOverride,
       cwdOverride,
       registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
     })
     sessionRef = scope.sessionRef
-    const intent = buildManagedRunIntent(scope, { prompt, debug })
+    const intent = await buildManagedRunIntent(scope, { prompt, debug })
 
     if (dryRun) {
       const w = (s: string) => process.stdout.write(`${s}\n`)
@@ -632,14 +632,14 @@ export async function cmdStart(args: string[]): Promise<void> {
 
   let sessionRef: string | undefined
   try {
-    const scope = resolveManagedScopeContext(scopeInput, {
+    const scope = await resolveManagedScopeContext(scopeInput, {
       projectIdOverride,
       projectRootOverride,
       cwdOverride,
       registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
     })
     sessionRef = scope.sessionRef
-    const intent = buildManagedStartIntent(scope, {
+    const intent = await buildManagedStartIntent(scope, {
       prompt,
       debug,
       ...(viewerWindow !== undefined ? { viewerWindow } : {}),
@@ -1069,7 +1069,7 @@ export async function cmdAttach(args: string[]): Promise<void> {
 
   let sessionRef: string | undefined
   try {
-    const scope = resolveManagedScopeContext(target)
+    const scope = await resolveManagedScopeContext(target)
     sessionRef = scope.sessionRef
 
     if (dryRun) {

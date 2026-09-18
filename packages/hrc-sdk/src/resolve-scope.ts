@@ -1,13 +1,23 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+/**
+ * T-08597 — daemon-backed profile-aware scope resolution.
+ *
+ * Same names and result shapes; the authoritative profile (default role) and
+ * placement now come from the installed daemon (`POST /v1/placements/resolve`,
+ * aspd-observed) instead of local `spaces-config` parsing. Scope parsing
+ * itself stays local and pure (`agent-scope`). A missing/unreachable daemon
+ * socket is a typed `runtime_unavailable` HrcDomainError.
+ */
 
 import { type ResolvedScopeInput, resolveQualifiedScopeInput } from 'agent-scope'
-import { parseAgentProfile } from 'spaces-config'
 
+import type { ResolvePlacementResponse } from 'hrc-core'
 import {
   type HrcResolvedAgentPlacementPaths,
   type ResolveHrcAgentPlacementPathsOptions,
-  resolveHrcAgentPlacementPaths,
+  isAgentNotFoundError,
+  resolvePlacementObservation,
+  toMissedPaths,
+  toResolvedPaths,
 } from './project-placement.js'
 
 export interface ProfileAwareScopeDefaults {
@@ -31,6 +41,8 @@ export interface ResolveProfileAwareScopeInputOptions {
     | undefined
   /** Whether the project came from the target itself or caller-side inference. */
   projectOrigin?: ProjectOrigin | undefined
+  /** Test/operator seam for the scratch-daemon proof; production discovers the socket. */
+  socketPath?: string | undefined
 }
 
 export interface ProfileAwareResolvedScopeInput extends ResolvedScopeInput {
@@ -39,28 +51,41 @@ export interface ProfileAwareResolvedScopeInput extends ResolvedScopeInput {
   defaultRoleName?: string | undefined
 }
 
-function readDefaultScopeRole(agentRoot: string | undefined): string | undefined {
-  if (agentRoot === undefined) return undefined
-
-  const profilePath = join(agentRoot, 'agent-profile.toml')
-  if (!existsSync(profilePath)) return undefined
-
-  const source = readFileSync(profilePath, 'utf8')
-  const profile = parseAgentProfile(source, profilePath) as unknown as {
-    identity?: { role?: string }
-  }
-  return profile.identity?.role
-}
-
 /**
  * Resolve a user-facing scope through one profile-aware orchestration path:
- * parse identity, select placement, read that placement's profile, then run
- * the pure scope resolver with the selected profile's default role.
+ * parse identity, observe placement + authoritative profile from the daemon,
+ * then run the pure scope resolver with the observed default role.
  */
-export function resolveProfileAwareScopeInput(
+/**
+ * Pure scope assembly from an already-observed placement (pinned hermetically
+ * by unit tests): run the pure scope resolver with the observed default role,
+ * then attach the mapped placement. No socket.
+ */
+export function applyScopeObservation(
+  input: string,
+  scopeDefaults: ProfileAwareScopeDefaults,
+  projectOrigin: ProjectOrigin,
+  observation: ResolvePlacementResponse
+): ProfileAwareResolvedScopeInput {
+  const initial = resolveQualifiedScopeInput(input, scopeDefaults)
+  const defaultRoleName = observation.identity.role
+  const resolved =
+    defaultRoleName !== undefined
+      ? resolveQualifiedScopeInput(input, { ...scopeDefaults, defaultRoleName })
+      : initial
+
+  return {
+    ...resolved,
+    placement: toResolvedPaths(observation),
+    projectOrigin,
+    ...(defaultRoleName !== undefined ? { defaultRoleName } : {}),
+  }
+}
+
+export async function resolveProfileAwareScopeInput(
   input: string,
   options: ResolveProfileAwareScopeInputOptions = {}
-): ProfileAwareResolvedScopeInput {
+): Promise<ProfileAwareResolvedScopeInput> {
   // Extract agentId/projectId for profile placement by resolving WITH the
   // caller's scope defaults (projectId fallback, lane). Using the bare
   // `resolveScopeInput` here would re-throw on the project-deferred shorthand
@@ -73,23 +98,34 @@ export function resolveProfileAwareScopeInput(
     options.projectOrigin ??
     (input.includes('@') || /(^|:)project:/.test(input) ? 'explicit' : 'inferred')
   const projectId = initial.parsed.projectId ?? scopeDefaults.projectId
-  const placement = resolveHrcAgentPlacementPaths({
-    ...options.placement,
-    agentId: initial.parsed.agentId,
-    ...(projectId !== undefined ? { projectId } : {}),
-    projectOrigin,
-    ...(initial.parsed.taskId !== undefined ? { taskId: initial.parsed.taskId } : {}),
-  })
-  const defaultRoleName = readDefaultScopeRole(placement.agentRoot)
-  const resolved =
-    defaultRoleName !== undefined
-      ? resolveQualifiedScopeInput(input, { ...scopeDefaults, defaultRoleName })
-      : initial
-
-  return {
-    ...resolved,
-    placement,
-    projectOrigin,
-    ...(defaultRoleName !== undefined ? { defaultRoleName } : {}),
+  let observation: ResolvePlacementResponse
+  try {
+    observation = await resolvePlacementObservation({
+      ...options.placement,
+      agentId: initial.parsed.agentId,
+      ...(projectId !== undefined ? { projectId } : {}),
+      projectOrigin,
+      ...(initial.parsed.taskId !== undefined ? { taskId: initial.parsed.taskId } : {}),
+      ...(options.socketPath !== undefined ? { socketPath: options.socketPath } : {}),
+    })
+  } catch (error) {
+    // An unknown agent resolves WITHOUT placement (searched roots retained),
+    // exactly as the local resolver returned: no profile, no default role.
+    if (!isAgentNotFoundError(error)) throw error
+    return {
+      ...initial,
+      placement: toMissedPaths(
+        { projectId },
+        error.detail as
+          | {
+              searchedAgentRoots?: string[] | undefined
+              projectRoot?: string | undefined
+              cwd?: string | undefined
+            }
+          | undefined
+      ),
+      projectOrigin,
+    }
   }
+  return applyScopeObservation(input, scopeDefaults, projectOrigin, observation)
 }

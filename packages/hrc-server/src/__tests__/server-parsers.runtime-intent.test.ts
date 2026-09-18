@@ -24,33 +24,32 @@ function withAgentProfile(harness: string): { agentRoot: string; cleanup: () => 
 }
 
 describe('server-parsers runtime intent harness resolution', () => {
-  it('parseEnsureRuntimeRequest resolves missing harness from placement.agentRoot', () => {
+  it('parseEnsureRuntimeRequest refuses a missing harness (T-08597 fail-closed)', () => {
     const { agentRoot, cleanup } = withAgentProfile('codex')
     try {
-      const parsed = parseEnsureRuntimeRequest({
-        hostSessionId: 'hsid-test',
-        intent: {
-          placement: {
-            agentRoot,
-            projectRoot: '/tmp/project',
-            cwd: '/tmp/project',
-            runMode: 'task',
-            bundle: { kind: 'agent-project', agentName: 'animata', projectRoot: '/tmp/project' },
+      expect(() =>
+        parseEnsureRuntimeRequest({
+          hostSessionId: 'hsid-test',
+          intent: {
+            placement: {
+              agentRoot,
+              projectRoot: '/tmp/project',
+              cwd: '/tmp/project',
+              runMode: 'task',
+              bundle: { kind: 'agent-project', agentName: 'animata', projectRoot: '/tmp/project' },
+            },
+            execution: {
+              preferredMode: 'headless',
+            },
           },
-          execution: {
-            preferredMode: 'headless',
-          },
-        },
-      })
-
-      expect(parsed.intent.harness.provider).toBe('openai')
-      expect(parsed.intent.harness.interactive).toBe(true)
+        })
+      ).toThrow(/runtimeIntent\.harness is required/)
     } finally {
       cleanup()
     }
   })
 
-  it('preserves launch and initialPrompt while resolving omitted harness', () => {
+  it('preserves launch and initialPrompt alongside an explicit harness', () => {
     const { agentRoot, cleanup } = withAgentProfile('codex')
     try {
       const parsed = parseEnsureRuntimeRequest({
@@ -63,6 +62,7 @@ describe('server-parsers runtime intent harness resolution', () => {
             runMode: 'task',
             bundle: { kind: 'agent-project', agentName: 'animata', projectRoot: '/tmp/project' },
           },
+          harness: { provider: 'openai', interactive: true },
           execution: {
             preferredMode: 'headless',
           },
@@ -81,29 +81,27 @@ describe('server-parsers runtime intent harness resolution', () => {
     }
   })
 
-  it('parseDispatchTurnRequest infers nonInteractive sdk mode when harness is omitted', () => {
+  it('parseDispatchTurnRequest refuses an omitted harness (T-08597 fail-closed)', () => {
     const { agentRoot, cleanup } = withAgentProfile('claude-code')
     try {
-      const parsed = parseDispatchTurnRequest({
-        hostSessionId: 'hsid-test',
-        prompt: 'ship it',
-        runtimeIntent: {
-          placement: {
-            agentRoot,
-            projectRoot: '/tmp/project',
-            cwd: '/tmp/project',
-            runMode: 'task',
-            bundle: { kind: 'agent-project', agentName: 'animata', projectRoot: '/tmp/project' },
+      expect(() =>
+        parseDispatchTurnRequest({
+          hostSessionId: 'hsid-test',
+          prompt: 'ship it',
+          runtimeIntent: {
+            placement: {
+              agentRoot,
+              projectRoot: '/tmp/project',
+              cwd: '/tmp/project',
+              runMode: 'task',
+              bundle: { kind: 'agent-project', agentName: 'animata', projectRoot: '/tmp/project' },
+            },
+            execution: {
+              preferredMode: 'nonInteractive',
+            },
           },
-          execution: {
-            preferredMode: 'nonInteractive',
-          },
-        },
-      })
-
-      expect(parsed.runtimeIntent).toBeDefined()
-      expect(parsed.runtimeIntent?.harness.provider).toBe('anthropic')
-      expect(parsed.runtimeIntent?.harness.interactive).toBe(false)
+        })
+      ).toThrow(/runtimeIntent\.harness is required/)
     } finally {
       cleanup()
     }
@@ -123,6 +121,7 @@ describe('server-parsers runtime intent harness resolution', () => {
             runMode: 'task',
             bundle: { kind: 'agent-project', agentName: 'animata', projectRoot: '/tmp/project' },
           },
+          harness: { provider: 'anthropic', interactive: false },
           execution: {
             preferredMode: 'nonInteractive',
           },
@@ -134,6 +133,7 @@ describe('server-parsers runtime intent harness resolution', () => {
         },
       })
 
+      expect(parsed.runtimeIntent?.harness.provider).toBe('anthropic')
       expect(parsed.runtimeIntent?.launch?.env?.WRKQ_CAUSATION_REF).toBe('jrun_event_parent')
     } finally {
       cleanup()

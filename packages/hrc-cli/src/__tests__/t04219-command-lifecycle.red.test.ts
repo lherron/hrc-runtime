@@ -38,7 +38,7 @@
  *
  * ─────────────────────────────────────────────────────────────────────────────
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -47,6 +47,10 @@ import type { HrcServer, HrcServerOptions } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { main } from '../cli'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 // ---------------------------------------------------------------------------
 // Shared test harness (mirrors cli.test.ts setup)
@@ -346,6 +350,7 @@ describe('hrc run --attach-only — §6 lifecycle (RED: flag does not exist yet)
   describe('--attach-only functional (needs live server)', () => {
     beforeEach(async () => {
       server = await createHrcServer(serverOpts())
+      oldEngineDaemon.setProxy(socketPath)
       await seedRunRoots('rex', 'agent-spaces')
     })
 
@@ -353,6 +358,7 @@ describe('hrc run --attach-only — §6 lifecycle (RED: flag does not exist yet)
       const result = await runCli(
         ['run', '--attach-only', 'rex@agent-spaces', '--dry-run'],
         cliEnv({
+          HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
           ASP_AGENTS_ROOT: agentsRoot,
           ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         })
@@ -393,6 +399,7 @@ describe('hrc resume — §6 lifecycle (T-04836: distinct continuation-resume ve
   describe('resume distinct-verb surface', () => {
     beforeEach(async () => {
       server = await createHrcServer(serverOpts())
+      oldEngineDaemon.setProxy(socketPath)
       await seedRunRoots('rex', 'agent-spaces')
     })
 
@@ -400,6 +407,7 @@ describe('hrc resume — §6 lifecycle (T-04836: distinct continuation-resume ve
       const resumeResult = await runCli(
         ['resume', 'rex@agent-spaces', '--dry-run'],
         cliEnv({
+          HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
           ASP_AGENTS_ROOT: agentsRoot,
           ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         })
@@ -425,6 +433,7 @@ describe('hrc resume — §6 lifecycle (T-04836: distinct continuation-resume ve
       const result = await runCli(
         ['resume', 'rex@agent-spaces', '--prior', '--dry-run'],
         cliEnv({
+          HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
           ASP_AGENTS_ROOT: agentsRoot,
           ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         })
@@ -445,6 +454,7 @@ describe('hrc resume — §6 lifecycle (T-04836: distinct continuation-resume ve
           'prove',
         ],
         cliEnv({
+          HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
           ASP_AGENTS_ROOT: agentsRoot,
           ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         })
@@ -490,6 +500,7 @@ describe('hrc start --new-session — §6 lifecycle (pin existing behavior)', ()
   describe('start --new-session dry-run (needs live server)', () => {
     beforeEach(async () => {
       server = await createHrcServer(serverOpts())
+      oldEngineDaemon.setProxy(socketPath)
       await seedRunRoots('rex', 'agent-spaces')
     })
 
@@ -497,6 +508,7 @@ describe('hrc start --new-session — §6 lifecycle (pin existing behavior)', ()
       const result = await runCli(
         ['start', 'rex@agent-spaces', '--new-session', '--dry-run'],
         cliEnv({
+          HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
           ASP_AGENTS_ROOT: agentsRoot,
           ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         })
@@ -509,6 +521,7 @@ describe('hrc start --new-session — §6 lifecycle (pin existing behavior)', ()
       const result = await runCli(
         ['start', 'rex@agent-spaces', '--new-session', '--dry-run'],
         cliEnv({
+          HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
           ASP_AGENTS_ROOT: agentsRoot,
           ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         })
@@ -528,6 +541,7 @@ describe('existing lifecycle preserved — §6 regression guards', () => {
   describe('regression: existing lifecycle commands work (needs live server)', () => {
     beforeEach(async () => {
       server = await createHrcServer(serverOpts())
+      oldEngineDaemon.setProxy(socketPath)
       await seedRunRoots('rex', 'agent-spaces')
     })
   })

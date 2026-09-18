@@ -28,6 +28,7 @@
 
 import { parseScopeRef } from 'agent-scope'
 import type { ProvisioningScalars } from 'agent-scope'
+import { ROSTER_SLOT_TOKENS, type HrcRuntimePlacement as RuntimePlacement } from 'hrc-core'
 import type {
   BirthDesignationEstablishmentDecision,
   BirthDesignationRecord,
@@ -35,7 +36,6 @@ import type {
   PlacementBinding,
   PlacementLedgerRepository,
 } from 'hrc-store-sqlite'
-import { ROSTER_SLOT_TOKENS, type RuntimePlacement } from 'spaces-config'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
 import type { HrcHarnessIntent, SummonIntent } from 'hrc-core'

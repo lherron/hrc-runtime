@@ -79,7 +79,7 @@ export type MailKickerDependencies = {
   resolveRuntimeIntent(
     scopeRef: string,
     materializationIntent: string | undefined
-  ): HrcRuntimeIntent | undefined
+  ): Promise<HrcRuntimeIntent | undefined>
   findTargetSession(targetSessionRef: string): HrcSessionRecord | undefined
   ensureTargetSession(
     targetSessionRef: string,

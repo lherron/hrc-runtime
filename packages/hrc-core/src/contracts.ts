@@ -1,10 +1,12 @@
 import type { ProvisioningScalars } from 'agent-scope'
-import type { RuntimePlacement } from 'spaces-config'
 
 import type { HrcErrorCode } from './errors.js'
 import type { HrcSessionRef } from './selectors.js'
 
-import type { AttachmentRef } from 'spaces-runtime'
+import type {
+  HrcAttachmentRef as AttachmentRef,
+  HrcRuntimePlacement as RuntimePlacement,
+} from './placement-conventions.js'
 
 export type HrcProvider = 'anthropic' | 'openai' | 'meta'
 export type HrcHarness =

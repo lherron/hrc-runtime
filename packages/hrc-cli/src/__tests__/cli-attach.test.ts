@@ -21,7 +21,7 @@
  *
  * Reference: T-00946 (parent), T-00957 (CLI implementation task)
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
@@ -45,9 +45,14 @@ import {
   serverOpts,
   setServer,
   setupCliFixture,
+  socketPath,
   teardownCliFixture,
   writeCodexAgentProfile,
 } from './fixtures/cli.fixture'
+import { installOldEngineDaemon } from './old-engine-daemon.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 beforeEach(setupCliFixture)
 afterEach(teardownCliFixture)
@@ -55,6 +60,7 @@ afterEach(teardownCliFixture)
 describe('hrc attach <scope>', () => {
   beforeEach(async () => {
     setServer(await createHrcServer(serverOpts()))
+    oldEngineDaemon.setProxy(socketPath)
     await seedRunRoots('rex', 'agent-spaces')
   })
 
@@ -84,6 +90,7 @@ describe('hrc attach <scope>', () => {
     const result = await runCli(
       ['attach', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
         ASP_AGENTS_ROOT: agentsRoot,
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })

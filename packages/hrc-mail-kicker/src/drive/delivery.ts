@@ -142,10 +142,10 @@ export async function deliverToSeat(
 
   const runtimeIntent =
     session.lastAppliedIntentJson ??
-    server.resolveRuntimeIntent(
+    (await server.resolveRuntimeIntent(
       parseSessionRef(targetSessionRef).scopeRef,
       actionableDirectives([item])
-    )
+    ))
   if (runtimeIntent === undefined) {
     server.log('WARN', 'wrkq.kicker.delivery_unavailable', {
       targetSessionRef,
@@ -337,7 +337,7 @@ export async function deliverByColdBirth(
   wakeReason: HrcMailDriveWakeReason
 ): Promise<DeliveryOutcome | 'birth-refused'> {
   const scopeRef = parseSessionRef(targetSessionRef).scopeRef
-  const runtimeIntent = server.resolveRuntimeIntent(scopeRef, actionableDirectives([item]))
+  const runtimeIntent = await server.resolveRuntimeIntent(scopeRef, actionableDirectives([item]))
   if (runtimeIntent === undefined) {
     // Placement is HRC's, so a missing intent means this node could not find
     // the target agent's profile — not that the sender forgot something.

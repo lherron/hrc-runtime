@@ -46,8 +46,8 @@ import type {
   LocateSkew,
   ScopeLocation,
 } from 'hrc-core'
+import { inferProjectIdFromCwd } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
-import { inferProjectIdFromCwd } from 'spaces-config'
 
 import { printJson } from '../print.js'
 import { targetDoctorChecks } from '../target/live-commands.js'

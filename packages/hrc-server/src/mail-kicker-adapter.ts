@@ -27,7 +27,7 @@ export function createServerMailKicker(server: HrcServerInstanceForHandlers): Ma
           }),
           scopeRef
         ),
-      resolveRuntimeIntent: (scopeRef, materializationIntent) =>
+      resolveRuntimeIntent: async (scopeRef, materializationIntent) =>
         buildKickRuntimeIntent(scopeRef, materializationIntent),
       findTargetSession: (targetSessionRef) =>
         findTargetSession(server.db, targetSessionRef) ?? undefined,

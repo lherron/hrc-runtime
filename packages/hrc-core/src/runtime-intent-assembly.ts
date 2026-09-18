@@ -1,48 +1,49 @@
 /**
- * Single authority for deriving an {@link HrcRuntimeIntent} from a resolved
- * agent placement.
+ * Single authority for deriving an {@link HrcRuntimeIntent} from OBSERVED ASP
+ * declaration facts.
  *
- * The harness/provider for a target is determined ENTIRELY by the agent profile
- * (and any project-target overlay), resolved through the canonical `spaces-config`
- * helpers. Callers (hrcchat, hrc-cli, agent-loop's hrc dispatch backend) supply
- * already-resolved placement paths plus their own turn semantics
- * (`interactive` / `preferredMode`) — they do NOT carry any concept of
- * "claude-code" vs "codex". That knowledge lives here, keyed off the profile.
+ * T-08597: this module no longer parses agent profiles, project targets, or
+ * the harness catalog in-process. The provider/harness/provisioning inputs
+ * arrive already interpreted — either from the daemon's aspd-backed
+ * `/v1/declarations/resolve` producer (over the socket) or from the same
+ * observation in-process inside the daemon. HRC owns intent assembly,
+ * interaction semantics, the directive grammar/deny-list, and every refusal.
  *
  * Before this module the harness→intent assembly was duplicated in hrcchat-cli,
- * hrc-cli, and agent-loop's dispatch adapter (each with its own bespoke,
- * sometimes-hardcoded provider). This is the one place it lives now.
+ * hrc-cli, and agent-loop's dispatch adapter. This is the one place it lives now.
  */
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
 import { DENIED_PROVISION_OVERRIDE_KEYS } from 'agent-scope'
 import type { ProvisioningScalars } from 'agent-scope'
-import {
-  type RuntimePlacement,
-  type TargetDefinition,
-  buildRuntimeBundleRef,
-  mergeAgentWithProjectTarget,
-  normalizeHarnessFrontend,
-  parseAgentProfile,
-  parseTargetsToml,
-  resolveAgentPrimingPrompt,
-  resolveHarnessProvider,
-} from 'spaces-config'
 import type { HrcExecutionMode, HrcHarness, HrcRuntimeIntent } from './contracts.js'
+import { HrcDomainError, HrcErrorCode } from './errors.js'
+import type { HrcRuntimePlacement } from './placement-conventions.js'
 
 export type ResolvedAgentHarness = {
   provider: 'anthropic' | 'openai' | 'meta'
-  /** Frontend harness name from the profile/target (e.g. "claude-code", "codex"). */
+  /** Frontend harness name from the observed provisioning (e.g. "codex-cli"). */
   harness: string | undefined
   /**
-   * T-07398 — the merged `[provisioning]` top-level scalars behind that harness
-   * choice: the agent profile overlaid with any matching project target, i.e.
-   * the BASELINE a per-summon directive block overrides. Empty when no profile
-   * (or project target) declares any.
+   * T-07398 — the observed `[provisioning]` top-level scalars behind that
+   * harness choice, i.e. the BASELINE a per-summon directive block overrides.
+   * Empty when nothing declares any.
    */
   provision: ProvisioningScalars
 }
+
+/**
+ * HRC-admitted harness frontends. Observed frontends outside this set carry no
+ * explicit id — HRC picks its default — exactly as the pre-migration
+ * normalization did for catalog names without a frontend. (ASP may name
+ * frontends HRC has not admitted yet; only HRC-known ids are forwarded.)
+ */
+const HRC_ADMITTED_HARNESS_FRONTENDS: ReadonlySet<string> = new Set<string>([
+  'agent-sdk',
+  'claude-code',
+  'codex-cli',
+  'pi-cli',
+  'pi-sdk',
+  'muse-cli',
+])
 
 /**
  * The birth-time scalars that may ride an intent.
@@ -63,18 +64,6 @@ function overridableProvision(scalars: ProvisioningScalars): ProvisioningScalars
 /**
  * Keep only the members that can legally ride an intent: present, top-level
  * scalars.
- *
- * Two jobs, both structural rather than key-listed, which is what lets a future
- * `[provisioning]` scalar work here with no edit:
- *
- *  - absent keys are dropped, so an overlay never overwrites a merged value
- *    with `undefined` (`{ ...baseline, ...directives }` would otherwise let an
- *    explicitly-undefined member erase what the profile concluded);
- *  - non-scalars are dropped, because the profile-only harness escape hatches
- *    (`[provisioning.claude]`, `[provisioning.codex]`) share this table's shape
- *    and would otherwise be published on the wire — where the server's dispatch
- *    boundary refuses them as INVALID_PROVISION_SHAPE, turning a legitimate
- *    profile into an unstartable one.
  */
 function scalarsOnly(scalars: Record<string, unknown>): ProvisioningScalars {
   return Object.fromEntries(
@@ -85,178 +74,24 @@ function scalarsOnly(scalars: Record<string, unknown>): ProvisioningScalars {
   ) as ProvisioningScalars
 }
 
-function resolveProviderForHarness(harness: string | undefined): 'anthropic' | 'openai' | 'meta' {
-  return resolveHarnessProvider(harness) ?? 'anthropic'
-}
-
-function loadProjectTarget(
-  projectRoot: string | undefined,
-  targetName: string
-): TargetDefinition | undefined {
-  if (!projectRoot) return undefined
-  const targetsPath = join(projectRoot, 'asp-targets.toml')
-  if (!existsSync(targetsPath)) return undefined
-  return parseTargetsToml(readFileSync(targetsPath, 'utf8'), targetsPath).targets[targetName]
-}
-
-function targetHarness(target: TargetDefinition | undefined): string | undefined {
-  return (target as unknown as { provisioning?: { harness?: string } } | undefined)?.provisioning
-    ?.harness
-}
-
 /**
- * Resolve the effective provider + harness frontend for an agent from its
- * `agent-profile.toml`, overlaid with any matching `asp-targets.toml` entry.
- * Falls back to the project-target harness (or anthropic) when no profile is
- * present or parsing fails. The fallback VALUE still mirrors the prior
- * hrcchat-cli behavior verbatim; since T-08128 the parse-failure branch also
- * reports itself, which the original did not.
+ * Normalize an OBSERVED harness frontend name to the canonical {@link HrcHarness}
+ * id the dispatcher understands.
  *
- * Both fallbacks return the same value; only one of them is ordinary. See
- * {@link warnProfileProvisioningStripped} for why the other one now says so.
- */
-export function resolveAgentHarness(args: {
-  agentRoot: string
-  agentId: string
-  projectRoot?: string | undefined
-}): ResolvedAgentHarness {
-  const { agentRoot, agentId, projectRoot } = args
-  const projectTarget = loadProjectTarget(projectRoot, agentId)
-  const profilePath = join(agentRoot, 'agent-profile.toml')
-  const targetOnly = (): ResolvedAgentHarness => {
-    const harness = targetHarness(projectTarget)
-    return {
-      provider: resolveProviderForHarness(harness),
-      harness,
-      provision: scalarsOnly({
-        ...(projectTarget?.provisioning ?? {}),
-        ...(harness === undefined ? {} : { harness }),
-      }),
-    }
-  }
-  if (!existsSync(profilePath)) {
-    // An agent with no profile is a legitimate, ordinary state: its provisioning
-    // is simply whatever the project target declares. Silent by design — a line
-    // here would print on ordinary births too, and a warning that fires in every
-    // state teaches its readers to skim past the one state that matters.
-    return targetOnly()
-  }
-  try {
-    const source = readFileSync(profilePath, 'utf8')
-    const profile = parseAgentProfile(source, profilePath)
-    const primingPrompt = resolveAgentPrimingPrompt(profile, agentRoot)
-    const effective = mergeAgentWithProjectTarget(
-      {
-        ...profile,
-        ...(primingPrompt !== undefined ? { priming: primingPrompt } : {}),
-      },
-      projectTarget,
-      'task'
-    )
-    return {
-      provider: resolveProviderForHarness(effective.harness),
-      harness: effective.harness,
-      // The merge's canonical bag is the single authority for provisioning
-      // scalars, including target-over-profile precedence. `harness` is the one
-      // deliberate asymmetry: the bag preserves absence, while the legacy
-      // effective field applies the load-bearing `claude-code` default that HRC
-      // has always published on the intent.
-      provision: scalarsOnly({
-        ...effective.provisioning,
-        harness: effective.harness,
-      }),
-    }
-  } catch (error) {
-    const fallback = targetOnly()
-    warnProfileProvisioningStripped(agentId, profilePath, error, fallback)
-    return fallback
-  }
-}
-
-/**
- * T-08128 — report a profile that EXISTS but could not be turned into
- * provisioning.
- *
- * Read, parse and merge failures all land in one `catch` because they all have
- * one consequence: the profile contributes nothing and the agent is born on the
- * project target alone. That fallback is identical, byte for byte, to the one an
- * ABSENT profile takes — so no caller downstream can tell the two apart, and
- * this is the only point in the system where the difference still exists.
- *
- * Deliberately a WARN and not a throw: failing closed here would let a single
- * bad edit refuse births fleet-wide, which is a worse failure than an unpinned
- * model. The birth proceeds exactly as before. It just stops being silent.
- *
- * The line leads with the CONSEQUENCE. "failed to parse agent-profile.toml"
- * reads as recoverable and gets skimmed; "born with NO provisioning" does not.
- * When this fired unannounced on 2026-09-06 a config edit silently unpinned an
- * agent's model, the agent kept working and produced correct output, and it
- * took two agents about twenty minutes and four probes to find — only because
- * the edit happened to be under scrutiny at the time.
- *
- * Not deduplicated and not rate-limited: each degraded birth is its own lost
- * pin, and an unattended broken profile that keeps stripping provisioning
- * should keep saying so rather than announcing it once and going quiet.
- */
-function warnProfileProvisioningStripped(
-  agentId: string,
-  profilePath: string,
-  error: unknown,
-  fallback: ResolvedAgentHarness
-): void {
-  console.error(
-    formatProfileProvisioningStrippedWarning({
-      agentId,
-      profilePath,
-      errorMessage: error instanceof Error ? error.message : String(error),
-      survivingProvisionKeys: Object.keys(fallback.provision),
-    })
-  )
-}
-
-/**
- * T-08564: the single-line `agent.provisioning.stripped` warning, shared by the
- * in-process assembler above and the declaration-observation route, which
- * projects it from an explicit producer `invalid` profile observation. Only
- * the `error=` detail comes from the caller; every other byte is HRC-owned.
- */
-export function formatProfileProvisioningStrippedWarning(input: {
-  agentId: string
-  profilePath: string
-  errorMessage: string
-  survivingProvisionKeys: readonly string[]
-}): string {
-  const survived = input.survivingProvisionKeys
-  // Two different facts, so two different sentences: with a matching project
-  // target the agent keeps that target's pins and loses only the profile's;
-  // with none it is born with nothing at all.
-  const consequence =
-    survived.length === 0
-      ? 'is being born with NO provisioning at all: no model pin, no harness pin, no yolo, no node'
-      : `is being born WITHOUT its profile's provisioning (no model pin, no harness pin from the profile); only the project target's ${JSON.stringify(survived)} survives`
-  // Collapsed to a single line on purpose. A TOML parse error arrives with an
-  // embedded source excerpt spanning several lines, and a multi-line WARN in a
-  // busy daemon log greps as one hit plus a few lines of orphaned noise — which
-  // is most of the way back to being unreadable.
-  const rendered = input.errorMessage.replace(/\s+/g, ' ').trim()
-  const detail = rendered.length > 300 ? `${rendered.slice(0, 297)}...` : rendered
-  return [
-    `[hrc-core] WARN agent.provisioning.stripped — agent "${input.agentId}" ${consequence}.`,
-    'Its agent-profile.toml EXISTS but could not be read or parsed, so it contributed nothing.',
-    `profile=${input.profilePath} error=${detail}`,
-  ].join(' ')
-}
-
-/**
- * Normalize a harness frontend name from the profile (e.g. "pi-sdk", "agent-sdk",
- * "claude-code") to the canonical {@link HrcHarness} id the dispatcher understands.
+ * T-08597 narrowing (explicit in the hrc-sdk surface diff): the input must
+ * already be frontend form — declaration observations always are
+ * (`entry.frontend`, projected aspd-side). Bare catalog ids/aliases
+ * (`codex`, `pi`, `claude-code` alias, …) no longer normalize; they resolve to
+ * `undefined` and HRC picks its default. Nothing in-repo passes id form; the
+ * observation path never did.
  */
 export function harnessFrontendToHrcHarness(harness: string | undefined): HrcHarness | undefined {
-  return normalizeHarnessFrontend(harness) as HrcHarness | undefined
+  if (harness === undefined) return undefined
+  return HRC_ADMITTED_HARNESS_FRONTENDS.has(harness) ? (harness as HrcHarness) : undefined
 }
 
 export interface BuildHrcRuntimeIntentInput {
-  /** Agent id — used to match a project-target overlay for harness resolution. */
+  /** Agent id — names the declaration the intent is assembled from. */
   agentId: string
   /** Resolved agent root (where `agent-profile.toml` lives). */
   agentRoot: string
@@ -265,7 +100,7 @@ export interface BuildHrcRuntimeIntentInput {
   /** Working directory for the runtime; defaults to projectRoot ?? agentRoot. */
   cwd?: string | undefined
   /** Placement run mode; defaults to 'task'. */
-  runMode?: RuntimePlacement['runMode'] | undefined
+  runMode?: HrcRuntimePlacement['runMode'] | undefined
   /** Caller's turn semantic — whether this is an interactive runtime. */
   interactive?: boolean | undefined
   /** Caller's preferred execution mode (its own turn semantic, not harness knowledge). */
@@ -279,28 +114,28 @@ export interface BuildHrcRuntimeIntentInput {
   /** Optional initial prompt threaded onto the intent. */
   initialPrompt?: string | undefined
   /**
-   * T-07398 — a per-summon provisioning directive block, applied as the FINAL
-   * step of assembly: it overlays whatever the profile+target merge concluded,
-   * and the harness id and provider follow the OVERLAID harness rather than the
-   * profile's. Deny-listed keys never reach here (the sender grammar refuses
-   * them) and are stripped again on the way out.
+   * T-07398 — a per-summon provisioning directive block. hrc-sdk forwards it
+   * to the daemon, which applies it aspd-side as the FINAL step of assembly.
+   * Deny-listed keys never reach here (the sender grammar refuses them) and
+   * are stripped again on the way out.
    */
   provision?: Partial<ProvisioningScalars> | undefined
+  /** Test/operator seam; production discovers the installed daemon socket. */
+  socketPath?: string | undefined
 }
 
 /**
- * Apply a per-summon directive block to a resolved profile+target merge — the
- * FINAL step of provisioning assembly.
+ * Apply a per-summon directive block to observed provisioning — the FINAL step
+ * of provisioning assembly.
  *
- * Exported because there are TWO intent assemblers in this monorepo:
- * `buildHrcRuntimeIntent` below (hrcchat, agent-loop) and hrc-cli's
- * `buildManagedRuntimeIntent`, which hand-assembles so it can carry its own
- * placement correlation. Both must apply the overlay identically — a directive
- * that changes the harness has to move the provider and harness id with it, or
- * `+harness=codex` silently launches the profile's harness — so the rule lives
- * here once rather than being restated at each assembler.
- *
- * Returns the overlaid block plus the harness identity that follows FROM it.
+ * T-08597 compat narrowing (explicit in the hrc-sdk surface diff): the
+ * provider follows the overlaid harness only when the directives leave the
+ * harness unchanged (the common case — every in-repo caller forwards the block
+ * to the daemon route instead, where aspd re-resolves provider and harness id
+ * from the overlaid declaration). A directive block that CHANGES the harness
+ * throws a typed error directing the caller to `POST /v1/declarations/resolve`:
+ * mapping the new harness name to its provider is catalog interpretation,
+ * which HRC no longer performs in-process.
  */
 export function applyProvisionDirectives(
   merged: ResolvedAgentHarness,
@@ -316,61 +151,132 @@ export function applyProvisionDirectives(
     ...scalarsOnly(directives ?? {}),
   })
   const harness = provision.harness ?? merged.harness
+  if (harness !== undefined && harness !== merged.harness) {
+    throw new HrcDomainError(
+      HrcErrorCode.UNSUPPORTED_CAPABILITY,
+      'provision directive changes the harness; resolve through POST /v1/declarations/resolve',
+      { capability: 'intent.directive-harness-change', harness }
+    )
+  }
   return {
     provision,
     harness,
-    provider: resolveProviderForHarness(harness),
+    provider: merged.provider,
     harnessId: harnessFrontendToHrcHarness(harness),
   }
 }
 
 /**
- * Assemble an {@link HrcRuntimeIntent} from a resolved placement. The provider
- * and harness id are derived from the agent profile; the placement and the
- * caller-supplied interaction semantics are passed through unchanged.
+ * T-08564: the single-line `agent.provisioning.stripped` warning, shared by the
+ * in-process assembler and the declaration-observation route, which projects it
+ * from an explicit producer `invalid` profile observation. Only the `error=`
+ * detail comes from the caller; every other byte is HRC-owned.
  */
-export function buildHrcRuntimeIntent(input: BuildHrcRuntimeIntentInput): HrcRuntimeIntent {
-  const { agentId, agentRoot, projectRoot } = input
-  const cwd = input.cwd ?? projectRoot ?? agentRoot
-  const runMode = input.runMode ?? 'task'
-  const interactive = input.interactive ?? false
-  const preferredMode: HrcExecutionMode = input.preferredMode ?? 'nonInteractive'
+export function formatProfileProvisioningStrippedWarning(input: {
+  agentId: string
+  profilePath: string
+  errorMessage: string
+  survivingProvisionKeys: readonly string[]
+}): string {
+  const survived = input.survivingProvisionKeys
+  const consequence =
+    survived.length === 0
+      ? 'is being born with NO provisioning at all: no model pin, no harness pin, no yolo, no node'
+      : `is being born WITHOUT its profile's provisioning (no model pin, no harness pin from the profile); only the project target's ${JSON.stringify(survived)} survives`
+  const rendered = input.errorMessage.replace(/\s+/g, ' ').trim()
+  const detail = rendered.length > 300 ? `${rendered.slice(0, 297)}...` : rendered
+  return [
+    `[hrc-core] WARN agent.provisioning.stripped — agent "${input.agentId}" ${consequence}.`,
+    'Its agent-profile.toml EXISTS but could not be read or parsed, so it contributed nothing.',
+    `profile=${input.profilePath} error=${detail}`,
+  ].join(' ')
+}
 
-  const bundle = buildRuntimeBundleRef({ agentName: agentId, agentRoot, projectRoot })
-  const merged = resolveAgentHarness({ agentRoot, agentId, projectRoot })
+/**
+ * T-08564 parity: the single-line `agent.provisioning.stripped` warning for an
+ * invalid-but-present profile, built from observed diagnostics. The daemon
+ * route projects it; kick-intent logs it — the same WARN the local assembler
+ * printed, byte for byte.
+ */
+export function buildInvalidProfileWarning(input: {
+  agentId: string
+  agentRoot: string
+  diagnosticMessages: readonly string[]
+  survivingProvisionKeys: readonly string[]
+}): string {
+  return formatProfileProvisioningStrippedWarning({
+    agentId: input.agentId,
+    profilePath: `${input.agentRoot.replace(/\/+$/, '')}/agent-profile.toml`,
+    errorMessage: input.diagnosticMessages.join(' '),
+    survivingProvisionKeys: input.survivingProvisionKeys,
+  })
+}
 
-  // The overlay is LAST, after the profile+target merge, so a directive can
-  // change what the merge concluded. Everything downstream reads the overlaid
-  // result — including the provider and harness id, which is why `harness=`
-  // works at all: they are re-resolved rather than carried over.
-  const { provision, provider, harnessId } = applyProvisionDirectives(merged, input.provision)
+export type ObservedRuntimeIntentProvisioning = {
+  provider: 'anthropic' | 'openai' | 'meta'
+  frontend: string
+  effectiveHarness: string
+  scalars: Record<string, string | number | boolean>
+}
 
-  const placement: RuntimePlacement = {
-    agentRoot,
-    ...(projectRoot ? { projectRoot } : {}),
-    cwd,
-    runMode,
-    bundle,
+export type ObservedRuntimeIntentPlacement = {
+  agentRoot: string
+  projectRoot?: string | undefined
+  cwd: string
+  runMode: HrcRuntimePlacement['runMode']
+  bundle: HrcRuntimePlacement['bundle']
+}
+
+/**
+ * Assemble an {@link HrcRuntimeIntent} from an OBSERVED declaration (aspd
+ * projection) plus the caller's interaction semantics. Pure and sync: the
+ * daemon calls this in-process (no self-HTTP); hrc-sdk's async
+ * `buildHrcRuntimeIntent` observes over the socket first, then assembles here.
+ */
+export function assembleHrcRuntimeIntent(
+  observed: {
+    provisioning: ObservedRuntimeIntentProvisioning
+    placement: ObservedRuntimeIntentPlacement
+  },
+  body: {
+    interactive?: boolean | undefined
+    preferredMode?: HrcExecutionMode | undefined
+    allowInteractiveSurfaceReuse?: boolean | undefined
+    initialPrompt?: string | undefined
+  }
+): HrcRuntimeIntent {
+  const interactive = body.interactive ?? false
+  const preferredMode: HrcExecutionMode = body.preferredMode ?? 'nonInteractive'
+  const provision = overridableProvision(
+    scalarsOnly(observed.provisioning.scalars) as ProvisioningScalars
+  )
+  const harnessId = harnessFrontendToHrcHarness(observed.provisioning.frontend)
+
+  const placement: HrcRuntimePlacement = {
+    agentRoot: observed.placement.agentRoot,
+    ...(observed.placement.projectRoot !== undefined
+      ? { projectRoot: observed.placement.projectRoot }
+      : {}),
+    cwd: observed.placement.cwd,
+    runMode: observed.placement.runMode,
+    bundle: observed.placement.bundle,
     dryRun: false,
   }
 
   return {
-    placement,
+    placement: placement as HrcRuntimeIntent['placement'],
     harness: {
-      provider,
+      provider: observed.provisioning.provider,
       interactive,
       ...(harnessId !== undefined ? { id: harnessId } : {}),
     },
     execution: {
       preferredMode,
-      ...(input.allowInteractiveSurfaceReuse !== undefined
-        ? { allowInteractiveSurfaceReuse: input.allowInteractiveSurfaceReuse }
+      ...(body.allowInteractiveSurfaceReuse !== undefined
+        ? { allowInteractiveSurfaceReuse: body.allowInteractiveSurfaceReuse }
         : {}),
     },
-    ...(input.initialPrompt !== undefined ? { initialPrompt: input.initialPrompt } : {}),
-    // An agent with no declared `[provisioning]` and no directives carries no
-    // block at all, rather than an empty one nobody can distinguish from "the
-    // sender meant to say nothing".
+    ...(body.initialPrompt !== undefined ? { initialPrompt: body.initialPrompt } : {}),
     ...(Object.keys(provision).length === 0 ? {} : { provision }),
   }
 }

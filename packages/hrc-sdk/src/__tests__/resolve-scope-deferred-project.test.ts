@@ -1,39 +1,43 @@
 /**
- * Regression: resolveProfileAwareScopeInput must apply the caller's projectId
- * fallback BEFORE enforcing scope legality, so the project-deferred shorthand
- * (`<agent>:<task>`) resolves when a project is supplied out-of-band (cwd
- * inference / ASP_PROJECT). Previously the wrapper's first step called the
- * strict `resolveScopeInput(input)` with no project hint, which threw
- * "task <t> requires a project" before the fallback was ever applied — breaking
- * `hrc run mable:BLAH` from a project directory.
+ * Regression: scope assembly must apply the caller's projectId fallback
+ * BEFORE enforcing scope legality, so the project-deferred shorthand
+ * (`<agent>:<task>`) resolves when a project is supplied out-of-band.
+ *
+ * T-08597: placement + default role arrive as a daemon observation; these pin
+ * the pure assembly (no socket). Socket round trips are proved by the route
+ * parity table.
  */
-import { afterAll, describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { describe, expect, it } from 'bun:test'
 
-import { resolveProfileAwareScopeInput } from '../index'
+import { applyScopeObservation } from '../resolve-scope.js'
 
-// T-07654: explicit-project resolution walks the operator's disk (wrkq registry,
-// then a marker scan under $HOME/praesidium) and parses whatever asp-targets.toml
-// it finds there. A unit test for scope-string parsing must not depend on the
-// developer's sibling checkouts, so the explicit cases run against a throwaway
-// HOME with a canonical `agent-loop` checkout and an injected (empty) registry.
-const home = mkdtempSync(join(tmpdir(), 'hrc-resolve-scope-'))
-mkdirSync(join(home, 'praesidium', 'agent-loop', '.git'), { recursive: true })
-mkdirSync(join(home, 'agents', 'mable'), { recursive: true })
-afterAll(() => rmSync(home, { recursive: true, force: true }))
-
-const hermeticPlacement = {
-  agentRoot: join(home, 'agents', 'mable'),
-  registryProjects: [],
-  env: { HOME: home, HRC_PROJECT_SEARCH_ROOTS: join(home, 'praesidium') },
+const observation = {
+  agentId: 'mable',
+  projectId: 'agent-loop',
+  agentRoot: '/agents/mable',
+  projectRoot: '/src/agent-loop',
+  cwd: '/src/agent-loop',
+  harness: { provider: 'anthropic', frontend: 'claude-code', effectiveHarness: 'claude' },
+  provision: { scalars: {} },
+  policy: { claimsTask: false, placement: { pins: {}, homes: {} } },
+  identity: { operator: false },
+  agentSources: { provenance: 'daemon-default' },
+  searchedAgentRoots: [],
+  source: {
+    agentProfile: 'valid',
+    projectTargets: 'valid',
+    selectedTarget: 'absent',
+    priming: 'valid',
+  },
+  resolution: { source: 'inferred', reason: 'cwd from inferred project agent-loop' },
+  warnings: [],
+  release: { releaseId: 'r', sourceCommit: 'c' },
 } as const
 
-describe('resolveProfileAwareScopeInput — project-deferred shorthand', () => {
+describe('applyScopeObservation — project-deferred shorthand', () => {
   it('resolves <agent>:<task> when projectId is supplied as a scope fallback', () => {
-    const resolved = resolveProfileAwareScopeInput('mable:BLAH', {
-      scope: { projectId: 'agent-loop' },
+    const resolved = applyScopeObservation('mable:BLAH', { projectId: 'agent-loop' }, 'inferred', {
+      ...observation,
     })
     expect(resolved.scopeRef).toBe('agent:mable:project:agent-loop:task:BLAH')
     expect(resolved.parsed.projectId).toBe('agent-loop')
@@ -42,34 +46,51 @@ describe('resolveProfileAwareScopeInput — project-deferred shorthand', () => {
   })
 
   it('still throws the actionable error when no project is resolvable anywhere', () => {
-    expect(() => resolveProfileAwareScopeInput('mable:BLAH', { scope: {} })).toThrow(
+    expect(() => applyScopeObservation('mable:BLAH', {}, 'inferred', { ...observation })).toThrow(
       /task "BLAH" requires a project/
     )
   })
 
   it('leaves an explicit <agent>@<project>:<task> handle unchanged', () => {
-    const resolved = resolveProfileAwareScopeInput('mable@agent-loop:BLAH', {
-      placement: hermeticPlacement,
+    const resolved = applyScopeObservation('mable@agent-loop:BLAH', {}, 'explicit', {
+      ...observation,
     })
     expect(resolved.scopeRef).toBe('agent:mable:project:agent-loop:task:BLAH')
     expect(resolved.projectOrigin).toBe('explicit')
-    expect(resolved.placement.resolution.source).toBe('marker-scan')
   })
 
   it('qualifies a bare agent to primary task using the project fallback', () => {
-    const resolved = resolveProfileAwareScopeInput('mable', {
-      scope: { projectId: 'agent-loop', defaultTaskId: 'primary' },
-    })
+    const resolved = applyScopeObservation(
+      'mable',
+      { projectId: 'agent-loop', defaultTaskId: 'primary' },
+      'inferred',
+      { ...observation }
+    )
     expect(resolved.scopeRef).toBe('agent:mable:project:agent-loop:task:primary')
     expect(resolved.projectOrigin).toBe('inferred')
   })
 
   it('allows an explicit project option to preserve its origin through shorthand parsing', () => {
-    const resolved = resolveProfileAwareScopeInput('mable:BLAH', {
-      scope: { projectId: 'agent-loop' },
-      projectOrigin: 'explicit',
-      placement: hermeticPlacement,
+    const resolved = applyScopeObservation('mable:BLAH', { projectId: 'agent-loop' }, 'explicit', {
+      ...observation,
     })
     expect(resolved.projectOrigin).toBe('explicit')
+  })
+
+  it('applies the observed default role to an explicit task', () => {
+    const resolved = applyScopeObservation('mable@agent-loop:BLAH', {}, 'explicit', {
+      ...observation,
+      identity: { role: 'coordinator', operator: false },
+    })
+    expect(resolved.defaultRoleName).toBe('coordinator')
+    expect(resolved.scopeRef).toBe('agent:mable:project:agent-loop:task:BLAH:role:coordinator')
+  })
+
+  it('attaches the mapped placement', () => {
+    const resolved = applyScopeObservation('mable@agent-loop:BLAH', {}, 'explicit', {
+      ...observation,
+    })
+    expect(resolved.placement.agentRoot).toBe('/agents/mable')
+    expect(resolved.placement.projectRoot).toBe('/src/agent-loop')
   })
 })

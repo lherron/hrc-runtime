@@ -1,11 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
+import { installOldEngineDaemon } from '../../__tests__/old-engine-daemon.js'
 import {
   formatAddress,
   resolveCallerAddress,
   resolveSenderAddress,
   resolveTargetToSessionRef,
 } from '../normalize.js'
+
+const oldEngineDaemon = installOldEngineDaemon()
+afterAll(() => oldEngineDaemon.stop())
 
 describe('hrcchat normalize helpers', () => {
   const savedAspProject = process.env['ASP_PROJECT']
@@ -31,19 +35,19 @@ describe('hrcchat normalize helpers', () => {
     }
   })
 
-  it('resolves main-lane handles to canonical session refs', () => {
-    expect(resolveTargetToSessionRef('clod@agent-spaces:T-01128')).toBe(
+  it('resolves main-lane handles to canonical session refs', async () => {
+    expect(await resolveTargetToSessionRef('clod@agent-spaces:T-01128')).toBe(
       'agent:clod:project:agent-spaces:task:T-01128/lane:main'
     )
   })
 
-  it('resolves explicit lanes without duplicating the lane prefix', () => {
-    expect(resolveTargetToSessionRef('clod@agent-spaces:T-01128~repair')).toBe(
+  it('resolves explicit lanes without duplicating the lane prefix', async () => {
+    expect(await resolveTargetToSessionRef('clod@agent-spaces:T-01128~repair')).toBe(
       'agent:clod:project:agent-spaces:task:T-01128/lane:repair'
     )
   })
 
-  it('formats non-main session addresses with lane suffixes', () => {
+  it('formats non-main session addresses with lane suffixes', async () => {
     expect(
       formatAddress({
         kind: 'session',
@@ -52,30 +56,30 @@ describe('hrcchat normalize helpers', () => {
     ).toBe('clod@agent-spaces:T-01128~repair')
   })
 
-  it('fills missing task with primary when only project is provided', () => {
-    expect(resolveTargetToSessionRef('clod@agent-spaces')).toBe(
+  it('fills missing task with primary when only project is provided', async () => {
+    expect(await resolveTargetToSessionRef('clod@agent-spaces')).toBe(
       'agent:clod:project:agent-spaces:task:primary/lane:main'
     )
   })
 
-  it('fills both project (from ASP_PROJECT) and task (primary) for bare agent handles', () => {
+  it('fills both project (from ASP_PROJECT) and task (primary) for bare agent handles', async () => {
     process.env['ASP_PROJECT'] = 'agent-spaces'
     Reflect.deleteProperty(process.env, 'HRC_SESSION_REF')
-    expect(resolveTargetToSessionRef('clod')).toBe(
+    expect(await resolveTargetToSessionRef('clod')).toBe(
       'agent:clod:project:agent-spaces:task:primary/lane:main'
     )
   })
 
-  it('inherits caller taskId from HRC_SESSION_REF when input lacks one', () => {
+  it('inherits caller taskId from HRC_SESSION_REF when input lacks one', async () => {
     process.env['ASP_PROJECT'] = 'agent-spaces'
     process.env['HRC_SESSION_REF'] = 'agent:rex:project:agent-spaces:task:T-09999/lane:main'
-    expect(resolveTargetToSessionRef('clod')).toBe(
+    expect(await resolveTargetToSessionRef('clod')).toBe(
       'agent:clod:project:agent-spaces:task:T-09999/lane:main'
     )
   })
 
-  it('preserves session-handle lane while filling missing task', () => {
-    expect(resolveTargetToSessionRef('clod@agent-spaces~repair')).toBe(
+  it('preserves session-handle lane while filling missing task', async () => {
+    expect(await resolveTargetToSessionRef('clod@agent-spaces~repair')).toBe(
       'agent:clod:project:agent-spaces:task:primary/lane:repair'
     )
   })
@@ -99,7 +103,7 @@ describe('resolveCallerAddress', () => {
     }
   })
 
-  it('returns session address when HRC_SESSION_REF is set with lane: prefix', () => {
+  it('returns session address when HRC_SESSION_REF is set with lane: prefix', async () => {
     process.env['HRC_SESSION_REF'] = 'agent:smokey:project:media-ingest/lane:main'
 
     const addr = resolveCallerAddress()
@@ -110,7 +114,7 @@ describe('resolveCallerAddress', () => {
     })
   })
 
-  it('normalizes legacy format without lane: prefix', () => {
+  it('normalizes legacy format without lane: prefix', async () => {
     process.env['HRC_SESSION_REF'] = 'agent:smokey:project:media-ingest/main'
 
     const addr = resolveCallerAddress()
@@ -121,7 +125,7 @@ describe('resolveCallerAddress', () => {
     })
   })
 
-  it('falls back to entity:human when HRC_SESSION_REF is absent', () => {
+  it('falls back to entity:human when HRC_SESSION_REF is absent', async () => {
     Reflect.deleteProperty(process.env, 'HRC_SESSION_REF')
 
     const addr = resolveCallerAddress()
@@ -129,7 +133,7 @@ describe('resolveCallerAddress', () => {
     expect(addr).toEqual({ kind: 'entity', entity: 'human' })
   })
 
-  it('handles task-scoped session refs from placement correlation', () => {
+  it('handles task-scoped session refs from placement correlation', async () => {
     process.env['HRC_SESSION_REF'] = 'agent:rex:project:agent-spaces:task:T-01104/lane:repair'
 
     const addr = resolveCallerAddress()
@@ -157,19 +161,19 @@ describe('resolveSenderAddress', () => {
     }
   })
 
-  it('explicit --as human wins over an envelope', () => {
+  it('explicit --as human wins over an envelope', async () => {
     process.env['HRC_SESSION_REF'] = 'agent:smokey:project:media-ingest/lane:main'
 
-    const sender = resolveSenderAddress('human')
+    const sender = await resolveSenderAddress('human')
 
     expect(sender.source).toBe('explicit')
     expect(sender.address).toEqual({ kind: 'entity', entity: 'human' })
   })
 
-  it('explicit --as agent handle resolves to a session address', () => {
+  it('explicit --as agent handle resolves to a session address', async () => {
     Reflect.deleteProperty(process.env, 'HRC_SESSION_REF')
 
-    const sender = resolveSenderAddress('mable@hrc-runtime:minisvc')
+    const sender = await resolveSenderAddress('mable@hrc-runtime:minisvc')
 
     expect(sender.source).toBe('explicit')
     expect(sender.address.kind).toBe('session')
@@ -180,10 +184,10 @@ describe('resolveSenderAddress', () => {
     }
   })
 
-  it('uses the envelope when no --as is given', () => {
+  it('uses the envelope when no --as is given', async () => {
     process.env['HRC_SESSION_REF'] = 'agent:smokey:project:media-ingest/lane:main'
 
-    const sender = resolveSenderAddress(undefined)
+    const sender = await resolveSenderAddress(undefined)
 
     expect(sender.source).toBe('envelope')
     expect(sender.address).toEqual({
@@ -192,10 +196,10 @@ describe('resolveSenderAddress', () => {
     })
   })
 
-  it('reports the human fallback distinctly when nothing identifies the sender', () => {
+  it('reports the human fallback distinctly when nothing identifies the sender', async () => {
     Reflect.deleteProperty(process.env, 'HRC_SESSION_REF')
 
-    const sender = resolveSenderAddress(undefined)
+    const sender = await resolveSenderAddress(undefined)
 
     expect(sender.source).toBe('human-fallback')
     expect(sender.address).toEqual({ kind: 'entity', entity: 'human' })
