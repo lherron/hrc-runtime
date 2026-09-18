@@ -3,8 +3,8 @@
  *
  * Performs STATIC admission + hash verification over a compiled runtime plan.
  * It admits the explicitly supported broker-controller shapes: headless Codex,
- * nonInteractive pi-sdk, and interactive broker-owned tmux. Every other shape
- * is rejected without fallback.
+ * headless Muse, nonInteractive pi-sdk, and interactive broker-owned tmux.
+ * Every other shape is rejected without fallback.
  *
  * BOUNDARY (W1A broker-path scoped guard): this file lives at
  * `agent-spaces-adapter/compile-*.ts`, so it may import only
@@ -86,6 +86,7 @@ export function isBrokerControllerProfile(
     profile.kind === 'harness-broker' &&
     isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
     (isHeadlessCodexBrokerProfile(profile) ||
+      isHeadlessMuseBrokerProfile(profile) ||
       isNonInteractivePiBrokerProfile(profile) ||
       isInteractiveTmuxBrokerProfile(profile))
   )
@@ -99,6 +100,17 @@ function isHeadlessCodexBrokerProfile(
     profile.interactionMode === 'headless' &&
     isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
     profile.brokerDriver === 'codex-app-server'
+  )
+}
+
+function isHeadlessMuseBrokerProfile(
+  profile: RuntimeExecutionProfile
+): profile is BrokerExecutionProfile {
+  return (
+    profile.kind === 'harness-broker' &&
+    profile.interactionMode === 'headless' &&
+    isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
+    profile.brokerDriver === 'muse-serve'
   )
 }
 

@@ -47,6 +47,24 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.startRequest.spec.invocationId).toBe(startRequest.spec.invocationId)
   })
 
+  it('admits a headless muse-serve broker profile (muse seat)', () => {
+    const identity = makeIdentity()
+    const { profile } = makeBrokerProfile(identity, {
+      profileId: 'profile_muse_headless',
+      brokerDriver: 'muse-serve',
+    })
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
+
+    expect(selection.admitted).toBe(true)
+    if (!selection.admitted) return
+    expect(selection.profile.kind).toBe('harness-broker')
+    expect(selection.profile.interactionMode).toBe('headless')
+    expect(selection.profile.brokerDriver).toBe('muse-serve')
+  })
+
   it('freezes the admitted startRequest so it can never be mutated downstream', () => {
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity)
