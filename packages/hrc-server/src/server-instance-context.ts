@@ -209,6 +209,7 @@ type HrcServerInstanceDataForHandlers = {
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
   readonly piTuiTmuxBrokerEnabled: boolean
+  readonly museCliTmuxBrokerEnabled: boolean
   readonly hrcMailKickerEnabled: boolean
   readonly hrcMailKickerSweepIntervalMs: number
   readonly hrcTranscriptIndexEnabled: boolean

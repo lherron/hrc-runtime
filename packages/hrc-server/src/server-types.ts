@@ -446,6 +446,12 @@ export type HrcServerOptions = {
    */
   piTuiTmuxBrokerEnabled?: boolean | undefined
   /**
+   * Cut interactive Muse TUI tmux dispatch over to the Harness Broker. Default on.
+   *
+   * Env override: `HRC_MUSE_CLI_TMUX_BROKER_ENABLED` (`0`/`false` disables).
+   */
+  museCliTmuxBrokerEnabled?: boolean | undefined
+  /**
    * Enable the durable Unix-IPC broker route (T-01810 / T-01801 Phase 1). OFF by
    * default (truthy-only), unlike the default-on broker cutover flags.
    *

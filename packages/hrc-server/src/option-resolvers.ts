@@ -11,6 +11,7 @@ import {
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
   HRC_HEADLESS_MUSE_BROKER_ENABLED_ENV,
   HRC_MAIL_KICKER_ENABLED_ENV,
+  HRC_MUSE_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
   HRC_SESSION_IDLE_ARCHIVE_DAYS_ENV,
   HRC_SESSION_PROJECTION_DAYS_ENV,
@@ -104,6 +105,14 @@ export function resolvePiTuiTmuxBrokerEnabled(options: HrcServerOptions): boolea
   return resolveBooleanFlag(
     options.piTuiTmuxBrokerEnabled,
     process.env[HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV],
+    { defaultOn: true }
+  )
+}
+
+export function resolveMuseCliTmuxBrokerEnabled(options: HrcServerOptions): boolean {
+  return resolveBooleanFlag(
+    options.museCliTmuxBrokerEnabled,
+    process.env[HRC_MUSE_CLI_TMUX_BROKER_ENABLED_ENV],
     { defaultOn: true }
   )
 }

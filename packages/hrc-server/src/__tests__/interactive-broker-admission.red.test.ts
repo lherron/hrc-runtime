@@ -102,6 +102,7 @@ type InteractiveTmuxBrokerDriver =
   | 'codex-app-server'
   | 'codex-cli-tmux'
   | 'pi-tui-tmux'
+  | 'muse-cli-tmux'
 
 type LatestRuntimeAdmissionView = {
   controllerKind: string | undefined
@@ -129,11 +130,17 @@ type InteractiveBrokerAdmissionDecision =
 const HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED = 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED'
 const HRC_CODEX_CLI_TMUX_BROKER_ENABLED = 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED'
 const HRC_PI_TUI_TMUX_BROKER_ENABLED = 'HRC_PI_TUI_TMUX_BROKER_ENABLED'
+const HRC_MUSE_CLI_TMUX_BROKER_ENABLED = 'HRC_MUSE_CLI_TMUX_BROKER_ENABLED'
 
 const BOTH_FLAGS_ON = {
   claudeCodeTmuxBrokerEnabled: true,
   codexCliTmuxBrokerEnabled: true,
   piTuiTmuxBrokerEnabled: true,
+}
+
+const MUSE_FLAGS_ON = {
+  ...BOTH_FLAGS_ON,
+  museCliTmuxBrokerEnabled: true,
 }
 
 // Minimal valid intent factory — only the fields the admission decision reads.
@@ -241,6 +248,43 @@ describe('decideInteractiveBrokerAdmission — supported happy paths → broker-
       flagEnvName: HRC_CODEX_CLI_TMUX_BROKER_ENABLED,
       allowedBrokerDriver: 'codex-app-server',
     })
+  })
+
+  it('interactive muse-cli → broker-start (muse-cli-tmux)', () => {
+    expect(
+      decideInteractiveBrokerAdmission!(
+        intent({ provider: 'meta', interactive: true, id: 'muse-cli' }),
+        null,
+        MUSE_FLAGS_ON
+      )
+    ).toEqual({
+      decision: 'broker-start',
+      flagEnvName: HRC_MUSE_CLI_TMUX_BROKER_ENABLED,
+      allowedBrokerDriver: 'muse-cli-tmux',
+    })
+  })
+
+  it('id-less meta interactive → broker-start (muse-cli-tmux)', () => {
+    expect(
+      decideInteractiveBrokerAdmission!(
+        intent({ provider: 'meta', interactive: true }),
+        null,
+        MUSE_FLAGS_ON
+      )
+    ).toEqual({
+      decision: 'broker-start',
+      flagEnvName: HRC_MUSE_CLI_TMUX_BROKER_ENABLED,
+      allowedBrokerDriver: 'muse-cli-tmux',
+    })
+  })
+
+  it('interactive muse-cli with the muse flag OFF → runtime-unavailable (no legacy fallback)', () => {
+    const decision = decideInteractiveBrokerAdmission!(
+      intent({ provider: 'meta', interactive: true, id: 'muse-cli' }),
+      null,
+      { ...BOTH_FLAGS_ON, museCliTmuxBrokerEnabled: false }
+    )
+    expect(decision.decision).toBe('runtime-unavailable')
   })
 })
 

@@ -15,6 +15,7 @@ import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import {
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
+  HRC_MUSE_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
 } from './server-constants.js'
 import { isRecord } from './server-parsers.js'
@@ -275,6 +276,7 @@ export type InteractiveTmuxBrokerDriver =
   | 'codex-app-server'
   | 'codex-cli-tmux'
   | 'pi-tui-tmux'
+  | 'muse-cli-tmux'
 
 export type LatestRuntimeAdmissionView = {
   controllerKind: HrcRuntimeControllerKind | undefined
@@ -433,6 +435,7 @@ export function decideInteractiveBrokerAdmission(
   options: {
     claudeCodeTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
+    museCliTmuxBrokerEnabled: boolean
     /** T-07397 surface-ownership proof carried by the dispatch, if any. */
     establishedBrokerInvocationId?: string | undefined
   }
@@ -526,6 +529,7 @@ export function resolveInteractiveBrokerAdmissionDriver(
   options: {
     claudeCodeTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
+    museCliTmuxBrokerEnabled: boolean
   }
 ): { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver } | undefined {
   if (
@@ -564,6 +568,17 @@ export function resolveInteractiveBrokerAdmissionDriver(
     }
   }
 
+  if (
+    options.museCliTmuxBrokerEnabled &&
+    intent.harness.provider === 'meta' &&
+    (intent.harness.id === undefined || intent.harness.id === 'muse-cli')
+  ) {
+    return {
+      flagEnvName: HRC_MUSE_CLI_TMUX_BROKER_ENABLED_ENV,
+      allowedBrokerDriver: 'muse-cli-tmux',
+    }
+  }
+
   return undefined
 }
 
@@ -572,6 +587,7 @@ export function decideInteractiveTmuxBrokerStartRoute(
   options: {
     claudeCodeTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
+    museCliTmuxBrokerEnabled: boolean
   }
 ): InteractiveTmuxBrokerStartRoute {
   if (options.claudeCodeTmuxBrokerEnabled && shouldConsiderClaudeCodeTmuxBrokerDispatch(intent)) {
@@ -596,6 +612,14 @@ export function decideInteractiveTmuxBrokerStartRoute(
       route: 'broker',
       flagEnvName: HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
       allowedBrokerDriver: 'pi-tui-tmux',
+    }
+  }
+
+  if (options.museCliTmuxBrokerEnabled && shouldConsiderMuseCliTmuxBrokerDispatch(intent)) {
+    return {
+      route: 'broker',
+      flagEnvName: HRC_MUSE_CLI_TMUX_BROKER_ENABLED_ENV,
+      allowedBrokerDriver: 'muse-cli-tmux',
     }
   }
 
@@ -921,6 +945,14 @@ export function shouldConsiderPiTuiTmuxBrokerDispatch(intent: HrcRuntimeIntent):
   )
 }
 
+export function shouldConsiderMuseCliTmuxBrokerDispatch(intent: HrcRuntimeIntent): boolean {
+  return (
+    isInteractiveTmuxBrokerIntent(intent) &&
+    intent.harness.provider === 'meta' &&
+    (intent.harness.id === undefined || intent.harness.id === 'muse-cli')
+  )
+}
+
 export function isInteractiveTmuxBrokerDriver(
   brokerDriver: string | undefined
 ): brokerDriver is InteractiveTmuxBrokerDriver {
@@ -928,7 +960,8 @@ export function isInteractiveTmuxBrokerDriver(
     brokerDriver === 'claude-code-tmux' ||
     brokerDriver === 'codex-app-server' ||
     brokerDriver === 'codex-cli-tmux' ||
-    brokerDriver === 'pi-tui-tmux'
+    brokerDriver === 'pi-tui-tmux' ||
+    brokerDriver === 'muse-cli-tmux'
   )
 }
 

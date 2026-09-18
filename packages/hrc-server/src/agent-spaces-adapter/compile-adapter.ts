@@ -233,6 +233,9 @@ export function toProfileSelector(intent: HrcRuntimeIntent): AspcProfileSelector
     if (runtime === 'pi-cli') {
       return { brokerDriver: 'pi-tui-tmux' }
     }
+    if (runtime === 'muse-cli') {
+      return { brokerDriver: 'muse-cli-tmux' }
+    }
     return undefined
   }
 

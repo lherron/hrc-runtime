@@ -1772,6 +1772,7 @@ async function classifyRedirectOffCodexDispatch(
     route,
     claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
     piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
+    museCliTmuxBrokerEnabled: this.museCliTmuxBrokerEnabled,
     ...(options.establishedBrokerInvocationId !== undefined
       ? { establishedBrokerInvocationId: options.establishedBrokerInvocationId }
       : {}),
@@ -2131,6 +2132,7 @@ async function dispatchAdmittedTurnForSession(
     {
       claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
       piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
+      museCliTmuxBrokerEnabled: this.museCliTmuxBrokerEnabled,
       // T-07397: the caller's proof that it owns this surface. Compared by
       // exact identity against the runtime's ACTIVE invocation; absent means
       // "owns nothing", which can only ever refuse.
@@ -2182,7 +2184,8 @@ async function dispatchAdmittedTurnForSession(
       await this.executeInteractiveBrokerInputTurn(session, latestRuntime, prompt, runId, {
         waitForCompletion:
           admission.allowedBrokerDriver === 'codex-cli-tmux' ||
-          admission.allowedBrokerDriver === 'pi-tui-tmux'
+          admission.allowedBrokerDriver === 'pi-tui-tmux' ||
+          admission.allowedBrokerDriver === 'muse-cli-tmux'
             ? false
             : options.waitForCompletion,
         repairCorrelation: options.repairCorrelation,
@@ -2217,7 +2220,8 @@ async function dispatchAdmittedTurnForSession(
             : {}),
           waitForCompletion:
             admission.allowedBrokerDriver === 'codex-cli-tmux' ||
-            admission.allowedBrokerDriver === 'pi-tui-tmux'
+            admission.allowedBrokerDriver === 'pi-tui-tmux' ||
+            admission.allowedBrokerDriver === 'muse-cli-tmux'
               ? false
               : options.waitForCompletion,
           joinInFlightRuntimeStart: options.joinInFlightRuntimeStart,

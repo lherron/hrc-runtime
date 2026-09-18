@@ -406,6 +406,7 @@ export async function startRuntimeForSession(
               route: 'interactive',
               claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
               piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
+              museCliTmuxBrokerEnabled: this.museCliTmuxBrokerEnabled,
             },
             isBrokerRuntimeInputDispatchable(this.db, liveJoined)
           )
@@ -724,6 +725,7 @@ export function selectInteractiveTmuxBrokerOptions(
   const route = decideInteractiveTmuxBrokerStartRoute(intent, {
     claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
     piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
+    museCliTmuxBrokerEnabled: this.museCliTmuxBrokerEnabled,
   })
 
   if (route.route !== 'broker') {
@@ -742,7 +744,8 @@ function isExplicitInteractiveTmuxBrokerStartIntent(intent: HrcRuntimeIntent): b
     (intent.harness.provider === 'openai' &&
       (intent.harness.id === 'codex-cli' ||
         intent.harness.id === 'pi' ||
-        intent.harness.id === 'pi-cli'))
+        intent.harness.id === 'pi-cli')) ||
+    (intent.harness.provider === 'meta' && intent.harness.id === 'muse-cli')
   )
 }
 
@@ -892,6 +895,7 @@ export async function attachRuntimeEffectfully(
       {
         claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
         piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
+        museCliTmuxBrokerEnabled: this.museCliTmuxBrokerEnabled,
       }
     )
     if (admission.decision === 'runtime-unavailable') {

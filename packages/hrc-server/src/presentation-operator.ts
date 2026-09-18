@@ -365,6 +365,7 @@ export type RedirectOffBirthJoin = {
   route: RedirectOffCodexRoute
   claudeCodeTmuxBrokerEnabled: boolean
   piTuiTmuxBrokerEnabled: boolean
+  museCliTmuxBrokerEnabled: boolean
   establishedBrokerInvocationId?: string | undefined
 }
 
@@ -404,6 +405,7 @@ export function assertBirthJoinAdmitted(
     {
       claudeCodeTmuxBrokerEnabled: join.claudeCodeTmuxBrokerEnabled,
       piTuiTmuxBrokerEnabled: join.piTuiTmuxBrokerEnabled,
+      museCliTmuxBrokerEnabled: join.museCliTmuxBrokerEnabled,
       ...(join.establishedBrokerInvocationId !== undefined
         ? { establishedBrokerInvocationId: join.establishedBrokerInvocationId }
         : {}),

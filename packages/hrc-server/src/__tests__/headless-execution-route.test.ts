@@ -125,6 +125,7 @@ const decideInteractiveTmuxBrokerStartRoute = (
         claudeCodeTmuxBrokerEnabled: boolean
         codexCliTmuxBrokerEnabled: boolean
         piTuiTmuxBrokerEnabled?: boolean
+        museCliTmuxBrokerEnabled?: boolean
       }
     ) => InteractiveTmuxBrokerStartRoute
   }
@@ -634,6 +635,36 @@ describe('decideInteractiveTmuxBrokerStartRoute — no-prompt interactive starts
         {
           claudeCodeTmuxBrokerEnabled: false,
           codexCliTmuxBrokerEnabled: true,
+        }
+      )
+    ).toEqual({ route: 'legacy-tmux' })
+  })
+
+  it('selects the muse-cli-tmux broker when the muse flag is enabled', () => {
+    expect(
+      decideInteractiveTmuxBrokerStartRoute!(
+        intent({ provider: 'meta', interactive: true, id: 'muse-cli' }, 'interactive'),
+        {
+          claudeCodeTmuxBrokerEnabled: false,
+          codexCliTmuxBrokerEnabled: false,
+          museCliTmuxBrokerEnabled: true,
+        }
+      )
+    ).toEqual({
+      route: 'broker',
+      flagEnvName: 'HRC_MUSE_CLI_TMUX_BROKER_ENABLED',
+      allowedBrokerDriver: 'muse-cli-tmux',
+    })
+  })
+
+  it('keeps interactive muse starts on legacy tmux when the muse flag is disabled', () => {
+    expect(
+      decideInteractiveTmuxBrokerStartRoute!(
+        intent({ provider: 'meta', interactive: true, id: 'muse-cli' }, 'interactive'),
+        {
+          claudeCodeTmuxBrokerEnabled: false,
+          codexCliTmuxBrokerEnabled: false,
+          museCliTmuxBrokerEnabled: false,
         }
       )
     ).toEqual({ route: 'legacy-tmux' })
