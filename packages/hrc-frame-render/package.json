@@ -24,8 +24,7 @@
   },
   "dependencies": {
     "agent-action-render": "*",
-    "agent-scope": "latest",
-    "spaces-runtime": "latest"
+    "agent-scope": "latest"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

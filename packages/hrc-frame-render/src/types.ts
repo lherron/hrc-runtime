@@ -1,3 +1,5 @@
+import type { UnifiedRuntimeSessionEvent } from './runtime-event-types.js'
+
 export type RunId = string
 export type ProjectId = string
 
@@ -166,7 +168,7 @@ export type GatewayNoticeEvent = {
 }
 
 export type GatewaySessionEvent =
-  | import('spaces-runtime').UnifiedSessionEvent
+  | UnifiedRuntimeSessionEvent
   | GatewayRunQueuedEvent
   | GatewayRunStartedEvent
   | GatewayRunCompletedEvent

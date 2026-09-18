@@ -1,7 +1,11 @@
 import { admissionLabel } from 'agent-action-render'
 import { parseScopeRef, validateScopeRef } from 'agent-scope'
-import type { ContentBlock, Message, ToolResult } from 'spaces-runtime'
 import { createLogger } from './logger.js'
+import type {
+  RuntimeContentBlock,
+  RuntimeMessage,
+  RuntimeToolResult,
+} from './runtime-event-types.js'
 import type { GatewaySessionEvent, SessionEventEnvelope } from './types.js'
 
 const log = createLogger({ component: 'hrc-frame-render' })
@@ -138,7 +142,7 @@ function adaptToolResult(payload: unknown): GatewaySessionEvent | undefined {
     toolUseId,
     toolName,
     result: isRecord(result)
-      ? (result as unknown as ToolResult)
+      ? (result as unknown as RuntimeToolResult)
       : {
           content: [{ type: 'text', text: textFrom(result) }],
         },
@@ -174,7 +178,7 @@ function adaptAssistantMessage(
     ...(messageId !== undefined ? { messageId } : {}),
     message: {
       role: 'assistant',
-      content: content as Message['content'],
+      content: content as RuntimeMessage['content'],
     },
     ...(getBoolean(record, 'truncated') === true ? { truncated: true } : {}),
   }
@@ -202,7 +206,7 @@ function adaptAssistantMessageStart(payload: unknown): GatewaySessionEvent | und
     ...(messageId !== undefined ? { messageId } : {}),
     message: {
       role: 'assistant',
-      content: content as Message['content'],
+      content: content as RuntimeMessage['content'],
     },
   }
 }
@@ -216,7 +220,7 @@ function adaptAssistantMessageUpdate(payload: unknown): GatewaySessionEvent | un
   const messageId = getString(record, 'messageId')
   const textDelta = getString(record, 'textDelta')
   const contentBlocks = Array.isArray(record['contentBlocks'])
-    ? (record['contentBlocks'] as ContentBlock[])
+    ? (record['contentBlocks'] as RuntimeContentBlock[])
     : undefined
 
   if (textDelta === undefined && contentBlocks === undefined) {
