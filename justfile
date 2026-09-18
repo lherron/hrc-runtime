@@ -696,3 +696,19 @@ cp-test prompt="List skills available. Use only what is in your context, no tool
         --target-dir /Users/lherron/praesidium/rex-home \
         --model claude/sonnet \
         "{{prompt}}"
+
+# Local dev install: build the working tree as it stands and cut the local CLI
+# over to it. `just install` is still the release path — it proves the source is
+# committed and contained by a freshly fetched origin/main before it publishes.
+# This recipe deliberately skips that proof, so it needs no push and tolerates a
+# dirty tree; it publishes on the `worktree` tag, leaving the `latest` dev
+# channel other repos pull untouched. Run `hrc server restart` afterwards to move
+# the daemon onto it.
+install-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bun scripts/atomic-install.ts \
+      --context=main \
+      --link-mode=on \
+      --publish-channel=worktree \
+      --source-root="$PWD"
