@@ -25,7 +25,6 @@
   "dependencies": {
     "agent-scope": "latest",
     "hrc-core": "*",
-    "spaces-config": "latest",
     "spaces-harness-broker-protocol": "latest"
   },
   "devDependencies": {

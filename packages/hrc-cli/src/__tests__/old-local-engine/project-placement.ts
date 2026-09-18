@@ -1,19 +1,18 @@
 import { spawnSync } from 'node:child_process'
-import { readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 
 import {
   type WrkqProjectRegistryEntry,
   environmentWithoutGitOverrides,
+  findProjectMarker,
   findWrkqProjectEntry,
+  getAgentsRoot,
   readWrkqProjectRegistry,
 } from 'hrc-core'
-import {
-  type ResolveAgentPlacementPathsOptions,
-  type ResolvedAgentPlacementPaths,
-  resolveAgentPlacementPaths,
-} from 'spaces-config'
+
+import { parseFixtureTargetsToml } from './fixture-targets.js'
 
 export type ProjectOrigin = 'explicit' | 'inferred'
 
@@ -33,7 +32,118 @@ export interface ProjectPlacementResolution {
   reason: string
 }
 
-export interface HrcResolvedAgentPlacementPaths extends ResolvedAgentPlacementPaths {
+/**
+ * T-08597 — vendored ASP agent-root resolver for the frozen old-engine fake.
+ *
+ * Origin: spaces-config `resolveAgentPlacementPaths` +
+ * `getAgentRootSearchPathForProject` (store/runtime-placement.js and
+ * store/asp-config.js at ASP 0.1.1-dev.20260917231122), re-expressed over
+ * hrc-core's `getAgentsRoot` / `findProjectMarker` (vendored mirrors of the
+ * ASP originals, already HRC-owned) and the fixture targets reader above.
+ * Semantics preserved verbatim: an explicit projectRoot wins; otherwise the
+ * projectId resolves from `ASP_PROJECT_ROOT_OVERRIDE` or the marker walk-up
+ * (whose id must match); agent homes are searched project-local-root-first,
+ * then canonical, for the first dir carrying an agent-profile.toml; a
+ * declared-but-missing project agents root becomes a warning, not an error.
+ * Production code never touches this: the daemon resolves placement via aspd.
+ */
+export interface OldEngineAgentPlacementOptions {
+  agentId: string
+  projectId?: string | undefined
+  agentRoot?: string | undefined
+  projectRoot?: string | undefined
+  cwd?: string | undefined
+  aspHome?: string | undefined
+  env?: Record<string, string | undefined> | undefined
+}
+
+export interface OldEngineAgentPlacementPaths {
+  agentRoot?: string | undefined
+  projectRoot?: string | undefined
+  cwd?: string | undefined
+  searchedAgentRoots?: string[] | undefined
+  warnings?: string[] | undefined
+}
+
+function expandProjectAgentsRoot(
+  projectRoot: string,
+  declaredPath: string,
+  env: Record<string, string | undefined>
+): string {
+  const home = env['HOME'] ?? homedir()
+  const expanded =
+    declaredPath === '~'
+      ? home
+      : declaredPath.startsWith('~/')
+        ? join(home, declaredPath.slice(2))
+        : declaredPath
+  return isAbsolute(expanded) ? resolve(expanded) : resolve(projectRoot, expanded)
+}
+
+function resolveAgentPlacementPaths(
+  options: OldEngineAgentPlacementOptions
+): OldEngineAgentPlacementPaths {
+  const env = options.env ?? process.env
+  const projectRoot =
+    options.projectRoot ??
+    (() => {
+      if (!options.projectId) return undefined
+      const override = env['ASP_PROJECT_ROOT_OVERRIDE']
+      if (override) {
+        const home = env['HOME'] ?? homedir()
+        return override === '~'
+          ? home
+          : override.startsWith('~/')
+            ? join(home, override.slice(2))
+            : override
+      }
+      const startDir = options.cwd ?? process.cwd()
+      const agentsRoot = getAgentsRoot({
+        ...(options.aspHome !== undefined ? { aspHome: options.aspHome } : {}),
+        ...(options.env !== undefined ? { env: options.env } : {}),
+      })
+      const marker = findProjectMarker(startDir, { agentsRoot })
+      if (marker && marker.id === options.projectId) return marker.dir
+      return undefined
+    })()
+  const roots: string[] = []
+  const warnings: string[] = []
+  if (projectRoot) {
+    const manifestPath = join(projectRoot, 'asp-targets.toml')
+    if (existsSync(manifestPath)) {
+      const manifest = parseFixtureTargetsToml(readFileSync(manifestPath, 'utf8'), manifestPath)
+      const declaredPath = manifest.agentsRoot
+      if (declaredPath) {
+        const root = expandProjectAgentsRoot(projectRoot, declaredPath, env)
+        if (existsSync(root)) {
+          roots.push(root)
+        } else {
+          warnings.push(`Declared project agents root does not exist: ${root}`)
+        }
+      }
+    }
+  }
+  const canonical = getAgentsRoot({ env })
+  if (canonical) roots.push(canonical)
+  const deduped = [...new Set(roots.map((root) => resolve(root)))].map(
+    (resolved) => roots.find((root) => resolve(root) === resolved) as string
+  )
+  const searchedAgentRoots = deduped.map((root) => join(root, options.agentId))
+  const agentRoot =
+    options.agentRoot ??
+    searchedAgentRoots.find((root) => existsSync(join(root, 'agent-profile.toml')))
+  return {
+    ...(agentRoot ? { agentRoot } : {}),
+    ...(projectRoot ? { projectRoot } : {}),
+    ...(!agentRoot && searchedAgentRoots.length > 0 ? { searchedAgentRoots } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+    ...((options.cwd ?? projectRoot ?? agentRoot)
+      ? { cwd: options.cwd ?? projectRoot ?? agentRoot }
+      : {}),
+  }
+}
+
+export interface HrcResolvedAgentPlacementPaths extends OldEngineAgentPlacementPaths {
   resolution: ProjectPlacementResolution
 }
 
@@ -43,7 +153,7 @@ export interface HrcResolvedAgentPlacementPaths extends ResolvedAgentPlacementPa
  */
 export type ProjectRegistryEntry = WrkqProjectRegistryEntry
 
-export interface ResolveHrcAgentPlacementPathsOptions extends ResolveAgentPlacementPathsOptions {
+export interface ResolveHrcAgentPlacementPathsOptions extends OldEngineAgentPlacementOptions {
   projectOrigin: ProjectOrigin
   taskId?: string | undefined
   /** Strict for launch placement; advisory for messaging/read selectors. */

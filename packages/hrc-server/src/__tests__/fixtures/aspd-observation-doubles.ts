@@ -6,10 +6,9 @@
  * observations. Keep the request ledger behavioral: the route tests use it to
  * prove project-mode/context forwarding and the single-connection preview law.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { parseAgentProfile, resolveHarnessCatalogEntry } from 'spaces-config'
 import type { HarnessInvocationSpec, InvocationStartRequest } from 'spaces-harness-broker-protocol'
 import {
   type RuntimeIdentityAllocation,
@@ -18,6 +17,8 @@ import {
 } from 'spaces-runtime-contracts'
 
 import type { Release } from './aspd-route-doubles'
+import { resolveFixtureHarnessCatalogEntry } from './fixture-catalog.js'
+import { type FixtureAgentProfile, readFixtureAgentProfile } from './fixture-profile.js'
 
 export type ResolveScript =
   | 'ok'
@@ -478,19 +479,10 @@ type FixtureAgentHit = {
   profileAbsent: boolean
 }
 
-type ParsedFixtureProfile = {
-  identity?: { role?: string }
-  operator?: boolean
-  claims_task?: boolean
-  provisioning?: { harness?: string; node?: string }
-  placement?: { pins?: Record<string, string>; homes?: Record<string, string> }
-}
+type ParsedFixtureProfile = FixtureAgentProfile
 
 function readFixtureProfile(profilePath: string): ParsedFixtureProfile {
-  return parseAgentProfile(
-    readFileSync(profilePath, 'utf8'),
-    profilePath
-  ) as unknown as ParsedFixtureProfile
+  return readFixtureAgentProfile(profilePath)
 }
 
 function lookupFixtureAgent(
@@ -512,9 +504,10 @@ function lookupFixtureAgent(
     } catch {
       return { invalid: true, agentRoot: home }
     }
-    const declared = profile.provisioning?.harness
+    const declared = profile.provisioning?.['harness']
     const entry =
-      (typeof declared === 'string' ? resolveHarnessCatalogEntry(declared) : undefined) ?? undefined
+      (typeof declared === 'string' ? resolveFixtureHarnessCatalogEntry(declared) : undefined) ??
+      undefined
     const role = profile.identity?.role
     const pins =
       profile.placement?.pins !== undefined && typeof profile.placement.pins === 'object'
@@ -524,7 +517,7 @@ function lookupFixtureAgent(
       profile.placement?.homes !== undefined && typeof profile.placement.homes === 'object'
         ? (profile.placement.homes as Record<string, string>)
         : {}
-    const node = profile.provisioning?.node
+    const node = profile.provisioning?.['node']
     return {
       agentRoot: home,
       ...(typeof role === 'string' ? { role } : {}),

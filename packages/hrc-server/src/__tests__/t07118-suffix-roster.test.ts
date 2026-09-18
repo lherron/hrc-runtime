@@ -33,9 +33,8 @@ import type {
   HrcSessionRecord,
   SuffixStartRuntimeRequest,
 } from 'hrc-core'
-import { isSuffixStartRuntimeRequest } from 'hrc-core'
+import { ROSTER_SLOT_TOKENS, isSuffixStartRuntimeRequest } from 'hrc-core'
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
-import { ROSTER_SLOT_TOKENS } from 'spaces-config'
 
 import { appendEvent } from '../event-notification-handlers'
 import { parseStartRuntimeRequest } from '../parsers/runtime'

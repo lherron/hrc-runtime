@@ -29,8 +29,7 @@
     "hrc-mail-kicker": "*",
     "hrc-sdk": "*",
     "hrc-server": "*",
-    "hrc-store-sqlite": "*",
-    "spaces-config": "latest"
+    "hrc-store-sqlite": "*"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

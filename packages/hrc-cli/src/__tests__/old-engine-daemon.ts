@@ -15,24 +15,21 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { parseScopeRef } from 'agent-scope'
-import {
-  buildRuntimeBundleRef,
-  getAgentsRoot,
-  getAspHome,
-  parseAgentProfile,
-  resolveHarnessCatalogEntry,
-} from 'spaces-config'
+import { getAgentsRoot, getAspHome } from 'hrc-core'
 
 import { type FakeDaemon, startFakeDaemon } from './fake-daemon.js'
+import { resolveFixtureHarnessCatalogEntry } from './old-local-engine/fixture-catalog.js'
+import { parseFixtureAgentProfile } from './old-local-engine/fixture-profile.js'
 import { resolveHrcAgentPlacementPaths } from './old-local-engine/project-placement.js'
 import {
   buildHrcRuntimeIntent,
+  buildOldEngineBundleRef,
   resolveAgentHarness,
 } from './old-local-engine/runtime-intent-assembly.js'
 
 function readRoleOperator(agentRoot: string): { role?: string; operator: boolean } {
   try {
-    const profile = parseAgentProfile(
+    const profile = parseFixtureAgentProfile(
       readFileSync(join(agentRoot, 'agent-profile.toml'), 'utf8'),
       join(agentRoot, 'agent-profile.toml')
     ) as unknown as { identity?: { role?: string }; operator?: boolean }
@@ -83,11 +80,13 @@ export function startOldEngineDaemon(): FakeDaemon {
               ...(paths.projectRoot !== undefined ? { projectRoot: paths.projectRoot } : {}),
             })
       const entry =
-        harness?.harness === undefined ? undefined : resolveHarnessCatalogEntry(harness.harness)
+        harness?.harness === undefined
+          ? undefined
+          : resolveFixtureHarnessCatalogEntry(harness.harness)
       const bundle =
         paths.agentRoot === undefined
           ? undefined
-          : buildRuntimeBundleRef({
+          : buildOldEngineBundleRef({
               agentName: agentId,
               agentRoot: paths.agentRoot,
               ...(paths.projectRoot !== undefined ? { projectRoot: paths.projectRoot } : {}),

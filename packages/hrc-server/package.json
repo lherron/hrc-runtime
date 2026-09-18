@@ -25,18 +25,14 @@
   "dependencies": {
     "@iarna/toml": "^2.2.5",
     "agent-scope": "latest",
-    "agent-spaces": "latest",
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-mail-kicker": "*",
     "hrc-transcript-index": "*",
     "hrc-store-sqlite": "*",
     "spaces-aspc-protocol": "latest",
-    "spaces-config": "latest",
-    "spaces-execution": "latest",
     "spaces-harness-broker-client": "latest",
     "spaces-harness-broker-protocol": "latest",
-    "spaces-runtime": "latest",
     "spaces-runtime-contracts": "latest"
   },
   "devDependencies": {

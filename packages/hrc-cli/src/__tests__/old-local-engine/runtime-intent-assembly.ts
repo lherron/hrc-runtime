@@ -16,20 +16,109 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { DENIED_PROVISION_OVERRIDE_KEYS } from 'agent-scope'
+import { DENIED_PROVISION_OVERRIDE_KEYS, PROVISIONING_SCALAR_KEYS } from 'agent-scope'
 import type { ProvisioningScalars } from 'agent-scope'
+import type {
+  HrcExecutionMode,
+  HrcHarness,
+  HrcRunMode,
+  HrcRuntimeBundleRef,
+  HrcRuntimeIntent,
+} from 'hrc-core'
+
 import {
-  type RuntimePlacement,
-  type TargetDefinition,
-  buildRuntimeBundleRef,
-  mergeAgentWithProjectTarget,
-  normalizeHarnessFrontend,
-  parseAgentProfile,
-  parseTargetsToml,
-  resolveAgentPrimingPrompt,
-  resolveHarnessProvider,
-} from 'spaces-config'
-import type { HrcExecutionMode, HrcHarness, HrcRuntimeIntent } from 'hrc-core'
+  normalizeFixtureHarnessFrontend,
+  resolveFixtureHarnessProvider,
+} from './fixture-catalog.js'
+import { type FixtureAgentProfile, parseFixtureAgentProfile } from './fixture-profile.js'
+import { type FixtureProjectTarget, parseFixtureTargetsToml } from './fixture-targets.js'
+
+/**
+ * T-08597 — vendored ASP interpretation for the frozen old-engine fake.
+ *
+ * Origin: spaces-config `buildRuntimeBundleRef` (store/runtime-placement.js),
+ * `mergeAgentWithProjectTarget` + `mergePrimingPrompt` +
+ * `resolveAgentPrimingPrompt` (core/merge/agent-project-merge.js), and the
+ * harness-name helpers (core/types/harness.js), all at ASP
+ * 0.1.1-dev.20260917231122. The merge keeps the fields the assembler reads
+ * (`harness`, the scalar `provisioning` bag with target-over-profile
+ * precedence and the `claude-code` default, plus the priming-conflict throw);
+ * compose/space and per-harness option merges are dropped — no fake route
+ * reads them. Production code never touches this: the daemon assembles intent
+ * from the aspd declaration observation.
+ */
+export function buildOldEngineBundleRef(options: {
+  agentName: string
+  agentRoot: string
+  projectRoot?: string | undefined
+}): HrcRuntimeBundleRef {
+  const profilePath = join(options.agentRoot, 'agent-profile.toml')
+  if (!existsSync(profilePath)) {
+    throw new Error(
+      `buildRuntimeBundleRef: agent-profile.toml not found at ${profilePath} — agent install incomplete`
+    )
+  }
+  return {
+    kind: 'agent-project',
+    agentName: options.agentName,
+    ...(options.projectRoot ? { projectRoot: options.projectRoot } : {}),
+  }
+}
+
+function mergeOldEngineProvisioningScalars(
+  agentProvisioning: Record<string, unknown> | undefined,
+  targetProvisioning: Record<string, unknown> | undefined
+): ProvisioningScalars {
+  const merged: Record<string, unknown> = {}
+  for (const key of PROVISIONING_SCALAR_KEYS) {
+    const value = targetProvisioning?.[key] ?? agentProvisioning?.[key]
+    if (value !== undefined) merged[key] = value
+  }
+  merged['yolo'] ??= false
+  merged['remote'] ??= false
+  return merged as ProvisioningScalars
+}
+
+function mergeOldEnginePriming(
+  agentDefault: string | undefined,
+  projectTarget: FixtureProjectTarget | undefined
+): string | undefined {
+  if (!projectTarget) return agentDefault
+  if (projectTarget.priming !== undefined && projectTarget.priming_append !== undefined) {
+    throw new Error(
+      'Invalid target override: cannot set both priming and priming_append on the same target'
+    )
+  }
+  if (projectTarget.priming !== undefined) return projectTarget.priming
+  if (projectTarget.priming_append !== undefined && agentDefault) {
+    return `${agentDefault}\n${projectTarget.priming_append}`
+  }
+  return agentDefault
+}
+
+function resolveOldEnginePrimingPrompt(
+  profile: FixtureAgentProfile,
+  agentRoot: string
+): string | undefined {
+  if (profile.priming) return profile.priming
+  if (profile.priming_file) return readFileSync(join(agentRoot, profile.priming_file), 'utf8')
+  return undefined
+}
+
+function mergeOldEngineAgentWithProjectTarget(
+  profile: FixtureAgentProfile,
+  projectTarget: FixtureProjectTarget | undefined,
+  agentRoot: string
+): { harness: string | undefined; provisioning: ProvisioningScalars } {
+  const agentProvisioning = profile.provisioning
+  const targetProvisioning = projectTarget?.provisioning
+  const provisioning = mergeOldEngineProvisioningScalars(agentProvisioning, targetProvisioning)
+  mergeOldEnginePriming(resolveOldEnginePrimingPrompt(profile, agentRoot), projectTarget)
+  return {
+    harness: (provisioning['harness'] as string | undefined) ?? 'claude-code',
+    provisioning,
+  }
+}
 
 export type ResolvedAgentHarness = {
   provider: 'anthropic' | 'openai' | 'meta'
@@ -86,22 +175,22 @@ function scalarsOnly(scalars: Record<string, unknown>): ProvisioningScalars {
 }
 
 function resolveProviderForHarness(harness: string | undefined): 'anthropic' | 'openai' | 'meta' {
-  return resolveHarnessProvider(harness) ?? 'anthropic'
+  return resolveFixtureHarnessProvider(harness) ?? 'anthropic'
 }
 
 function loadProjectTarget(
   projectRoot: string | undefined,
   targetName: string
-): TargetDefinition | undefined {
+): FixtureProjectTarget | undefined {
   if (!projectRoot) return undefined
   const targetsPath = join(projectRoot, 'asp-targets.toml')
   if (!existsSync(targetsPath)) return undefined
-  return parseTargetsToml(readFileSync(targetsPath, 'utf8'), targetsPath).targets[targetName]
+  return parseFixtureTargetsToml(readFileSync(targetsPath, 'utf8'), targetsPath).targets[targetName]
 }
 
-function targetHarness(target: TargetDefinition | undefined): string | undefined {
-  return (target as unknown as { provisioning?: { harness?: string } } | undefined)?.provisioning
-    ?.harness
+function targetHarness(target: FixtureProjectTarget | undefined): string | undefined {
+  const harness = target?.provisioning?.['harness']
+  return typeof harness === 'string' ? harness : undefined
 }
 
 /**
@@ -143,16 +232,8 @@ export function resolveAgentHarness(args: {
   }
   try {
     const source = readFileSync(profilePath, 'utf8')
-    const profile = parseAgentProfile(source, profilePath)
-    const primingPrompt = resolveAgentPrimingPrompt(profile, agentRoot)
-    const effective = mergeAgentWithProjectTarget(
-      {
-        ...profile,
-        ...(primingPrompt !== undefined ? { priming: primingPrompt } : {}),
-      },
-      projectTarget,
-      'task'
-    )
+    const profile = parseFixtureAgentProfile(source, profilePath)
+    const effective = mergeOldEngineAgentWithProjectTarget(profile, projectTarget, agentRoot)
     return {
       provider: resolveProviderForHarness(effective.harness),
       harness: effective.harness,
@@ -252,7 +333,7 @@ export function formatProfileProvisioningStrippedWarning(input: {
  * "claude-code") to the canonical {@link HrcHarness} id the dispatcher understands.
  */
 export function harnessFrontendToHrcHarness(harness: string | undefined): HrcHarness | undefined {
-  return normalizeHarnessFrontend(harness) as HrcHarness | undefined
+  return normalizeFixtureHarnessFrontend(harness) as HrcHarness | undefined
 }
 
 export interface BuildHrcRuntimeIntentInput {
@@ -265,7 +346,7 @@ export interface BuildHrcRuntimeIntentInput {
   /** Working directory for the runtime; defaults to projectRoot ?? agentRoot. */
   cwd?: string | undefined
   /** Placement run mode; defaults to 'task'. */
-  runMode?: RuntimePlacement['runMode'] | undefined
+  runMode?: HrcRunMode | undefined
   /** Caller's turn semantic — whether this is an interactive runtime. */
   interactive?: boolean | undefined
   /** Caller's preferred execution mode (its own turn semantic, not harness knowledge). */
@@ -336,7 +417,7 @@ export function buildHrcRuntimeIntent(input: BuildHrcRuntimeIntentInput): HrcRun
   const interactive = input.interactive ?? false
   const preferredMode: HrcExecutionMode = input.preferredMode ?? 'nonInteractive'
 
-  const bundle = buildRuntimeBundleRef({ agentName: agentId, agentRoot, projectRoot })
+  const bundle = buildOldEngineBundleRef({ agentName: agentId, agentRoot, projectRoot })
   const merged = resolveAgentHarness({ agentRoot, agentId, projectRoot })
 
   // The overlay is LAST, after the profile+target merge, so a directive can
@@ -345,7 +426,7 @@ export function buildHrcRuntimeIntent(input: BuildHrcRuntimeIntentInput): HrcRun
   // works at all: they are re-resolved rather than carried over.
   const { provision, provider, harnessId } = applyProvisionDirectives(merged, input.provision)
 
-  const placement: RuntimePlacement = {
+  const placement: HrcRuntimeIntent['placement'] = {
     agentRoot,
     ...(projectRoot ? { projectRoot } : {}),
     cwd,

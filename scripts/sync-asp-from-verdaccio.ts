@@ -12,9 +12,6 @@ export const aspSyncSpec: SyncSpec = {
       packages: [
         'agent-scope',
         'cli-kit',
-        'spaces-config',
-        'spaces-runtime',
-        'spaces-execution',
         'spaces-harness-broker-protocol',
         'spaces-harness-broker-client',
         // T-08596 (T-08569A closure): the bundled execution packages left this
@@ -23,8 +20,10 @@ export const aspSyncSpec: SyncSpec = {
         // `spaces-aspc-facade`, `spaces-harness-codex`). The T-07677 lesson
         // still applies to everything that remains: every package HRC's
         // manifests declare must be listed here or `pull-deps` reports green
-        // while the set splits. The full trim of the remaining execution
-        // packages follows the T-08569B interpretation migration.
+        // while the set splits. T-08597 (T-08569B interpretation migration)
+        // completes the trim: spaces-config, spaces-runtime, spaces-execution,
+        // and agent-spaces leave this list with the manifests that declared
+        // them. hrc-frame-render keeps a type-only spaces-runtime edge.
         'spaces-runtime-contracts',
         'spaces-aspc-protocol',
         'spaces-aspc',
@@ -32,7 +31,6 @@ export const aspSyncSpec: SyncSpec = {
         'spaces-harness-muse',
         'spaces-harness-pi',
         'spaces-harness-pi-sdk',
-        'agent-spaces',
       ],
     },
   ],
