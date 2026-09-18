@@ -27,7 +27,6 @@ import { workerHelloRefusal } from '../../agent-spaces-adapter/aspd-execution-re
 import { deriveRuntimeStatusWithAwaiting } from '../../ask-bracket'
 import {
   type AspToolchainBinarySelection,
-  describeAspToolchainCommand,
   externalToolchainContractDriftDetail,
   observeAspToolchainHello,
 } from '../../asp-toolchain'
@@ -544,12 +543,10 @@ async function startControllerAttempt(
       if (input.brokerClient !== undefined) {
         client = input.brokerClient
       } else {
+        // T-08596 (T-08569A closure): no resolver fallback. The default
+        // resolveBrokerCommand refuses with aspd_unconfigured; an injected
+        // broker client or command is used as given, with no selection to record.
         const command = ctx.resolveBrokerCommand()
-        spawnedSelection = describeAspToolchainCommand(
-          'harness-broker',
-          command,
-          ctx.env ?? process.env
-        )
         client = await ctx.brokerClientFactory({
           command,
           args: ctx.brokerArgs,

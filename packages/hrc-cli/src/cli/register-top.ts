@@ -47,7 +47,7 @@ export function registerTopLevelCommands(program: Command): void {
     .allowUnknownOption(true)
     .option('--force-restart', 'replace runtime with a fresh PTY; preserve the conversation')
     .option('--new-session', 'rotate to a fresh host session before starting')
-    .option('--dry-run', 'local plan preview — no server calls')
+    .option('--dry-run', 'daemon plan preview — no side effects')
     .option('--debug', 'keep tmux shell alive after harness exits')
     .option('--no-register', 'do not prompt to register cwd as a project marker')
     .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
@@ -136,7 +136,7 @@ export function registerTopLevelCommands(program: Command): void {
       '--attach-only',
       'reattach to the existing runtime without starting one (like `hrc attach`)'
     )
-    .option('--dry-run', 'local plan preview — no server calls')
+    .option('--dry-run', 'daemon plan preview — no side effects')
     .option('--debug', 'keep tmux shell alive after harness exits')
     .option('--no-register', 'do not prompt to register cwd as a project marker')
     .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
@@ -238,7 +238,7 @@ export function registerTopLevelCommands(program: Command): void {
     .option('--no-attach', 'resume and start without attaching to the tmux session')
     .option('--prior', "resume the current session's immediate predecessor")
     .option('--host-session <id>', 'resume an exact historical host session')
-    .option('--dry-run', 'local plan preview — no server calls')
+    .option('--dry-run', 'local plan preview — no side effects')
     .option('--debug', 'keep tmux shell alive after harness exits')
     .option('--no-register', 'do not prompt to register cwd as a project marker')
     .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
@@ -537,7 +537,7 @@ The output always names the resolved kind and the concrete ID(s).
     .command('attach')
     .description('attach to a live runtime')
     .argument('[scope]', 'scope or runtime ID to attach to')
-    .option('--dry-run', 'local plan preview — no server calls')
+    .option('--dry-run', 'local plan preview — no side effects')
     .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
     .action(async (scope, _opts, cmd: Command) => {
       const positionals = scope !== undefined ? [scope] : []

@@ -51,7 +51,7 @@ describe('hrc run', () => {
     await seedRunRoots('rex', 'agent-spaces')
   })
 
-  it('admits canonical CLI-built prompt and no-prompt intents on the attached broker-tmux path', async () => {
+  it('builds canonical CLI prompt and no-prompt intents; the attached prepare refuses without an aspd endpoint (T-08596)', async () => {
     const originalAgentsRoot = process.env['ASP_AGENTS_ROOT']
     process.env['ASP_AGENTS_ROOT'] = agentsRoot
     const client = new HrcClient(socketPath)
@@ -81,18 +81,17 @@ describe('hrc run', () => {
         expect(intent.execution?.preferredMode).toBe('interactive')
         expect(intent.initialPrompt).toBe(testCase.prompt)
 
-        const prepared = await client.prepareAttachedRun({
-          hostSessionId: resolved.hostSessionId,
-          intent,
-          restartStyle: 'reuse_pty',
-          ...(testCase.prompt ? { prompt: testCase.prompt } : {}),
-        })
-
-        expect(prepared.status).toBe('prepared')
-        expect(prepared.attach.argv[0]?.startsWith('/')).toBe(true)
-        expect(prepared.attach.argv[0]?.endsWith('/tmux')).toBe(true)
-        expect(prepared.attach.bindingFence.hostSessionId).toBe(resolved.hostSessionId)
-        expect(prepared.attach.bindingFence.runtimeId).toMatch(/^rt-/)
+        // T-08596: the attached prepare needs an aspd endpoint; the fixture
+        // daemon declares none, so it refuses with the typed closure refusal.
+        // The CLI-built intent shaping above is the coverage this file keeps.
+        await expect(
+          client.prepareAttachedRun({
+            hostSessionId: resolved.hostSessionId,
+            intent,
+            restartStyle: 'reuse_pty',
+            ...(testCase.prompt ? { prompt: testCase.prompt } : {}),
+          })
+        ).rejects.toThrow('aspd-independent execution closure')
       }
     } finally {
       restoreEnvValue('ASP_AGENTS_ROOT', originalAgentsRoot)

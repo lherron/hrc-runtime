@@ -56,6 +56,7 @@ import * as substrateAllocator from '../broker-interactive-handlers/substrate-al
 import type { BrokerClientLike } from '../broker/controller'
 import { HarnessBrokerController } from '../broker/controller'
 import * as tmuxSocket from '../tmux-socket'
+import { makeFrozenWorkerLaunch } from './fixtures/frozen-substrate'
 
 import { makeBrokerProfile, makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
 
@@ -440,6 +441,14 @@ describe('T-04921 Test 4 — observer integration: observer socket wiring (RED)'
       hostSessionId: 'hostSession_viewer',
       generation: 1,
       brokerDriver: 'codex-app-server',
+      workerLaunch: await makeFrozenWorkerLaunch({
+        runtimeRoot: fixture.dir,
+        driverKind: 'codex-app-server',
+        runtimeId: 'runtime_viewer',
+        hostSessionId: 'hostSession_viewer',
+        generation: 1,
+        withObserverSocket: true,
+      }),
     })
 
     // The broker MUST be told to serve the observer socket via the launch command.
@@ -607,6 +616,14 @@ describe('T-04921 Test 4 — observer integration: observer socket wiring (RED)'
       hostSessionId: 'hostSession_viewer',
       generation: 1,
       brokerDriver: 'codex-app-server',
+      workerLaunch: await makeFrozenWorkerLaunch({
+        runtimeRoot: fixture.dir,
+        driverKind: 'codex-app-server',
+        runtimeId: 'runtime_single_path',
+        hostSessionId: 'hostSession_viewer',
+        generation: 1,
+        withObserverSocket: true,
+      }),
     })
 
     // TODAY FAILS: observerSocketPath field does not exist in any current allocator.

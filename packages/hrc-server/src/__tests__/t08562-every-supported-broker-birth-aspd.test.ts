@@ -460,18 +460,19 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
     expect(facadeCalls).toBe(0)
   })
 
-  it('codex-cli-tmux keeps the facade on a configured node (deprecation fence)', async () => {
+  it('codex-cli-tmux refuses with aspd_unconfigured on a configured node (deprecation fence retired, T-08596)', async () => {
     const s = await session()
     await expect(
       internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-cli-tmux', {
         flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED',
         allowedBrokerDriver: 'codex-cli-tmux',
       })
-    ).rejects.toThrow('bundled facade reached')
+    ).rejects.toThrow('aspd-independent execution closure')
     expect(aspd.compileCalls).toBe(0)
+    expect(facadeCalls).toBe(0)
   })
 
-  it('an unset socket keeps the facade for claude-code-tmux and pi-tui-tmux', async () => {
+  it('an unset socket refuses claude-code-tmux and pi-tui-tmux with aspd_unconfigured (T-08596)', async () => {
     setEnv('HRC_ASPD_SOCKET', undefined)
     const s = await session()
     for (const driver of ['claude-code-tmux', 'pi-tui-tmux'] as const) {
@@ -486,10 +487,10 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
             coldBirthPrompt: MARK,
           }
         )
-      ).rejects.toThrow('bundled facade reached')
+      ).rejects.toThrow('aspd-independent execution closure')
     }
     expect(aspd.compileCalls).toBe(0)
-    expect(facadeCalls).toBe(2)
+    expect(facadeCalls).toBe(0)
   })
 })
 
@@ -725,7 +726,7 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
     expect(aspd.compileAspHomes[0]).toBe(join(scratch, 'caller-asp-home'))
   })
 
-  it('pi-sdk on a configured node keeps its resolver/facade route and never reaches aspd', async () => {
+  it('pi-sdk on a configured node refuses with aspd_unconfigured and never reaches aspd (T-08596)', async () => {
     const s = await session()
     const response = await fixture.postJson('/v1/turns', {
       hostSessionId: s.hostSessionId,
@@ -734,8 +735,10 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
       waitFor: 'accepted',
     })
     expect(response.status).toBeGreaterThanOrEqual(400)
+    const body = (await response.json()) as { error: { detail: { code: string } } }
+    expect(body.error.detail.code).toBe('aspd_unconfigured')
     expect(aspd.compileCalls).toBe(0)
-    expect(facadeCalls).toBe(1)
+    expect(facadeCalls).toBe(0)
   })
 
   it('a forced pi-sdk preparation refused by the producer (release_worker_driver_unavailable) leaves no operation', async () => {

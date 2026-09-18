@@ -29,6 +29,7 @@ import { createHrcServer } from 'hrc-server'
 import {
   BROKER_LIFECYCLE_TEST_TIMEOUT_MS,
   cliEnv,
+  dbPath,
   runCli,
   serverOpts,
   setServer,
@@ -36,6 +37,7 @@ import {
   teardownCliFixture,
   testProjectScope,
 } from './fixtures/cli.fixture'
+import { seedLiveTmuxRuntime } from './fixtures/seed-live-tmux-runtime'
 
 beforeEach(setupCliFixture)
 afterEach(teardownCliFixture)
@@ -63,8 +65,6 @@ describe('session rotate', () => {
     'session rotate outputs rotation JSON for a known hostSessionId',
     async () => {
       const hostSessionId = await resolveHostSessionId(testProjectScope('clearctxcli'))
-      const ensureResult = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
-      expect(ensureResult.exitCode).toBe(0)
 
       const result = await runCli(['session', 'rotate', hostSessionId], cliEnv())
 
@@ -220,27 +220,31 @@ describe('runtime lifecycle commands', () => {
     return JSON.parse(result.stdout.trim()).hostSessionId as string
   }
 
-  async function ensureRuntime(scope: string): Promise<string> {
+  // T-08596: births refuse on nodes without an aspd endpoint, so action
+  // tests seed a live tmux runtime row (real pane) instead of ensuring one.
+  const seeded: Array<{ cleanup: () => Promise<void> }> = []
+  async function seedRuntime(scope: string): Promise<string> {
     const hostSessionId = await resolveHostSessionId(scope)
-    const result = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
-    expect(result.exitCode).toBe(0)
-    return JSON.parse(result.stdout.trim()).runtimeId as string
+    const seededRuntime = await seedLiveTmuxRuntime(dbPath, hostSessionId)
+    seeded.push(seededRuntime)
+    return seededRuntime.runtimeId
   }
+  afterEach(async () => {
+    await Promise.all(seeded.splice(0).map((entry) => entry.cleanup()))
+  })
 
-  it('admin runtime ensure outputs runtime JSON for a known hostSessionId', async () => {
+  it('admin runtime ensure refuses with aspd_unconfigured on a node without an aspd endpoint (T-08596)', async () => {
+    // T-08596: birthing through ensure is gone without an aspd endpoint. The
+    // ensure plumbing itself is pinned by the seeded action tests below.
     const hostSessionId = await resolveHostSessionId(testProjectScope('runtimecli'))
     const result = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
 
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(body.hostSessionId).toBe(hostSessionId)
-    expect(body.transport).toBe('tmux')
-    expect(body.status).toBe('ready')
-    expect(body.runtimeId).toBeString()
+    expect(result.exitCode).not.toBe(0)
+    expect(`${result.stdout}${result.stderr}`).toContain('aspd_unconfigured')
   })
 
   it('runtime capture prints pane text for a runtimeId', async () => {
-    const runtimeId = await ensureRuntime(testProjectScope('runtime-capturecli'))
+    const runtimeId = await seedRuntime(testProjectScope('runtime-capturecli'))
     const result = await runCli(['runtime', 'capture', runtimeId], cliEnv())
 
     expect(result.exitCode).toBe(0)
@@ -248,7 +252,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('attach prints descriptor JSON for a runtimeId', async () => {
-    const runtimeId = await ensureRuntime(testProjectScope('attachcli'))
+    const runtimeId = await seedRuntime(testProjectScope('attachcli'))
     const result = await runCli(['attach', runtimeId], cliEnv())
 
     expect(result.exitCode).toBe(0)
@@ -258,7 +262,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('attach auto-binds Ghostty when GHOSTTY_SURFACE_UUID is present', async () => {
-    const runtimeId = await ensureRuntime(testProjectScope('attach-ghostty-cli'))
+    const runtimeId = await seedRuntime(testProjectScope('attach-ghostty-cli'))
     const result = await runCli(
       ['attach', runtimeId],
       cliEnv({ GHOSTTY_SURFACE_UUID: 'ghostty-cli-attach-1' })
@@ -275,7 +279,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('runtime interrupt prints JSON for a runtimeId', async () => {
-    const runtimeId = await ensureRuntime(testProjectScope('interruptcli'))
+    const runtimeId = await seedRuntime(testProjectScope('interruptcli'))
     const result = await runCli(['runtime', 'interrupt', runtimeId], cliEnv())
 
     expect(result.exitCode).toBe(0)
@@ -287,7 +291,7 @@ describe('runtime lifecycle commands', () => {
   it(
     'runtime terminate prints JSON for a runtimeId',
     async () => {
-      const runtimeId = await ensureRuntime(testProjectScope('terminatecli'))
+      const runtimeId = await seedRuntime(testProjectScope('terminatecli'))
       const result = await runCli(['runtime', 'terminate', runtimeId], cliEnv())
 
       expect(result.exitCode).toBe(0)
@@ -299,7 +303,7 @@ describe('runtime lifecycle commands', () => {
   )
 
   it('surface bind/list/unbind commands manage runtime bindings', async () => {
-    const runtimeId = await ensureRuntime(testProjectScope('surfacecli'))
+    const runtimeId = await seedRuntime(testProjectScope('surfacecli'))
 
     const bindResult = await runCli(
       ['admin', 'surface', 'bind', runtimeId, '--kind', 'ghostty', '--id', 'ghostty-cli-2'],

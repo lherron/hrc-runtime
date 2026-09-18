@@ -471,13 +471,20 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     expect(ledger.attachCalls).toBe(0)
   })
 
-  it('leaves the facade route untouched when no endpoint is configured', async () => {
+  it('refuses with aspd_unconfigured (no facade) when no endpoint is configured (T-08596)', async () => {
     setEnv('HRC_ASPD_SOCKET', undefined)
     const s = await session()
-    await expect(
-      internal().startHeadlessBrokerRuntime(s, headlessIntent(), 'x', 'run-t08542-facade')
-    ).rejects.toBeDefined()
-    expect(facadeSpy).toHaveBeenCalledTimes(1)
+    const error = await internal()
+      .startHeadlessBrokerRuntime(s, headlessIntent(), 'x', 'run-t08542-facade')
+      .then(
+        () => {
+          throw new Error('birth without an endpoint must refuse')
+        },
+        (refusal: unknown) => refusal as Error & { detail?: Record<string, unknown> }
+      )
+    expect(String(error.message)).toContain('aspd-independent execution closure')
+    expect(error.detail).toMatchObject({ code: 'aspd_unconfigured', site: 'headless-broker-birth' })
+    expect(facadeSpy).not.toHaveBeenCalled()
     expect(aspd.compileCalls).toBe(0)
   })
 })
@@ -506,24 +513,8 @@ describe('T-08542 pre-acceptance refusal through the public turn door', () => {
     ])
   })
 
-  it('control: a facade-route compile rejection also answers 503 without an unobserved rejection', async () => {
+  it('control: the closure refusal also answers 503 without an unobserved rejection (T-08596)', async () => {
     setEnv('HRC_ASPD_SOCKET', undefined)
-    facadeSpy.mockRestore()
-    facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-      return {
-        hello: async () => ({
-          protocolVersion: 'aspc/0.1',
-          facadeInfo: { name: 'aspc-facade', version: 't08542-control' },
-          capabilities: { compileHarnessInvocation: true, cohostedBroker: true },
-        }),
-        compileHarnessInvocation: async () => ({
-          schemaVersion: 'aspc-compile-harness-invocation-response/v1',
-          ok: false,
-          diagnostics: [],
-        }),
-        close: async () => undefined,
-      } as never
-    })
     const s = await session()
     const response = await fixture.postJson('/v1/turns', {
       hostSessionId: s.hostSessionId,
@@ -533,6 +524,9 @@ describe('T-08542 pre-acceptance refusal through the public turn door', () => {
       waitFor: 'terminal',
     })
     expect(response.status).toBe(503)
+    const body = (await response.json()) as { error: { detail: { code: string } } }
+    expect(body.error.detail.code).toBe('aspd_unconfigured')
+    expect(facadeSpy).not.toHaveBeenCalled()
     await Bun.sleep(20)
   })
 })

@@ -691,7 +691,7 @@ export type { WrkqLedgerClient } from './wrkq/ledger-client.js'
 export { drainEventDatabase } from './event-ingest.js'
 
 export type { BrokerRunPreview } from './broker-run-preview.js'
-export { buildBrokerRunPreview } from './broker-run-preview.js'
+export { resolvePreviewIntent } from './broker-run-preview.js'
 
 const SESSION_TITLE_MAX_LENGTH = 200
 
@@ -2908,9 +2908,7 @@ class HrcServerInstance implements HrcServer {
         ? (await this.collectFederationPeerHealth()).map((probe) => probe.health)
         : undefined
     const release = projectServerRelease(this.capturedRelease)
-    const aspToolchain = projectAspToolchainStatus(
-      release.mode === 'atomic' ? release.aspBuild : undefined
-    )
+    const aspToolchain = projectAspToolchainStatus()
     const aspd = await projectAspdServiceStatus()
     if (url?.searchParams.get('includeSessions') === 'false') {
       const uptimeMs = Date.now() - new Date(this.startedAt).getTime()

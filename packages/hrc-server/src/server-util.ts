@@ -5,6 +5,7 @@ import {
   HrcDomainError,
   HrcErrorCode,
   HrcInternalError,
+  HrcRuntimeUnavailableError,
   createHrcError,
   httpStatusForErrorCode,
 } from 'hrc-core'
@@ -33,6 +34,28 @@ export function serializeEvent(event: HrcLifecycleEvent): string {
 
 export function json(body: unknown, status = 200, headers?: Record<string, string>): Response {
   return Response.json(body, headers ? { status, headers } : { status })
+}
+
+/**
+ * T-08596 (T-08569A closure) — the bundled ASP execution closure is gone: no
+ * facade spawn, no toolchain-resolver fallback, no local compile. Every birth
+ * site that used to fall back now refuses with this typed error. The `code`
+ * follows the existing `aspd_*` detail-code convention so API bodies carry a
+ * stable machine-readable reason (`error.detail.code`) instead of an ENOENT
+ * from a missing bin; `site` names the exact refusal site for the readback.
+ */
+export function aspdUnconfiguredError(
+  site:
+    | 'headless-broker-birth'
+    | 'interactive-broker-birth'
+    | 'broker-substrate'
+    | 'broker-command',
+  extra: Record<string, unknown> = {}
+): HrcRuntimeUnavailableError {
+  return new HrcRuntimeUnavailableError(
+    `aspd-independent execution closure: local ASP execution is removed; node declares no aspd endpoint for this birth (${site})`,
+    { code: 'aspd_unconfigured', route: 'aspd', site, ...extra }
+  )
 }
 
 export function requireDispatchRuntimeId(

@@ -48,6 +48,7 @@ import {
   tmpDir,
   tmuxSocketPath,
 } from './fixtures/cli.fixture'
+import { seedLiveTmuxRuntime } from './fixtures/seed-live-tmux-runtime'
 
 beforeEach(setupCliFixture)
 afterEach(teardownCliFixture)
@@ -56,6 +57,20 @@ describe('Phase 6 diagnostics CLI', () => {
   beforeEach(async () => {
     setServer(await createHrcServer(serverOpts()))
   })
+
+  // T-08596: births refuse on nodes without an aspd endpoint, so tests that
+  // need a live runtime seed a tmux row (real pane) instead of ensuring one.
+  const seeded: Array<{ cleanup: () => Promise<void> }> = []
+  afterEach(async () => {
+    await Promise.all(seeded.splice(0).map((entry) => entry.cleanup()))
+  })
+  async function seedRuntime(
+    hostSessionId: string
+  ): Promise<{ hostSessionId: string; runtimeId: string }> {
+    const seededRuntime = await seedLiveTmuxRuntime(dbPath, hostSessionId)
+    seeded.push(seededRuntime)
+    return { hostSessionId, runtimeId: seededRuntime.runtimeId }
+  }
 
   describe('T-01292 server status acceptance', () => {
     beforeEach(async () => {
@@ -392,7 +407,7 @@ describe('Phase 6 diagnostics CLI', () => {
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
-    await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
+    await seedRuntime(hostSessionId)
 
     // RED: 'runtime list' subcommand does not exist
     const result = await runCli(['runtime', 'list', '--host-session-id', hostSessionId], cliEnv())
@@ -425,8 +440,7 @@ describe('Phase 6 diagnostics CLI', () => {
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
-    const ensureResult = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
-    const runtimeId = JSON.parse(ensureResult.stdout.trim()).runtimeId as string
+    const { runtimeId } = await seedRuntime(hostSessionId)
 
     const result = await runCli(['ls', 'launches', '--runtime-id', runtimeId], cliEnv())
     expect(result.exitCode).toBe(0)
@@ -501,8 +515,7 @@ describe('Phase 6 diagnostics CLI', () => {
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
-    const ensureResult = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
-    const runtimeId = JSON.parse(ensureResult.stdout.trim()).runtimeId as string
+    const { runtimeId } = await seedRuntime(hostSessionId)
 
     const result = await runCli(['admin', 'runtime', 'adopt', runtimeId], cliEnv())
     expect(result.exitCode).toBe(1)

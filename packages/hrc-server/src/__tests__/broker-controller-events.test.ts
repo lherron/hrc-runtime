@@ -99,6 +99,8 @@ describe('HarnessBrokerController', () => {
       now: () => NOW,
     })
 
+    // T-08596: the injected broker client is the supported seam; the legacy
+    // stdio seam refuses without it.
     const startPromise = controller.start({
       plan: response.plan,
       profile,
@@ -107,6 +109,7 @@ describe('HarnessBrokerController', () => {
       startRequestHash: profile.harnessInvocation.startRequestHash,
       identity,
       dispatchEnv: { HRC_DISPATCH: 'yes' },
+      brokerClient: fake,
       attachBeforeInvocationStart: { pendingStartId: 'pending-attach-first' },
     })
 

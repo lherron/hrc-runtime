@@ -954,7 +954,13 @@ function printFirstTurnTripDetail(result: GetFirstTurnDiagnosticsResponse): void
   process.stdout.write('\nversions at trip\n')
   process.stdout.write(`  harness       ${versions?.harnessVersion ?? '(unknown)'}\n`)
   process.stdout.write(`  hrc release   ${versions?.hrcReleaseId ?? '(unknown)'}\n`)
-  process.stdout.write(`  agent-spaces  ${versions?.agentSpacesVersion ?? '(unknown)'}\n`)
+  if (versions?.aspContracts !== undefined) {
+    for (const contract of versions.aspContracts) {
+      process.stdout.write(`  asp-contract ${contract.name}  ${contract.version}\n`)
+    }
+  } else {
+    process.stdout.write(`  agent-spaces  ${versions?.agentSpacesVersion ?? '(unknown)'}\n`)
+  }
 
   const surfaces = bundle.surfaces
   if (surfaces !== undefined && Object.keys(surfaces).length > 0) {

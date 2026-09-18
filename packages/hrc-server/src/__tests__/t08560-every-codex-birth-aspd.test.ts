@@ -480,9 +480,9 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
   })
 
   // T-08562 (§1.6.2): claude-code-tmux and pi-tui-tmux now prepare through aspd
-  // (their success paths are T-08562's gates); codex-cli-tmux and an unset socket
-  // keep the facade.
-  it('claude-code-tmux prepares through aspd on a configured node; codex-cli-tmux and an unset socket keep the facade (G-route negative)', async () => {
+  // (their success paths are T-08562's gates). T-08596: codex-cli-tmux and an
+  // unset socket refuse with aspd_unconfigured; the facade is deleted.
+  it('claude-code-tmux prepares through aspd on a configured node; codex-cli-tmux and an unset socket refuse with aspd_unconfigured (G-route negative)', async () => {
     const s = await session()
     await expect(
       internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-claude', {
@@ -499,7 +499,7 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
         allowedBrokerDriver: 'codex-cli-tmux',
         coldBirthPrompt: MARK,
       })
-    ).rejects.toThrow('bundled facade reached')
+    ).rejects.toThrow('aspd-independent execution closure')
     setEnv('HRC_ASPD_SOCKET', undefined)
     await expect(
       internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-unset', {
@@ -507,8 +507,8 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
         allowedBrokerDriver: 'codex-app-server',
         coldBirthPrompt: MARK,
       })
-    ).rejects.toThrow('bundled facade reached')
-    expect(facadeCalls).toBe(2)
+    ).rejects.toThrow('aspd-independent execution closure')
+    expect(facadeCalls).toBe(0)
     expect(aspd.compileCalls).toBe(1)
   })
 })

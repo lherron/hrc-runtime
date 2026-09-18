@@ -54,12 +54,14 @@ async function writeAtomicRelease(
         : '2222222222222222222222222222222222222222',
       `0.5.13-dev.${releaseId}`
     ),
-    aspBuild: build(
-      'agent-spaces',
-      'asp',
-      '3333333333333333333333333333333333333333',
-      '0.1.0-dev.fixture'
-    ),
+    aspContracts: [
+      { name: 'agent-scope', version: '0.1.1-dev.fixture' },
+      { name: 'cli-kit', version: '0.1.1-dev.fixture' },
+      { name: 'spaces-aspc-protocol', version: '0.1.1-dev.fixture' },
+      { name: 'spaces-harness-broker-protocol', version: '0.1.1-dev.fixture' },
+      { name: 'spaces-harness-broker-client', version: '0.1.1-dev.fixture' },
+      { name: 'spaces-runtime-contracts', version: '0.1.1-dev.fixture' },
+    ],
     installedAt: '2026-07-24T13:00:00.000Z',
   }
   await writeFile(

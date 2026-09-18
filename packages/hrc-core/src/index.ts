@@ -194,6 +194,7 @@ export type {
   HrcStatusSummaryResponse,
   HrcStatusSessionView,
   HrcStatusTmuxView,
+  AspContractPackage,
   PraesidiumBuild,
   PraesidiumReleaseManifest,
 } from './contracts.js'
@@ -609,12 +610,15 @@ export {
   resolveAgentHarness,
 } from './runtime-intent-assembly.js'
 export type {
+  BrokerRunPreview,
+  BrokerRunPreviewPromptZones,
   DeclarationRunMode,
   DeclarationSourceState,
   ResolveRuntimeIntentRequest,
   ResolveRuntimeIntentResponse,
   ResolvedDeclarationAgentSources,
   RunPreviewRequest,
+  RunPreviewResponse,
 } from './declaration-contracts.js'
 export type {
   BuildHrcRuntimeIntentInput,

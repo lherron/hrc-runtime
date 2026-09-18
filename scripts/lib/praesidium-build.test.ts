@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  ASP_PACKAGE_NAMES,
-  readCoherentInstalledAspBuild,
+  ASP_CONTRACT_PACKAGE_NAMES,
+  readInstalledAspContracts,
   readPublishedHrcBuild,
 } from './praesidium-build'
 
@@ -17,56 +17,30 @@ afterEach(async () => {
   )
 })
 
-function aspBuild() {
-  return {
-    schema: 1 as const,
-    repository: 'agent-spaces',
-    canonicalRemote: 'git@github.com:lherron/agent-spaces.git',
-    sourceCommit: '1111111111111111111111111111111111111111',
-    setName: 'asp' as const,
-    setVersion: '0.1.1-dev.fixture',
-    builtAt: '2026-07-24T12:00:00.000Z',
-  }
-}
-
-async function writeAspSet(root: string): Promise<void> {
-  for (const name of ASP_PACKAGE_NAMES) {
+async function writeContractSet(root: string, version = '0.1.1-dev.fixture'): Promise<void> {
+  for (const name of ASP_CONTRACT_PACKAGE_NAMES) {
     const packageRoot = join(root, 'node_modules', name)
     await mkdir(packageRoot, { recursive: true })
-    await writeFile(
-      join(packageRoot, 'package.json'),
-      JSON.stringify({
-        name,
-        version: aspBuild().setVersion,
-        praesidiumBuild: aspBuild(),
-      })
-    )
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name, version }))
   }
 }
 
-describe('T-06958 installed package build readers', () => {
-  test('accepts one exact coherent ASP package set and rejects tuple divergence', async () => {
+describe('T-06958 installed package build readers (T-08596: contracts, not a coherent tuple)', () => {
+  test('reads the thin contract set versions and rejects name/version mismatch', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hrc-asp-build-reader-'))
     fixtures.push(root)
-    await writeAspSet(root)
+    await writeContractSet(root)
 
-    expect(await readCoherentInstalledAspBuild(root)).toEqual(aspBuild())
+    expect(await readInstalledAspContracts(root)).toEqual(
+      ASP_CONTRACT_PACKAGE_NAMES.map((name) => ({ name, version: '0.1.1-dev.fixture' }))
+    )
 
-    const divergent = ASP_PACKAGE_NAMES.at(-1)!
+    const divergent = ASP_CONTRACT_PACKAGE_NAMES.at(-1)!
     await writeFile(
       join(root, 'node_modules', divergent, 'package.json'),
-      JSON.stringify({
-        name: divergent,
-        version: aspBuild().setVersion,
-        praesidiumBuild: {
-          ...aspBuild(),
-          sourceCommit: '2222222222222222222222222222222222222222',
-        },
-      })
+      JSON.stringify({ name: 'wrong-name', version: '0.1.1-dev.fixture' })
     )
-    await expect(readCoherentInstalledAspBuild(root)).rejects.toThrow(
-      'does not share the installed coherent ASP build tuple'
-    )
+    await expect(readInstalledAspContracts(root)).rejects.toThrow('installed ASP contract mismatch')
   })
 
   test('requires the publisher channel proof expected by the installer', async () => {

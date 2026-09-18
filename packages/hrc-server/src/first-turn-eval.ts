@@ -148,7 +148,7 @@ async function publishDiagnostics(
       ...(server.capturedRelease.mode === 'atomic'
         ? {
             releaseId: server.capturedRelease.releaseId,
-            aspSetVersion: server.capturedRelease.aspBuild.setVersion,
+            aspContracts: server.capturedRelease.aspContracts,
           }
         : {}),
     },

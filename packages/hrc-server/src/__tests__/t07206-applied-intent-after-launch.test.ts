@@ -1,10 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import { ASPC_PROTOCOL_VERSION } from 'spaces-aspc-protocol'
-
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
@@ -43,27 +40,8 @@ function candidateIntent(interactive: boolean): HrcRuntimeIntent {
   }
 }
 
-function installRejectingFacade(): ReturnType<typeof spyOn> {
-  return spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-    return {
-      hello: async () => ({
-        protocolVersion: ASPC_PROTOCOL_VERSION,
-        facadeInfo: { name: 'aspc-facade', version: 't07206-test' },
-        capabilities: { compileHarnessInvocation: true, cohostedBroker: true },
-      }),
-      compileHarnessInvocation: async () => ({
-        schemaVersion: 'aspc-compile-harness-invocation-response/v1',
-        ok: false,
-        diagnostics: [],
-      }),
-      close: async () => undefined,
-    } as unknown as AspcFacadeBrokerClient
-  })
-}
-
 let fixture: HrcServerTestFixture
 let server: HrcServer
-let facadeSpy: ReturnType<typeof spyOn>
 
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-t07206-applied-intent-')
@@ -74,11 +52,12 @@ beforeEach(async () => {
       otelListenerEnabled: false,
     })
   )
-  facadeSpy = installRejectingFacade()
+  // T-08596: no facade rig. The fixture server declares no aspd endpoint, so
+  // every birth below refuses with the typed closure refusal before any
+  // compile — which is exactly the rejection authority this file pins.
 })
 
 afterEach(async () => {
-  facadeSpy.mockRestore()
   await server.stop()
   await fixture.cleanup()
 })
@@ -142,7 +121,7 @@ describe('T-07206 applied intent authority', () => {
         'rejected headless turn',
         'run-t07206-headless'
       )
-    ).rejects.toThrow('headless broker compile/admission rejected')
+    ).rejects.toThrow('aspd-independent execution closure')
 
     expect(db.sessions.getByHostSessionId(session.hostSessionId)?.lastAppliedIntentJson).toEqual(
       PRIOR_INTENT
@@ -213,7 +192,7 @@ describe('T-07206 applied intent authority', () => {
           allowedBrokerDriver: 'claude-code-tmux',
         }
       )
-    ).rejects.toThrow('interactive broker compile/admission rejected')
+    ).rejects.toThrow('aspd-independent execution closure')
 
     expect(db.sessions.getByHostSessionId(session.hostSessionId)?.lastAppliedIntentJson).toEqual(
       PRIOR_INTENT
@@ -253,7 +232,7 @@ describe('T-07206 applied intent authority', () => {
           ): Promise<unknown>
         }
       ).startHeadlessBrokerRuntime(session, intent, 'rejected mail drive', 'run-t07206-mail-cold')
-    ).rejects.toThrow('headless broker compile/admission rejected')
+    ).rejects.toThrow('aspd-independent execution closure')
 
     expect(
       db.sessions.getByHostSessionId(session.hostSessionId)?.lastAppliedIntentJson

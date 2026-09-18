@@ -31,6 +31,7 @@ import type {
 import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
 import type { ResolveRuntimeIntentRequest, ResolveRuntimeIntentResponse } from 'hrc-core'
+import type { RunPreviewRequest, RunPreviewResponse } from 'hrc-core'
 import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
@@ -411,6 +412,46 @@ export class HrcClient {
       await this.throwTypedError(res)
     }
     return (await res.json()) as ResolveRuntimeIntentResponse
+  }
+
+  /**
+   * T-08596 (T-08569A closure): fetch a broker-run plan preview compiled by the
+   * daemon (`POST /v1/previews/run`). The CLI `--dry-run` path calls this
+   * instead of compiling locally: no facade spawn, no local interpretation. An
+   * unreachable daemon socket is `hrc_daemon_unreachable`; a daemon without the
+   * route is `unsupported_capability`.
+   */
+  async fetchRunPreview(request: RunPreviewRequest): Promise<RunPreviewResponse> {
+    const path = '/v1/previews/run'
+    let res: Response
+    try {
+      res = await this.unixFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      })
+    } catch (error) {
+      throw new HrcDomainError(
+        HrcErrorCode.RUNTIME_UNAVAILABLE,
+        `HRC daemon unreachable at ${this.socketPath}`,
+        {
+          code: 'hrc_daemon_unreachable',
+          socketPath: this.socketPath,
+          cause: error instanceof Error ? error.message : String(error),
+        }
+      )
+    }
+    if (res.status === 404) {
+      throw new HrcDomainError(
+        HrcErrorCode.UNSUPPORTED_CAPABILITY,
+        'HRC daemon does not serve run previews',
+        { capability: 'previews.run', route: path }
+      )
+    }
+    if (!res.ok) {
+      await this.throwTypedError(res)
+    }
+    return (await res.json()) as RunPreviewResponse
   }
 
   async resolveSession(request: ResolveSessionRequest): Promise<ResolveSessionResponse> {

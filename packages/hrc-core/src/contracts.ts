@@ -992,7 +992,10 @@ export type HrcFirstTurnMissingBundle = {
     | {
         harnessVersion?: string | undefined
         hrcReleaseId?: string | undefined
+        /** Pre-closure bundles only; post-closure bundles carry aspContracts. */
         agentSpacesVersion?: string | undefined
+        /** T-08596: the thin ASP contract set installed in the serving release. */
+        aspContracts?: AspContractPackage[] | undefined
       }
     | undefined
   paneCapture?:
@@ -1168,12 +1171,24 @@ export type PraesidiumBuild = {
   builtAt: string
 }
 
-/** Install-time identity persisted at an atomic HRC release root. */
+/** A thin ASP contract package installed in the release, by installed version. */
+export type AspContractPackage = {
+  name: string
+  version: string
+}
+
+/**
+ * Install-time identity persisted at an atomic HRC release root.
+ *
+ * T-08596 (T-08569A closure): the locked ASP execution build (`aspBuild`) is
+ * gone with the bundled closure. The manifest names the thin ASP contract
+ * packages actually installed, instead of an ASP execution build.
+ */
 export type PraesidiumReleaseManifest = {
   schema: 1
   releaseId: string
   hrcBuild: PraesidiumBuild
-  aspBuild: PraesidiumBuild
+  aspContracts: AspContractPackage[]
   installedAt: string
 }
 
@@ -1184,7 +1199,7 @@ export type HrcReleaseStatus =
       releasePath: string
       manifestPath: string
       hrcBuild: PraesidiumBuild
-      aspBuild: PraesidiumBuild
+      aspContracts: AspContractPackage[]
       installedAt: string
       processStartedAt: string
       runningEqualsInstalled: boolean

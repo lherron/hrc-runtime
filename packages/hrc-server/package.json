@@ -31,13 +31,11 @@
     "hrc-mail-kicker": "*",
     "hrc-transcript-index": "*",
     "hrc-store-sqlite": "*",
-    "spaces-aspc-facade": "latest",
     "spaces-aspc-protocol": "latest",
     "spaces-config": "latest",
     "spaces-execution": "latest",
     "spaces-harness-broker-client": "latest",
     "spaces-harness-broker-protocol": "latest",
-    "spaces-harness-codex": "latest",
     "spaces-runtime": "latest",
     "spaces-runtime-contracts": "latest"
   },

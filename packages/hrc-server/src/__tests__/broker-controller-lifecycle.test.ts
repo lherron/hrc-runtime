@@ -424,6 +424,9 @@ describe('HarnessBrokerController', () => {
       now: () => NOW,
     })
 
+    // T-08596: with no durable IPC socket and no frozen launch, the legacy
+    // stdio seam refuses; the injected broker client is the supported seam for
+    // this dispatch-persistence shape.
     const result = await controller.start({
       plan: response.plan,
       profile,
@@ -432,6 +435,7 @@ describe('HarnessBrokerController', () => {
       startRequestHash: profile.harnessInvocation.startRequestHash,
       identity,
       dispatchEnv: { HRC_DISPATCH: 'yes' },
+      brokerClient: fake,
     })
 
     expect(result.ok).toBe(true)

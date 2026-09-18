@@ -20,6 +20,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
+  type AspContractPackage,
   HRC_FIRST_TURN_MISSING_BUNDLE_SCHEMA,
   type HrcFirstTurnMissingBundle,
   type HrcFirstTurnWatchRecord,
@@ -231,7 +232,9 @@ export type FirstTurnBundleDeps = {
    * to the runtime's own socket rather than the shared one.
    */
   tmuxManagerFactory?: ((options: { socketPath: string }) => TmuxCapturer) | undefined
-  release?: { releaseId?: string | undefined; aspSetVersion?: string | undefined } | undefined
+  release?:
+    | { releaseId?: string | undefined; aspContracts?: AspContractPackage[] | undefined }
+    | undefined
   /** Remaining wall-clock budget for the whole assembly. */
   budgetMs: number
   now: () => string
@@ -311,10 +314,10 @@ export async function assembleFirstTurnBundle(
   const versions: NonNullable<HrcFirstTurnMissingBundle['versions']> = {}
   if (deps.release?.releaseId !== undefined) versions.hrcReleaseId = deps.release.releaseId
   else failures['hrcReleaseId'] = 'unmanaged_release'
-  if (deps.release?.aspSetVersion !== undefined) {
-    versions.agentSpacesVersion = deps.release.aspSetVersion
+  if (deps.release?.aspContracts !== undefined) {
+    versions.aspContracts = deps.release.aspContracts
   } else {
-    failures['agentSpacesVersion'] = 'unmanaged_release'
+    failures['aspContracts'] = 'unmanaged_release'
   }
   const harnessCommand = asString(spec?.process?.command)
   if (harnessCommand === undefined) {

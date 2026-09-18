@@ -46,6 +46,7 @@ import type {
   DurableTmuxManagerLike,
 } from '../broker-interactive-handlers'
 import type { BrokerWindowIdentity } from '../broker/controller'
+import { makeFrozenWorkerLaunch } from './fixtures/frozen-substrate'
 
 // ── Fake named-window tmux manager ────────────────────────────────────────────
 //
@@ -140,6 +141,13 @@ describe('[CHARACTERIZATION A] allocateBrokerSubstrate(presentation=tmux-tui) �
       driverKind: 'claude-code-tmux',
       endpoint: 'unix-jsonrpc-ndjson',
       presentation: 'tmux-tui',
+      workerLaunch: await makeFrozenWorkerLaunch({
+        runtimeRoot: dir,
+        driverKind: 'claude-code-tmux',
+        runtimeId: 'rt-char-t04755',
+        hostSessionId: 'hsid-char',
+        generation: 7,
+      }),
     })
   })
 
@@ -302,6 +310,13 @@ describe('[CHARACTERIZATION B] allocateBrokerSubstrate(presentation=none) — tu
       driverKind: 'claude-code-tmux',
       endpoint: 'unix-jsonrpc-ndjson',
       presentation: 'none',
+      workerLaunch: await makeFrozenWorkerLaunch({
+        runtimeRoot: dir,
+        driverKind: 'claude-code-tmux',
+        runtimeId: 'rt-char-headless-t04755',
+        hostSessionId: 'hsid-char-headless',
+        generation: 2,
+      }),
     })
   })
 
@@ -346,6 +361,13 @@ describe('[CHARACTERIZATION C] createBrokerDurableTmuxAllocator — BrokerTmuxAl
       hostSessionId: 'hsid-char-alloc',
       generation: 5,
       brokerDriver: 'claude-code-tmux',
+      workerLaunch: await makeFrozenWorkerLaunch({
+        runtimeRoot: dir,
+        driverKind: 'claude-code-tmux',
+        runtimeId: 'rt-char-alloc-t04755',
+        hostSessionId: 'hsid-char-alloc',
+        generation: 5,
+      }),
     })) as Record<string, unknown>
   })
 

@@ -493,7 +493,7 @@ describe('hrc start --new-session — §6 lifecycle (pin existing behavior)', ()
       await seedRunRoots('rex', 'agent-spaces')
     })
 
-    it('hrc start --new-session --dry-run emits local plan preview (not an error)', async () => {
+    it('hrc start --new-session --dry-run emits daemon plan preview (not an error)', async () => {
       const result = await runCli(
         ['start', 'rex@agent-spaces', '--new-session', '--dry-run'],
         cliEnv({
@@ -502,7 +502,7 @@ describe('hrc start --new-session — §6 lifecycle (pin existing behavior)', ()
         })
       )
       expect(result.exitCode).toBe(0)
-      expect(result.stdout).toContain('local plan preview')
+      expect(result.stdout).toContain('daemon plan preview')
     })
 
     it('hrc start --new-session --dry-run shows sessionRef in the plan', async () => {

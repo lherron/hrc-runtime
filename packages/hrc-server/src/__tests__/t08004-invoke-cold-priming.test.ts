@@ -2,15 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import { ASPC_PROTOCOL_VERSION } from 'spaces-aspc-protocol'
-import type {
-  AspcCompileHarnessInvocationRequest,
-  AspcCompileHarnessInvocationResponse,
-} from 'spaces-aspc-protocol'
-import type {
-  InvocationEventEnvelope,
-  InvocationStartRequest,
-} from 'spaces-harness-broker-protocol'
+import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import type { RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
 import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client.js'
@@ -78,6 +70,10 @@ function brokerEnvelope(
 
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-t08004-invoke-cold-priming-')
+  // T-08596: fail loud if anything still reaches the deleted facade spawn.
+  facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
+    throw new Error('T-08596: facade spawn deleted; must not be consulted')
+  })
   server = await createHrcServer(
     fixture.serverOpts({
       claudeCodeTmuxBrokerEnabled: true,
@@ -129,91 +125,25 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
     expect(coldBirthPromptMode).toBe('append-to-priming')
   })
 
-  it('hands the caller to the interactive compiler with priming enabled', async () => {
-    let compileRequest: AspcCompileHarnessInvocationRequest['compileRequest'] | undefined
-    let startedRequest: InvocationStartRequest | undefined
-    facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(
-      async () =>
-        ({
-          hello: async () => ({
-            protocolVersion: ASPC_PROTOCOL_VERSION,
-            facadeInfo: { name: 'aspc-facade', version: 't08004-test' },
-            capabilities: { compileHarnessInvocation: true, cohostedBroker: true },
-          }),
-          compileHarnessInvocation: async (
-            request: AspcCompileHarnessInvocationRequest
-          ): Promise<AspcCompileHarnessInvocationResponse> => {
-            compileRequest = request.compileRequest
-            const identity = request.compileRequest.identity as RuntimeIdentityAllocation
-            const { profile, startRequest } = makeInteractiveTmuxProfile(identity, {
-              launchInitialPrompt: `${PRIMING}\n\n${request.compileRequest.materialization.initialPrompt}`,
-              withInitialInput: false,
-            })
-            const compileResponse = makeCompileResponse(identity, [profile])
-            if (!compileResponse.ok) throw new Error('T-08004 compile fixture rejected')
-            return {
-              schemaVersion: 'aspc-compile-harness-invocation-response/v1',
-              ok: true,
-              compileResponse,
-              plan: compileResponse.plan,
-              selectedProfile: profile,
-              startRequest,
-              dispatchRequest: { startRequest },
-              diagnostics: compileResponse.diagnostics,
-            }
-          },
-          close: async () => undefined,
-        }) as unknown as AspcFacadeBrokerClient
-    )
-
+  it('refuses the cold-birth compiler path with aspd_unconfigured on a node without an aspd endpoint (T-08596)', async () => {
+    // T-08596: the local facade compile behind a cold-birth prompt is deleted.
+    // Prompt shaping into a compile request no longer happens in HRC; the
+    // launch-carried prompt is a preparation input on the aspd path.
     const resolved = await fixture.resolveSession(SCOPE)
     const internal = server as unknown as HrcServerInstanceForHandlers
     const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
     if (session === null) throw new Error('T-08004 fixture session missing')
-    const runtime: HrcRuntimeSnapshot = {
-      runtimeId: 'rt-t08004-compile',
-      runtimeKind: 'harness',
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      transport: 'tmux',
-      harness: 'claude-code',
-      provider: 'anthropic',
-      status: 'starting',
-      supportsInflightInput: true,
-      adopted: false,
-      controllerKind: 'harness-broker',
-      activeOperationId: 'op-t08004-compile',
-      activeInvocationId: 'inv-t08004-compile',
-      createdAt: fixture.now(),
-      updatedAt: fixture.now(),
-    }
-    internal.getHarnessBrokerController = () =>
-      ({
-        start: async (input: { startRequest: InvocationStartRequest }) => {
-          startedRequest = input.startRequest
-          return { ok: true as const, runtime }
-        },
-      }) as ReturnType<HrcServerInstanceForHandlers['getHarnessBrokerController']>
 
-    await internal.startInteractiveTmuxBrokerRuntime(
-      session,
-      redirectedClaudeIntent(),
-      'run-t08004',
-      {
+    await expect(
+      internal.startInteractiveTmuxBrokerRuntime(session, redirectedClaudeIntent(), 'run-t08004', {
         flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED',
         allowedBrokerDriver: 'claude-code-tmux',
         coldBirthPrompt: CALLER,
         includePrimingForColdBirthPrompt: true,
         submissionDoor: 'invoke',
-      }
-    )
-
-    expect(compileRequest?.materialization.initialPrompt).toBe(CALLER)
-    expect(compileRequest?.materialization.omitPriming).toBeUndefined()
-    expect(startedRequest?.spec.launch?.initialPrompt).toBe(`${PRIMING}\n\n${CALLER}`)
-    expect(startedRequest?.initialInput).toBeUndefined()
+      })
+    ).rejects.toThrow('aspd-independent execution closure')
+    expect(facadeSpy).not.toHaveBeenCalled()
   })
 
   it('returns from cold launch without admitting an independent caller submission', async () => {

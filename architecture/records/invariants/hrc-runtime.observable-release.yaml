@@ -4,12 +4,14 @@ status: active
 owner_project: hrc-runtime
 scope: installed and running HRC release identity
 predicate: >
-  Every atomic HRC release records its exact HRC build and locked ASP build in
-  praesidium-release.json before cutover; the daemon captures that immutable
-  identity at startup, fails closed for invalid atomic manifests, and reports
-  on every status read whether the running release still equals the installed
-  release. Source and worktree daemons report unmanaged explicitly.
-authority: wrkq:T-06958
+  Every atomic HRC release records its exact HRC build and the installed
+  versions of the thin ASP contract set (aspContracts) in
+  praesidium-release.json before cutover; no locked ASP execution build is
+  recorded anywhere. The daemon captures that immutable identity at startup,
+  fails closed for invalid atomic manifests, and reports on every status read
+  whether the running release still equals the installed release. Source and
+  worktree daemons report unmanaged explicitly.
+authority: wrkq:T-06958; wrkq:T-08596 aspContracts amendment (Daedalus approval EN-14687, 2026-09-18)
 source:
   - packages/hrc-core/src/contracts.ts
   - packages/hrc-server/src/release-provenance.ts

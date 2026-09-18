@@ -42,10 +42,10 @@ import type {
   SubmissionWithdrawResponse,
   TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
-import { resolveAspToolchainBinary } from '../asp-toolchain'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle'
 import { DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS } from '../server-constants'
 import { isLiveProcess } from '../server-lock'
+import { aspdUnconfiguredError } from '../server-util.js'
 import { createTmuxManager } from '../tmux'
 import { droppedBrokerClientEventFields } from './client-observability'
 import {
@@ -557,13 +557,19 @@ export class HarnessBrokerController {
     )
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
     this.metricsStateRoot = deps.metricsStateRoot
-    // Preserve brokerCommand as a constant test seam, but production selection
-    // is deliberately late-bound at each legacy stdio spawn.
+    // Preserve brokerCommand as a constant test seam.
+    // T-08596 (T-08569A closure): the bundled ASP execution closure is removed.
+    // The legacy stdio spawn has no resolver to consult. Production births
+    // always arrive with a durable Unix-IPC allocation or an injected broker
+    // client; reaching this default refuses loudly with a typed refusal,
+    // never an ENOENT from a missing bin. Tests inject `resolveBrokerCommand`.
     this.resolveBrokerCommand =
       deps.resolveBrokerCommand ??
       (deps.brokerCommand !== undefined
         ? () => deps.brokerCommand as string
-        : () => resolveAspToolchainBinary('harness-broker', deps.env ?? process.env).path)
+        : () => {
+            throw aspdUnconfiguredError('broker-command', {})
+          })
     this.brokerArgs = deps.brokerArgs ?? DEFAULT_BROKER_ARGS
     this.env = deps.env
     this.now = deps.now ?? (() => new Date().toISOString())

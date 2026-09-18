@@ -71,6 +71,11 @@ import {
   makeIdentity,
   makeInteractiveTmuxProfile,
 } from './broker-compile-fixtures'
+import {
+  FROZEN_RELEASE_IDENTITY,
+  makeFrozenAspdExecution,
+  seedPreparedAspdOperation,
+} from './fixtures/frozen-substrate'
 import { type SocketScratch, createSocketScratch } from './fixtures/socket-scratch'
 
 const NOW = '2026-06-01T22:00:00.000Z'
@@ -298,6 +303,8 @@ function makeServerInstance(db: HrcDatabase, dir: string, durableFlag: boolean):
   const unixCalls: Array<{ socketPath: string }> = []
   const stdioFake = new FakeBrokerClient('harness-broker/0.1')
   const unixFake = new FakeBrokerClient('harness-broker/0.2')
+  stdioFake.helloResponse.release = { ...FROZEN_RELEASE_IDENTITY }
+  unixFake.helloResponse.release = { ...FROZEN_RELEASE_IDENTITY }
 
   const instance = {
     options: { runtimeRoot: dir, brokerDurableIpcEnabled: durableFlag },
@@ -362,7 +369,6 @@ async function killBtmuxServers(dir: string): Promise<void> {
 
 let dir: string
 let db: HrcDatabase
-let savedBrokerCmd: string | undefined
 let scratch: SocketScratch
 
 beforeEach(async () => {
@@ -370,26 +376,18 @@ beforeEach(async () => {
   dir = scratch.root
   db = openHrcDatabase(join(dir, 'state.sqlite'))
   seedSession(db)
-  // Neutralize the default stdio factory: if getHarnessBrokerController ignores
-  // the injected brokerClientFactory seam, BrokerClient.start would otherwise
-  // spawn the real `harness-broker` binary. The durable allocator deliberately
-  // honors this override too, so its recorded command should name the stub.
-  savedBrokerCmd = process.env['HRC_HARNESS_BROKER_CMD']
-  process.env['HRC_HARNESS_BROKER_CMD'] = 'hrc-nonexistent-broker-stub-xyz'
+  // T-08596: no stub needed. The deleted toolchain resolver used to honor
+  // HRC_HARNESS_BROKER_CMD here; the closure default refuses instead of
+  // spawning, so nothing can escape the injected factories.
 })
 
 afterEach(async () => {
   db.close()
   await killBtmuxServers(dir)
   await scratch.cleanup()
-  if (savedBrokerCmd === undefined) {
-    process.env['HRC_HARNESS_BROKER_CMD'] = undefined
-  } else {
-    process.env['HRC_HARNESS_BROKER_CMD'] = savedBrokerCmd
-  }
 })
 
-function interactiveStartInput() {
+async function interactiveStartInput() {
   const identity = makeIdentity({
     runtimeId: 'runtime_tmux',
     invocationId: 'invocation_tmux',
@@ -400,8 +398,9 @@ function interactiveStartInput() {
   if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
   return {
     // NOTE: the durable interactive START must NOT pre-supply a brokerClient —
-    // the controller allocates the durable btmux lease (which launches the broker
-    // in its own window over --transport unix) and dials the allocated socket.
+    // the controller allocates the durable btmux lease (which launches the frozen
+    // worker in its own window over --transport unix) and dials the allocated socket.
+    // T-08596: the launch is the frozen aspd execution; there is no resolver fallback.
     plan: response.plan,
     profile,
     startRequest,
@@ -409,10 +408,19 @@ function interactiveStartInput() {
     startRequestHash: profile.harnessInvocation.startRequestHash,
     identity,
     dispatchEnv: { HRC_DISPATCH: 'yes' },
+    aspdExecution: await makeFrozenAspdExecution({
+      runtimeRoot: dir,
+      driverKind: 'claude-code-tmux',
+      runtimeId: 'runtime_tmux',
+      hostSessionId: 'hostSession_w2',
+      generation: 1,
+      operationId: 'runtimeOperation_w2',
+      route: 'interactive-tmux-broker',
+    }),
   }
 }
 
-function headlessStartInput() {
+async function headlessStartInput() {
   const identity = makeIdentity({
     runtimeId: 'runtime_headless',
     invocationId: 'invocation_headless',
@@ -429,14 +437,30 @@ function headlessStartInput() {
     startRequestHash: profile.harnessInvocation.startRequestHash,
     identity,
     dispatchEnv: { HRC_DISPATCH: 'yes' },
+    aspdExecution: await makeFrozenAspdExecution({
+      runtimeRoot: dir,
+      driverKind: profile.brokerDriver,
+      runtimeId: 'runtime_headless',
+      hostSessionId: 'hostSession_w2',
+      generation: 1,
+      operationId: 'runtimeOperation_w2',
+      route: 'headless-codex-app-server',
+    }),
   }
 }
 
 describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable interactive route', () => {
   it('flag ON + interactive broker-tmux START ⇒ DURABLE allocator (broker+tui windows), NOT the legacy createLeaseSession path (RED)', async () => {
     const h = makeServerInstance(db, dir, true)
+    seedPreparedAspdOperation(db, {
+      operationId: 'runtimeOperation_w2',
+      runtimeId: 'runtime_tmux',
+      runId: 'run_tmux',
+      hostSessionId: 'hostSession_w2',
+      generation: 1,
+    })
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start(interactiveStartInput() as never)
+    const result = await controller.start((await interactiveStartInput()) as never)
 
     // DIAGNOSTIC RED LEAD: at HEAD getHarnessBrokerController() ignores the flag
     // and the brokerTmuxManagerFactory seam, so the durable allocator never runs
@@ -448,7 +472,7 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
     expect(manager?.windowWithCommandCalls).toHaveLength(1)
     const brokerCall = manager?.windowWithCommandCalls[0]
     expect(brokerCall?.windowName).toBe('broker')
-    expect(brokerCall?.command).toContain('hrc-nonexistent-broker-stub-xyz')
+    expect(brokerCall?.command).toContain('harness-broker')
     expect(brokerCall?.command).toContain('--transport')
     expect(brokerCall?.command).toContain('unix')
     expect(manager?.orInspectCalls).toEqual([
@@ -461,8 +485,15 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
 
   it('flag ON + interactive START ⇒ dials brokerUnixClientFactory/connectUnix with the allocated broker IPC socket, NOT the stdio brokerClientFactory (RED)', async () => {
     const h = makeServerInstance(db, dir, true)
+    seedPreparedAspdOperation(db, {
+      operationId: 'runtimeOperation_w2',
+      runtimeId: 'runtime_tmux',
+      runId: 'run_tmux',
+      hostSessionId: 'hostSession_w2',
+      generation: 1,
+    })
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start(interactiveStartInput() as never)
+    const result = await controller.start((await interactiveStartInput()) as never)
 
     // DIAGNOSTIC RED LEAD: the durable route must dial the unix client factory
     // with the allocated broker IPC socket. At HEAD the flag is inert, so the
@@ -478,8 +509,15 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
 
   it('flag ON + interactive START ⇒ persists runtime_state_json.broker.endpoint.kind === unix-jsonrpc-ndjson + broker/tui identity (RED)', async () => {
     const h = makeServerInstance(db, dir, true)
+    seedPreparedAspdOperation(db, {
+      operationId: 'runtimeOperation_w2',
+      runtimeId: 'runtime_tmux',
+      runId: 'run_tmux',
+      hostSessionId: 'hostSession_w2',
+      generation: 1,
+    })
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start(interactiveStartInput() as never)
+    const result = await controller.start((await interactiveStartInput()) as never)
 
     // DIAGNOSTIC RED LEAD: persisted endpoint must record the durable Unix
     // identity. At HEAD the legacy stdio allocator runs, so on success the
@@ -502,8 +540,15 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
 
   it('flag ON + interactive START ⇒ hello negotiates harness-broker/0.2 on the durable route (RED — controller hello hardcodes v1)', async () => {
     const h = makeServerInstance(db, dir, true)
+    seedPreparedAspdOperation(db, {
+      operationId: 'runtimeOperation_w2',
+      runtimeId: 'runtime_tmux',
+      runId: 'run_tmux',
+      hostSessionId: 'hostSession_w2',
+      generation: 1,
+    })
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start(interactiveStartInput() as never)
+    const result = await controller.start((await interactiveStartInput()) as never)
 
     // DIAGNOSTIC RED LEAD: the unix client (durable route) must be the one that
     // handshakes, and the hello must offer v0.2 — controller.start() currently
@@ -517,42 +562,42 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
     expect(result.ok).toBe(true)
   })
 
-  it('flag OFF + legacy stdio interactive broker ⇒ HRC offers ONLY v0.2 and REJECTS the v0.1 broker (broker_protocol_unsupported) — T-01866', async () => {
+  it('flag OFF + legacy seam ⇒ no stdio spawn: the closure refusal fails the start closed (T-08596)', async () => {
     const h = makeServerInstance(db, dir, false)
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start(interactiveStartInput() as never)
+    const result = await controller.start((await interactiveStartInput()) as never)
 
-    // Flag OFF still routes through the legacy single-window stdio seam: the legacy
-    // allocator runs on the injected tmux manager and the stdio factory is dialed
-    // (never the unix factory).
-    expect(h.stdioCalls).toHaveLength(1)
-    expect(h.unixCalls).toHaveLength(0)
+    // T-08596: the legacy stdio seam has no resolver to consult. The legacy
+    // allocator still carves its lease session, but with no durable socket and
+    // no injected client the default broker command refuses with the typed
+    // closure refusal — nothing is spawned (neither stdio nor unix factory runs).
     const manager = h.managers[0]
     expect(manager).toBeDefined()
     expect(manager?.leaseSessionCalls.length).toBeGreaterThanOrEqual(1)
     expect(manager?.windowWithCommandCalls).toEqual([])
-
-    // T-01866: HRC negotiates ONLY harness-broker/0.2 — never the decommissioned
-    // v0.1 — even on the legacy stdio seam. The stdioFake advertises v0.1, so the
-    // start is fail-closed with a clear unsupported-protocol error (no v0.1
-    // fallback, no v0.2-over-stdio masquerade).
-    expect(h.stdioFake.helloCalls).toHaveLength(1)
-    const offered = h.stdioFake.helloCalls[0]?.protocolVersions ?? []
-    expect(offered).toContain('harness-broker/0.2')
-    expect(offered).not.toContain('harness-broker/0.1')
+    expect(h.stdioCalls).toHaveLength(0)
+    expect(h.unixCalls).toHaveLength(0)
 
     expect(result.ok).toBe(false)
     if (!result.ok) {
-      expect(result.error.code).toBe('broker_protocol_unsupported')
+      expect(result.error.code).toBe('broker_start_failed')
+      expect(result.error.message).toContain('aspd-independent execution closure')
     }
-    // Nothing durable was persisted for the rejected v0.1 broker.
+    // Nothing durable was persisted for the refused start.
     expect(db.runtimes.getByRuntimeId('runtime_tmux')).toBeNull()
   })
 
   it('HEADLESS broker START ⇒ DURABLE leased-tmux + Unix v0.2 (presentation=none), never stdio — T-01866', async () => {
     const h = makeServerInstance(db, dir, true)
+    seedPreparedAspdOperation(db, {
+      operationId: 'runtimeOperation_w2',
+      runtimeId: 'runtime_headless',
+      runId: 'run_headless',
+      hostSessionId: 'hostSession_w2',
+      generation: 1,
+    })
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start(headlessStartInput() as never)
+    const result = await controller.start((await headlessStartInput()) as never)
 
     // T-01866: the headless cutover is UNCONDITIONAL. A leased-tmux broker window
     // is allocated (exec-form over --transport unix) and dialed over the Unix v0.2
@@ -561,7 +606,7 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
     const manager = h.managers[0]
     const brokerCall = manager?.windowWithCommandCalls[0]
     expect(brokerCall?.windowName).toBe('broker')
-    expect(brokerCall?.command).toContain('hrc-nonexistent-broker-stub-xyz')
+    expect(brokerCall?.command).toContain('harness-broker')
     expect(brokerCall?.command).toContain('--transport')
     expect(brokerCall?.command).toContain('unix')
     // presentation='none': a headless runtime creates NO operator tui window.

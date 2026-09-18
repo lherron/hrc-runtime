@@ -16,6 +16,7 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import {
+  type AspContractPackage,
   type PraesidiumBuild,
   type PraesidiumReleaseManifest,
   environmentWithoutGitOverrides,
@@ -24,7 +25,11 @@ import {
 import { DIRECT_STORE_OPEN_COMMANDS, readStoreSchemaState } from 'hrc-store-sqlite'
 
 import type { InstallContext, PublishChannel, SideEffectMode } from './install-policy'
-import { readCoherentInstalledAspBuild, readPublishedHrcBuild } from './lib/praesidium-build'
+import {
+  ASP_CONTRACT_PACKAGE_NAMES,
+  readInstalledAspContracts,
+  readPublishedHrcBuild,
+} from './lib/praesidium-build'
 import { assertPublishContainment } from './lib/publish-containment'
 import { activeRegistryUrl } from './lib/registry'
 import {
@@ -60,7 +65,7 @@ export type AtomicInstallOptions = {
 
 export type PreparedReleaseBuilds = {
   hrcBuild: PraesidiumBuild
-  aspBuild: PraesidiumBuild
+  aspContracts: AspContractPackage[]
 }
 
 type CliOptions = {
@@ -198,6 +203,34 @@ function expectBuildTuple(
   }
 }
 
+/** The manifest names exactly the thin ASP contract set, with installed versions. */
+function expectAspContracts(value: unknown): asserts value is AspContractPackage[] {
+  if (!Array.isArray(value) || value.length !== ASP_CONTRACT_PACKAGE_NAMES.length) {
+    throw new Error(
+      `release manifest aspContracts must list exactly ${ASP_CONTRACT_PACKAGE_NAMES.join(', ')}`
+    )
+  }
+  const names = new Set<string>()
+  for (const [index, entry] of value.entries()) {
+    if (
+      entry === null ||
+      typeof entry !== 'object' ||
+      typeof (entry as { name?: unknown }).name !== 'string' ||
+      ((entry as { name?: unknown }).name as string).trim() === '' ||
+      typeof (entry as { version?: unknown }).version !== 'string' ||
+      ((entry as { version?: unknown }).version as string).trim() === ''
+    ) {
+      throw new Error(`release manifest aspContracts[${index}] must be {name, version}`)
+    }
+    names.add((entry as { name?: unknown }).name as string)
+  }
+  for (const expected of ASP_CONTRACT_PACKAGE_NAMES) {
+    if (!names.has(expected)) {
+      throw new Error(`release manifest aspContracts is missing ${expected}`)
+    }
+  }
+}
+
 async function validateReleaseShape(releasePath: string, releaseId: string): Promise<void> {
   for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
     const entrypoint = join(releasePath, 'packages', packageName, cli.entrypoint)
@@ -215,7 +248,7 @@ async function validateReleaseShape(releasePath: string, releaseId: string): Pro
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown
   expectExactFields(
     manifest,
-    ['schema', 'releaseId', 'hrcBuild', 'aspBuild', 'installedAt'].sort(),
+    ['schema', 'releaseId', 'hrcBuild', 'aspContracts', 'installedAt'].sort(),
     'release manifest'
   )
   if (manifest['schema'] !== 1) throw new Error('release manifest schema must be 1')
@@ -229,7 +262,7 @@ async function validateReleaseShape(releasePath: string, releaseId: string): Pro
     throw new Error('release manifest installedAt must be an ISO timestamp')
   }
   expectBuildTuple(manifest['hrcBuild'], 'hrc-runtime', 'hrc')
-  expectBuildTuple(manifest['aspBuild'], 'agent-spaces', 'asp')
+  expectAspContracts(manifest['aspContracts'])
 }
 
 /**
@@ -326,7 +359,7 @@ export async function installAtomicRelease(options: AtomicInstallOptions): Promi
       schema: 1,
       releaseId,
       hrcBuild: builds.hrcBuild,
-      aspBuild: builds.aspBuild,
+      aspContracts: builds.aspContracts,
       installedAt: new Date().toISOString(),
     }
     await writeFile(
@@ -474,7 +507,7 @@ async function prepareProductionRelease(
   await runCommand('bun', publishArgs, releasePath, publishEnv)
   const builds = {
     hrcBuild: await readPublishedHrcBuild(buildOutput, source.canonical),
-    aspBuild: await readCoherentInstalledAspBuild(releasePath),
+    aspContracts: await readInstalledAspContracts(releasePath),
   }
   await rm(buildOutput, { force: true })
   return builds

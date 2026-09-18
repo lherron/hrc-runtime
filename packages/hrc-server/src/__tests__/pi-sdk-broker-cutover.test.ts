@@ -1,51 +1,83 @@
+/**
+ * T-08596 (T-08569A closure) — the pi-sdk resolver arm is deleted along with
+ * the toolchain resolver. A substrate allocation with no frozen worker launch
+ * refuses with the typed `aspd_unconfigured` refusal (site `broker-substrate`)
+ * for every driver kind, including pi-sdk; a frozen aspd worker launch still
+ * allocates and launches EXACTLY its executable.
+ */
 import { describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, isAbsolute, join } from 'node:path'
+import { join } from 'node:path'
+
+import { HrcRuntimeUnavailableError } from 'hrc-core'
 
 import {
   type DurableTmuxManagerLike,
   allocateBrokerSubstrate,
-  resolveBrokerBinary,
+  describeBrokerSubstratePaths,
 } from '../broker-interactive-handlers/substrate-allocator'
 import type { BrokerWindowIdentity } from '../broker/controller'
-describe('broker binary mapping', () => {
-  it('selects release-relative driver-specific broker binaries', () => {
-    expect(isAbsolute(resolveBrokerBinary('pi-sdk'))).toBe(true)
-    expect(basename(resolveBrokerBinary('pi-sdk'))).toBe('harness-broker-pi')
-  })
 
-  for (const driver of ['codex-app-server', 'claude-code-tmux', 'codex-cli-tmux', 'pi-tui-tmux']) {
-    it(`keeps ${driver} on the canonical broker binary`, () => {
-      const binary = resolveBrokerBinary(driver)
-      expect(isAbsolute(binary)).toBe(true)
-      expect(basename(binary)).toBe('harness-broker')
+function substrateInput(
+  runtimeId: string,
+  driverKind: string,
+  workerLaunch?: { executable: string; argv: string[] } | undefined
+) {
+  return {
+    runtimeId,
+    hostSessionId: 'hsid-pi-sdk-cutover',
+    generation: 1,
+    driverKind,
+    endpoint: 'unix-jsonrpc-ndjson' as const,
+    presentation: 'none' as const,
+    brokerEnv: { OPENAI_API_KEY: 'process-only-test-key' },
+    ...(workerLaunch !== undefined ? { workerLaunch } : {}),
+  }
+}
+
+describe('broker substrate without a frozen worker launch (T-08596 closure)', () => {
+  for (const driver of ['pi-sdk', 'codex-app-server', 'claude-code-tmux', 'pi-tui-tmux']) {
+    it(`refuses ${driver} with aspd_unconfigured instead of resolving a broker binary`, async () => {
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'hrc-pi-cutover-'))
+      try {
+        const error = await allocateBrokerSubstrate(
+          { runtimeRoot },
+          {
+            tmuxManagerFactory: () => {
+              throw new Error('no spawn may precede the refusal')
+            },
+            generateAttachToken: () => 'pi-cutover-token',
+          },
+          substrateInput('rt-pi-sdk-cutover', driver)
+        ).then(
+          () => {
+            throw new Error('allocation without a worker launch must refuse')
+          },
+          (error: unknown) => error
+        )
+        expect(error).toBeInstanceOf(HrcRuntimeUnavailableError)
+        const detail = (error as HrcRuntimeUnavailableError).detail as Record<string, unknown>
+        expect(detail).toMatchObject({
+          code: 'aspd_unconfigured',
+          route: 'aspd',
+          site: 'broker-substrate',
+          driverKind: driver,
+        })
+      } finally {
+        await rm(runtimeRoot, { recursive: true, force: true })
+      }
     })
   }
 
-  it('honors per-binary command overrides', () => {
-    const priorPi = process.env['HRC_HARNESS_BROKER_PI_CMD']
-    const priorCanonical = process.env['HRC_HARNESS_BROKER_CMD']
-    try {
-      process.env['HRC_HARNESS_BROKER_PI_CMD'] = '/overrides/harness-broker-pi'
-      process.env['HRC_HARNESS_BROKER_CMD'] = '/overrides/harness-broker'
-      expect(resolveBrokerBinary('pi-sdk')).toBe('/overrides/harness-broker-pi')
-      expect(resolveBrokerBinary('codex-cli-tmux')).toBe('/overrides/harness-broker')
-    } finally {
-      process.env['HRC_HARNESS_BROKER_PI_CMD'] = priorPi
-      process.env['HRC_HARNESS_BROKER_CMD'] = priorCanonical
-    }
-  })
-
-  it('places harness-broker-pi in the actual allocated broker command', async () => {
-    const runtimeRoot = await mkdtemp(join(tmpdir(), 'hrc-pi-cutover-'))
+  it('launches a frozen pi-sdk worker launch exactly, with no resolver consultation', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'hrc-pi-frozen-'))
+    const runtimeId = 'rt-pi-sdk-frozen'
     const commands: string[] = []
-    const environments: Array<Record<string, string> | undefined> = []
     const manager: DurableTmuxManagerLike = {
       initialize: async () => {},
       createWindowWithCommand: async (input): Promise<BrokerWindowIdentity> => {
         commands.push(input.command)
-        environments.push(input.env)
         return {
           socketPath: '/tmp/pi-sdk-btmux.sock',
           sessionId: '$1',
@@ -61,28 +93,40 @@ describe('broker binary mapping', () => {
     }
 
     try {
+      const paths = describeBrokerSubstratePaths({ runtimeRoot }, 'pi-sdk', runtimeId)
+      const executable = '/bin/echo'
+      const workerLaunch = {
+        executable,
+        argv: [
+          executable,
+          'run',
+          '--socket',
+          paths.brokerIpcSocketPath,
+          '--event-ledger',
+          paths.eventLedgerPath,
+          '--runtime-id',
+          runtimeId,
+          '--host-session-id',
+          'hsid-pi-sdk-cutover',
+          '--generation',
+          '1',
+          '--attach-token-file',
+          paths.attachTokenPath,
+        ],
+      }
       const allocation = await allocateBrokerSubstrate(
         { runtimeRoot },
         {
           tmuxManagerFactory: () => manager,
           generateAttachToken: () => 'pi-cutover-token',
         },
-        {
-          runtimeId: 'rt-pi-sdk-cutover',
-          hostSessionId: 'hsid-pi-sdk-cutover',
-          generation: 1,
-          driverKind: 'pi-sdk',
-          endpoint: 'unix-jsonrpc-ndjson',
-          presentation: 'none',
-          brokerEnv: { OPENAI_API_KEY: 'process-only-test-key' },
-        }
+        substrateInput(runtimeId, 'pi-sdk', workerLaunch)
       )
 
       expect(commands).toHaveLength(1)
-      expect(commands[0]).toContain("/node_modules/.bin/harness-broker-pi' run ")
+      expect(commands[0]).toContain(`'${executable}'`)
+      expect(commands[0]).not.toContain('node_modules/.bin')
       expect(allocation.brokerCommand).toBe(commands[0]!)
-      expect(commands[0]).not.toContain('process-only-test-key')
-      expect(environments).toEqual([{ OPENAI_API_KEY: 'process-only-test-key' }])
     } finally {
       await rm(runtimeRoot, { recursive: true, force: true })
     }

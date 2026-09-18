@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
@@ -9,9 +8,6 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
-import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
-import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { isInteractiveTmuxBrokerProfile } from './agent-spaces-adapter/compile-profile-selector.js'
 import {
   aspdInteractiveBrokerEndpoint,
@@ -29,7 +25,6 @@ import {
 } from './broker/adoption-root.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
-import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
 import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
 import { armFirstTurnWatch } from './first-turn-watch.js'
@@ -49,8 +44,6 @@ import {
 import { runtimeActivityPatch } from './runtime-activity.js'
 
 import {
-  actuatorSplitRuntimeAuthority,
-  assertActuatorSplitAdmission,
   assertActuatorSplitRuntimeReuse,
   normalizeActuatorSplitPolicy,
   prepareActuatorSplitIntent,
@@ -58,9 +51,6 @@ import {
 import {
   decideBrokerDurableInteractiveRoute,
   decideInteractiveTmuxBrokerContinuation,
-  decideInteractiveTmuxExecutionRoute,
-  extractPiSdkBrokerCredentialEnv,
-  filterBrokerDispatchEnvForLockedEnv,
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
   shouldBlockForBrokerTurnCompletion,
@@ -68,8 +58,7 @@ import {
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
 import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
-import { resolveBrokerDurableIpcEnabled, startAspcFacadeBrokerClient } from './option-resolvers.js'
-import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
+import { resolveBrokerDurableIpcEnabled } from './option-resolvers.js'
 import {
   assertRuntimeNotBusy,
   classifyBrokerInputFailure,
@@ -94,7 +83,12 @@ import {
   dispatchRunPersistence,
   submissionDoorCarriesColdLaunch,
 } from './server-types.js'
-import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import {
+  aspdUnconfiguredError,
+  isRuntimeUnavailableStatus,
+  json,
+  timestamp,
+} from './server-util.js'
 import {
   automaticContinuationForRuntime,
   automaticContinuationForSession,
@@ -154,26 +148,6 @@ function cleanupInvokeFirstTurnRendezvous(
     server.invokeFirstTurnRendezvous.get(hostSessionId) === rendezvous
   ) {
     server.invokeFirstTurnRendezvous.delete(hostSessionId)
-  }
-}
-
-function assertBrokerPermissionPolicyAdmitted(input: {
-  mode: unknown
-  hostSessionId: string
-  runId: string
-  route: string
-}): void {
-  if (input.mode === 'ask-client') {
-    throw new HrcUnprocessableEntityError(
-      HrcErrorCode.ASK_CLIENT_UNSUPPORTED,
-      'ask-client permission mode is unsupported for HRC-owned broker dispatch',
-      {
-        hostSessionId: input.hostSessionId,
-        runId: input.runId,
-        route: input.route,
-        permissionMode: 'ask-client',
-      }
-    )
   }
 }
 
@@ -1412,227 +1386,15 @@ export async function startInteractiveTmuxBrokerRuntime(
       preparedAuthority: preparedActuatorSplit.authority,
     })
   }
-  const runtimeId = `rt-${randomUUID()}`
-  const timing = createPrecompileLaunchTimingContext(
-    'interactive',
-    runtimeId,
-    this.options.stateRoot
-  )
-
-  const hrcDispatchEnv = buildInteractiveBrokerDispatchEnv({
-    baseEnv: mergeEnv(buildHrcCorrelationEnv(effectiveTurnIntent), effectiveTurnIntent.launch),
-    db: this.db,
-    runtimeRoot: this.options.runtimeRoot,
+  // T-08596 (T-08569A closure): the bundled ASP execution closure is removed.
+  // The facade/toolchain fallback below is deleted — including the deprecated
+  // codex-cli-tmux keeper. An unconfigured node refuses loudly with a typed
+  // refusal, never an ENOENT from a missing bin.
+  throw aspdUnconfiguredError('interactive-broker-birth', {
     hostSessionId: session.hostSessionId,
-    runtimeId,
-    mailStopSocket: this.options.socketPath,
+    runId: diagnosticRunId,
+    allowedBrokerDriver: flagOptions.allowedBrokerDriver,
   })
-  // This compile-only intent is deliberately not persisted below.
-  const compileIntent =
-    flagOptions.coldBirthPrompt !== undefined
-      ? {
-          ...effectiveTurnIntent,
-          initialPrompt: flagOptions.coldBirthPrompt,
-          ...(flagOptions.includePrimingForColdBirthPrompt ? {} : { omitPriming: true }),
-        }
-      : effectiveTurnIntent
-  const client = await startAspcFacadeBrokerClient(timing)
-  let handedOffToController = false
-  try {
-    const compiled = await compileBrokerRuntimePlan(
-      {
-        intent: compileIntent,
-        hostSessionId: session.hostSessionId,
-        generation: session.generation,
-        dispatchEnv: hrcDispatchEnv,
-        // T-01770 Phase D: arriving here means there is no live TUI to reuse
-        // (the reuse predicates return an already-live runtime first). A fresh
-        // first launch must NOT attempt continuation — passing session.continuation
-        // for codex would emit `codex resume <rollout>` (or `claude --continue`),
-        // replaying a transcript and, when the recorded cwd differs, blocking the
-        // TUI on a "choose working directory to resume" picker (commit 120eb7a).
-        // We REVERSE that disable ONLY for the safe recreate cases (T-04836):
-        //   - claude-code-tmux + a captured Claude session id ⇒ `--resume <uuid>`
-        //   - codex-app-server + a codex/kind:thread/UUID continuation ⇒
-        //     compiler-owned `resumeThreadId` (no `codex resume` argv).
-        // The deprecated codex-cli-tmux path retains its explicit-id
-        // resume support until that driver is removed.
-        // decideInteractiveTmuxBrokerContinuation enforces those gates; all other
-        // cases (incl. pi-tui-tmux, non-UUID/non-session codex keys) stay undefined.
-        continuation: toRuntimeContinuationRef(
-          decideInteractiveTmuxBrokerContinuation({
-            allowedBrokerDriver: flagOptions.allowedBrokerDriver,
-            sessionContinuation: automaticContinuationForSession(this.db, session),
-          })
-        ),
-        responseFormat: flagOptions.responseFormat,
-      },
-      {
-        compileHarnessInvocation: (request) => {
-          return client.compileHarnessInvocation(request)
-        },
-        timing,
-        ids: {
-          requestId: () => `req-${randomUUID()}`,
-          operationId: () => `op-${randomUUID()}`,
-          runtimeId: () => runtimeId,
-          invocationId: () => `inv-${randomUUID()}`,
-          initialInputId: () => `input-${randomUUID()}`,
-          runId: () => diagnosticRunId,
-          traceId: () => `trace-${randomUUID()}`,
-        },
-      }
-    )
-
-    if (!compiled.admitted) {
-      writeServerLog('WARN', 'broker.compile_admission_rejected', {
-        hostSessionId: session.hostSessionId,
-        hostId: session.hostSessionId,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        generation: session.generation,
-        runId: diagnosticRunId,
-        allocatedRunId: compiled.identity.runId,
-        runtimeId: compiled.identity.runtimeId,
-        invocationId: compiled.identity.invocationId,
-        requestId: compiled.identity.requestId,
-        operationId: compiled.identity.operationId,
-        traceId: compiled.identity.traceId,
-        code: compiled.code,
-        diagnostics: compiled.diagnostics,
-        route: 'interactive-broker',
-        flag: flagOptions.flagEnvName,
-        harnessProvider: effectiveTurnIntent.harness.provider,
-        harnessId: effectiveTurnIntent.harness.id,
-        harnessInteractive: effectiveTurnIntent.harness.interactive,
-        preferredMode: effectiveTurnIntent.execution?.preferredMode,
-        cwd: effectiveTurnIntent.placement.cwd,
-        projectRoot: effectiveTurnIntent.placement.projectRoot,
-        runMode: effectiveTurnIntent.placement.runMode,
-        brokerDriver: flagOptions.allowedBrokerDriver,
-      })
-      throw new HrcRuntimeUnavailableError('interactive broker compile/admission rejected', {
-        hostSessionId: session.hostSessionId,
-        runId: diagnosticRunId,
-        code: compiled.code,
-        diagnostics: compiled.diagnostics,
-        route: 'interactive-broker',
-        flag: flagOptions.flagEnvName,
-      })
-    }
-
-    assertBrokerPermissionPolicyAdmitted({
-      mode: compiled.profile.policy.permissionPolicy.mode,
-      hostSessionId: session.hostSessionId,
-      runId: diagnosticRunId,
-      route: 'interactive-broker',
-    })
-    const actuatorSplitAuthority = await assertActuatorSplitAdmission({
-      intent: effectiveTurnIntent,
-      route: 'interactive-broker',
-      startRequest: compiled.startRequest,
-      preparedAuthority: preparedActuatorSplit.authority,
-    })
-
-    const route = decideInteractiveTmuxExecutionRoute(compileIntent, compiled.profile, {
-      brokerFlagEnabled: true,
-      allowedBrokerDriver: flagOptions.allowedBrokerDriver,
-    })
-    if (route !== 'broker') {
-      throw new HrcRuntimeUnavailableError(
-        `interactive broker profile did not resolve to ${flagOptions.allowedBrokerDriver}`,
-        {
-          hostSessionId: session.hostSessionId,
-          runId: diagnosticRunId,
-          brokerDriver: compiled.profile.brokerDriver,
-          brokerTerminal: compiled.profile.brokerTerminal,
-          route: 'interactive-broker',
-          flag: flagOptions.flagEnvName,
-        }
-      )
-    }
-    const coldBirthPromptRodeLaunch =
-      flagOptions.coldBirthPrompt !== undefined && isInteractiveTmuxBrokerProfile(compiled.profile)
-    flagOptions.onColdBirthPromptRoute?.(coldBirthPromptRodeLaunch)
-
-    const durableInteractiveRoute = decideBrokerDurableInteractiveRoute({
-      durableIpcEnabled: resolveBrokerDurableIpcEnabled(this.options),
-      endpointKind: 'unix-jsonrpc-ndjson',
-      interactionMode: 'interactive',
-    })
-    let brokerClient: ReturnType<typeof asBrokerClient> | undefined
-    if (durableInteractiveRoute === 'durable-ipc') {
-      await client.close().catch(() => undefined)
-    } else {
-      brokerClient = asBrokerClient(client)
-    }
-
-    handedOffToController = true
-    const mergedDispatchEnv = { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv }
-    const result = await this.getHarnessBrokerController().start({
-      plan: compiled.plan,
-      profile: compiled.profile,
-      startRequest: compiled.startRequest,
-      specHash: compiled.specHash,
-      startRequestHash: compiled.startRequestHash,
-      identity: compiled.identity,
-      runtimeAuthority: actuatorSplitRuntimeAuthority(actuatorSplitAuthority),
-      requestedResponseFormat: toBrokerResponseFormat(flagOptions.responseFormat),
-      ...dispatchRunPersistence(flagOptions),
-      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(mergedDispatchEnv, compiled.startRequest),
-      brokerEnv: extractPiSdkBrokerCredentialEnv(mergedDispatchEnv, compiled.startRequest),
-      ...(brokerClient ? { brokerClient } : {}),
-      ...(flagOptions.attachBeforeInvocationStart
-        ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
-        : {}),
-      routeDecision: {
-        route: 'broker',
-        flag: flagOptions.flagEnvName,
-        selectedBy: 'decideInteractiveTmuxExecutionRoute',
-        durableInteractiveRoute,
-        brokerTransport:
-          durableInteractiveRoute === 'durable-ipc'
-            ? 'unix-jsonrpc-ndjson'
-            : 'stdio-jsonrpc-ndjson',
-        durableRouteSelectedBy: 'decideBrokerDurableInteractiveRoute',
-      },
-      lifecyclePolicy: resolveLifecyclePolicyOverlay({
-        routeId: `interactive-broker:${compiled.profile.brokerDriver}`,
-        brokerRoute: true,
-      }),
-      ...(flagOptions.onAccepted
-        ? {
-            onAccepted: async (graph) => {
-              await flagOptions.onAccepted?.(graph.runtime)
-            },
-          }
-        : {}),
-    })
-
-    if (!result.ok) {
-      settleFailedInteractiveBrokerStart(this, {
-        session,
-        runId: diagnosticRunId,
-        runtimeId,
-        invocationId: String(compiled.identity.invocationId),
-        operationId: String(compiled.identity.operationId),
-        error: result.error,
-        responseFormat: flagOptions.responseFormat,
-        flagEnvName: flagOptions.flagEnvName,
-      })
-    }
-
-    // Match the headless authority invariant: rejected compilation, policy,
-    // route selection, and controller starts must not become the implicit plan
-    // used by later automatic dispatches.
-    this.db.sessions.updateIntent(session.hostSessionId, effectiveTurnIntent, timestamp(), timing)
-    return result.runtime
-  } catch (error) {
-    if (!handedOffToController) {
-      await client?.close().catch(() => undefined)
-    }
-    throw error
-  }
 }
 
 /**

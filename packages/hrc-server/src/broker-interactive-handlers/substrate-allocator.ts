@@ -3,12 +3,7 @@ import { access, chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 
 import { dirname, isAbsolute, join } from 'node:path'
 
-import {
-  type AspToolchainBinarySelection,
-  brokerDriverToolchainKind,
-  describeAspToolchainCommand,
-  resolveAspToolchainBinary,
-} from '../asp-toolchain.js'
+import type { AspToolchainBinarySelection } from '../asp-toolchain.js'
 import type {
   BrokerTmuxAllocation,
   BrokerTmuxAllocator,
@@ -22,6 +17,7 @@ import type {
 } from '../broker/runtime-hosting.js'
 import { shellQuote } from '../dispatch-invocation.js'
 import type { HrcServerOptions } from '../server-types.js'
+import { aspdUnconfiguredError } from '../server-util.js'
 import { timestamp } from '../server-util.js'
 import {
   getBrokerIpcSocketPath,
@@ -184,10 +180,6 @@ export type BrokerSubstrateAllocation = {
   observerLease?: BrokerTmuxLease | undefined
 }
 
-export function resolveBrokerBinary(driverKind: string): string {
-  return resolveAspToolchainBinary(brokerDriverToolchainKind(driverKind)).path
-}
-
 export async function allocateBrokerSubstrate(
   options: Pick<HrcServerOptions, 'runtimeRoot'>,
   deps: BrokerDurableTmuxAllocatorDeps,
@@ -204,12 +196,18 @@ export async function allocateBrokerSubstrate(
   preflightBrokerIpcSocketPath(brokerIpcSocketPath)
 
   const workerLaunch = input.workerLaunch
-  // T-08542: a frozen aspd worker launch never reaches the toolchain resolver.
-  const brokerBinary = workerLaunch?.executable ?? resolveBrokerBinary(driverKind)
-  const aspToolchainSelection =
-    workerLaunch === undefined
-      ? describeAspToolchainCommand(brokerDriverToolchainKind(driverKind), brokerBinary)
-      : undefined
+  // T-08596 (T-08569A closure): the toolchain resolver is deleted. Only a
+  // frozen aspd worker launch may allocate a substrate; anything else refuses
+  // loudly with a typed refusal, never an ENOENT from a missing bin.
+  if (workerLaunch === undefined) {
+    throw aspdUnconfiguredError('broker-substrate', {
+      hostSessionId,
+      runtimeId,
+      driverKind,
+    })
+  }
+  const brokerBinary = workerLaunch.executable
+  const aspToolchainSelection = undefined
   if (workerLaunch !== undefined) {
     assertFrozenWorkerArgvHosting(workerLaunch.argv, paths, input)
   }

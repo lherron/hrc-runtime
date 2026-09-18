@@ -192,16 +192,18 @@ live worker's hosting, frozen release or presentation:
 **Configuration.** `HRC_ASPD_SOCKET` names the node-local aspd Unix endpoint
 (absolute path; the daemon's own environment, read at each preparation, never
 cached). It is endpoint configuration, not a flag: when it is set, this route's
-preparation service IS that endpoint; when unset, every route, including this
-one, keeps its existing behavior (in-process-spawned stdio `aspc-facade`
-resolved by `hrc-runtime.asp-toolchain-selection`). A relative or empty value
+preparation service IS that endpoint. [T-08596: when unset, every birth refuses
+with the typed `aspd_unconfigured` refusal; the in-process-spawned stdio
+`aspc-facade` fallback and the `hrc-runtime.asp-toolchain-selection` resolver
+are deleted.] A relative or empty value
 is a configuration error on this route, not "unset".
 
 Every other route (interactive tmux, the node-default codex `tmux-tui` viewer
 route — only an explicit §1.2 request moves a viewer onto aspd [superseded by
 §1.3: node-default `tmux-tui` is on aspd when configured] — pi-sdk,
 participant registration/establishment, previews, catalog/inspection) is
-untouched and keeps its facade/toolchain selection. [T-08560/T-08562: interactive
+untouched. [T-08596: the facade/toolchain fallback is deleted for every route;
+unconfigured nodes refuse with `aspd_unconfigured`.] [T-08560/T-08562: interactive
 Codex, Claude and Pi TUI births are on aspd when configured, §1.5 and §1.6;
 pi-sdk and participants stay.]
 
@@ -227,7 +229,9 @@ public transport stays `headless`. The Ghostty viewer (hrc-viewer) attaches
 from the presentation read model (`tmux attach-session -t <session>:tui`), with
 no server attach call. Today that route is reached only by an omitted choice on a node
 whose default is `tmux-tui` AND whose Codex redirect does not apply (e.g. a
-`responseFormat` dispatch), and it always prepares through the bundled facade.
+`responseFormat` dispatch). [T-08596: the bundled-facade fallback is deleted;
+this route prepares through aspd when configured and refuses with
+`aspd_unconfigured` when not.]
 
 **Carrier.** `HrcPresentationIntent.operator` accepts one more value:
 `operator?: 'none' | 'tmux-tui'`. `'tmux-tui'` means "run this new execution on
@@ -341,7 +345,9 @@ release and continuation, or applies that admission's existing fenced handling.
 request off the aspd viewer: (1) the Codex interactive redirect
 (`HRC_CODEX_CLI_TMUX_BROKER_ENABLED=1`) rewrites it to codex-tui before any
 presentation decision, and (2) with the redirect out of the way, node-default
-`tmux-tui` still prepares through the bundled facade (§1.2 route selection).
+`tmux-tui` prepares through aspd when configured [T-08596: the bundled-facade
+fallback is deleted; unconfigured nodes refuse with `aspd_unconfigured`]
+(§1.2 route selection).
 Both change: (1) by node configuration, (2) by one routing rule.
 
 **Decision 1: the redirect control governs only the redirect.**
@@ -365,8 +371,9 @@ branches are unchanged. The flag is not renamed and gains no value.
 aspd.** The aspd route (§1) covers every headless codex-app-server intent whose
 effective presentation is `none` or `tmux-tui`, whether the source is `request`
 or `node-default`. This replaces §1.2's "an omitted choice that resolves to
-`tmux-tui` through the node default keeps its facade preparation". With
-`HRC_ASPD_SOCKET` unset nothing changes: every presentation keeps the facade.
+`tmux-tui` through the node default keeps its facade preparation". [T-08596: with
+`HRC_ASPD_SOCKET` unset every presentation refuses with `aspd_unconfigured`;
+no presentation keeps a facade path.]
 Because aspd is the only preparation service on this route (§1, no fallback),
 ordinary Codex births on a configured node now depend on aspd:
 `aspd_unavailable` refuses a NEW execution before any hosting effect. Live
@@ -751,8 +758,8 @@ route; the non-Codex interactive route admits by hosting requirements plus hosti
 evidence, §1.6.3]. Anything else is
 refused `aspd_route_profile_mismatch`. The durable interactive route is
 required: with `HRC_BROKER_DURABLE_IPC_ENABLED` resolving off, the door refuses
-`aspd_route_requires_durable_ipc` before preparation. The stdio route spawns a
-resolver-selected broker, which cannot be the frozen release.
+`aspd_route_requires_durable_ipc` before preparation. [T-08596: the stdio seam
+has no resolver to consult; reaching it refuses with `aspd_unconfigured`.]
 
 **Launch.** From the operation id only, exactly as §5. Validation of the persisted
 bytes and hosting description is unchanged. The interactive allocator
@@ -985,8 +992,10 @@ any other `door` value is refused `launch_description_mismatch` as today.
 
 These are construction facts. They are asserted in tests, not new refusals.
 
-**No silent fallback.** On a configured node, no Codex interactive birth reaches
-`startAspcFacadeBrokerClient`, the resolver or a checkout worker. Every §4
+**No silent fallback.** On a configured node, no broker birth of any driver reaches
+a facade spawn, the (deleted) resolver or a checkout worker; on an unconfigured
+node every birth refuses with `aspd_unconfigured`. [T-08596: `startAspcFacadeBrokerClient`,
+`resolveAspToolchainBinary`, `resolveBrokerBinary` and `resolveHoistedBinary` are deleted.] Every §4
 preparation refusal and every §5 launch refusal fails the birth. The failure
 propagates to the calling door exactly as a facade compile failure does today:
 - the dispatch/kicker/DM/selector call throws;
@@ -1411,12 +1420,11 @@ hosting-evidence refusal. Codex births are unchanged byte for byte (§1.5).
   (`turn-dispatch-handlers.ts:1835-1838`, `shouldRedirectClaudeToInteractiveBroker`
   `broker-decisions.ts:687-710`). Leg B therefore needs no headless change for
   Claude.
-- **Worker selection:** `allocateBrokerSubstrate`
-  (`broker-interactive-handlers/substrate-allocator.ts:204`):
-  `workerLaunch?.executable ?? resolveBrokerBinary(driverKind)`.
-  `resolveBrokerBinary` (`:183-185`) goes to `resolveAspToolchainBinary(
-  brokerDriverToolchainKind(driverKind))` (`asp-toolchain.ts:80-116`), which
-  applies override, then `HRC_ASP_TOOLCHAIN_ROOT`, then bundled.
+- **Worker selection:** `allocateBrokerSubstrate` launches only the frozen
+  `workerLaunch` executable. [T-08596: the `resolveBrokerBinary` /
+  `resolveAspToolchainBinary` / `brokerDriverToolchainKind` fallback and the
+  override / `HRC_ASP_TOOLCHAIN_ROOT` / bundled precedence are deleted; a birth
+  with no frozen worker launch refuses with `aspd_unconfigured`.]
 
 **Live population (read-only, `state.sqlite`, runtimes created since
 2026-09-16):**
@@ -1481,11 +1489,12 @@ through aspd iff:
 
 This replaces `aspdInteractiveCodexEndpoint`. Nothing else enters the predicate:
 not the door, not `attachBeforeInvocationStart`, not `coldBirthPrompt`, not a
-redirect control. With the socket unset the chokepoint keeps the facade byte for
-byte.
+redirect control. [T-08596: with the socket unset the chokepoint refuses with
+`aspd_unconfigured`; the facade path is deleted.]
 
 **The one named exclusion is a deprecation fence, not admission.**
-`codex-cli-tmux` keeps the facade path it has today. It has no release binding
+[T-08596: `codex-cli-tmux` keeps no facade path; the deprecated driver refuses
+with `aspd_unconfigured` like every other non-aspd birth.] It has no release binding
 (T-08561 §3.1) and is not retired. No door emits it in production:
 - `resolveInteractiveBrokerAdmissionDriver` and
   `decideInteractiveTmuxBrokerStartRoute` never return it;
@@ -1493,11 +1502,11 @@ byte.
 
 So the fence is proved by a unit gate only. mable kept this fence (EN-13464).
 
-**Headless route: unchanged.** `aspdHeadlessCodexEndpoint` stays headless
-`codex-app-server` only. A non-interactive `pi-sdk` start or dispatch keeps:
-- the facade compile (`startAspcFacadeBrokerClient`);
-- the resolver's `harness-broker-pi` kind (`asp-toolchain.ts:113-116`);
-- `extractPiSdkBrokerCredentialEnv` broker env (`broker-decisions.ts:621-632`).
+**Headless route: unchanged in predicate, closed in fallback.** `aspdHeadlessCodexEndpoint` stays headless
+`codex-app-server` only. [T-08596: a non-interactive `pi-sdk` start or dispatch
+no longer keeps the facade compile or the resolver's `harness-broker-pi` kind
+(both deleted); it refuses with `aspd_unconfigured`.]
+`extractPiSdkBrokerCredentialEnv` broker env (`broker-decisions.ts:621-632`) stays.
 
 It never reaches aspd, so a production HRC never asks aspd for a pi-sdk
 preparation.
@@ -1773,6 +1782,10 @@ runner and statusline are the producer's guarantee
 
 #### 1.6.9 What the resolver still serves after Leg B
 
+[T-08596: NOTHING. The resolver is deleted and governs no route on any node;
+every row below now refuses with `aspd_unconfigured`. The table is retained as
+the pre-closure record.]
+
 On a configured node `resolveBrokerBinary` / `resolveAspToolchainBinary` still
 serves exactly these:
 
@@ -1785,9 +1798,8 @@ serves exactly these:
 | Legacy stdio broker seam | `broker/controller.ts:557-563` | Non-durable test and legacy seam; the aspd route refuses stdio (`aspd_route_requires_durable_ipc`) | unchanged |
 | Every route with the socket unset | all of the above plus Claude, Pi and Codex | Endpoint configuration is the only gate | Leg D (fleet), later authority |
 
-The `aspc-facade` compiler spawn (`option-resolvers.ts:182`, `:231`) remains for
-the same unconfigured and preserved routes. `hrc server status` `aspToolchain`
-keeps describing the resolver for these routes.
+[T-08596: the `aspc-facade` compiler spawn is deleted outright.] `hrc server status`
+`aspToolchain` reports the resolver retired with no selectable binaries.
 
 #### 1.6.10 Operational consequence (named, not new law)
 
@@ -1901,6 +1913,26 @@ no input.
 Rolling back to another binding-aware release needs no HRC action.
 
 No plist change. No ASP change in this task.
+
+#### 1.6.14 Bundled execution closure (T-08596 / T-08569A)
+
+The resolver described in §§1–1.6 is deleted and governs NOTHING on any node:
+`resolveAspToolchainBinary` (override → `HRC_ASP_TOOLCHAIN_ROOT` → bundled
+`resolveHoistedBinary`), `describeAspToolchainCommand`, `resolveBrokerBinary`,
+`brokerDriverToolchainKind`, `startAspcFacadeBrokerClient`,
+`resolveAspcFacadeStartOptions` and the `aspc-facade` / `harness-broker` /
+`harness-broker-pi` spawns are gone. Every birth launches only from a frozen
+aspd preparation; a birth with no frozen worker launch — unconfigured node
+(`HRC_ASPD_SOCKET` unset), deprecated `codex-cli-tmux`, non-interactive `pi-sdk`,
+legacy stdio seam, or local CLI preview — refuses loudly with the typed
+`aspd_unconfigured` refusal (detail `route: 'aspd'`, `site` naming the birth
+site), never an ENOENT from a missing bin. The CLI `--dry-run` preview compiles
+through the daemon's `POST /v1/previews/run` instead of a local facade spawn.
+`praesidium-release.json` and `hrc server status` carry `release.aspContracts`
+(the thin contract set with installed versions) instead of `release.aspBuild`.
+The §1.6.9 table above is retained as the pre-closure record: every row now
+refuses. Rollback is the newest pre-deletion retained HRC release; no release
+named by a live `executionRelease` or unresolved recovery is ever garbage-collected.
 
 ## 2. Wire use (existing contract only)
 

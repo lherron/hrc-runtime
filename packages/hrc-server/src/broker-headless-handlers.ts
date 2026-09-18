@@ -10,9 +10,6 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
-import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
-import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import {
   compilerPrimingSubmissionId,
   isCompilerPrimingSubmissionTerminal,
@@ -23,11 +20,7 @@ import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { formatDmAddress } from './messages.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
-import {
-  actuatorSplitRuntimeAuthority,
-  assertActuatorSplitAdmission,
-  prepareActuatorSplitIntent,
-} from './actuator-split.js'
+import { prepareActuatorSplitIntent } from './actuator-split.js'
 import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
 import { bindAppHarnessBirthIntent, trackAppIdentityOperation } from './app-session-identity.js'
 import {
@@ -38,25 +31,12 @@ import {
   prepareAspdHeadlessAttempt,
   readAspdPreparation,
 } from './aspd-headless-start.js'
-import {
-  decideCodexAppServerPresentation,
-  decideMuseServePresentation,
-  extractPiSdkBrokerCredentialEnv,
-  filterBrokerDispatchEnvForLockedEnv,
-  toRuntimeContinuationRef,
-} from './broker-decisions.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { isClosedDbError } from './broker/controller/internal.js'
 import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
-import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
-import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
-import {
-  operatorPresentationSource,
-  recordStartBirth,
-  startBirthOfIntent,
-} from './presentation-operator.js'
+import { recordStartBirth, startBirthOfIntent } from './presentation-operator.js'
 import {
   classifyBrokerInputFailure,
   isRunActive,
@@ -66,11 +46,6 @@ import {
   isTransitionalBrokerInvocationState,
   requireSession,
 } from './require-helpers.js'
-import {
-  HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV,
-  HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
-  HRC_MUSE_SERVE_OPERATOR_PRESENTATION_ENV,
-} from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import {
@@ -79,8 +54,12 @@ import {
   dispatchOriginRunFields,
   dispatchRunPersistence,
 } from './server-types.js'
-import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
-import { automaticContinuationForSession } from './session-continuation-reuse.js'
+import {
+  aspdUnconfiguredError,
+  isRuntimeUnavailableStatus,
+  json,
+  timestamp,
+} from './server-util.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import {
   assertRuntimeSupportsResponseFormat,
@@ -537,26 +516,6 @@ export async function drainDurableHeadlessTurnInputs(
   }
 }
 
-function assertBrokerPermissionPolicyAdmitted(input: {
-  mode: unknown
-  hostSessionId: string
-  runId: string
-  route: string
-}): void {
-  if (input.mode === 'ask-client') {
-    throw new HrcUnprocessableEntityError(
-      HrcErrorCode.ASK_CLIENT_UNSUPPORTED,
-      'ask-client permission mode is unsupported for HRC-owned broker dispatch',
-      {
-        hostSessionId: input.hostSessionId,
-        runId: input.runId,
-        route: input.route,
-        permissionMode: 'ask-client',
-      }
-    )
-  }
-}
-
 export async function startHeadlessBrokerRuntime(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
@@ -597,165 +556,16 @@ export async function startHeadlessBrokerRuntime(
       options
     )
   }
-  // Resolve every approval/artifact/base/path fact before opening the compiler
-  // facade or allocating a broker substrate. Actuator prompts are replaced here
-  // with the deterministic apply request, so free-form caller text never enters
-  // hash-covered invocation material as actuator authority.
-  const preparedActuatorSplit = await prepareActuatorSplitIntent(requestedTurnIntent)
-  const turnIntent = preparedActuatorSplit.intent
-  const runtimeId = `rt-${randomUUID()}`
-  const timing = createPrecompileLaunchTimingContext('headless', runtimeId, this.options.stateRoot)
-
-  let handedOffToController = false
-  const hrcDispatchEnv = buildHeadlessBrokerDispatchEnv({
-    baseEnv: mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
-    db: this.db,
-    runtimeRoot: this.options.runtimeRoot,
+  // T-08596 (T-08569A closure): the bundled ASP execution closure is removed.
+  // The facade/toolchain fallback below is deleted; a node that declares no
+  // aspd endpoint for this birth refuses loudly with a typed refusal, never an
+  // ENOENT from a missing bin.
+  throw aspdUnconfiguredError('headless-broker-birth', {
     hostSessionId: session.hostSessionId,
-    runtimeId,
-    mailStopSocket: this.options.socketPath,
+    runId,
+    harnessId: requestedTurnIntent.harness.id ?? null,
+    provider: requestedTurnIntent.harness.provider,
   })
-  const client = await startAspcFacadeBrokerClient(timing)
-  try {
-    const compiled = await compileBrokerRuntimePlan(
-      {
-        intent: turnIntent,
-        hostSessionId: session.hostSessionId,
-        generation: session.generation,
-        dispatchEnv: hrcDispatchEnv,
-        continuation: toRuntimeContinuationRef(automaticContinuationForSession(this.db, session)),
-        allowCompilerInitialInputWithoutIdentity: options.allowCompilerInitialInputWithoutIdentity,
-        responseFormat: options.responseFormat,
-      },
-      {
-        compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
-        timing,
-        ids: {
-          requestId: () => `req-${randomUUID()}`,
-          operationId: () => `op-${randomUUID()}`,
-          runtimeId: () => runtimeId,
-          invocationId: () => `inv-${randomUUID()}`,
-          initialInputId: () => `input-${randomUUID()}`,
-          runId: () => runId,
-          traceId: () => `trace-${randomUUID()}`,
-        },
-      }
-    )
-
-    if (!compiled.admitted) {
-      throw new HrcRuntimeUnavailableError('headless broker compile/admission rejected', {
-        hostSessionId: session.hostSessionId,
-        runId,
-        code: compiled.code,
-        diagnostics: compiled.diagnostics,
-        route: 'broker',
-      })
-    }
-
-    assertBrokerPermissionPolicyAdmitted({
-      mode: compiled.profile.policy.permissionPolicy.mode,
-      hostSessionId: session.hostSessionId,
-      runId,
-      route: 'broker',
-    })
-    const actuatorSplitAuthority = await assertActuatorSplitAdmission({
-      intent: turnIntent,
-      route: 'broker',
-      startRequest: compiled.startRequest,
-      preparedAuthority: preparedActuatorSplit.authority,
-    })
-
-    // T-01866 — headless durable cutover is UNCONDITIONAL. Every headless broker
-    // runtime goes through the controller's leased-tmux + Unix-IPC allocation, so
-    // HRC must NOT hand the controller a pre-created stdio broker client (that
-    // bypasses substrate allocation and reintroduces the daemon-child lifecycle —
-    // spec §10.4). The ASPC facade is used ONLY for compile; it is closed and
-    // dropped here before handing off. There is no legacy-stdio route and no
-    // HRC_HEADLESS_BROKER_LEGACY_STDIO escape hatch: the controller always
-    // allocates a leased substrate + Unix v0.2 endpoint.
-    await client?.close().catch(() => undefined)
-
-    const controller = this.getHarnessBrokerController()
-    handedOffToController = true
-    // T-04921 (T-04905 Phase A) — HRC-owned operator-presentation policy for the
-    // codex-app-server dual-tmux viewer route. The DEFAULT policy is sourced from
-    // an env var (unset → ordinary headless, behaviour-preserving); the decision
-    // gates on driver applicability (codex-app-server only). The trigger is the
-    // POLICY, never the driver name alone.
-    const operatorPresentation =
-      compiled.profile.brokerDriver === 'muse-serve'
-        ? decideMuseServePresentation({
-            operatorPresentation: process.env[HRC_MUSE_SERVE_OPERATOR_PRESENTATION_ENV],
-            brokerDriver: compiled.profile.brokerDriver,
-            requestedOperator: turnIntent.presentation?.operator,
-          })
-        : decideCodexAppServerPresentation({
-            operatorPresentation: process.env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
-            brokerDriver: compiled.profile.brokerDriver,
-            requestedOperator: turnIntent.presentation?.operator,
-          })
-    const mergedDispatchEnv = { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv }
-    const result = await controller.start({
-      plan: compiled.plan,
-      profile: compiled.profile,
-      startRequest: compiled.startRequest,
-      specHash: compiled.specHash,
-      startRequestHash: compiled.startRequestHash,
-      identity: compiled.identity,
-      runtimeAuthority: actuatorSplitRuntimeAuthority(actuatorSplitAuthority),
-      requestedResponseFormat: toBrokerResponseFormat(options.responseFormat),
-      ...dispatchRunPersistence(options),
-      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(mergedDispatchEnv, compiled.startRequest),
-      brokerEnv: extractPiSdkBrokerCredentialEnv(mergedDispatchEnv, compiled.startRequest),
-      routeDecision: {
-        route: 'broker',
-        flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
-        selectedBy: 'decideHeadlessExecutionRoute',
-        headlessRoute: 'durable-leased',
-        brokerTransport: 'unix-jsonrpc-ndjson',
-        // The presenter policy the controller routes on: 'tmux-tui' selects the
-        // tmux-tui allocator + observer socket, 'observer' selects the
-        // observer-pane allocator + observer socket; 'none' is ordinary headless.
-        operatorPresentation,
-        operatorPresentationSource: operatorPresentationSource(turnIntent),
-      },
-      lifecyclePolicy: resolveLifecyclePolicyOverlay({
-        routeId: `headless-broker:${compiled.profile.brokerDriver}`,
-        brokerRoute: true,
-      }),
-      ...(options.onAccepted
-        ? {
-            onAccepted: async (graph) => {
-              await options.onAccepted?.(graph.runtime)
-            },
-          }
-        : {}),
-    })
-
-    if (!result.ok) {
-      settleFailedHeadlessBrokerStart(this, {
-        session,
-        runId,
-        runtimeId,
-        invocationId: String(compiled.identity.invocationId),
-        operationId: String(compiled.identity.operationId),
-        error: result.error,
-        responseFormat: options.responseFormat,
-      })
-    }
-
-    // `lastAppliedIntentJson` is materialization authority for automatic queued
-    // drains and mail delivery. Commit only after the controller has admitted
-    // and launched this exact intent; every earlier error therefore leaves the
-    // prior authority untouched.
-    this.db.sessions.updateIntent(session.hostSessionId, turnIntent, timestamp(), timing)
-    return result.runtime
-  } catch (error) {
-    if (!handedOffToController) {
-      await client?.close().catch(() => undefined)
-    }
-    throw error
-  }
 }
 
 /**

@@ -91,7 +91,10 @@ export const SERVER_STATUS_CONTRACT: readonly ServerStatusContractEntry[] = [
   },
   { label: 'installed', paths: ['release.runningEqualsInstalled'] },
   { label: 'HRC build', paths: ['release.hrcBuild.setVersion', 'release.hrcBuild.sourceCommit'] },
-  { label: 'ASP build', paths: ['release.aspBuild.setVersion', 'release.aspBuild.sourceCommit'] },
+  {
+    label: 'ASP contract',
+    paths: ['release.aspContracts[].name', 'release.aspContracts[].version'],
+  },
   { label: 'nodeId', paths: ['node.nodeId', 'node.nodeIdProvenance'] },
   { label: 'node mode', paths: ['node.mode'] },
   { label: 'node config', paths: ['node.configPath', 'node.configExists'] },

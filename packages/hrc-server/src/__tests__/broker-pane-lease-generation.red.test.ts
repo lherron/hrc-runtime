@@ -226,6 +226,8 @@ describe('RED (GAP 2): broker-tmux persists generation in lease projections', ()
       now: () => NOW,
     })
 
+    // T-08596: the injected broker client is the supported seam for
+    // lease-persistence shapes; the legacy stdio seam refuses without it.
     const result = await controller.start({
       plan: response.plan,
       profile,
@@ -234,6 +236,7 @@ describe('RED (GAP 2): broker-tmux persists generation in lease projections', ()
       startRequestHash: profile.harnessInvocation.startRequestHash,
       identity,
       dispatchEnv: { HRC_DISPATCH: 'yes' },
+      brokerClient: fake,
     })
     expect(result.ok).toBe(true)
 

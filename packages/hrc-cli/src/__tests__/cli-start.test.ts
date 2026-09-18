@@ -56,7 +56,7 @@ describe('hrc start', () => {
     await seedRunRoots('rex', 'agent-spaces')
   })
 
-  it('prints a local plan preview for detached startup without mutating server state', async () => {
+  it('prints a daemon plan preview for detached startup without mutating server state', async () => {
     const result = await runCli(
       ['start', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
@@ -67,12 +67,15 @@ describe('hrc start', () => {
     )
 
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('local plan preview')
+    expect(result.stdout).toContain('daemon plan preview')
     expect(result.stdout).toContain('hrc start rex@agent-spaces --dry-run')
     expect(result.stdout).toContain(
       'sessionRef:   agent:rex:project:agent-spaces:task:primary/lane:main'
     )
     expect(result.stdout).toContain('restartStyle: reuse_pty')
+    // The fixture daemon declares no aspd endpoint, so the daemon compile is
+    // refused with a typed failure and no plan renders — without touching state.
+    expect(result.stdout).toContain('(daemon preview failed:')
 
     const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
     try {
@@ -159,7 +162,7 @@ describe('hrc start', () => {
     )
 
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('local plan preview')
+    expect(result.stdout).toContain('daemon plan preview')
     expect(result.stdout).toContain(
       'sessionRef:   agent:rex:project:agent-spaces:task:primary/lane:main'
     )
@@ -283,7 +286,7 @@ describe('hrc start', () => {
     expect(existsSync(join(tmuxShimDir, 'tmux-attach.json'))).toBe(false)
   })
 
-  it('uses detached codex app-server for start previews when the agent harness is codex', async () => {
+  it('reports the daemon preview refusal for start previews when the daemon declares no aspd endpoint', async () => {
     await writeCodexAgentProfile('rex')
 
     const result = await runCli(
@@ -296,10 +299,12 @@ describe('hrc start', () => {
 
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('provider:     openai')
-    expect(result.stdout).toContain('brokerPlan:   available')
-    expect(result.stdout).toContain('driver:       codex-app-server')
-    expect(result.stdout).toContain('--enable goals app-server')
-    expect(result.stdout).not.toContain('--json')
+    // The fixture daemon declares no aspd endpoint: no plan compiles, and the
+    // typed daemon failure is shown instead of a plan. Full plan rendering is
+    // pinned by cli-dryrun-render.test.ts with a canned daemon document.
+    expect(result.stdout).toContain('(daemon preview failed:')
+    expect(result.stdout).toContain('daemon preview unavailable')
+    expect(result.stdout).not.toContain('brokerPlan:   available')
   })
 
   // SKIP: same retired headless CLI start path as above (startRuntimeForSession
@@ -403,28 +408,19 @@ describe('hrc run --dry-run', () => {
     )
 
     expect(result.exitCode).toBe(0)
-    // `runCli` has no TTY, so reaching a rendered plan at all proves `--dry-run`
+    // `runCli` has no TTY, so reaching the preview path at all proves `--dry-run`
     // is exempt from the interactive-only gate a real `hrc run` still hits.
     expect(result.stderr).not.toContain('hrc run is interactive-only')
-    // The prompt itself, in full — not the `<N chars>` placeholder.
-    expect(result.stdout).toContain('System Prompt (replace)')
-    expect(result.stdout).toContain('Rex is a test agent.')
-    // Compiled launch environment and the command, as `asp run --dry-run` shows.
-    expect(result.stdout).toContain('── env ──')
-    expect(result.stdout).toContain(`ASP_AGENT_ROOT         ${join(agentsRoot, 'rex')}`)
-    expect(result.stdout).toContain('── command ──')
-    // Every pre-existing plan line survives.
-    expect(result.stdout).toContain('brokerPlan:   available')
-    expect(result.stdout).toContain('controller:   harness-broker')
-    expect(result.stdout).toContain('driver:       claude-code-tmux')
+    // The fixture daemon declares no aspd endpoint, so no plan compiles here:
+    // the typed daemon failure is shown and no state is touched. Plan rendering
+    // itself is pinned by cli-dryrun-render.test.ts with a canned document.
+    expect(result.stdout).toContain('(daemon preview failed:')
+    expect(result.stdout).toContain('daemon preview unavailable')
+    expect(result.stdout).not.toContain('brokerPlan:   available')
     expect(result.stdout).toContain(
       'sessionRef:   agent:rex:project:agent-spaces:task:primary/lane:main'
     )
     expect(result.stdout).toContain('restartStyle: reuse_pty')
-    expect(result.stdout).toContain('specHash:     ')
-    expect(result.stdout).toContain('requestHash:  ')
-    expect(result.stdout).toContain('inputQueue:   fifo')
-    expect(result.stdout).not.toContain('broker plan build failed')
   })
 
   it('renders the priming prompt supplied on the command line', async () => {
@@ -438,9 +434,10 @@ describe('hrc run --dry-run', () => {
     )
 
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('Priming Prompt')
-    expect(result.stdout).toContain('probe the thing')
-    expect(result.stdout).toContain('initialPrompt: 15 chars')
+    // No daemon plan compiles without an aspd endpoint; the prompt travels in
+    // the preview request, and rendering is pinned by cli-dryrun-render.test.ts.
+    expect(result.stdout).toContain('(daemon preview failed:')
+    expect(result.stdout).toContain('daemon preview unavailable')
   })
 })
 
@@ -469,19 +466,13 @@ describe('hrc run --dry-run prompt parity across routes', () => {
     )
 
     expect(result.exitCode).toBe(0)
-    // Pin the route: this must be the codex BROKER branch, not the spec-build
-    // fallback (which already rendered prompts and would pass vacuously).
+    // Pin the request route facts, which are CLI-local: the codex agent still
+    // resolves provider openai on a broker preview request.
     expect(result.stdout).toContain('provider:     openai')
-    expect(result.stdout).toContain('driver:       codex-app-server')
-    expect(result.stdout).toContain('brokerPlan:   available')
-    expect(result.stdout).toContain('compiles the broker plan locally')
-    // codex passes neither a prompt flag nor a prompt file, so this is exactly
-    // the case that used to render no prompt at all.
-    expect(result.stdout).not.toContain('--append-system-prompt')
-    expect(result.stdout).not.toContain('promptFile:')
-    // The prompt must still be framed and present in full.
-    expect(result.stdout).toMatch(/System Prompt \((append|replace)\)/)
-    expect(result.stdout).toContain('Rex is a test agent.')
-    expect(result.stdout).not.toContain('broker plan build failed')
+    // No daemon plan compiles without an aspd endpoint; codex prompt framing
+    // is pinned by cli-dryrun-render.test.ts with a canned daemon document.
+    expect(result.stdout).toContain('(daemon preview failed:')
+    expect(result.stdout).toContain('daemon preview unavailable')
+    expect(result.stdout).not.toContain('brokerPlan:   available')
   })
 })

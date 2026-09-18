@@ -112,15 +112,14 @@ function fixtureBuilds() {
       setVersion: '0.5.13-dev.fixture',
       builtAt: '2026-07-24T12:00:00.000Z',
     },
-    aspBuild: {
-      schema: 1 as const,
-      repository: 'agent-spaces',
-      canonicalRemote: 'ssh://example.test/praesidium.git',
-      sourceCommit: '2222222222222222222222222222222222222222',
-      setName: 'asp' as const,
-      setVersion: '0.1.0-dev.fixture',
-      builtAt: '2026-07-24T11:00:00.000Z',
-    },
+    aspContracts: [
+      { name: 'agent-scope', version: '0.1.1-dev.fixture' },
+      { name: 'cli-kit', version: '0.1.1-dev.fixture' },
+      { name: 'spaces-aspc-protocol', version: '0.1.1-dev.fixture' },
+      { name: 'spaces-harness-broker-protocol', version: '0.1.1-dev.fixture' },
+      { name: 'spaces-harness-broker-client', version: '0.1.1-dev.fixture' },
+      { name: 'spaces-runtime-contracts', version: '0.1.1-dev.fixture' },
+    ],
   }
 }
 
@@ -241,12 +240,12 @@ describe('T-06685 installed CLI continuity harness', () => {
       'schema',
       'releaseId',
       'hrcBuild',
-      'aspBuild',
+      'aspContracts',
       'installedAt',
     ])
     expect(manifest.releaseId).toBe('release-new')
     expect(manifest.hrcBuild).toEqual(fixtureBuilds().hrcBuild)
-    expect(manifest.aspBuild).toEqual(fixtureBuilds().aspBuild)
+    expect(manifest.aspContracts).toEqual(fixtureBuilds().aspContracts)
 
     const after = Array.from({ length: 10 }, () => invokeInstalled(fixture.binPath))
     expect(after.every((result) => result.exitCode === 0)).toBeTrue()

@@ -247,17 +247,21 @@ describe('T-08554 explicit app-server viewer', () => {
   })
 
   // T-08555: with HRC_ASPD_SOCKET configured a node-default viewer prepares
-  // through aspd (t08555-default-app-server-viewer.test.ts); unset keeps the facade.
-  it('a node-default tmux-tui with no request choice keeps the facade viewer route when HRC_ASPD_SOCKET is unset', async () => {
+  // through aspd (t08555-default-app-server-viewer.test.ts). T-08596: unset
+  // refuses with aspd_unconfigured; the facade viewer route is deleted.
+  it('a node-default tmux-tui with no request choice refuses with aspd_unconfigured when HRC_ASPD_SOCKET is unset (T-08596)', async () => {
     setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
     setEnv('HRC_ASPD_SOCKET', undefined)
     await server.stop()
     await bootServer()
     const s = await session()
-    await turn(s.hostSessionId, headlessIntent())
+    const response = await turn(s.hostSessionId, headlessIntent())
+    expect(response.status).toBe(503)
+    const body = (await response.json()) as { error: { detail: { code: string } } }
+    expect(body.error.detail.code).toBe('aspd_unconfigured')
     await Bun.sleep(50)
     expect(aspd.compileCalls).toBe(0)
-    expect(facadeSpy).toHaveBeenCalled()
+    expect(facadeSpy).not.toHaveBeenCalled()
   })
 
   it('refuses a viewer request for a driver that has no viewer before any effect', async () => {

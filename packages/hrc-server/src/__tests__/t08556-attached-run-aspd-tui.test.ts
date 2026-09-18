@@ -388,13 +388,16 @@ describe('T-08556 attached-run cold birth', () => {
     expect(runtime.transport).toBe('tmux')
   })
 
-  it('a node without an aspd endpoint keeps the pre-change attached-run path', async () => {
+  it('a node without an aspd endpoint refuses the attached-run birth with aspd_unconfigured (T-08596)', async () => {
     setEnv('HRC_ASPD_SOCKET', undefined)
     const s = await session()
     const refused = await refusedAttachedRun(s.hostSessionId)
     expect(refused.status).toBeGreaterThanOrEqual(500)
-    expect(facadeCalls).toBe(1)
+    // T-08596: the pre-change facade path is deleted; nothing is spawned and
+    // aspd is never consulted.
+    expect(facadeCalls).toBe(0)
     expect(aspd.compileCalls).toBe(0)
+    expect(JSON.stringify(refused.body)).toContain('aspd_unconfigured')
   })
 })
 

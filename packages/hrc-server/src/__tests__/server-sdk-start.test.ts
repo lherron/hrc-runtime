@@ -38,10 +38,8 @@ import type { HrcServer } from '../index'
 
 import { installFakeCodex } from './fixtures/fake-harness-driver'
 import {
-  readRuntime,
   seedSessionContinuation,
   seedTerminatedTmuxRuntime,
-  waitForQueuedPrompt,
 } from './fixtures/sdk-dispatch-database.fixture'
 import { createSocketScratch } from './fixtures/socket-scratch'
 
@@ -521,59 +519,38 @@ describe('runtime lifecycle start/attach', () => {
     expect(execLog).not.toContain('app-server:')
   })
 
-  it('POST /v1/runtimes/start provisions headless codex THROUGH the broker and is idempotent', async () => {
-    // T-01757 (Wave C, A2): codex headless START goes through the
-    // HarnessBrokerController (parent acceptance), NOT exec.ts. Asserts the
-    // broker contract: 200 + controllerKind 'harness-broker' + NO launch
-    // artifact + the compiled plan is mode=headless (regression-locks the
-    // normalize bug that flipped headless->interactive) + idempotent reuse
-    // does NOT re-call controller.start().
+  it('POST /v1/runtimes/start refuses headless codex with aspd_unconfigured on a node without an aspd endpoint (T-08596)', async () => {
+    // T-08596: the local facade-compile path behind this route is deleted. On a
+    // node that declares no aspd endpoint the start refuses with the typed
+    // closure refusal before any controller is consulted; the stubbed
+    // controller below is never reached. Idempotent reuse and prompt delivery
+    // on the aspd path are pinned by the aspd-prepared route tests.
     await restartServerWithHeadlessCodexBroker()
     const hsid = await resolveSession('lifecycle-start-idempotent')
     const stub = installHeadlessBrokerStartStub(hsid)
 
-    const startBody = {
+    const firstRes = await postJson('/v1/runtimes/start', {
       hostSessionId: hsid,
       intent: headlessCodexIntent({}),
-    }
-
-    const firstRes = await postJson('/v1/runtimes/start', startBody)
-    expect(firstRes.status).toBe(200)
-    const firstData = (await firstRes.json()) as any
-
-    const firstRuntime = readRuntime(dbPath, firstData.runtimeId)
-    expect(firstRuntime?.controllerKind).toBe('harness-broker')
-    expect(firstRuntime?.transport).toBe('headless')
-
-    // Regression-lock: the broker plan compiled in HEADLESS mode (not interactive).
-    expect(stub.calls).toHaveLength(1)
-    expect(stub.calls[0].profile.interactionMode).toBe('headless')
-
-    const secondRes = await postJson('/v1/runtimes/start', startBody)
-    expect(secondRes.status).toBe(200)
-    const secondData = (await secondRes.json()) as any
-
-    // Idempotent: a live broker headless runtime with continuation is REUSED —
-    // controller.start() is NOT called again (no re-provision).
-    expect(secondData.runtimeId).toBe(firstData.runtimeId)
-    expect(stub.calls).toHaveLength(1)
-
-    const sessionRes = await fetchSocket(`/v1/sessions/by-host/${hsid}`)
-    const sessionData = (await sessionRes.json()) as any
-    expect(sessionData.continuation).toEqual({
-      provider: 'openai',
-      key: 'thread-123',
     })
+    expect(firstRes.status).toBe(503)
+    const firstData = (await firstRes.json()) as any
+    expect(firstData.error.detail).toMatchObject({
+      code: 'aspd_unconfigured',
+      route: 'aspd',
+      site: 'headless-broker-birth',
+    })
+    expect(stub.calls).toHaveLength(0)
 
-    // Broker route writes NO legacy launch artifact (exec.ts retired).
-    const launchesRes = await fetchSocket(
-      `/v1/launches?runtimeId=${encodeURIComponent(firstData.runtimeId)}`
-    )
-    const launches = (await launchesRes.json()) as any[]
-    expect(launches).toHaveLength(0)
+    const secondRes = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: headlessCodexIntent({}),
+    })
+    expect(secondRes.status).toBe(503)
+    expect(stub.calls).toHaveLength(0)
   })
 
-  it('POST /v1/runtimes/start delivers initialPrompt when reusing a headless broker runtime', async () => {
+  it('POST /v1/runtimes/start refuses initialPrompt delivery with aspd_unconfigured on a node without an aspd endpoint (T-08596)', async () => {
     await restartServerWithHeadlessCodexBroker()
     const hsid = await resolveSession('lifecycle-start-existing-prompt')
     const stub = installHeadlessBrokerStartStub(hsid)
@@ -582,33 +559,32 @@ describe('runtime lifecycle start/attach', () => {
       hostSessionId: hsid,
       intent: headlessCodexIntent({}),
     })
-    expect(firstRes.status).toBe(200)
-    const firstData = (await firstRes.json()) as { runtimeId: string }
+    expect(firstRes.status).toBe(503)
 
     const secondRes = await postJson('/v1/runtimes/start', {
       hostSessionId: hsid,
       intent: headlessCodexIntent({ initialPrompt: 'wake the existing session' }),
     })
-    expect(secondRes.status).toBe(200)
-    const secondData = (await secondRes.json()) as { runtimeId: string }
-
-    expect(secondData.runtimeId).toBe(firstData.runtimeId)
-    expect(stub.calls).toHaveLength(1)
-    expect(stub.enqueueCalls).toHaveLength(1)
-    expect(stub.enqueueCalls[0].body).toBe('wake the existing session')
+    expect(secondRes.status).toBe(503)
+    const secondData = (await secondRes.json()) as any
+    expect(secondData.error.detail).toMatchObject({
+      code: 'aspd_unconfigured',
+      site: 'headless-broker-birth',
+    })
+    expect(stub.calls).toHaveLength(0)
+    expect(stub.enqueueCalls).toHaveLength(0)
   })
 
-  it('keeps a fresh-session prompt in the broker start after the waiting client exits', async () => {
+  it('refuses a fresh-session turn with aspd_unconfigured instead of booting a local broker (T-08596)', async () => {
+    // T-08596: the local facade birth behind /v1/turns is deleted. On a node
+    // that declares no aspd endpoint the dispatch refuses with the typed
+    // closure refusal; nothing boots and the stubbed controller is never
+    // consulted.
     await restartServerWithHeadlessCodexBroker()
     const hsid = await resolveSession('lifecycle-start-fresh-prompt-client-exit')
-    let releaseGate: () => void = () => {}
-    const gate = new Promise<void>((resolve) => {
-      releaseGate = resolve
-    })
-    const stub = installHeadlessBrokerStartStub(hsid, { gate })
-    const controller = new AbortController()
+    const stub = installHeadlessBrokerStartStub(hsid)
 
-    const request = fetchSocket('/v1/turns', {
+    const response = await fetchSocket('/v1/turns', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -617,86 +593,37 @@ describe('runtime lifecycle start/attach', () => {
         runtimeIntent: headlessCodexIntent({}),
         waitForCompletion: true,
       }),
-      signal: controller.signal,
     })
-
-    try {
-      await stub.startCalled
-      controller.abort()
-      await request.catch(() => undefined)
-
-      expect(stub.calls).toHaveLength(1)
-      // T-07963: the prompt is IN the boot's own first input now, not owed as a
-      // second submission afterwards. That is what makes this test's subject —
-      // the prompt surviving the caller's exit — structural rather than
-      // dependent on a detached chain outliving the request.
-      expect(stub.calls[0].startRequest.initialInput).toBeDefined()
-    } finally {
-      releaseGate()
-    }
-
-    await stub.runtimePersisted
-    expect(stub.runtimeIds).toHaveLength(1)
-    // No invoke: there is no deferred caller prompt left to submit.
-    expect(stub.invokeCalls).toHaveLength(0)
+    expect(response.status).toBeGreaterThanOrEqual(500)
+    const body = (await response.json()) as any
+    expect(JSON.stringify(body)).toContain('aspd_unconfigured')
+    expect(stub.calls).toHaveLength(0)
   })
 
-  it(
-    'queues an existing-session prompt behind boot and delivers it after the client exits',
-    async () => {
-      await restartServerWithHeadlessCodexBroker()
-      const hsid = await resolveSession('lifecycle-start-existing-boot-prompt-client-exit')
-      let releaseGate: () => void = () => {}
-      const gate = new Promise<void>((resolve) => {
-        releaseGate = resolve
-      })
-      const stub = installHeadlessBrokerStartStub(hsid, { gate })
+  it('refuses a boot-racing prompt with aspd_unconfigured instead of queueing behind a local boot (T-08596)', async () => {
+    await restartServerWithHeadlessCodexBroker()
+    const hsid = await resolveSession('lifecycle-start-existing-boot-prompt-client-exit')
+    const stub = installHeadlessBrokerStartStub(hsid)
 
-      const bootRequest = postJson('/v1/runtimes/start', {
+    const bootResponse = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: headlessCodexIntent({}),
+    })
+    expect(bootResponse.status).toBe(503)
+
+    const promptResponse = await fetchSocket('/v1/turns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         hostSessionId: hsid,
-        intent: headlessCodexIntent({}),
-      })
-      await stub.startCalled
-
-      const controller = new AbortController()
-      const promptRequest = fetchSocket('/v1/turns', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          hostSessionId: hsid,
-          prompt: 'queued prompt must survive boot timeout',
-          runtimeIntent: headlessCodexIntent({}),
-          waitForCompletion: true,
-        }),
-        signal: controller.signal,
-      })
-
-      try {
-        // Abort only after the accepting handler has durably queued the prompt.
-        await waitForQueuedPrompt(
-          dbPath,
-          hsid,
-          'queued prompt must survive boot timeout',
-          INTEGRATION_TIMEOUT_MS
-        )
-        controller.abort()
-        await promptRequest.catch(() => undefined)
-      } finally {
-        releaseGate()
-      }
-
-      const bootResponse = await bootRequest
-      expect(bootResponse.status).toBe(200)
-      await stub.runtimePersisted
-      expect(stub.runtimeIds).toHaveLength(1)
-
-      // A boot-racing prompt belongs to the one booting runtime. Starting a
-      // second broker invocation is not queueing and can split the session.
-      expect(stub.calls).toHaveLength(1)
-      await stub.inputDispatched
-      expect(stub.invokeCalls).toHaveLength(1)
-      expect(stub.invokeCalls[0].body).toBe('queued prompt must survive boot timeout')
-    },
-    INTEGRATION_TIMEOUT_MS
-  )
+        prompt: 'queued prompt must survive boot timeout',
+        runtimeIntent: headlessCodexIntent({}),
+        waitForCompletion: true,
+      }),
+    })
+    expect(promptResponse.status).toBeGreaterThanOrEqual(500)
+    const body = (await promptResponse.json()) as any
+    expect(JSON.stringify(body)).toContain('aspd_unconfigured')
+    expect(stub.calls).toHaveLength(0)
+  })
 })

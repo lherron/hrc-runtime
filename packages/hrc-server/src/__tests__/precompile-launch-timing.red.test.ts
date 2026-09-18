@@ -1,18 +1,13 @@
-import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
-import {
-  ASPC_PROTOCOL_VERSION,
-  type AspcCompileHarnessInvocationResponse,
-} from 'spaces-aspc-protocol'
+import type { AspcCompileHarnessInvocationResponse } from 'spaces-aspc-protocol'
 import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
 import { compileBrokerRuntimePlan } from '../agent-spaces-adapter/compile-adapter'
-import { startAspcFacadeBrokerClient } from '../option-resolvers'
 
 import { makeBrokerProfile, makeCompileResponse } from './broker-compile-fixtures'
 
@@ -39,16 +34,6 @@ afterAll(() => {
 
 type TimingFields = Record<string, unknown>
 type TimingEntry = { message: string; fields: TimingFields }
-
-type TimingContext = {
-  transport: 'headless' | 'interactive' | 'preview'
-  runtimeId: string
-  boundMs?: number
-  logger: {
-    info(message: string, fields: TimingFields): void
-    warn(message: string, fields: TimingFields): void
-  }
-}
 
 function makeLogger() {
   const info: TimingEntry[] = []
@@ -111,24 +96,6 @@ function makeSuccessfulCompileResponse(
   }
 }
 
-function fakeFacadeClient() {
-  return {
-    hello: async () => ({
-      protocolVersion: ASPC_PROTOCOL_VERSION,
-      facadeInfo: { name: 'timing-test' },
-      capabilities: { compileHarnessInvocation: true, cohostedBroker: true },
-    }),
-    close: async () => undefined,
-  } as unknown as AspcFacadeBrokerClient
-}
-
-async function startWithTiming(timing: TimingContext): Promise<AspcFacadeBrokerClient> {
-  const start = startAspcFacadeBrokerClient as unknown as (
-    timing: TimingContext
-  ) => Promise<AspcFacadeBrokerClient>
-  return start({ ...timing, stateRoot })
-}
-
 async function waitForWarning(
   entries: TimingEntry[],
   phase: RegExp,
@@ -143,52 +110,10 @@ async function waitForWarning(
   throw new Error('compile bound diagnostic was not emitted')
 }
 
-describe('dark pre-compile launch timing (T-06402)', () => {
-  it('emits a tagged ASPC facade child-spawn span inside the start helper', async () => {
-    const capture = makeLogger()
-    const startSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () =>
-      fakeFacadeClient()
-    )
-    try {
-      await startWithTiming({
-        transport: 'headless',
-        runtimeId: 'runtime-spawn',
-        logger: capture.logger,
-      })
-    } finally {
-      startSpy.mockRestore()
-    }
-
-    const entry = capture.info.find(({ fields }) => String(fields['phase']).match(/facade.*spawn/i))
-    expect(entry?.message).toBe('broker.timing')
-    expect(entry?.fields).toMatchObject({ transport: 'headless', runtimeId: 'runtime-spawn' })
-    expect(typeof entry?.fields['durMs']).toBe('number')
-  })
-
-  it('emits a separately tagged ASPC facade hello-handshake span inside the start helper', async () => {
-    const capture = makeLogger()
-    const startSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () =>
-      fakeFacadeClient()
-    )
-    try {
-      await startWithTiming({
-        transport: 'interactive',
-        runtimeId: 'runtime-hello',
-        logger: capture.logger,
-      })
-    } finally {
-      startSpy.mockRestore()
-    }
-
-    const entry = capture.info.find(({ fields }) => String(fields['phase']).match(/facade.*hello/i))
-    expect(entry?.message).toBe('broker.timing')
-    expect(entry?.fields).toMatchObject({
-      transport: 'interactive',
-      runtimeId: 'runtime-hello',
-    })
-    expect(typeof entry?.fields['durMs']).toBe('number')
-  })
-
+describe('dark pre-compile launch timing (T-06402; T-08596 closure)', () => {
+  // T-08596: the ASPC facade child-spawn and hello-handshake spans are gone
+  // with the facade spawn. The compile RPC span below is the surviving timing
+  // surface for daemon/aspd-backed compiles.
   it('emits a tagged compile RPC span inside compileBrokerRuntimePlan', async () => {
     const capture = makeLogger()
     const compileHarnessInvocation = async (request: { compileRequest: RuntimeCompileRequest }) =>

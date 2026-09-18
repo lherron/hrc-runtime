@@ -547,9 +547,9 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
     lines.push(
       `  HRC build:    ${status.release.hrcBuild.setVersion} @ ${status.release.hrcBuild.sourceCommit}`
     )
-    lines.push(
-      `  ASP build:    ${status.release.aspBuild.setVersion} @ ${status.release.aspBuild.sourceCommit}`
-    )
+    for (const contract of status.release.aspContracts) {
+      lines.push(`  ASP contract: ${contract.name} @ ${contract.version}`)
+    }
   } else if (status.release?.mode === 'unmanaged') {
     lines.push('  release:      unmanaged')
   }

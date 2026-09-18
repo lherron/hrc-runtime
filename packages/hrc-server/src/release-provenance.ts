@@ -1,7 +1,12 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
-import type { HrcReleaseStatus, PraesidiumBuild, PraesidiumReleaseManifest } from 'hrc-core'
+import type {
+  AspContractPackage,
+  HrcReleaseStatus,
+  PraesidiumBuild,
+  PraesidiumReleaseManifest,
+} from 'hrc-core'
 
 export const PRAESIDIUM_RELEASE_MANIFEST_BASENAME = 'praesidium-release.json'
 
@@ -14,7 +19,7 @@ const BUILD_FIELDS = [
   'setVersion',
   'builtAt',
 ] as const
-const RELEASE_FIELDS = ['schema', 'releaseId', 'hrcBuild', 'aspBuild', 'installedAt'] as const
+const RELEASE_FIELDS = ['schema', 'releaseId', 'hrcBuild', 'aspContracts', 'installedAt'] as const
 
 type CapturedAtomicRelease = Omit<
   Extract<HrcReleaseStatus, { mode: 'atomic' }>,
@@ -90,6 +95,25 @@ export function parsePraesidiumBuild(
   }
 }
 
+/** The thin ASP contract set is data, not a build tuple: names plus installed versions. */
+export function parseAspContracts(value: unknown): AspContractPackage[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('release manifest.aspContracts must be a non-empty array')
+  }
+  return value.map((entry, index) => {
+    if (!isRecord(entry)) {
+      throw new Error(`release manifest.aspContracts[${index}] must be an object`)
+    }
+    const name = requireNonEmptyString(entry, 'name', `release manifest.aspContracts[${index}]`)
+    const version = requireNonEmptyString(
+      entry,
+      'version',
+      `release manifest.aspContracts[${index}]`
+    )
+    return { name, version }
+  })
+}
+
 export function parsePraesidiumReleaseManifest(
   value: unknown,
   expectedReleaseId?: string
@@ -116,11 +140,7 @@ export function parsePraesidiumReleaseManifest(
       { repository: 'hrc-runtime', setName: 'hrc' },
       'release manifest.hrcBuild'
     ),
-    aspBuild: parsePraesidiumBuild(
-      value['aspBuild'],
-      { repository: 'agent-spaces', setName: 'asp' },
-      'release manifest.aspBuild'
-    ),
+    aspContracts: parseAspContracts(value['aspContracts']),
     installedAt,
   }
 }
@@ -174,7 +194,7 @@ export function captureServerRelease(
     releasePath,
     manifestPath,
     hrcBuild: manifest.hrcBuild,
-    aspBuild: manifest.aspBuild,
+    aspContracts: manifest.aspContracts,
     installedAt: manifest.installedAt,
     processStartedAt,
     installedLinkPath: join(dirname(dirname(releasePath)), 'hrc-runtime-current'),

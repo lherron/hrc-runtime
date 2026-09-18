@@ -1,18 +1,4 @@
-import { HrcRuntimeUnavailableError } from 'hrc-core'
-import { ASPC_PROTOCOL_VERSION } from 'spaces-aspc-protocol'
-import type { AspcHelloResponse } from 'spaces-aspc-protocol'
-
-import { AspcFacadeBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
-import {
-  externalToolchainContractDriftDetail,
-  observeAspToolchainHello,
-  resolveAspToolchainBinary,
-} from './asp-toolchain.js'
 import { isFalsyFeatureFlag, isTruthyFeatureFlag } from './broker-decisions.js'
-import {
-  type PrecompileLaunchTimingContext,
-  observePrecompileLaunchSpan,
-} from './precompile-launch-timing.js'
 import {
   DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS,
   DEFAULT_HRC_TRANSCRIPT_INDEX_TICK_INTERVAL_MS,
@@ -33,9 +19,6 @@ import {
   HRC_TRANSCRIPT_INDEX_TICK_MS_ENV,
 } from './server-constants.js'
 import type { HrcServerOptions } from './server-types.js'
-
-const HRC_ASPC_FACADE_ARGS_ENV = 'HRC_ASPC_FACADE_ARGS'
-const DEFAULT_ASPC_FACADE_ARGS = ['run', '--transport', 'stdio']
 
 export function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
   if (typeof options.staleGenerationEnabled === 'boolean') {
@@ -173,95 +156,6 @@ export function resolveHrcTranscriptIndexTickIntervalMs(options: HrcServerOption
     if (Number.isFinite(parsed) && parsed > 0) return Math.max(10, Math.floor(parsed))
   }
   return DEFAULT_HRC_TRANSCRIPT_INDEX_TICK_INTERVAL_MS
-}
-
-function resolveAspcFacadeArgs(env: Record<string, string | undefined>): string[] {
-  const rawArgs = env[HRC_ASPC_FACADE_ARGS_ENV]
-  return rawArgs === undefined
-    ? DEFAULT_ASPC_FACADE_ARGS
-    : rawArgs
-        .split(/\s+/)
-        .map((arg) => arg.trim())
-        .filter((arg) => arg.length > 0)
-}
-
-export function resolveAspcFacadeStartOptions(
-  env: Record<string, string | undefined> = process.env
-): { command: string; args: string[] } {
-  const command = resolveAspToolchainBinary('aspc-facade', env).path
-  const args = resolveAspcFacadeArgs(env)
-  return { command, args }
-}
-
-export function assertAspcFacadeHello(
-  selection: ReturnType<typeof resolveAspToolchainBinary>,
-  hello: AspcHelloResponse
-): void {
-  const externalDrift = externalToolchainContractDriftDetail(selection)
-  if (hello.protocolVersion !== ASPC_PROTOCOL_VERSION) {
-    throw new HrcRuntimeUnavailableError(
-      externalDrift?.remedy ??
-        `ASPC facade selected unsupported protocol ${hello.protocolVersion}; HRC requires ${ASPC_PROTOCOL_VERSION}`,
-      {
-        facadeInfo: hello.facadeInfo,
-        protocolVersion: hello.protocolVersion,
-        requiredProtocolVersion: ASPC_PROTOCOL_VERSION,
-        ...(externalDrift ?? {}),
-      }
-    )
-  }
-  if (!hello.capabilities.compileHarnessInvocation) {
-    throw new HrcRuntimeUnavailableError(
-      externalDrift?.remedy ?? 'ASPC facade does not support harness invocation compilation',
-      {
-        facadeInfo: hello.facadeInfo,
-        protocolVersion: hello.protocolVersion,
-        ...(externalDrift ?? {}),
-      }
-    )
-  }
-  if (!hello.capabilities.cohostedBroker) {
-    throw new HrcRuntimeUnavailableError(
-      externalDrift?.remedy ?? 'ASPC facade did not co-host a broker',
-      {
-        facadeInfo: hello.facadeInfo,
-        protocolVersion: hello.protocolVersion,
-        ...(externalDrift ?? {}),
-      }
-    )
-  }
-}
-
-export async function startAspcFacadeBrokerClient(
-  timing?: PrecompileLaunchTimingContext | undefined
-): Promise<AspcFacadeBrokerClient> {
-  // Resolve once, immediately before this spawn. In particular, do not move
-  // this back to module load: agent-spaces bun-links may advance while HRC lives.
-  const selection = resolveAspToolchainBinary('aspc-facade')
-  const startClient = () =>
-    AspcFacadeBrokerClient.start({
-      command: selection.path,
-      args: resolveAspcFacadeArgs(process.env),
-      env: process.env as Record<string, string>,
-    })
-  const client = timing
-    ? await observePrecompileLaunchSpan('precompile-facade-spawn', timing, startClient)
-    : await startClient()
-  try {
-    const hello = timing
-      ? await observePrecompileLaunchSpan('precompile-facade-hello', timing, () => client.hello())
-      : await client.hello()
-    observeAspToolchainHello(selection, {
-      name: hello.facadeInfo.name,
-      version: hello.facadeInfo.version,
-      protocolVersion: hello.protocolVersion,
-    })
-    assertAspcFacadeHello(selection, hello)
-    return client
-  } catch (error) {
-    await client.close().catch(() => undefined)
-    throw error
-  }
 }
 
 /**

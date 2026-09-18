@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import type { PraesidiumBuild } from 'hrc-core'
+import type { AspContractPackage, PraesidiumBuild } from 'hrc-core'
 
 export const PRAESIDIUM_BUILD_FIELDS = [
   'schema',
@@ -13,24 +13,19 @@ export const PRAESIDIUM_BUILD_FIELDS = [
   'builtAt',
 ] as const
 
-export const ASP_PACKAGE_NAMES = [
+/**
+ * T-08596 (T-08569A closure) — the thin ASP contract set: the only
+ * agent-spaces packages an HRC release installs. Stamped into
+ * praesidium-release.json as `aspContracts` (names plus installed versions)
+ * instead of the deleted coherent execution-build tuple.
+ */
+export const ASP_CONTRACT_PACKAGE_NAMES = [
   'agent-scope',
   'cli-kit',
-  'spaces-config',
-  'spaces-runtime',
-  'spaces-execution',
+  'spaces-aspc-protocol',
   'spaces-harness-broker-protocol',
   'spaces-harness-broker-client',
-  'spaces-harness-broker',
   'spaces-runtime-contracts',
-  'spaces-aspc-protocol',
-  'spaces-aspc',
-  'spaces-aspc-facade',
-  'spaces-harness-claude',
-  'spaces-harness-codex',
-  'spaces-harness-pi',
-  'spaces-harness-pi-sdk',
-  'agent-spaces',
 ] as const
 
 type PackageManifest = {
@@ -96,41 +91,20 @@ export function parsePraesidiumBuild(
   }
 }
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  if (!isRecord(value)) return JSON.stringify(value)
-  return `{${Object.entries(value)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
-    .join(',')}}`
-}
-
-/** Read and cross-check the complete ASP package set selected by the release lock/install. */
-export async function readCoherentInstalledAspBuild(releasePath: string): Promise<PraesidiumBuild> {
-  let coherent: PraesidiumBuild | undefined
-  for (const packageName of ASP_PACKAGE_NAMES) {
+/** Read the installed versions of the thin ASP contract set for the release manifest. */
+export async function readInstalledAspContracts(
+  releasePath: string
+): Promise<AspContractPackage[]> {
+  const contracts: AspContractPackage[] = []
+  for (const packageName of ASP_CONTRACT_PACKAGE_NAMES) {
     const manifestPath = join(releasePath, 'node_modules', packageName, 'package.json')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as PackageManifest
     if (manifest.name !== packageName || manifest.version === undefined) {
-      throw new Error(`installed ASP manifest mismatch at ${manifestPath}`)
+      throw new Error(`installed ASP contract mismatch at ${manifestPath}`)
     }
-    const build = parsePraesidiumBuild(
-      manifest.praesidiumBuild,
-      { repository: 'agent-spaces', setName: 'asp' },
-      `${packageName}.praesidiumBuild`
-    )
-    if (build.setVersion !== manifest.version) {
-      throw new Error(
-        `${packageName} installed version ${manifest.version} disagrees with build ${build.setVersion}`
-      )
-    }
-    if (coherent === undefined) coherent = build
-    else if (stableJson(coherent) !== stableJson(build)) {
-      throw new Error(`${packageName} does not share the installed coherent ASP build tuple`)
-    }
+    contracts.push({ name: packageName, version: manifest.version })
   }
-  if (coherent === undefined) throw new Error('installed ASP package set is empty')
-  return coherent
+  return contracts
 }
 
 export async function readPublishedHrcBuild(

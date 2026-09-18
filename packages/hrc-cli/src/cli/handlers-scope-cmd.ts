@@ -3,10 +3,16 @@ import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 
 import { recordCliLaunch } from 'hrc-core'
-import type { CliLaunchPhase, DispatchTurnRequest, HrcRuntimeIntent } from 'hrc-core'
+import type {
+  BrokerRunPreview,
+  CliLaunchPhase,
+  DispatchTurnRequest,
+  HrcRuntimeIntent,
+} from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
-import { buildBrokerRunPreview } from 'hrc-server'
-import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spaces-execution'
+import { resolvePreviewIntent } from 'hrc-server'
+
+import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from './dry-run-display.js'
 
 import { printJson } from '../print.js'
 import { hasFlag, parseFlag, requireArg } from './argv.js'
@@ -198,7 +204,7 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
 
 Options:
   --force-restart      Replace the runtime with a fresh PTY; preserve the conversation
-${noAttachOption}${newSessionOption}${startOnlyOptions}  --dry-run            Local plan preview — no server calls, no side effects
+${noAttachOption}${newSessionOption}${startOnlyOptions}  --dry-run            Daemon plan preview — no side effects
   --debug              Keep tmux shell alive after harness exits
   --project-id <id>    Override the inferred project id (cwd is treated as its root)
   --project-root <dir> Override project root (defaults to cwd when --project-id is set)
@@ -227,7 +233,7 @@ export async function cmdRun(
     return
   }
 
-  // `--dry-run` prints a local plan and returns; it never resolves a session,
+  // `--dry-run` prints a daemon-compiled plan and returns; it never resolves a session,
   // spawns a runtime, or attaches a terminal, so the interactive-only gate does
   // not apply to it. Reading the plan (and the compiled prompts) from a pipe is
   // the point of the flag.
@@ -385,7 +391,7 @@ Options:
   --no-attach          Resume and start without attaching to the tmux session
   --prior              Resume the current session's immediate predecessor
   --host-session <id>  Resume an exact historical host session
-  --dry-run            Local plan preview — no server calls, no side effects
+  --dry-run            Local plan preview — no side effects
   --debug              Keep tmux shell alive after harness exits
   --project-id <id>    Override the inferred project id (cwd is treated as its root)
   --project-root <dir> Override project root (defaults to cwd when --project-id is set)
@@ -778,37 +784,19 @@ function previewEnvEntries(env: Record<string, string>): Array<[string, string]>
 }
 
 /**
- * Render the broker-plan branch of the run dry-run preview. Returns `true` when
- * a broker plan was rendered (caller should stop), `false` to fall through to
- * the spec-build preview.
+ * Render the daemon-compiled broker plan of the run dry-run preview.
  *
- * Every plan line the prior version emitted is still emitted, verbatim, but
- * they are now handed to `displayPrompts` as `betweenLines` so the branch also
- * frames the compiled system and priming prompts the way `asp run --dry-run`
- * does. Broker-driven agents are the normal route today, so this branch always
- * won and the prompt-rendering branch below it had become unreachable — the
- * regression this restores.
+ * T-08596 (T-08569A closure): the plan is compiled by the daemon
+ * (`POST /v1/previews/run`) — no local facade spawn, no local interpretation.
+ * Every plan line the prior version emitted is still emitted, verbatim, from
+ * the daemon's preview document. An unreachable daemon surfaces the SDK's typed
+ * `hrc_daemon_unreachable` refusal via the caller's error envelope.
  */
-async function renderBrokerPlanPreview(
+export async function renderBrokerPlanPreview(
   w: RunPreviewWriter,
-  intent: HrcRuntimeIntent,
-  sessionRef: string,
-  restartStyle: 'reuse_pty' | 'fresh_pty',
+  brokerPreview: BrokerRunPreview,
   prompt: string | undefined
 ): Promise<boolean> {
-  const brokerPreview = await buildBrokerRunPreview(intent, {
-    sessionRef,
-    restartStyle,
-    promptLength: prompt?.length,
-  }).catch((err: unknown) => {
-    w('')
-    w(`  (broker plan build failed: ${err instanceof Error ? err.message : String(err)})`)
-    return undefined
-  })
-  if (!brokerPreview) {
-    return false
-  }
-
   // Prefer the resolved prompt zones: they are the only source that covers
   // every route (codex passes no prompt flag and no prompt file) and the only
   // one carrying the reminder and per-section sizes `asp run --dry-run` shows.
@@ -831,14 +819,9 @@ async function renderBrokerPlanPreview(
 
   const lines: string[] = []
   lines.push('  brokerPlan:   available')
-  lines.push(`  sessionRef:   ${sessionRef}`)
-  lines.push(`  restartStyle: ${restartStyle}`)
   lines.push(`  controller:   ${brokerPreview.controllerKind}`)
   lines.push(`  driver:       ${brokerPreview.brokerDriver}`)
   lines.push(`  interaction:  ${brokerPreview.interactionMode}`)
-  lines.push(`  agentRoot:    ${intent.placement.agentRoot}`)
-  lines.push(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
-  lines.push(`  provider:     ${intent.harness.provider}`)
   lines.push(
     `  model:        ${brokerPreview.model.modelId}${
       brokerPreview.model.requestedModel !== undefined &&
@@ -919,7 +902,7 @@ async function renderBrokerPlanPreview(
   })
 
   w('')
-  w('  Note: this preview compiles the broker plan locally and does not')
+  w('  Note: this preview is compiled by the daemon and does not')
   w('  inspect existing runtime, PTY, or tmux state. Run without --dry-run to execute.')
   return true
 }
@@ -937,26 +920,65 @@ export async function printLocalRunPreview(
     process.stdout.write(`${s}\n`)
   }
 
-  w(`hrc ${command} ${scope} --dry-run  (local plan preview — no server state consulted)`)
+  w(`hrc ${command} ${scope} --dry-run  (daemon plan preview — no side effects)`)
   if (placementReason) {
     w(`  placement:    ${placementReason}`)
   }
+  // Request facts are CLI-local and print in every branch; only the compiled
+  // plan facts below need the daemon.
+  w(`  sessionRef:   ${sessionRef}`)
+  w(`  restartStyle: ${restartStyle}`)
+  w(`  agentRoot:    ${intent.placement.agentRoot}`)
+  w(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
+  w(`  provider:     ${intent.harness.provider}`)
+  w(`  cwd:          ${intent.placement.cwd}`)
 
-  // Detached starts and interactive runs can both be broker-owned. Ask the
-  // route-aware preview; when the intent has no broker route there is nothing
-  // to preview (T-08584 retired the direct spec-build fallthrough).
-  const rendered = await renderBrokerPlanPreview(w, intent, sessionRef, restartStyle, prompt)
-  if (rendered) {
+  // T-08596 (T-08569A closure): the preview is compiled by the daemon
+  // (`POST /v1/previews/run`). No local facade spawn and no local plan build.
+  // An intent with no broker route never reaches the daemon: the no-route
+  // reason below is offline and side-effect free. Otherwise an unreachable
+  // daemon throws the SDK's typed `hrc_daemon_unreachable` refusal, which the
+  // caller's error envelope carries.
+  if (resolvePreviewIntent(intent) === undefined) {
+    const harnessId = intent.harness.id ?? intent.harness.provider
+    w('')
+    w(
+      `  no broker route for harness "${harnessId}" (provider ${intent.harness.provider}, interactive ${intent.harness.interactive}); nothing to preview`
+    )
+    w('')
+    w('  Note: this preview shows the daemon-compiled plan. Server-side')
+    w('  details (existing runtime, PTY state, tmux session) are not consulted.')
+    w('  Run without --dry-run to execute.')
     return
+  }
+  const client = createClient()
+  let daemonFailed = false
+  const brokerPreview = await client
+    .fetchRunPreview({ intent, sessionRef, restartStyle, promptLength: prompt?.length })
+    .catch((err: unknown) => {
+      daemonFailed = true
+      w('')
+      w(`  (daemon preview failed: ${err instanceof Error ? err.message : String(err)})`)
+      return undefined
+    })
+  if (brokerPreview) {
+    const rendered = await renderBrokerPlanPreview(w, brokerPreview, prompt)
+    if (rendered) {
+      return
+    }
   }
 
   const harnessId = intent.harness.id ?? intent.harness.provider
   w('')
-  w(
-    `  no broker route for harness "${harnessId}" (provider ${intent.harness.provider}, interactive ${intent.harness.interactive}); nothing to preview`
-  )
+  if (daemonFailed) {
+    w(`  daemon preview unavailable for harness "${harnessId}"; nothing to preview`)
+  } else {
+    w(
+      `  no broker preview for harness "${harnessId}" (provider ${intent.harness.provider}, interactive ${intent.harness.interactive}); nothing to preview`
+    )
+  }
   w('')
-  w('  Note: this preview shows the request the client would send. Server-side')
+  w('  Note: this preview shows the daemon-compiled plan. Server-side')
   w('  details (existing runtime, PTY state, tmux session) are not consulted.')
   w('  Run without --dry-run to execute.')
 }

@@ -46,6 +46,7 @@ import type {
 import * as brokerInteractiveHandlers from '../broker-interactive-handlers'
 import { HarnessBrokerController } from '../broker/controller'
 import type { BrokerClientLike } from '../broker/controller'
+import { makeFrozenWorkerLaunch } from './fixtures/frozen-substrate'
 
 import {
   makeCompileResponse,
@@ -163,6 +164,13 @@ describe('T-01812 Phase 3 — createBrokerDurableTmuxAllocator shape', () => {
       hostSessionId: 'hostSession_w2',
       generation: 4,
       brokerDriver: 'claude-code-tmux',
+      workerLaunch: await makeFrozenWorkerLaunch({
+        runtimeRoot: dir,
+        driverKind: 'claude-code-tmux',
+        runtimeId: 'runtime_p3',
+        hostSessionId: 'hostSession_w2',
+        generation: 4,
+      }),
     })
 
     const manager = managers[0]
@@ -221,6 +229,13 @@ describe('T-01812 Phase 3 — createBrokerDurableTmuxAllocator shape', () => {
       hostSessionId: 'hostSession_w2',
       generation: 1,
       brokerDriver: 'claude-code-tmux',
+      workerLaunch: await makeFrozenWorkerLaunch({
+        runtimeRoot: dir,
+        driverKind: 'claude-code-tmux',
+        runtimeId: 'runtime_mode',
+        hostSessionId: 'hostSession_w2',
+        generation: 1,
+      }),
     })
     const ipcSocket = String(allocation['brokerIpcSocketPath'])
     const ipcDir = ipcSocket.slice(0, ipcSocket.lastIndexOf('/'))

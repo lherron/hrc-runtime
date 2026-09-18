@@ -308,7 +308,7 @@ fleet-status:
       fi
       health="$(jq -r '.status // "down"' <<<"$status")"
       hrc="$(jq -r '.release.hrcBuild.sourceCommit // "unknown"' <<<"$status")"
-      asp="$(jq -r '.release.aspBuild.setVersion // "unknown"' <<<"$status")"
+      asp="$(jq -r '([.release.aspContracts[]? | "\(.name)@\(.version)"] | select(length > 0) | join(",")) // "unknown"' <<<"$status")"
       coherent="$(jq -r '.release.runningEqualsInstalled // false' <<<"$status")"
       printf '%-8s %-12s %-10s %-28s %s\n' \
         "$label" "$health" "${hrc:0:8}" "$asp" \
@@ -629,10 +629,10 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
         "$expected_node" "$owner_target" "$server_pid"
     fi
 
-    asp_version="$(jq -r '.release.aspBuild.setVersion // "unknown"' <<<"$status_after")"
+    asp_contracts="$(jq -r '([.release.aspContracts[]? | "\(.name)@\(.version)"] | select(length > 0) | join(",")) // "unknown"' <<<"$status_after")"
 
-    printf 'deployed %s to %s: %s (asp %s)\n' \
-      "$target_sha" "$expected_node" "$release_root" "$asp_version"
+    printf 'deployed %s to %s: %s (asp-contracts %s)\n' \
+      "$target_sha" "$expected_node" "$release_root" "$asp_contracts"
     REMOTE
 
 pull-deps:
