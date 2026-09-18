@@ -117,7 +117,7 @@ export type HeadlessExecutionRoute = 'sdk' | 'broker' | 'legacy-exec'
 
 export function decideHeadlessExecutionRoute(
   intent: HrcRuntimeIntent,
-  options: { brokerFlagEnabled: boolean }
+  options: { brokerFlagEnabled: boolean; museBrokerFlagEnabled: boolean }
 ): HeadlessExecutionRoute {
   if (shouldUseHeadlessSdkExecutor(intent.harness)) {
     return 'sdk'
@@ -139,7 +139,18 @@ export function decideHeadlessExecutionRoute(
     intent.harness.provider === 'openai' &&
     (intent.harness.id === undefined || intent.harness.id === 'codex-cli')
 
-  return isHeadlessCodexCandidate ? 'broker' : 'legacy-exec'
+  if (isHeadlessCodexCandidate) {
+    return 'broker'
+  }
+
+  const isHeadlessMuseCandidate =
+    options.museBrokerFlagEnabled &&
+    shouldUseHeadlessTransport(intent) &&
+    intent.harness.interactive !== true &&
+    intent.harness.provider === 'meta' &&
+    (intent.harness.id === undefined || intent.harness.id === 'muse-cli')
+
+  return isHeadlessMuseCandidate ? 'broker' : 'legacy-exec'
 }
 
 export async function runHeadlessRoute<T>(

@@ -203,6 +203,8 @@ function toPreferredHarnessRuntime(
       return 'pi-cli'
     case 'pi-sdk':
       return 'pi-sdk'
+    case 'muse-cli':
+      return 'muse-cli'
     default:
       return undefined
   }
@@ -215,6 +217,7 @@ function toHarnessFamily(
   if (runtime === 'claude-code-cli' || runtime === 'claude-agent-sdk') return 'claude-code'
   if (runtime === 'codex-cli') return 'codex'
   if (runtime === 'pi-cli' || runtime === 'pi-sdk') return 'pi'
+  if (runtime === 'muse-cli') return 'muse'
   return provider === 'openai' ? 'codex' : 'claude-code'
 }
 
@@ -239,6 +242,9 @@ export function toProfileSelector(intent: HrcRuntimeIntent): AspcProfileSelector
   }
   if (runtime === 'codex-cli' || intent.harness.provider === 'openai') {
     return { brokerDriver: 'codex-app-server' }
+  }
+  if (runtime === 'muse-cli' || intent.harness.provider === 'meta') {
+    return { brokerDriver: 'muse-serve' }
   }
   return undefined
 }

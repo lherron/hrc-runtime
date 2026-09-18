@@ -702,3 +702,14 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     expect(result.code).toBe('invocation-id-mismatch')
   })
 })
+
+describe('toProfileSelector — muse headless birth (muse seat)', () => {
+  it('maps a headless meta/muse-cli intent to the muse-serve broker driver', async () => {
+    const { toProfileSelector } = await import('../agent-spaces-adapter/compile-adapter')
+    expect(
+      toProfileSelector(
+        makeIntent({ harness: { provider: 'meta', interactive: false, id: 'muse-cli' } })
+      )
+    ).toEqual({ brokerDriver: 'muse-serve' })
+  })
+})

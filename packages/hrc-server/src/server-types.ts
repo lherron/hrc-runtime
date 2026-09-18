@@ -418,6 +418,12 @@ export type HrcServerOptions = {
    */
   headlessCodexBrokerEnabled?: boolean | undefined
   /**
+   * Cut headless Meta Muse dispatch over to the Harness Broker. Default on.
+   *
+   * Env override: `HRC_HEADLESS_MUSE_BROKER_ENABLED` (`0`/`false` disables).
+   */
+  headlessMuseBrokerEnabled?: boolean | undefined
+  /**
    * Cut interactive Claude Code tmux dispatch over to the Harness Broker. Default on.
    *
    * Env override: `HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED` (`0`/`false` disables).

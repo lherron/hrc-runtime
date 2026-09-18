@@ -14,7 +14,7 @@
  *
  *   export function decideHeadlessExecutionRoute(
  *     intent: HrcRuntimeIntent,
- *     options: { brokerFlagEnabled: boolean },
+ *     options: { brokerFlagEnabled: boolean; museBrokerFlagEnabled: boolean },
  *   ): HeadlessExecutionRoute
  *
  *   export async function runHeadlessRoute<T>(
@@ -32,8 +32,12 @@
  *   - 'broker'      iff brokerFlagEnabled AND the intent is a headless OpenAI Codex
  *                   candidate: NOT sdk-executor, NOT interactive, provider 'openai',
  *                   harness.id in { 'codex-cli', undefined } (codex-app-server shares the
- *                   'codex-cli' harness id — app-server is a launch detail, not an intent id).
- *   - 'legacy-exec' otherwise (includes: flag OFF + codex; pi-cli/pi; interactive codex).
+ *                   'codex-cli' harness id — app-server is a launch detail, not an intent id);
+ *                   OR museBrokerFlagEnabled AND a headless Meta Muse candidate:
+ *                   NOT sdk-executor, NOT interactive, provider 'meta',
+ *                   harness.id in { 'muse-cli', undefined }.
+ *   - 'legacy-exec' otherwise (includes: flags OFF + codex/muse; pi-cli/pi;
+ *                   interactive codex/muse).
  *
  * Invariant the wording "flag OFF => legacy ALWAYS" encodes: with the flag OFF the
  * broker route is NEVER selected. Non-codex harnesses keep their existing route
@@ -86,7 +90,7 @@ const decideHeadlessExecutionRoute = (
   hrc as unknown as {
     decideHeadlessExecutionRoute?: (
       intent: HrcRuntimeIntent,
-      options: { brokerFlagEnabled: boolean }
+      options: { brokerFlagEnabled: boolean; museBrokerFlagEnabled: boolean }
     ) => HeadlessExecutionRoute
   }
 ).decideHeadlessExecutionRoute
@@ -209,9 +213,12 @@ describe('decideHeadlessExecutionRoute — Codex flag OFF', () => {
   ]
   for (const { name, harness, expected } of cases) {
     it(name, () => {
-      expect(decideHeadlessExecutionRoute!(intent(harness), { brokerFlagEnabled: false })).toBe(
-        expected
-      )
+      expect(
+        decideHeadlessExecutionRoute!(intent(harness), {
+          brokerFlagEnabled: false,
+          museBrokerFlagEnabled: false,
+        })
+      ).toBe(expected)
     })
   }
 })
@@ -249,12 +256,51 @@ describe('decideHeadlessExecutionRoute — Codex flag ON', () => {
       harness: { provider: 'openai', interactive: false, id: 'pi-cli' },
       expected: 'legacy-exec',
     },
+    {
+      name: 'headless muse-cli (meta) → broker',
+      harness: { provider: 'meta', interactive: false, id: 'muse-cli' },
+      expected: 'broker',
+    },
+    {
+      name: 'headless id-less meta (muse target) → broker',
+      harness: { provider: 'meta', interactive: false },
+      expected: 'broker',
+    },
   ]
   for (const { name, harness, expected } of cases) {
     it(name, () => {
-      expect(decideHeadlessExecutionRoute!(intent(harness), { brokerFlagEnabled: true })).toBe(
-        expected
-      )
+      expect(
+        decideHeadlessExecutionRoute!(intent(harness), {
+          brokerFlagEnabled: true,
+          museBrokerFlagEnabled: true,
+        })
+      ).toBe(expected)
+    })
+  }
+})
+
+describe('decideHeadlessExecutionRoute — Muse flag OFF routes muse to legacy-exec', () => {
+  type Case = { name: string; harness: Harness; expected: HeadlessExecutionRoute }
+  const cases: Case[] = [
+    {
+      name: 'headless muse-cli (meta), muse flag OFF → legacy-exec',
+      harness: { provider: 'meta', interactive: false, id: 'muse-cli' },
+      expected: 'legacy-exec',
+    },
+    {
+      name: 'headless codex-cli still routes broker when only the muse flag is OFF',
+      harness: { provider: 'openai', interactive: false, id: 'codex-cli' },
+      expected: 'broker',
+    },
+  ]
+  for (const { name, harness, expected } of cases) {
+    it(name, () => {
+      expect(
+        decideHeadlessExecutionRoute!(intent(harness), {
+          brokerFlagEnabled: true,
+          museBrokerFlagEnabled: false,
+        })
+      ).toBe(expected)
     })
   }
 })
@@ -269,12 +315,19 @@ describe('decideHeadlessExecutionRoute — Codex flag ON, interactive/tmux is NE
       name: 'interactive claude-code (tmux) → not broker',
       harness: { provider: 'anthropic', interactive: true, id: 'claude-code' },
     },
+    {
+      name: 'interactive muse-cli (tmux) → not broker',
+      harness: { provider: 'meta', interactive: true, id: 'muse-cli' },
+    },
   ]
   for (const { name, harness } of interactiveCases) {
     it(name, () => {
-      expect(decideHeadlessExecutionRoute!(intent(harness), { brokerFlagEnabled: true })).not.toBe(
-        'broker'
-      )
+      expect(
+        decideHeadlessExecutionRoute!(intent(harness), {
+          brokerFlagEnabled: true,
+          museBrokerFlagEnabled: true,
+        })
+      ).not.toBe('broker')
     })
   }
 })
@@ -449,9 +502,12 @@ describe('decideInteractiveTmuxExecutionRoute — claude-code-tmux flag', () => 
   it('does not let the claude-code-tmux flag affect the headless codex route', () => {
     const headlessCodex = intent({ provider: 'openai', interactive: false, id: 'codex-cli' })
 
-    expect(decideHeadlessExecutionRoute!(headlessCodex, { brokerFlagEnabled: false })).toBe(
-      'legacy-exec'
-    )
+    expect(
+      decideHeadlessExecutionRoute!(headlessCodex, {
+        brokerFlagEnabled: false,
+        museBrokerFlagEnabled: false,
+      })
+    ).toBe('legacy-exec')
   })
 
   it('does not select the claude-code-tmux route for another interactive tmux broker driver', () => {

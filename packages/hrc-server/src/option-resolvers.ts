@@ -23,6 +23,7 @@ import {
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
+  HRC_HEADLESS_MUSE_BROKER_ENABLED_ENV,
   HRC_MAIL_KICKER_ENABLED_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
   HRC_SESSION_IDLE_ARCHIVE_DAYS_ENV,
@@ -88,6 +89,14 @@ export function resolveHeadlessCodexBrokerEnabled(options: HrcServerOptions): bo
   return resolveBooleanFlag(
     options.headlessCodexBrokerEnabled,
     process.env[HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV],
+    { defaultOn: true }
+  )
+}
+
+export function resolveHeadlessMuseBrokerEnabled(options: HrcServerOptions): boolean {
+  return resolveBooleanFlag(
+    options.headlessMuseBrokerEnabled,
+    process.env[HRC_HEADLESS_MUSE_BROKER_ENABLED_ENV],
     { defaultOn: true }
   )
 }

@@ -1003,6 +1003,7 @@ export async function handleOpenBrokerSession(
 
   const route = decideHeadlessExecutionRoute(intent, {
     brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+    museBrokerFlagEnabled: this.headlessMuseBrokerEnabled,
   })
   assertActuatorSplitRouteAdmission(intent, route)
   if (route !== 'broker') {
@@ -1920,6 +1921,7 @@ async function dispatchAdmittedTurnForSession(
       headlessRoute: shouldUseHeadlessTransport(intent)
         ? decideHeadlessExecutionRoute(intent, {
             brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+            museBrokerFlagEnabled: this.headlessMuseBrokerEnabled,
           })
         : undefined,
     })
@@ -1957,6 +1959,7 @@ async function dispatchAdmittedTurnForSession(
   if (shouldUseHeadlessTransport(intent) && !liveInteractiveBrokerReusable) {
     const route = decideHeadlessExecutionRoute(intent, {
       brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+      museBrokerFlagEnabled: this.headlessMuseBrokerEnabled,
     })
     assertActuatorSplitRouteAdmission(intent, route)
     if (route === 'broker') {

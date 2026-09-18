@@ -476,6 +476,7 @@ export async function startRuntimeForSession(
         headlessRoute: shouldUseHeadlessTransport(startIntent)
           ? decideHeadlessExecutionRoute(startIntent, {
               brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+              museBrokerFlagEnabled: this.headlessMuseBrokerEnabled,
             })
           : undefined,
       })
@@ -496,6 +497,7 @@ export async function startRuntimeForSession(
       // still hard-fails; legacy-exec still fails closed.
       const headlessRoute = decideHeadlessExecutionRoute(startIntent, {
         brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+        museBrokerFlagEnabled: this.headlessMuseBrokerEnabled,
       })
       assertActuatorSplitRouteAdmission(startIntent, headlessRoute)
       if (headlessRoute === 'broker') {

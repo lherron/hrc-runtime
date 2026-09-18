@@ -178,6 +178,7 @@ import {
   resolveClaudeCodeTmuxBrokerEnabled,
   resolveCodexCliTmuxBrokerEnabled,
   resolveHeadlessCodexBrokerEnabled,
+  resolveHeadlessMuseBrokerEnabled,
   resolveHrcMailKickerEnabled,
   resolveHrcMailKickerSweepIntervalMs,
   resolveHrcTranscriptIndexEnabled,
@@ -918,6 +919,7 @@ class HrcServerInstance implements HrcServer {
   readonly staleGenerationThresholdSec: number
   readonly tmuxAgingEnabled: boolean
   readonly headlessCodexBrokerEnabled: boolean
+  readonly headlessMuseBrokerEnabled: boolean
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
   readonly piTuiTmuxBrokerEnabled: boolean
@@ -1376,6 +1378,7 @@ class HrcServerInstance implements HrcServer {
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
     this.tmuxAgingEnabled = resolveTmuxAgingEnabled(options)
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
+    this.headlessMuseBrokerEnabled = resolveHeadlessMuseBrokerEnabled(options)
     this.claudeCodeTmuxBrokerEnabled = resolveClaudeCodeTmuxBrokerEnabled(options)
     this.codexCliTmuxBrokerEnabled = resolveCodexCliTmuxBrokerEnabled(options)
     this.piTuiTmuxBrokerEnabled = resolvePiTuiTmuxBrokerEnabled(options)
