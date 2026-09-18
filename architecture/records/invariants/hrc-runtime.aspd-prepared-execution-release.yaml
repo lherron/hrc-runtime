@@ -44,8 +44,10 @@ predicate: >
   are on this route; pi-sdk, codex-cli-tmux, hosted participant brokers and the
   Codex Desktop observer are not. Headless muse-serve births prepare on route
   headless-muse-serve with effective operator presentation none only; the muse
-  observer viewer has no aspd-route hosting, so an observer request stays off
-  the route. The hostedDrivers evidence rule above already covers muse-serve:
+  observer viewer has no aspd-route hosting, so an observer decision is
+  narrowed to none on this route, with the request choice visible in the
+  applied intent and the route decision source. The hostedDrivers evidence
+  rule above already covers muse-serve:
   the frozen executionRelease must list it.] Effective operator
   presentation is an explicit per-request presentation.operator none when
   present, otherwise the node default unchanged; an explicit none also exempts
@@ -227,7 +229,7 @@ source:
   - packages/hrc-mail-kicker/src/drive/delivery.ts
 required_tests:
   - just architecture-records
-  - headless muse-serve route gates prove a headless muse intent prepares route headless-muse-serve with presentation none and launches the frozen worker, an observer request stays off the route, and absent/non-matching hostedDrivers refuses aspd_worker_hosting_unproven before boundary P
+  - headless muse-serve route gates prove a headless muse intent prepares route headless-muse-serve with presentation none and launches the frozen worker, an observer decision is hosted as none, and absent/non-matching hostedDrivers refuses aspd_worker_hosting_unproven before boundary P
   - T-08562 route gates prove every claude-code-tmux and pi-tui-tmux birth door on a configured node prepares through aspd with its driver, route and door class and never reaches the facade or resolver, while codex-cli-tmux, pi-sdk and an unset endpoint keep their paths
   - T-08562 admission gates prove generic hosting-shape admission, driver equality with the request, and aspd_worker_hosting_unproven for absent, malformed or non-matching hostedDrivers before boundary P and at launch, with codex-app-server admissible without it
   - T-08562 launch-argv prompt gates prove replace-priming and append-to-priming Claude and Pi prompts are frozen once in the start request, absent from the applied intent, reported after boundary P, never submitted again, and carry launch-carried invocation provenance

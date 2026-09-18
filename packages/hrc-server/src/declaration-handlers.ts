@@ -55,6 +55,7 @@ const HRC_HARNESS_IDS: ReadonlySet<string> = new Set<HrcHarness>([
   'pi',
   'pi-cli',
   'pi-sdk',
+  'muse-cli',
 ])
 
 const RUN_MODES = new Set(['query', 'heartbeat', 'task', 'maintenance'])

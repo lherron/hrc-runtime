@@ -192,14 +192,16 @@ function aspdRoutePresentation(
   if (intent.harness.interactive === true) return undefined
   const brokerDriver = toProfileSelector(intent)?.brokerDriver
   if (brokerDriver === ASPD_MUSE_BROKER_DRIVER) {
-    const decided = decideMuseServePresentation({
+    decideMuseServePresentation({
       operatorPresentation: env[HRC_MUSE_SERVE_OPERATOR_PRESENTATION_ENV],
       brokerDriver,
       requestedOperator: intent.presentation?.operator,
     })
-    // The observer viewer has no aspd-route hosting yet: an observer request
-    // stays off this route rather than silently losing its viewer.
-    return decided === 'none' ? decided : undefined
+    // The observer viewer has no aspd-route hosting yet: narrow every muse
+    // decision into the hosting union, exactly as the codex arm narrows
+    // observer to none. The request choice stays visible in the applied
+    // intent and the route decision's operatorPresentationSource.
+    return 'none'
   }
   if (brokerDriver !== ASPD_BROKER_DRIVER) return undefined
   const decided = decideCodexAppServerPresentation({

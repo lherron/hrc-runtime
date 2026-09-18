@@ -149,7 +149,9 @@ beforeEach(async () => {
   aspd.hostedDrivers = HOSTED
   setEnv('HRC_ASPD_SOCKET', aspdSocket)
   setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', undefined)
-  setEnv('HRC_MUSE_SERVE_OPERATOR_PRESENTATION', undefined)
+  // Mirror the max3 node default that caught the live seat: the observer
+  // viewer has no aspd-route hosting, so the route hosts it as none.
+  setEnv('HRC_MUSE_SERVE_OPERATOR_PRESENTATION', 'observer')
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
   setEnv('ASP_HOME', join(scratch, 'caller-asp-home'))
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
@@ -212,12 +214,18 @@ describe('headless muse-serve route selection', () => {
     )
   })
 
-  it('refuses an observer muse request, an interactive muse intent, and an unconfigured node', () => {
+  it('hosts an observer muse request as none, and refuses interactive intents and unconfigured nodes', () => {
     const observer = {
       ...museIntent(),
       presentation: { operator: 'observer' },
     } as HrcRuntimeIntent
-    expect(aspdHeadlessBrokerEndpoint(observer, { HRC_ASPD_SOCKET: aspdSocket })).toBeUndefined()
+    expect(aspdHeadlessBrokerEndpoint(observer, { HRC_ASPD_SOCKET: aspdSocket })).toBe(aspdSocket)
+    expect(
+      aspdHeadlessBrokerEndpoint(museIntent(), {
+        HRC_ASPD_SOCKET: aspdSocket,
+        HRC_MUSE_SERVE_OPERATOR_PRESENTATION: 'observer',
+      })
+    ).toBe(aspdSocket)
     const interactive = {
       ...museIntent(),
       harness: { provider: 'meta', id: 'muse-cli', interactive: true },
