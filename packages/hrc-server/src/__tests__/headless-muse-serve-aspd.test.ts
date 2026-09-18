@@ -23,6 +23,7 @@ import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-clie
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
+  createBrokerObserverPaneAllocator,
   createBrokerTmuxTuiAllocator,
 } from '../broker-interactive-handlers/substrate-allocator'
 import { HarnessBrokerController } from '../broker/controller'
@@ -136,6 +137,10 @@ async function bootServer(): Promise<void> {
       deps('attach-muse-h')
     ),
     tmuxTuiAllocator: createBrokerTmuxTuiAllocator(internal().options, deps('attach-muse-h-v')),
+    observerPaneAllocator: createBrokerObserverPaneAllocator(
+      internal().options,
+      deps('attach-muse-h-o')
+    ),
     now: () => new Date().toISOString(),
   } as unknown as ConstructorParameters<typeof HarnessBrokerController>[0])
 }
@@ -214,7 +219,7 @@ describe('headless muse-serve route selection', () => {
     )
   })
 
-  it('hosts an observer muse request as none, and refuses interactive intents and unconfigured nodes', () => {
+  it('admits observer muse requests, and refuses interactive intents and unconfigured nodes', () => {
     const observer = {
       ...museIntent(),
       presentation: { operator: 'observer' },
@@ -236,7 +241,7 @@ describe('headless muse-serve route selection', () => {
 })
 
 describe('headless muse-serve birth through aspd', () => {
-  it('mail summons prepares route headless-muse-serve with presentation none and launches the frozen worker', async () => {
+  it('mail summons prepares route headless-muse-serve with the observer viewer and launches the frozen worker', async () => {
     const s = await seedMuse()
     const response = await kickerSummons(s)
     expect(response.status).toBe(200)
@@ -249,20 +254,23 @@ describe('headless muse-serve birth through aspd', () => {
     expect(op?.record.route).toBe('headless-muse-serve')
     expect(op?.record.hosting).toMatchObject({
       driverKind: 'muse-serve',
-      presentation: 'none',
+      presentation: 'observer',
     })
     expect(op?.record.executionRelease.worker.hostedDrivers).toEqual(HOSTED)
     expect(op?.record.dispatch.routeDecision).toMatchObject({
       preparation: 'aspd',
       flag: 'HRC_HEADLESS_MUSE_BROKER_ENABLED',
       selectedBy: 'aspdHeadlessBrokerEndpoint',
-      operatorPresentation: 'none',
+      operatorPresentation: 'observer',
     })
-    // Launched from the frozen release with headless (viewer-free) paths.
+    // Launched from the frozen release with the observer socket on the worker
+    // command and the frozen paths.
     expect(ledger.commands[0]).toContain(join(releaseA.releaseRoot, 'harness-broker'))
     expect(ledger.commands[0]).toContain(op?.record.hosting.paths.brokerIpcSocketPath)
     expect(op?.record.hosting.paths.sessionName).toContain('muse-serve')
-    expect(op?.record.hosting.paths.observerSocketPath).toBeUndefined()
+    expect(op?.record.hosting.paths.observerSocketPath).toContain('observer.sock')
+    expect(ledger.commands[0]).toContain(op?.record.hosting.paths.observerSocketPath)
+    expect(ledger.commands[0]).toContain('--experimental-observer-socket')
     expect(ledger.startCalls).toHaveLength(1)
   })
 
