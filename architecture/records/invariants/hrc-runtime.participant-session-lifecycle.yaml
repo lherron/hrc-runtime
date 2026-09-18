@@ -144,9 +144,6 @@ source:
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
   - architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml
-  - packages/hrc-server/src/desktop/registration.ts
-  - packages/hrc-server/src/desktop/observer-attachment.ts
-  - packages/hrc-server/src/desktop/observer-supervisor.ts
   - packages/hrc-server/src/broker/controller/dispatch.ts
   - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
   - packages/hrc-server/src/participant-registration-handlers.ts
@@ -156,8 +153,8 @@ required_tests:
   - T-08504 HRC continuation selection is exposed and bound into the frozen request with mismatch clear-barrier and unsupported-resume proof
   - T-08504 wrong-home redirect and same-request retry allocate one canonical owner only
   - T-08344 post-join profile validation rejects foreign identity hash mismatches ownership mismatches and runtime or lifecycle-policy fields before effects
-  - T-08344 hosted presentation discriminator persists actual HRC lease IDs and selected lifecycle policy before ensure while crash retries preserve token bytes full dispatch and ensure digest and missing leases block
-  - T-08344 both join directions register establish a resident invocation attach terminate and resume through the generic path
+  - T-08344 participant presentation discriminator persists actual HRC lease IDs and selected lifecycle policy before ensure while crash retries preserve token bytes full dispatch and ensure digest and missing leases block
+  - T-08344 participant-served registrations establish a resident invocation attach terminate and resume through the generic path
   - T-08344 C.5.1 concurrent duplicate lost-response request-conflict and crash-boundary receipt gates preserve at-most-once driver start and truthful indeterminate outcomes
   - T-08344 C.5.2 spawn-before-completion recovery preserves credential bytes and exactly one broker process and window
   - T-08344 retirement discriminator rejects old-owner writes before and after successor claim completion while unresolved input remains independently protected

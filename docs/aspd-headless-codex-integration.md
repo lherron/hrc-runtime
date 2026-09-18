@@ -74,8 +74,9 @@ is frozen and delivered exactly once (D1), how a caller retry key is frozen and
 resumed (D2), what keyless doors do (D3), and where reprovision stale-marking sits
 relative to preparation (D4). No flag, value, endpoint, ASPC verb or wire field is
 added. The one new refusal reason and the two-value door class are HRC-internal.
-The Claude, Pi and deprecated `codex-cli-tmux` interactive drivers, hosted
-participant brokers and the Codex Desktop observer are not moved. Where §1, §1.3,
+The Claude, Pi and deprecated `codex-cli-tmux` interactive drivers are not
+moved; the hosted participant broker and the Codex Desktop observer are RETIRED
+by T-08567. Where §1, §1.3,
 §1.4, §8, §9 or §10.4 say that a door other than the attached run keeps the
 facade, or that the interactive route is attached-run only, §1.5 supersedes that
 sentence. [T-08562: Claude and Pi TUI births move, §1.6.]
@@ -99,8 +100,9 @@ effect.
 The following are unchanged:
 - `pi-sdk` stays on its non-aspd route;
 - the deprecated `codex-cli-tmux` keeps its current path;
-- the hosted participant broker, the Codex Desktop observer, app-session direct
-  launch, configuration/inspection and evidence are other tasks.
+- the hosted participant broker and the Codex Desktop observer (both RETIRED
+  by T-08567), app-session direct launch (RETIRED by T-08584),
+  configuration/inspection and evidence are other tasks.
 
 No flag, value, endpoint, ASPC verb or wire field is added, and there is no ASP
 change. The route value, presentation value and refusal reason are
@@ -1337,8 +1339,8 @@ aspd like every other door. Leg A does not register them, for three reasons:
 - Not moved:
   - the Claude, Pi and `codex-cli-tmux` interactive drivers (Leg B, after P1)
     [T-08562: Claude and Pi moved, §1.6; `codex-cli-tmux` stays];
-  - the hosted participant broker (M7);
-  - the Codex Desktop observer (M18: Leg B / T-08567, U12 pending).
+  - the hosted participant broker (M7, RETIRED by T-08567);
+  - the Codex Desktop observer (M18, RETIRED by T-08567).
 
 **Refusals.** New: `aspd_preparation_route_changed` (D2 route fence, retryable
 `runtime_unavailable`; HRC-internal, not wire). Reused on every Codex interactive birth door:
@@ -1779,7 +1781,7 @@ serves exactly these:
 | `pi-sdk` headless births (`harness-broker-pi`) | `substrate-allocator.ts:204` via `brokerDriverToolchainKind` `asp-toolchain.ts:113-116`; facade compile `option-resolvers.ts:182`, `:231` | Preserved non-aspd route. The producer's pi-sdk binding is deferred (T-08561 §3.1); a new release refuses `release_worker_driver_unavailable` | Future producer task, then an HRC consumer; not assigned |
 | `codex-cli-tmux` | chokepoint facade path | Deprecated in place, no binding, no retirement; unreachable in production | none |
 | Hosted participant broker | `participant-hosting-intent.ts:152` | M7 | T-08567 |
-| Codex Desktop observer broker | controller start without `workerLaunch` (`desktop/observer-attachment.ts:372-399`, `lifecycleOwner: 'external'` at `:380`, `:393`) | M18 | T-08574 (T-08567 lists M18; T-08574 owns the Desktop observer) |
+| Codex Desktop observer broker | RETIRED by T-08567: `desktop/*` and the `/v1/internal/desktop/register` route are deleted; Desktop threads join as participant-served participants | M18 | T-08594 (self-join landed) |
 | Legacy stdio broker seam | `broker/controller.ts:557-563` | Non-durable test and legacy seam; the aspd route refuses stdio (`aspd_route_requires_durable_ipc`) | unchanged |
 | Every route with the socket unset | all of the above plus Claude, Pi and Codex | Endpoint configuration is the only gate | Leg D (fleet), later authority |
 
@@ -1832,13 +1834,11 @@ is HRC first, then aspd. Recorded on T-08571.
   `photon-node`/`esbuild`).
 - **`codex-cli-tmux`:** deprecated in place, no binding, no retirement, facade
   path kept.
-- **Hosted participant broker (M7), T-08567:** its launch is participant-hosting
-  law (`participant-hosting-intent.ts:152-178`), not a door birth through the
-  chokepoint. Adapter-prepared establishment is not wired in production
-  (`index.ts:2911`, T-08558 M7).
-- **Codex Desktop observer (M18), T-08574 (with T-08567):** HRC hand-builds the
-  observer profile without a compile. Whether a bundle-less conversation-bound
-  preparation is admissible is U12, a different preparation problem.
+- **Hosted participant broker (M7), RETIRED by T-08567:** the `hrc-hosted`
+  join is deleted; the validator admits only `participant-served`.
+- **Codex Desktop observer (M18), RETIRED by T-08567:** `desktop/*` and the
+  registration route are deleted; Desktop threads self-join as
+  participant-served participants (T-08594).
 - **App-session direct path (M6), RETIRED by T-08584:** the in-process
   `buildCliInvocation` preview builder is deleted, not migrated; the only
   preview is the broker-plan aspd observation.
@@ -2228,8 +2228,9 @@ or `interactive-birth`) and the interactive start request at boundary P.
 any door, is aspd-prepared and is not governed by the resolver. Its worker,
 codex-tui wrapper and hook receiver run only from the frozen `executionRelease`,
 with no fallback. Interactive births of other broker drivers (`claude-code-tmux`,
-`pi-tui-tmux`, `codex-cli-tmux`), hosted participant brokers and the Codex
-Desktop observer broker remain resolver-governed [superseded by T-08562 below].
+`pi-tui-tmux`, `codex-cli-tmux`) remain resolver-governed [superseded by T-08562
+below]. The hrc-hosted participant join and the Codex Desktop observer broker are
+RETIRED by T-08567.
 
 **Amend `hrc-runtime.aspd-prepared-execution-release` (T-08562):** As amended for every supported broker birth, on a configured node every new
 interactive claude-code-tmux and pi-tui-tmux birth prepares through aspd by
@@ -2261,9 +2262,9 @@ aspd-prepared and not governed by the resolver: its worker, hook bridge and
 tmux launch runner run only from the frozen executionRelease, with no
 fallback. On a configured node the resolver still governs only the
 non-interactive pi-sdk broker (harness-broker-pi), the deprecated
-codex-cli-tmux interactive driver, hosted participant brokers, the Codex
-Desktop observer broker, and the legacy stdio test seam; with
-HRC_ASPD_SOCKET unset it governs every broker route as before.
+codex-cli-tmux interactive driver, and the legacy stdio test seam; with
+HRC_ASPD_SOCKET unset it governs every broker route as before. The hrc-hosted
+participant join and the Codex Desktop observer broker are RETIRED by T-08567.
 
 **Amend `hrc-runtime.harness-broker-admission-client` (T-08562):** no predicate change; a required test proves launch-primed cold summons, cold invoke and cold enqueue on an aspd-prepared claude-code-tmux birth keep the T-07920, T-08004, T-08012 and T-08531 facts.
 
@@ -2317,9 +2318,10 @@ HRC_ASPD_SOCKET unset it governs every broker route as before.
     The kicker's keyless dispatch and uncertain-on-throw classification are
     unchanged.
   - Ensure stays unregistered (§1.5.7).
-  - Not moved: Claude, Pi and `codex-cli-tmux` interactive births, hosted
-    participant brokers, and the Codex Desktop observer (Leg B / T-08567).
-    [T-08562: Claude and Pi moved; participant T-08567; Desktop observer T-08574.]
+  - Not moved: Claude, Pi and `codex-cli-tmux` interactive births.
+    RETIRED: hosted participant brokers and the Codex Desktop observer
+    (T-08567); app-session direct launch (T-08584).
+    [T-08562: Claude and Pi moved.]
   - There is no migration of live facade-born interactive runtimes. They are
     reused by admission and replaced only by today's reprovision rules, and that
     rebirth is aspd-prepared.
@@ -2343,8 +2345,7 @@ HRC_ASPD_SOCKET unset it governs every broker route as before.
     stays on the facade plus `harness-broker-pi` resolver. It is not in
     `hostedDrivers` and not in any full-independence claim. The deprecated
     `codex-cli-tmux` keeps the facade path, with no binding and no retirement.
-  - Not moved: hosted participant brokers (T-08567), Codex Desktop observer
-    (T-08574), app-session direct launch (T-08567), configuration and inspection
+  - Not moved: configuration and inspection
     including `toProfileSelector` (T-08563/T-08564), evidence and offline recovery
     (T-08565/T-08566). The resolver and bundled ASP packages remain for §1.6.9's
     users. The closure gate (T-08558 §5) is not claimed.

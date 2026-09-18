@@ -1,6 +1,3 @@
-import { mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
-
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import type {
   InvocationDispatchRequest,
@@ -28,10 +25,6 @@ type TmuxWindow = {
 type InspectableTmuxManager = DurableTmuxManagerLike & {
   inspectWindow(input: { sessionName: string; windowName: string }): Promise<TmuxWindow | null>
 }
-
-type ObservedPaneProcess = NonNullable<
-  Awaited<ReturnType<NonNullable<DurableTmuxManagerLike['inspectPaneProcess']>>>
->
 
 /**
  * HRC's observed resource boundary. It intentionally contains concrete lease
@@ -145,9 +138,10 @@ function assertJoinOwnership(
   registration: ParticipantRegistration,
   profile: BrokerExecutionProfile
 ): void {
-  const expected =
-    registration.join === 'hrc-hosted' ? 'hrc-owned-process' : 'participant-owned-process'
-  if (profile.brokerOwnership !== expected) {
+  if (registration.join !== 'participant-served') {
+    throw new Error(`unsupported participant join direction: ${registration.join}`)
+  }
+  if (profile.brokerOwnership !== 'participant-owned-process') {
     throw new Error(`participant profile ownership does not match ${registration.join}`)
   }
 }
@@ -168,92 +162,13 @@ function requireInspectableTmux(tmux: DurableTmuxManagerLike): InspectableTmuxMa
   return tmux as InspectableTmuxManager
 }
 
-function assertCommittedHostedWriter(
-  process: ObservedPaneProcess,
-  hosted: NonNullable<ParticipantHostingIntent['hrcHosted']>
-): void {
-  if (process.dead || process.pid <= 0) {
-    throw new Error('participant broker did not realize a live process')
-  }
-  // The shipped broker is a Bun shebang script. macOS `ps` reports its post-exec
-  // form as `bun <persisted-script-argv...>`; it does not expose a structured
-  // argv vector. Compare that observed representation as a complete value, not
-  // as a token parser or a substring predicate. This makes it only a live
-  // process candidate check: installIdentity below remains the broker-owned
-  // identity authority before this attempt may ensure an invocation.
-  const commandLine = process.commandLine
-  const expectedCommandLine = `bun ${hosted.brokerArgv.join(' ')}`
-  if (process.command !== 'bun' || commandLine !== expectedCommandLine) {
-    throw new Error('participant broker writer does not match the committed launch identity')
-  }
-}
-
-async function realizeHosted(
-  server: HrcServerInstanceForHandlers,
-  intent: ParticipantHostingIntent
-): Promise<ParticipantRealizedHosting> {
-  const hosted = intent.hrcHosted
-  if (hosted === undefined)
-    throw new Error('hrc-hosted participant is missing its HRC hosting intent')
-  // The intent commits an HRC-owned tmux socket path, but the durable IPC
-  // boundary only creates its sibling directory. Establish the tmux parent
-  // before the first resource effect so a fresh runtime root can realize it.
-  await mkdir(dirname(hosted.tmuxSocketPath), { recursive: true, mode: 0o700 })
-  const tmux = (server.brokerTmuxManagerFactory ?? createTmuxManager)({
-    socketPath: hosted.tmuxSocketPath,
-  })
-  await tmux.initialize()
-
-  const inspectable = requireInspectableTmux(tmux)
-  let broker = await inspectable.inspectWindow({
-    sessionName: hosted.sessionName,
-    windowName: 'broker',
-  })
-  // A bare broker window proves only that the named resource exists, not that
-  // the broker was launched. Creation is authorized solely by the committed
-  // intent and uses its exact shell rendering.
-  if (broker === null) {
-    broker = await tmux.createWindowWithCommand({
-      sessionName: hosted.sessionName,
-      windowName: 'broker',
-      command: hosted.brokerCommand,
-    })
-  }
-  const process = await tmux.inspectPaneProcess?.(broker.paneId)
-  if (process === undefined) {
-    throw new Error('participant broker realization requires pane process inspection')
-  }
-  if (process === null) throw new Error('participant broker did not realize a live process')
-  assertCommittedHostedWriter(process, hosted)
-
-  const tui =
-    intent.presentation.kind === 'tmux-tui'
-      ? await inspectedWindow(tmux, hosted.sessionName, 'tui')
-      : null
-  if (intent.presentation.kind === 'tmux-tui' && tui === null) {
-    throw new Error('participant requested presentation could not be realized')
-  }
-
-  return {
-    schemaVersion: 'participant-realized-hosting/v1',
-    endpoint: intent.endpoint,
-    substrate: {
-      kind: 'leased-tmux',
-      brokerWindow: toWindow(broker),
-      pid: process.pid,
-      command: process.command,
-    },
-    presentation: tui === null ? { kind: 'none' } : { kind: 'tmux-tui', tuiWindow: tui },
-  }
-}
-
 async function realizeParticipantServed(
   server: HrcServerInstanceForHandlers,
   attempt: ParticipantAttempt,
   intent: ParticipantHostingIntent,
   profile: BrokerExecutionProfile
 ): Promise<ParticipantRealizedHosting> {
-  if (intent.hrcHosted !== undefined) {
+  if ('hrcHosted' in intent) {
     throw new Error('participant-served participant must not carry an HRC broker process intent')
   }
   if (intent.presentation.kind === 'none') {
@@ -314,10 +229,15 @@ async function validateRediscovery(
     ) {
       throw new Error('persisted participant broker writer cannot be verified')
     }
-    if (intent.hrcHosted === undefined) {
-      throw new Error('persisted participant broker lease has no committed hosting identity')
+    const legacyHosted = intent as unknown as {
+      hrcHosted?: { brokerArgv: string[] }
     }
-    assertCommittedHostedWriter(process, intent.hrcHosted)
+    if (legacyHosted.hrcHosted !== undefined) {
+      const expectedCommandLine = `bun ${legacyHosted.hrcHosted.brokerArgv.join(' ')}`
+      if (process.command !== 'bun' || process.commandLine !== expectedCommandLine) {
+        throw new Error('participant broker writer does not match the committed launch identity')
+      }
+    }
   }
   if (realized.presentation.kind === 'tmux-tui') {
     const tui = realized.presentation.tuiWindow
@@ -379,10 +299,10 @@ export async function realizeAndFreezeParticipantDispatch(
       ? undefined
       : parseJson<ParticipantRealizedHosting>(attempt.realizedHostingJson, 'realized hosting')
   if (realized === undefined) {
-    realized =
-      registration.join === 'hrc-hosted'
-        ? await realizeHosted(server, intent)
-        : await realizeParticipantServed(server, attempt, intent, profile)
+    if (registration.join !== 'participant-served') {
+      throw new Error(`unsupported participant join direction: ${registration.join}`)
+    }
+    realized = await realizeParticipantServed(server, attempt, intent, profile)
     const now = timestamp()
     server.db.sqlite.transaction(() => {
       server.db.participantRegistrations.setSnapshotIfAbsent(

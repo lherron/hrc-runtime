@@ -8,8 +8,8 @@
  * assert the attempt, activation, replay, and hosting invariants named in T-08349.
  *
  * Baseline observed against the real installed max3 daemon on 2026-09-09:
- * POST /v1/participants/register => plain-text 404, while the legacy Desktop and
- * EPR routes retain their own distinct request and error shapes.
+ * POST /v1/participants/register => plain-text 404, while the legacy EPR route
+ * retains its own distinct request and error shape.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
@@ -27,7 +27,7 @@ import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-
 type GenericParticipantClass = {
   classId: string
   adapterId: string
-  join: 'hrc-hosted' | 'participant-served'
+  join: 'participant-served'
   address: 'permanent-keyed'
   continuity: 'key-scoped'
   replaySemantics: 'none' | 'full-source-replay'
@@ -42,23 +42,16 @@ type ResponseObservation = {
   body: unknown
 }
 
-const hostedClass: GenericParticipantClass = {
-  classId: 't08349-hosted',
+const participantServedClass: GenericParticipantClass = {
+  classId: 't08349-participant-served',
   adapterId: 'controlled-participant',
-  join: 'hrc-hosted',
+  join: 'participant-served',
   address: 'permanent-keyed',
   continuity: 'key-scoped',
-  replaySemantics: 'none',
+  replaySemantics: 'full-source-replay',
   scopeTemplate: { agent: 'smokey', project: 'hrc-runtime' },
   maxInstances: 2,
   defaultTtl: 60,
-}
-
-const participantServedClass: GenericParticipantClass = {
-  ...hostedClass,
-  classId: 't08349-participant-served',
-  join: 'participant-served',
-  replaySemantics: 'full-source-replay',
 }
 
 const eprClass: RegistrationClassConfig = {
@@ -147,12 +140,11 @@ describe('T-08349 generic participant registration callback surface', () => {
         // Rev6 C.1 extends the existing validated class declaration. Cast only
         // at this pre-producer red boundary; no local wire or adapter type is invented.
         registrationClasses: [
-          hostedClass,
           participantServedClass,
         ] as unknown as readonly RegistrationClassConfig[],
         participantAdapterRegistry: new ParticipantAdapterRegistry([
           createControlledParticipantAdapter({
-            adapterId: hostedClass.adapterId,
+            adapterId: participantServedClass.adapterId,
             workspaceCwd: fixture.tmpDir,
           }),
         ]),
@@ -165,20 +157,6 @@ describe('T-08349 generic participant registration callback surface', () => {
     expect(started.error).toBeUndefined()
     if (started.server === undefined) return
     server = started.server
-
-    const hostedWithSocket = await observe(
-      await fixture.postJson('/v1/participants/register', {
-        classId: hostedClass.classId,
-        processToken: 'opaque-hosted-token',
-        workspaceCwd: fixture.tmpDir,
-        participantKey: 'hosted-permanent-key',
-        socketPath: `${fixture.tmpDir}/must-be-forbidden.sock`,
-      })
-    )
-    expect(hostedWithSocket).toMatchObject({
-      status: 400,
-      body: { error: { code: 'malformed_request', detail: { field: 'socketPath' } } },
-    })
 
     const servedWithoutSocket = await observe(
       await fixture.postJson('/v1/participants/register', {
@@ -193,31 +171,8 @@ describe('T-08349 generic participant registration callback surface', () => {
       body: { error: { code: 'malformed_request', detail: { field: 'socketPath' } } },
     })
 
-    // Use the canonical source-graph adapter, not a local duplicate, for both
-    // legal join shapes. This reaches the first durable boundary only: profile
-    // preparation is frozen before any HRC hosting or broker effect.
-    const admittedHosted = await observe(
-      await fixture.postJson('/v1/participants/register', {
-        classId: hostedClass.classId,
-        processToken: 'opaque-hosted-token',
-        workspaceCwd: fixture.tmpDir,
-        participantKey: 'hosted-permanent-key',
-        evidence: { kind: 'controlled-continuity/v1', token: 'first' },
-      })
-    )
-    expect(admittedHosted).toMatchObject({
-      status: 200,
-      body: {
-        status: 'registered',
-        created: true,
-        resumed: false,
-        scopeRef: expect.stringMatching(/^agent:smokey:project:hrc-runtime:task:participant-/),
-        hostSessionId: expect.stringMatching(/^hsid-/),
-        generation: 1,
-        observation: { state: 'prepared' },
-      },
-    })
-
+    // Use the canonical source-graph adapter, not a local duplicate, for the
+    // participant-served join shape. This reaches the first durable boundary only.
     const admittedServed = await observe(
       await fixture.postJson('/v1/participants/register', {
         classId: participantServedClass.classId,
@@ -238,88 +193,25 @@ describe('T-08349 generic participant registration callback surface', () => {
       },
     })
 
-    const retriedHosted = await observe(
-      await fixture.postJson('/v1/participants/register', {
-        classId: hostedClass.classId,
-        processToken: 'opaque-hosted-token',
-        workspaceCwd: fixture.tmpDir,
-        participantKey: 'hosted-permanent-key',
-        evidence: { kind: 'controlled-continuity/v1', token: 'first' },
-      })
-    )
-    expect(retriedHosted).toMatchObject({
-      status: 200,
-      body: {
-        status: 'registered',
-        created: false,
-        resumed: false,
-        scopeRef: (admittedHosted.body as { scopeRef: string }).scopeRef,
-        hostSessionId: (admittedHosted.body as { hostSessionId: string }).hostSessionId,
-        generation: 1,
-      },
-    })
-
     const db = openHrcDatabase(fixture.dbPath, { migrate: false })
     try {
-      const registration = db.participantRegistrations.getRegistrationByClassAndKey(
-        hostedClass.classId,
-        'hosted-permanent-key'
-      )
-      expect(registration).not.toBeNull()
-      const attempt = db.participantRegistrations.getAttemptByRegistrationId(
-        registration?.registrationId ?? ''
-      )
-      expect(attempt).toMatchObject({
-        state: 'HOSTING_INTENT_PERSISTED',
-        requestId: expect.stringMatching(/^req-/),
-        operationId: expect.stringMatching(/^op-/),
-        invocationId: expect.stringMatching(/^inv-/),
-        runtimeId: expect.stringMatching(/^rt-/),
-        preparedProfileJson: expect.stringContaining(hostedClass.classId),
-      })
       expect(
         db.participantRegistrations.getRegistrationByClassAndKey(
           participantServedClass.classId,
           'served-permanent-key'
         )
       ).toMatchObject({ socketPath: `${fixture.tmpDir}/participant-served.sock` })
-      const hostedRegistration = db.participantRegistrations.getRegistrationByClassAndKey(
-        hostedClass.classId,
-        'hosted-permanent-key'
-      )
       const servedRegistration = db.participantRegistrations.getRegistrationByClassAndKey(
         participantServedClass.classId,
         'served-permanent-key'
       )
-      const hostedAttempt = db.participantRegistrations.getAttemptByRegistrationId(
-        hostedRegistration?.registrationId ?? ''
-      )
       const servedAttempt = db.participantRegistrations.getAttemptByRegistrationId(
         servedRegistration?.registrationId ?? ''
       )
-      expect([
-        'HOSTING_INTENT_PERSISTED',
-        'REALIZED',
-        'DISPATCH_FROZEN',
-        'INSTALL_CONFIRMED',
-        'INVOCATION_READY',
-        'ATTACH_CONFIRMED',
-        'ACTIVE',
-      ]).toContain(hostedAttempt?.state)
       expect(['HOSTING_INTENT_PERSISTED', 'REALIZED', 'DISPATCH_FROZEN']).toContain(
         servedAttempt?.state
       )
-      const hostedIntent = JSON.parse(hostedAttempt?.hostingIntentJson ?? '{}')
       const servedIntent = JSON.parse(servedAttempt?.hostingIntentJson ?? '{}')
-      expect(hostedIntent).toMatchObject({
-        join: 'hrc-hosted',
-        presentation: { kind: 'none' },
-        hrcHosted: {
-          brokerDriver: 'codex-app-server',
-          sessionName: expect.stringMatching(/^hrc-codex-app-server-rt-/),
-        },
-        lifecyclePolicy: expect.objectContaining({ policyId: expect.any(String) }),
-      })
       expect(servedIntent).toMatchObject({
         join: 'participant-served',
         presentation: { kind: 'none' },
@@ -334,15 +226,19 @@ describe('T-08349 generic participant registration callback surface', () => {
 
   test('joins without an adapter present, and never takes down EPR', async () => {
     await start({
-      registrationClasses: [hostedClass, eprClass] as unknown as readonly RegistrationClassConfig[],
+      registrationClasses: [
+        participantServedClass,
+        eprClass,
+      ] as unknown as readonly RegistrationClassConfig[],
     })
 
     const unavailable = await observe(
       await fixture.postJson('/v1/participants/register', {
-        classId: hostedClass.classId,
-        processToken: 'opaque-hosted-token',
+        classId: participantServedClass.classId,
+        processToken: 'opaque-served-token',
         workspaceCwd: fixture.tmpDir,
         participantKey: 'unavailable-adapter-key',
+        socketPath: `${fixture.tmpDir}/unavailable-adapter.sock`,
       })
     )
     // R6.1 inverts this case. HRC "does not ... load an adapter to approve
@@ -357,7 +253,7 @@ describe('T-08349 generic participant registration callback surface', () => {
     const db = openHrcDatabase(fixture.dbPath, { migrate: false })
     try {
       const registration = db.participantRegistrations.getRegistrationByClassAndKey(
-        hostedClass.classId,
+        participantServedClass.classId,
         'unavailable-adapter-key'
       )
       expect(registration).not.toBeNull()

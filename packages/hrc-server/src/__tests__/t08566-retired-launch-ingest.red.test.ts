@@ -1,6 +1,6 @@
 /**
  * T-08566 stage-1 behavior reds: retire producer-less launch ingest without
- * disturbing Desktop registration, retained history, or broker projection.
+ * disturbing unhandled spool endpoints, retained history, or broker projection.
  *
  * These tests deliberately drive the public Unix-socket HTTP surface and the
  * real spool reader. The Stop case has no launch row or launch artifact: the
@@ -12,7 +12,7 @@
  * - an OTLP listener is still exposed and bound;
  * - retired spool entries are applied/deleted instead of quarantined.
  *
- * Positive controls remain green throughout: Desktop registration/spooling and
+ * Positive controls remain green throughout: unhandled spool entries and
  * the committed broker-event projection path are intentionally not retired.
  */
 import { expect, test } from 'bun:test'
@@ -296,13 +296,13 @@ test('R3: the daemon exposes no OTLP endpoint and leaves the configured legacy p
   }
 })
 
-test('R4: retired spool entries are quarantined while Desktop bytes, reader, and history survive', async () => {
+test('R4: retired spool entries are quarantined while unhandled bytes, reader, and history survive', async () => {
   const fixture = await createHrcTestFixture('t08566-spool-retired-')
   let server = await createHrcServer(fixture.serverOpts({ otelPreferredPort: 0 } as never))
   const runtime = await fixture.ensureRuntime('agent:smokey:project:hrc-runtime:task:T-08566')
   const hookKey = `hook-${randomUUID()}`
   const launchKey = `launch-${randomUUID()}`
-  const desktopKey = `desktop-${randomUUID()}`
+  const unknownKey = `unknown-${randomUUID()}`
   const historicalLaunchId = `historical-${randomUUID()}`
   let before: DurableSnapshot
   let reconciledRuntimeStatus: string
@@ -382,16 +382,16 @@ test('R4: retired spool entries are quarantined while Desktop bytes, reader, and
       endpoint: launchRoute,
       payload: { hostSessionId: runtime.hostSessionId, wrapperPid: 91919 },
     })
-    const desktopPath = await spoolCallback(fixture.spoolDir, desktopKey, {
-      endpoint: '/v1/internal/desktop/register',
+    const unknownPath = await spoolCallback(fixture.spoolDir, unknownKey, {
+      endpoint: '/v1/internal/example/unhandled',
       payload: { nativeThreadId: randomUUID() },
     })
-    const desktopBytesBefore = await readFile(desktopPath)
+    const unknownBytesBefore = await readFile(unknownPath)
     expect(
-      (await readSpoolEntries(fixture.spoolDir, desktopKey)).map((entry) => entry.payload)
+      (await readSpoolEntries(fixture.spoolDir, unknownKey)).map((entry) => entry.payload)
     ).toEqual([
       {
-        endpoint: '/v1/internal/desktop/register',
+        endpoint: '/v1/internal/example/unhandled',
         payload: expect.objectContaining({ nativeThreadId: expect.any(String) }),
       },
     ])
@@ -413,11 +413,11 @@ test('R4: retired spool entries are quarantined while Desktop bytes, reader, and
     expect(started.stderr).toContain('/v1/internal/hooks/ingest')
     expect(started.stderr).toContain(launchRoute)
 
-    expect(await Bun.file(desktopPath).exists()).toBe(true)
-    expect(sha256(await readFile(desktopPath))).toBe(sha256(desktopBytesBefore))
-    expect(await readSpoolEntries(fixture.spoolDir, desktopKey)).toHaveLength(1)
+    expect(await Bun.file(unknownPath).exists()).toBe(true)
+    expect(sha256(await readFile(unknownPath))).toBe(sha256(unknownBytesBefore))
+    expect(await readSpoolEntries(fixture.spoolDir, unknownKey)).toHaveLength(1)
     expect(started.stderr).toContain('spool replay failed')
-    expect(started.stderr).toContain('/v1/internal/desktop/register')
+    expect(started.stderr).toContain('/v1/internal/example/unhandled')
 
     const observed = openHrcDatabase(fixture.dbPath)
     try {
@@ -442,19 +442,14 @@ test('R4: retired spool entries are quarantined while Desktop bytes, reader, and
   }
 })
 
-test('R5 positive control: Desktop registration keeps its 200 pending contract', async () => {
+test('R5 refusal control: retired Desktop registration answers 404 (T-08567)', async () => {
   const fixture = await createHrcTestFixture('t08566-desktop-control-')
   const server = await createHrcServer(fixture.serverOpts({ otelPreferredPort: 0 } as never))
   try {
     const response = await fixture.postJson('/v1/internal/desktop/register', {
       nativeThreadId: randomUUID(),
     })
-    expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({
-      status: 'pending',
-      reason: 'native_metadata_unavailable',
-      detail: 'no rollout path reported; registration needs native session metadata',
-    })
+    expect(response.status).toBe(404)
   } finally {
     await server.stop()
     await fixture.cleanup()

@@ -685,9 +685,6 @@ export async function handleRegisterParticipant(
       { classId: body.classId }
     )
   }
-  if (registrationClass.join === 'hrc-hosted' && body.socketPath !== undefined) {
-    malformed('socketPath is forbidden for an hrc-hosted participant', 'socketPath')
-  }
   if (registrationClass.join === 'participant-served' && body.socketPath === undefined) {
     malformed('socketPath is required for a participant-served participant', 'socketPath')
   }

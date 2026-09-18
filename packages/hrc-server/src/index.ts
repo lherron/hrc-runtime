@@ -106,16 +106,6 @@ import {
 export { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import { handleResolveRuntimeIntent, handleRunPreview } from './declaration-handlers.js'
 import {
-  type DesktopObserverHandlersMethods,
-  desktopObserverHandlersMethods,
-} from './desktop/observer-attachment.js'
-import {
-  type DesktopRegistrationHandlersMethods,
-  type DesktopRegistrationResponse,
-  desktopRegistrationHandlersMethods,
-  parseDesktopRegistrationRequest,
-} from './desktop/registration.js'
-import {
   type ExactClaimHandlersMethods,
   exactClaimHandlersMethods,
   exactStartScope,
@@ -838,8 +828,6 @@ interface HrcServerInstance
     ParticipantRegistrationHandlersMethods,
     ParticipantAttachHandlersMethods,
     RegistrationHandlersMethods,
-    DesktopRegistrationHandlersMethods,
-    DesktopObserverHandlersMethods,
     RuntimeInspectHandlersMethods {}
 
 class HrcServerInstance implements HrcServer {
@@ -1071,12 +1059,6 @@ class HrcServerInstance implements HrcServer {
     // T-08566 stage 1: the launch-wrapper hook ingest is retired (no producer).
     [exactRouteKey('POST', '/v1/internal/hooks/ingest')]: (request) =>
       legacyLaunchIngestRetired(new URL(request.url).pathname),
-    // T-08294: private desktop-thread registration. Internal callback socket
-    // only — this is integration plumbing for the desktop hook helper, NOT a
-    // public operator API, and it deliberately shares no shape with
-    // `/v1/registrations` (generic EPR).
-    [exactRouteKey('POST', '/v1/internal/desktop/register')]: (request) =>
-      this.handleDesktopRegistration(request),
     [exactRouteKey('GET', '/v1/runtime-diagnostics')]: (_request, url) =>
       handleFirstTurnDiagnostics(this.db, url),
     [exactRouteKey('GET', '/v1/presentation/runtimes')]: () =>
@@ -2702,30 +2684,6 @@ class HrcServerInstance implements HrcServer {
     } satisfies DropContinuationResponse)
   }
 
-  /**
-   * Private desktop-thread registration (T-08294).
-   *
-   * A conversation this daemon cannot register yet — guardian thread, rollout
-   * not persisted, project unresolvable — answers 200 with `status: 'pending'`
-   * and a nameable reason, NOT an error. The hook must be able to keep its
-   * legacy behavior and report "integration pending" without failing Lance's
-   * turn; a 4xx here would turn a normal, expected state into a broken hook.
-   */
-  async handleDesktopRegistration(request: Request): Promise<Response> {
-    let rawBody: unknown
-    try {
-      rawBody = await request.json()
-    } catch {
-      throw new HrcBadRequestError(
-        HrcErrorCode.MALFORMED_REQUEST,
-        'desktop registration body must be valid JSON'
-      )
-    }
-    const parsed = parseDesktopRegistrationRequest(rawBody)
-    const response: DesktopRegistrationResponse = await this.registerDesktopThread(parsed)
-    return json(response)
-  }
-
   handleHealth(): Response {
     return json({ ok: true })
   }
@@ -3085,7 +3043,6 @@ export type HrcServerInstanceClassBodyMethods = {
     | 'handleDropContinuation'
     | 'handleGetSessionByHost'
     | 'handleHealth'
-    | 'handleDesktopRegistration'
     | 'handleInterrupt'
     | 'handleListSessions'
     | 'handleSetSessionTitle'
@@ -3127,9 +3084,7 @@ Object.assign(
   registrationGcHandlersMethods,
   participantRegistrationHandlersMethods,
   participantAttachHandlersMethods,
-  registrationHandlersMethods,
-  desktopRegistrationHandlersMethods,
-  desktopObserverHandlersMethods
+  registrationHandlersMethods
 )
 
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {

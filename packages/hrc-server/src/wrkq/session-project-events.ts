@@ -30,13 +30,7 @@ export type SessionProjectEventType = 'session.born' | 'session.rotated'
  * what the birth site can actually observe. See the doc for why `mail` and
  * `dispatch` are not separable here.
  */
-export type SessionBirthCause =
-  | 'rotation'
-  | 'summon'
-  | 'dispatch'
-  | 'desktop'
-  | 'command_run'
-  | 'resolve'
+export type SessionBirthCause = 'rotation' | 'summon' | 'dispatch' | 'command_run' | 'resolve'
 
 export type SessionProjectEventFact = {
   type: SessionProjectEventType
@@ -108,7 +102,6 @@ function causeFor(session: HrcSessionRecord, payload: Record<string, unknown>): 
   if (payload['summon'] === true) return 'summon'
   const reason = typeof payload['reason'] === 'string' ? payload['reason'] : undefined
   if (reason === 'exact-scope-claim' || reason === 'roster-suffix-claim') return 'dispatch'
-  if (reason === 'codex-desktop-registration') return 'desktop'
   return 'resolve'
 }
 

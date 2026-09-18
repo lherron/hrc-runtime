@@ -26,7 +26,7 @@ export type ExternalRegistrationClassConfig = {
 export type ParticipantRegistrationClassConfig = {
   classId: string
   adapterId: string
-  join: 'hrc-hosted' | 'participant-served'
+  join: 'participant-served'
   address: 'permanent-keyed'
   continuity: 'key-scoped'
   replaySemantics: 'none' | 'full-source-replay'
@@ -141,8 +141,8 @@ export function validateRegistrationClassConfig(
 
   const adapterId = requireToken(value['adapterId'], 'adapterId', where)
   const join = value['join']
-  if (join !== 'hrc-hosted' && join !== 'participant-served') {
-    throw new Error(`${where}.join must be hrc-hosted or participant-served`)
+  if (join !== 'participant-served') {
+    throw new Error(`${where}.join must be participant-served`)
   }
   if (value['address'] !== 'permanent-keyed') {
     throw new Error(`${where}.address must be permanent-keyed`)

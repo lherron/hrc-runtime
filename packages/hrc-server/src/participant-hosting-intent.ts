@@ -1,17 +1,15 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, open, realpath } from 'node:fs/promises'
+import { chmod, mkdir, open } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import type { BrokerLifecyclePolicyOverlay } from 'spaces-harness-broker-protocol'
 import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
-import { resolveBrokerBinary } from './broker-interactive-handlers/substrate-allocator.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import type { BrokerAttachTokenRef } from './broker/runtime-state.js'
-import { shellQuote } from './dispatch-invocation.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { getBrokerIpcSocketPath, getBrokerTmuxSocketPath } from './tmux-socket.js'
+import { getBrokerIpcSocketPath } from './tmux-socket.js'
 
 /**
  * Boundary two of the generic participant path. It records HRC's hosting
@@ -30,16 +28,6 @@ export type ParticipantHostingIntent = {
     protocolVersion: 'harness-broker/0.2'
   }
   lifecyclePolicy: BrokerLifecyclePolicyOverlay
-  hrcHosted?: {
-    brokerDriver: string
-    brokerBinary: string
-    /** Exact executable argv; command is only the tmux shell rendering of this. */
-    brokerArgv: string[]
-    brokerCommand: string
-    tmuxSocketPath: string
-    sessionName: string
-    eventLedgerPath: string
-  }
 }
 
 function attachTokenFor(server: HrcServerInstanceForHandlers): string {
@@ -127,76 +115,22 @@ export async function createParticipantHostingIntent(
             throw new Error('participant profile requests an unsupported HRC presentation resource')
           })()
 
-  if (registration.join === 'participant-served') {
-    if (registration.socketPath === undefined) {
-      throw new Error('participant-served registration is missing its durable serving socket')
-    }
-    return {
-      schemaVersion: 'participant-hosting-intent/v1',
-      join: registration.join,
-      presentation,
-      endpoint: {
-        kind: 'unix-jsonrpc-ndjson',
-        socketPath: registration.socketPath,
-        attachTokenRef,
-        protocolVersion: 'harness-broker/0.2',
-      },
-      lifecyclePolicy,
-    }
+  if (registration.join !== 'participant-served') {
+    throw new Error(`unsupported participant join direction: ${registration.join}`)
   }
-
-  // Persist the filesystem identity that exec/ps will report. On macOS `/var`
-  // is commonly a symlink to `/private/var`; retaining the lexical resolver
-  // path here would make our required exact post-launch comparison reject the
-  // writer we just launched.
-  const brokerBinary = await realpath(resolveBrokerBinary(profile.brokerDriver))
-  const btmuxSocketPath = getBrokerTmuxSocketPath(
-    server.options,
-    profile.brokerDriver,
-    attempt.runtimeId
-  )
-  const sessionName = `hrc-${profile.brokerDriver}-${attempt.runtimeId}`
-  const eventLedgerPath = join(dirname(brokerIpcSocketPath), 'events.ndjson')
-  const brokerStderrPath = join(dirname(brokerIpcSocketPath), 'broker.err')
-  const brokerArgv = [
-    brokerBinary,
-    'run',
-    '--transport',
-    'unix',
-    '--socket',
-    brokerIpcSocketPath,
-    '--event-ledger',
-    eventLedgerPath,
-    '--runtime-id',
-    attempt.runtimeId,
-    '--host-session-id',
-    registration.hostSessionId,
-    '--generation',
-    String(registration.generation),
-    '--attach-token-file',
-    attachTokenPath,
-  ]
-  const brokerCommand = `exec ${brokerArgv.map(shellQuote).join(' ')} 2>${shellQuote(brokerStderrPath)}`
-
+  if (registration.socketPath === undefined) {
+    throw new Error('participant-served registration is missing its durable serving socket')
+  }
   return {
     schemaVersion: 'participant-hosting-intent/v1',
     join: registration.join,
     presentation,
     endpoint: {
       kind: 'unix-jsonrpc-ndjson',
-      socketPath: brokerIpcSocketPath,
+      socketPath: registration.socketPath,
       attachTokenRef,
       protocolVersion: 'harness-broker/0.2',
     },
     lifecyclePolicy,
-    hrcHosted: {
-      brokerDriver: profile.brokerDriver,
-      brokerBinary,
-      brokerArgv,
-      brokerCommand,
-      tmuxSocketPath: btmuxSocketPath,
-      sessionName,
-      eventLedgerPath,
-    },
   }
 }

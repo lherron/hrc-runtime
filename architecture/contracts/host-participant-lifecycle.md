@@ -519,16 +519,19 @@ These terms are load-bearing. Section 4 depends on holding them apart.
 | **Controller** | HRC's attaching client, today `hrc-server:<pid>`, fenced by `attachEpoch`. | HRC | one daemon attachment |
 | **Helper** | Any other process the host owns or spawns — a TUI, a tool child, an internal subagent worker. | host | arbitrary |
 | **Host lifecycle owner** | Who may start, stop or replace the *application* process: `external` or `hrc-managed`. | declared class policy | class |
-| **Broker join** | Who spawns the *bridge*: `hrc-hosted` or `participant-served`. Today's `join`. | declared class policy | class |
+| **Broker join** | Who spawns the *bridge*: `participant-served` (`hrc-hosted` retired by T-08567; stored rows keep the value). Today's `join`. | declared class policy | class |
 
 **A helper is never a host incarnation, never a participant and never an
 address.** A helper PID change is not a host change; a host PID change is not a
 helper change.
 
-**Broker ownership is not host ownership.** `join: 'hrc-hosted'` means HRC
+**Broker ownership is not host ownership.** `join: 'hrc-hosted'` meant HRC
 spawned a broker process. It conveys no authority over the application. This is
 the single most important separation in this contract and it is enforced by
-making `hostLifecycleOwner` an independent declared field (§3.2).
+making `hostLifecycleOwner` an independent declared field (§3.2). T-08567
+retires the `hrc-hosted` join: the class validator admits only
+`participant-served`; no new hosted registration is possible, while stored
+hosted rows keep their value under keep-forever ledger law.
 
 ---
 
@@ -647,7 +650,7 @@ and behaviorally identical.
 export type ParticipantRegistrationClassConfig = {
   classId: string
   adapterId: string
-  join: 'hrc-hosted' | 'participant-served'          // broker process ownership
+  join: 'participant-served'                         // broker process ownership (`hrc-hosted` retired, T-08567)
   address: 'permanent-keyed' | 'selected-scope'      // widened
   continuity: 'key-scoped' | 'host-incarnation'      // widened
   replaySemantics: 'none' | 'full-source-replay'
@@ -687,9 +690,9 @@ Coherence rules, all enforced at daemon startup by the existing validator:
    | `join` | `hostLifecycleOwner` | Meaning | Status |
    | --- | --- | --- | --- |
    | `participant-served` | `external` | Application and bridge both external. | **MVP configuration** |
-   | `hrc-hosted` | `external` | HRC spawns a bridge in front of an external application. HRC has broker authority only. | legal; this is the combination A1 got wrong |
+   | `hrc-hosted` | `external` | HRC spawns a bridge in front of an external application. HRC has broker authority only. | RETIRED (T-08567); stored rows keep the value |
    | `participant-served` | `hrc-managed` | HRC launches the application; the application serves its own bridge. | legal; managed follow-on |
-   | `hrc-hosted` | `hrc-managed` | HRC launches both. | legal; managed follow-on |
+   | `hrc-hosted` | `hrc-managed` | HRC launches both. | RETIRED (T-08567); stored rows keep the value |
 
 6. The value written to `runtimeStateJson.lifecycleOwner` is
    `hostLifecycleOwner === 'hrc-managed' ? undefined : 'external'`. It is
@@ -845,7 +848,7 @@ a field's permissibility are different failures with different fixes, and
 | # | Status | Reason | Trigger |
 | --- | --- | --- | --- |
 | 1 | `malformed_request` | — | body is not an object; an unsupported key is present; a required key is absent; a string is empty, untrimmable or contains NUL; `socketPath` is not absolute; `evidence` is not JSON-serializable; `requestedSessionRef` is **not parseable** as `<scopeRef>[/lane:<lane>]`; `expectedPredecessor` is present with a missing or extra key |
-| 2 | `malformed_request` | — | a field is present that its class policy forbids: `socketPath` on `hrc-hosted`, `requestedSessionRef` on `permanent-keyed`, `hostIncarnationId` or `expectedPredecessor` on `key-scoped`, `launchId` on an `external` class |
+| 2 | `malformed_request` | — | a field is present that its class policy forbids: `requestedSessionRef` on `permanent-keyed`, `hostIncarnationId` or `expectedPredecessor` on `key-scoped`, `launchId` on an `external` class |
 | 3 | `rejected` | `unknown_registration_class` | `classId` is not configured (existing `HrcNotFoundError`) |
 | 4 | `rejected` | `participant_scope_not_selectable` | `requestedSessionRef` **parses** but its agent/project is not `scopeTemplate`, its task is not in `selectableTasks`, or it carries a `roleName`. **Well-formed but disallowed — never `malformed_request`.** |
 | 5 | `rejected` | `participant_scope_not_reserved` | the selected address has no held reservation on this node (§4.3) |
@@ -1163,7 +1166,7 @@ resident driver — those depend on **it**.
 | `WriterSubject`, `WriterRef`, `WriterEvidence`, the three state unions, `validateWriterEvidence`, optional `ParticipantAdapter.retireWriter` / `inspectWriter` | `spaces-runtime-contracts` | **T-08510**, agent-spaces | **blocks T-08349's participant-served successor acceptance and T-08503's resident driver**, and the successor exit of both policies |
 | **a controlled reference adapter implementing both methods**, able to produce each cell of §3.6.4's truth table on demand for **both** subjects (`host` and `bridge`) and each `priorRecovery` value | `spaces-runtime-contracts` test/controlled-adapter surface | **T-08510** | **required inside T-08510.** Exported interfaces alone are not a usable gate: T-08349's installed both-join proof needs a real adapter that can answer, and it must not have to wait on the consumer product's host (T-08502) or resident driver (T-08503) to get one. The controlled adapter is what breaks that cycle. |
 | product adapter implementations of the two methods | consumer product adapter | T-08502 / T-08503 | downstream of T-08510; **not** a prerequisite of T-08349's proof |
-| broker-side `broker.writerEvidence` returning the same `WriterEvidence` | `spaces-harness-broker-protocol` | agent-spaces | **deferred, not in the minimum slice.** For `join: 'hrc-hosted'` HRC already has committed instance evidence, which the T-08349 closure names as sufficient for that join. Recorded here so nobody builds it speculatively; it becomes necessary only if an HRC-owned writer must assert retirement it cannot assert from committed instance facts. If added it is additive (`BrokerMethodV5`), keeping the negotiated protocol version unchanged exactly as `broker.installIdentity` / `broker.ensureInvocation` did. |
+| broker-side `broker.writerEvidence` returning the same `WriterEvidence` | `spaces-harness-broker-protocol` | agent-spaces | **deferred, not in the minimum slice.** T-08567 retired the `hrc-hosted` join and its committed-instance evidence path, so this row is moot for hosted writers. Recorded here so nobody builds it speculatively; it becomes necessary only if an HRC-owned writer must assert retirement it cannot assert from committed instance facts. If added it is additive (`BrokerMethodV5`), keeping the negotiated protocol version unchanged exactly as `broker.installIdentity` / `broker.ensureInvocation` did. |
 
 **Acyclic ordering.** This contract may be reviewed and closed before the slice
 exists. HRC work that does not reach a successor exit is not blocked by it:

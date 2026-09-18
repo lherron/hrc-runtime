@@ -16,7 +16,7 @@ const registration = (): ParticipantRegistration => ({
   registrationMode: 'legacy',
   classId: 'controlled-participant',
   adapterId: 'controlled-participant',
-  join: 'hrc-hosted',
+  join: 'participant-served',
   participantKey: 'opaque-permanent-key',
   scopeRef: 'agent:smokey:project:hrc-runtime:task:participant-1',
   laneRef: 'main',

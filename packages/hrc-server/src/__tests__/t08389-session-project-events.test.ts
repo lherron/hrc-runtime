@@ -130,7 +130,6 @@ describe('T-08389 — the derived fact', () => {
     expect(cause({ created: true, summon: true })).toBe('summon')
     expect(cause({ created: true, reason: 'exact-scope-claim' })).toBe('dispatch')
     expect(cause({ created: true, reason: 'roster-suffix-claim' })).toBe('dispatch')
-    expect(cause({ created: true, reason: 'codex-desktop-registration' })).toBe('desktop')
     expect(cause({ created: true, commandRun: true })).toBe('command_run')
     expect(cause({ created: true })).toBe('resolve')
   })

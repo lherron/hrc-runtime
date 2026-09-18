@@ -36,7 +36,6 @@ import {
   extractRuntimeControlState,
   withDirectTmuxDegradedControlState,
 } from './broker/runtime-state.js'
-import { currentDesktopObserverRuntimeIds } from './desktop/observer-supervisor.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { isRunActive, requireSession } from './require-helpers.js'
@@ -666,13 +665,6 @@ export async function reconcileDurableBrokerStartup(
     // rows; the harness-broker startup classifier must never stale or attach
     // them with broker.attach.
     //
-    // A registered Codex desktop observer is ALSO external and is deliberately
-    // still skipped HERE, unlike in `warmDurableBrokerBindings` (T-08296). This
-    // pass runs before the server instance exists and only CLASSIFIES on a
-    // throwaway controller; binding is the warmup's job, on the controller that
-    // owns the live event loop. Attaching in both places would put two clients
-    // on one desktop broker for no benefit. What this exclusion also buys is that
-    // no desktop row is classified-stale by a pass that cannot reattach it.
     if (isExternalLifecycleOwner(runtime)) {
       continue
     }
@@ -770,8 +762,8 @@ function alreadyAttachedOnServingController(
 /**
  * Attach one durable runtime onto the serving controller, at most once at a time.
  *
- * The SINGLE shared owner. Startup warmup and desktop registration recovery both
- * enter here, so they cannot each open a client for the same runtime, and the
+ * The SINGLE shared owner. Startup warmup enters here, so concurrent warmup
+ * callers cannot each open a client for the same runtime, and the
  * rich outcome is preserved for the warmup's category diagnostics.
  *
  * Concurrency contract, in full:
@@ -919,38 +911,10 @@ export function brokerWarmupCategoryForOutcome(
  * operator can see the control loop if the intermittent failure reappears.
  */
 /**
- * The desktop observers a restart may reattach: at most ONE per registration.
- *
- * Both a desktop observer and a genuine external participant carry
- * `lifecycleOwner: 'external'`, and the blanket exclusion of that flag is why an
- * HRC restart left desktop conversations unobserved (T-08296): the broker
- * survived, but the request-serving controller was never given a client for it,
- * so `seatProbe` answered `no active broker client` indefinitely and mail sat
- * pending while the runtime row read `ready`.
- *
- * The flag means two different things to the two populations, which is why
- * keying on it alone is wrong. For EPR the exclusion is REAL and stays: its
- * process substrate and attach protocol are external, `broker.attach` is not how
- * those rows are reattached, and registration convergence owns them. A desktop
- * observer is external only in the sense that HRC must never kill, reap or
- * cold-restart the ChatGPT window; its OBSERVER is an ordinary durable broker
- * over a unix endpoint and a leased tmux substrate.
- *
- * "Has a desktop registration for its scope" is NOT sufficient, and that gap is
- * Astra's finding on the first cut: §5 leaves a SUPERSEDED observer `ready` and
- * externally owned deliberately, so a scope predicate matches every historical
- * observer that conversation ever had and a restart would dial all of their
- * endpoints. Selection therefore reuses the supervisor's own
- * one-per-registration rule, which pins the session generation and takes the
- * most recent non-terminal row.
- *
- * External PROCESS-lifecycle protection is untouched either way: this decides
- * who gets a socket reattached, never who may be terminated.
+ * Externally-owned rows (EPR and participant-served participants) are never
+ * reattached by startup warmup: their process substrate and attach protocol are
+ * external, and registration convergence owns them.
  */
-function eligibleDesktopObserverIds(db: HrcDatabase): Set<string> {
-  return currentDesktopObserverRuntimeIds(db)
-}
-
 export async function warmDurableBrokerBindings(
   db: HrcDatabase,
   deps: {
@@ -982,12 +946,11 @@ export async function warmDurableBrokerBindings(
     },
   }
 
-  const eligibleDesktopObservers = eligibleDesktopObserverIds(db)
   for (const runtime of db.runtimes.listAll()) {
     if (
       runtime.controllerKind !== 'harness-broker' ||
       isRuntimeUnavailableStatus(runtime.status) ||
-      (isExternalLifecycleOwner(runtime) && !eligibleDesktopObservers.has(runtime.runtimeId)) ||
+      isExternalLifecycleOwner(runtime) ||
       !getPersistedDurableBrokerEndpoint(runtime)
     ) {
       continue
@@ -995,9 +958,8 @@ export async function warmDurableBrokerBindings(
     summary.total += 1
     let outcome: BrokerReattachOutcome
     try {
-      // Through the SHARED per-runtime owner, not a private call. Desktop
-      // registration recovery reaches the serving controller by the same route,
-      // and the two used to be able to attach the same runtime concurrently —
+      // Through the SHARED per-runtime owner, not a private call. Two
+      // concurrent attachers used to be able to attach the same runtime —
       // `setActive` replaces the map entry but neither closes the losing client
       // nor cancels its live consumer, so the loser kept projecting from a second
       // socket forever.

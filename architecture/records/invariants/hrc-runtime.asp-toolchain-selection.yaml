@@ -38,17 +38,17 @@ predicate: >
   governed by the resolver. Its worker, codex-tui wrapper, and hook receiver
   run only from the frozen executionRelease, with no fallback. Interactive
   births of other broker drivers (claude-code-tmux, pi-tui-tmux,
-  codex-cli-tmux), hosted participant brokers, and the Codex Desktop observer
-  broker remain resolver-governed [superseded by the T-08562 amendment below].
+  codex-cli-tmux) remain resolver-governed [superseded by the T-08562 amendment
+  below]. The hrc-hosted participant join and the Codex Desktop observer broker
+  are retired (T-08567); nothing new is governed under their names.
   As amended for every supported broker birth, every new interactive
   claude-code-tmux and pi-tui-tmux birth on a configured node is likewise
   aspd-prepared and not governed by the resolver: its worker, hook bridge and
   tmux launch runner run only from the frozen executionRelease, with no
   fallback. On a configured node the resolver still governs only the
   non-interactive pi-sdk broker (harness-broker-pi), the deprecated
-  codex-cli-tmux interactive driver, hosted participant brokers, the Codex
-  Desktop observer broker, and the legacy stdio test seam; with HRC_ASPD_SOCKET
-  unset it governs every broker route as before. The migrated broker-plan preview is an aspd
+  codex-cli-tmux interactive driver, and the legacy stdio test seam; with
+  HRC_ASPD_SOCKET unset it governs every broker route as before. The migrated broker-plan preview is an aspd
   observation and spawns no HRC-owned aspc-facade child through this resolver;
   the direct preview branch is retired (T-08584); the only preview is the
   broker-plan aspd observation, and no preview falls back to a

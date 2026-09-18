@@ -37,15 +37,6 @@ export const CLI_PACKAGES = {
   'hrc-cli': { bin: 'hrc', entrypoint: 'src/cli.ts', helpExitCode: 0 },
   'hrcchat-cli': { bin: 'hrcchat', entrypoint: 'src/main.ts', helpExitCode: 2 },
   'hrc-viewer': { bin: 'hrc-viewer', entrypoint: 'src/main.ts', helpExitCode: 0 },
-  // Private integration plumbing, not an operator command (P-00502 §3). It is
-  // linked as a bin because the managed Codex overlay hook has to name a stable
-  // path from inside the desktop app's own hook execution, where neither the
-  // release root nor a workspace checkout is known.
-  'hrc-server': {
-    bin: 'hrc-desktop-hook',
-    entrypoint: 'src/launch/desktop-hook-cli.ts',
-    helpExitCode: 0,
-  },
 } as const
 
 type CliPackageName = keyof typeof CLI_PACKAGES

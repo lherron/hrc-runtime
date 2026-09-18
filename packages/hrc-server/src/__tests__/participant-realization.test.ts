@@ -16,8 +16,6 @@ import { HarnessBrokerController } from '../broker/controller.js'
 import {
   assertPriorParticipantRecoveryDisposition,
   ensureAndStageParticipantAttach,
-  ensureParticipantInvocation,
-  installAndHelloParticipantBroker,
   recoverParticipantEstablishmentWork,
   scheduleParticipantEstablishment,
 } from '../participant-establishment.js'
@@ -108,20 +106,20 @@ function fakeTmux() {
   }
 }
 
-function registration(joinDirection: ParticipantRegistration['join']): ParticipantRegistration {
+function registration(): ParticipantRegistration {
   return {
-    registrationId: `registration-${joinDirection}`,
+    registrationId: 'registration-participant-served',
     registrationMode: 'legacy',
-    classId: `class-${joinDirection}`,
+    classId: 'class-participant-served',
     adapterId: 'controlled-participant',
-    join: joinDirection,
-    participantKey: `key-${joinDirection}`,
-    scopeRef: `agent:larry:project:hrc-runtime:task:participant-realization-${joinDirection}`,
+    join: 'participant-served',
+    participantKey: 'key-participant-served',
+    scopeRef: 'agent:larry:project:hrc-runtime:task:participant-realization-served',
     laneRef: 'main',
     hostSessionId: 'hsid-participant-realization',
     generation: 1,
     workspaceCwd: '/tmp/participant-workspace',
-    ...(joinDirection === 'participant-served' ? { socketPath: '/tmp/served.sock' } : {}),
+    socketPath: '/tmp/served.sock',
     preparationJson: '{}',
     createdAt: '2026-09-09T22:30:00.000Z',
     updatedAt: '2026-09-09T22:30:00.000Z',
@@ -146,19 +144,16 @@ function attempt(registrationId: string, runtimeId: string): ParticipantAttempt 
   }
 }
 
-async function profileFor(
-  joinDirection: ParticipantRegistration['join'],
-  input: ParticipantAttempt
-): Promise<BrokerExecutionProfile> {
+async function profileFor(input: ParticipantAttempt): Promise<BrokerExecutionProfile> {
   const adapter = createControlledParticipantAdapter({
     adapterId: 'controlled-participant',
     workspaceCwd: '/tmp/participant-workspace',
     driver: 'noop-driver',
   })
   const prepared = await adapter.prepare({
-    classId: `class-${joinDirection}`,
-    join: joinDirection,
-    participantKey: `key-${joinDirection}`,
+    classId: 'class-participant-served',
+    join: 'participant-served',
+    participantKey: 'key-participant-served',
     workspaceCwd: '/tmp/participant-workspace',
     preparation: {},
     identity: {
@@ -184,7 +179,7 @@ test('persists actual HRC leases then freezes the unchanged start request before
   const tmux = fakeTmux()
   const installedIdentities: unknown[] = []
   const helloRequests: unknown[] = []
-  let brokerInstanceId = 'broker-instance-1'
+  const brokerInstanceId = 'broker-instance-1'
   const server = {
     options: { runtimeRoot },
     db,
@@ -234,117 +229,9 @@ test('persists actual HRC leases then freezes the unchanged start request before
       }) as never,
   } as unknown as HrcServerInstanceForHandlers
   try {
-    const hostedRegistration = registration('hrc-hosted')
-    const hostedAttempt = attempt(hostedRegistration.registrationId, 'rt-hosted')
-    const hostedProfile = await profileFor('hrc-hosted', hostedAttempt)
-    const hostedIntent = await createParticipantHostingIntent(
-      server,
-      hostedRegistration,
-      hostedAttempt,
-      hostedProfile
-    )
-    if (hostedIntent.hrcHosted === undefined) throw new Error('expected hosted intent')
-    // The isolated hosted-broker probe records macOS's post-shebang `ps`
-    // representation: the shipped executable appears as `bun <script argv>`.
-    tmux.setNextBrokerCommandLine(`bun ${hostedIntent.hrcHosted.brokerArgv.join(' ')}`)
-    db.participantRegistrations.insertRegistration(hostedRegistration)
-    db.participantRegistrations.insertAttempt({
-      ...hostedAttempt,
-      preparedProfileJson: JSON.stringify(hostedProfile),
-      adapterDispatchEnvJson: JSON.stringify({ ADAPTER_ONLY: 'kept' }),
-      hostingIntentJson: JSON.stringify(hostedIntent),
-    })
-
-    const frozenHosted = await realizeAndFreezeParticipantDispatch(
-      server,
-      hostedRegistration,
-      hostedAttempt
-    )
-    expect(frozenHosted).toMatchObject({ state: 'DISPATCH_FROZEN' })
-    const realizedHosted = JSON.parse(frozenHosted.realizedHostingJson ?? '{}')
-    const dispatchHosted = JSON.parse(frozenHosted.dispatchJson ?? '{}')
-    expect(realizedHosted).toMatchObject({
-      substrate: { kind: 'leased-tmux', brokerWindow: { paneId: '%1' }, pid: 83_349 },
-      presentation: { kind: 'none' },
-    })
-    expect(dispatchHosted).toMatchObject({
-      startRequest: hostedProfile.harnessInvocation.startRequest,
-      dispatchEnv: { ADAPTER_ONLY: 'kept' },
-      lifecyclePolicy: hostedIntent.lifecyclePolicy,
-    })
-    expect(dispatchHosted.runtime).toBeUndefined()
-    expect(tmux.createCommands).toEqual([hostedIntent.hrcHosted?.brokerCommand])
-    expect(
-      await realizeAndFreezeParticipantDispatch(server, hostedRegistration, frozenHosted)
-    ).toEqual(frozenHosted)
-    expect(tmux.createCommands).toHaveLength(1)
-
-    // Exact lease/process equality only admits a candidate. The broker still
-    // receives the launch identity, then HELLO, and its instance/epoch
-    // acknowledgement is frozen before any ensure can be considered.
-    const installedHosted = await installAndHelloParticipantBroker(
-      server,
-      hostedRegistration,
-      frozenHosted
-    )
-    expect(installedHosted).toMatchObject({ state: 'INSTALL_CONFIRMED' })
-    expect(JSON.parse(installedHosted.brokerIdentityJson ?? '{}')).toMatchObject({
-      brokerInstanceId: 'broker-instance-1',
-      runtimeId: hostedAttempt.runtimeId,
-      attachEpoch: hostedAttempt.attachEpoch,
-      invocationId: hostedAttempt.invocationId,
-    })
-    expect(installedIdentities).toHaveLength(1)
-    expect(helloRequests).toEqual([
-      {
-        clientInfo: { name: 'hrc-server' },
-        protocolVersions: [hostedIntent.endpoint.protocolVersion],
-        capabilities: { permissionRequests: true },
-      },
-    ])
-    const ensuredHosted = await ensureParticipantInvocation(
-      server,
-      hostedRegistration,
-      installedHosted
-    )
-    expect(ensuredHosted).toMatchObject({
-      attempt: {
-        state: 'INVOCATION_READY',
-        brokerIdentityJson: installedHosted.brokerIdentityJson,
-      },
-      receipt: { state: 'started', brokerInstanceId: 'broker-instance-1' },
-    })
-    expect(ensuredHosted.attempt.dispatchJson).toBe(installedHosted.dispatchJson)
-    brokerInstanceId = 'broker-instance-conflict'
-    await expect(
-      installAndHelloParticipantBroker(server, hostedRegistration, ensuredHosted.attempt)
-    ).rejects.toThrow('participant broker instance or epoch conflicts with durable acknowledgement')
-    expect(db.participantRegistrations.getAttempt(hostedAttempt.attemptId)).toMatchObject({
-      state: 'INVOCATION_READY',
-      dispatchJson: installedHosted.dispatchJson,
-      realizedHostingJson: installedHosted.realizedHostingJson,
-      brokerIdentityJson: installedHosted.brokerIdentityJson,
-    })
-
-    const unavailableServer = {
-      ...server,
-      brokerTmuxManagerFactory: () => {
-        throw new Error('writer unavailable')
-      },
-    } as unknown as HrcServerInstanceForHandlers
-    await expect(
-      realizeAndFreezeParticipantDispatch(unavailableServer, hostedRegistration, frozenHosted)
-    ).rejects.toThrow('writer unavailable')
-    expect(db.participantRegistrations.getAttempt(hostedAttempt.attemptId)).toMatchObject({
-      state: 'INVOCATION_READY',
-      dispatchJson: installedHosted.dispatchJson,
-      realizedHostingJson: installedHosted.realizedHostingJson,
-      brokerIdentityJson: installedHosted.brokerIdentityJson,
-    })
-
-    const servedRegistration = registration('participant-served')
+    const servedRegistration = registration()
     const servedAttempt = attempt(servedRegistration.registrationId, 'rt-served')
-    const preparedServed = await profileFor('participant-served', servedAttempt)
+    const preparedServed = await profileFor(servedAttempt)
     const servedProfile: BrokerExecutionProfile = {
       ...preparedServed,
       interactionMode: 'interactive',
@@ -380,7 +267,7 @@ test('persists actual HRC leases then freezes the unchanged start request before
       terminalSurface: { kind: 'tmux-pane', ownership: 'hrc', paneId: expect.any(String) },
       terminalSurfaceRequired: true,
     })
-    expect(tmux.createCommands).toHaveLength(1)
+    expect(tmux.createCommands).toHaveLength(0)
   } finally {
     db.close()
   }
@@ -510,83 +397,81 @@ test('retries replay failure after activation CAS without reclassification or de
     stopping: false,
   } as unknown as HrcServerInstanceForHandlers
   try {
-    const hostedRegistration = registration('hrc-hosted')
-    const hostedAttempt = {
-      ...attempt(hostedRegistration.registrationId, 'rt-stage'),
+    const stagedRegistration = registration()
+    const stagedAttempt = {
+      ...attempt(stagedRegistration.registrationId, 'rt-stage'),
       activationClassification: 'resume' as const,
     }
-    const hostedProfile = await profileFor('hrc-hosted', hostedAttempt)
-    const hostedIntent = await createParticipantHostingIntent(
+    const stagedProfile = await profileFor(stagedAttempt)
+    const stagedIntent = await createParticipantHostingIntent(
       server,
-      hostedRegistration,
-      hostedAttempt,
-      hostedProfile
+      stagedRegistration,
+      stagedAttempt,
+      stagedProfile
     )
-    if (hostedIntent.hrcHosted === undefined) throw new Error('expected hosted intent')
-    tmux.setNextBrokerCommandLine(`bun ${hostedIntent.hrcHosted.brokerArgv.join(' ')}`)
     db.sessions.insert({
-      hostSessionId: hostedRegistration.hostSessionId,
-      scopeRef: hostedRegistration.scopeRef,
-      laneRef: hostedRegistration.laneRef,
-      generation: hostedRegistration.generation,
+      hostSessionId: stagedRegistration.hostSessionId,
+      scopeRef: stagedRegistration.scopeRef,
+      laneRef: stagedRegistration.laneRef,
+      generation: stagedRegistration.generation,
       status: 'active',
-      createdAt: hostedRegistration.createdAt,
-      updatedAt: hostedRegistration.updatedAt,
+      createdAt: stagedRegistration.createdAt,
+      updatedAt: stagedRegistration.updatedAt,
       parsedScopeJson: {},
       ancestorScopeRefs: [],
     })
-    db.participantRegistrations.insertRegistration(hostedRegistration)
+    db.participantRegistrations.insertRegistration(stagedRegistration)
     db.participantRegistrations.insertAttempt({
-      ...hostedAttempt,
-      preparedProfileJson: JSON.stringify(hostedProfile),
+      ...stagedAttempt,
+      preparedProfileJson: JSON.stringify(stagedProfile),
       adapterDispatchEnvJson: 'null',
-      hostingIntentJson: JSON.stringify(hostedIntent),
+      hostingIntentJson: JSON.stringify(stagedIntent),
     })
 
-    const staged = await ensureAndStageParticipantAttach(server, hostedRegistration, hostedAttempt)
+    const staged = await ensureAndStageParticipantAttach(server, stagedRegistration, stagedAttempt)
 
     expect(staged).toMatchObject({ state: 'ATTACH_CONFIRMED' })
     expect(attachCalls).toBe(1)
     expect(replayCalls).toBe(0)
     expect(ackCalls).toBe(0)
-    expect(db.runtimes.getByRuntimeId(hostedAttempt.runtimeId)).toMatchObject({
-      activeOperationId: hostedAttempt.operationId,
-      activeInvocationId: hostedAttempt.invocationId,
+    expect(db.runtimes.getByRuntimeId(stagedAttempt.runtimeId)).toMatchObject({
+      activeOperationId: stagedAttempt.operationId,
+      activeInvocationId: stagedAttempt.invocationId,
       status: 'starting',
       runtimeStateJson: {
         lifecycleOwner: 'external',
         control: { brokerAttached: false },
       },
     })
-    expect(db.runtimeOperations.getByOperationId(hostedAttempt.operationId)).toMatchObject({
+    expect(db.runtimeOperations.getByOperationId(stagedAttempt.operationId)).toMatchObject({
       startupMethod: 'broker.ensureInvocation',
-      selectedProfileHash: hostedProfile.profileHash,
+      selectedProfileHash: stagedProfile.profileHash,
     })
-    expect(db.brokerInvocations.getByInvocationId(hostedAttempt.invocationId)).toMatchObject({
+    expect(db.brokerInvocations.getByInvocationId(stagedAttempt.invocationId)).toMatchObject({
       invocationState: 'ready',
       lastProjectedSeq: 0,
-      startRequestHash: hostedProfile.harnessInvocation.startRequestHash,
+      startRequestHash: stagedProfile.harnessInvocation.startRequestHash,
     })
 
     // Losing an unactivated candidate leaves the durable attempt staged. Its
     // next callback must reconnect that same attempt instead of rerunning
     // ensure or trying to release a missing candidate.
-    const legacyRuntime = db.runtimes.getByRuntimeId(hostedAttempt.runtimeId)
+    const legacyRuntime = db.runtimes.getByRuntimeId(stagedAttempt.runtimeId)
     if (legacyRuntime === null) throw new Error('expected participant runtime bookkeeping')
     const legacyRuntimeState = Object.fromEntries(
       Object.entries(legacyRuntime.runtimeStateJson ?? {}).filter(
         ([key]) => key !== 'lifecycleOwner'
       )
     )
-    db.runtimes.update(hostedAttempt.runtimeId, {
+    db.runtimes.update(stagedAttempt.runtimeId, {
       runtimeStateJson: legacyRuntimeState,
       updatedAt: '2026-09-15T14:30:00.000Z',
     })
-    await controller.discardStagedParticipantAttach(hostedAttempt.attemptId)
-    scheduleParticipantEstablishment(server, hostedRegistration, staged)
-    const failedActivation = server.participantEstablishmentOperations.get(hostedAttempt.attemptId)
+    await controller.discardStagedParticipantAttach(stagedAttempt.attemptId)
+    scheduleParticipantEstablishment(server, stagedRegistration, staged)
+    const failedActivation = server.participantEstablishmentOperations.get(stagedAttempt.attemptId)
     await failedActivation
-    const retrying = db.participantRegistrations.getAttempt(hostedAttempt.attemptId)
+    const retrying = db.participantRegistrations.getAttempt(stagedAttempt.attemptId)
     expect(retrying).toMatchObject({
       state: 'ACTIVE',
       initialActivationConfirmedAt: expect.any(String),
@@ -594,7 +479,7 @@ test('retries replay failure after activation CAS without reclassification or de
       establishmentAttemptCount: 1,
     })
     expect(db.participantRegistrations.listEstablishmentWork()).toContainEqual(retrying)
-    expect(db.runtimes.getByRuntimeId(hostedAttempt.runtimeId)).toMatchObject({
+    expect(db.runtimes.getByRuntimeId(stagedAttempt.runtimeId)).toMatchObject({
       status: expect.not.stringMatching(/^(stale|terminated)$/),
       runtimeStateJson: {
         lifecycleOwner: 'external',
@@ -602,10 +487,10 @@ test('retries replay failure after activation CAS without reclassification or de
       },
     })
 
-    const retry = server.participantEstablishmentOperations.get(hostedAttempt.attemptId)
+    const retry = server.participantEstablishmentOperations.get(stagedAttempt.attemptId)
     expect(retry).toBeDefined()
     await retry
-    expect(db.participantRegistrations.getAttempt(hostedAttempt.attemptId)).toMatchObject({
+    expect(db.participantRegistrations.getAttempt(stagedAttempt.attemptId)).toMatchObject({
       state: 'ACTIVE',
       initialActivationConfirmedAt: expect.any(String),
       establishmentWorkState: 'completed',
@@ -614,10 +499,10 @@ test('retries replay failure after activation CAS without reclassification or de
     expect(attachCalls).toBe(5)
     expect(replayCalls).toBe(2)
     expect(ackCalls).toBe(0)
-    expect(db.runtimes.getByRuntimeId(hostedAttempt.runtimeId)?.runtimeStateJson).toMatchObject({
+    expect(db.runtimes.getByRuntimeId(stagedAttempt.runtimeId)?.runtimeStateJson).toMatchObject({
       participantActivation: {
-        attemptId: hostedAttempt.attemptId,
-        attachEpoch: hostedAttempt.attachEpoch,
+        attemptId: stagedAttempt.attemptId,
+        attachEpoch: stagedAttempt.attachEpoch,
         classification: 'resume',
       },
     })
@@ -626,7 +511,7 @@ test('retries replay failure after activation CAS without reclassification or de
         .listByKind('runtime.ensured')
         .filter(
           (event) =>
-            event.runtimeId === hostedAttempt.runtimeId &&
+            event.runtimeId === stagedAttempt.runtimeId &&
             event.payload?.['source'] === 'participant-activation'
         )
     ).toHaveLength(1)
@@ -635,10 +520,10 @@ test('retries replay failure after activation CAS without reclassification or de
     // and, critically, no activation attempt without a staged candidate.
     scheduleParticipantEstablishment(
       server,
-      hostedRegistration,
-      db.participantRegistrations.getAttempt(hostedAttempt.attemptId) ?? hostedAttempt
+      stagedRegistration,
+      db.participantRegistrations.getAttempt(stagedAttempt.attemptId) ?? stagedAttempt
     )
-    await server.participantEstablishmentOperations.get(hostedAttempt.attemptId)
+    await server.participantEstablishmentOperations.get(stagedAttempt.attemptId)
     expect(attachCalls).toBe(5)
     expect(replayCalls).toBe(2)
   } finally {
@@ -650,7 +535,7 @@ test('retries replay failure after activation CAS without reclassification or de
 test('holds successor replay until prior recovery has an independent durable disposition', () => {
   const db = openHrcDatabase(':memory:')
   try {
-    const durableRegistration = registration('hrc-hosted')
+    const durableRegistration = registration()
     db.participantRegistrations.insertRegistration(durableRegistration)
     const prior = {
       ...attempt(durableRegistration.registrationId, 'rt-prior-recovery'),
@@ -687,7 +572,7 @@ test('holds successor replay until prior recovery has an independent durable dis
 test('startup recovery discovers durable work without another participant callback', async () => {
   const db = openHrcDatabase(':memory:')
   try {
-    const durableRegistration = registration('hrc-hosted')
+    const durableRegistration = registration()
     const activeAttempt = {
       ...attempt(durableRegistration.registrationId, 'rt-boot-recovery'),
       state: 'ACTIVE' as const,
@@ -719,7 +604,7 @@ test('startup recovery discovers durable work without another participant callba
 test('startup recovery fences durable work from an older attempt epoch', async () => {
   const db = openHrcDatabase(':memory:')
   try {
-    const durableRegistration = registration('hrc-hosted')
+    const durableRegistration = registration()
     const stale = {
       ...attempt(durableRegistration.registrationId, 'rt-stale-work'),
       state: 'DETACHED' as const,
@@ -760,7 +645,7 @@ test('startup recovery fences durable work from an older attempt epoch', async (
 test('bounded retries become durably inert without abandoning a possibly-live writer', async () => {
   const db = openHrcDatabase(':memory:')
   try {
-    const durableRegistration = registration('hrc-hosted')
+    const durableRegistration = registration()
     const activeAttempt = {
       ...attempt(durableRegistration.registrationId, 'rt-retry-exhaustion'),
       state: 'ACTIVE' as const,
@@ -797,56 +682,6 @@ test('bounded retries become durably inert without abandoning a possibly-live wr
     expect(
       db.participantRegistrations.getAttempt(activeAttempt.attemptId)?.establishmentAttemptCount
     ).toBe(attemptsBefore)
-  } finally {
-    db.close()
-  }
-})
-
-test('refuses an incumbent broker whose attach-token path differs from the committed argv', async () => {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), 't08349-incumbent-'))
-  temporaryRoots.push(runtimeRoot)
-  const db = openHrcDatabase(':memory:')
-  const tmux = fakeTmux()
-  const server = {
-    options: { runtimeRoot },
-    db,
-    generateBrokerAttachToken: () => 'incumbent-token',
-    brokerTmuxManagerFactory: tmux.manager,
-  } as unknown as HrcServerInstanceForHandlers
-  try {
-    const hostedRegistration = registration('hrc-hosted')
-    const hostedAttempt = attempt(hostedRegistration.registrationId, 'rt-incumbent')
-    const hostedProfile = await profileFor('hrc-hosted', hostedAttempt)
-    const hostedIntent = await createParticipantHostingIntent(
-      server,
-      hostedRegistration,
-      hostedAttempt,
-      hostedProfile
-    )
-    const hosted = hostedIntent.hrcHosted
-    if (hosted === undefined) throw new Error('expected hosted intent')
-    tmux.seedWindow(hosted.tmuxSocketPath, hosted.sessionName, 'broker', {
-      command: 'bun',
-      pid: 91_234,
-      dead: false,
-      commandLine: `bun ${hosted.brokerArgv.join(' ')}-different`,
-    })
-    db.participantRegistrations.insertRegistration(hostedRegistration)
-    db.participantRegistrations.insertAttempt({
-      ...hostedAttempt,
-      preparedProfileJson: JSON.stringify(hostedProfile),
-      adapterDispatchEnvJson: 'null',
-      hostingIntentJson: JSON.stringify(hostedIntent),
-    })
-
-    await expect(
-      realizeAndFreezeParticipantDispatch(server, hostedRegistration, hostedAttempt)
-    ).rejects.toThrow('participant broker writer does not match the committed launch identity')
-    expect(tmux.createCommands).toEqual([])
-    const persisted = db.participantRegistrations.getAttempt(hostedAttempt.attemptId)
-    expect(persisted).toMatchObject({ state: 'HOSTING_INTENT_PERSISTED' })
-    expect(persisted?.realizedHostingJson).toBeUndefined()
-    expect(persisted?.dispatchJson).toBeUndefined()
   } finally {
     db.close()
   }

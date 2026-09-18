@@ -265,7 +265,7 @@ beforeEach(async () => {
     operationId: 'op-t08296-int',
     runtimeId: RUNTIME_ID,
     brokerProtocol: 'harness-broker/0.2',
-    brokerDriver: 'codex-desktop',
+    brokerDriver: 'codex-cli-tmux',
     invocationState: 'ready',
     capabilitiesJson: '{}',
     specHash: 'spec',

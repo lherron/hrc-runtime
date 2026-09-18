@@ -115,9 +115,9 @@ predicate: >
   refuse with legacy_launch_ingest_retired and write nothing durable, no OTLP
   log listener is bound, and spooled entries for those routes are quarantined
   without being applied, so run, turn, and runtime state are never derived from
-  those native payloads. Codex Desktop registration (POST
-  /v1/internal/desktop/register, including its hrc-desktop-hook spool entries)
-  is outside this sentence and remains governed by
+  those native payloads. The retired Codex Desktop registration route (POST
+  /v1/internal/desktop/register, T-08567) answers 404; Desktop threads join
+  through the generic participant door governed by
   hrc-runtime.participant-session-lifecycle.
 authority: wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, and wrkq:T-08201 revision 5 (C-19938)
 source:

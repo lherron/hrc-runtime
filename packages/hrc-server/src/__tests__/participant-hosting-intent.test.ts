@@ -19,19 +19,19 @@ afterEach(async () => {
   )
 })
 
-function registration(joinDirection: ParticipantRegistration['join']): ParticipantRegistration {
+function registration(): ParticipantRegistration {
   return {
-    registrationId: `registration-${joinDirection}`,
-    classId: `class-${joinDirection}`,
+    registrationId: 'registration-participant-served',
+    classId: 'class-participant-served',
     adapterId: 'controlled-participant',
-    join: joinDirection,
-    participantKey: `key-${joinDirection}`,
+    join: 'participant-served',
+    participantKey: 'key-participant-served',
     scopeRef: 'agent:larry:project:hrc-runtime:task:participant-hosting-intent',
     laneRef: 'main',
     hostSessionId: 'hsid-hosting-intent',
     generation: 1,
     workspaceCwd: '/tmp/participant-workspace',
-    ...(joinDirection === 'participant-served' ? { socketPath: '/tmp/served broker.sock' } : {}),
+    socketPath: '/tmp/served broker.sock',
     preparationJson: '{}',
     createdAt: '2026-09-09T22:20:00.000Z',
     updatedAt: '2026-09-09T22:20:00.000Z',
@@ -67,9 +67,9 @@ async function controlledProfile(): Promise<BrokerExecutionProfile> {
     driver: 'noop-driver',
   })
   const result = await adapter.prepare({
-    classId: 'class-hrc-hosted',
-    join: 'hrc-hosted',
-    participantKey: 'key-hrc-hosted',
+    classId: 'class-participant-served',
+    join: 'participant-served',
+    participantKey: 'key-participant-served',
     workspaceCwd: '/tmp/participant-workspace',
     preparation: {},
     identity: {
@@ -88,33 +88,10 @@ async function controlledProfile(): Promise<BrokerExecutionProfile> {
   return result.profile
 }
 
-test('preserves every hosted command argv through shell rendering and records requested presentation', async () => {
+test('records requested presentation and serves the participant-owned endpoint', async () => {
   const runtimeRoot = await mkdtemp(join(tmpdir(), 't08349 path '))
   temporaryRoots.push(runtimeRoot)
   const baseProfile = await controlledProfile()
-  const hosted = await createParticipantHostingIntent(
-    server(runtimeRoot),
-    registration('hrc-hosted'),
-    attempt('rt host intent'),
-    baseProfile
-  )
-  expect(hosted.presentation).toEqual({ kind: 'none' })
-  expect(hosted.hrcHosted).toBeDefined()
-  const hostedIntent = hosted.hrcHosted!
-  const shell = Bun.spawn(
-    [
-      '/bin/sh',
-      '-c',
-      `set -- ${hostedIntent.brokerCommand.slice('exec '.length)}; printf '%s\\n' "$@"`,
-    ],
-    { stdout: 'pipe', stderr: 'pipe' }
-  )
-  expect(await shell.exited).toBe(0)
-  expect(await new Response(shell.stdout).text()).toBe(`${hostedIntent.brokerArgv.join('\n')}\n`)
-  const tokenPath = hosted.endpoint.attachTokenRef.path
-  expect(await readFile(tokenPath, 'utf8')).toBe('durable-token-for-test')
-  expect(JSON.stringify(hosted)).not.toContain('durable-token-for-test')
-
   const servedProfile: BrokerExecutionProfile = {
     ...baseProfile,
     interactionMode: 'interactive',
@@ -128,11 +105,14 @@ test('preserves every hosted command argv through shell rendering and records re
   }
   const served = await createParticipantHostingIntent(
     server(runtimeRoot),
-    registration('participant-served'),
+    registration(),
     attempt('rt served intent'),
     servedProfile
   )
   expect(served.presentation).toEqual({ kind: 'tmux-tui' })
-  expect(served.hrcHosted).toBeUndefined()
+  expect('hrcHosted' in served).toBe(false)
   expect(served.endpoint.socketPath).toBe('/tmp/served broker.sock')
+  const tokenPath = served.endpoint.attachTokenRef.path
+  expect(await readFile(tokenPath, 'utf8')).toBe('durable-token-for-test')
+  expect(JSON.stringify(served)).not.toContain('durable-token-for-test')
 })

@@ -6,9 +6,7 @@
  * 1. The writer HRC asks about must be the actual writer being replaced. The
  *    broker instance HRC committed at install acknowledgement is a bridge; it
  *    is not an application host incarnation, and its id must never be relabeled
- *    as one on the basis of the join direction. For `hrc-hosted` the evidence
- *    owner is HRC's own committed instance facts, so a legacy hosted adapter
- *    that exposes neither optional writer method still works.
+ *    as one on the basis of the join direction.
  *
  * 2. Classification compares the candidate against the last ACTIVATED known
  *    evidence, not against whatever the immediately prior attempt happened to
@@ -29,7 +27,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { createControlledParticipantAdapter } from 'agent-spaces/testing'
-import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 import type {
   ParticipantAdapter,
   WriterEvidence,
@@ -47,7 +45,7 @@ import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-
 type GenericParticipantClass = {
   classId: string
   adapterId: string
-  join: 'hrc-hosted' | 'participant-served'
+  join: 'participant-served'
   address: 'permanent-keyed'
   continuity: 'key-scoped'
   replaySemantics: 'none' | 'full-source-replay'
@@ -56,23 +54,16 @@ type GenericParticipantClass = {
   defaultTtl: number
 }
 
-const hostedClass: GenericParticipantClass = {
-  classId: 't08349-writer-hosted',
+const servedClass: GenericParticipantClass = {
+  classId: 't08349-writer-served',
   adapterId: 'controlled-participant',
-  join: 'hrc-hosted',
+  join: 'participant-served',
   address: 'permanent-keyed',
   continuity: 'key-scoped',
-  replaySemantics: 'none',
+  replaySemantics: 'full-source-replay',
   scopeTemplate: { agent: 'smokey', project: 'hrc-runtime' },
   maxInstances: 2,
   defaultTtl: 60,
-}
-
-const servedClass: GenericParticipantClass = {
-  ...hostedClass,
-  classId: 't08349-writer-served',
-  join: 'participant-served',
-  replaySemantics: 'full-source-replay',
 }
 
 const FIXED_NOW = '2026-09-15T15:00:00.000Z'
@@ -116,16 +107,6 @@ function capturingAdapter(
   }
 }
 
-/** A hosted adapter predating the writer-evidence seam: neither optional method. */
-function legacyHostedAdapter(adapterId: string, workspaceCwd: string): ParticipantAdapter {
-  const base = createControlledParticipantAdapter({ adapterId, workspaceCwd })
-  return {
-    adapterId: base.adapterId,
-    admit: (input) => base.admit(input),
-    prepare: (input) => base.prepare(input),
-  }
-}
-
 type FakeWindow = {
   socketPath: string
   sessionName: string
@@ -137,10 +118,10 @@ type FakeWindow = {
 type FakePaneProcess = { command: string; pid: number; dead: boolean; commandLine?: string }
 
 /**
- * A tmux double with two phases. `unavailable` makes hosted realization fail
- * fast, so the establishment chain exhausts without producing any resource.
- * `observing` then serves the one committed broker window that the writer
- * evidence path re-reads. It never creates a window in either phase.
+ * A tmux double with two phases. `unavailable` makes realization fail fast, so
+ * the establishment chain exhausts without producing any resource. `observing`
+ * then serves the one committed window that the writer evidence path re-reads.
+ * It never creates a window in either phase.
  */
 function fakeTmux() {
   const state: {
@@ -223,63 +204,6 @@ async function settled(
   throw new Error('participant establishment never exhausted its durable retries')
 }
 
-function realizedLease(window: FakeWindow): string {
-  return JSON.stringify({
-    schemaVersion: 'participant-realized-hosting/v1',
-    endpoint: { kind: 'unix-jsonrpc-ndjson' },
-    substrate: { kind: 'leased-tmux', brokerWindow: window, pid: 83_349, command: 'bun' },
-    presentation: { kind: 'none' },
-  })
-}
-
-/** Walks a stalled hosted attempt to the producer terminal HRC itself projects. */
-function driveToProducerTerminal(
-  db: HrcDatabase,
-  attemptId: string,
-  window: FakeWindow,
-  brokerInstanceId: string
-): void {
-  const snapshots: Array<['realizedHostingJson' | 'dispatchJson' | 'brokerIdentityJson', string]> =
-    [
-      ['realizedHostingJson', realizedLease(window)],
-      ['dispatchJson', '{}'],
-      ['brokerIdentityJson', JSON.stringify({ brokerInstanceId })],
-    ]
-  for (const [field, value] of snapshots) {
-    expect(
-      db.participantRegistrations.setSnapshotIfAbsent(attemptId, field, value, FIXED_NOW)
-    ).toBe(true)
-  }
-  const walk: Array<
-    [
-      from:
-        | 'HOSTING_INTENT_PERSISTED'
-        | 'REALIZED'
-        | 'DISPATCH_FROZEN'
-        | 'INSTALL_CONFIRMED'
-        | 'INVOCATION_READY',
-      to: 'REALIZED' | 'DISPATCH_FROZEN' | 'INSTALL_CONFIRMED' | 'INVOCATION_READY' | 'TERMINAL',
-    ]
-  > = [
-    ['HOSTING_INTENT_PERSISTED', 'REALIZED'],
-    ['REALIZED', 'DISPATCH_FROZEN'],
-    ['DISPATCH_FROZEN', 'INSTALL_CONFIRMED'],
-    ['INSTALL_CONFIRMED', 'INVOCATION_READY'],
-    ['INVOCATION_READY', 'TERMINAL'],
-  ]
-  for (const [from, to] of walk) {
-    expect(
-      db.participantRegistrations.transitionAttempt(
-        attemptId,
-        [from],
-        to,
-        FIXED_NOW,
-        to === 'TERMINAL' ? 'producer-terminal:process-exit' : undefined
-      )
-    ).toBe(true)
-  }
-}
-
 describe('T-08349 exact writer identity', () => {
   let fixture: HrcServerTestFixture
   let server: HrcServer | undefined
@@ -296,7 +220,6 @@ describe('T-08349 exact writer identity', () => {
   /**
    * `brokerTmuxManagerFactory` is an instance seam, not a construction option,
    * so it is installed on the constructed daemon before the first registration.
-   * Without it a hosted class realizes a real tmux window and a real broker.
    */
   async function start(
     options: Partial<HrcServerOptions>,
@@ -387,266 +310,6 @@ describe('T-08349 exact writer identity', () => {
       brokerInstanceId: 'served-bridge-instance',
     })
     expect(Object.hasOwn(capturing.asked[0] ?? {}, 'hostIncarnationId')).toBe(false)
-  }, 60_000)
-
-  test('never asks a hosted adapter to speak for the HRC-owned broker writer', async () => {
-    const tmux = fakeTmux()
-    const capturing = capturingAdapter(hostedClass.adapterId, fixture.tmpDir, {
-      writePath: { state: 'retired', reason: 'adapter must not be consulted' },
-      liveness: { state: 'dead', reason: 'adapter must not be consulted' },
-      priorRecovery: { state: 'recovered', reason: 'adapter must not be consulted' },
-    })
-    await start(
-      {
-        registrationClasses: [hostedClass] as unknown as readonly RegistrationClassConfig[],
-        participantAdapterRegistry: new ParticipantAdapterRegistry([capturing.adapter]),
-      },
-      tmux.factory
-    )
-
-    await body(
-      await fixture.postJson('/v1/participants/register', {
-        classId: hostedClass.classId,
-        processToken: 'first-process',
-        workspaceCwd: fixture.tmpDir,
-        participantKey: 'hosted-writer-key',
-        evidence: evidenceFor('first'),
-      })
-    )
-    const prior = await settled(fixture.dbPath, hostedClass.classId, 'hosted-writer-key')
-    const intent = JSON.parse(prior.hostingIntentJson) as {
-      hrcHosted: { tmuxSocketPath: string; sessionName: string; brokerArgv: string[] }
-    }
-    const window: FakeWindow = {
-      socketPath: intent.hrcHosted.tmuxSocketPath,
-      sessionName: intent.hrcHosted.sessionName,
-      windowName: 'broker',
-      sessionId: '$1',
-      windowId: '@1',
-      paneId: '%1',
-    }
-    tmux.state.window = window
-    tmux.state.process = null
-    tmux.state.mode = 'observing'
-
-    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
-    try {
-      driveToProducerTerminal(db, prior.attemptId, window, 'hosted-broker-instance')
-    } finally {
-      db.close()
-    }
-
-    const successor = await body(
-      await fixture.postJson('/v1/participants/register', {
-        classId: hostedClass.classId,
-        processToken: 'successor-process',
-        workspaceCwd: fixture.tmpDir,
-        participantKey: 'hosted-writer-key',
-        evidence: evidenceFor('changed'),
-      })
-    )
-
-    // HRC owns the broker it launched; the adapter is never asked to speak for it.
-    expect(capturing.asked).toEqual([])
-    expect(successor).toMatchObject({ status: 'registered', created: false })
-
-    const readback = openHrcDatabase(fixture.dbPath, { migrate: false })
-    try {
-      const evidence = JSON.parse(
-        readback.participantRegistrations.getAttempt(prior.attemptId)?.writerEvidenceJson ?? '{}'
-      ) as WriterEvidence
-      expect(evidence.writerRef).toMatchObject({
-        subject: 'bridge',
-        brokerInstanceId: 'hosted-broker-instance',
-        attemptId: prior.attemptId,
-        attachEpoch: 1,
-      })
-      // A broker instance id is not an application host incarnation id.
-      expect(Object.hasOwn(evidence.writerRef, 'hostIncarnationId')).toBe(false)
-      // HRC observed only the process it launched. Nothing here claims anything
-      // about an external application's fate.
-      expect(evidence.liveness.state).toBe('dead')
-      expect(evidence.writePath.state).toBe('retired')
-    } finally {
-      readback.close()
-    }
-  }, 60_000)
-
-  test('admits a hosted successor for a legacy adapter with neither writer method', async () => {
-    const tmux = fakeTmux()
-    await start(
-      {
-        registrationClasses: [hostedClass] as unknown as readonly RegistrationClassConfig[],
-        participantAdapterRegistry: new ParticipantAdapterRegistry([
-          legacyHostedAdapter(hostedClass.adapterId, fixture.tmpDir),
-        ]),
-      },
-      tmux.factory
-    )
-
-    await body(
-      await fixture.postJson('/v1/participants/register', {
-        classId: hostedClass.classId,
-        processToken: 'first-process',
-        workspaceCwd: fixture.tmpDir,
-        participantKey: 'legacy-hosted-key',
-        evidence: evidenceFor('first'),
-      })
-    )
-    const prior = await settled(fixture.dbPath, hostedClass.classId, 'legacy-hosted-key')
-    const intent = JSON.parse(prior.hostingIntentJson) as {
-      hrcHosted: { tmuxSocketPath: string; sessionName: string }
-    }
-    const window: FakeWindow = {
-      socketPath: intent.hrcHosted.tmuxSocketPath,
-      sessionName: intent.hrcHosted.sessionName,
-      windowName: 'broker',
-      sessionId: '$1',
-      windowId: '@1',
-      paneId: '%1',
-    }
-    tmux.state.window = window
-    tmux.state.process = null
-    tmux.state.mode = 'observing'
-
-    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
-    try {
-      driveToProducerTerminal(db, prior.attemptId, window, 'legacy-hosted-instance')
-    } finally {
-      db.close()
-    }
-
-    const successor = await body(
-      await fixture.postJson('/v1/participants/register', {
-        classId: hostedClass.classId,
-        processToken: 'successor-process',
-        workspaceCwd: fixture.tmpDir,
-        participantKey: 'legacy-hosted-key',
-        evidence: evidenceFor('changed'),
-      })
-    )
-    expect(successor).toMatchObject({ status: 'registered', created: false })
-
-    const readback = openHrcDatabase(fixture.dbPath, { migrate: false })
-    try {
-      const attempts = readback.participantRegistrations.listAttemptsByRegistrationId(
-        prior.registrationId
-      )
-      expect(attempts).toHaveLength(2)
-      expect(attempts[1]).toMatchObject({ attachEpoch: 2 })
-    } finally {
-      readback.close()
-    }
-  }, 60_000)
-
-  test('holds a hosted successor while the committed broker process is still live', async () => {
-    const tmux = fakeTmux()
-    await start(
-      {
-        registrationClasses: [hostedClass] as unknown as readonly RegistrationClassConfig[],
-        participantAdapterRegistry: new ParticipantAdapterRegistry([
-          legacyHostedAdapter(hostedClass.adapterId, fixture.tmpDir),
-        ]),
-      },
-      tmux.factory
-    )
-
-    await body(
-      await fixture.postJson('/v1/participants/register', {
-        classId: hostedClass.classId,
-        processToken: 'first-process',
-        workspaceCwd: fixture.tmpDir,
-        participantKey: 'live-hosted-key',
-        evidence: evidenceFor('first'),
-      })
-    )
-    const prior = await settled(fixture.dbPath, hostedClass.classId, 'live-hosted-key')
-    const intent = JSON.parse(prior.hostingIntentJson) as {
-      hrcHosted: { tmuxSocketPath: string; sessionName: string; brokerArgv: string[] }
-    }
-    const window: FakeWindow = {
-      socketPath: intent.hrcHosted.tmuxSocketPath,
-      sessionName: intent.hrcHosted.sessionName,
-      windowName: 'broker',
-      sessionId: '$1',
-      windowId: '@1',
-      paneId: '%1',
-    }
-    tmux.state.window = window
-    tmux.state.process = {
-      command: 'bun',
-      pid: 83_349,
-      dead: false,
-      commandLine: `bun ${intent.hrcHosted.brokerArgv.join(' ')}`,
-    }
-    tmux.state.mode = 'observing'
-
-    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
-    try {
-      expect(
-        db.participantRegistrations.setSnapshotIfAbsent(
-          prior.attemptId,
-          'realizedHostingJson',
-          realizedLease(window),
-          FIXED_NOW
-        )
-      ).toBe(true)
-      expect(
-        db.participantRegistrations.setSnapshotIfAbsent(
-          prior.attemptId,
-          'brokerIdentityJson',
-          JSON.stringify({ brokerInstanceId: 'live-hosted-instance' }),
-          FIXED_NOW
-        )
-      ).toBe(true)
-      // R6.2 makes `evidence` ignored for continuation, so the successor is
-      // requested by an absorbing prior attempt. That sharpens this case rather
-      // than weakening it: the attempt is finished AND the committed bridge is
-      // still live, and HRC must still refuse to hand the address over --
-      // losing an attempt is not proof that its writer died.
-      const priorRow = db.participantRegistrations.getAttempt(prior.attemptId)
-      expect(priorRow).not.toBeNull()
-      expect(
-        db.participantRegistrations.transitionAttempt(
-          prior.attemptId,
-          [priorRow!.state],
-          'ABANDONED',
-          FIXED_NOW,
-          'prior participant attempt abandoned by the fixture'
-        )
-      ).toBe(true)
-    } finally {
-      db.close()
-    }
-
-    const successor = await body(
-      await fixture.postJson('/v1/participants/register', {
-        classId: hostedClass.classId,
-        processToken: 'successor-process',
-        workspaceCwd: fixture.tmpDir,
-        participantKey: 'live-hosted-key',
-        evidence: evidenceFor('changed'),
-      })
-    )
-    // No projected producer terminal and a live committed process: an unknown
-    // write path with a live writer holds. HRC claims nothing about any
-    // external application.
-    expect(successor).toMatchObject({ status: 'pending', reason: 'host_retirement_unproven' })
-
-    const readback = openHrcDatabase(fixture.dbPath, { migrate: false })
-    try {
-      expect(
-        readback.participantRegistrations.listAttemptsByRegistrationId(prior.registrationId)
-      ).toHaveLength(1)
-      const evidence = JSON.parse(
-        readback.participantRegistrations.getAttempt(prior.attemptId)?.writerEvidenceJson ?? '{}'
-      ) as WriterEvidence
-      expect(evidence.writerRef.subject).toBe('bridge')
-      expect(evidence.liveness.state).toBe('live')
-      expect(evidence.writePath.state).toBe('unknown')
-    } finally {
-      readback.close()
-    }
   }, 60_000)
 })
 
