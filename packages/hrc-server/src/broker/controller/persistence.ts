@@ -39,6 +39,7 @@ import {
 } from '../runtime-state'
 import { BrokerControllerError } from './errors'
 import { USER_INITIATED_CONTINUATION_CLEAR_REASONS } from './internal'
+import { isObserverPaneRoute } from './allocation'
 import type { BrokerControllerStartInput, BrokerTmuxAllocation } from './types'
 
 export type PersistenceContext = {
@@ -156,7 +157,9 @@ export function persistStartGraph(
     statusChangedAt: now,
     supportsInflightInput: true,
     adopted: false,
-    ...(tmuxAllocation && isBrokerTmuxProfile(input.profile)
+    // Observer-pane runtimes persist tmuxJson too: the viewer attaches to the
+    // observer pane (transport stays 'headless' per T-01874).
+    ...(tmuxAllocation && (isBrokerTmuxProfile(input.profile) || isObserverPaneRoute(input))
       ? {
           tmuxJson: toBrokerTmuxJson(input.profile.brokerDriver, tmuxAllocation),
         }

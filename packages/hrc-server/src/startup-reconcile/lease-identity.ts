@@ -615,6 +615,17 @@ async function observeRuntimeClaimedLease(
       hosting.presentation.kind === 'tmux-tui' && !tuiWindow
         ? await manager.inspectPane(hosting.presentation.tuiWindow.paneId)
         : tuiWindow
+    const observerWindow =
+      hosting.presentation.kind === 'observer'
+        ? await manager.inspectWindow({
+            sessionName: substrate.sessionName,
+            windowName: 'observer',
+          })
+        : null
+    const observedObserverPane =
+      hosting.presentation.kind === 'observer' && !observerWindow
+        ? await manager.inspectPane(hosting.presentation.observerWindow.paneId)
+        : observerWindow
     const comparison = compareBrokerLeaseIdentity(runtime, {
       tmuxSocketPath: socketPath,
       sessionName: substrate.sessionName,
@@ -638,6 +649,16 @@ async function observeRuntimeClaimedLease(
             },
           }
         : {}),
+      ...(observedObserverPane
+        ? {
+            observerWindowName: observedObserverPane.windowName,
+            observerWindow: {
+              sessionId: observedObserverPane.sessionId,
+              windowId: observedObserverPane.windowId,
+              paneId: observedObserverPane.paneId,
+            },
+          }
+        : {}),
     })
     const paneProcess = await manager.inspectPaneProcess(
       observedBrokerPane?.paneId ?? substrate.brokerWindow.paneId
@@ -655,6 +676,7 @@ async function observeRuntimeClaimedLease(
       observedSessions,
       observedBrokerWindow: observedBrokerPane,
       observedTuiWindow: observedTuiPane,
+      observedObserverWindow: observedObserverPane,
       observedBrokerProcess: paneProcess,
       processIdentifiesBroker,
     }
