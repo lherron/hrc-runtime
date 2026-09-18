@@ -229,6 +229,7 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
                   })
                 : makeBrokerProfile(identity, {
                     initialInputText: message.params.compileRequest.materialization.initialPrompt,
+                    brokerDriver: selectedDriver,
                   })
             const compileResponse = makeCompileResponse(identity, [profile])
             if (!compileResponse.ok) throw new Error('fixture compile rejected')
@@ -334,12 +335,14 @@ export function workerClient(
           brokerToClientRequests: true,
           attachReplay: true,
         },
-        drivers: ['codex-app-server', 'claude-code-tmux', 'pi-tui-tmux'].map((kind) => ({
-          kind,
-          version: '0.2.0-test',
-          available: true,
-          capabilities: capabilities(),
-        })),
+        drivers: ['codex-app-server', 'claude-code-tmux', 'pi-tui-tmux', 'muse-serve'].map(
+          (kind) => ({
+            kind,
+            version: '0.2.0-test',
+            available: true,
+            capabilities: capabilities(),
+          })
+        ),
         ...(release !== undefined ? { release } : {}),
       } as BrokerHelloResponse
     },

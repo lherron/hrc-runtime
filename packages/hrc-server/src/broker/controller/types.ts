@@ -559,11 +559,16 @@ export type BrokerAspdExecution = {
   operationId: string
   /**
    * The frozen route (T-08556): the headless substrate for
-   * `headless-codex-app-server`, the durable interactive tmux substrate for
+   * `headless-codex-app-server` and for headless muse-serve
+   * (`headless-muse-serve`), the durable interactive tmux substrate for
    * `interactive-codex-tui` and (T-08562) for the non-Codex
    * `interactive-tmux-broker`.
    */
-  route: 'headless-codex-app-server' | 'interactive-codex-tui' | 'interactive-tmux-broker'
+  route:
+    | 'headless-codex-app-server'
+    | 'headless-muse-serve'
+    | 'interactive-codex-tui'
+    | 'interactive-tmux-broker'
   release: AspcExecutionRelease
   executable: string
   argv: string[]

@@ -21,10 +21,10 @@ import { formatDmAddress } from './messages.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
 import { prepareActuatorSplitIntent } from './actuator-split.js'
-import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
+import { hasInitialUserTurn, toProfileSelector } from './agent-spaces-adapter/compile-adapter.js'
 import { bindAppHarnessBirthIntent, trackAppIdentityOperation } from './app-session-identity.js'
 import {
-  aspdHeadlessCodexEndpoint,
+  aspdHeadlessBrokerEndpoint,
   assertPreparedAspdAttemptRoute,
   findPreparedAspdAttemptForRetry,
   launchAspdPreparedAttempt,
@@ -544,8 +544,9 @@ export async function startHeadlessBrokerRuntime(
   const requestedTurnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...boundIntent, initialPrompt: prompt } : boundIntent
   // T-08542: a node that declares an aspd endpoint prepares ordinary headless
-  // codex-app-server there, with no facade/toolchain fallback.
-  const aspdEndpoint = aspdHeadlessCodexEndpoint(requestedTurnIntent)
+  // codex-app-server there, with no facade/toolchain fallback. Headless
+  // muse-serve prepares on its own route the same way.
+  const aspdEndpoint = aspdHeadlessBrokerEndpoint(requestedTurnIntent)
   if (aspdEndpoint !== undefined) {
     return await startAspdHeadlessBrokerRuntime(
       this,
@@ -599,7 +600,9 @@ async function startAspdHeadlessBrokerRuntime(
     // T-08560 D2: launch only a preparation frozen on this route.
     assertPreparedAspdAttemptRoute(
       resumable,
-      { route: 'headless-codex-app-server', driverKind: 'codex-app-server' },
+      toProfileSelector(requestedTurnIntent)?.brokerDriver === 'muse-serve'
+        ? { route: 'headless-muse-serve', driverKind: 'muse-serve' }
+        : { route: 'headless-codex-app-server', driverKind: 'codex-app-server' },
       session.hostSessionId
     )
     operationId = resumable.operationId

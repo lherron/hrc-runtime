@@ -72,6 +72,7 @@ import {
   type InteractiveTmuxBrokerDriver,
   decideCodexAppServerPresentation,
   decideInteractiveTmuxExecutionRoute,
+  decideMuseServePresentation,
   extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
   toRuntimeContinuationRef,
@@ -87,6 +88,8 @@ import { operatorPresentationSource } from './presentation-operator.js'
 import {
   HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
+  HRC_HEADLESS_MUSE_BROKER_ENABLED_ENV,
+  HRC_MUSE_SERVE_OPERATOR_PRESENTATION_ENV,
 } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
@@ -98,15 +101,18 @@ import { toBrokerResponseFormat } from './turn-response-format.js'
 
 export const ASPD_PREPARATION_SCHEMA = 'hrc-aspd-preparation/v1'
 const ASPD_BROKER_DRIVER = 'codex-app-server'
+const ASPD_MUSE_BROKER_DRIVER = 'muse-serve'
 
 type OkCompileResponse = Extract<AspcCompileHarnessInvocationResponse, { ok: true }>
 
 /**
  * The routes a frozen aspd preparation launches on (T-08556 adds the interactive
- * Codex TUI; T-08562 adds the non-Codex interactive tmux broker route).
+ * Codex TUI; T-08562 adds the non-Codex interactive tmux broker route; the
+ * headless muse-serve route admits that driver with presentation none only).
  */
 export type AspdPreparationRoute =
   | 'headless-codex-app-server'
+  | 'headless-muse-serve'
   | 'interactive-codex-tui'
   | 'interactive-tmux-broker'
 
@@ -184,7 +190,18 @@ function aspdRoutePresentation(
   env: Record<string, string | undefined>
 ): AspdHostingPresentation | undefined {
   if (intent.harness.interactive === true) return undefined
-  if (toProfileSelector(intent)?.brokerDriver !== ASPD_BROKER_DRIVER) return undefined
+  const brokerDriver = toProfileSelector(intent)?.brokerDriver
+  if (brokerDriver === ASPD_MUSE_BROKER_DRIVER) {
+    const decided = decideMuseServePresentation({
+      operatorPresentation: env[HRC_MUSE_SERVE_OPERATOR_PRESENTATION_ENV],
+      brokerDriver,
+      requestedOperator: intent.presentation?.operator,
+    })
+    // The observer viewer has no aspd-route hosting yet: an observer request
+    // stays off this route rather than silently losing its viewer.
+    return decided === 'none' ? decided : undefined
+  }
+  if (brokerDriver !== ASPD_BROKER_DRIVER) return undefined
   const decided = decideCodexAppServerPresentation({
     operatorPresentation: env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
     brokerDriver: ASPD_BROKER_DRIVER,
@@ -279,10 +296,11 @@ export function aspdInteractiveRouteFor(brokerDriver: string): AspdPreparationRo
 /**
  * The route this module owns: the node declares an aspd endpoint and the intent
  * is ordinary headless codex-app-server, with operator presentation `none` or
- * the `tmux-tui` viewer, chosen by request or node default (T-08555).
- * Returns the endpoint, or undefined for every other route.
+ * the `tmux-tui` viewer, chosen by request or node default (T-08555), or
+ * headless muse-serve with operator presentation `none`. Returns the endpoint,
+ * or undefined for every other route.
  */
-export function aspdHeadlessCodexEndpoint(
+export function aspdHeadlessBrokerEndpoint(
   intent: HrcRuntimeIntent,
   env: Record<string, string | undefined> = process.env
 ): string | undefined {
@@ -437,7 +455,8 @@ export async function prepareAspdHeadlessAttempt(
   // driver the door requested; no driver-name list.
   const routeMatches =
     interactive === undefined
-      ? compiled.profile.brokerDriver === ASPD_BROKER_DRIVER &&
+      ? (compiled.profile.brokerDriver === ASPD_BROKER_DRIVER ||
+          compiled.profile.brokerDriver === ASPD_MUSE_BROKER_DRIVER) &&
         compiled.profile.interactionMode === 'headless'
       : isInteractiveTmuxBrokerProfile(compiled.profile) &&
         compiled.profile.brokerDriver === interactive.brokerDriver &&
@@ -449,7 +468,7 @@ export async function prepareAspdHeadlessAttempt(
     throw aspdStartError(
       'aspd_route_profile_mismatch',
       interactive === undefined
-        ? 'aspd selected a profile outside the headless codex-app-server route'
+        ? 'aspd selected a profile outside the headless broker route'
         : `aspd selected a profile outside the interactive ${interactive.brokerDriver} route`,
       {
         hostSessionId: session.hostSessionId,
@@ -514,7 +533,11 @@ export async function prepareAspdHeadlessAttempt(
   const operationId = String(compiled.identity.operationId)
   const brokerDriver = compiled.profile.brokerDriver
   const route: AspdPreparationRoute =
-    interactive === undefined ? 'headless-codex-app-server' : aspdInteractiveRouteFor(brokerDriver)
+    interactive === undefined
+      ? brokerDriver === ASPD_MUSE_BROKER_DRIVER
+        ? 'headless-muse-serve'
+        : 'headless-codex-app-server'
+      : aspdInteractiveRouteFor(brokerDriver)
   const presentation: AspdHostingPresentation | undefined =
     interactive === undefined
       ? aspdRoutePresentation(intent, process.env)
@@ -549,8 +572,11 @@ export async function prepareAspdHeadlessAttempt(
     interactive === undefined
       ? {
           route: 'broker',
-          flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
-          selectedBy: 'aspdHeadlessCodexEndpoint',
+          flag:
+            brokerDriver === ASPD_MUSE_BROKER_DRIVER
+              ? HRC_HEADLESS_MUSE_BROKER_ENABLED_ENV
+              : HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
+          selectedBy: 'aspdHeadlessBrokerEndpoint',
           headlessRoute: 'durable-leased',
           brokerTransport: 'unix-jsonrpc-ndjson',
           operatorPresentation: presentation,
@@ -847,11 +873,15 @@ export async function launchAspdPreparedAttempt(
           record.hosting.driverKind !== ASPD_BROKER_DRIVER &&
           record.hosting.driverKind === record.admission.profile.brokerDriver &&
           interactiveDoor
-        : record.route === 'headless-codex-app-server' &&
-          record.hosting.driverKind === ASPD_BROKER_DRIVER &&
-          record.hosting.presentation !== 'codex-tui' &&
-          record.hosting.presentation !== 'interactive-tui' &&
-          record.dispatch.routeDecision['operatorPresentation'] === record.hosting.presentation
+        : record.route === 'headless-codex-app-server'
+          ? record.hosting.driverKind === ASPD_BROKER_DRIVER &&
+            record.hosting.presentation !== 'codex-tui' &&
+            record.hosting.presentation !== 'interactive-tui' &&
+            record.dispatch.routeDecision['operatorPresentation'] === record.hosting.presentation
+          : record.route === 'headless-muse-serve' &&
+            record.hosting.driverKind === ASPD_MUSE_BROKER_DRIVER &&
+            record.hosting.presentation === 'none' &&
+            record.dispatch.routeDecision['operatorPresentation'] === record.hosting.presentation
   if (
     JSON.stringify(expectedArgv) !== JSON.stringify(record.hosting.argv) ||
     JSON.stringify(currentPaths) !== JSON.stringify(record.hosting.paths) ||
