@@ -37,9 +37,9 @@ import {
   toBrokerTmuxJson,
   toRuntimeStateTmux,
 } from '../runtime-state'
+import { isObserverPaneRoute } from './allocation'
 import { BrokerControllerError } from './errors'
 import { USER_INITIATED_CONTINUATION_CLEAR_REASONS } from './internal'
-import { isObserverPaneRoute } from './allocation'
 import type { BrokerControllerStartInput, BrokerTmuxAllocation } from './types'
 
 export type PersistenceContext = {

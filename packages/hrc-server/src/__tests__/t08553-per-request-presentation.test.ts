@@ -229,9 +229,7 @@ describe('T-08553 per-request operator presentation', () => {
     expect(decideMuseServePresentation({ ...base, requestedOperator: 'none' })).toBe('none')
     expect(decideMuseServePresentation({ ...base, operatorPresentation: undefined })).toBe('none')
     expect(decideMuseServePresentation({ ...base, brokerDriver: 'codex-app-server' })).toBe('none')
-    expect(
-      decideMuseServePresentation({ ...base, requestedOperator: 'tmux-tui' })
-    ).toBe('none')
+    expect(decideMuseServePresentation({ ...base, requestedOperator: 'tmux-tui' })).toBe('none')
   })
 
   // The interactive handler is observed here, so no preparation is expected. On a

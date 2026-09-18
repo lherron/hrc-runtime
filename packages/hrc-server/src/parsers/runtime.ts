@@ -216,7 +216,12 @@ function parseOptionalPresentationIntent(
   // the app-server viewer ('tmux-tui'); the observer-pane renderer viewer
   // ('observer') is the muse-serve equivalent.
   const operator = value['operator']
-  if (operator !== undefined && operator !== 'none' && operator !== 'tmux-tui' && operator !== 'observer') {
+  if (
+    operator !== undefined &&
+    operator !== 'none' &&
+    operator !== 'tmux-tui' &&
+    operator !== 'observer'
+  ) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
       "presentation.operator accepts only 'none', 'tmux-tui', or 'observer'",
