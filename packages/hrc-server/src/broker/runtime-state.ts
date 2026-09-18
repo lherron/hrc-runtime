@@ -332,6 +332,7 @@ export function runtimeHarness(
   if (runtime === 'claude-agent-sdk') return 'agent-sdk'
   if (runtime === 'pi-cli') return 'pi-cli'
   if (runtime === 'pi-sdk') return 'pi-sdk'
+  if (runtime === 'muse-cli') return 'muse-cli'
   return 'codex-cli'
 }
 
