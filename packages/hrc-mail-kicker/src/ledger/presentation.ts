@@ -352,7 +352,28 @@ function formatReplyLine(presentable: PresentableEnvelope): string | undefined {
   if (envelope.obligation !== 'reply_required') return undefined
   const to = envelopeReplyAddressee(envelope)
   if (to === undefined) return undefined
-  return [`reply: wrkc say ${envelope.id} --to ${to} - <<'EOF'`, '…', 'EOF'].join('\n')
+  // Headless broker-born turns carry no caller principal in their child env,
+  // so a bare `wrkc say` fails principal validation and the reply never
+  // lands (observed live: muse seat). Spell the replier's principal from the
+  // addressee scope — harmless where a principal already resolves.
+  const as = replyPrincipal(envelope)
+  const asFlag = as === undefined ? '' : ` --as ${as}`
+  return [`reply: wrkc say ${envelope.id} --to ${to}${asFlag} - <<'EOF'`, '…', 'EOF'].join('\n')
+}
+
+/**
+ * The replier's principal for the hinted `wrkc say`, derived from the
+ * addressee side of the envelope (`muse@hrc-runtime:primary` → `agent:muse`).
+ * Returns undefined when no agent identity is resolvable, preserving the
+ * historical bare form.
+ */
+export function replyPrincipal(envelope: WrkqEnvelope): string | undefined {
+  const scope = envelope.to?.scopeRef?.trim() ?? ''
+  const at = scope.indexOf('@')
+  if (at > 0) return `agent:${scope.slice(0, at)}`
+  const principal = envelope.to?.principalRef?.trim() ?? ''
+  if (/^agent:[A-Za-z0-9_-]+$/.test(principal)) return principal
+  return undefined
 }
 
 export function envelopeReplyAddressee(envelope: WrkqEnvelope): string | undefined {

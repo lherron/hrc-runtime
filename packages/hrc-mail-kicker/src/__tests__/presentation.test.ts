@@ -5,6 +5,7 @@ import {
   formatEnvelopeFailureNotice,
   formatEnvelopePresentation,
   formatEnvelopePresentations,
+  replyPrincipal,
 } from '../index.js'
 import { targetSessionRefForLedgerScope } from '../index.js'
 import type { WrkqEnvelope } from '../index.js'
@@ -55,7 +56,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
       [
         '[T-07604 · cody@hrc-runtime:T-07604 (gen 3) → you · reply required]',
         'the body',
-        "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'",
+        "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 --as agent:clod - <<'EOF'",
         '…',
         'EOF',
       ].join('\n')
@@ -67,7 +68,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
   // say is spelled out before the obligation is ever late.
   it('teaches the reply verb at first contact', () => {
     expect(formatEnvelopePresentation(presentable(), NOW)).toContain(
-      "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'"
+      "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 --as agent:clod - <<'EOF'"
     )
   })
 
@@ -145,7 +146,9 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
       NOW
     )
     expect(rendered).toContain('· reply required]')
-    expect(rendered).toContain("reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'")
+    expect(rendered).toContain(
+      "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 --as agent:clod - <<'EOF'"
+    )
   })
 
   it('marks a stored hold in the recipient header without changing the body grammar', () => {
@@ -174,7 +177,9 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
       '[R-00012 · mable@hrc-runtime:primary (gen 7) → you · reply required · still owed'
     )
     expect(rendered).not.toContain('"')
-    expect(rendered).toContain("reply: wrkc say EN-00042 --to mable@hrc-runtime:primary - <<'EOF'")
+    expect(rendered).toContain(
+      "reply: wrkc say EN-00042 --to mable@hrc-runtime:primary --as agent:clod - <<'EOF'"
+    )
   })
 
   // T-07638, observed live on T-07616: a bare `--to clod` in task room T-07616
@@ -196,7 +201,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
       NOW
     )
     expect(rendered).toContain(
-      "reply: wrkc say EN-00042 --to clod@hrc-runtime:codex-019efeb5-1234-7abc-8def-0123456789ab - <<'EOF'"
+      "reply: wrkc say EN-00042 --to clod@hrc-runtime:codex-019efeb5-1234-7abc-8def-0123456789ab --as agent:clod - <<'EOF'"
     )
     // The bare name is exactly what misresolved; it must not survive anywhere
     // in the reply line.
@@ -272,7 +277,7 @@ describe('T-07612 rev 5.1 §4 pointer forms', () => {
       [
         '[T-07604 · cody@hrc-runtime:T-07604 → you · reply required · still owed — your turn ended 4m ago without a reply]',
         'read: wrkc show EN-00042   ·   thread: wrkc log T-07604',
-        "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'",
+        "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 --as agent:clod - <<'EOF'",
         '…',
         'EOF',
       ].join('\n')
@@ -305,7 +310,9 @@ describe('T-07612 rev 5.1 §4 pointer forms', () => {
       '· reply required · you deferred this: "mid-restart drain, back in 10"]'
     )
     expect(rendered).toContain('read: wrkc show EN-00042   ·   thread: wrkc log T-07604')
-    expect(rendered).toContain("reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'")
+    expect(rendered).toContain(
+      "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 --as agent:clod - <<'EOF'"
+    )
     expect(rendered).not.toContain('the body')
   })
 
@@ -384,5 +391,36 @@ describe('T-07612 rev 5.1 §5 sender failure notice', () => {
     expect(formatEnvelopeFailureNotice(failed, 'undeliverable', { now: NOW })).toContain(
       'never delivered; clod@hrc-runtime:T-07604 could not be seated.'
     )
+  })
+})
+
+describe('reply principal (headless broker births carry no caller principal)', () => {
+  it('spells --as agent:muse for a muse addressee scope', () => {
+    const rendered = formatEnvelopePresentation(
+      presentable({
+        envelope: envelope({
+          id: 'EN-14625',
+          from: { principalRef: 'agent:clod', scopeRef: 'clod@hrc-runtime:primary' },
+          to: { principalRef: 'agent:muse', scopeRef: 'muse@hrc-runtime:primary' },
+        }),
+      }),
+      NOW
+    )
+    expect(rendered).toContain(
+      "reply: wrkc say EN-14625 --to clod@hrc-runtime:primary --as agent:muse - <<'EOF'"
+    )
+    expect(replyPrincipal(envelope())).toBe('agent:clod')
+  })
+
+  it('falls back to the principalRef when the scope carries no agent handle', () => {
+    const env = envelope({ to: { principalRef: 'agent:muse' } })
+    expect(replyPrincipal(env)).toBe('agent:muse')
+  })
+
+  it('omits --as when no agent identity is resolvable', () => {
+    const env = envelope({ to: { principalRef: 'human:lance' } })
+    expect(replyPrincipal(env)).toBeUndefined()
+    const rendered = formatEnvelopePresentation(presentable({ envelope: env }), NOW)
+    expect(rendered).toContain("reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'")
   })
 })

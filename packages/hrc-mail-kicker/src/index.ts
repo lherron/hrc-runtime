@@ -25,6 +25,7 @@ export {
   formatEnvelopeFailureNotice,
   formatEnvelopePresentation,
   formatEnvelopePresentations,
+  replyPrincipal,
 } from './ledger/presentation.js'
 export type {
   EnvelopePresentationForm,
