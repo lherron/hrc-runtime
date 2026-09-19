@@ -55,6 +55,17 @@ describe('HrcInjectionPort contract — real daemon', () => {
     expect(response.intent.placement.agentRoot).toContain('agents/kicker-proof')
   })
 
+  it('refuses caller placement fields on the scope resolver arm', async () => {
+    const response = await fixture.postJson('/v1/declarations/resolve', {
+      scopeRef: SCOPE,
+      cwd: fixture.tmpDir,
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'malformed_request', detail: { field: 'cwd' } },
+    })
+  })
+
   it('resolves and ensures a cold target without exposing daemon state', async () => {
     const intent = await port().resolveRuntimeIntent(SCOPE, undefined)
     expect(intent).toBeDefined()
