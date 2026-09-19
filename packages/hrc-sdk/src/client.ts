@@ -30,6 +30,11 @@ import type {
 } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
+import type {
+  RuntimeSeatResponse,
+  WithdrawSubmissionRequest,
+  WithdrawSubmissionResponse,
+} from 'hrc-core'
 import type { ResolveRuntimeIntentRequest, ResolveRuntimeIntentResponse } from 'hrc-core'
 import type { ResolvePlacementRequest, ResolvePlacementResponse } from 'hrc-core'
 import type { RunPreviewRequest, RunPreviewResponse } from 'hrc-core'
@@ -657,6 +662,21 @@ export class HrcClient {
 
   async preempt(request: PreemptSubmissionRequest): Promise<HrcSubmissionResponse> {
     return this.postJson<HrcSubmissionResponse>('/v1/submissions/preempt', request)
+  }
+
+  /**
+   * Injector seat probe (T-08606). One read: the live seat probe plus the
+   * frozen invocation facts (invocationId, generation, admissionClasses,
+   * currentBrokerSeq). Call before dispatch; persist the lower bound, then
+   * submit.
+   */
+  async getSeat(runtimeId: string): Promise<RuntimeSeatResponse> {
+    return this.getJson<RuntimeSeatResponse>(`/v1/runtimes/${encodeURIComponent(runtimeId)}/seat`)
+  }
+
+  /** Injector submission withdraw (T-08606). Wraps broker withdraw. */
+  async withdraw(request: WithdrawSubmissionRequest): Promise<WithdrawSubmissionResponse> {
+    return this.postJson<WithdrawSubmissionResponse>('/v1/submissions/withdraw', request)
   }
 
   async getTurnAdmission(): Promise<HrcTurnAdmissionState> {

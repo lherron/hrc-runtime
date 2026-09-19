@@ -239,6 +239,10 @@ import {
 } from './runtime-list-adopt-handlers.js'
 import { type SdkTurnHandlersMethods, sdkTurnHandlersMethods } from './sdk-turn-handlers.js'
 import {
+  type SeatWithdrawHandlersMethods,
+  seatWithdrawHandlersMethods,
+} from './seat-withdraw-handlers.js'
+import {
   type SelectorMessageHandlersMethods,
   selectorMessageHandlersMethods,
 } from './selector-message-handlers.js'
@@ -278,7 +282,12 @@ import {
   parseStartRuntimeRequest,
   parseTerminateRuntimeRequest,
 } from './server-parsers.js'
-import { exactRouteKey, matchLaunchSubroute, matchSessionTitleRoute } from './server-routing.js'
+import {
+  exactRouteKey,
+  matchLaunchSubroute,
+  matchRuntimeSeatRoute,
+  matchSessionTitleRoute,
+} from './server-routing.js'
 import type {
   ExactRouteHandler,
   FollowSubscriber,
@@ -830,7 +839,8 @@ interface HrcServerInstance
     ParticipantRegistrationHandlersMethods,
     ParticipantAttachHandlersMethods,
     RegistrationHandlersMethods,
-    RuntimeInspectHandlersMethods {}
+    RuntimeInspectHandlersMethods,
+    SeatWithdrawHandlersMethods {}
 
 class HrcServerInstance implements HrcServer {
   readonly followSubscribers = new Set<FollowSubscriber>()
@@ -1029,6 +1039,8 @@ class HrcServerInstance implements HrcServer {
       this.handleSubmission(request, 'invoke'),
     [exactRouteKey('POST', '/v1/submissions/preempt')]: (request) =>
       this.handleSubmission(request, 'preempt'),
+    [exactRouteKey('POST', '/v1/submissions/withdraw')]: (request) =>
+      this.handleWithdrawSubmission(request),
     [exactRouteKey('POST', '/v1/active-run-contributions')]: (request) =>
       this.handleActiveRunContribution(request),
     [exactRouteKey('POST', '/v1/in-flight-input')]: (request) => this.handleInFlightInput(request),
@@ -2043,6 +2055,14 @@ class HrcServerInstance implements HrcServer {
         return request.method === 'POST'
           ? await this.handleSetSessionTitle(hostSessionId, request)
           : this.handleDeleteSessionTitle(hostSessionId)
+      }
+
+      const runtimeSeatRoute = matchRuntimeSeatRoute(request.method, pathname)
+      if (runtimeSeatRoute) {
+        // NOTE: `await` is load-bearing here. A bare `return` of the handler
+        // promise would adopt its rejection outside this try/catch, escaping
+        // `errorResponse` and crashing the connection (T-08606).
+        return await this.handleRuntimeSeat(runtimeSeatRoute.runtimeId)
       }
 
       if (request.method === 'GET' && pathname.startsWith('/v1/active-run-contributions/')) {
@@ -3085,6 +3105,7 @@ Object.assign(
   selectorWaitHandlersMethods,
   wrkqStopGateHandlersMethods,
   runtimeInspectHandlersMethods,
+  seatWithdrawHandlersMethods,
   rosterClaimHandlersMethods,
   exactClaimHandlersMethods,
   registrationGcHandlersMethods,

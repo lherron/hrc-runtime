@@ -1799,3 +1799,65 @@ export type CaptureRecoverResponse = {
   capability?: { declared: boolean; releaseId?: string | undefined } | undefined
   detail: Record<string, unknown>
 }
+
+/**
+ * Injector seat probe (T-08606). The socket form of the kicker's pre-dispatch
+ * read: one call returns the live seat probe together with the frozen
+ * invocation facts the injector persists as its write-ahead lower bound
+ * (invocationId + currentBrokerSeq) and the frozen admission-class truth used
+ * for door selection. Null marks "no fact" explicitly so the shape survives
+ * JSON serialization (never `undefined` on the wire).
+ */
+export type InjectorAdmissionClass = 'steer' | 'queue' | 'exclusive' | 'preempt'
+
+export type InjectorSeatProbeState =
+  | { state: 'idle' }
+  | { state: 'turn-active'; turnId: string; policy: 'open' | 'guarded' }
+  | { state: 'turn-observed'; turnId: string }
+  | { state: 'starting' | 'stopping' | 'terminal' }
+
+export type InjectorSeatProbe = {
+  invocationId: string
+  seat: InjectorSeatProbeState
+  brokerHeldDepth: number
+}
+
+/** `GET /v1/runtimes/{runtimeId}/seat` — wraps `HarnessBrokerController.seatProbe`. */
+export type RuntimeSeatResponse = {
+  runtimeId: string
+  /** The runtime's active invocation, when one is bound. */
+  invocationId: string | null
+  /** The runtime row's generation (the seat's incarnation binding). */
+  generation: number
+  /**
+   * Frozen admission classes from `broker_invocations.capabilitiesJson`
+   * (`admission.classes`, frozen at invocation start). Null when the
+   * invocation row is absent or carries no class list — "did not say" is not
+   * a refusal and must not be read as one.
+   */
+  admissionClasses: InjectorAdmissionClass[] | null
+  /** `brokerInvocationEvents.maxBrokerSeq(invocationId)`; null without an invocation. */
+  currentBrokerSeq: number | null
+  /** The live probe result; null when the probe failed (see `probeError`). */
+  probe: InjectorSeatProbe | null
+  /** The probe failure, when `probe` is null. */
+  probeError: { code: string; message: string } | null
+}
+
+/**
+ * `POST /v1/submissions/withdraw` — wraps `HarnessBrokerController.withdraw`.
+ * Exactly one of `submissionId` / `envelopeId` names the held submission.
+ */
+export type WithdrawSubmissionRequest = {
+  runtimeId: string
+  submissionId?: string | undefined
+  envelopeId?: string | undefined
+  reason: string
+}
+
+export type WithdrawSubmissionResponse = {
+  runtimeId: string
+  outcome: 'withdrawn' | 'not_held' | 'unknown'
+  /** Present only when `outcome` is `not_held`. */
+  state?: 'accepted' | 'terminal' | undefined
+}

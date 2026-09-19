@@ -22,6 +22,7 @@ import type {
   StartRuntimeRequest,
   SteerSubmissionRequest,
   TerminateRuntimeRequest,
+  WithdrawSubmissionRequest,
 } from 'hrc-core'
 
 import type { HrcRuntimePlacement } from 'hrc-core'
@@ -1116,6 +1117,28 @@ export function parseBrokerInspectRequest(input: unknown): BrokerInspectRequest 
     ...(typeof includeDisposed === 'boolean' ? { includeDisposed } : {}),
     ...(typeof includeInvocations === 'boolean' ? { includeInvocations } : {}),
     ...(recoverFinalSummary !== undefined ? { recoverFinalSummary } : {}),
+  }
+}
+
+export function parseWithdrawSubmissionRequest(input: unknown): WithdrawSubmissionRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  const body = parseRuntimeActionBody(input)
+  const submissionId = readOptionalNonEmptyStringField(input, 'submissionId')
+  const envelopeId = readOptionalNonEmptyStringField(input, 'envelopeId')
+  if ((submissionId === undefined) === (envelopeId === undefined)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'exactly one of submissionId or envelopeId is required',
+      { field: 'submissionId' }
+    )
+  }
+  return {
+    runtimeId: body.runtimeId,
+    ...(submissionId !== undefined ? { submissionId } : {}),
+    ...(envelopeId !== undefined ? { envelopeId } : {}),
+    reason: requireTrimmedStringField(input, 'reason'),
   }
 }
 

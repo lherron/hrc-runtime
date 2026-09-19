@@ -3231,6 +3231,30 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "InjectorAdmissionClass",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|InjectorAdmissionClass|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "InjectorSeatProbe",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|InjectorSeatProbe|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "InjectorSeatProbeState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|InjectorSeatProbeState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "InspectRuntimeRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -4207,6 +4231,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "RuntimeSeatResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RuntimeSeatResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "ScopeLocation",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
@@ -4643,6 +4675,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|WatchMessagesRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "WithdrawSubmissionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|WithdrawSubmissionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "WithdrawSubmissionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|WithdrawSubmissionResponse|type",
       "count": 1
     },
     {

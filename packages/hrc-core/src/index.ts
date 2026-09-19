@@ -393,6 +393,12 @@ export type {
   CaptureRecoverResponse,
   RetainedEvidenceOutcomeClass,
   RetainedEvidenceTrigger,
+  InjectorAdmissionClass,
+  InjectorSeatProbeState,
+  InjectorSeatProbe,
+  RuntimeSeatResponse,
+  WithdrawSubmissionRequest,
+  WithdrawSubmissionResponse,
 } from './http-contracts.js'
 export {
   OPERATOR_REAP_REASON,
