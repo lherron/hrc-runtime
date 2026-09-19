@@ -423,6 +423,54 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "BrokerEventsFollowRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BrokerEventsFollowRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BrokerEventsFollowResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BrokerEventsFollowResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BrokerEventsQueryOp",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BrokerEventsQueryOp|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BrokerEventsQueryResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BrokerEventsQueryResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BrokerEventsQueryResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BrokerEventsQueryResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BrokerEventWireRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BrokerEventWireRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "BrokerForensicsEvent",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -939,6 +987,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/git-environment.ts",
       "hash": "hrc-core|environmentWithoutGitOverrides|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EventsHeadResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|EventsHeadResponse|type",
       "count": 1
     },
     {

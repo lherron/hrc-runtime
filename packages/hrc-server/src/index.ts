@@ -103,6 +103,7 @@ import {
   type EventNotificationHandlersMethods,
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
+import { type EvidenceHandlersMethods, evidenceHandlersMethods } from './evidence-handlers.js'
 export { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import { handleResolveRuntimeIntent, handleRunPreview } from './declaration-handlers.js'
 import {
@@ -845,7 +846,8 @@ interface HrcServerInstance
     RegistrationHandlersMethods,
     RuntimeInspectHandlersMethods,
     SeatWithdrawHandlersMethods,
-    PlacementFederationHandlersMethods {}
+    PlacementFederationHandlersMethods,
+    EvidenceHandlersMethods {}
 
 class HrcServerInstance implements HrcServer {
   readonly followSubscribers = new Set<FollowSubscriber>()
@@ -976,6 +978,11 @@ class HrcServerInstance implements HrcServer {
       this.handleBoundedEvents(url, request),
     [exactRouteKey('GET', '/v1/broker-events')]: (request, url) =>
       this.handleBrokerEvents(url, request),
+    [exactRouteKey('GET', '/v1/broker-events/query')]: (_request, url) =>
+      this.handleBrokerEventsQuery(_request, url),
+    [exactRouteKey('POST', '/v1/broker-events/follow')]: (request) =>
+      this.handleBrokerEventsFollow(request),
+    [exactRouteKey('GET', '/v1/events/head')]: () => this.handleEventsHead(),
     [exactRouteKey('GET', '/v1/broker-forensics')]: (_request, url) =>
       this.handleBrokerForensics(url),
     [exactRouteKey('POST', '/v1/transcript-search')]: (request) =>
@@ -3117,6 +3124,7 @@ Object.assign(
   runtimeInspectHandlersMethods,
   seatWithdrawHandlersMethods,
   placementFederationHandlersMethods,
+  evidenceHandlersMethods,
   rosterClaimHandlersMethods,
   exactClaimHandlersMethods,
   registrationGcHandlersMethods,

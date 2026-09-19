@@ -31,6 +31,11 @@ import type {
 import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
 import type {
+  BrokerEventsFollowRequest,
+  BrokerEventsFollowResponse,
+  BrokerEventsQueryOp,
+  BrokerEventsQueryResponse,
+  EventsHeadResponse,
   ListLiveSeatRefsResponse,
   ListPlacementBindingsResponse,
   ListUnbornDesignationsResponse,
@@ -699,6 +704,33 @@ export class HrcClient {
 
   async listUnbornDesignations(): Promise<ListUnbornDesignationsResponse> {
     return this.getJson<ListUnbornDesignationsResponse>('/v1/federation/designations?unborn=true')
+  }
+
+  /**
+   * Injector evidence reads (T-08607). Recovery starts at the head; landing
+   * and reconcile consult the committed-evidence queries; the node-wide
+   * commit stream is followed by ordinal.
+   */
+  async eventsHead(): Promise<EventsHeadResponse> {
+    return this.getJson<EventsHeadResponse>('/v1/events/head')
+  }
+
+  async queryBrokerEvents(
+    op: BrokerEventsQueryOp,
+    options?: { includeRetained?: boolean | undefined }
+  ): Promise<BrokerEventsQueryResponse> {
+    return this.getJson<BrokerEventsQueryResponse>(
+      buildPath('/v1/broker-events/query', {
+        ...op,
+        ...(options?.includeRetained === true ? { includeRetained: 'true' } : {}),
+      })
+    )
+  }
+
+  async followBrokerEvents(
+    request: BrokerEventsFollowRequest
+  ): Promise<BrokerEventsFollowResponse> {
+    return this.postJson<BrokerEventsFollowResponse>('/v1/broker-events/follow', request)
   }
 
   async getTurnAdmission(): Promise<HrcTurnAdmissionState> {

@@ -1918,3 +1918,96 @@ export type ListUnbornDesignationsResponse = {
   localNodeId: string
   designations: BirthDesignationRecord[]
 }
+
+/**
+ * Injector evidence surface (T-08607). The socket form of the kicker's
+ * event-drive reads: recovery replans start with "what do I still need"
+ * (head), landing/reconcile consult the five committed-evidence queries, and
+ * the node-wide commit stream is followed by ordinal (no per-subscription
+ * cursor).
+ *
+ * The retained fence rides every row read: `evidenceOrigin` is always on the
+ * wire (`live` for committed rows, `retained` for offline-projected rows),
+ * and retained rows are refused unless the caller passes
+ * `includeRetained: true`. The high-water in `EventsHeadResponse` is
+ * positional and unfenced — it names a commit position, not evidence.
+ */
+
+/** `GET /v1/events/head` — highest commit position in both event tables. */
+export type EventsHeadResponse = {
+  /** `MAX(hrc_seq)` over hrc_events. */
+  hrcSeq: number
+  /**
+   * `MAX(id)` over broker_invocation_events. `id` is
+   * `INTEGER PRIMARY KEY AUTOINCREMENT` — the commit ordinal (V5 decision:
+   * keep it; AUTOINCREMENT ids are never reused, so retention pruning the old
+   * end cannot alias a follow cursor).
+   */
+  brokerCommit: number
+}
+
+export type BrokerEventsQueryOp =
+  | { op: 'admission-rejection'; runtimeId: string; submissionId: string }
+  | { op: 'input-accepted'; runtimeId: string; inputId: string }
+  | {
+      op: 'unique-submission-after'
+      runtimeId: string
+      invocationId: string
+      envelopeId: string
+      afterSeq: number
+    }
+  | { op: 'disposition'; runtimeId: string; submissionId: string }
+  | { op: 'input-rejection-evidence'; runtimeId: string; submissionId: string }
+
+export type BrokerEventsQueryResult =
+  | { op: 'admission-rejection'; layer: string; reason: string }
+  | { op: 'input-accepted'; accepted: boolean }
+  | { op: 'unique-submission-after'; submissionId: string }
+  | { op: 'disposition'; type: string; turnId?: string | undefined; reason?: string | undefined }
+  | {
+      op: 'input-rejection-evidence'
+      deliveryEvidence: 'not_written' | 'possibly_written'
+    }
+
+/**
+ * `GET /v1/broker-events/query` — one of event-drive's five committed-evidence
+ * queries. `result` is null when the ledger holds no matching row; the
+ * retained fence applies inside the query (a retained-only match reads as
+ * absent without `includeRetained: true`).
+ */
+export type BrokerEventsQueryResponse = {
+  result: BrokerEventsQueryResult | null
+}
+
+/**
+ * One committed broker event on the follow wire: the full record plus the
+ * commit ordinal and an always-explicit evidence origin.
+ */
+export type BrokerEventWireRecord = Omit<
+  HrcBrokerInvocationEventRecord,
+  'id' | 'evidenceOrigin'
+> & {
+  commitOrdinal: number
+  evidenceOrigin: 'live' | 'retained'
+}
+
+/** `POST /v1/broker-events/follow` — bounded commit-ordered page. */
+export type BrokerEventsFollowRequest = {
+  /**
+   * Commit ordinal to resume from, newer-or-equal: rows with
+   * `commitOrdinal >= afterCommit` stream back, so a retried follow
+   * re-observes the boundary row instead of skipping it.
+   */
+  afterCommit: number
+  limit?: number | undefined
+  includeRetained?: boolean | undefined
+}
+
+export type BrokerEventsFollowResponse = {
+  events: BrokerEventWireRecord[]
+  /**
+   * Resume cursor: the highest commit ordinal returned, or `afterCommit` when
+   * the page is empty (never rewinds).
+   */
+  nextCommit: number
+}

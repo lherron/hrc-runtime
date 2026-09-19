@@ -546,6 +546,19 @@ const BROKER_INVOCATION_EVENT_PROJECTION_SPEC: ReadonlyArray<
   { key: 'projectionError', column: 'projection_error' },
 ]
 
+/**
+ * Retained-evidence fence predicate fragment (T-08607). Offline-projected
+ * rows carry `evidence_origin = 'retained'`; live rows carry NULL. The fence
+ * is opt-OUT: only an explicit `includeRetained: true` reads retained rows.
+ * Callers that pass no options keep the historical unfiltered read — the
+ * socket routes always pass the request's flag explicitly.
+ */
+function retainedFencePredicate(includeRetained: boolean | undefined): string {
+  return includeRetained === true
+    ? ''
+    : `AND (evidence_origin IS NULL OR evidence_origin != 'retained')`
+}
+
 export class BrokerInvocationEventRepository {
   private readonly appendInTransaction: (
     input: BrokerInvocationEventAppendInput
@@ -962,7 +975,11 @@ export class BrokerInvocationEventRepository {
     return rows.map((row) => this.mapRow(row))
   }
 
-  hasInputAccepted(runtimeId: string, inputId: string): boolean {
+  hasInputAccepted(
+    runtimeId: string,
+    inputId: string,
+    options: { includeRetained?: boolean | undefined } = {}
+  ): boolean {
     return (
       this.db
         .query<{ found: number }, [string, string]>(
@@ -971,6 +988,7 @@ export class BrokerInvocationEventRepository {
             WHERE runtime_id = ?
               AND type = 'input.accepted'
               AND json_extract(broker_event_json, '$.inputId') = ?
+              ${retainedFencePredicate(options.includeRetained)}
             LIMIT 1`
         )
         .get(runtimeId, inputId) !== null
@@ -1002,7 +1020,8 @@ export class BrokerInvocationEventRepository {
    */
   findSubmissionDisposition(
     runtimeId: string,
-    submissionId: string
+    submissionId: string,
+    options: { includeRetained?: boolean | undefined } = {}
   ): { type: string; turnId?: string | undefined; reason?: string | undefined } | undefined {
     const row = this.db
       .query<{ type: string; turnId: string | null; reason: string | null }, [string, string]>(
@@ -1017,6 +1036,7 @@ export class BrokerInvocationEventRepository {
               'submission.lost'
             )
             AND json_extract(broker_event_json, '$.submissionId') = ?
+            ${retainedFencePredicate(options.includeRetained)}
           ORDER BY time ASC, seq ASC
           LIMIT 1`
       )
@@ -1032,7 +1052,8 @@ export class BrokerInvocationEventRepository {
   /** Explicit producer proof that an input did not reach a native write. */
   findInputRejectionDeliveryEvidence(
     runtimeId: string,
-    submissionId: string
+    submissionId: string,
+    options: { includeRetained?: boolean | undefined } = {}
   ): 'not_written' | 'possibly_written' | undefined {
     const row = this.db
       .query<{ deliveryEvidence: string | null }, [string, string, string]>(
@@ -1044,6 +1065,7 @@ export class BrokerInvocationEventRepository {
               json_extract(broker_event_json, '$.inputId') = ? OR
               json_extract(broker_event_json, '$.submissionId') = ?
             )
+            ${retainedFencePredicate(options.includeRetained)}
           ORDER BY time ASC, seq ASC
           LIMIT 1`
       )
@@ -1070,7 +1092,8 @@ export class BrokerInvocationEventRepository {
    */
   findAdmissionRejection(
     runtimeId: string,
-    submissionId: string
+    submissionId: string,
+    options: { includeRetained?: boolean | undefined } = {}
   ): { layer: string; reason: string } | undefined {
     const row = this.db
       .query<{ layer: string | null; reason: string | null }, [string, string]>(
@@ -1080,6 +1103,7 @@ export class BrokerInvocationEventRepository {
           WHERE runtime_id = ?
             AND type = 'admission.rejected'
             AND json_extract(broker_event_json, '$.submissionId') = ?
+            ${retainedFencePredicate(options.includeRetained)}
           ORDER BY time DESC, seq DESC
           LIMIT 1`
       )
@@ -1115,19 +1139,64 @@ export class BrokerInvocationEventRepository {
     invocationId: string
     envelopeId: string
     afterSeq: number
+    includeRetained?: boolean | undefined
   }): string | undefined {
     const rows = this.db
       .query<{ submissionId: string | null }, [string, string, number, string]>(
         `SELECT DISTINCT json_extract(broker_event_json, '$.submissionId') AS submissionId
          FROM broker_invocation_events WHERE runtime_id = ? AND invocation_id = ?
            AND seq > ? AND type = 'admission.requested'
-           AND json_extract(broker_event_json, '$.origin.envelopeId') = ?`
+           AND json_extract(broker_event_json, '$.origin.envelopeId') = ?
+           ${retainedFencePredicate(input.includeRetained)}`
       )
       .all(input.runtimeId, input.invocationId, input.afterSeq, input.envelopeId)
     const ids = rows
       .map((row) => row.submissionId)
       .filter((id): id is string => typeof id === 'string')
     return ids.length === 1 ? ids[0] : undefined
+  }
+
+  /**
+   * Node-wide broker commit high-water (T-08607): `MAX(id)` over
+   * broker_invocation_events. `id` is `INTEGER PRIMARY KEY AUTOINCREMENT` —
+   * the commit ordinal (V5 decision: keep it; AUTOINCREMENT ids are never
+   * reused, so retention pruning the old end cannot alias a cursor).
+   */
+  maxBrokerCommitId(): number {
+    const row = this.db
+      .query<{ max_id: number | null }, []>(
+        'SELECT MAX(id) AS max_id FROM broker_invocation_events'
+      )
+      .get()
+    return row?.max_id ?? 0
+  }
+
+  /**
+   * Commit-ordered broker event page for the follow route (T-08607).
+   * Newer-or-equal on the commit ordinal: `id >= afterCommit`, ascending, so a
+   * retried follow re-observes the boundary row instead of skipping it
+   * (at-least-once; the injector dedupes by ordinal). The retained fence is
+   * explicit: callers that do not pass `includeRetained` keep the historical
+   * unfiltered read; the socket routes always pass it through from the request.
+   */
+  listBrokerEventsAfterCommit(input: {
+    afterCommit: number
+    limit: number
+    includeRetained?: boolean | undefined
+  }): HrcBrokerInvocationEventRecord[] {
+    const fence =
+      input.includeRetained === true
+        ? ''
+        : `AND (evidence_origin IS NULL OR evidence_origin != 'retained')`
+    return this.db
+      .query<BrokerInvocationEventRow, [number, number]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+          WHERE id >= ? ${fence}
+          ORDER BY id ASC
+          LIMIT ?`
+      )
+      .all(input.afterCommit, input.limit)
+      .map((row) => this.mapRow(row))
   }
 
   maxBrokerSeq(invocationId: string): number {
