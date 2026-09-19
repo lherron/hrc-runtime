@@ -674,10 +674,11 @@ export function parseSubmissionRequest(
     'origin',
     'responseFormat',
     'freshContext',
-    ...(door === 'enqueue' || door === 'preempt' ? ['ttlMs'] : []),
+    ...(door === 'enqueue' || door === 'preempt' || door === 'invoke' ? ['ttlMs'] : []),
     // A steer joins the running turn or starts one, so it has a turn to wait on.
     'wait',
     ...(door === 'steer' ? [] : ['turnPolicy', 'runtimeIntent', 'establishedBrokerInvocationId']),
+    ...(door === 'invoke' ? ['coldBirth'] : []),
   ]
   rejectUnknownFields(input, allowed)
 
@@ -721,12 +722,14 @@ export function parseSubmissionRequest(
     'establishedBrokerInvocationId'
   )
   const ttlMs =
-    door === 'enqueue' || door === 'preempt'
+    door === 'enqueue' || door === 'preempt' || door === 'invoke'
       ? parseOptionalSubmissionTtlMs(input['ttlMs'])
       : undefined
+  const coldBirth = door === 'invoke' ? parseOptionalInvokeColdBirth(input['coldBirth']) : undefined
   return {
     ...common,
     ...(ttlMs !== undefined ? { ttlMs } : {}),
+    ...(coldBirth !== undefined ? { coldBirth } : {}),
     ...(turnPolicy !== undefined ? { turnPolicy } : {}),
     ...(wait !== undefined ? { wait } : {}),
     ...(runtimeIntent && isRecord(runtimeIntent)
@@ -734,6 +737,30 @@ export function parseSubmissionRequest(
       : {}),
     ...(establishedBrokerInvocationId !== undefined ? { establishedBrokerInvocationId } : {}),
   }
+}
+
+function parseOptionalInvokeColdBirth(input: unknown): InvokeSubmissionRequest['coldBirth'] {
+  if (input === undefined) return undefined
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'coldBirth must be an object', {
+      field: 'coldBirth',
+    })
+  }
+  rejectUnknownFields(input, ['promptMode'], 'coldBirth')
+  const promptMode = requireOptionalOneOf(
+    input['promptMode'],
+    ['replace-priming', 'append-to-priming'],
+    'coldBirth.promptMode must be "replace-priming" or "append-to-priming"',
+    { field: 'coldBirth.promptMode' }
+  )
+  if (promptMode === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'coldBirth.promptMode is required',
+      { field: 'coldBirth.promptMode' }
+    )
+  }
+  return { promptMode }
 }
 
 function parseOptionalSubmissionTtlMs(input: unknown): number | undefined {

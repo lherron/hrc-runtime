@@ -392,10 +392,22 @@ export async function handleEnsureTarget(
   const parsedScopeJson = isRecord(body['parsedScopeJson'])
     ? (body['parsedScopeJson'] as Record<string, unknown>)
     : undefined
+  const persistIntent = body['persistIntent']
+  if (persistIntent !== undefined && typeof persistIntent !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'persistIntent must be a boolean',
+      {
+        field: 'persistIntent',
+      }
+    )
+  }
   const session = await this.ensureTargetSession(
     sessionRef,
     runtimeIntent as HrcRuntimeIntent,
-    parsedScopeJson
+    parsedScopeJson,
+    'local',
+    ...(persistIntent !== undefined ? [{ persistIntent } as const] : [])
   )
   return json(toTargetView(this.db, session) satisfies EnsureTargetResponse)
 }

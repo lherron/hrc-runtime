@@ -489,7 +489,17 @@ export type EnqueueSubmissionRequest = HrcSessionBoundSubmissionRequest & {
   wait?: boolean | undefined
 }
 
+/**
+ * Cold-launch prompt carriage on the invoke class method (T-08610): how the
+ * born runtime's first turn carries the body when the invoke cold-births.
+ * An invoke-class option, not an admission-class selector — the method stays
+ * the class. Absent means the legacy behavior (`append-to-priming`).
+ */
+export type ColdBirthPromptMode = 'replace-priming' | 'append-to-priming'
+
 export type InvokeSubmissionRequest = HrcSessionBoundSubmissionRequest & {
+  ttlMs?: number | undefined
+  coldBirth?: { promptMode: ColdBirthPromptMode } | undefined
   turnPolicy?: 'open' | 'guarded' | undefined
   wait?: boolean | undefined
 }

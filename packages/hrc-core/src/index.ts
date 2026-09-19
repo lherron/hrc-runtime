@@ -399,6 +399,7 @@ export type {
   RuntimeSeatResponse,
   WithdrawSubmissionRequest,
   WithdrawSubmissionResponse,
+  ColdBirthPromptMode,
   LiveSeatRef,
   ListLiveSeatRefsResponse,
   PlacementBindingView,

@@ -10,6 +10,7 @@ import {
   validateFence,
 } from 'hrc-core'
 import type {
+  ColdBirthPromptMode,
   DispatchTurnResponse,
   DispatchTurnTerminalOutcome,
   EnqueueSubmissionRequest,
@@ -624,6 +625,8 @@ export async function handleSubmission(
       door,
     })
   }
+  const invokeColdBirthPromptMode =
+    door === 'invoke' ? (body as InvokeSubmissionRequest).coldBirth?.promptMode : undefined
   const publicResponse = await dispatchPublicSubmission(this, session, intent, body.body, {
     runId,
     // The door response is not complete until the broker has minted its
@@ -635,6 +638,9 @@ export async function handleSubmission(
     origin: runOriginFromSubmission(body.origin),
     responseFormat: body.responseFormat,
     freshContext: body.freshContext,
+    ...(invokeColdBirthPromptMode !== undefined
+      ? { coldBirthPromptMode: invokeColdBirthPromptMode }
+      : {}),
     ...('ttlMs' in body && body.ttlMs !== undefined ? { ttlMs: body.ttlMs } : {}),
     ...('turnPolicy' in body && body.turnPolicy !== undefined
       ? { turnPolicy: body.turnPolicy }
@@ -1662,6 +1668,13 @@ type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
    * non-launch-primed routes (T-07920).
    */
   launchPromptOnColdBirth?: boolean | undefined
+  /**
+   * Requested cold-launch prompt carriage (T-08610): an explicit per-request
+   * override of the `launchPromptOnColdBirth` derivation below. Carried from
+   * `POST /v1/submissions/invoke`'s `coldBirth.promptMode`, which is an option
+   * on the invoke class method, not an admission-class selector.
+   */
+  coldBirthPromptMode?: ColdBirthPromptMode | undefined
 }
 
 export async function dispatchTurnForSession(
@@ -2226,11 +2239,13 @@ async function dispatchAdmittedTurnForSession(
               : options.waitForCompletion,
           joinInFlightRuntimeStart: options.joinInFlightRuntimeStart,
           ...(redirectOffBirthJoin !== undefined ? { redirectOffBirthJoin } : {}),
-          coldBirthPromptMode: options.launchPromptOnColdBirth
-            ? 'replace-priming'
-            : submissionDoorCarriesColdLaunch(options.submissionDoor)
-              ? 'append-to-priming'
-              : undefined,
+          coldBirthPromptMode:
+            options.coldBirthPromptMode ??
+            (options.launchPromptOnColdBirth
+              ? 'replace-priming'
+              : submissionDoorCarriesColdLaunch(options.submissionDoor)
+                ? 'append-to-priming'
+                : undefined),
           responseFormat: options.responseFormat,
           ...dispatchRunPersistence(options),
         }),

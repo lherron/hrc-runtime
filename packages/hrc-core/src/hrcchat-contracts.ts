@@ -244,6 +244,7 @@ export type EnsureTargetRequest = {
   sessionRef: string
   runtimeIntent: HrcRuntimeIntent
   parsedScopeJson?: Record<string, unknown> | undefined
+  persistIntent?: boolean | undefined
 }
 
 export type EnsureTargetResponse = HrcTargetView
