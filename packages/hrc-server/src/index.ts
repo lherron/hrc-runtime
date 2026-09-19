@@ -1672,7 +1672,11 @@ class HrcServerInstance implements HrcServer {
       dbPath: this.options.dbPath,
       tmuxSocketPath: getTmuxSocketPath(this.options),
     })
-    this.server.stop(true)
+    // The kicker consumes this daemon through its own Unix socket. Drain its
+    // cursor-backed followers while the listener is still available; closing it
+    // first races a live fetch against Bun's socket teardown.
+    await this.mailKicker.stop()
+    this.server.stop()
     await this.eventForwarder?.stop()
     await this.eventIngestListener?.stop()
     this.collectiveHistory?.stop()
@@ -1775,7 +1779,6 @@ class HrcServerInstance implements HrcServer {
       }
     }
     await this.transcriptIndexer.stop()
-    await this.mailKicker.stop()
     // The ledger transport is a child process; leaving it behind would strand a
     // `wrkq rpc --stdio` per daemon restart.
     await this.wrkqLedger.close().catch((error: unknown) => {

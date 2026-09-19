@@ -28,6 +28,7 @@
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-mail-kicker": "*",
+    "hrc-sdk": "*",
     "hrc-transcript-index": "*",
     "hrc-store-sqlite": "*",
     "spaces-aspc-protocol": "latest",
@@ -37,7 +38,6 @@
   },
   "devDependencies": {
     "@types/bun": "1.3.14",
-    "hrc-sdk": "*",
     "typescript": "^5.8.3"
   }
 }

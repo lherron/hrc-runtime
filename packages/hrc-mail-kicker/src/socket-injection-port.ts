@@ -25,6 +25,7 @@ const EMPTY_FOLLOW_DELAY_MS = 100
  * or in-process dispatch closures by accident.
  */
 export function createSocketInjectionPort(client: HrcClient): HrcInjectionPort {
+  let closed = false
   let subscriber: Promise<void> | undefined
   const declareSubscriber = async (): Promise<void> => {
     subscriber ??= client.declareSubscriber({ name: MAIL_SUBSCRIBER }).then(() => undefined)
@@ -86,7 +87,7 @@ export function createSocketInjectionPort(client: HrcClient): HrcInjectionPort {
     return response as KickerDispatchResult
   }
 
-  return {
+  const port: HrcInjectionPort = {
     runtime: async (runtimeId) =>
       (await client.listRuntimes({ all: true })).find((runtime) => runtime.runtimeId === runtimeId),
     runtimesByHostSession: async (hostSessionId) =>
@@ -154,44 +155,55 @@ export function createSocketInjectionPort(client: HrcClient): HrcInjectionPort {
     unbornDesignations: async () => await client.listUnbornDesignations(),
     subscribeLifecycle: async ({ afterSeq, onEvent }) => {
       await declareSubscriber()
-      const controller = new AbortController()
-      void (async () => {
+      const operation = (async () => {
+        let cursor = afterSeq
         try {
-          for await (const event of client.watch({
-            fromSeq: afterSeq + 1,
-            follow: true,
-            signal: controller.signal,
-          })) {
-            onEvent(event)
+          while (!closed) {
+            let observed = false
+            for await (const event of client.watch({
+              fromSeq: cursor + 1,
+            })) {
+              if (closed) return
+              observed = true
+              cursor = event.hrcSeq
+              onEvent(event)
+            }
+            if (!observed) await delay(EMPTY_FOLLOW_DELAY_MS)
           }
         } catch {
           // The kicker's persisted cursor and sweep own retry/reconciliation.
         }
       })()
-      return () => controller.abort()
+      return async () => {
+        closed = true
+        await operation
+      }
     },
     subscribeBroker: async ({ afterCommit, onEvent }) => {
       await declareSubscriber()
-      const controller = new AbortController()
-      void (async () => {
+      const operation = (async () => {
         let cursor = afterCommit
         try {
-          while (!controller.signal.aborted) {
+          while (!closed) {
             const page = await client.followBrokerEvents(
               { afterCommit: cursor, limit: BROKER_FOLLOW_LIMIT },
               MAIL_SUBSCRIBER
             )
             for (const event of page.events) {
+              if (closed) return
               onEvent({ ...event, id: event.commitOrdinal } as HrcBrokerInvocationEventRecord)
             }
             cursor = page.nextCommit
-            if (page.events.length === 0) await delay(EMPTY_FOLLOW_DELAY_MS, controller.signal)
+            if (page.events.length === 0) await delay(EMPTY_FOLLOW_DELAY_MS)
           }
         } catch {
           // The kicker's persisted cursor and sweep own retry/reconciliation.
         }
       })()
-      return () => controller.abort()
+      return async () => {
+        closed = true
+        await operation
+      }
     },
     steer: (session, intent, prompt, options) =>
       dispatch('steer', session, intent, prompt, options),
@@ -204,18 +216,20 @@ export function createSocketInjectionPort(client: HrcClient): HrcInjectionPort {
     preemptAdmission: async (_session, request: PreemptSubmissionRequest) =>
       (await client.preemptAdmission(request)).admission,
   }
+  return new Proxy(port, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver)
+      if (typeof value !== 'function') return value
+      return (...args: unknown[]) => {
+        if (closed) return Promise.reject(new Error('socket injection port is stopped'))
+        return Reflect.apply(value, target, args)
+      }
+    },
+  })
 }
 
-function delay(ms: number, signal: AbortSignal): Promise<void> {
+function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, ms)
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timeout)
-        resolve()
-      },
-      { once: true }
-    )
+    setTimeout(resolve, ms)
   })
 }

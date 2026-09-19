@@ -1,62 +1,16 @@
-import type { HrcBrokerInvocationEventRecord, HrcEventEnvelope, HrcLifecycleEvent } from 'hrc-core'
-import { createInProcessInjectionPort, createMailKicker } from 'hrc-mail-kicker'
-import type { KickerDispatchResult, MailKicker } from 'hrc-mail-kicker'
+import { createMailKicker, createSocketInjectionPort } from 'hrc-mail-kicker'
+import type { MailKicker } from 'hrc-mail-kicker'
+import { HrcClient } from 'hrc-sdk'
 
-import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import { findTargetSession } from './target-view.js'
-import { preemptAdmission } from './turn-dispatch-handlers.js'
-import { buildKickRuntimeIntent } from './wrkq/kick-intent.js'
 
 /** Bind the package-owned kicker state machine to this daemon's runtime capabilities. */
 export function createServerMailKicker(server: HrcServerInstanceForHandlers): MailKicker {
   return createMailKicker(
     {
       store: server.db,
-      port: createInProcessInjectionPort({
-        db: server.db,
-        nodeId: server.federationNodeId,
-        registry: server.federationRegistryClient,
-        resolveForeignHome: (scopeRef) =>
-          resolveForeignHome(
-            homeAuthorityDeps(server, (failedScopeRef, error) => {
-              writeServerLog('WARN', 'wrkq.kicker.home_consult_failed', {
-                scopeRef: failedScopeRef,
-                error: error instanceof Error ? error.message : String(error),
-              })
-            }),
-            scopeRef
-          ),
-        resolveRuntimeIntent: async (scopeRef, materializationIntent) =>
-          buildKickRuntimeIntent(scopeRef, materializationIntent),
-        findTargetSession: (targetSessionRef) =>
-          findTargetSession(server.db, targetSessionRef) ?? undefined,
-        ensureTargetSession: (targetSessionRef, intent, options) =>
-          server.ensureTargetSession(targetSessionRef, intent, undefined, 'local', options),
-        dispatchTurn: async (session, intent, prompt, options) => {
-          const response = await server.dispatchTurnForSession(session, intent, prompt, options)
-          return (await response.json()) as KickerDispatchResult
-        },
-        broker: {
-          seatProbe: (runtimeId) => server.getHarnessBrokerController().seatProbe(runtimeId),
-          withdraw: (input) => server.getHarnessBrokerController().withdraw(input),
-        },
-        subscribeLifecycle: ({ onEvent }) => {
-          const subscriber = (event: HrcLifecycleEvent | HrcEventEnvelope) => {
-            if ('hrcSeq' in event) onEvent(event)
-          }
-          server.followSubscribers.add(subscriber)
-          return () => server.followSubscribers.delete(subscriber)
-        },
-        subscribeBroker: ({ onEvent }) => {
-          const subscriber = (event: { record: HrcBrokerInvocationEventRecord }) =>
-            onEvent(event.record)
-          server.rawBrokerSubscribers.add(subscriber)
-          return () => server.rawBrokerSubscribers.delete(subscriber)
-        },
-        preemptAdmission: (session, request) => preemptAdmission(server, session, request),
-      }),
+      port: createSocketInjectionPort(new HrcClient(server.options.socketPath)),
       ledger: server.wrkqLedger,
       nodeId: server.federationNodeId,
       foreignHomeMemo: server.foreignHomeMemo,

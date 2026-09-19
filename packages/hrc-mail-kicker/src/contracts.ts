@@ -112,11 +112,11 @@ export type HrcInjectionPort = {
   subscribeLifecycle(input: {
     afterSeq: number
     onEvent(event: HrcLifecycleEvent): void
-  }): Promise<() => void>
+  }): Promise<() => void | Promise<void>>
   subscribeBroker(input: {
     afterCommit: number
     onEvent(event: HrcBrokerInvocationEventRecord): void
-  }): Promise<() => void>
+  }): Promise<() => void | Promise<void>>
   steer(
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,

@@ -59,8 +59,8 @@ export class MailKicker implements MailKickerContext {
   readonly mailKickerSteerRefused = new Set<string>()
   readonly mailKickerSteerFallback = new Set<string>()
   readonly mailKickerDeliveryBackoff = new Map<string, number>()
-  private lifecycleUnsubscribe: (() => void) | undefined
-  private brokerUnsubscribe: (() => void) | undefined
+  private lifecycleUnsubscribe: (() => void | Promise<void>) | undefined
+  private brokerUnsubscribe: (() => void | Promise<void>) | undefined
 
   constructor(
     private readonly dependencies: MailKickerDependencies,
@@ -118,9 +118,9 @@ export class MailKicker implements MailKickerContext {
   async stop(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
-    this.lifecycleUnsubscribe?.()
+    await this.lifecycleUnsubscribe?.()
     this.lifecycleUnsubscribe = undefined
-    this.brokerUnsubscribe?.()
+    await this.brokerUnsubscribe?.()
     this.brokerUnsubscribe = undefined
     if (this.mailKickerSweepTimer !== undefined) {
       clearInterval(this.mailKickerSweepTimer)
@@ -167,6 +167,7 @@ export class MailKicker implements MailKickerContext {
     this.mailKickerPendingTargets.set(targetSessionRef, wakeReason)
     queueMicrotask(() => {
       void this.drainTarget(targetSessionRef).catch((error: unknown) => {
+        if (this.stopping) return
         this.log('WARN', 'wrkq.kicker.wake_failed', {
           targetSessionRef,
           wakeReason,
@@ -216,6 +217,7 @@ export class MailKicker implements MailKickerContext {
   }
 
   observeLifecycleEvent(event: HrcLifecycleEvent): void {
+    if (this.stopping) return
     observeMailDriveLifecycleEvent.call(this, event)
   }
 
