@@ -73,6 +73,13 @@ type Internal = {
     runId: string,
     options?: Record<string, unknown>
   ): Promise<HrcRuntimeSnapshot>
+  executeHeadlessBrokerStartTurn(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    runId: string,
+    options: Record<string, unknown>
+  ): Promise<Response>
 }
 
 function internal(): Internal {
@@ -323,6 +330,45 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     expect(persisted?.releaseId).toBe(releaseA.releaseId)
     await Bun.sleep(20)
     expect(aspd.openConnections).toBe(0)
+  })
+
+  it('returns the cold launch initial-input admission identity to an injector door', async () => {
+    const s = await session()
+    const response = await internal().executeHeadlessBrokerStartTurn(
+      s,
+      headlessIntent(),
+      'injector envelope body',
+      'run-t08542-injector',
+      {
+        waitForCompletion: false,
+        submissionDoor: 'invoke',
+        submissionOrigin: { principalRef: 'agent:test', envelopeId: 'EN-T08542' },
+      }
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { submissionId?: string; admission?: string }
+    const [operation] = operationsFor(s.hostSessionId)
+    const { record } = readAspdPreparation(internal(), operation!.operation_id)
+    const inputId = record.admission.startRequest.initialInput.inputId
+    expect(body).toEqual({
+      runId: 'run-t08542-injector',
+      hostSessionId: s.hostSessionId,
+      generation: s.generation,
+      runtimeId: expect.any(String),
+      transport: 'headless',
+      status: 'started',
+      supportsInFlightInput: false,
+      submissionId: inputId,
+      admission: 'admitted',
+    })
+    const admission = internal()
+      .db.sqlite.query<
+        { submission_id: string; door: string; envelope_id: string | null },
+        [string]
+      >('SELECT submission_id, door, envelope_id FROM submission_admissions WHERE run_id = ?')
+      .get('run-t08542-injector')
+    expect(admission).toEqual({ submission_id: inputId, door: 'invoke', envelope_id: 'EN-T08542' })
   })
 
   it('refuses without fallback when aspd is unavailable, incompatible, or omits executionRelease', async () => {

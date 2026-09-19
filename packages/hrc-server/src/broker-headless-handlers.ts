@@ -827,6 +827,22 @@ export async function executeHeadlessBrokerStartTurn(
           updatedAt: acceptedAt,
         })
       }
+      const submissionId = compilerPrimingSubmissionId(this.db, runtime)
+      if (submissionId !== undefined && options.submissionDoor !== undefined) {
+        // A cold launch carries the caller's input as the compiler start
+        // request's initial input. Persist the same submission identity and
+        // origin as an ordinary broker-door submission so external injectors
+        // can observe and reconcile its admission.
+        this.db.submissionAdmissions.upsertAdmission({
+          submissionId,
+          runId,
+          runtimeId: runtime.runtimeId,
+          invocationId: runtime.activeInvocationId,
+          door: options.submissionDoor,
+          envelopeId: submissionOrigin(session.scopeRef, options).envelopeId,
+          admittedAt: acceptedAt,
+        })
+      }
       // T-07963: nothing is owed any more. T-07944 persisted the caller prompt
       // here so a restart could re-arm the second submission; the prompt now
       // rides the boot's own first input, so there is no deferred submission to
@@ -888,6 +904,8 @@ export async function executeHeadlessBrokerStartTurn(
     // sender's obligation: it failed the run, the drive attempt never reached
     // `started`, and nothing ever armed a reminder for what it carried.
     const runtime = await accepted
+    const submissionId =
+      options.submissionDoor === undefined ? undefined : compilerPrimingSubmissionId(this.db, runtime)
     return json({
       runId,
       hostSessionId: session.hostSessionId,
@@ -896,9 +914,12 @@ export async function executeHeadlessBrokerStartTurn(
       transport: 'headless',
       status: 'started',
       supportsInFlightInput: false,
+      ...(submissionId !== undefined ? { submissionId, admission: 'admitted' as const } : {}),
     } satisfies DispatchTurnResponseBase)
   }
   const runtime = await bootOperation
+  const submissionId =
+    options.submissionDoor === undefined ? undefined : compilerPrimingSubmissionId(this.db, runtime)
   // A blocking caller waits for the FIRST turn now, because the first turn is the
   // delivery. There is no second submission whose completion it could await.
   await this.waitForHeadlessBrokerRunCompletion(runId, runtime.runtimeId)
@@ -910,6 +931,7 @@ export async function executeHeadlessBrokerStartTurn(
     transport: 'headless',
     status: 'completed',
     supportsInFlightInput: false,
+    ...(submissionId !== undefined ? { submissionId, admission: 'admitted' as const } : {}),
   } satisfies DispatchTurnResponseBase)
 }
 
