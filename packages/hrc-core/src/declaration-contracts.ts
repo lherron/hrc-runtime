@@ -13,7 +13,16 @@ export type DeclarationRunMode = 'query' | 'heartbeat' | 'task' | 'maintenance'
 
 export type DeclarationSourceState = 'absent' | 'valid' | 'invalid'
 
-export type ResolveRuntimeIntentRequest = {
+type ResolveRuntimeIntentOptions = {
+  runMode?: DeclarationRunMode | undefined
+  interactive?: boolean | undefined
+  preferredMode?: HrcExecutionMode | undefined
+  allowInteractiveSurfaceReuse?: boolean | undefined
+  initialPrompt?: string | undefined
+}
+
+/** Resolve a declaration for paths that the caller has already selected. */
+export type ResolveRuntimeIntentByPathsRequest = ResolveRuntimeIntentOptions & {
   agentId: string
   /** Required: the caller's already-resolved agent root is read exactly. */
   agentRoot: string
@@ -21,14 +30,25 @@ export type ResolveRuntimeIntentRequest = {
   /** Present → project mode `root`; omitted → project mode `none` (projectless). */
   projectRoot?: string | undefined
   cwd: string
-  runMode?: DeclarationRunMode | undefined
-  interactive?: boolean | undefined
-  preferredMode?: HrcExecutionMode | undefined
-  allowInteractiveSurfaceReuse?: boolean | undefined
-  initialPrompt?: string | undefined
   provision?: Partial<ProvisioningScalars> | undefined
   agentSources?: { agentsRoot?: string | undefined; aspHome?: string | undefined } | undefined
 }
+
+/**
+ * Resolve a declaration for a scope using the daemon's placement policy.
+ *
+ * A socket injector knows its target scope, not the daemon's local checkout
+ * paths.  This arm deliberately has no caller-supplied root or agent sources:
+ * HRC resolves those before it observes the declaration through aspd.
+ */
+export type ResolveRuntimeIntentByScopeRequest = ResolveRuntimeIntentOptions & {
+  scopeRef: string
+  materializationIntent?: string | undefined
+}
+
+export type ResolveRuntimeIntentRequest =
+  | ResolveRuntimeIntentByPathsRequest
+  | ResolveRuntimeIntentByScopeRequest
 
 export type ResolvedDeclarationAgentSources = {
   aspHome?: string | undefined

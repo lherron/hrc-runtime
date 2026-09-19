@@ -13,6 +13,7 @@ import {
   DENIED_PROVISION_OVERRIDE_KEYS,
   type ProvisioningScalars,
   parseScopeRef,
+  resolveQualifiedScopeInput,
 } from 'agent-scope'
 import {
   type DeclarationSourceState,
@@ -45,6 +46,7 @@ import {
   projectBrokerRunPreview,
   resolvePreviewIntent,
 } from './broker-run-preview.js'
+import { resolvePlacementInProcess } from './placements-resolve.js'
 import { isRecord, parseJsonBody } from './server-parsers.js'
 import { json } from './server-util.js'
 
@@ -61,20 +63,30 @@ const HRC_HARNESS_IDS: ReadonlySet<string> = new Set<HrcHarness>([
 const RUN_MODES = new Set(['query', 'heartbeat', 'task', 'maintenance'])
 const EXECUTION_MODES = new Set(['headless', 'interactive', 'nonInteractive'])
 
-type ResolveBody = {
-  agentId: string
-  agentRoot: string
-  projectId?: string | undefined
-  projectRoot?: string | undefined
-  cwd: string
+type ResolveBodyOptions = {
   runMode: AspcRuntimeDeclarationContext['runMode']
   interactive: boolean
   preferredMode: HrcExecutionMode
   allowInteractiveSurfaceReuse?: boolean | undefined
   initialPrompt?: string | undefined
+}
+
+type ResolveByPathsBody = ResolveBodyOptions & {
+  agentId: string
+  agentRoot: string
+  projectId?: string | undefined
+  projectRoot?: string | undefined
+  cwd: string
   provision?: Record<string, unknown> | undefined
   agentSources?: { agentsRoot?: string | undefined; aspHome?: string | undefined } | undefined
 }
+
+type ResolveByScopeBody = ResolveBodyOptions & {
+  scopeRef: string
+  materializationIntent?: string | undefined
+}
+
+type ResolveBody = ResolveByPathsBody | ResolveByScopeBody
 
 function badRequest(message: string, field: string): HrcBadRequestError {
   return new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, message, { field })
@@ -130,6 +142,31 @@ function parseResolveBody(input: unknown): ResolveBody {
   if (provision !== undefined && !isRecord(provision)) {
     throw badRequest('provision must be an object', 'provision')
   }
+  const scopeRef = optionalString(input, 'scopeRef')
+  if (scopeRef !== undefined) {
+    for (const field of [
+      'agentId',
+      'agentRoot',
+      'projectId',
+      'projectRoot',
+      'cwd',
+      'provision',
+      'agentSources',
+    ]) {
+      if (input[field] !== undefined) {
+        throw badRequest(`${field} cannot be combined with scopeRef`, field)
+      }
+    }
+    return {
+      scopeRef,
+      materializationIntent: optionalString(input, 'materializationIntent'),
+      runMode: runMode as AspcRuntimeDeclarationContext['runMode'],
+      interactive,
+      preferredMode: preferredMode as HrcExecutionMode,
+      allowInteractiveSurfaceReuse: reuse as boolean | undefined,
+      initialPrompt: initialPrompt as string | undefined,
+    }
+  }
   const sourcesRaw = input['agentSources']
   if (sourcesRaw !== undefined && !isRecord(sourcesRaw)) {
     throw badRequest('agentSources must be an object', 'agentSources')
@@ -161,6 +198,60 @@ function parseResolveBody(input: unknown): ResolveBody {
   }
 }
 
+/** Resolve a socket caller's scope into daemon-local declaration inputs. */
+async function resolveScopeBody(body: ResolveByScopeBody): Promise<ResolveByPathsBody> {
+  let parsed: ReturnType<typeof parseScopeRef>
+  try {
+    parsed = parseScopeRef(body.scopeRef)
+  } catch (error) {
+    throw badRequest(
+      `scopeRef is not a valid scope: ${error instanceof Error ? error.message : String(error)}`,
+      'scopeRef'
+    )
+  }
+  const placement = await resolvePlacementInProcess({
+    agentId: parsed.agentId,
+    ...(parsed.projectId !== undefined ? { projectId: parsed.projectId } : {}),
+    ...(parsed.taskId !== undefined ? { taskId: parsed.taskId } : {}),
+    cwd: process.cwd(),
+    runMode: body.runMode,
+  })
+  if (placement.agentRoot === undefined) {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.DECLARATION_INVALID,
+      `agent "${parsed.agentId}" has no resolved agent root`,
+      { source: 'agent-profile', agentId: parsed.agentId }
+    )
+  }
+  let provision: ProvisioningScalars | undefined
+  const block = body.materializationIntent?.trim()
+  if (block !== undefined && block.length > 0) {
+    try {
+      provision = resolveQualifiedScopeInput(
+        `${body.scopeRef}${block.startsWith('+') ? '' : '+'}${block}`
+      ).directives
+    } catch {
+      // Match the established kicker rule: a malformed carried override must
+      // not strand the target; resolve its declaration without the override.
+    }
+  }
+  return {
+    agentId: parsed.agentId,
+    agentRoot: placement.agentRoot,
+    ...(parsed.projectId !== undefined ? { projectId: parsed.projectId } : {}),
+    ...(placement.projectRoot !== undefined ? { projectRoot: placement.projectRoot } : {}),
+    cwd: placement.cwd ?? process.cwd(),
+    runMode: body.runMode,
+    interactive: body.interactive,
+    preferredMode: body.preferredMode,
+    ...(body.allowInteractiveSurfaceReuse !== undefined
+      ? { allowInteractiveSurfaceReuse: body.allowInteractiveSurfaceReuse }
+      : {}),
+    ...(body.initialPrompt !== undefined ? { initialPrompt: body.initialPrompt } : {}),
+    ...(provision !== undefined ? { provision } : {}),
+  }
+}
+
 /** HRC directive law: only top-level scalars ride, and deny-listed keys never do. */
 function authorizedScalars(scalars: Record<string, unknown> | undefined): ProvisioningScalars {
   const carried: Record<string, string | number | boolean> = {}
@@ -175,7 +266,7 @@ function authorizedScalars(scalars: Record<string, unknown> | undefined): Provis
   return carried as ProvisioningScalars
 }
 
-function declarationContext(body: ResolveBody): AspcRuntimeDeclarationContext {
+function declarationContext(body: ResolveByPathsBody): AspcRuntimeDeclarationContext {
   const directives = authorizedScalars(body.provision)
   return {
     agentId: body.agentId,
@@ -288,7 +379,8 @@ function invalidProfileWarning(
 }
 
 export async function handleResolveRuntimeIntent(request: Request): Promise<Response> {
-  const body = parseResolveBody(await parseJsonBody(request))
+  const parsed = parseResolveBody(await parseJsonBody(request))
+  const body = 'scopeRef' in parsed ? await resolveScopeBody(parsed) : parsed
   const operation = 'resolveRuntimeDeclaration'
   return await withAspdObservationSession([operation], async ({ service, client }) => {
     const declaration = await client.resolveRuntimeDeclaration({

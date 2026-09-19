@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { HrcInjectionPort } from 'hrc-mail-kicker'
+import { HrcClient } from 'hrc-sdk'
 
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import type { HrcServer } from '../index.js'
@@ -47,6 +48,13 @@ function port(): HrcInjectionPort {
  * socket. SocketInjectionPort will execute these same cases unchanged.
  */
 describe('HrcInjectionPort contract — real daemon', () => {
+  it('resolves a scope over the socket without caller-side placement paths', async () => {
+    const response = await new HrcClient(fixture.socketPath).resolveRuntimeIntent({
+      scopeRef: SCOPE,
+    })
+    expect(response.intent.placement.agentRoot).toContain('agents/kicker-proof')
+  })
+
   it('resolves and ensures a cold target without exposing daemon state', async () => {
     const intent = await port().resolveRuntimeIntent(SCOPE, undefined)
     expect(intent).toBeDefined()
