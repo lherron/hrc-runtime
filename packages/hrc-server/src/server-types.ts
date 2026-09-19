@@ -319,6 +319,8 @@ export type HrcServerOptions = {
   lockPath: string
   spoolDir: string
   dbPath: string
+  /** Private kicker delivery-state database; defaults under runtimeRoot. */
+  kickerStatePath?: string | undefined
   /**
    * SQLite lock-wait ceiling applied to every daemon-owned connection.
    * Defaults to 5000ms and can be overridden with HRC_SQLITE_BUSY_TIMEOUT_MS.

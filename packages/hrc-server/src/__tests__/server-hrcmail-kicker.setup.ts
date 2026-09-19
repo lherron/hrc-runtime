@@ -37,6 +37,11 @@ export type KickerPreamble = {
   savedAspdSocket: string | undefined
 }
 
+type KickerServerInternals = {
+  db: HrcDatabase
+  mailKicker: MailKicker
+}
+
 export async function setupKickerPreamble(): Promise<KickerPreamble> {
   const fixture = await createHrcTestFixture('hrc-mail-kicker-')
   const ledger = new FakeWrkqLedger()
@@ -86,7 +91,23 @@ export function sayToLedger(
 }
 
 export function kickerOf(server: HrcServer): MailKicker {
-  return (server as any).mailKicker
+  return (server as unknown as KickerServerInternals).mailKicker
+}
+
+/**
+ * The daemon keeps its historical HRC mail tables for rollback, while the
+ * active kicker owns the moved delivery rows in its private database. Tests
+ * that inspect both HRC runtime state and active delivery state use this view.
+ */
+export function kickerStateDb(server: HrcServer): HrcDatabase {
+  const hrcDb = (server as unknown as KickerServerInternals).db
+  return new Proxy(hrcDb, {
+    get(target, property, receiver) {
+      if (property === 'mailDelivery') return kickerOf(server).store.mailDelivery
+      if (property === 'wrkqLedgerCursors') return kickerOf(server).store.wrkqLedgerCursors
+      return Reflect.get(target, property, receiver)
+    },
+  })
 }
 
 export function farFuture(): string {

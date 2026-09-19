@@ -160,6 +160,7 @@ export class MailKicker implements MailKickerContext {
       ])
       if (raced === 'timeout') break
     }
+    this.store.close?.()
   }
 
   wake(targetSessionRef: string, wakeReason: HrcMailDriveWakeReason): void {

@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { MailKicker } from 'hrc-mail-kicker'
-import type { HrcDatabase } from 'hrc-store-sqlite'
-
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import type { HrcServer } from '../index.js'
 import { resolveHrcMailKickerEnabled } from '../option-resolvers.js'
@@ -21,6 +19,7 @@ import {
   TARGET,
   buildKickerServer,
   farFuture,
+  kickerStateDb,
   sayToLedger,
   setupKickerPreamble,
   teardownKickerPreamble,
@@ -88,7 +87,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await Promise.all([kicker().runSweepOnce(), kicker().runSweepOnce()])
     await waitUntil(() => deterministic.calls() === 1, 'one dispatched drive')
 
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     // T-08094: the fence is the WRITE-AHEAD INTENT, whose primary key refuses a
     // second submission for the same envelope. One landing, one receipt.
     await waitUntil(
@@ -111,7 +110,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const deterministic = installDeterministicStart(server as HrcServer)
     kicker().wake(TARGET, 'insert')
 
-    const db = serverInternals(server as HrcServer).db
+    const db = kickerStateDb(server as HrcServer)
     await waitUntil(() => deterministic.runIds().length === 1, 'the drive dispatched')
     const runId = deterministic.runIds()[0] as string
     const run = db.runs.getByRunId(runId)
@@ -228,7 +227,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     // A session that already exists and already has a runtime, so the cue
     // decision is about the runtime and not about a birth.
     const resolved = await fixture.resolveSession(SCOPE)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     const now = timestamp()
     db.runtimes.insert({
       runtimeId: `rt-${resolved.hostSessionId}-0`,
@@ -282,7 +281,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
   it('previews and dispatches a fyi into an idle seat, then commits it with the accepted input', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     const now = timestamp()
     db.runtimes.insert({
       runtimeId: 'rt-fyi-seat',
@@ -346,7 +345,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     // one either — §5 says a fyi never summons, full stop.
     await kicker().runSweepOnce()
     await Bun.sleep(50)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     expect(deterministic.calls()).toBe(0)
     expect(queryCount(db, 'sessions')).toBe(0)
     expect(db.mailDelivery.listOpenIntents(TARGET)).toHaveLength(0)
@@ -370,9 +369,9 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     // The tail must treat this as a wake — the gate that used to read
     // `obligation !== 'reply_required'` and drop it.
     await kicker().runTailOnce()
-    await Bun.sleep(50)
+    await waitUntil(() => deterministic.calls() === 1, 'notify delivery dispatched')
 
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     // A seat was actually born. Under the pre-T-07746 filter every one of
     // these is 0, which is exactly the defect this proves is gone.
     expect(deterministic.calls()).toBe(1)
@@ -392,7 +391,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await kicker().runTailOnce()
     await waitUntil(() => deterministic.calls() === 1, 'tail-triggered summon')
 
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     expect(db.sessions.listByScopeRef(SCOPE, 'main')).toHaveLength(1)
 
     await waitUntil(
@@ -423,7 +422,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     // The reply IS the ack; by the time the turn ends the obligation is gone.
     ledger.ack(envelope.id)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     await completeRun(server as HrcServer, deterministic.runIds()[0] as string)
     await Bun.sleep(80)
     expect(db.mailDelivery.listDueReminders(TARGET, farFuture())).toEqual([])
@@ -438,7 +437,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await kicker().runSweepOnce()
     await Bun.sleep(50)
     expect(deterministic.calls()).toBe(0)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     expect(db.mailDelivery.listOpenIntents(TARGET)).toHaveLength(0)
   })
 
@@ -450,7 +449,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     say({ body: 'also from before' })
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
 
     await kicker().runTailOnce()
     await Bun.sleep(50)
@@ -475,7 +474,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
   it('resumes the tail from the persisted cursor rather than sweeping for a cold scope', async () => {
     await startServer()
     await kicker().runTailOnce()
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     const cursorBefore = db.wrkqLedgerCursors.get() as number
     await (server as unknown as HrcServer).stop()
     server = undefined
@@ -486,7 +485,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    const reopened = (server as any).db as HrcDatabase
+    const reopened = kickerStateDb(server as HrcServer)
     expect(reopened.wrkqLedgerCursors.get()).toBe(cursorBefore)
 
     await kicker().runTailOnce()
@@ -495,7 +494,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
   it('sweeps only the scopes this node is seating, plus attempts in flight', async () => {
     await startServer()
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     const scopes: string[][] = []
     const realPendingView = ledger.pendingView.bind(ledger)
     ledger.pendingView = async (params) => {

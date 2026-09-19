@@ -15,7 +15,7 @@ import type {
   PreemptSubmissionRequest,
   RuntimeSeatResponse,
 } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import type { HrcMailDeliveryRepository, WrkqLedgerCursorRepository } from 'hrc-store-sqlite'
 import type { SeatProbeResponse, SubmissionWithdrawResponse } from 'spaces-harness-broker-protocol'
 
 import type { MailKickerLedger } from './ledger/client.js'
@@ -147,8 +147,12 @@ export type HrcInjectionPort = {
   ): Promise<PreemptAdmission>
 }
 
-/** The private state that remains co-located with HRC until the store split. */
-export type KickerStateStore = Pick<HrcDatabase, 'mailDelivery' | 'wrkqLedgerCursors'>
+/** The kicker-owned durable delivery state. */
+export type KickerStateStore = {
+  mailDelivery: HrcMailDeliveryRepository
+  wrkqLedgerCursors: WrkqLedgerCursorRepository
+  close?(): void
+}
 
 export type MailKickerDependencies = {
   store: KickerStateStore

@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { MailKicker } from 'hrc-mail-kicker'
-import type { HrcDatabase } from 'hrc-store-sqlite'
-
 import type { HrcServer } from '../index.js'
 import { timestamp } from '../server-util.js'
 import type { AspdObservationDouble } from './fixtures/aspd-observation-doubles.js'
@@ -20,6 +18,7 @@ import {
   buildKickerServer,
   farFuture,
   installQueuedDispatch,
+  kickerStateDb,
   sayToLedger,
   setupKickerPreamble,
   teardownKickerPreamble,
@@ -65,7 +64,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
   it('does not infer a busy seat for fyi delivery from an HRC run row', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     const now = timestamp()
     db.runtimes.insert({
       runtimeId: 'rt-busy-v1',
@@ -127,7 +126,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     kicker().wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'first drive')
 
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     await completeRun(server as HrcServer, deterministic.runIds()[0] as string)
     await waitUntil(
       () => db.mailDelivery.listDueReminders(TARGET, farFuture()).length === 1,
@@ -159,7 +158,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
   it('retains an uncertain intent when dispatch throws after preview', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     const now = timestamp()
     db.runtimes.insert({
       runtimeId: 'rt-preview-then-throw',
@@ -211,7 +210,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
   it('never treats a run row alone as observed busy-seat state', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     const now = timestamp()
     db.runtimes.insert({
       runtimeId: 'rt-busy-visible',
@@ -284,14 +283,12 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       kicker().wake(strandedTarget, 'insert')
       await kicker().drainTarget(strandedTarget)
     })
-    expect(captured.lines.some((line) => line.includes('wrkq.kicker.placement_unresolvable'))).toBe(
-      true
-    )
+    expect(captured.lines.some((line) => line.includes('wrkq.kicker.birth_failed'))).toBe(true)
 
     // Nothing is left in flight. Under the drive slot a `claimed` attempt here
     // owned the scope forever and made it undrivable; the intent equivalent is
     // an open row, and there must be none.
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     expect(db.mailDelivery.listOpenIntents(strandedTarget)).toHaveLength(0)
     expect(db.mailDelivery.listIntentTargets()).not.toContain(strandedTarget)
   })
@@ -305,7 +302,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const envelope = say()
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
 
     // Deliver, but suppress the landing: the door was called and admitted, and
     // this daemon never saw what happened next.
@@ -375,7 +372,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
   it('leaves a full delivery_intent → delivery_admitted → presented trail for a fyi drive', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     const now = timestamp()
     db.runtimes.insert({
       runtimeId: 'rt-fyi-trail',
@@ -455,7 +452,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     // The same presentation id threads intent → landing, so one grep of the
     // scope reconstructs the delivery in order.
-    const db = (server as any).db as HrcDatabase
+    const db = kickerStateDb(server as HrcServer)
     await waitUntil(
       () => db.mailDelivery.presentationsForTarget(TARGET).length === 1,
       'the delivery landed'

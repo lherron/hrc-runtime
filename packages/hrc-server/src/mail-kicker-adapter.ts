@@ -1,4 +1,4 @@
-import { createMailKicker, createSocketInjectionPort } from 'hrc-mail-kicker'
+import { createMailKicker, createSocketInjectionPort, openKickerStateStore } from 'hrc-mail-kicker'
 import type { MailKicker } from 'hrc-mail-kicker'
 import { HrcClient } from 'hrc-sdk'
 
@@ -9,7 +9,10 @@ import { writeServerLog } from './server-log.js'
 export function createServerMailKicker(server: HrcServerInstanceForHandlers): MailKicker {
   return createMailKicker(
     {
-      store: server.db,
+      store: openKickerStateStore(server.options.kickerStatePath ?? 'hrc-mail-kicker.sqlite', {
+        source: server.db.sqlite,
+        sourcePath: server.options.dbPath,
+      }),
       port: createSocketInjectionPort(new HrcClient(server.options.socketPath)),
       ledger: server.wrkqLedger,
       nodeId: server.federationNodeId,

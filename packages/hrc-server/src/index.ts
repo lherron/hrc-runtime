@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { CaptureRecoverResponse } from 'hrc-core'
 import {
   RETAINED_EVIDENCE_PASS_LIMIT,
@@ -3147,6 +3147,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     options.participantAdapterRegistry ?? new ParticipantAdapterRegistry([])
   const resolvedOptions: HrcServerOptions = {
     ...options,
+    kickerStatePath: options.kickerStatePath ?? join(options.runtimeRoot, 'hrc-mail-kicker.sqlite'),
     sqliteBusyTimeoutMs: resolveSqliteBusyTimeoutMs(options.sqliteBusyTimeoutMs),
     localPersonaAllowlist: normalizeLocalPersonaAllowlist(options.localPersonaAllowlist),
     commandRunTargets: await resolveCommandRunTargets(options.commandRunTargets),

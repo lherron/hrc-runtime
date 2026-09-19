@@ -1,6 +1,8 @@
 export { createInProcessInjectionPort } from './in-process-injection-port.js'
 export type { InProcessInjectionPortDependencies } from './in-process-injection-port.js'
 export { createSocketInjectionPort } from './socket-injection-port.js'
+export { importKickerStateStore, openKickerStateStore } from './kicker-state-store.js'
+export type { KickerStoreImport } from './kicker-state-store.js'
 export {
   MailKicker,
   createMailKicker,
