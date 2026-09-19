@@ -399,6 +399,11 @@ export type {
   RuntimeSeatResponse,
   WithdrawSubmissionRequest,
   WithdrawSubmissionResponse,
+  LiveSeatRef,
+  ListLiveSeatRefsResponse,
+  PlacementBindingView,
+  ListPlacementBindingsResponse,
+  ListUnbornDesignationsResponse,
 } from './http-contracts.js'
 export {
   OPERATOR_REAP_REASON,

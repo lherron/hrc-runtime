@@ -31,6 +31,9 @@ import type {
 import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
 import type {
+  ListLiveSeatRefsResponse,
+  ListPlacementBindingsResponse,
+  ListUnbornDesignationsResponse,
   RuntimeSeatResponse,
   WithdrawSubmissionRequest,
   WithdrawSubmissionResponse,
@@ -677,6 +680,25 @@ export class HrcClient {
   /** Injector submission withdraw (T-08606). Wraps broker withdraw. */
   async withdraw(request: WithdrawSubmissionRequest): Promise<WithdrawSubmissionResponse> {
     return this.postJson<WithdrawSubmissionResponse>('/v1/submissions/withdraw', request)
+  }
+
+  /**
+   * Injector placement + federation reads (T-08609). Per-tick live seats,
+   * locally homed active placement bindings, and unborn designations naming
+   * this node — the kicker's wake-enumeration inputs over the socket.
+   */
+  async getLiveSeatRefs(): Promise<ListLiveSeatRefsResponse> {
+    return this.getJson<ListLiveSeatRefsResponse>('/v1/runtimes/live-refs')
+  }
+
+  async listLocalPlacementBindings(): Promise<ListPlacementBindingsResponse> {
+    return this.getJson<ListPlacementBindingsResponse>(
+      '/v1/placement/bindings?home=self&state=active'
+    )
+  }
+
+  async listUnbornDesignations(): Promise<ListUnbornDesignationsResponse> {
+    return this.getJson<ListUnbornDesignationsResponse>('/v1/federation/designations?unborn=true')
   }
 
   async getTurnAdmission(): Promise<HrcTurnAdmissionState> {

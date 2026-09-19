@@ -351,6 +351,14 @@ export class RunIdOwnershipRegistry {
   }
 }
 
+/** Narrow live-seat projection row (T-08609): identity columns only, no `*_json`. */
+export type LiveSeatRefRow = {
+  scopeRef: string
+  laneRef: string
+  runtimeId: string
+  hostSessionId: string
+}
+
 export class RuntimeRepository {
   constructor(
     private readonly db: Database,
@@ -513,6 +521,26 @@ export class RuntimeRepository {
       )
       .all()
       .map((row) => row.session_ref)
+  }
+
+  /**
+   * One row per live runtime seat, narrow columns only (T-08609). The same
+   * live predicate as `listLiveSessionRefs` pushed into SQL — never a full
+   * ledger page with its `*_json` columns (T-08363). Backs
+   * `GET /v1/runtimes/live-refs`, the socket form of the kicker's per-tick
+   * sweep membership read.
+   */
+  listLiveSessionRefRows(): LiveSeatRefRow[] {
+    return this.db
+      .query<LiveSeatRefRow, []>(
+        `SELECT scope_ref AS scopeRef, lane_ref AS laneRef, runtime_id AS runtimeId,
+                host_session_id AS hostSessionId
+           FROM runtimes
+          WHERE status IN ('starting', 'ready', 'busy', 'awaiting_input', 'stopping')
+            AND scope_ref LIKE 'agent:%'
+          ORDER BY scope_ref ASC, lane_ref ASC, runtime_id ASC`
+      )
+      .all()
   }
 
   /**

@@ -193,6 +193,10 @@ import {
   type ParticipantRegistrationHandlersMethods,
   participantRegistrationHandlersMethods,
 } from './participant-registration-handlers.js'
+import {
+  type PlacementFederationHandlersMethods,
+  placementFederationHandlersMethods,
+} from './placement-federation-handlers.js'
 import { handleResolvePlacement } from './placements-resolve.js'
 import {
   type PresentationPublishMethods,
@@ -840,7 +844,8 @@ interface HrcServerInstance
     ParticipantAttachHandlersMethods,
     RegistrationHandlersMethods,
     RuntimeInspectHandlersMethods,
-    SeatWithdrawHandlersMethods {}
+    SeatWithdrawHandlersMethods,
+    PlacementFederationHandlersMethods {}
 
 class HrcServerInstance implements HrcServer {
   readonly followSubscribers = new Set<FollowSubscriber>()
@@ -1088,6 +1093,11 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/federation/retire')]: (request) =>
       this.handleFederationRetirement(request),
     [exactRouteKey('GET', '/v1/federation/bindings')]: () => this.handleFederationBindings(),
+    [exactRouteKey('GET', '/v1/federation/designations')]: (_request, url) =>
+      this.handleListUnbornDesignations(_request, url),
+    [exactRouteKey('GET', '/v1/placement/bindings')]: (_request, url) =>
+      this.handleListPlacementBindings(_request, url),
+    [exactRouteKey('GET', '/v1/runtimes/live-refs')]: () => this.handleListLiveSeatRefs(),
     [exactRouteKey('GET', '/v1/targets')]: (_request, url) => this.handleListTargets(url),
     [exactRouteKey('GET', '/v1/targets/by-session-ref')]: (_request, url) =>
       this.handleGetTarget(url),
@@ -3106,6 +3116,7 @@ Object.assign(
   wrkqStopGateHandlersMethods,
   runtimeInspectHandlersMethods,
   seatWithdrawHandlersMethods,
+  placementFederationHandlersMethods,
   rosterClaimHandlersMethods,
   exactClaimHandlersMethods,
   registrationGcHandlersMethods,

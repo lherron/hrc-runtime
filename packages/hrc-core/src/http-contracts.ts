@@ -26,6 +26,7 @@ import type {
   HrcTurnResponseFormat,
 } from './contracts.js'
 import type { HrcDeliveryOutcome, HrcDeliveryWarning } from './delivery-contracts.js'
+import type { BirthDesignationRecord } from './federation-contracts.js'
 import type { HrcFence } from './fences.js'
 import type { HrcSessionRef } from './selectors.js'
 
@@ -1860,4 +1861,50 @@ export type WithdrawSubmissionResponse = {
   outcome: 'withdrawn' | 'not_held' | 'unknown'
   /** Present only when `outcome` is `not_held`. */
   state?: 'accepted' | 'terminal' | undefined
+}
+
+/**
+ * Injector placement + federation surface (T-08609). The socket form of the
+ * kicker's wake-enumeration reads: per-tick live seats, locally homed active
+ * placement bindings (cold-start catch-up), and unborn designations naming
+ * this node (birth retry).
+ */
+
+/** `GET /v1/runtimes/live-refs` — one row per live runtime seat. */
+export type LiveSeatRef = {
+  scopeRef: string
+  laneRef: string
+  runtimeId: string
+  hostSessionId: string
+}
+
+export type ListLiveSeatRefsResponse = {
+  refs: LiveSeatRef[]
+}
+
+/**
+ * `GET /v1/placement/bindings?home=self&state=active` — the locally homed
+ * active bindings cold-start catch-up enumerates. Deliberately NOT the
+ * `/v1/federation/bindings` skew-audit shape: this is the placement ledger's
+ * own rows, not a cross-source audit.
+ */
+export type PlacementBindingView = {
+  scopeRef: string
+  homeNodeId: string
+  state: string
+}
+
+export type ListPlacementBindingsResponse = {
+  localNodeId: string
+  bindings: PlacementBindingView[]
+}
+
+/**
+ * `GET /v1/federation/designations?unborn=true` — wraps
+ * `registry.listUnbornDesignations(nodeId)`. Full records pass through: the
+ * injector maps them to session refs exactly as the in-process sweep does.
+ */
+export type ListUnbornDesignationsResponse = {
+  localNodeId: string
+  designations: BirthDesignationRecord[]
 }
