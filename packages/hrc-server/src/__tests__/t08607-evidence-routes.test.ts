@@ -140,8 +140,21 @@ async function query(params: Record<string, string>): Promise<BrokerEventsQueryR
   return (await res.json()) as BrokerEventsQueryResponse
 }
 
-async function follow(body: Record<string, unknown>): Promise<BrokerEventsFollowResponse> {
-  const res = await fixture.postJson('/v1/broker-events/follow', body)
+const SUBSCRIBER = 't08607-follow'
+
+async function declareSubscriber(name: string): Promise<void> {
+  const res = await fixture.postJson('/v1/server/subscribers', { name })
+  expect(res.status).toBe(200)
+}
+
+async function follow(
+  params: Record<string, string>,
+  name: string = SUBSCRIBER
+): Promise<BrokerEventsFollowResponse> {
+  const qs = new URLSearchParams(params).toString()
+  const res = await fixture.fetchSocket(`/v1/broker-events/follow?${qs}`, {
+    headers: { 'x-hrc-subscriber-name': name },
+  })
   expect(res.status).toBe(200)
   return (await res.json()) as BrokerEventsFollowResponse
 }
@@ -149,6 +162,7 @@ async function follow(body: Record<string, unknown>): Promise<BrokerEventsFollow
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-t08607-')
   server = await createHrcServer(fixture.serverOpts())
+  await declareSubscriber(SUBSCRIBER)
 })
 
 afterEach(async () => {
@@ -281,44 +295,45 @@ describe('GET /v1/broker-events/query', () => {
 describe('POST /v1/broker-events/follow', () => {
   it('pages commit-ascending with explicit origins and a resume cursor', async () => {
     seedEvidence()
-    const first = await follow({ afterCommit: 0, limit: 3 })
+    const first = await follow({ afterCommit: '0', limit: '3' })
     expect(first.events.map((event) => event.commitOrdinal)).toEqual([1, 2, 3])
     for (const event of first.events) {
       expect(event.evidenceOrigin).toBe('live')
     }
     expect(first.nextCommit).toBe(3)
     // Newer-or-equal: resuming at the cursor re-observes the boundary row.
-    const second = await follow({ afterCommit: first.nextCommit, limit: 100 })
+    const second = await follow({ afterCommit: String(first.nextCommit), limit: '100' })
     expect(second.events[0]?.commitOrdinal).toBe(3)
     expect(second.events[0]).toEqual(first.events[2])
     expect(second.nextCommit).toBe(7)
   })
 
-  it('excludes retained rows unless asked, and marks every origin', async () => {
+  it('excludes retained rows and marks every origin', async () => {
     seedEvidence()
-    const fenced = await follow({ afterCommit: 7, limit: 100 })
+    const fenced = await follow({ afterCommit: '7', limit: '100' })
     expect(fenced.events.map((event) => event.commitOrdinal)).toEqual([7])
     expect(fenced.events[0]?.evidenceOrigin).toBe('live')
-    const open = await follow({ afterCommit: 7, limit: 100, includeRetained: true })
-    expect(open.events.map((event) => event.commitOrdinal)).toEqual([7, 8])
-    expect(open.events[1]?.evidenceOrigin).toBe('retained')
+    // A named delivery consumer asking for retained rows is refused (T-08608):
+    // the fenced page is the only answer follow gives.
+    const refused = await fixture.fetchSocket(
+      '/v1/broker-events/follow?afterCommit=7&limit=100&includeRetained=true',
+      { headers: { 'x-hrc-subscriber-name': SUBSCRIBER } }
+    )
+    expect(refused.status).toBe(400)
   })
 
   it('an empty page never rewinds the cursor', async () => {
     seedEvidence()
-    const page = await follow({ afterCommit: 999, limit: 100 })
+    const page = await follow({ afterCommit: '999', limit: '100' })
     expect(page.events).toEqual([])
     expect(page.nextCommit).toBe(999)
   })
 
-  it('400s a bad body', async () => {
-    for (const body of [
-      {},
-      { afterCommit: -1 },
-      { afterCommit: 0, limit: 0 },
-      { afterCommit: 1.5 },
-    ]) {
-      const res = await fixture.postJson('/v1/broker-events/follow', body)
+  it('400s bad query params', async () => {
+    for (const qs of ['', 'afterCommit=-1', 'afterCommit=0&limit=0', 'afterCommit=1.5']) {
+      const res = await fixture.fetchSocket(`/v1/broker-events/follow?${qs}`, {
+        headers: { 'x-hrc-subscriber-name': SUBSCRIBER },
+      })
       expect(res.status).toBe(400)
     }
   })
@@ -370,7 +385,7 @@ describe('POST /v1/broker-events/follow', () => {
         db2.close()
       }
     }
-    const page = await follow({ afterCommit: 0, limit: 100 })
+    const page = await follow({ afterCommit: '0', limit: '100' })
     const ordinals = page.events.map((event) => event.commitOrdinal)
     expect(ordinals).toEqual([1, 2, 3, 4])
     expect(page.events.map((event) => event.invocationId)).toEqual([
@@ -391,11 +406,11 @@ describe('POST /v1/broker-events/follow', () => {
       db.close()
     }
     appendBrokerEvent(9, 'input.accepted', { inputId: 'input-after-prune' })
-    const page = await follow({ afterCommit: 0, limit: 100 })
+    const page = await follow({ afterCommit: '0', limit: '100' })
     // AUTOINCREMENT never reuses ids: the new row continues past the prune.
     expect(page.events.map((event) => event.commitOrdinal)).toEqual([6, 7, 9])
     // A cursor pointing into pruned history still streams newer-or-equal.
-    const resumed = await follow({ afterCommit: 3, limit: 100 })
+    const resumed = await follow({ afterCommit: '3', limit: '100' })
     expect(resumed.events.map((event) => event.commitOrdinal)).toEqual([6, 7, 9])
   })
 })

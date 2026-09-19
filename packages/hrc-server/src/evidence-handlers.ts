@@ -6,10 +6,11 @@ import type {
   BrokerEventsQueryResult,
   EventsHeadResponse,
   HrcBrokerInvocationEventRecord,
+  SubscriberDeclareResponse,
 } from 'hrc-core'
 
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { parseJsonBody } from './server-parsers.js'
+import { isRecord, parseJsonBody } from './server-parsers.js'
 import { json } from './server-util.js'
 
 const QUERY_OPS = [
@@ -156,65 +157,149 @@ function toWireRecord(
   return { ...rest, commitOrdinal: id, evidenceOrigin: evidenceOrigin ?? 'live' }
 }
 
-/** `POST /v1/broker-events/follow` — bounded newer-or-equal commit page. */
+export const SUBSCRIBER_NAME_HEADER = 'x-hrc-subscriber-name'
+
+function parseFollowLimit(url: URL): number {
+  const raw = url.searchParams.get('limit')
+  if (raw === null) return 100
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value < 1 || value > 1000) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'limit must be an integer between 1 and 1000',
+      { field: 'limit' }
+    )
+  }
+  return value
+}
+
+/**
+ * `GET /v1/broker-events/follow` — bounded newer-or-equal commit page for a
+ * named delivery consumer (T-08608). The `x-hrc-subscriber-name` header is
+ * required and must name a declared admission: absent and undeclared are both
+ * 400. A named consumer asking for retained rows is refused (400) — delivery
+ * consumers cannot launder retained evidence. Every served page heartbeats
+ * the named admission through the existing consumer-receipt accounting.
+ */
 export async function handleBrokerEventsFollow(
+  this: HrcServerInstanceForHandlers,
+  request: Request,
+  url: URL
+): Promise<Response> {
+  const name = request.headers.get(SUBSCRIBER_NAME_HEADER)?.trim() ?? ''
+  if (name.length === 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `${SUBSCRIBER_NAME_HEADER} is required: follow is a named delivery-consumer read`,
+      { field: SUBSCRIBER_NAME_HEADER }
+    )
+  }
+  const admission = this.subscriberAdmissions.findByName(name)
+  const entry = this.subscriberAdmissions
+    .snapshot()
+    .active.find((candidate) => candidate.subscriberId === admission?.subscriberId)
+  if (admission === undefined || entry?.route !== 'broker-events') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.INVALID_SELECTOR,
+      `subscriber "${name}" is not declared for broker-events follow`,
+      { field: SUBSCRIBER_NAME_HEADER }
+    )
+  }
+  const includeRetained = parseIncludeRetained(url)
+  if (includeRetained) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.INVALID_FENCE,
+      'includeRetained is refused for named delivery consumers',
+      { field: 'includeRetained' }
+    )
+  }
+  const afterCommit = parseNonNegativeInt(url, 'afterCommit')
+  const limit = parseFollowLimit(url)
+  const rows = this.db.brokerInvocationEvents.listBrokerEventsAfterCommit({
+    afterCommit,
+    limit,
+    includeRetained: false,
+  })
+  const events = rows.map((row) => toWireRecord(row, row.runtimeId))
+  const nextCommit = events.at(-1)?.commitOrdinal ?? afterCommit
+  // Heartbeat: the served page is both produced and consumed — the named
+  // admission's stream-accepted head advances through the existing accounting.
+  admission.recordEnqueued(nextCommit, null)
+  admission.recordStreamAccepted(nextCommit, null)
+  return json({ events, nextCommit } satisfies BrokerEventsFollowResponse)
+}
+
+/**
+ * `POST /v1/server/subscribers` — declares a named delivery consumer
+ * (T-08608). Idempotent: re-declaring an open name returns the existing
+ * admission rather than minting a duplicate.
+ */
+export async function handleDeclareSubscriber(
   this: HrcServerInstanceForHandlers,
   request: Request
 ): Promise<Response> {
   const body = await parseJsonBody(request)
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+  if (!isRecord(body)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
-  const record = body as Record<string, unknown>
-  const { afterCommit, limit, includeRetained } = parseFollowBody(record)
-  const rows = this.db.brokerInvocationEvents.listBrokerEventsAfterCommit({
-    afterCommit,
-    limit,
-    ...(includeRetained ? { includeRetained } : {}),
+  const name = typeof body['name'] === 'string' ? body['name'].trim() : ''
+  if (name.length === 0 || name.length > 128) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'name must be a non-empty string of at most 128 characters',
+      { field: 'name' }
+    )
+  }
+  const route = body['route'] ?? 'broker-events'
+  if (route !== 'events' && route !== 'broker-events') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'route must be "events" or "broker-events"',
+      { field: 'route' }
+    )
+  }
+  const receiptMode = body['receiptMode'] ?? 'none'
+  if (receiptMode !== 'none' && receiptMode !== 'consumer-ack-v1') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'receiptMode must be "none" or "consumer-ack-v1"',
+      { field: 'receiptMode' }
+    )
+  }
+  const existing = this.subscriberAdmissions.findByName(name)
+  const existingEntry = this.subscriberAdmissions
+    .snapshot()
+    .active.find((candidate) => candidate.subscriberId === existing?.subscriberId)
+  if (existing !== undefined && existingEntry?.route === route) {
+    return json({
+      subscriberId: existing.subscriberId,
+      name,
+      route,
+      receiptMode: existing.receiptMode,
+      ...(existing.receiptToken !== undefined ? { receiptToken: existing.receiptToken } : {}),
+    } satisfies SubscriberDeclareResponse)
+  }
+  const admission = this.subscriberAdmissions.open({
+    route,
+    selector: { subscriberName: name },
+    receiptMode,
+    name,
+    openedAt: new Date().toISOString(),
   })
-  const events = rows.map((row) => toWireRecord(row, row.runtimeId))
-  const nextCommit = events.length === 0 ? afterCommit : events[events.length - 1]!.commitOrdinal
-  return json({ events, nextCommit } satisfies BrokerEventsFollowResponse)
-}
-
-function parseFollowBody(record: Record<string, unknown>): {
-  afterCommit: number
-  limit: number
-  includeRetained: boolean
-} {
-  const { afterCommit, limit, includeRetained } = record
-  if (typeof afterCommit !== 'number' || !Number.isInteger(afterCommit) || afterCommit < 0) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'afterCommit must be an integer >= 0',
-      { field: 'afterCommit' }
-    )
-  }
-  let resolvedLimit = 100
-  if (limit !== undefined) {
-    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 1000) {
-      throw new HrcBadRequestError(
-        HrcErrorCode.MALFORMED_REQUEST,
-        'limit must be an integer between 1 and 1000',
-        { field: 'limit' }
-      )
-    }
-    resolvedLimit = limit
-  }
-  if (includeRetained !== undefined && typeof includeRetained !== 'boolean') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'includeRetained must be a boolean',
-      { field: 'includeRetained' }
-    )
-  }
-  return { afterCommit, limit: resolvedLimit, includeRetained: includeRetained === true }
+  return json({
+    subscriberId: admission.subscriberId,
+    name,
+    route,
+    receiptMode: admission.receiptMode,
+    ...(admission.receiptToken !== undefined ? { receiptToken: admission.receiptToken } : {}),
+  } satisfies SubscriberDeclareResponse)
 }
 
 export const evidenceHandlersMethods = {
   handleEventsHead,
   handleBrokerEventsQuery,
   handleBrokerEventsFollow,
+  handleDeclareSubscriber,
 }
 
 export type EvidenceHandlersMethods = typeof evidenceHandlersMethods

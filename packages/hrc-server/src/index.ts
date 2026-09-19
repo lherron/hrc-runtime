@@ -980,8 +980,10 @@ class HrcServerInstance implements HrcServer {
       this.handleBrokerEvents(url, request),
     [exactRouteKey('GET', '/v1/broker-events/query')]: (_request, url) =>
       this.handleBrokerEventsQuery(_request, url),
-    [exactRouteKey('POST', '/v1/broker-events/follow')]: (request) =>
-      this.handleBrokerEventsFollow(request),
+    [exactRouteKey('GET', '/v1/broker-events/follow')]: (request, url) =>
+      this.handleBrokerEventsFollow(request, url),
+    [exactRouteKey('POST', '/v1/server/subscribers')]: (request) =>
+      this.handleDeclareSubscriber(request),
     [exactRouteKey('GET', '/v1/events/head')]: () => this.handleEventsHead(),
     [exactRouteKey('GET', '/v1/broker-forensics')]: (_request, url) =>
       this.handleBrokerForensics(url),
@@ -3031,6 +3033,7 @@ class HrcServerInstance implements HrcServer {
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,
       node: this.nodeStatus(),
+      mailKicker: { enabled: this.hrcMailKickerEnabled },
       ...(peerHealth === undefined ? {} : { peerHealth }),
       capabilities: {
         semanticCore: {

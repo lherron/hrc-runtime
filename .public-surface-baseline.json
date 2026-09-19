@@ -4527,6 +4527,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "SubscriberDeclareRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SubscriberDeclareRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SubscriberDeclareResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SubscriberDeclareResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "SuffixStartRuntimeRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",

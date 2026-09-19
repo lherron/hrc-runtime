@@ -407,6 +407,8 @@ export type {
   BrokerEventsQueryResponse,
   BrokerEventsQueryResult,
   EventsHeadResponse,
+  SubscriberDeclareRequest,
+  SubscriberDeclareResponse,
   LiveSeatRef,
   ListLiveSeatRefsResponse,
   PlacementBindingView,

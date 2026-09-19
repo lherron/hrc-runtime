@@ -1349,6 +1349,14 @@ export type HrcStatusSessionView = {
 
 export type HrcStatusResponse = HrcCapabilityStatus & {
   sessions: HrcStatusSessionView[]
+  /**
+   * Mail-kicker delivery posture (T-08608): derived from server construction
+   * (`hrcMailKickerEnabled`), never a constant — the kicker is not always
+   * in-process.
+   */
+  mailKicker: {
+    enabled: boolean
+  }
 }
 
 export type HrcStatusSummaryResponse = HrcCapabilityStatus

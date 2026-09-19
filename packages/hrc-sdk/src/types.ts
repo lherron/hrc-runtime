@@ -138,6 +138,8 @@ export type {
   BrokerEventsQueryResponse,
   BrokerEventsQueryResult,
   EventsHeadResponse,
+  SubscriberDeclareRequest,
+  SubscriberDeclareResponse,
   HrcBridgeDeliverTextRequest,
   HrcBridgeDeliverTextResponse,
   HrcBridgeTargetSelector,

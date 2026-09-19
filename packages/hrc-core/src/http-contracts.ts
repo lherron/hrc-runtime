@@ -1443,6 +1443,12 @@ export type HrcSubscriberReceiptState =
 
 export type HrcSubscriberAdmissionEntry = {
   subscriberId: string
+  /**
+   * Injector delivery-consumer name (T-08608). Present only for admissions
+   * declared through `POST /v1/server/subscribers`; stream admissions opened
+   * anonymously by the NDJSON routes carry no name.
+   */
+  name?: string | undefined
   route: HrcSubscriberAdmissionRoute
   selector: Record<string, unknown>
   remoteInfo?: string | undefined
@@ -1463,6 +1469,25 @@ export type HrcSubscriberAdmissionEntry = {
   consumerReceiptBehindSince: string | null
   consumerReceiptAckCount: number
   closedAt: string | null
+}
+
+/**
+ * `POST /v1/server/subscribers` — declares a named delivery consumer for the
+ * commit-ordinal follow route. Idempotent: re-declaring an open name returns
+ * the existing admission.
+ */
+export type SubscriberDeclareRequest = {
+  name: string
+  route?: HrcSubscriberAdmissionRoute | undefined
+  receiptMode?: HrcSubscriberReceiptMode | undefined
+}
+
+export type SubscriberDeclareResponse = {
+  subscriberId: string
+  name: string
+  route: HrcSubscriberAdmissionRoute
+  receiptMode: HrcSubscriberReceiptMode
+  receiptToken?: string | undefined
 }
 
 export type HrcSubscriberAdmissionSnapshot = {

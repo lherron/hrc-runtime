@@ -40,6 +40,8 @@ import type {
   ListPlacementBindingsResponse,
   ListUnbornDesignationsResponse,
   RuntimeSeatResponse,
+  SubscriberDeclareRequest,
+  SubscriberDeclareResponse,
   WithdrawSubmissionRequest,
   WithdrawSubmissionResponse,
 } from 'hrc-core'
@@ -232,6 +234,9 @@ function boolField(value: boolean | null | undefined): 'true' | undefined {
  * Build a path with an optional query string. Skips `undefined` values, joins
  * array values with commas, and only appends `?` when at least one param is set.
  */
+/** Named delivery-consumer header for the commit-ordinal follow route (T-08608). */
+const SUBSCRIBER_NAME_HEADER = 'x-hrc-subscriber-name'
+
 function buildPath(base: string, params: Record<string, QueryValue>): string {
   const search = new URLSearchParams()
   for (const [name, value] of Object.entries(params)) {
@@ -728,9 +733,29 @@ export class HrcClient {
   }
 
   async followBrokerEvents(
-    request: BrokerEventsFollowRequest
+    request: BrokerEventsFollowRequest,
+    subscriberName: string
   ): Promise<BrokerEventsFollowResponse> {
-    return this.postJson<BrokerEventsFollowResponse>('/v1/broker-events/follow', request)
+    const res = await this.unixFetch(
+      buildPath('/v1/broker-events/follow', {
+        afterCommit: request.afterCommit,
+        ...(request.limit !== undefined ? { limit: request.limit } : {}),
+        ...(request.includeRetained === true ? { includeRetained: 'true' } : {}),
+      }),
+      { method: 'GET', headers: { [SUBSCRIBER_NAME_HEADER]: subscriberName } }
+    )
+    if (!res.ok) {
+      await this.throwTypedError(res)
+    }
+    return (await res.json()) as BrokerEventsFollowResponse
+  }
+
+  /**
+   * Named delivery-consumer declaration (T-08608). Idempotent: re-declaring
+   * an open name returns the existing admission.
+   */
+  async declareSubscriber(request: SubscriberDeclareRequest): Promise<SubscriberDeclareResponse> {
+    return this.postJson<SubscriberDeclareResponse>('/v1/server/subscribers', request)
   }
 
   async getTurnAdmission(): Promise<HrcTurnAdmissionState> {

@@ -21,6 +21,11 @@ export type OpenSubscriberAdmissionInput = {
   remoteInfo?: string | undefined
   openedAt?: string | undefined
   receiptMode?: HrcSubscriberReceiptMode | undefined
+  /**
+   * Injector delivery-consumer name (T-08608). Named admissions are found by
+   * `findByName` for the commit-ordinal follow heartbeat.
+   */
+  name?: string | undefined
 }
 
 export type SubscriberAdmissionHandle = {
@@ -37,6 +42,11 @@ export type SubscriberAdmissionRegistry = {
   open(input: OpenSubscriberAdmissionInput): SubscriberAdmissionHandle
   acknowledge(input: HrcSubscriberReceiptAckRequest): HrcSubscriberReceiptAckResponse
   snapshot(): HrcSubscriberAdmissionSnapshot
+  /**
+   * The open named admission for a delivery consumer (T-08608), or undefined
+   * when the name was never declared or its admission closed.
+   */
+  findByName(name: string): SubscriberAdmissionHandle | undefined
 }
 
 const DEFAULT_RECENTLY_CLOSED_LIMIT = 32
@@ -64,6 +74,7 @@ export function createSubscriberAdmissionRegistry(
   const recentlyClosed: InternalSubscriberAdmission[] = []
   const bySubscriberId = new Map<string, InternalSubscriberAdmission>()
 
+  const byName = new Map<string, SubscriberAdmissionHandle>()
   return {
     open(input) {
       const subscriberId = `sub-${randomUUID()}`
@@ -71,6 +82,7 @@ export function createSubscriberAdmissionRegistry(
       const receiptToken = receiptMode === 'consumer-ack-v1' ? `receipt-${randomUUID()}` : undefined
       const entry: HrcSubscriberAdmissionEntry = {
         subscriberId,
+        ...(input.name !== undefined ? { name: input.name } : {}),
         route: input.route,
         selector: structuredClone(input.selector),
         ...(input.remoteInfo !== undefined ? { remoteInfo: input.remoteInfo } : {}),
@@ -100,7 +112,7 @@ export function createSubscriberAdmissionRegistry(
       active.set(subscriberId, internal)
       bySubscriberId.set(subscriberId, internal)
 
-      return {
+      const handle: SubscriberAdmissionHandle = {
         subscriberId,
         receiptMode,
         ...(receiptToken !== undefined ? { receiptToken } : {}),
@@ -139,6 +151,9 @@ export function createSubscriberAdmissionRegistry(
           if (internal.closed) return
           internal.closed = true
           active.delete(subscriberId)
+          if (input.name !== undefined && byName.get(input.name)?.subscriberId === subscriberId) {
+            byName.delete(input.name)
+          }
           entry.closedAt = now()
           if (recentlyClosedLimit > 0) {
             recentlyClosed.push(internal)
@@ -153,6 +168,13 @@ export function createSubscriberAdmissionRegistry(
           }
         },
       }
+      if (input.name !== undefined) {
+        byName.set(input.name, handle)
+      }
+      return handle
+    },
+    findByName(name) {
+      return byName.get(name)
     },
     acknowledge(input) {
       const internal = bySubscriberId.get(input.subscriberId)
