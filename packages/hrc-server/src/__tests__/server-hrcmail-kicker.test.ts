@@ -116,6 +116,10 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const runId = deterministic.runIds()[0] as string
     const run = db.runs.getByRunId(runId)
     if (run === null) throw new Error(`missing started run ${runId}`)
+    await waitUntil(
+      () => db.mailDelivery.presentationsForTarget(TARGET).length === 1,
+      'presentation before terminal turn'
+    )
     const message = appendHrcEvent(db, 'turn.message', {
       ts: timestamp(),
       hostSessionId: run.hostSessionId,
@@ -158,6 +162,11 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(prompt).not.toContain('wrkc defer')
     // No room history is ever injected; the first message in a room has no cue.
     expect(prompt).not.toContain('history:')
+    await waitUntil(
+      () =>
+        ledger.presentRequests.filter((request) => request.envelope === envelope.id).length === 2,
+      'presentation receipt'
+    )
     const requests = ledger.presentRequests.filter((request) => request.envelope === envelope.id)
     expect(requests).toHaveLength(2)
     expect(requests[0]).toMatchObject({ preview: true })
@@ -205,6 +214,10 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(deterministic.prompts()[0]).toContain('live body')
     expect(deterministic.prompts()[0]).not.toContain('expired body')
     expect(deterministic.prompts()[0]).not.toContain('withdrawn body')
+    await waitUntil(
+      () => ledger.envelopes.get(live.id)?.presentedTo.length === 1,
+      'live presentation receipt'
+    )
     expect(ledger.envelopes.get(live.id)?.presentedTo).toHaveLength(1)
     expect(ledger.envelopes.get(expired.id)?.presentedTo).toEqual([])
     expect(ledger.envelopes.get(withdrawn.id)?.presentedTo).toEqual([])
@@ -381,6 +394,11 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     const db = (server as any).db as HrcDatabase
     expect(db.sessions.listByScopeRef(SCOPE, 'main')).toHaveLength(1)
+
+    await waitUntil(
+      () => db.mailDelivery.presentationsForTarget(TARGET).length === 1,
+      'summoned presentation receipt'
+    )
 
     await completeRun(server as HrcServer, deterministic.runIds()[0] as string)
     await waitUntil(

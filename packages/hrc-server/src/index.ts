@@ -915,6 +915,7 @@ class HrcServerInstance implements HrcServer {
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<FirstTurnEvalSummary> | undefined
   readonly mailKicker: MailKicker
+  readonly mailKickerStarted: Promise<void>
   readonly transcriptIndexer: TranscriptIndexer
   readonly foreignHomeMemo = new Map<string, ForeignHome>()
   shadowTeardownTimer: ReturnType<typeof setInterval> | undefined
@@ -1457,7 +1458,7 @@ class HrcServerInstance implements HrcServer {
     this.startTmuxAging()
     this.startSessionRetentionSweep()
     this.startFirstTurnWatchdog()
-    this.mailKicker.start()
+    this.mailKickerStarted = this.mailKicker.start()
     this.transcriptIndexer.start()
     this.startForeignHomeShadowTeardown()
     for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
@@ -3242,6 +3243,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       runtimeRoot: resolvedOptions.runtimeRoot,
     })
     server = new HrcServerInstance({ ...resolvedOptions, federationConfig }, db, tmux, lockHandle)
+    await server.mailKickerStarted
     await server.initializeEventTransport()
     // The constructor starts durable-broker reattachment concurrently. Wait
     // for its always-resolving barrier before placement repair so a refused

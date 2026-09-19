@@ -53,6 +53,7 @@ export class MailKicker implements MailKickerContext {
   readonly mailKickerBirthSweepBackoff = new Map<string, { attempts: number; nextAtMs: number }>()
   readonly mailKickerLapsedRuntimes = new Set<string>()
   readonly mailKickerDisposalsPending = new Set<Promise<void>>()
+  private readonly landingObserverOperations = new Set<Promise<void>>()
   mailKickerBootReconcilePending = true
   readonly mailKickerStalledDeliveryAnnounced = new Set<string>()
   readonly mailKickerSteerRefused = new Set<string>()
@@ -78,7 +79,7 @@ export class MailKicker implements MailKickerContext {
     this.dependencies.log(level, event, detail)
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (!this.enabled || this.mailKickerSweepTimer !== undefined || this.stopping) return
     // D2 step 5: reconcile at daemon START. An intent committed by the previous
     // process is the only record that a delivery may be in flight, and until it
@@ -87,21 +88,19 @@ export class MailKicker implements MailKickerContext {
     void reconcileOpenIntents(this, { reason: 'daemon_start' }).catch((error: unknown) => {
       this.log('WARN', 'wrkq.kicker.start_reconcile_failed', { error: errorText(error) })
     })
-    void this.port
-      .eventsHead()
-      .then(async ({ hrcSeq, brokerCommit }) => {
-        this.lifecycleUnsubscribe = await this.port.subscribeLifecycle({
-          afterSeq: hrcSeq,
-          onEvent: (event) => this.observeLifecycleEvent(event),
-        })
-        this.brokerUnsubscribe = await this.port.subscribeBroker({
-          afterCommit: brokerCommit,
-          onEvent: (event) => this.observeBrokerEvent(event),
-        })
+    try {
+      const { hrcSeq, brokerCommit } = await this.port.eventsHead()
+      this.lifecycleUnsubscribe = await this.port.subscribeLifecycle({
+        afterSeq: hrcSeq,
+        onEvent: (event) => this.observeLifecycleEvent(event),
       })
-      .catch((error: unknown) => {
-        this.log('WARN', 'wrkq.kicker.subscription_start_failed', { error: errorText(error) })
+      this.brokerUnsubscribe = await this.port.subscribeBroker({
+        afterCommit: brokerCommit,
+        onEvent: (event) => this.observeBrokerEvent(event),
       })
+    } catch (error) {
+      this.log('WARN', 'wrkq.kicker.subscription_start_failed', { error: errorText(error) })
+    }
     let tick = 0
     this.mailKickerSweepTimer = setInterval(() => {
       void this.runTailOnce().catch((error: unknown) => {
@@ -147,6 +146,7 @@ export class MailKicker implements MailKickerContext {
         this.wrkqLedgerTailInFlight,
         ...this.mailKickerTargetOperations.values(),
         ...this.mailKickerDisposalsPending,
+        ...this.landingObserverOperations,
       ].filter((operation): operation is Promise<void> => operation !== undefined)
       if (operations.length === 0) break
       const remaining = deadline - Date.now()
@@ -220,14 +220,18 @@ export class MailKicker implements MailKickerContext {
   }
 
   observeBrokerEvent(record: HrcBrokerInvocationEventRecord): void {
-    void observeBrokerLanding(this, record).catch((error: unknown) => {
-      this.log('WARN', 'wrkq.kicker.landing_observer_failed', {
-        invocationId: record.invocationId,
-        runtimeId: record.runtimeId,
-        brokerEventType: record.type,
-        error: errorText(error),
+    if (this.stopping) return
+    const operation = observeBrokerLanding(this, record)
+      .catch((error: unknown) => {
+        this.log('WARN', 'wrkq.kicker.landing_observer_failed', {
+          invocationId: record.invocationId,
+          runtimeId: record.runtimeId,
+          brokerEventType: record.type,
+          error: errorText(error),
+        })
       })
-    })
+      .finally(() => this.landingObserverOperations.delete(operation))
+    this.landingObserverOperations.add(operation)
   }
 }
 
