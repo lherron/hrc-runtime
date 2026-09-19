@@ -212,7 +212,7 @@ export async function resolveManagedScopeContext(
     placement:
       projectRootOverride !== undefined
         ? { projectRoot: projectRootOverride, cwd: projectRootOverride }
-        : {},
+        : { cwd: resolvePath(process.cwd()) },
     projectOrigin,
   })
 

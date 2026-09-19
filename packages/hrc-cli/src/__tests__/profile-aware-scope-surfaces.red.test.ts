@@ -201,6 +201,29 @@ afterEach(async () => {
 })
 
 describe('profile-aware managed HRC scope resolution', () => {
+  test('bare run sends the caller cwd to daemon-backed placement resolution', async () => {
+    const originalCwd = process.cwd()
+    try {
+      process.chdir(projectRoot)
+      const callerCwd = process.cwd()
+
+      const result = await runCli(['run', 'clod', '--dry-run'], true)
+
+      expect(result.exitCode).toBe(0)
+      const placementRequest = daemon?.requests.find(
+        (request) => request.path === '/v1/placements/resolve'
+      )
+      expect(placementRequest?.body).toMatchObject({
+        agentId: 'clod',
+        projectId: 'project',
+        projectOrigin: 'inferred',
+        cwd: callerCwd,
+      })
+    } finally {
+      process.chdir(originalCwd)
+    }
+  })
+
   test('run, start, and attach use the project-local configured role for one explicit task', async () => {
     const handle = 'clod@proj:T-12345'
     const expectedSessionRef = 'agent:clod:project:proj:task:T-12345:role:tester/lane:main'
