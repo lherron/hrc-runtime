@@ -1,3 +1,5 @@
+export { createInProcessInjectionPort } from './in-process-injection-port.js'
+export type { InProcessInjectionPortDependencies } from './in-process-injection-port.js'
 export {
   MailKicker,
   createMailKicker,
@@ -5,6 +7,8 @@ export {
 } from './controller.js'
 export type {
   ForeignHome,
+  HrcInjectionPort,
+  KickerStateStore,
   KickerBrokerPort,
   KickerDispatchOptions,
   KickerDispatchResult,

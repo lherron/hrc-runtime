@@ -22,6 +22,7 @@ import type { HrcSessionRecord, PreemptSubmissionRequest } from 'hrc-core'
 import type { HrcMailDeliveryDoor, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
+import type { KickerDispatchOptions, KickerDispatchResult } from '../contracts.js'
 import { KICKER_SUBMISSION_TTL_MS, errorText, parseSessionRef } from '../internal.js'
 import { formatEnvelopePresentations } from '../ledger/presentation.js'
 import type { PresentableEnvelope } from '../ledger/presentation.js'
@@ -51,6 +52,19 @@ export type DeliveryOutcome = 'submitted' | 'refused' | 'skipped'
  * equal to the door the body actually took.
  */
 type SeatDoor = Extract<HrcMailDeliveryDoor, 'steer' | 'enqueue' | 'preempt'>
+type InjectionDoor = SeatDoor | 'invoke'
+
+/** Door selection is kicker policy; the port exposes only typed submissions. */
+export function submitInjected(
+  server: MailKickerContext,
+  door: InjectionDoor,
+  session: HrcSessionRecord,
+  intent: NonNullable<HrcSessionRecord['lastAppliedIntentJson']>,
+  prompt: string,
+  options: KickerDispatchOptions
+): Promise<KickerDispatchResult> {
+  return server.port[door](session, intent, prompt, options)
+}
 
 function doorFor(
   server: MailKickerContext,
@@ -142,7 +156,7 @@ export async function deliverToSeat(
 
   const runtimeIntent =
     session.lastAppliedIntentJson ??
-    (await server.resolveRuntimeIntent(
+    (await server.port.resolveRuntimeIntent(
       parseSessionRef(targetSessionRef).scopeRef,
       actionableDirectives([item])
     ))
@@ -180,7 +194,7 @@ export async function deliverToSeat(
       ttlMs: KICKER_SUBMISSION_TTL_MS,
       turnPolicy: 'guarded',
     }
-    const admission = await server.preemptAdmission(session, request)
+    const admission = await server.port.preemptAdmission(session, request)
     if (admission === 'authorized') {
       door = 'preempt'
       deliveryOutcome = undefined
@@ -205,9 +219,10 @@ export async function deliverToSeat(
   }
 
   const presentationId = `present-${randomUUID()}`
-  const runtime = runtimeId === undefined ? undefined : server.db.runtimes.getByRuntimeId(runtimeId)
+  const runtime =
+    runtimeId === undefined ? undefined : server.port.runtimes.getByRuntimeId(runtimeId)
   const invocationId = runtime?.activeInvocationId
-  const intent = server.db.mailDelivery.openIntent({
+  const intent = server.store.mailDelivery.openIntent({
     envelopeId: item.envelope.id,
     targetSessionRef,
     door,
@@ -217,12 +232,12 @@ export async function deliverToSeat(
     hostSessionId: session.hostSessionId,
     generation: session.generation,
     ...(deliveryOutcome === undefined ? {} : { deliveryOutcome }),
-    submittedHrcSeq: server.db.hrcEvents.maxHrcSeq(),
+    submittedHrcSeq: server.port.events.maxHrcSeq(),
     ...(invocationId === undefined
       ? {}
       : {
           invocationId,
-          brokerAfterSeq: server.db.brokerInvocationEvents.maxBrokerSeq(invocationId),
+          brokerAfterSeq: server.port.brokerEvents.maxBrokerSeq(invocationId),
         }),
   })
   if (intent === undefined) return 'skipped'
@@ -241,11 +256,10 @@ export async function deliverToSeat(
       : {}),
   })
 
-  let body: Awaited<ReturnType<MailKickerContext['dispatchTurn']>>
+  let body: KickerDispatchResult
   try {
-    body = await server.dispatchTurn(session, runtimeIntent, prompt, {
+    body = await submitInjected(server, door, session, runtimeIntent, prompt, {
       waitForCompletion: false,
-      submissionDoor: door,
       ttlMs: KICKER_SUBMISSION_TTL_MS,
       ...(door === 'preempt' ? { turnPolicy: 'guarded' as const } : {}),
       submissionOrigin: originFor(item),
@@ -254,7 +268,7 @@ export async function deliverToSeat(
     // A thrown RPC is not positive proof that the broker did not write.  Keep
     // the pre-minted intent as the no-second-body fence; a later receipt may
     // still arrive for this exact presentation.
-    server.db.mailDelivery.markUncertain(item.envelope.id, 'dispatch_error', 'dispatch_error')
+    server.store.mailDelivery.markUncertain(item.envelope.id, 'dispatch_error', 'dispatch_error')
     server.log('WARN', 'wrkq.kicker.delivery_failed', {
       targetSessionRef,
       wakeReason,
@@ -267,7 +281,7 @@ export async function deliverToSeat(
 
   const submissionId = body.submissionId ?? body.inputId
   if (body.admission === 'rejected') {
-    server.db.mailDelivery.clearIntent(item.envelope.id)
+    server.store.mailDelivery.clearIntent(item.envelope.id)
     const reason = body.reason ?? 'no_submission_identity'
     // An admission refusal wrote nothing. A steer refused by a guarded turn,
     // authority or capability is best effort that did not happen, never a lost
@@ -292,7 +306,7 @@ export async function deliverToSeat(
     return 'refused'
   }
   if (submissionId === undefined) {
-    server.db.mailDelivery.markUncertain(
+    server.store.mailDelivery.markUncertain(
       item.envelope.id,
       'missing_submission_identity',
       'admission_response'
@@ -300,7 +314,7 @@ export async function deliverToSeat(
     return 'submitted'
   }
 
-  server.db.mailDelivery.attachAdmission(item.envelope.id, {
+  server.store.mailDelivery.attachAdmission(item.envelope.id, {
     submissionId,
     ...(body.runtimeId === undefined ? {} : { runtimeId: body.runtimeId }),
     hostSessionId: body.hostSessionId,
@@ -337,7 +351,10 @@ export async function deliverByColdBirth(
   wakeReason: HrcMailDriveWakeReason
 ): Promise<DeliveryOutcome | 'birth-refused'> {
   const scopeRef = parseSessionRef(targetSessionRef).scopeRef
-  const runtimeIntent = await server.resolveRuntimeIntent(scopeRef, actionableDirectives([item]))
+  const runtimeIntent = await server.port.resolveRuntimeIntent(
+    scopeRef,
+    actionableDirectives([item])
+  )
   if (runtimeIntent === undefined) {
     // Placement is HRC's, so a missing intent means this node could not find
     // the target agent's profile — not that the sender forgot something.
@@ -350,13 +367,13 @@ export async function deliverByColdBirth(
   }
 
   const presentationId = `present-${randomUUID()}`
-  const intent = server.db.mailDelivery.openIntent({
+  const intent = server.store.mailDelivery.openIntent({
     envelopeId: item.envelope.id,
     targetSessionRef,
     door: 'launch',
     form: item.form,
     presentationId,
-    submittedHrcSeq: server.db.hrcEvents.maxHrcSeq(),
+    submittedHrcSeq: server.port.events.maxHrcSeq(),
   })
   if (intent === undefined) return 'skipped'
 
@@ -375,14 +392,14 @@ export async function deliverByColdBirth(
     // The only message-traffic provisioning path. `ensureTargetSession` enters
     // the normal summon/placement gate before it mints anything, so a scope
     // this node does not home is refused here rather than pre-filtered.
-    session = await server.ensureTargetSession(targetSessionRef, runtimeIntent, {
+    session = await server.port.ensureTargetSession(targetSessionRef, runtimeIntent, {
       persistIntent: false,
     })
     // The seat exists, so this node no longer owes the birth. Left open, the
     // refusal keeps the scope in every later sweep's candidate set for nothing.
-    server.db.mailDelivery.resolveBirthRefusal(targetSessionRef, 'birth established')
+    server.store.mailDelivery.resolveBirthRefusal(targetSessionRef, 'birth established')
   } catch (error) {
-    server.db.mailDelivery.clearIntent(item.envelope.id)
+    server.store.mailDelivery.clearIntent(item.envelope.id)
     throw error
   }
 
@@ -395,7 +412,7 @@ export async function deliverByColdBirth(
       presentationRuntimeIdFor(server, session)
     )
   } catch (error) {
-    server.db.mailDelivery.clearIntent(item.envelope.id)
+    server.store.mailDelivery.clearIntent(item.envelope.id)
     server.log('WARN', 'wrkq.kicker.presentation_preview_failed', {
       targetSessionRef,
       wakeReason,
@@ -405,18 +422,16 @@ export async function deliverByColdBirth(
     return 'refused'
   }
 
-  let body: Awaited<ReturnType<MailKickerContext['dispatchTurn']>>
+  let body: KickerDispatchResult
   try {
-    body = await server.dispatchTurn(
+    body = await submitInjected(
+      server,
+      'invoke',
       session,
       session.lastAppliedIntentJson ?? runtimeIntent,
       formatEnvelopePresentations([presentable]),
       {
         waitForCompletion: false,
-        // The spec's cold-birth door. `invoke` is also what marks the run as
-        // having supplied the launch prompt, which is how the event mapper
-        // attributes the born runtime's first input-less bracket to it.
-        submissionDoor: 'invoke',
         ttlMs: KICKER_SUBMISSION_TTL_MS,
         submissionOrigin: originFor(item),
         // A summons that finds no broker seat is the first user turn of a
@@ -429,7 +444,7 @@ export async function deliverByColdBirth(
   } catch (error) {
     // The invoke/launch RPC may have reached the provider before its response
     // was lost. It is an uncertain delivery, never a new birth opportunity.
-    server.db.mailDelivery.markUncertain(item.envelope.id, 'dispatch_error', 'dispatch_error')
+    server.store.mailDelivery.markUncertain(item.envelope.id, 'dispatch_error', 'dispatch_error')
     throw error
   }
 
@@ -439,7 +454,7 @@ export async function deliverByColdBirth(
     // T-07693: a cold birth's delivery class has NO invocation input — the
     // prompt rides the runtime's `initialPrompt`. Its landing fact is the born
     // runtime's first turn start, not a submission disposition.
-    server.db.mailDelivery.attachAdmission(item.envelope.id, {
+    server.store.mailDelivery.attachAdmission(item.envelope.id, {
       door: 'launch',
       ...(runtimeId === undefined ? {} : { runtimeId }),
       hostSessionId: body.hostSessionId,
@@ -457,14 +472,14 @@ export async function deliverByColdBirth(
     // this intent knew which runtime the launch produced — so the live observer
     // saw a turn start with no intent to match. Check once here, where the
     // correlation finally exists.
-    const current = server.db.mailDelivery.getIntent(item.envelope.id)
+    const current = server.store.mailDelivery.getIntent(item.envelope.id)
     if (current !== undefined) await landLaunchIfStarted(server, current)
     return 'submitted'
   }
 
   // The birth admitted an ordinary submission instead: this is an invoke, and
   // its landing is a submission disposition like any other door's.
-  server.db.mailDelivery.attachAdmission(item.envelope.id, {
+  server.store.mailDelivery.attachAdmission(item.envelope.id, {
     door: 'invoke',
     submissionId,
     ...(runtimeId === undefined ? {} : { runtimeId }),

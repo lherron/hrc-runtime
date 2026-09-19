@@ -3,25 +3,24 @@ export async function deliverFailureNotices(
   targetSessionRef: string,
   session: HrcSessionRecord
 ): Promise<void> {
-  const notices = server.db.mailDelivery.listUndeliveredFailureNotices(targetSessionRef)
+  const notices = server.store.mailDelivery.listUndeliveredFailureNotices(targetSessionRef)
   if (notices.length === 0) return
   if (presentationRuntimeIdFor(server, session) === undefined) return
   const intent =
     session.lastAppliedIntentJson ??
-    (await server.resolveRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, undefined))
+    (await server.port.resolveRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, undefined))
   if (intent === undefined) return
   const prompt = notices.map((notice) => notice.notice).join('\n\n')
   try {
-    const body = await server.dispatchTurn(session, intent, prompt, {
+    const body = await server.port.enqueue(session, intent, prompt, {
       waitForCompletion: false,
-      submissionDoor: 'enqueue',
       ttlMs: KICKER_SUBMISSION_TTL_MS,
       submissionOrigin: { principalRef: 'system:hrc-kicker', scopeRef: session.scopeRef },
     })
     if (body.status !== 'started') {
       throw new Error(`failure notice did not start (status=${body.status})`)
     }
-    server.db.mailDelivery.markFailureNoticesDelivered(
+    server.store.mailDelivery.markFailureNoticesDelivered(
       targetSessionRef,
       notices.map((notice) => notice.envelopeId)
     )
@@ -71,16 +70,15 @@ export async function queueFailureNotice(
   // one un-normalized read took the whole notice path down.
   const canonicalScope = kickerScopeRefFor(targetSessionRef)
   const placement =
-    canonicalScope === undefined
-      ? undefined
-      : createPlacementLedgerRepository(server.db.sqlite).get(canonicalScope)
+    canonicalScope === undefined ? undefined : server.port.placement.get(canonicalScope)
   const homed = placement?.state === 'active' && placement.homeNodeId === server.nodeId
-  if (!homed && server.findTargetSession(targetSessionRef) === undefined) return
+  if (!homed && server.port.findTargetSession(targetSessionRef) === undefined) return
   const runtimeId = failedPayload(event.payload)?.runtime_id
   const notice = formatEnvelopeFailureNotice(envelope, reason, {
     ...(runtimeId === undefined ? {} : { runtimeId }),
   })
-  if (!server.db.mailDelivery.recordFailureNotice({ envelopeId, targetSessionRef, notice })) return
+  if (!server.store.mailDelivery.recordFailureNotice({ envelopeId, targetSessionRef, notice }))
+    return
   server.log('INFO', 'wrkq.kicker.failure_notice_queued', {
     targetSessionRef,
     envelope: envelopeId,
@@ -115,7 +113,6 @@ function failureReasonFor(raw: string | undefined): WrkqEnvelopeFailureReason | 
     : undefined
 }
 import type { HrcSessionRecord } from 'hrc-core'
-import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
 import { kickerScopeRefFor, presentationRuntimeIdFor } from '../drive/authority.js'

@@ -89,16 +89,19 @@ describe('D2 — steer first, and the door is chosen by what the seat is doing',
     })
     context = {
       ...context,
-      broker: {
-        ...context.broker,
-        seatProbe: async () => ({
-          ok: true,
-          response: {
-            invocationId: 'inv-observed' as never,
-            seat: { state: 'turn-observed', turnId: 'turn-human' as never },
-            brokerHeldDepth: 0,
-          },
-        }),
+      port: {
+        ...context.port,
+        broker: {
+          ...context.port.broker,
+          seatProbe: async () => ({
+            ok: true,
+            response: {
+              invocationId: 'inv-observed' as never,
+              seat: { state: 'turn-observed', turnId: 'turn-human' as never },
+              brokerHeldDepth: 0,
+            },
+          }),
+        },
       },
     }
 
@@ -175,16 +178,19 @@ describe('D2 — steer first, and the door is chosen by what the seat is doing',
     })
     context = {
       ...context,
-      broker: {
-        ...context.broker,
-        seatProbe: async () => ({
-          ok: true,
-          response: {
-            invocationId: 'inv-idle-caps' as never,
-            seat: { state: 'idle' },
-            brokerHeldDepth: 0,
-          },
-        }),
+      port: {
+        ...context.port,
+        broker: {
+          ...context.port.broker,
+          seatProbe: async () => ({
+            ok: true,
+            response: {
+              invocationId: 'inv-idle-caps' as never,
+              seat: { state: 'idle' },
+              brokerHeldDepth: 0,
+            },
+          }),
+        },
       },
     }
     expect(await observeBrokerSeat(context, session)).toEqual({
@@ -431,8 +437,11 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     // place and the test would assert nothing.
     harness.context = {
       ...context,
-      dispatchTurn: async () => {
-        throw new Error('server turn admission is closed for a drained restart')
+      port: {
+        ...context.port,
+        steer: async () => {
+          throw new Error('server turn admission is closed for a drained restart')
+        },
       },
     }
     expect(await deliverOne(seatIn('turn-active'), envelope)).toBe('refused')
@@ -515,26 +524,31 @@ describe('D2 — a refused submission is not a failed envelope', () => {
       wakes.length = 0
       harness.context = {
         ...context,
-        dispatchTurn: async (_session, _intent, _prompt, options) => {
-          dispatches.push(options)
-          return options.submissionDoor === 'steer'
-            ? ({
-                runId: 'run-refused',
-                hostSessionId: session.hostSessionId,
-                generation: session.generation,
-                runtimeId: RUNTIME,
-                submissionId: `sub-refused-${reason}`,
-                admission: 'rejected',
-                reason,
-              } as never)
-            : ({
-                runId: 'run-queued',
-                hostSessionId: session.hostSessionId,
-                generation: session.generation,
-                runtimeId: RUNTIME,
-                submissionId: `sub-queued-${reason}`,
-                admission: 'admitted',
-              } as never)
+        port: {
+          ...context.port,
+          steer: async (_session, _intent, _prompt, options) => {
+            dispatches.push({ ...options, submissionDoor: 'steer' })
+            return {
+              runId: 'run-refused',
+              hostSessionId: session.hostSessionId,
+              generation: session.generation,
+              runtimeId: RUNTIME,
+              submissionId: `sub-refused-${reason}`,
+              admission: 'rejected',
+              reason,
+            } as never
+          },
+          enqueue: async (_session, _intent, _prompt, options) => {
+            dispatches.push({ ...options, submissionDoor: 'enqueue' })
+            return {
+              runId: 'run-queued',
+              hostSessionId: session.hostSessionId,
+              generation: session.generation,
+              runtimeId: RUNTIME,
+              submissionId: `sub-queued-${reason}`,
+              admission: 'admitted',
+            } as never
+          },
         },
       }
       expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('refused')

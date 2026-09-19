@@ -1,5 +1,3 @@
-import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
-
 import type { MailKickerContext } from '../context.js'
 import { LEDGER_SWEEP_SCOPE_BATCH } from '../internal.js'
 import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
@@ -38,7 +36,7 @@ export function collectPendingTargets(items: readonly WrkqEnvelope[], targets: S
  */
 function homedTargetSessionRefs(server: MailKickerContext): string[] {
   const refs = new Set<string>()
-  for (const record of createPlacementLedgerRepository(server.db.sqlite).list()) {
+  for (const record of server.port.placement.list()) {
     if (record.state !== 'active') continue
     if (record.homeNodeId !== server.nodeId) continue
     const sessionRef = targetSessionRefForLedgerScope(record.scopeRef)

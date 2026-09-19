@@ -43,16 +43,8 @@ export type KickerBrokerPort = {
 
 export type KickerDispatchOptions = {
   waitForCompletion?: boolean | undefined
-  /**
-   * The broker door this delivery goes through (spec T-08092 D2).
-   *
-   * `steer` is the default for an idle or turn-active seat whose driver
-   * advertises the class: the body joins the turn the reader is already inside
-   * rather than waiting for it to end, or starts one when none is running
-   * (T-08533). Every door returns ADMISSION only; the landing is reported later
-   * on the committed broker stream.
-   */
-  submissionDoor: 'steer' | 'enqueue' | 'invoke' | 'preempt'
+  /** Internal in-process adapter diagnostic; policy selects a typed port method. */
+  submissionDoor?: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
   ttlMs: number
   turnPolicy?: 'guarded' | undefined
   submissionOrigin: {
@@ -68,13 +60,37 @@ export type KickerDispatchResult = DispatchTurnResponse & {
   delivery?: { code?: string | undefined } | undefined
 }
 
-export type MailKickerDependencies = {
-  db: HrcDatabase
-  ledger: MailKickerLedger
-  nodeId: string
-  registry?: KickerRegistryClient | undefined
-  /** Shared with other HRC home-authority consumers; the kicker never owns the verdict. */
-  foreignHomeMemo: Map<string, ForeignHome>
+/**
+ * The daemon capabilities the mail policy is permitted to use.
+ *
+ * This is intentionally a structural projection, rather than an HRC database
+ * handle: policy receives only the reads and mutations named by the injector
+ * contract.  The phase-three in-process implementation projects today's
+ * repositories; the socket implementation projects the same operations from
+ * HrcClient in the next task.
+ */
+export type HrcInjectionPort = {
+  readonly runtimes: Pick<
+    HrcDatabase['runtimes'],
+    'getByRuntimeId' | 'listAll' | 'listByHostSessionId' | 'listLiveSessionRefs'
+  >
+  readonly brokerInvocations: Pick<HrcDatabase['brokerInvocations'], 'getByInvocationId'>
+  readonly brokerEvents: Pick<
+    HrcDatabase['brokerInvocationEvents'],
+    | 'maxBrokerSeq'
+    | 'findAdmissionRejection'
+    | 'hasInputAccepted'
+    | 'findUniqueSubmissionForEnvelopeAfter'
+    | 'findSubmissionDisposition'
+    | 'findInputRejectionDeliveryEvidence'
+  >
+  readonly events: Pick<HrcDatabase['hrcEvents'], 'maxHrcSeq' | 'listByKind'>
+  readonly placement: Pick<
+    ReturnType<typeof import('hrc-store-sqlite').createPlacementLedgerRepository>,
+    'list' | 'get'
+  >
+  readonly broker: KickerBrokerPort
+  readonly registry: KickerRegistryClient | undefined
   resolveForeignHome(scopeRef: string): Promise<ForeignHome | undefined>
   resolveRuntimeIntent(
     scopeRef: string,
@@ -86,25 +102,46 @@ export type MailKickerDependencies = {
     intent: HrcRuntimeIntent,
     options: { persistIntent: false }
   ): Promise<HrcSessionRecord>
-  dispatchTurn(
+  steer(
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,
     prompt: string,
     options: KickerDispatchOptions
   ): Promise<KickerDispatchResult>
-  broker: KickerBrokerPort
-  /**
-   * T-08337: the three-way preempt answer, not a boolean.
-   *
-   * The kicker still takes the ordinary door for anything but `authorized`, but
-   * a hold refused because the DRIVER cannot be interrupted and a hold refused
-   * because the SENDER may not interrupt are different facts, and the kicker is
-   * the surface where the first one will actually be seen.
-   */
+  enqueue(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    options: KickerDispatchOptions
+  ): Promise<KickerDispatchResult>
+  invoke(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    options: KickerDispatchOptions
+  ): Promise<KickerDispatchResult>
+  preempt(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    options: KickerDispatchOptions
+  ): Promise<KickerDispatchResult>
   preemptAdmission(
     session: HrcSessionRecord,
     request: PreemptSubmissionRequest
   ): Promise<PreemptAdmission>
+}
+
+/** The private state that remains co-located with HRC until the store split. */
+export type KickerStateStore = Pick<HrcDatabase, 'mailDelivery' | 'wrkqLedgerCursors'>
+
+export type MailKickerDependencies = {
+  store: KickerStateStore
+  port: HrcInjectionPort
+  ledger: MailKickerLedger
+  nodeId: string
+  /** Shared with other HRC home-authority consumers; the kicker never owns the verdict. */
+  foreignHomeMemo: Map<string, ForeignHome>
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void
 }
 

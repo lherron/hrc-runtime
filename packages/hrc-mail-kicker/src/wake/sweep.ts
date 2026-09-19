@@ -65,14 +65,14 @@ export function runMailKickerSweep(this: MailKickerContext): Promise<void> {
     // presentation cannot cross.
     await sweepLapsedObligations(this)
     const now = new Date().toISOString()
-    const targets = new Set<string>(this.db.mailDelivery.listIntentTargets())
+    const targets = new Set<string>(this.store.mailDelivery.listIntentTargets())
     // Two rev 5.1 candidate sources that key on nothing in the ledger: a due
     // D4 reminder, and a §5 notice waiting for its sender's next attend.
     // Neither shows up as pending mail, so without these a scope whose only
     // outstanding business is one of them is never woken at all.
-    for (const target of this.db.mailDelivery.listDueReminderTargets(now)) targets.add(target)
-    for (const target of this.db.mailDelivery.listFailureNoticeTargets()) targets.add(target)
-    const seated = this.db.runtimes.listLiveSessionRefs()
+    for (const target of this.store.mailDelivery.listDueReminderTargets(now)) targets.add(target)
+    for (const target of this.store.mailDelivery.listFailureNoticeTargets()) targets.add(target)
+    const seated = this.port.runtimes.listLiveSessionRefs()
     const unborn = await unbornBirthWakeCandidates(this, seated)
     for (const batch of chunk([...seated, ...unborn], LEDGER_SWEEP_SCOPE_BATCH)) {
       try {

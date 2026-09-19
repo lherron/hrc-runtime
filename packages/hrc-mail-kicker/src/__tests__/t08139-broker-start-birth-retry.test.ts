@@ -83,31 +83,34 @@ describe('T-08139 D2 — broker-start failure returns a seated target to the swe
     let dispatches = 0
     context = {
       ...context,
-      dispatchTurn: async () => {
-        dispatches += 1
-        const now = new Date().toISOString()
-        harness.db.runtimes.update(OLD_RUNTIME, {
-          status: 'stale',
-          statusChangedAt: now,
-          updatedAt: now,
-        })
-        harness.db.runtimes.insert({
-          runtimeId: FAILED_RUNTIME,
-          hostSessionId: harness.session.hostSessionId,
-          scopeRef: SCOPE,
-          laneRef: 'main',
-          generation: harness.session.generation,
-          transport: 'tmux',
-          harness: 'codex-cli',
-          provider: 'openai',
-          status: 'failed',
-          supportsInflightInput: true,
-          adopted: false,
-          createdAt: now,
-          updatedAt: now,
-        })
-        observeMailDriveLifecycleEvent.call(context, brokerStartFailedEvent())
-        throw new Error('interactive broker start failed')
+      port: {
+        ...context.port,
+        steer: async () => {
+          dispatches += 1
+          const now = new Date().toISOString()
+          harness.db.runtimes.update(OLD_RUNTIME, {
+            status: 'stale',
+            statusChangedAt: now,
+            updatedAt: now,
+          })
+          harness.db.runtimes.insert({
+            runtimeId: FAILED_RUNTIME,
+            hostSessionId: harness.session.hostSessionId,
+            scopeRef: SCOPE,
+            laneRef: 'main',
+            generation: harness.session.generation,
+            transport: 'tmux',
+            harness: 'codex-cli',
+            provider: 'openai',
+            status: 'failed',
+            supportsInflightInput: true,
+            adopted: false,
+            createdAt: now,
+            updatedAt: now,
+          })
+          observeMailDriveLifecycleEvent.call(context, brokerStartFailedEvent())
+          throw new Error('interactive broker start failed')
+        },
       },
     }
     harness.context = context

@@ -48,10 +48,10 @@ export async function readActionableEnvelopes(
     })
   }
   const outstanding = new Set(
-    server.db.mailDelivery.listOpenIntents(targetSessionRef).map((intent) => intent.envelopeId)
+    server.store.mailDelivery.listOpenIntents(targetSessionRef).map((intent) => intent.envelopeId)
   )
   const due = new Map(
-    server.db.mailDelivery
+    server.store.mailDelivery
       .listDueReminders(targetSessionRef, new Date().toISOString())
       .map((presentation) => [presentation.envelopeId, presentation] as const)
   )
@@ -84,7 +84,9 @@ export async function readActionableEnvelopes(
   for (const presentation of due.values()) {
     if (claimedReminders.has(presentation.envelopeId)) continue
     if (outstanding.has(presentation.envelopeId)) continue
-    if (!server.db.mailDelivery.retireReminder(presentation.envelopeId, presentation.runtimeId)) {
+    if (
+      !server.store.mailDelivery.retireReminder(presentation.envelopeId, presentation.runtimeId)
+    ) {
       continue
     }
     server.log('INFO', 'wrkq.kicker.reminder_retired', {
@@ -143,6 +145,6 @@ export function senderGenerationFor(
   if (scopeRef === undefined) return {}
   const sessionRef = targetSessionRefForLedgerScope(scopeRef)
   if (sessionRef === undefined) return {}
-  const session = server.findTargetSession(sessionRef)
+  const session = server.port.findTargetSession(sessionRef)
   return session === undefined ? {} : { senderGeneration: session.generation }
 }

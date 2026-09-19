@@ -41,7 +41,6 @@
 import type { MailKickerContext } from '../context.js'
 import type { KickerRegistryConsultResult } from '../contracts.js'
 import { kickerScopeRefFor } from '../drive/authority.js'
-import { deferDesktopDelivery, desktopRegistrationForTarget } from '../drive/desktop.js'
 import { BIRTH_SWEEP_BACKOFF_BASE_MS, BIRTH_SWEEP_MAX_REFUSALS, errorText } from '../internal.js'
 import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
 import { failEnvelopeWithAudit } from '../terminal/envelope-terminal.js'
@@ -79,11 +78,11 @@ export async function unbornBirthWakeCandidates(
 
 /** Live designations naming this node whose scope the registry has never bound. */
 async function designatedUnbornTargets(server: MailKickerContext): Promise<string[]> {
-  const list = server.registry?.listUnbornDesignations
+  const list = server.port.registry?.listUnbornDesignations
   if (list === undefined) return []
   let designations: readonly { scopeRef: string }[]
   try {
-    designations = await list.call(server.registry, server.nodeId)
+    designations = await list.call(server.port.registry, server.nodeId)
   } catch (error) {
     // An unreachable registry is not evidence that this node owes no births.
     // It is a reason to try again on the next sweep, and never a reason to
@@ -113,7 +112,7 @@ async function designatedUnbornTargets(server: MailKickerContext): Promise<strin
  */
 function refusedBirthTargets(server: MailKickerContext): string[] {
   const targets: string[] = []
-  for (const targetSessionRef of server.db.mailDelivery.listRefusedBirthTargets()) {
+  for (const targetSessionRef of server.store.mailDelivery.listRefusedBirthTargets()) {
     const scopeRef = kickerScopeRefFor(targetSessionRef)
     if (scopeRef === undefined) continue
     if (server.mailKickerBirthDeferredAnnounced.has(scopeRef)) continue
@@ -140,23 +139,6 @@ export async function chargeBirthSweepRefusal(
   server: MailKickerContext,
   targetSessionRef: string
 ): Promise<void> {
-  // A permanently reserved desktop conversation has no birth to charge and no
-  // undeliverable verdict to reach (P-00502 §6). The drive already declines to
-  // birth one, so reaching here at all would mean a stale birth-refusal row from
-  // before the reservation existed; either way D7's bound must not apply, or a
-  // closed ChatGPT window would eventually tell every sender the address is
-  // undeliverable. Defense in depth for the one rule that ends in a lie.
-  const desktopRegistration = desktopRegistrationForTarget(server, targetSessionRef)
-  if (desktopRegistration !== undefined) {
-    server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
-    server.db.mailDelivery.resolveBirthRefusal(targetSessionRef, 'desktop reservation: no birth')
-    deferDesktopDelivery(server, {
-      targetSessionRef,
-      registration: desktopRegistration,
-      reason: 'birth_suppressed',
-    })
-    return
-  }
   const now = Date.now()
   const attempts = (server.mailKickerBirthSweepBackoff.get(targetSessionRef)?.attempts ?? 0) + 1
   if (attempts >= BIRTH_SWEEP_MAX_REFUSALS) {
@@ -210,7 +192,7 @@ async function failUndeliverableMail(
   refusals: number
 ): Promise<boolean> {
   const scopeRef = kickerScopeRefFor(targetSessionRef)
-  const registry = server.registry
+  const registry = server.port.registry
   if (registry !== undefined) {
     if (scopeRef === undefined) {
       server.log('WARN', 'wrkq.kicker.undeliverable_home_unresolved', {
@@ -233,7 +215,7 @@ async function failUndeliverableMail(
     if (authority.outcome === 'bound' && authority.binding.homeNodeId !== server.nodeId) {
       const homeNodeId = authority.binding.homeNodeId
       server.foreignHomeMemo.set(scopeRef, { homeNodeId, source: 'registry' })
-      const resolvedBirth = server.db.mailDelivery.resolveBirthRefusal(
+      const resolvedBirth = server.store.mailDelivery.resolveBirthRefusal(
         targetSessionRef,
         `${scopeRef} is homed on ${homeNodeId}; this node has no authority to fail its mail`
       )

@@ -68,7 +68,7 @@ function liveRuntimeForTarget(
   } catch {
     return undefined
   }
-  return server.db.runtimes
+  return server.port.runtimes
     .listAll()
     .filter((runtime) => runtime.scopeRef === target.scopeRef && runtime.laneRef === target.laneRef)
     .find(

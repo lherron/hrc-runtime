@@ -23,7 +23,7 @@ export function presentationRuntimeIdFor(
   server: MailKickerContext,
   session: HrcSessionRecord
 ): string | undefined {
-  const runtimes = server.db.runtimes.listByHostSessionId(session.hostSessionId)
+  const runtimes = server.port.runtimes.listByHostSessionId(session.hostSessionId)
   for (let index = runtimes.length - 1; index >= 0; index -= 1) {
     const runtime = runtimes[index]
     if (runtime === undefined) continue
@@ -62,7 +62,7 @@ export function skipForeignHomedTarget(
   foreign: ForeignHome,
   wakeReason: HrcMailDriveWakeReason
 ): void {
-  const resolvedBirth = server.db.mailDelivery.resolveBirthRefusal(
+  const resolvedBirth = server.store.mailDelivery.resolveBirthRefusal(
     targetSessionRef,
     `${scopeRef} is homed on ${foreign.homeNodeId}; this node has no authority to drive it`
   )
@@ -144,7 +144,7 @@ export function deferBirthForTarget(
   deferral: BirthDeferral,
   wakeReason: HrcMailDriveWakeReason
 ): void {
-  const resolvedBirth = server.db.mailDelivery.resolveBirthRefusal(
+  const resolvedBirth = server.store.mailDelivery.resolveBirthRefusal(
     targetSessionRef,
     `${scopeRef} is designated to be born on ${deferral.homeNodeId}; this node takes no part in the birth`
   )

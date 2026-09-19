@@ -1,31 +1,23 @@
-import type {
-  HrcBrokerInvocationEventRecord,
-  HrcLifecycleEvent,
-  HrcRuntimeIntent,
-  HrcSessionRecord,
-  PreemptAdmission,
-  PreemptSubmissionRequest,
-} from 'hrc-core'
-import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
+import type { HrcBrokerInvocationEventRecord, HrcLifecycleEvent } from 'hrc-core'
+import type { HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type {
   ForeignHome,
-  KickerBrokerPort,
-  KickerDispatchOptions,
-  KickerDispatchResult,
+  HrcInjectionPort,
   KickerLogLevel,
-  KickerRegistryClient,
+  KickerStateStore,
 } from './contracts.js'
 import type { MailKickerLedger } from './ledger/client.js'
 
 /** Internal capability surface shared by the decomposed kicker state machines. */
 export type MailKickerContext = {
-  readonly db: HrcDatabase
+  /** Kicker-owned state; in its own sqlite file after the Phase 3 store split. */
+  readonly store: KickerStateStore
+  /** Every HRC-owned read and mutation crosses this boundary. */
+  readonly port: HrcInjectionPort
   readonly ledger: MailKickerLedger
   readonly nodeId: string
-  readonly registry: KickerRegistryClient | undefined
   readonly foreignHomeMemo: Map<string, ForeignHome>
-  readonly broker: KickerBrokerPort
   readonly enabled: boolean
   readonly sweepIntervalMs: number
 
@@ -90,35 +82,6 @@ export type MailKickerContext = {
    */
   readonly mailKickerDeliveryBackoff: Map<string, number>
 
-  resolveForeignHome(scopeRef: string): Promise<ForeignHome | undefined>
-  resolveRuntimeIntent(
-    scopeRef: string,
-    materializationIntent: string | undefined
-  ): Promise<HrcRuntimeIntent | undefined>
-  findTargetSession(targetSessionRef: string): HrcSessionRecord | undefined
-  ensureTargetSession(
-    targetSessionRef: string,
-    intent: HrcRuntimeIntent,
-    options: { persistIntent: false }
-  ): Promise<HrcSessionRecord>
-  dispatchTurn(
-    session: HrcSessionRecord,
-    intent: HrcRuntimeIntent,
-    prompt: string,
-    options: KickerDispatchOptions
-  ): Promise<KickerDispatchResult>
-  /**
-   * T-08337: the three-way preempt answer, not a boolean.
-   *
-   * The kicker still takes the ordinary door for anything but `authorized`, but
-   * a hold refused because the DRIVER cannot be interrupted and a hold refused
-   * because the SENDER may not interrupt are different facts, and the kicker is
-   * the surface where the first one will actually be seen.
-   */
-  preemptAdmission(
-    session: HrcSessionRecord,
-    request: PreemptSubmissionRequest
-  ): Promise<PreemptAdmission>
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void
 
   wake(targetSessionRef: string, reason: HrcMailDriveWakeReason): void

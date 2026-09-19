@@ -20,10 +20,6 @@
  *    layer → enqueue, and the harness-local queue drains it at the boundary;
  *  - seat absent → cold birth, and the launch carries the body.
  *
- * ONE address family is exempt from the last rule: a scope permanently reserved
- * for a Codex desktop conversation (P-00502 §6). HRC does not own that process,
- * so "nothing is seated" is a reason to WAIT under the registered address, never
- * to birth a replacement. See `desktop.ts`.
  */
 import type { HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
@@ -38,7 +34,6 @@ import {
   skipForeignHomedTarget,
 } from './authority.js'
 import { deliverByColdBirth, deliverToSeat } from './delivery.js'
-import { deferDesktopDelivery, desktopRegistrationForTarget } from './desktop.js'
 import type { ActionableEnvelope } from './presentation.js'
 import { readActionableEnvelopes, summonsATurn } from './presentation.js'
 import { observeBrokerSeat } from './seat.js'
@@ -91,7 +86,7 @@ async function birthForTarget(
       error: errorText(error),
     })
     if (scopeRef !== undefined) {
-      server.db.mailDelivery.recordBirthRefusal({
+      server.store.mailDelivery.recordBirthRefusal({
         targetSessionRef,
         scopeRef,
         reason: errorText(error),
@@ -112,13 +107,14 @@ export async function driveMailTargetOnce(
   // parse gets no verdict and falls through to the path that already reported
   // that for what it is.
   const scopeRef = kickerScopeRefFor(targetSessionRef)
-  const foreign = scopeRef === undefined ? undefined : await server.resolveForeignHome(scopeRef)
+  const foreign =
+    scopeRef === undefined ? undefined : await server.port.resolveForeignHome(scopeRef)
   if (scopeRef !== undefined && foreign !== undefined) {
     skipForeignHomedTarget(server, targetSessionRef, scopeRef, foreign, wakeReason)
     return
   }
 
-  const session = server.findTargetSession(targetSessionRef) ?? undefined
+  const session = server.port.findTargetSession(targetSessionRef) ?? undefined
   // §5 — the sender-side failure notices this scope is owed. Delivered here
   // rather than folded into the drive because a notice is not an obligation:
   // it rides a live generation if there is one and waits for the next attend
@@ -140,44 +136,13 @@ export async function driveMailTargetOnce(
   }
   if (actionable.length === 0) return
 
-  // A registered desktop conversation is never HRC's to seat (P-00502 §6). The
-  // check sits after the ledger read so the deferral line can name the mail it
-  // is holding, and before every door so no branch below can birth or dispatch.
-  const desktopRegistration = desktopRegistrationForTarget(server, targetSessionRef)
-
   if (session === undefined) {
-    if (desktopRegistration !== undefined) {
-      deferDesktopDelivery(server, {
-        targetSessionRef,
-        registration: desktopRegistration,
-        reason: 'no_registered_session',
-        envelopeIds: actionable.map((item) => item.envelope.id),
-        detail: { wakeReason },
-      })
-      return
-    }
     return await birthForTarget(server, targetSessionRef, scopeRef, actionable, wakeReason)
   }
 
   const seat = await observeBrokerSeat(server, session)
 
-  // `absent` means no live broker observation of this conversation. For a
-  // desktop conversation, provisioning one IS the forbidden cold CLI
-  // replacement, because the session row outlives every observer. Detachment is
-  // also not evidence about the desktop process itself, so this is a wait, not
-  // a verdict.
-  if (desktopRegistration !== undefined && seat.state === 'absent') {
-    deferDesktopDelivery(server, {
-      targetSessionRef,
-      registration: desktopRegistration,
-      reason: 'observer_absent',
-      envelopeIds: actionable.map((item) => item.envelope.id),
-      detail: { wakeReason },
-    })
-    return
-  }
-
-  // For an ordinary seat, absent means there is no harness to submit into, so a
+  // An absent seat means there is no harness to submit into, so a
   // SUMMONING envelope takes the launch-carried door — the same one a target
   // with no session row takes. A session row is not a seat: it outlives every
   // runtime, so routing on the row is what sent this case to `enqueue`, where
@@ -205,7 +170,6 @@ export async function driveMailTargetOnce(
       wakeReason,
       observedSeatState: seat.state,
       envelopeIds: actionable.map((item) => item.envelope.id),
-      ...(desktopRegistration === undefined ? {} : { desktopReservation: true }),
     })
     return
   }
@@ -219,7 +183,6 @@ export async function driveMailTargetOnce(
       wakeReason,
       observedSeatState: seat.state,
       envelopeIds: actionable.map((item) => item.envelope.id),
-      ...(desktopRegistration === undefined ? {} : { desktopReservation: true }),
     })
     return
   }

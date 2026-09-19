@@ -142,14 +142,14 @@ export async function commitLanding(
     // terminal instant stands. No receipt, no wake and no re-open follows.
     const priorCause = intent.terminalEnvelopeCause ?? 'terminal'
     if (!priorCause.endsWith(TERMINAL_EXECUTION_SUFFIX)) {
-      server.db.mailDelivery.markTerminalEnvelope(
+      server.store.mailDelivery.markTerminalEnvelope(
         intent.envelopeId,
         `${priorCause}${TERMINAL_EXECUTION_SUFFIX}`
       )
     }
     // Harmless and correct when a presentation row does exist (a reply that
     // discharged the obligation between landing and commit); a no-op otherwise.
-    server.db.mailDelivery.recordDisposition(
+    server.store.mailDelivery.recordDisposition(
       intent.envelopeId,
       input.runtimeId,
       'terminal_execution_observed'
@@ -176,15 +176,15 @@ export async function commitLanding(
   // D3 has nothing to dispose it from.
   const isReminder =
     intent.form === 'reminder' &&
-    server.db.mailDelivery.getPresentation(intent.envelopeId, input.runtimeId) !== undefined
+    server.store.mailDelivery.getPresentation(intent.envelopeId, input.runtimeId) !== undefined
   if (isReminder) {
-    server.db.mailDelivery.recordReminderLanding(
+    server.store.mailDelivery.recordReminderLanding(
       intent.envelopeId,
       input.runtimeId,
       input.landingHrcSeq
     )
   } else {
-    server.db.mailDelivery.recordPresentation({
+    server.store.mailDelivery.recordPresentation({
       envelopeId: intent.envelopeId,
       runtimeId: input.runtimeId,
       targetSessionRef: intent.targetSessionRef,
@@ -224,8 +224,8 @@ export async function commitLanding(
       // The body landed after the envelope became terminal.  Preserve the
       // intent as an inspectable terminal fence: deleting it would allow a
       // sweep to inject a second body while the receipt is impossible.
-      server.db.mailDelivery.markTerminalEnvelope(intent.envelopeId, 'receipt_wrong_state')
-      server.db.mailDelivery.recordDisposition(
+      server.store.mailDelivery.markTerminalEnvelope(intent.envelopeId, 'receipt_wrong_state')
+      server.store.mailDelivery.recordDisposition(
         intent.envelopeId,
         input.runtimeId,
         'terminal_before_receipt'
@@ -253,12 +253,12 @@ export async function commitLanding(
     return 'failed'
   }
 
-  server.db.mailDelivery.markReceiptCommitted(intent.envelopeId, input.runtimeId)
-  server.db.mailDelivery.clearIntent(intent.envelopeId)
+  server.store.mailDelivery.markReceiptCommitted(intent.envelopeId, input.runtimeId)
+  server.store.mailDelivery.clearIntent(intent.envelopeId)
   server.mailKickerDeliveryBackoff.delete(input.runtimeId)
   // The seat took a body, so it is not the seat that cannot land: the TTL bound
   // starts over rather than carrying a stale near-miss into the next delivery.
-  server.db.mailDelivery.clearNonLandingStrikes(intent.envelopeId)
+  server.store.mailDelivery.clearNonLandingStrikes(intent.envelopeId)
   server.log('INFO', 'wrkq.kicker.presented', {
     targetSessionRef: intent.targetSessionRef,
     envelope: intent.envelopeId,
@@ -303,7 +303,7 @@ export async function landLaunchIfStarted(
 ): Promise<LandingCommit | undefined> {
   const runtimeId = intent.runtimeId
   if (runtimeId === undefined || intent.door !== 'launch') return undefined
-  const started = server.db.hrcEvents.listByKind('turn.started', { runtimeId, limit: 1 })[0]
+  const started = server.port.events.listByKind('turn.started', { runtimeId, limit: 1 })[0]
   if (started === undefined) return undefined
   return await commitLanding(server, intent, {
     runtimeId,
@@ -338,7 +338,7 @@ export function steerRefusalIsPermanent(
 ): boolean {
   if (CAPABILITY_REFUSALS.has(reason)) return true
   if (submissionId === undefined) return false
-  const rejection = server.db.brokerInvocationEvents.findAdmissionRejection(runtimeId, submissionId)
+  const rejection = server.port.brokerEvents.findAdmissionRejection(runtimeId, submissionId)
   return rejection?.layer === 'capability'
 }
 
@@ -365,10 +365,7 @@ export function steerRefusalFallback(
   if (steerRefusalIsPermanent(server, runtimeId, submissionId, reason)) return 'capability'
   if (POLICY_OR_AUTHORITY_REFUSALS.has(reason)) return 'turn'
   if (submissionId === undefined) return undefined
-  const layer = server.db.brokerInvocationEvents.findAdmissionRejection(
-    runtimeId,
-    submissionId
-  )?.layer
+  const layer = server.port.brokerEvents.findAdmissionRejection(runtimeId, submissionId)?.layer
   return layer === 'policy' || layer === 'authority' ? 'turn' : undefined
 }
 
@@ -408,7 +405,7 @@ export function clearRefusedIntent(
     fallbackDoor?: 'enqueue' | undefined
   } = {}
 ): void {
-  server.db.mailDelivery.clearIntent(intent.envelopeId)
+  server.store.mailDelivery.clearIntent(intent.envelopeId)
   server.log('INFO', 'wrkq.kicker.landing_refused', {
     targetSessionRef: intent.targetSessionRef,
     envelope: intent.envelopeId,
@@ -453,7 +450,7 @@ function refusalFollowedAWrite(
   submissionId: string | undefined
 ): boolean {
   if (submissionId === undefined) return false
-  return server.db.brokerInvocationEvents.hasInputAccepted(runtimeId, submissionId)
+  return server.port.brokerEvents.hasInputAccepted(runtimeId, submissionId)
 }
 
 /**
@@ -474,14 +471,14 @@ export async function chargeNonLandingOutcome(
   runtimeId: string,
   cause: string
 ): Promise<'struck' | 'exhausted'> {
-  const strikes = server.db.mailDelivery.recordNonLandingStrike(intent.envelopeId, runtimeId)
+  const strikes = server.store.mailDelivery.recordNonLandingStrike(intent.envelopeId, runtimeId)
   // The window belongs to the RUN of refusals a strike ends, so the next
   // continuous run is measured from scratch rather than from the first refusal
   // this envelope ever had on this seat.
-  server.db.mailDelivery.closeRefusalWindow(intent.envelopeId, runtimeId)
+  server.store.mailDelivery.closeRefusalWindow(intent.envelopeId, runtimeId)
   if (strikes < KICKER_MAX_NON_LANDING_STRIKES) return 'struck'
 
-  server.db.mailDelivery.clearIntent(intent.envelopeId)
+  server.store.mailDelivery.clearIntent(intent.envelopeId)
   server.log('WARN', 'wrkq.kicker.non_landing_strikes_exhausted', {
     targetSessionRef: intent.targetSessionRef,
     envelope: intent.envelopeId,
@@ -545,7 +542,7 @@ export async function refuseIntent(
   }
 
   if (refusalFollowedAWrite(server, runtimeId, intent.submissionId)) {
-    server.db.mailDelivery.markUncertain(intent.envelopeId, reason, 'post_write_refusal')
+    server.store.mailDelivery.markUncertain(intent.envelopeId, reason, 'post_write_refusal')
     return 'refused'
   }
 
@@ -579,12 +576,12 @@ export async function observeBrokerLanding(
   record: HrcBrokerInvocationEventRecord
 ): Promise<void> {
   if (record.type === 'turn.started') {
-    const intents = server.db.mailDelivery.listLaunchIntentsForRuntime(record.runtimeId)
+    const intents = server.store.mailDelivery.listLaunchIntentsForRuntime(record.runtimeId)
     for (const intent of intents) {
       await commitLanding(server, intent, {
         runtimeId: record.runtimeId,
         eventType: record.type,
-        landingHrcSeq: server.db.hrcEvents.maxHrcSeq(),
+        landingHrcSeq: server.port.events.maxHrcSeq(),
       })
     }
     return
@@ -593,14 +590,14 @@ export async function observeBrokerLanding(
   const payload = parsePayload(record)
   const submissionId = payload?.['submissionId'] ?? payload?.['inputId']
   if (typeof submissionId !== 'string') return
-  const intent = server.db.mailDelivery.getIntentBySubmissionId(submissionId)
+  const intent = server.store.mailDelivery.getIntentBySubmissionId(submissionId)
   if (intent === undefined) return
 
   if (LANDED_TYPES.has(record.type)) {
     await commitLanding(server, intent, {
       runtimeId: intent.runtimeId ?? record.runtimeId,
       eventType: record.type,
-      landingHrcSeq: server.db.hrcEvents.maxHrcSeq(),
+      landingHrcSeq: server.port.events.maxHrcSeq(),
     })
     return
   }
@@ -609,7 +606,7 @@ export async function observeBrokerLanding(
   // rev2 emits this explicit correlation on `input.rejected`; older/partial
   // streams remain safely uncertain rather than reopening the envelope.
   if (payload?.['deliveryEvidence'] !== 'not_written') {
-    server.db.mailDelivery.markUncertain(
+    server.store.mailDelivery.markUncertain(
       intent.envelopeId,
       reason,
       'refusal_without_no_write_proof'

@@ -239,7 +239,7 @@ describe('T-08576 app-scope kicker exclusion', () => {
   it('R-K1 reconciles an app runtime terminal locally without reading wrkq', async () => {
     const appSession = insertAppRuntime()
     const calls = installRecordingLedger(harness.context)
-    harness.context.findTargetSession = (target) =>
+    harness.context.port.findTargetSession = (target) =>
       target === APP_TARGET ? appSession : harness.session
 
     const { envelopeId } = await observeRuntimeTerminal({
@@ -264,7 +264,7 @@ describe('T-08576 app-scope kicker exclusion', () => {
   it('R-K2 disposes an app turn locally without waking a wrkq read', async () => {
     const appSession = insertAppRuntime()
     const calls = installRecordingLedger(harness.context)
-    harness.context.findTargetSession = (target) =>
+    harness.context.port.findTargetSession = (target) =>
       target === APP_TARGET ? appSession : harness.session
 
     const { envelopeId, wakeOperations } = await observeTurnCompleted({

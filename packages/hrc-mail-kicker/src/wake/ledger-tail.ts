@@ -41,15 +41,15 @@ export async function withdrawAckedQueuedInjection(
   // The durable intent is the no-second-body fence. Terminalizing it applies
   // to every shape, including a launch-carried or runtime-less uncertain call;
   // only the broker-held cleanup below needs a concrete runtime.
-  const intent = server.db.mailDelivery.getIntent(envelopeId)
+  const intent = server.store.mailDelivery.getIntent(envelopeId)
   if (intent === undefined) return
   const terminal =
-    server.db.mailDelivery.markTerminalEnvelope(envelopeId, event.eventType) ?? intent
+    server.store.mailDelivery.markTerminalEnvelope(envelopeId, event.eventType) ?? intent
   // The ledger can report equivalent terminal evidence more than once. A
   // cleanup is a one-shot observation, never a polling loop.
   if (terminal.cleanupAt !== undefined) return
   if (terminal.runtimeId === undefined || terminal.door === 'launch') {
-    server.db.mailDelivery.recordTerminalCleanup(envelopeId, 'not_applicable')
+    server.store.mailDelivery.recordTerminalCleanup(envelopeId, 'not_applicable')
     server.log('INFO', 'wrkq.kicker.queued_injection_withdraw_skipped', {
       envelopeId,
       ...(terminal.runtimeId === undefined ? {} : { runtimeId: terminal.runtimeId }),
@@ -64,9 +64,9 @@ export async function withdrawAckedQueuedInjection(
   // This is a broker-held queue cleanup only.  It is not a native harness
   // removal and neither an error nor `not_held` proves that the body was not
   // already applied.  Terminalize the durable fence before asking the broker.
-  let withdrawal: Awaited<ReturnType<MailKickerContext['broker']['withdraw']>>
+  let withdrawal: Awaited<ReturnType<MailKickerContext['port']['broker']['withdraw']>>
   try {
-    withdrawal = await server.broker.withdraw(
+    withdrawal = await server.port.broker.withdraw(
       terminal.submissionId === undefined
         ? {
             runtimeId: terminal.runtimeId,
@@ -80,7 +80,7 @@ export async function withdrawAckedQueuedInjection(
           }
     )
   } catch (error) {
-    server.db.mailDelivery.recordTerminalCleanup(envelopeId, 'unsupported_or_error')
+    server.store.mailDelivery.recordTerminalCleanup(envelopeId, 'unsupported_or_error')
     server.log('WARN', 'wrkq.kicker.queued_injection_withdraw_failed', {
       envelopeId,
       runtimeId: terminal.runtimeId,
@@ -91,7 +91,7 @@ export async function withdrawAckedQueuedInjection(
     return
   }
   if (!withdrawal.ok) {
-    server.db.mailDelivery.recordTerminalCleanup(envelopeId, 'unsupported_or_error')
+    server.store.mailDelivery.recordTerminalCleanup(envelopeId, 'unsupported_or_error')
     server.log('WARN', 'wrkq.kicker.queued_injection_withdraw_failed', {
       envelopeId,
       runtimeId: terminal.runtimeId,
@@ -103,7 +103,7 @@ export async function withdrawAckedQueuedInjection(
   }
 
   if (withdrawal.response.outcome === 'withdrawn') {
-    server.db.mailDelivery.recordTerminalCleanup(envelopeId, 'withdrawn')
+    server.store.mailDelivery.recordTerminalCleanup(envelopeId, 'withdrawn')
     server.log('INFO', 'wrkq.kicker.queued_injection_withdrawn', {
       envelopeId,
       runtimeId: terminal.runtimeId,
@@ -116,7 +116,7 @@ export async function withdrawAckedQueuedInjection(
 
   // `not_held`/`unknown` are not a no-write proof.  The terminal intent stays
   // held and a late landing is audit-only; no receipt or reinjection follows.
-  server.db.mailDelivery.recordTerminalCleanup(envelopeId, withdrawal.response.outcome)
+  server.store.mailDelivery.recordTerminalCleanup(envelopeId, withdrawal.response.outcome)
   server.log('INFO', 'wrkq.kicker.queued_injection_withdraw_skipped', {
     envelopeId,
     runtimeId: terminal.runtimeId,
@@ -133,9 +133,9 @@ export async function runWrkqLedgerTail(this: MailKickerContext): Promise<void> 
 
   const tail = (async () => {
     try {
-      let cursor = this.db.wrkqLedgerCursors.get()
+      let cursor = this.store.wrkqLedgerCursors.get()
       if (cursor === undefined) {
-        cursor = this.db.wrkqLedgerCursors.advance(await resolveTailStartCursor(this))
+        cursor = this.store.wrkqLedgerCursors.advance(await resolveTailStartCursor(this))
         // Armed BEFORE the catch-up runs and cleared only when one completes,
         // so a wrkq outage on the first tick costs a retry rather than the
         // whole backlog: the cursor is already persisted and this condition
@@ -174,12 +174,12 @@ export async function runWrkqLedgerTail(this: MailKickerContext): Promise<void> 
           })
           continue
         }
-        seated ??= new Set(this.db.runtimes.listLiveSessionRefs())
+        seated ??= new Set(this.port.runtimes.listLiveSessionRefs())
         const target = wakeTargetForEvent(event, seated)
         if (target === undefined) continue
         this.wake(target, 'insert')
       }
-      if (page.highWater > cursor) this.db.wrkqLedgerCursors.advance(page.highWater)
+      if (page.highWater > cursor) this.store.wrkqLedgerCursors.advance(page.highWater)
     } catch (error) {
       this.log(
         error instanceof WrkqLedgerUnavailableError ? 'WARN' : 'ERROR',

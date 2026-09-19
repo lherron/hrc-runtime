@@ -1,22 +1,13 @@
-import type {
-  HrcBrokerInvocationEventRecord,
-  HrcLifecycleEvent,
-  HrcRuntimeIntent,
-  HrcSessionRecord,
-  PreemptAdmission,
-  PreemptSubmissionRequest,
-} from 'hrc-core'
+import type { HrcBrokerInvocationEventRecord, HrcLifecycleEvent } from 'hrc-core'
 import { parseAppSessionScopeRef } from 'hrc-core'
-import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
+import type { HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from './context.js'
 import type {
   ForeignHome,
-  KickerBrokerPort,
-  KickerDispatchOptions,
-  KickerDispatchResult,
+  HrcInjectionPort,
   KickerLogLevel,
-  KickerRegistryClient,
+  KickerStateStore,
   MailKickerDependencies,
   MailKickerOptions,
 } from './contracts.js'
@@ -42,12 +33,11 @@ import { runMailKickerSweep } from './wake/sweep.js'
 
 /** Owns the kicker's scheduler, process-local state, and target-drive serialization. */
 export class MailKicker implements MailKickerContext {
-  readonly db: HrcDatabase
+  readonly store: KickerStateStore
+  readonly port: HrcInjectionPort
   readonly ledger: MailKickerLedger
   readonly nodeId: string
-  readonly registry: KickerRegistryClient | undefined
   readonly foreignHomeMemo: Map<string, ForeignHome>
-  readonly broker: KickerBrokerPort
   readonly enabled: boolean
   readonly sweepIntervalMs: number
 
@@ -73,53 +63,13 @@ export class MailKicker implements MailKickerContext {
     private readonly dependencies: MailKickerDependencies,
     options: MailKickerOptions
   ) {
-    this.db = dependencies.db
+    this.store = dependencies.store
+    this.port = dependencies.port
     this.ledger = dependencies.ledger
     this.nodeId = dependencies.nodeId
-    this.registry = dependencies.registry
     this.foreignHomeMemo = dependencies.foreignHomeMemo
-    this.broker = dependencies.broker
     this.enabled = options.enabled
     this.sweepIntervalMs = options.sweepIntervalMs
-  }
-
-  resolveForeignHome(scopeRef: string): Promise<ForeignHome | undefined> {
-    return this.dependencies.resolveForeignHome(scopeRef)
-  }
-
-  async resolveRuntimeIntent(
-    scopeRef: string,
-    materializationIntent: string | undefined
-  ): Promise<HrcRuntimeIntent | undefined> {
-    return this.dependencies.resolveRuntimeIntent(scopeRef, materializationIntent)
-  }
-
-  findTargetSession(targetSessionRef: string): HrcSessionRecord | undefined {
-    return this.dependencies.findTargetSession(targetSessionRef)
-  }
-
-  ensureTargetSession(
-    targetSessionRef: string,
-    intent: HrcRuntimeIntent,
-    options: { persistIntent: false }
-  ): Promise<HrcSessionRecord> {
-    return this.dependencies.ensureTargetSession(targetSessionRef, intent, options)
-  }
-
-  dispatchTurn(
-    session: HrcSessionRecord,
-    intent: HrcRuntimeIntent,
-    prompt: string,
-    options: KickerDispatchOptions
-  ): Promise<KickerDispatchResult> {
-    return this.dependencies.dispatchTurn(session, intent, prompt, options)
-  }
-
-  preemptAdmission(
-    session: HrcSessionRecord,
-    request: PreemptSubmissionRequest
-  ): Promise<PreemptAdmission> {
-    return this.dependencies.preemptAdmission(session, request)
   }
 
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void {
@@ -281,7 +231,7 @@ export function observeMailDriveLifecycleEvent(
     // committed lifecycle ledger rather than the broker stream so the landing
     // sequence is the same ordering D3's terminals are compared against.
     if (runtimeId === undefined) return
-    const intents = this.db.mailDelivery.listLaunchIntentsForRuntime(runtimeId)
+    const intents = this.store.mailDelivery.listLaunchIntentsForRuntime(runtimeId)
     for (const intent of intents) {
       void commitLanding(this, intent, {
         runtimeId,
@@ -303,7 +253,7 @@ export function observeMailDriveLifecycleEvent(
   }
   if (RUNTIME_TERMINAL_EVENTS.has(event.eventKind)) {
     if (runtimeId === undefined || this.mailKickerLapsedRuntimes.has(runtimeId)) return
-    const runtime = this.db.runtimes.getByRuntimeId(runtimeId) ?? undefined
+    const runtime = this.port.runtimes.getByRuntimeId(runtimeId) ?? undefined
     if (runtime === undefined || !isRuntimeTerminal(runtime.status)) return
     const targetSessionRef = formatSessionRef(event.scopeRef, event.laneRef)
     // D2 step 5: a runtime termination resolves every intent bound to it.
@@ -374,7 +324,7 @@ function recordDeliveryBrokerStartRefusal(
   if (payload?.['phase'] !== 'broker-invocation-start') return
 
   const targetSessionRef = formatSessionRef(event.scopeRef, event.laneRef)
-  const intent = server.db.mailDelivery
+  const intent = server.store.mailDelivery
     .listOpenIntents(targetSessionRef)
     .filter((candidate) => candidate.submittedHrcSeq <= event.hrcSeq)
     .at(-1)
@@ -388,7 +338,7 @@ function recordDeliveryBrokerStartRefusal(
         ? payload['code']
         : 'broker start failed'
   const reason = `${intent.envelopeId}: broker-invocation-start: ${failure}`
-  server.db.mailDelivery.recordBirthRefusal({ targetSessionRef, scopeRef, reason })
+  server.store.mailDelivery.recordBirthRefusal({ targetSessionRef, scopeRef, reason })
   server.log('WARN', 'wrkq.kicker.delivery_birth_refused', {
     targetSessionRef,
     envelope: intent.envelopeId,

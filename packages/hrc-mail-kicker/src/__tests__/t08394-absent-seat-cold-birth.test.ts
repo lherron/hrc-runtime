@@ -77,7 +77,7 @@ function seatTheRuntime(): void {
   })
   // The probe is the busy/idle authority; without a reachable one the seat reads
   // `unavailable` and nothing is delivered at all.
-  h.context.broker.seatProbe = async () =>
+  h.context.port.broker.seatProbe = async () =>
     ({ ok: true, response: { seat: { state: 'idle' } } }) as never
 }
 
@@ -88,7 +88,7 @@ describe('T-08394 — the seat decides the door, not the session row', () => {
 
     // The row is present and `findTargetSession` returns it -- this is exactly
     // the case that used to reach `enqueue`.
-    expect(h.context.findTargetSession(TARGET_REF)).toBeDefined()
+    expect(h.context.port.findTargetSession(TARGET_REF)).toBeDefined()
     expect(doors()).toEqual(['launch'])
 
     // The launch CARRIES the body. Without this the birth runs the agent's

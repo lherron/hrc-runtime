@@ -31,9 +31,9 @@ export function seatCanDispatch(seat: ObservedBrokerSeat): boolean {
 
 /** Does the broker in front of this runtime advertise the `steer` admission class? */
 export function runtimeAdvertisesSteer(server: MailKickerContext, runtimeId: string): boolean {
-  const runtime = server.db.runtimes.getByRuntimeId(runtimeId) ?? undefined
+  const runtime = server.port.runtimes.getByRuntimeId(runtimeId) ?? undefined
   if (runtime?.activeInvocationId === undefined) return false
-  const invocation = server.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+  const invocation = server.port.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
   const capabilitiesJson = invocation?.capabilitiesJson
   if (capabilitiesJson === undefined) return false
   try {
@@ -49,7 +49,7 @@ export async function observeBrokerSeat(
   server: MailKickerContext,
   session: HrcSessionRecord
 ): Promise<ObservedBrokerSeat> {
-  const runtime = server.db.runtimes
+  const runtime = server.port.runtimes
     .listByHostSessionId(session.hostSessionId)
     .filter(
       (candidate) =>
@@ -60,7 +60,7 @@ export async function observeBrokerSeat(
     )
     .at(-1)
   if (runtime === undefined) return { state: 'absent' }
-  const probe = await server.broker.seatProbe(runtime.runtimeId)
+  const probe = await server.port.broker.seatProbe(runtime.runtimeId)
   if (!probe.ok) return { state: 'unavailable', runtimeId: runtime.runtimeId }
   const seat = probe.response.seat
   return seat.state === 'turn-active'

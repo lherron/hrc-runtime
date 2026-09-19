@@ -56,7 +56,7 @@ export function disposeRuntimeObligations(
     turnEndedAt: string
   }
 ): void {
-  const candidates = server.db.mailDelivery.listUndisposedForRuntime(input.runtimeId)
+  const candidates = server.store.mailDelivery.listUndisposedForRuntime(input.runtimeId)
   if (candidates.length === 0) return
   const outcomes: Record<string, DisposalOutcome> = {}
 
@@ -67,7 +67,7 @@ export function disposeRuntimeObligations(
         const row = await server.ledger.envelopeShow({ envelope: presentation.envelopeId })
         if (row.state !== 'presented') {
           outcomes[presentation.envelopeId] = 'skipped:not_presented'
-          server.db.mailDelivery.recordDisposition(
+          server.store.mailDelivery.recordDisposition(
             presentation.envelopeId,
             input.runtimeId,
             `skipped:not_presented:${row.state}`
@@ -78,7 +78,7 @@ export function disposeRuntimeObligations(
         // obligation is bound to that runtime and not to this one.
         if (newestPresentationReceipt(row)?.runtimeId !== input.runtimeId) {
           outcomes[presentation.envelopeId] = 'skipped:superseded'
-          server.db.mailDelivery.recordDisposition(
+          server.store.mailDelivery.recordDisposition(
             presentation.envelopeId,
             input.runtimeId,
             'skipped:superseded'
@@ -96,7 +96,7 @@ export function disposeRuntimeObligations(
             callSite: 'dispose_runtime_obligations',
           })
           outcomes[presentation.envelopeId] = 'failed:ignored'
-          server.db.mailDelivery.recordDisposition(
+          server.store.mailDelivery.recordDisposition(
             presentation.envelopeId,
             input.runtimeId,
             'failed:ignored'
@@ -115,7 +115,7 @@ export function disposeRuntimeObligations(
           outcomes[presentation.envelopeId] = 'skipped:awaiting_turn'
           continue
         }
-        const armed = server.db.mailDelivery.armReminder({
+        const armed = server.store.mailDelivery.armReminder({
           envelopeId: presentation.envelopeId,
           runtimeId: input.runtimeId,
           turnEndedAt: input.turnEndedAt,

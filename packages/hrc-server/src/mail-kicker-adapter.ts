@@ -1,4 +1,4 @@
-import { createMailKicker } from 'hrc-mail-kicker'
+import { createInProcessInjectionPort, createMailKicker } from 'hrc-mail-kicker'
 import type { KickerDispatchResult, MailKicker } from 'hrc-mail-kicker'
 
 import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
@@ -12,36 +12,39 @@ import { buildKickRuntimeIntent } from './wrkq/kick-intent.js'
 export function createServerMailKicker(server: HrcServerInstanceForHandlers): MailKicker {
   return createMailKicker(
     {
-      db: server.db,
+      store: server.db,
+      port: createInProcessInjectionPort({
+        db: server.db,
+        registry: server.federationRegistryClient,
+        resolveForeignHome: (scopeRef) =>
+          resolveForeignHome(
+            homeAuthorityDeps(server, (failedScopeRef, error) => {
+              writeServerLog('WARN', 'wrkq.kicker.home_consult_failed', {
+                scopeRef: failedScopeRef,
+                error: error instanceof Error ? error.message : String(error),
+              })
+            }),
+            scopeRef
+          ),
+        resolveRuntimeIntent: async (scopeRef, materializationIntent) =>
+          buildKickRuntimeIntent(scopeRef, materializationIntent),
+        findTargetSession: (targetSessionRef) =>
+          findTargetSession(server.db, targetSessionRef) ?? undefined,
+        ensureTargetSession: (targetSessionRef, intent, options) =>
+          server.ensureTargetSession(targetSessionRef, intent, undefined, 'local', options),
+        dispatchTurn: async (session, intent, prompt, options) => {
+          const response = await server.dispatchTurnForSession(session, intent, prompt, options)
+          return (await response.json()) as KickerDispatchResult
+        },
+        broker: {
+          seatProbe: (runtimeId) => server.getHarnessBrokerController().seatProbe(runtimeId),
+          withdraw: (input) => server.getHarnessBrokerController().withdraw(input),
+        },
+        preemptAdmission: (session, request) => preemptAdmission(server, session, request),
+      }),
       ledger: server.wrkqLedger,
       nodeId: server.federationNodeId,
-      registry: server.federationRegistryClient,
       foreignHomeMemo: server.foreignHomeMemo,
-      resolveForeignHome: (scopeRef) =>
-        resolveForeignHome(
-          homeAuthorityDeps(server, (failedScopeRef, error) => {
-            writeServerLog('WARN', 'wrkq.kicker.home_consult_failed', {
-              scopeRef: failedScopeRef,
-              error: error instanceof Error ? error.message : String(error),
-            })
-          }),
-          scopeRef
-        ),
-      resolveRuntimeIntent: async (scopeRef, materializationIntent) =>
-        buildKickRuntimeIntent(scopeRef, materializationIntent),
-      findTargetSession: (targetSessionRef) =>
-        findTargetSession(server.db, targetSessionRef) ?? undefined,
-      ensureTargetSession: (targetSessionRef, intent, options) =>
-        server.ensureTargetSession(targetSessionRef, intent, undefined, 'local', options),
-      dispatchTurn: async (session, intent, prompt, options) => {
-        const response = await server.dispatchTurnForSession(session, intent, prompt, options)
-        return (await response.json()) as KickerDispatchResult
-      },
-      broker: {
-        seatProbe: (runtimeId) => server.getHarnessBrokerController().seatProbe(runtimeId),
-        withdraw: (input) => server.getHarnessBrokerController().withdraw(input),
-      },
-      preemptAdmission: (session, request) => preemptAdmission(server, session, request),
       log: writeServerLog,
     },
     {

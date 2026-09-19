@@ -12,7 +12,6 @@
  * as swept without memoizing a ledger outage as an answer.
  */
 import type { MailKickerContext } from '../context.js'
-import { deferDesktopDelivery, desktopRegistrationForTarget } from '../drive/desktop.js'
 import { LAPSE_SWEEP_LOOKBACK_MS, errorText } from '../internal.js'
 import { WrkqLedgerUnavailableError } from '../ledger/client.js'
 import { newestPresentationReceipt } from '../ledger/types.js'
@@ -25,25 +24,6 @@ export async function failLapsedObligations(
   targetSessionRef: string,
   runtimeIds: ReadonlySet<string>
 ): Promise<boolean> {
-  // D3's predicate is "the runtime that was holding this is gone". For a Codex
-  // desktop conversation the runtime it names is HRC's OBSERVER, not the reader:
-  // the reader is a ChatGPT window HRC neither owns nor can see the end of. So
-  // an observer that terminated — a restart, a supervisor replacement, a reaper
-  // reclassification — is not evidence that the obligation lapsed, and P-00502
-  // §5 forbids reading it as one: "Do not fail pending wrkq obligations merely
-  // because HRC/observer disconnected." The mail stays presented; the next
-  // observer's landing/disposal path owns it.
-  const desktopRegistration = desktopRegistrationForTarget(server, targetSessionRef)
-  if (desktopRegistration !== undefined) {
-    deferDesktopDelivery(server, {
-      targetSessionRef,
-      registration: desktopRegistration,
-      reason: 'observer_terminal_not_a_lapse',
-      detail: { runtimeIds: [...runtimeIds] },
-    })
-    return true
-  }
-
   let view: WrkqEnvelopePendingView
   try {
     view = await server.ledger.pendingView({ scopes: [targetSessionRef], includeFyi: true })
@@ -78,7 +58,7 @@ export async function failLapsedObligations(
       // while the envelope is terminal in wrkq — which is exactly the state
       // EN-03687 was left in. The reconcile's candidate set is only
       // "self-emptying" if every terminating path says so.
-      server.db.mailDelivery.recordDisposition(envelope.id, runtime, 'failed:runtime_terminated')
+      server.store.mailDelivery.recordDisposition(envelope.id, runtime, 'failed:runtime_terminated')
     } catch (error) {
       server.log('WARN', 'wrkq.kicker.lapse_failed', {
         targetSessionRef,
@@ -108,9 +88,9 @@ export async function failLapsedObligations(
 export async function sweepLapsedObligations(server: MailKickerContext): Promise<void> {
   const since = new Date(Date.now() - LAPSE_SWEEP_LOOKBACK_MS).toISOString()
   const byTarget = new Map<string, Set<string>>()
-  for (const bound of server.db.mailDelivery.listRuntimeBoundTargets(since)) {
+  for (const bound of server.store.mailDelivery.listRuntimeBoundTargets(since)) {
     if (server.mailKickerLapsedRuntimes.has(bound.runtimeId)) continue
-    const runtime = server.db.runtimes.getByRuntimeId(bound.runtimeId) ?? undefined
+    const runtime = server.port.runtimes.getByRuntimeId(bound.runtimeId) ?? undefined
     if (runtime === undefined || !isRuntimeTerminal(runtime.status)) continue
     const runtimes = byTarget.get(bound.targetSessionRef) ?? new Set<string>()
     runtimes.add(bound.runtimeId)

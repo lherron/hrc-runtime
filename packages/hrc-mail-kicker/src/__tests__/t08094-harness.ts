@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { HrcSessionRecord } from 'hrc-core'
-import { openHrcDatabase } from 'hrc-store-sqlite'
+import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
@@ -234,14 +234,42 @@ export async function createT08094Harness(): Promise<T08094Harness> {
   const session = stored
 
   const context: MailKickerContext = {
-    db,
+    store: db,
     ledger: ledger as unknown as MailKickerContext['ledger'],
     nodeId: 'max3',
-    registry: undefined,
     foreignHomeMemo: new Map(),
-    broker: {
-      seatProbe: async () => ({ ok: false, error: { message: 'not used' } }),
-      withdraw: async () => ({ ok: false, error: { message: 'not used' } }),
+    port: {
+      runtimes: db.runtimes,
+      brokerInvocations: db.brokerInvocations,
+      brokerEvents: db.brokerInvocationEvents,
+      events: db.hrcEvents,
+      placement: createPlacementLedgerRepository(db.sqlite),
+      broker: {
+        seatProbe: async () => ({ ok: false, error: { message: 'not used' } }),
+        withdraw: async () => ({ ok: false, error: { message: 'not used' } }),
+      },
+      registry: undefined,
+      resolveForeignHome: async () => undefined,
+      resolveRuntimeIntent: () => ({}) as never,
+      findTargetSession: () => session,
+      ensureTargetSession: async () => session,
+      steer: async (_session, _intent, _prompt, options) => {
+        dispatches.push({ ...options, submissionDoor: 'steer' })
+        return dispatchResult()
+      },
+      enqueue: async (_session, _intent, _prompt, options) => {
+        dispatches.push({ ...options, submissionDoor: 'enqueue' })
+        return dispatchResult()
+      },
+      invoke: async (_session, _intent, _prompt, options) => {
+        dispatches.push({ ...options, submissionDoor: 'invoke' })
+        return dispatchResult()
+      },
+      preempt: async (_session, _intent, _prompt, options) => {
+        dispatches.push({ ...options, submissionDoor: 'preempt' })
+        return dispatchResult()
+      },
+      preemptAdmission: async () => 'authority-denied',
     },
     enabled: true,
     sweepIntervalMs: 60_000,
@@ -262,15 +290,6 @@ export async function createT08094Harness(): Promise<T08094Harness> {
     mailKickerSteerRefused: new Set(),
     mailKickerSteerFallback: new Set(),
     mailKickerDeliveryBackoff: new Map(),
-    resolveForeignHome: async () => undefined,
-    resolveRuntimeIntent: () => ({}) as never,
-    findTargetSession: () => session,
-    ensureTargetSession: async () => session,
-    dispatchTurn: async (_session, _intent, _prompt, options) => {
-      dispatches.push(options)
-      return dispatchResult()
-    },
-    preemptAdmission: async () => 'authority-denied',
     log: (level, event, detail) => logs.push({ level, event, detail }),
     wake: (target) => wakes.push(target),
     drainTarget: async () => undefined,

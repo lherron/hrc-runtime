@@ -62,7 +62,7 @@ export async function reconcileIntent(
     const submissionId =
       intent.submissionId ??
       (intent.invocationId !== undefined && intent.brokerAfterSeq !== undefined
-        ? server.db.brokerInvocationEvents.findUniqueSubmissionForEnvelopeAfter({
+        ? server.port.brokerEvents.findUniqueSubmissionForEnvelopeAfter({
             runtimeId,
             invocationId: intent.invocationId,
             envelopeId: intent.envelopeId,
@@ -71,29 +71,29 @@ export async function reconcileIntent(
         : undefined)
     if (submissionId !== undefined) {
       if (intent.submissionId === undefined) {
-        server.db.mailDelivery.attachAdmission(intent.envelopeId, { submissionId })
+        server.store.mailDelivery.attachAdmission(intent.envelopeId, { submissionId })
       }
-      const disposition = server.db.brokerInvocationEvents.findSubmissionDisposition(
+      const disposition = server.port.brokerEvents.findSubmissionDisposition(
         runtimeId,
         submissionId
       )
       if (disposition !== undefined && LANDED_EVENT_TYPES.has(disposition.type)) {
-        const current = server.db.mailDelivery.getIntent(intent.envelopeId) ?? intent
+        const current = server.store.mailDelivery.getIntent(intent.envelopeId) ?? intent
         const commit = await commitLanding(server, current, {
           runtimeId,
           eventType: disposition.type,
-          landingHrcSeq: server.db.hrcEvents.maxHrcSeq(),
+          landingHrcSeq: server.port.events.maxHrcSeq(),
         })
         // A commit that hit an already-discharged envelope is NOT a landing.
         return commit === 'committed' ? 'landed' : commit === 'disposed' ? 'disposed' : 'open'
       }
       if (disposition !== undefined) {
-        const evidence = server.db.brokerInvocationEvents.findInputRejectionDeliveryEvidence(
+        const evidence = server.port.brokerEvents.findInputRejectionDeliveryEvidence(
           runtimeId,
           submissionId
         )
         if (evidence !== 'not_written') {
-          server.db.mailDelivery.markUncertain(
+          server.store.mailDelivery.markUncertain(
             intent.envelopeId,
             disposition.reason ?? disposition.type,
             evidence === 'possibly_written' ? 'possibly_written' : 'refusal_without_no_write_proof'
@@ -102,13 +102,13 @@ export async function reconcileIntent(
         }
         return await refuseIntent(server, intent, disposition.reason ?? disposition.type)
       }
-      const evidence = server.db.brokerInvocationEvents.findInputRejectionDeliveryEvidence(
+      const evidence = server.port.brokerEvents.findInputRejectionDeliveryEvidence(
         runtimeId,
         submissionId
       )
       if (evidence === 'not_written') return await refuseIntent(server, intent, 'input.rejected')
       if (evidence === 'possibly_written') {
-        server.db.mailDelivery.markUncertain(
+        server.store.mailDelivery.markUncertain(
           intent.envelopeId,
           'input.rejected',
           'possibly_written'
@@ -123,9 +123,9 @@ export async function reconcileIntent(
       if (commit === 'disposed') return 'disposed'
     }
 
-    const runtime = server.db.runtimes.getByRuntimeId(runtimeId) ?? undefined
+    const runtime = server.port.runtimes.getByRuntimeId(runtimeId) ?? undefined
     if (runtime === undefined || isRuntimeTerminal(runtime.status)) {
-      server.db.mailDelivery.markUncertain(
+      server.store.mailDelivery.markUncertain(
         intent.envelopeId,
         'runtime_terminated_before_landing',
         'runtime_terminal'
@@ -136,7 +136,7 @@ export async function reconcileIntent(
 
   const age = now - Date.parse(intent.submittedAt)
   if (Number.isFinite(age) && age >= KICKER_SUBMISSION_TTL_MS) {
-    server.db.mailDelivery.markUncertain(intent.envelopeId, 'ttl_without_landing', 'ttl')
+    server.store.mailDelivery.markUncertain(intent.envelopeId, 'ttl_without_landing', 'ttl')
   }
   return 'open'
 }
@@ -162,7 +162,7 @@ export async function reconcileOpenIntents(
     undeliverable: 0,
     open: 0,
   }
-  const intents = server.db.mailDelivery
+  const intents = server.store.mailDelivery
     .listActiveOpenIntents()
     .filter(
       (intent) =>

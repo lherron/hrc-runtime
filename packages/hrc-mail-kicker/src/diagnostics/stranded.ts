@@ -83,7 +83,7 @@ export async function confirmStranded(
       if (row.state !== 'presented') continue
       const newest = newestPresentationReceipt(row)
       if (newest?.runtimeId !== candidate.runtimeId) continue
-      const runtime = server.db.runtimes.getByRuntimeId(candidate.runtimeId) ?? undefined
+      const runtime = server.port.runtimes.getByRuntimeId(candidate.runtimeId) ?? undefined
       const entry: StrandedPresentation = {
         envelope: candidate.envelopeId,
         presentationId: candidate.presentationId,
@@ -131,7 +131,7 @@ export type StalledDelivery = {
 export function findStalledDeliveries(server: MailKickerContext): StalledDelivery[] {
   const now = Date.now()
   const threshold = new Date(now - STALLED_DELIVERY_THRESHOLD_MS).toISOString()
-  return server.db.mailDelivery.listExpiredIntents(threshold).map((intent) => {
+  return server.store.mailDelivery.listExpiredIntents(threshold).map((intent) => {
     const submittedMs = Date.parse(intent.submittedAt)
     return {
       envelope: intent.envelopeId,
@@ -182,12 +182,12 @@ export function reportStalledDeliveries(server: MailKickerContext): Promise<void
  * what it names is the set an operator actually has to do something about.
  */
 export async function reportBootReconcile(server: MailKickerContext): Promise<void> {
-  const candidates = server.db.mailDelivery.listUndisposedPresentations(
+  const candidates = server.store.mailDelivery.listUndisposedPresentations(
     BOOT_RECONCILE_CANDIDATE_LIMIT
   )
   const { stranded, awaitingDisposal, ledgerErrors } = await confirmStranded(server, candidates)
   const stalled = findStalledDeliveries(server)
-  const openIntents = server.db.mailDelivery.listOpenIntents().length
+  const openIntents = server.store.mailDelivery.listOpenIntents().length
 
   server.log(
     stranded.length > 0 || stalled.length > 0 ? 'WARN' : 'INFO',
@@ -207,7 +207,7 @@ export async function reportBootReconcile(server: MailKickerContext): Promise<vo
       // predate local disposition tracking, are excluded from the actionable
       // set, and can never empty — inside the stranded array they would be a
       // permanent false alarm that teaches the reader to skip the line.
-      preMigrationUnknown: server.db.mailDelivery.countPreMigrationUnknownPresentations(),
+      preMigrationUnknown: server.store.mailDelivery.countPreMigrationUnknownPresentations(),
       openIntents,
       stalledCount: stalled.length,
       stalled,
