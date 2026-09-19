@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcSessionRecord } from 'hrc-core'
+import type { HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
@@ -253,24 +253,44 @@ export async function createT08094Harness(): Promise<T08094Harness> {
       resolveRuntimeIntent: () => ({}) as never,
       findTargetSession: () => session,
       ensureTargetSession: async () => session,
-      steer: async (_session, _intent, _prompt, options) => {
+      steer: async (
+        _session: HrcSessionRecord,
+        _intent: HrcRuntimeIntent,
+        _prompt: string,
+        options: KickerDispatchOptions
+      ) => {
         dispatches.push({ ...options, submissionDoor: 'steer' })
         return dispatchResult()
       },
-      enqueue: async (_session, _intent, _prompt, options) => {
+      enqueue: async (
+        _session: HrcSessionRecord,
+        _intent: HrcRuntimeIntent,
+        _prompt: string,
+        options: KickerDispatchOptions
+      ) => {
         dispatches.push({ ...options, submissionDoor: 'enqueue' })
         return dispatchResult()
       },
-      invoke: async (_session, _intent, _prompt, options) => {
+      invoke: async (
+        _session: HrcSessionRecord,
+        _intent: HrcRuntimeIntent,
+        _prompt: string,
+        options: KickerDispatchOptions
+      ) => {
         dispatches.push({ ...options, submissionDoor: 'invoke' })
         return dispatchResult()
       },
-      preempt: async (_session, _intent, _prompt, options) => {
+      preempt: async (
+        _session: HrcSessionRecord,
+        _intent: HrcRuntimeIntent,
+        _prompt: string,
+        options: KickerDispatchOptions
+      ) => {
         dispatches.push({ ...options, submissionDoor: 'preempt' })
         return dispatchResult()
       },
       preemptAdmission: async () => 'authority-denied',
-    },
+    } as unknown as MailKickerContext['port'],
     enabled: true,
     sweepIntervalMs: 60_000,
     stopping: false,

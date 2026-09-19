@@ -1,11 +1,18 @@
 import type {
+  BrokerEventsQueryOp,
+  BrokerEventsQueryResponse,
   DispatchTurnResponse,
+  EventsHeadResponse,
   HrcBrokerInvocationEventRecord,
   HrcLifecycleEvent,
   HrcRuntimeIntent,
+  HrcRuntimeSnapshot,
   HrcSessionRecord,
+  ListPlacementBindingsResponse,
+  ListUnbornDesignationsResponse,
   PreemptAdmission,
   PreemptSubmissionRequest,
+  RuntimeSeatResponse,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { SeatProbeResponse, SubmissionWithdrawResponse } from 'spaces-harness-broker-protocol'
@@ -70,6 +77,7 @@ export type KickerDispatchResult = DispatchTurnResponse & {
  * HrcClient in the next task.
  */
 export type HrcInjectionPort = {
+  /** Transitional projections retained while policy callers become async. */
   readonly runtimes: Pick<
     HrcDatabase['runtimes'],
     'getByRuntimeId' | 'listAll' | 'listByHostSessionId' | 'listLiveSessionRefs'
@@ -91,17 +99,46 @@ export type HrcInjectionPort = {
   >
   readonly broker: KickerBrokerPort
   readonly registry: KickerRegistryClient | undefined
+  runtime(runtimeId: string): Promise<HrcRuntimeSnapshot | undefined>
+  runtimesByHostSession(hostSessionId: string): Promise<readonly HrcRuntimeSnapshot[]>
+  allRuntimes(): Promise<readonly HrcRuntimeSnapshot[]>
+  liveSessionRefs(): Promise<readonly string[]>
+  seat(runtimeId: string): Promise<RuntimeSeatResponse>
+  withdraw(
+    input:
+      | { runtimeId: string; submissionId: string; reason: string }
+      | { runtimeId: string; envelopeId: string; reason: string }
+  ): Promise<KickerRpcResult<SubmissionWithdrawResponse>>
   resolveForeignHome(scopeRef: string): Promise<ForeignHome | undefined>
   resolveRuntimeIntent(
     scopeRef: string,
     materializationIntent: string | undefined
   ): Promise<HrcRuntimeIntent | undefined>
   findTargetSession(targetSessionRef: string): HrcSessionRecord | undefined
+  targetBySessionRef(targetSessionRef: string): Promise<HrcSessionRecord | undefined>
   ensureTargetSession(
     targetSessionRef: string,
     intent: HrcRuntimeIntent,
     options: { persistIntent: false }
   ): Promise<HrcSessionRecord>
+  eventsHead(): Promise<EventsHeadResponse>
+  lifecycleEvents(input: {
+    eventKind: string
+    runtimeId: string
+    limit: number
+  }): Promise<readonly HrcLifecycleEvent[]>
+  brokerEventsQuery(op: BrokerEventsQueryOp): Promise<BrokerEventsQueryResponse>
+  localPlacementBindings(): Promise<ListPlacementBindingsResponse>
+  locate(scopeRef: string): Promise<ForeignHome | undefined>
+  unbornDesignations(): Promise<ListUnbornDesignationsResponse>
+  subscribeLifecycle(input: {
+    afterSeq: number
+    onEvent(event: HrcLifecycleEvent): void
+  }): Promise<() => void>
+  subscribeBroker(input: {
+    afterCommit: number
+    onEvent(event: HrcBrokerInvocationEventRecord): void
+  }): Promise<() => void>
   steer(
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,
