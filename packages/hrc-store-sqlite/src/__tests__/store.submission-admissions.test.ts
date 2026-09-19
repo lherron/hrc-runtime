@@ -93,9 +93,9 @@ describe('SubmissionAdmissionRepository (T-08611)', () => {
       disposedAt: new Date('2026-09-19T00:01:00.000Z').toISOString(),
       onlyIfAbsent: true,
     })
-    expect(
-      db.submissionAdmissions.getBySubmissionId('sub-retained-1')?.disposition
-    ).toBe('executed')
+    expect(db.submissionAdmissions.getBySubmissionId('sub-retained-1')?.disposition).toBe(
+      'executed'
+    )
     // Retained replay never clobbers a live-committed disposition.
     db.submissionAdmissions.recordDisposition({
       submissionId: 'sub-retained-1',
@@ -103,9 +103,9 @@ describe('SubmissionAdmissionRepository (T-08611)', () => {
       disposedAt: new Date('2026-09-19T00:02:00.000Z').toISOString(),
       onlyIfAbsent: true,
     })
-    expect(
-      db.submissionAdmissions.getBySubmissionId('sub-retained-1')
-    ).toMatchObject({ disposition: 'executed' })
+    expect(db.submissionAdmissions.getBySubmissionId('sub-retained-1')).toMatchObject({
+      disposition: 'executed',
+    })
   })
 
   it('returns null for an unknown submission', async () => {

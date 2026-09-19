@@ -198,7 +198,7 @@ type HrcServerInstanceDataForHandlers = {
   /** T-07235 provision-liveness watchdog: its own cadence, not the zombie sweep's. */
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<unknown> | undefined
-  readonly mailKicker: MailKicker
+  readonly mailKicker: MailKicker | undefined
   readonly transcriptIndexer: TranscriptIndexer
   stopping: boolean
   readonly staleGenerationEnabled: boolean

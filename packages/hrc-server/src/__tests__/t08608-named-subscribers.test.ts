@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 
 import type { HrcStatusResponse, SubscriberDeclareResponse } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
@@ -222,12 +224,13 @@ describe('GET /v1/broker-events/follow admission', () => {
 })
 
 describe('hrc status mailKicker readback', () => {
-  it('reports the constructed kicker posture, not a constant', async () => {
+  it('reports disabled without constructing a kicker or opening its private store', async () => {
     const res = await fixture.fetchSocket('/v1/status')
     expect(res.status).toBe(200)
     const body = (await res.json()) as HrcStatusResponse
-    // The fixture server does not enable the in-process kicker.
-    expect(body.mailKicker).toEqual({ enabled: false })
+    expect(body.mailKicker).toBe('disabled')
+    expect((server as unknown as { mailKicker: unknown }).mailKicker).toBeUndefined()
+    expect(existsSync(join(fixture.runtimeRoot, 'hrc-mail-kicker.sqlite'))).toBe(false)
   })
 
   it('reads enabled when the server is constructed with the kicker on', async () => {
@@ -237,6 +240,8 @@ describe('hrc status mailKicker readback', () => {
     server = await createHrcServer(fixture.serverOpts({ hrcMailKickerEnabled: true }))
     const res = await fixture.fetchSocket('/v1/status')
     expect(res.status).toBe(200)
-    expect(((await res.json()) as HrcStatusResponse).mailKicker).toEqual({ enabled: true })
+    expect(((await res.json()) as HrcStatusResponse).mailKicker).toBe('in-process')
+    expect((server as unknown as { mailKicker: unknown }).mailKicker).toBeDefined()
+    expect(existsSync(join(fixture.runtimeRoot, 'hrc-mail-kicker.sqlite'))).toBe(true)
   })
 })

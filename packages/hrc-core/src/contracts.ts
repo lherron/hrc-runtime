@@ -1350,13 +1350,11 @@ export type HrcStatusSessionView = {
 export type HrcStatusResponse = HrcCapabilityStatus & {
   sessions: HrcStatusSessionView[]
   /**
-   * Mail-kicker delivery posture (T-08608): derived from server construction
-   * (`hrcMailKickerEnabled`), never a constant — the kicker is not always
-   * in-process.
+   * Mail-delivery ownership posture. The bridge can retain the package while
+   * constructing no owner (`disabled`); the deletion release has no package
+   * at all (`absent`). External injectors may run only in those two postures.
    */
-  mailKicker: {
-    enabled: boolean
-  }
+  mailKicker: 'in-process' | 'disabled' | 'absent'
 }
 
 export type HrcStatusSummaryResponse = HrcCapabilityStatus

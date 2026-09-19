@@ -164,7 +164,6 @@ import {
   assertLocalPersonaAllowed,
   normalizeLocalPersonaAllowlist,
 } from './local-persona-policy.js'
-import { createServerMailKicker } from './mail-kicker-adapter.js'
 import {
   resolveClaudeCodeTmuxBrokerEnabled,
   resolveCodexCliTmuxBrokerEnabled,
@@ -914,7 +913,7 @@ class HrcServerInstance implements HrcServer {
   sessionRetentionInFlight: Promise<void> | undefined
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<FirstTurnEvalSummary> | undefined
-  readonly mailKicker: MailKicker
+  mailKicker: MailKicker | undefined
   readonly mailKickerStarted: Promise<void>
   readonly transcriptIndexer: TranscriptIndexer
   readonly foreignHomeMemo = new Map<string, ForeignHome>()
@@ -1417,7 +1416,6 @@ class HrcServerInstance implements HrcServer {
     // defaulted real client lets any embedded instance write to fleet state.
     // `hrc server serve` passes the real one; nothing else should.
     this.wrkqLedger = options.wrkqLedger ?? new UnreachableWrkqLedger()
-    this.mailKicker = createServerMailKicker(this)
     this.transcriptIndexer = createServerTranscriptIndexer(this)
     this.ctx = {
       db: this.db,
@@ -1460,7 +1458,7 @@ class HrcServerInstance implements HrcServer {
     this.startTmuxAging()
     this.startSessionRetentionSweep()
     this.startFirstTurnWatchdog()
-    this.mailKickerStarted = this.mailKicker.start()
+    this.mailKickerStarted = this.startMailKicker()
     this.transcriptIndexer.start()
     this.startForeignHomeShadowTeardown()
     for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
@@ -1660,6 +1658,20 @@ class HrcServerInstance implements HrcServer {
     }
   }
 
+  /**
+   * The bridge switch is a construction boundary, not a no-op policy switch.
+   * Keeping the adapter behind a dynamic import means the disabled process does
+   * not load the private-store opening module and cannot retain an in-process
+   * delivery writer or SQLite handle alongside the external injector.
+   */
+  private async startMailKicker(): Promise<void> {
+    if (!this.hrcMailKickerEnabled) return
+    const { createServerMailKicker } = await import('./mail-kicker-adapter.js')
+    const kicker = createServerMailKicker(this)
+    this.mailKicker = kicker
+    await kicker.start()
+  }
+
   async stop(): Promise<void> {
     if (this.stopping) {
       return
@@ -1675,7 +1687,8 @@ class HrcServerInstance implements HrcServer {
     // The kicker consumes this daemon through its own Unix socket. Drain its
     // cursor-backed followers while the listener is still available; closing it
     // first races a live fetch against Bun's socket teardown.
-    await this.mailKicker.stop()
+    await this.mailKickerStarted
+    await this.mailKicker?.stop()
     this.server.stop()
     await this.eventForwarder?.stop()
     await this.eventIngestListener?.stop()
@@ -3038,7 +3051,7 @@ class HrcServerInstance implements HrcServer {
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,
       node: this.nodeStatus(),
-      mailKicker: { enabled: this.hrcMailKickerEnabled },
+      mailKicker: this.hrcMailKickerEnabled ? 'in-process' : 'disabled',
       ...(peerHealth === undefined ? {} : { peerHealth }),
       capabilities: {
         semanticCore: {
