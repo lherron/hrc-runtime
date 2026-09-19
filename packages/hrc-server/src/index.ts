@@ -1054,6 +1054,8 @@ class HrcServerInstance implements HrcServer {
       this.handleSubmission(request, 'invoke'),
     [exactRouteKey('POST', '/v1/submissions/preempt')]: (request) =>
       this.handleSubmission(request, 'preempt'),
+    [exactRouteKey('POST', '/v1/submissions/preempt/admission')]: (request) =>
+      this.handlePreemptAdmission(request),
     [exactRouteKey('POST', '/v1/submissions/withdraw')]: (request) =>
       this.handleWithdrawSubmission(request),
     [exactRouteKey('POST', '/v1/active-run-contributions')]: (request) =>

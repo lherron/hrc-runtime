@@ -26,6 +26,7 @@ import type {
   InvokeSubmissionRequest,
   OpenBrokerSessionResponse,
   PreemptAdmission,
+  PreemptAdmissionResponse,
   PreemptSubmissionRequest,
   PrepareAttachedRunResponse,
   ResumeAttachedRunResponse,
@@ -448,6 +449,30 @@ export async function preemptAdmission(
   return (await preemptOriginOwnsActiveTurn(server, runtime.runtimeId, invocationId, request))
     ? 'authorized'
     : 'authority-denied'
+}
+
+/**
+ * Generic injector read: resolve the same preempt target and report whether
+ * its current authority/capability gate permits an interruption. No rotation,
+ * broker admission, or dispatch occurs here; `handleSubmission` rechecks this
+ * predicate before the preempt door actuates.
+ */
+export async function handlePreemptAdmission(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = parseSubmissionRequest(await parseJsonBody(request), 'preempt')
+  const session = resolveSubmissionTarget(this, body.target, true)
+  if (session === null) {
+    throw new HrcRuntimeUnavailableError('submission target is unavailable', {
+      target: body.target,
+      door: 'preempt',
+    })
+  }
+  admitSubmissionTarget(session, 'preempt')
+  return json({
+    admission: await preemptAdmission(this, session, body),
+  } satisfies PreemptAdmissionResponse)
 }
 
 /**
@@ -2360,6 +2385,7 @@ export const turnDispatchHandlersMethods = {
   handleOpenBrokerSession,
   handleDispatchTurn,
   handleSubmission,
+  handlePreemptAdmission,
   handlePrepareAttachedRun,
   handleResumeAttachedRun,
   dispatchTurnForSession,

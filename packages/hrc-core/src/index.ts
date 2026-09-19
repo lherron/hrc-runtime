@@ -383,6 +383,7 @@ export type {
   HrcSubmissionTurnTerminal,
   InvokeSubmissionRequest,
   PreemptAdmission,
+  PreemptAdmissionResponse,
   PreemptSubmissionRequest,
   SteerSubmissionRequest,
   SendAppHarnessInFlightInputRequest,

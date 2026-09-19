@@ -126,6 +126,7 @@ import type {
   ListRegistrationGcCandidatesResponse,
   OpenBrokerSessionRequest,
   OpenBrokerSessionResponse,
+  PreemptAdmissionResponse,
   PreemptSubmissionRequest,
   PrepareAttachedRunRequest,
   PrepareAttachedRunResponse,
@@ -675,6 +676,14 @@ export class HrcClient {
 
   async preempt(request: PreemptSubmissionRequest): Promise<HrcSubmissionResponse> {
     return this.postJson<HrcSubmissionResponse>('/v1/submissions/preempt', request)
+  }
+
+  /**
+   * Side-effect-free preempt authority/capability check for an injector. The
+   * preempt submission route repeats this gate immediately before dispatch.
+   */
+  async preemptAdmission(request: PreemptSubmissionRequest): Promise<PreemptAdmissionResponse> {
+    return this.postJson<PreemptAdmissionResponse>('/v1/submissions/preempt/admission', request)
   }
 
   /**

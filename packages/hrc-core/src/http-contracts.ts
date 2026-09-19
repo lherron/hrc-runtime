@@ -522,6 +522,15 @@ export type PreemptSubmissionRequest = HrcSessionBoundSubmissionRequest & {
  */
 export type PreemptAdmission = 'authorized' | 'authority-denied' | 'preempt-unsupported'
 
+/**
+ * Side-effect-free preempt authority/capability observation for injectors.
+ *
+ * This is deliberately separate from the four submission methods: it neither
+ * admits nor dispatches a body. The preempt submission route repeats the gate
+ * immediately before actuation.
+ */
+export type PreemptAdmissionResponse = { admission: PreemptAdmission }
+
 export type HrcSubmissionDisposition =
   | { type: 'executed'; turnId: string }
   | { type: 'absorbed'; turnId: string }

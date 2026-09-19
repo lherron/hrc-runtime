@@ -120,6 +120,7 @@ export type {
   HrcTurnAdmissionReopenRequest,
   HrcTurnAdmissionState,
   HrcSubmissionResponse,
+  PreemptAdmissionResponse,
   InjectorAdmissionClass,
   InjectorSeatProbe,
   InjectorSeatProbeState,

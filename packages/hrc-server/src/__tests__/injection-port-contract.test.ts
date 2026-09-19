@@ -76,6 +76,22 @@ describe('HrcInjectionPort contract — real daemon', () => {
     expect((await port().targetBySessionRef(TARGET))?.hostSessionId).toBe(session.hostSessionId)
   })
 
+  it('checks preempt admission without creating a runtime or submission', async () => {
+    const intent = await port().resolveRuntimeIntent(SCOPE, undefined)
+    if (intent === undefined) throw new Error('contract target intent missing')
+    const target = await port().ensureTargetSession(TARGET, intent, { persistIntent: false })
+    const db = serverInternals(server as HrcServer).db
+    expect(db.runtimes.listByHostSessionId(target.hostSessionId)).toHaveLength(0)
+
+    const response = await new HrcClient(fixture.socketPath).preemptAdmission({
+      target: TARGET,
+      body: 'preflight-only',
+      origin: { principalRef: 'agent:kicker-proof', envelopeId: 'EN-preflight' },
+    })
+    expect(response.admission).toBe('authority-denied')
+    expect(db.runtimes.listByHostSessionId(target.hostSessionId)).toHaveLength(0)
+  })
+
   it('reads lifecycle evidence through a cursor-resuming subscription', async () => {
     const head = await port().eventsHead()
     const observed: string[] = []
