@@ -14,6 +14,7 @@ import {
   assertActuatorSplitRuntimeReuse,
   normalizeActuatorSplitPolicy,
 } from './actuator-split.js'
+import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
 import { assertAppIdentityOwner, issueAppBirthRunGrantForCompile } from './app-session-identity.js'
 import {
   decideHeadlessExecutionRoute,
@@ -550,7 +551,14 @@ export async function startRuntimeForSession(
           session,
           startIntent,
           initialPrompt,
-          startRunId
+          startRunId,
+          // A promptless headless start still permits ASPC's bundle/profile
+          // priming input, just as broker session-open does. No HRC run/input
+          // identity exists in this shape, so attachment-bearing starts remain
+          // strict and do not opt in here.
+          hasInitialUserTurn(startIntent)
+            ? undefined
+            : { allowCompilerInitialInputWithoutIdentity: true }
         )
         await this.publishPresentation(brokerRuntime, presentationOptions)
         // Explicit start WITH an initial prompt: wait for the startup turn to
