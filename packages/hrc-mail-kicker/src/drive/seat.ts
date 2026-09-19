@@ -30,27 +30,18 @@ export function seatCanDispatch(seat: ObservedBrokerSeat): boolean {
 }
 
 /** Does the broker in front of this runtime advertise the `steer` admission class? */
-export function runtimeAdvertisesSteer(server: MailKickerContext, runtimeId: string): boolean {
-  const runtime = server.port.runtimes.getByRuntimeId(runtimeId) ?? undefined
-  if (runtime?.activeInvocationId === undefined) return false
-  const invocation = server.port.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
-  const capabilitiesJson = invocation?.capabilitiesJson
-  if (capabilitiesJson === undefined) return false
-  try {
-    const capabilities = JSON.parse(capabilitiesJson) as { admission?: { classes?: unknown } }
-    const classes = capabilities.admission?.classes
-    return Array.isArray(classes) && classes.includes('steer')
-  } catch {
-    return false
-  }
+export async function runtimeAdvertisesSteer(
+  server: MailKickerContext,
+  runtimeId: string
+): Promise<boolean> {
+  return (await server.port.seat(runtimeId)).admissionClasses?.includes('steer') ?? false
 }
 
 export async function observeBrokerSeat(
   server: MailKickerContext,
   session: HrcSessionRecord
 ): Promise<ObservedBrokerSeat> {
-  const runtime = server.port.runtimes
-    .listByHostSessionId(session.hostSessionId)
+  const runtime = (await server.port.runtimesByHostSession(session.hostSessionId))
     .filter(
       (candidate) =>
         candidate.generation === session.generation &&
@@ -60,15 +51,15 @@ export async function observeBrokerSeat(
     )
     .at(-1)
   if (runtime === undefined) return { state: 'absent' }
-  const probe = await server.port.broker.seatProbe(runtime.runtimeId)
-  if (!probe.ok) return { state: 'unavailable', runtimeId: runtime.runtimeId }
-  const seat = probe.response.seat
+  const probe = await server.port.seat(runtime.runtimeId)
+  if (probe.probe === null) return { state: 'unavailable', runtimeId: runtime.runtimeId }
+  const seat = probe.probe.seat
   return seat.state === 'turn-active'
     ? {
         state: 'turn-active',
         runtimeId: runtime.runtimeId,
         turnId: String(seat.turnId),
-        steerCapable: runtimeAdvertisesSteer(server, runtime.runtimeId),
+        steerCapable: await runtimeAdvertisesSteer(server, runtime.runtimeId),
       }
     : seat.state === 'turn-observed'
       ? {
@@ -80,7 +71,7 @@ export async function observeBrokerSeat(
         ? {
             state: 'idle',
             runtimeId: runtime.runtimeId,
-            steerCapable: runtimeAdvertisesSteer(server, runtime.runtimeId),
+            steerCapable: await runtimeAdvertisesSteer(server, runtime.runtimeId),
           }
         : { state: seat.state, runtimeId: runtime.runtimeId }
 }

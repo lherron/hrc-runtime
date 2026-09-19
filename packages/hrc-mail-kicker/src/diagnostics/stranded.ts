@@ -83,7 +83,7 @@ export async function confirmStranded(
       if (row.state !== 'presented') continue
       const newest = newestPresentationReceipt(row)
       if (newest?.runtimeId !== candidate.runtimeId) continue
-      const runtime = server.port.runtimes.getByRuntimeId(candidate.runtimeId) ?? undefined
+      const runtime = await server.port.runtime(candidate.runtimeId)
       const entry: StrandedPresentation = {
         envelope: candidate.envelopeId,
         presentationId: candidate.presentationId,

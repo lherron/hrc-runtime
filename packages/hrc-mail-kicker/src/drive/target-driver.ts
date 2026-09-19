@@ -114,7 +114,7 @@ export async function driveMailTargetOnce(
     return
   }
 
-  const session = server.port.findTargetSession(targetSessionRef) ?? undefined
+  const session = (await server.port.targetBySessionRef(targetSessionRef)) ?? undefined
   // §5 — the sender-side failure notices this scope is owed. Delivered here
   // rather than folded into the drive because a notice is not an obligation:
   // it rides a live generation if there is one and waits for the next attend

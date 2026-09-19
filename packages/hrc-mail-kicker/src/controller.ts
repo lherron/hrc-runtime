@@ -58,6 +58,8 @@ export class MailKicker implements MailKickerContext {
   readonly mailKickerSteerRefused = new Set<string>()
   readonly mailKickerSteerFallback = new Set<string>()
   readonly mailKickerDeliveryBackoff = new Map<string, number>()
+  private lifecycleUnsubscribe: (() => void) | undefined
+  private brokerUnsubscribe: (() => void) | undefined
 
   constructor(
     private readonly dependencies: MailKickerDependencies,
@@ -85,6 +87,21 @@ export class MailKicker implements MailKickerContext {
     void reconcileOpenIntents(this, { reason: 'daemon_start' }).catch((error: unknown) => {
       this.log('WARN', 'wrkq.kicker.start_reconcile_failed', { error: errorText(error) })
     })
+    void this.port
+      .eventsHead()
+      .then(async ({ hrcSeq, brokerCommit }) => {
+        this.lifecycleUnsubscribe = await this.port.subscribeLifecycle({
+          afterSeq: hrcSeq,
+          onEvent: (event) => this.observeLifecycleEvent(event),
+        })
+        this.brokerUnsubscribe = await this.port.subscribeBroker({
+          afterCommit: brokerCommit,
+          onEvent: (event) => this.observeBrokerEvent(event),
+        })
+      })
+      .catch((error: unknown) => {
+        this.log('WARN', 'wrkq.kicker.subscription_start_failed', { error: errorText(error) })
+      })
     let tick = 0
     this.mailKickerSweepTimer = setInterval(() => {
       void this.runTailOnce().catch((error: unknown) => {
@@ -102,6 +119,10 @@ export class MailKicker implements MailKickerContext {
   async stop(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
+    this.lifecycleUnsubscribe?.()
+    this.lifecycleUnsubscribe = undefined
+    this.brokerUnsubscribe?.()
+    this.brokerUnsubscribe = undefined
     if (this.mailKickerSweepTimer !== undefined) {
       clearInterval(this.mailKickerSweepTimer)
       this.mailKickerSweepTimer = undefined
@@ -253,36 +274,25 @@ export function observeMailDriveLifecycleEvent(
   }
   if (RUNTIME_TERMINAL_EVENTS.has(event.eventKind)) {
     if (runtimeId === undefined || this.mailKickerLapsedRuntimes.has(runtimeId)) return
-    const runtime = this.port.runtimes.getByRuntimeId(runtimeId) ?? undefined
-    if (runtime === undefined || !isRuntimeTerminal(runtime.status)) return
     const targetSessionRef = formatSessionRef(event.scopeRef, event.laneRef)
-    // D2 step 5: a runtime termination resolves every intent bound to it.
-    // Nothing can land in a dead seat, so an open intent there is a delivery
-    // that will never happen, and its envelope must become actionable again.
-    void reconcileOpenIntents(this, {
-      runtimeIds: new Set([runtimeId]),
-      reason: 'runtime_terminated',
-    }).catch((error: unknown) => {
-      this.log('WARN', 'wrkq.kicker.terminal_reconcile_failed', {
+    void (async () => {
+      const runtime = await this.port.runtime(runtimeId)
+      if (runtime === undefined || !isRuntimeTerminal(runtime.status)) return
+      await reconcileOpenIntents(this, {
+        runtimeIds: new Set([runtimeId]),
+        reason: 'runtime_terminated',
+      })
+      if (parseAppSessionScopeRef(event.scopeRef) !== null) return
+      if (await failLapsedObligations(this, targetSessionRef, new Set([runtimeId]))) {
+        this.mailKickerLapsedRuntimes.add(runtimeId)
+      }
+    })().catch((error: unknown) => {
+      this.log('WARN', 'wrkq.kicker.terminal_lapse_failed', {
         targetSessionRef,
         runtimeId,
         error: errorText(error),
       })
     })
-    // T-08576 D2: an app scope has no wrkq address. Its local intents are
-    // reconciled above; it has no ledger obligations to lapse.
-    if (parseAppSessionScopeRef(event.scopeRef) !== null) return
-    void failLapsedObligations(this, targetSessionRef, new Set([runtimeId]))
-      .then((complete) => {
-        if (complete) this.mailKickerLapsedRuntimes.add(runtimeId)
-      })
-      .catch((error: unknown) => {
-        this.log('WARN', 'wrkq.kicker.lapse_wake_failed', {
-          targetSessionRef,
-          runtimeId,
-          error: errorText(error),
-        })
-      })
     return
   }
   if (!MAIL_DRIVE_TERMINAL_EVENTS.has(event.eventKind)) return

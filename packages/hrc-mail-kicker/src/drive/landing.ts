@@ -303,7 +303,13 @@ export async function landLaunchIfStarted(
 ): Promise<LandingCommit | undefined> {
   const runtimeId = intent.runtimeId
   if (runtimeId === undefined || intent.door !== 'launch') return undefined
-  const started = server.port.events.listByKind('turn.started', { runtimeId, limit: 1 })[0]
+  const started = (
+    await server.port.lifecycleEvents({
+      eventKind: 'turn.started',
+      runtimeId,
+      limit: 1,
+    })
+  )[0]
   if (started === undefined) return undefined
   return await commitLanding(server, intent, {
     runtimeId,
@@ -330,16 +336,20 @@ export async function landLaunchIfStarted(
  */
 const CAPABILITY_REFUSALS = new Set(['steer_not_supported', 'unsupported:steer'])
 
-export function steerRefusalIsPermanent(
+export async function steerRefusalIsPermanent(
   server: MailKickerContext,
   runtimeId: string,
   submissionId: string | undefined,
   reason: string
-): boolean {
+): Promise<boolean> {
   if (CAPABILITY_REFUSALS.has(reason)) return true
   if (submissionId === undefined) return false
-  const rejection = server.port.brokerEvents.findAdmissionRejection(runtimeId, submissionId)
-  return rejection?.layer === 'capability'
+  const { result } = await server.port.brokerEventsQuery({
+    op: 'admission-rejection',
+    runtimeId,
+    submissionId,
+  })
+  return result?.op === 'admission-rejection' && result.layer === 'capability'
 }
 
 /**
@@ -356,17 +366,24 @@ export function steerRefusalIsPermanent(
  */
 const POLICY_OR_AUTHORITY_REFUSALS = new Set(['guarded', 'authority-denied'])
 
-export function steerRefusalFallback(
+export async function steerRefusalFallback(
   server: MailKickerContext,
   runtimeId: string,
   submissionId: string | undefined,
   reason: string
-): 'capability' | 'turn' | undefined {
-  if (steerRefusalIsPermanent(server, runtimeId, submissionId, reason)) return 'capability'
+): Promise<'capability' | 'turn' | undefined> {
+  if (await steerRefusalIsPermanent(server, runtimeId, submissionId, reason)) return 'capability'
   if (POLICY_OR_AUTHORITY_REFUSALS.has(reason)) return 'turn'
   if (submissionId === undefined) return undefined
-  const layer = server.port.brokerEvents.findAdmissionRejection(runtimeId, submissionId)?.layer
-  return layer === 'policy' || layer === 'authority' ? 'turn' : undefined
+  const { result } = await server.port.brokerEventsQuery({
+    op: 'admission-rejection',
+    runtimeId,
+    submissionId,
+  })
+  return result?.op === 'admission-rejection' &&
+    (result.layer === 'policy' || result.layer === 'authority')
+    ? 'turn'
+    : undefined
 }
 
 /** Route this envelope's next pass through enqueue, and remember a capability gap. */
@@ -444,13 +461,18 @@ export function clearRefusedIntent(
  * admission refused on state or policy — wrote nothing, so redelivering it
  * costs the reader nothing and must not be charged as if it had.
  */
-function refusalFollowedAWrite(
+async function refusalFollowedAWrite(
   server: MailKickerContext,
   runtimeId: string,
   submissionId: string | undefined
-): boolean {
+): Promise<boolean> {
   if (submissionId === undefined) return false
-  return server.port.brokerEvents.hasInputAccepted(runtimeId, submissionId)
+  const { result } = await server.port.brokerEventsQuery({
+    op: 'input-accepted',
+    runtimeId,
+    inputId: submissionId,
+  })
+  return result?.op === 'input-accepted' && result.accepted
 }
 
 /**
@@ -541,13 +563,13 @@ export async function refuseIntent(
     return 'refused'
   }
 
-  if (refusalFollowedAWrite(server, runtimeId, intent.submissionId)) {
+  if (await refusalFollowedAWrite(server, runtimeId, intent.submissionId)) {
     server.store.mailDelivery.markUncertain(intent.envelopeId, reason, 'post_write_refusal')
     return 'refused'
   }
 
   if (intent.door === 'steer') {
-    const fallback = steerRefusalFallback(server, runtimeId, intent.submissionId, reason)
+    const fallback = await steerRefusalFallback(server, runtimeId, intent.submissionId, reason)
     if (fallback !== undefined) {
       recordSteerFallback(server, intent.envelopeId, runtimeId, fallback)
       clearRefusedIntent(server, intent, reason, {
@@ -581,7 +603,7 @@ export async function observeBrokerLanding(
       await commitLanding(server, intent, {
         runtimeId: record.runtimeId,
         eventType: record.type,
-        landingHrcSeq: server.port.events.maxHrcSeq(),
+        landingHrcSeq: (await server.port.eventsHead()).hrcSeq,
       })
     }
     return
@@ -597,7 +619,7 @@ export async function observeBrokerLanding(
     await commitLanding(server, intent, {
       runtimeId: intent.runtimeId ?? record.runtimeId,
       eventType: record.type,
-      landingHrcSeq: server.port.events.maxHrcSeq(),
+      landingHrcSeq: (await server.port.eventsHead()).hrcSeq,
     })
     return
   }

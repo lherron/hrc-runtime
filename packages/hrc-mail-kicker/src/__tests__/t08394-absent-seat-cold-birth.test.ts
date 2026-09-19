@@ -75,10 +75,18 @@ function seatTheRuntime(): void {
     controllerKind: 'harness-broker',
     updatedAt: now,
   })
-  // The probe is the busy/idle authority; without a reachable one the seat reads
-  // `unavailable` and nothing is delivered at all.
-  h.context.port.broker.seatProbe = async () =>
-    ({ ok: true, response: { seat: { state: 'idle' } } }) as never
+  // The port is the busy/idle authority; without a reachable response the seat
+  // reads `unavailable` and nothing is delivered at all.
+  h.context.port.seat = async () =>
+    ({
+      runtimeId: RUNTIME_ID,
+      invocationId: 'inv-t08394',
+      generation: 1,
+      admissionClasses: ['enqueue'],
+      currentBrokerSeq: 0,
+      probe: { seat: { state: 'idle' } },
+      probeError: null,
+    }) as never
 }
 
 describe('T-08394 — the seat decides the door, not the session row', () => {
@@ -86,9 +94,9 @@ describe('T-08394 — the seat decides the door, not the session row', () => {
     const envelope = h.ledger.say()
     await driveMailTargetOnce(h.context, TARGET_REF, 'insert')
 
-    // The row is present and `findTargetSession` returns it -- this is exactly
+    // The row is present and `targetBySessionRef` returns it -- this is exactly
     // the case that used to reach `enqueue`.
-    expect(h.context.port.findTargetSession(TARGET_REF)).toBeDefined()
+    expect(await h.context.port.targetBySessionRef(TARGET_REF)).toBeDefined()
     expect(doors()).toEqual(['launch'])
 
     // The launch CARRIES the body. Without this the birth runs the agent's

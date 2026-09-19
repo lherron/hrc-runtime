@@ -19,11 +19,11 @@
  * runtimeId: a delivery with no runtime is refused honestly, while one naming
  * the wrong runtime is not recoverable after the fact.
  */
-export function presentationRuntimeIdFor(
+export async function presentationRuntimeIdFor(
   server: MailKickerContext,
   session: HrcSessionRecord
-): string | undefined {
-  const runtimes = server.port.runtimes.listByHostSessionId(session.hostSessionId)
+): Promise<string | undefined> {
+  const runtimes = await server.port.runtimesByHostSession(session.hostSessionId)
   for (let index = runtimes.length - 1; index >= 0; index -= 1) {
     const runtime = runtimes[index]
     if (runtime === undefined) continue

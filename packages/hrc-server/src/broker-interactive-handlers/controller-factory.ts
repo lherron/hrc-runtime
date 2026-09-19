@@ -148,7 +148,6 @@ export function getHarnessBrokerController(
       },
     },
     notifyRawBrokerEvent: (event) => {
-      this.mailKicker.observeBrokerEvent(event.record)
       for (const subscriber of this.rawBrokerSubscribers) {
         subscriber(event)
       }

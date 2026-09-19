@@ -1,3 +1,4 @@
+import type { HrcBrokerInvocationEventRecord, HrcEventEnvelope, HrcLifecycleEvent } from 'hrc-core'
 import { createInProcessInjectionPort, createMailKicker } from 'hrc-mail-kicker'
 import type { KickerDispatchResult, MailKicker } from 'hrc-mail-kicker'
 
@@ -39,6 +40,19 @@ export function createServerMailKicker(server: HrcServerInstanceForHandlers): Ma
         broker: {
           seatProbe: (runtimeId) => server.getHarnessBrokerController().seatProbe(runtimeId),
           withdraw: (input) => server.getHarnessBrokerController().withdraw(input),
+        },
+        subscribeLifecycle: ({ onEvent }) => {
+          const subscriber = (event: HrcLifecycleEvent | HrcEventEnvelope) => {
+            if ('hrcSeq' in event) onEvent(event)
+          }
+          server.followSubscribers.add(subscriber)
+          return () => server.followSubscribers.delete(subscriber)
+        },
+        subscribeBroker: ({ onEvent }) => {
+          const subscriber = (event: { record: HrcBrokerInvocationEventRecord }) =>
+            onEvent(event.record)
+          server.rawBrokerSubscribers.add(subscriber)
+          return () => server.rawBrokerSubscribers.delete(subscriber)
         },
         preemptAdmission: (session, request) => preemptAdmission(server, session, request),
       }),

@@ -90,7 +90,7 @@ export async function sweepLapsedObligations(server: MailKickerContext): Promise
   const byTarget = new Map<string, Set<string>>()
   for (const bound of server.store.mailDelivery.listRuntimeBoundTargets(since)) {
     if (server.mailKickerLapsedRuntimes.has(bound.runtimeId)) continue
-    const runtime = server.port.runtimes.getByRuntimeId(bound.runtimeId) ?? undefined
+    const runtime = await server.port.runtime(bound.runtimeId)
     if (runtime === undefined || !isRuntimeTerminal(runtime.status)) continue
     const runtimes = byTarget.get(bound.targetSessionRef) ?? new Set<string>()
     runtimes.add(bound.runtimeId)

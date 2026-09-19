@@ -39,7 +39,6 @@
  * it never takes the ordinary sweep down with it.
  */
 import type { MailKickerContext } from '../context.js'
-import type { KickerRegistryConsultResult } from '../contracts.js'
 import { kickerScopeRefFor } from '../drive/authority.js'
 import { BIRTH_SWEEP_BACKOFF_BASE_MS, BIRTH_SWEEP_MAX_REFUSALS, errorText } from '../internal.js'
 import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
@@ -78,11 +77,9 @@ export async function unbornBirthWakeCandidates(
 
 /** Live designations naming this node whose scope the registry has never bound. */
 async function designatedUnbornTargets(server: MailKickerContext): Promise<string[]> {
-  const list = server.port.registry?.listUnbornDesignations
-  if (list === undefined) return []
   let designations: readonly { scopeRef: string }[]
   try {
-    designations = await list.call(server.port.registry, server.nodeId)
+    designations = (await server.port.unbornDesignations()).designations
   } catch (error) {
     // An unreachable registry is not evidence that this node owes no births.
     // It is a reason to try again on the next sweep, and never a reason to
@@ -192,28 +189,17 @@ async function failUndeliverableMail(
   refusals: number
 ): Promise<boolean> {
   const scopeRef = kickerScopeRefFor(targetSessionRef)
-  const registry = server.port.registry
-  if (registry !== undefined) {
-    if (scopeRef === undefined) {
-      server.log('WARN', 'wrkq.kicker.undeliverable_home_unresolved', {
-        targetSessionRef,
-        reason: 'target session ref has no parseable scope',
-      })
-      return false
-    }
-    let authority: KickerRegistryConsultResult
-    try {
-      authority = await registry.consult(scopeRef)
-    } catch (error) {
-      server.log('WARN', 'wrkq.kicker.undeliverable_home_consult_failed', {
-        targetSessionRef,
-        scopeRef,
-        error: errorText(error),
-      })
-      return false
-    }
-    if (authority.outcome === 'bound' && authority.binding.homeNodeId !== server.nodeId) {
-      const homeNodeId = authority.binding.homeNodeId
+  if (scopeRef === undefined) {
+    server.log('WARN', 'wrkq.kicker.undeliverable_home_unresolved', {
+      targetSessionRef,
+      reason: 'target session ref has no parseable scope',
+    })
+    return false
+  }
+  try {
+    const home = await server.port.locate(scopeRef)
+    if (home !== undefined && home.homeNodeId !== server.nodeId) {
+      const homeNodeId = home.homeNodeId
       server.foreignHomeMemo.set(scopeRef, { homeNodeId, source: 'registry' })
       const resolvedBirth = server.store.mailDelivery.resolveBirthRefusal(
         targetSessionRef,
@@ -228,6 +214,13 @@ async function failUndeliverableMail(
       })
       return true
     }
+  } catch (error) {
+    server.log('WARN', 'wrkq.kicker.undeliverable_home_consult_failed', {
+      targetSessionRef,
+      scopeRef,
+      error: errorText(error),
+    })
+    return false
   }
 
   const view = await server.ledger.pendingView({ scopes: [targetSessionRef] })

@@ -64,9 +64,9 @@ export async function withdrawAckedQueuedInjection(
   // This is a broker-held queue cleanup only.  It is not a native harness
   // removal and neither an error nor `not_held` proves that the body was not
   // already applied.  Terminalize the durable fence before asking the broker.
-  let withdrawal: Awaited<ReturnType<MailKickerContext['port']['broker']['withdraw']>>
+  let withdrawal: Awaited<ReturnType<MailKickerContext['port']['withdraw']>>
   try {
-    withdrawal = await server.port.broker.withdraw(
+    withdrawal = await server.port.withdraw(
       terminal.submissionId === undefined
         ? {
             runtimeId: terminal.runtimeId,
@@ -174,7 +174,7 @@ export async function runWrkqLedgerTail(this: MailKickerContext): Promise<void> 
           })
           continue
         }
-        seated ??= new Set(this.port.runtimes.listLiveSessionRefs())
+        seated ??= new Set(await this.port.liveSessionRefs())
         const target = wakeTargetForEvent(event, seated)
         if (target === undefined) continue
         this.wake(target, 'insert')

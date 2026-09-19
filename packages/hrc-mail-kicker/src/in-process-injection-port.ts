@@ -43,6 +43,14 @@ export type InProcessInjectionPortDependencies = {
     options: KickerDispatchOptions
   ): Promise<KickerDispatchResult>
   broker: KickerBrokerPort
+  subscribeLifecycle(input: {
+    afterSeq: number
+    onEvent(event: import('hrc-core').HrcLifecycleEvent): void
+  }): () => void
+  subscribeBroker(input: {
+    afterCommit: number
+    onEvent(event: import('hrc-core').HrcBrokerInvocationEventRecord): void
+  }): () => void
   preemptAdmission(
     session: HrcSessionRecord,
     request: PreemptSubmissionRequest
@@ -53,13 +61,6 @@ export function createInProcessInjectionPort(
   dependencies: InProcessInjectionPortDependencies
 ): HrcInjectionPort {
   return {
-    runtimes: dependencies.db.runtimes,
-    brokerInvocations: dependencies.db.brokerInvocations,
-    brokerEvents: dependencies.db.brokerInvocationEvents,
-    events: dependencies.db.hrcEvents,
-    placement: createPlacementLedgerRepository(dependencies.db.sqlite),
-    broker: dependencies.broker,
-    registry: dependencies.registry,
     runtime: async (runtimeId) => dependencies.db.runtimes.getByRuntimeId(runtimeId) ?? undefined,
     runtimesByHostSession: async (hostSessionId) =>
       dependencies.db.runtimes.listByHostSessionId(hostSessionId),
@@ -88,7 +89,9 @@ export function createInProcessInjectionPort(
         generation: runtime?.generation ?? 0,
         admissionClasses,
         currentBrokerSeq:
-          invocationId === null ? null : dependencies.db.brokerInvocationEvents.maxBrokerSeq(invocationId),
+          invocationId === null
+            ? null
+            : dependencies.db.brokerInvocationEvents.maxBrokerSeq(invocationId),
         probe: probe.ok ? probe.response : null,
         probeError: probe.ok ? null : { code: 'seat_probe_failed', message: probe.error.message },
       }
@@ -96,8 +99,8 @@ export function createInProcessInjectionPort(
     withdraw: (input) => dependencies.broker.withdraw(input),
     resolveForeignHome: dependencies.resolveForeignHome,
     resolveRuntimeIntent: dependencies.resolveRuntimeIntent,
-    findTargetSession: dependencies.findTargetSession,
-    targetBySessionRef: async (targetSessionRef) => dependencies.findTargetSession(targetSessionRef),
+    targetBySessionRef: async (targetSessionRef) =>
+      dependencies.findTargetSession(targetSessionRef),
     ensureTargetSession: dependencies.ensureTargetSession,
     steer: (session, intent, prompt, options) =>
       dependencies.dispatchTurn(session, intent, prompt, { ...options, submissionDoor: 'steer' }),
@@ -110,7 +113,7 @@ export function createInProcessInjectionPort(
     preemptAdmission: dependencies.preemptAdmission,
     eventsHead: async () => ({
       hrcSeq: dependencies.db.hrcEvents.maxHrcSeq(),
-      brokerCommit: 0,
+      brokerCommit: dependencies.db.brokerInvocationEvents.maxBrokerCommitId(),
     }),
     lifecycleEvents: async ({ eventKind, runtimeId, limit }) =>
       dependencies.db.hrcEvents.listByKind(eventKind, { runtimeId, limit }),
@@ -122,7 +125,9 @@ export function createInProcessInjectionPort(
           return { result: result === undefined ? null : { op: op.op, ...result } }
         }
         case 'input-accepted':
-          return { result: { op: op.op, accepted: events.hasInputAccepted(op.runtimeId, op.inputId) } }
+          return {
+            result: { op: op.op, accepted: events.hasInputAccepted(op.runtimeId, op.inputId) },
+          }
         case 'unique-submission-after': {
           const submissionId = events.findUniqueSubmissionForEnvelopeAfter(op)
           return { result: submissionId === undefined ? null : { op: op.op, submissionId } }
@@ -132,10 +137,12 @@ export function createInProcessInjectionPort(
           return { result: result === undefined ? null : { op: op.op, ...result } }
         }
         case 'input-rejection-evidence': {
-          const deliveryEvidence = events.findInputRejectionDeliveryEvidence(op.runtimeId, op.submissionId)
+          const deliveryEvidence = events.findInputRejectionDeliveryEvidence(
+            op.runtimeId,
+            op.submissionId
+          )
           return {
-            result:
-              deliveryEvidence === undefined ? null : { op: op.op, deliveryEvidence },
+            result: deliveryEvidence === undefined ? null : { op: op.op, deliveryEvidence },
           }
         }
       }
@@ -148,7 +155,22 @@ export function createInProcessInjectionPort(
     }),
     locate: dependencies.resolveForeignHome,
     unbornDesignations: async () => ({ localNodeId: '', designations: [] }),
-    subscribeLifecycle: async () => () => undefined,
-    subscribeBroker: async () => () => undefined,
+    subscribeLifecycle: async (input) => {
+      const unsubscribe = dependencies.subscribeLifecycle(input)
+      for (const event of dependencies.db.hrcEvents.listFromHrcSeq(input.afterSeq + 1)) {
+        input.onEvent(event)
+      }
+      return unsubscribe
+    },
+    subscribeBroker: async (input) => {
+      const unsubscribe = dependencies.subscribeBroker(input)
+      for (const event of dependencies.db.brokerInvocationEvents.listBrokerEventsAfterCommit({
+        afterCommit: input.afterCommit,
+        limit: 10_000,
+      })) {
+        input.onEvent(event)
+      }
+      return unsubscribe
+    },
   }
 }

@@ -59,39 +59,54 @@ export async function reconcileIntent(
   if (intent.terminalEnvelopeAt !== undefined) return 'open'
   const runtimeId = intent.runtimeId
   if (runtimeId !== undefined) {
-    const submissionId =
-      intent.submissionId ??
-      (intent.invocationId !== undefined && intent.brokerAfterSeq !== undefined
-        ? server.port.brokerEvents.findUniqueSubmissionForEnvelopeAfter({
-            runtimeId,
-            invocationId: intent.invocationId,
-            envelopeId: intent.envelopeId,
-            afterSeq: intent.brokerAfterSeq,
-          })
-        : undefined)
+    let submissionId = intent.submissionId
+    if (
+      submissionId === undefined &&
+      intent.invocationId !== undefined &&
+      intent.brokerAfterSeq !== undefined
+    ) {
+      const discovered = await server.port.brokerEventsQuery({
+        op: 'unique-submission-after',
+        runtimeId,
+        invocationId: intent.invocationId,
+        envelopeId: intent.envelopeId,
+        afterSeq: intent.brokerAfterSeq,
+      })
+      if (discovered.result?.op === 'unique-submission-after') {
+        submissionId = discovered.result.submissionId
+      }
+    }
     if (submissionId !== undefined) {
       if (intent.submissionId === undefined) {
         server.store.mailDelivery.attachAdmission(intent.envelopeId, { submissionId })
       }
-      const disposition = server.port.brokerEvents.findSubmissionDisposition(
+      const dispositionResult = await server.port.brokerEventsQuery({
+        op: 'disposition',
         runtimeId,
-        submissionId
-      )
+        submissionId,
+      })
+      const disposition =
+        dispositionResult.result?.op === 'disposition' ? dispositionResult.result : undefined
       if (disposition !== undefined && LANDED_EVENT_TYPES.has(disposition.type)) {
         const current = server.store.mailDelivery.getIntent(intent.envelopeId) ?? intent
         const commit = await commitLanding(server, current, {
           runtimeId,
           eventType: disposition.type,
-          landingHrcSeq: server.port.events.maxHrcSeq(),
+          landingHrcSeq: (await server.port.eventsHead()).hrcSeq,
         })
         // A commit that hit an already-discharged envelope is NOT a landing.
         return commit === 'committed' ? 'landed' : commit === 'disposed' ? 'disposed' : 'open'
       }
       if (disposition !== undefined) {
-        const evidence = server.port.brokerEvents.findInputRejectionDeliveryEvidence(
+        const evidenceResult = await server.port.brokerEventsQuery({
+          op: 'input-rejection-evidence',
           runtimeId,
-          submissionId
-        )
+          submissionId,
+        })
+        const evidence =
+          evidenceResult.result?.op === 'input-rejection-evidence'
+            ? evidenceResult.result.deliveryEvidence
+            : undefined
         if (evidence !== 'not_written') {
           server.store.mailDelivery.markUncertain(
             intent.envelopeId,
@@ -102,10 +117,15 @@ export async function reconcileIntent(
         }
         return await refuseIntent(server, intent, disposition.reason ?? disposition.type)
       }
-      const evidence = server.port.brokerEvents.findInputRejectionDeliveryEvidence(
+      const evidenceResult = await server.port.brokerEventsQuery({
+        op: 'input-rejection-evidence',
         runtimeId,
-        submissionId
-      )
+        submissionId,
+      })
+      const evidence =
+        evidenceResult.result?.op === 'input-rejection-evidence'
+          ? evidenceResult.result.deliveryEvidence
+          : undefined
       if (evidence === 'not_written') return await refuseIntent(server, intent, 'input.rejected')
       if (evidence === 'possibly_written') {
         server.store.mailDelivery.markUncertain(
@@ -123,7 +143,7 @@ export async function reconcileIntent(
       if (commit === 'disposed') return 'disposed'
     }
 
-    const runtime = server.port.runtimes.getByRuntimeId(runtimeId) ?? undefined
+    const runtime = await server.port.runtime(runtimeId)
     if (runtime === undefined || isRuntimeTerminal(runtime.status)) {
       server.store.mailDelivery.markUncertain(
         intent.envelopeId,

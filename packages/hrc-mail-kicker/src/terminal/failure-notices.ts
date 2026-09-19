@@ -5,7 +5,7 @@ export async function deliverFailureNotices(
 ): Promise<void> {
   const notices = server.store.mailDelivery.listUndeliveredFailureNotices(targetSessionRef)
   if (notices.length === 0) return
-  if (presentationRuntimeIdFor(server, session) === undefined) return
+  if ((await presentationRuntimeIdFor(server, session)) === undefined) return
   const intent =
     session.lastAppliedIntentJson ??
     (await server.port.resolveRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, undefined))
@@ -69,10 +69,14 @@ export async function queueFailureNotice(
   // wrkq stores. Handing it the handle throws rather than missing, which is how
   // one un-normalized read took the whole notice path down.
   const canonicalScope = kickerScopeRefFor(targetSessionRef)
-  const placement =
-    canonicalScope === undefined ? undefined : server.port.placement.get(canonicalScope)
-  const homed = placement?.state === 'active' && placement.homeNodeId === server.nodeId
-  if (!homed && server.port.findTargetSession(targetSessionRef) === undefined) return
+  const bindings = await server.port.localPlacementBindings()
+  const homed = bindings.bindings.some(
+    (binding) =>
+      binding.scopeRef === canonicalScope &&
+      binding.state === 'active' &&
+      binding.homeNodeId === server.nodeId
+  )
+  if (!homed && (await server.port.targetBySessionRef(targetSessionRef)) === undefined) return
   const runtimeId = failedPayload(event.payload)?.runtime_id
   const notice = formatEnvelopeFailureNotice(envelope, reason, {
     ...(runtimeId === undefined ? {} : { runtimeId }),

@@ -58,18 +58,17 @@ function terminalActorIdentity(server: MailKickerContext): {
 }
 
 /** A local runtime row is live until monitor truth classifies it runtime-dead. */
-function liveRuntimeForTarget(
+async function liveRuntimeForTarget(
   server: MailKickerContext,
   targetSessionRef: string
-): { runtimeId: string; status: string } | undefined {
+): Promise<{ runtimeId: string; status: string } | undefined> {
   let target: ReturnType<typeof parseSessionRef>
   try {
     target = parseSessionRef(targetSessionRef)
   } catch {
     return undefined
   }
-  return server.port.runtimes
-    .listAll()
+  return (await server.port.allRuntimes())
     .filter((runtime) => runtime.scopeRef === target.scopeRef && runtime.laneRef === target.laneRef)
     .find(
       (runtime) =>
@@ -99,7 +98,7 @@ export async function failEnvelopeWithAudit(
   // opposite evidence — the seat is live and is precisely why nothing lands, so
   // suppressing on liveness would suppress the only case the bound exists for.
   if (input.reason === 'undeliverable' && input.callSite !== 'non_landing_strikes_exhausted') {
-    const live = liveRuntimeForTarget(server, input.targetSessionRef)
+    const live = await liveRuntimeForTarget(server, input.targetSessionRef)
     if (live !== undefined) {
       server.log('WARN', 'wrkq.kicker.envelope_terminal_suppressed', {
         ...actor,

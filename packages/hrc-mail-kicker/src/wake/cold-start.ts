@@ -34,9 +34,9 @@ export function collectPendingTargets(items: readonly WrkqEnvelope[], targets: S
  * deliver to: an envelope to one still rides the tail's `envelope.created` into
  * the summon gate, which is where a first birth belongs.
  */
-function homedTargetSessionRefs(server: MailKickerContext): string[] {
+async function homedTargetSessionRefs(server: MailKickerContext): Promise<string[]> {
   const refs = new Set<string>()
-  for (const record of server.port.placement.list()) {
+  for (const record of (await server.port.localPlacementBindings()).bindings) {
     if (record.state !== 'active') continue
     if (record.homeNodeId !== server.nodeId) continue
     const sessionRef = targetSessionRefForLedgerScope(record.scopeRef)
@@ -73,7 +73,7 @@ function homedTargetSessionRefs(server: MailKickerContext): string[] {
  * birth on the node takes.
  */
 export async function runMailKickerColdStartCatchup(server: MailKickerContext): Promise<void> {
-  const homed = homedTargetSessionRefs(server)
+  const homed = await homedTargetSessionRefs(server)
   const targets = new Set<string>()
   for (const batch of chunk(homed, LEDGER_SWEEP_SCOPE_BATCH)) {
     const view = await server.ledger.pendingView({ scopes: batch, includeFyi: true })

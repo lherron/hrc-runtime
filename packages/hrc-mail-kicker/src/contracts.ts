@@ -77,28 +77,6 @@ export type KickerDispatchResult = DispatchTurnResponse & {
  * HrcClient in the next task.
  */
 export type HrcInjectionPort = {
-  /** Transitional projections retained while policy callers become async. */
-  readonly runtimes: Pick<
-    HrcDatabase['runtimes'],
-    'getByRuntimeId' | 'listAll' | 'listByHostSessionId' | 'listLiveSessionRefs'
-  >
-  readonly brokerInvocations: Pick<HrcDatabase['brokerInvocations'], 'getByInvocationId'>
-  readonly brokerEvents: Pick<
-    HrcDatabase['brokerInvocationEvents'],
-    | 'maxBrokerSeq'
-    | 'findAdmissionRejection'
-    | 'hasInputAccepted'
-    | 'findUniqueSubmissionForEnvelopeAfter'
-    | 'findSubmissionDisposition'
-    | 'findInputRejectionDeliveryEvidence'
-  >
-  readonly events: Pick<HrcDatabase['hrcEvents'], 'maxHrcSeq' | 'listByKind'>
-  readonly placement: Pick<
-    ReturnType<typeof import('hrc-store-sqlite').createPlacementLedgerRepository>,
-    'list' | 'get'
-  >
-  readonly broker: KickerBrokerPort
-  readonly registry: KickerRegistryClient | undefined
   runtime(runtimeId: string): Promise<HrcRuntimeSnapshot | undefined>
   runtimesByHostSession(hostSessionId: string): Promise<readonly HrcRuntimeSnapshot[]>
   allRuntimes(): Promise<readonly HrcRuntimeSnapshot[]>
@@ -114,7 +92,6 @@ export type HrcInjectionPort = {
     scopeRef: string,
     materializationIntent: string | undefined
   ): Promise<HrcRuntimeIntent | undefined>
-  findTargetSession(targetSessionRef: string): HrcSessionRecord | undefined
   targetBySessionRef(targetSessionRef: string): Promise<HrcSessionRecord | undefined>
   ensureTargetSession(
     targetSessionRef: string,

@@ -137,14 +137,14 @@ export function actionableDirectives(
  * It is execution state, so it comes from HRC and never from the ledger — and
  * it is omitted rather than guessed when the sender lives on another node.
  */
-export function senderGenerationFor(
+export async function senderGenerationFor(
   server: MailKickerContext,
   envelope: WrkqEnvelope
-): { senderGeneration?: number } {
+): Promise<{ senderGeneration?: number }> {
   const scopeRef = envelope.from.scopeRef
   if (scopeRef === undefined) return {}
   const sessionRef = targetSessionRefForLedgerScope(scopeRef)
   if (sessionRef === undefined) return {}
-  const session = server.port.findTargetSession(sessionRef)
+  const session = await server.port.targetBySessionRef(sessionRef)
   return session === undefined ? {} : { senderGeneration: session.generation }
 }

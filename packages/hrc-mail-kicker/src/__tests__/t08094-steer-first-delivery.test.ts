@@ -87,23 +87,19 @@ describe('D2 — steer first, and the door is chosen by what the seat is doing',
       activeInvocationId: 'inv-observed',
       updatedAt: now,
     })
-    context = {
-      ...context,
-      port: {
-        ...context.port,
-        broker: {
-          ...context.port.broker,
-          seatProbe: async () => ({
-            ok: true,
-            response: {
-              invocationId: 'inv-observed' as never,
-              seat: { state: 'turn-observed', turnId: 'turn-human' as never },
-              brokerHeldDepth: 0,
-            },
-          }),
-        },
+    context.port.seat = async () => ({
+      runtimeId: RUNTIME,
+      invocationId: 'inv-observed',
+      generation: 1,
+      admissionClasses: null,
+      currentBrokerSeq: 0,
+      probe: {
+        invocationId: 'inv-observed' as never,
+        seat: { state: 'turn-observed', turnId: 'turn-human' as never },
+        brokerHeldDepth: 0,
       },
-    }
+      probeError: null,
+    })
 
     expect(await observeBrokerSeat(context, session)).toEqual({
       state: 'turn-observed',
@@ -176,23 +172,19 @@ describe('D2 — steer first, and the door is chosen by what the seat is doing',
       activeInvocationId: 'inv-idle-caps',
       updatedAt: now,
     })
-    context = {
-      ...context,
-      port: {
-        ...context.port,
-        broker: {
-          ...context.port.broker,
-          seatProbe: async () => ({
-            ok: true,
-            response: {
-              invocationId: 'inv-idle-caps' as never,
-              seat: { state: 'idle' },
-              brokerHeldDepth: 0,
-            },
-          }),
-        },
+    context.port.seat = async () => ({
+      runtimeId: RUNTIME,
+      invocationId: 'inv-idle-caps',
+      generation: 1,
+      admissionClasses: ['steer'],
+      currentBrokerSeq: 0,
+      probe: {
+        invocationId: 'inv-idle-caps' as never,
+        seat: { state: 'idle' },
+        brokerHeldDepth: 0,
       },
-    }
+      probeError: null,
+    })
     expect(await observeBrokerSeat(context, session)).toEqual({
       state: 'idle',
       runtimeId: RUNTIME,
@@ -200,8 +192,8 @@ describe('D2 — steer first, and the door is chosen by what the seat is doing',
     })
   })
 
-  it('reads the steer class off the frozen broker hello, never off driver code', () => {
-    expect(runtimeAdvertisesSteer(context, RUNTIME)).toBe(false)
+  it('reads the steer class off the frozen broker hello, never off driver code', async () => {
+    expect(await runtimeAdvertisesSteer(context, RUNTIME)).toBe(false)
     const invocationId = 'inv-caps'
     const now = new Date().toISOString()
     db.brokerInvocations.insert({
@@ -219,7 +211,7 @@ describe('D2 — steer first, and the door is chosen by what the seat is doing',
       updatedAt: now,
     })
     db.runtimes.update(RUNTIME, { activeInvocationId: invocationId, updatedAt: now })
-    expect(runtimeAdvertisesSteer(context, RUNTIME)).toBe(true)
+    expect(await runtimeAdvertisesSteer(context, RUNTIME)).toBe(true)
   })
 })
 

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
+import type { BrokerEventsQueryOp, HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
@@ -318,6 +318,83 @@ export async function createT08094Harness(): Promise<T08094Harness> {
     observeLifecycleEvent: () => undefined,
     observeBrokerEvent: () => undefined,
   }
+
+  Object.assign(context.port, {
+    runtime: async (runtimeId: string) => db.runtimes.getByRuntimeId(runtimeId) ?? undefined,
+    runtimesByHostSession: async (hostSessionId: string) =>
+      db.runtimes.listByHostSessionId(hostSessionId),
+    allRuntimes: async () => db.runtimes.listAll(),
+    liveSessionRefs: async () => db.runtimes.listLiveSessionRefs(),
+    targetBySessionRef: async () => session,
+    seat: async (runtimeId: string) => {
+      const runtime = db.runtimes.getByRuntimeId(runtimeId)
+      const invocationId = runtime?.activeInvocationId ?? null
+      const invocation =
+        invocationId === null ? undefined : db.brokerInvocations.getByInvocationId(invocationId)
+      const capabilities = JSON.parse(invocation?.capabilitiesJson ?? '{}') as {
+        admission?: { classes?: Array<'steer' | 'enqueue' | 'invoke' | 'preempt'> }
+      }
+      return {
+        runtimeId,
+        invocationId,
+        generation: runtime?.generation ?? 0,
+        admissionClasses: capabilities.admission?.classes ?? null,
+        currentBrokerSeq:
+          invocationId === null ? null : db.brokerInvocationEvents.maxBrokerSeq(invocationId),
+        probe: null,
+        probeError: { code: 'test_probe_failed', message: 'not configured' },
+      }
+    },
+    eventsHead: async () => ({ hrcSeq: db.hrcEvents.maxHrcSeq(), brokerCommit: 0 }),
+    lifecycleEvents: async ({
+      eventKind,
+      runtimeId,
+      limit,
+    }: {
+      eventKind: string
+      runtimeId: string
+      limit: number
+    }) => db.hrcEvents.listByKind(eventKind, { runtimeId, limit }),
+    brokerEventsQuery: async (op: BrokerEventsQueryOp) => {
+      const events = db.brokerInvocationEvents
+      switch (op.op) {
+        case 'admission-rejection': {
+          const result = events.findAdmissionRejection(op.runtimeId, op.submissionId)
+          return { result: result === undefined ? null : { op: op.op, ...result } }
+        }
+        case 'input-accepted':
+          return {
+            result: { op: op.op, accepted: events.hasInputAccepted(op.runtimeId, op.inputId) },
+          }
+        case 'unique-submission-after': {
+          const submissionId = events.findUniqueSubmissionForEnvelopeAfter(op)
+          return { result: submissionId === undefined ? null : { op: op.op, submissionId } }
+        }
+        case 'disposition': {
+          const result = events.findSubmissionDisposition(op.runtimeId, op.submissionId)
+          return { result: result === undefined ? null : { op: op.op, ...result } }
+        }
+        case 'input-rejection-evidence': {
+          const deliveryEvidence = events.findInputRejectionDeliveryEvidence(
+            op.runtimeId,
+            op.submissionId
+          )
+          return { result: deliveryEvidence === undefined ? null : { op: op.op, deliveryEvidence } }
+        }
+      }
+    },
+    localPlacementBindings: async () => ({
+      localNodeId: 'max3',
+      bindings: createPlacementLedgerRepository(db.sqlite)
+        .list()
+        .filter((binding) => binding.state === 'active'),
+    }),
+    locate: async () => undefined,
+    unbornDesignations: async () => ({ localNodeId: 'max3', designations: [] }),
+    subscribeLifecycle: async () => () => undefined,
+    subscribeBroker: async () => () => undefined,
+    withdraw: async () => ({ ok: false, error: { message: 'not used' } }),
+  })
 
   return { dir, db, ledger, logs, wakes, dispatches, dispatchResult, context, session }
 }

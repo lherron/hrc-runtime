@@ -115,7 +115,7 @@ async function previewPresentation(
     ...(item.presentation?.turnEndedAt === undefined
       ? {}
       : { turnEndedAt: item.presentation.turnEndedAt }),
-    ...senderGenerationFor(server, result.envelope),
+    ...(await senderGenerationFor(server, result.envelope)),
   }
 }
 
@@ -144,7 +144,7 @@ export async function deliverToSeat(
   wakeReason: HrcMailDriveWakeReason
 ): Promise<DeliveryOutcome> {
   const runtimeId =
-    seat.state === 'absent' ? presentationRuntimeIdFor(server, session) : seat.runtimeId
+    seat.state === 'absent' ? await presentationRuntimeIdFor(server, session) : seat.runtimeId
   const isHold = item.envelope.delivery === 'hold'
 
   const intentDoorAndOutcome = doorFor(server, seat, item.envelope.id, isHold, false)
@@ -219,9 +219,10 @@ export async function deliverToSeat(
   }
 
   const presentationId = `present-${randomUUID()}`
-  const runtime =
-    runtimeId === undefined ? undefined : server.port.runtimes.getByRuntimeId(runtimeId)
+  const runtime = runtimeId === undefined ? undefined : await server.port.runtime(runtimeId)
   const invocationId = runtime?.activeInvocationId
+  const eventsHead = await server.port.eventsHead()
+  const seatSnapshot = runtimeId === undefined ? undefined : await server.port.seat(runtimeId)
   const intent = server.store.mailDelivery.openIntent({
     envelopeId: item.envelope.id,
     targetSessionRef,
@@ -232,12 +233,12 @@ export async function deliverToSeat(
     hostSessionId: session.hostSessionId,
     generation: session.generation,
     ...(deliveryOutcome === undefined ? {} : { deliveryOutcome }),
-    submittedHrcSeq: server.port.events.maxHrcSeq(),
+    submittedHrcSeq: eventsHead.hrcSeq,
     ...(invocationId === undefined
       ? {}
       : {
           invocationId,
-          brokerAfterSeq: server.port.brokerEvents.maxBrokerSeq(invocationId),
+          brokerAfterSeq: seatSnapshot?.currentBrokerSeq ?? 0,
         }),
   })
   if (intent === undefined) return 'skipped'
@@ -288,7 +289,7 @@ export async function deliverToSeat(
     // envelope: queue this one behind that turn on the very next pass (T-08533).
     const fallback =
       door === 'steer' && runtimeId !== undefined
-        ? steerRefusalFallback(server, runtimeId, body.submissionId, reason)
+        ? await steerRefusalFallback(server, runtimeId, body.submissionId, reason)
         : undefined
     if (fallback !== undefined && runtimeId !== undefined) {
       recordSteerFallback(server, item.envelope.id, runtimeId, fallback)
@@ -373,7 +374,7 @@ export async function deliverByColdBirth(
     door: 'launch',
     form: item.form,
     presentationId,
-    submittedHrcSeq: server.port.events.maxHrcSeq(),
+    submittedHrcSeq: (await server.port.eventsHead()).hrcSeq,
   })
   if (intent === undefined) return 'skipped'
 
@@ -409,7 +410,7 @@ export async function deliverByColdBirth(
       server,
       item,
       session,
-      presentationRuntimeIdFor(server, session)
+      await presentationRuntimeIdFor(server, session)
     )
   } catch (error) {
     server.store.mailDelivery.clearIntent(item.envelope.id)
@@ -448,7 +449,7 @@ export async function deliverByColdBirth(
     throw error
   }
 
-  const runtimeId = body.runtimeId ?? presentationRuntimeIdFor(server, session)
+  const runtimeId = body.runtimeId ?? (await presentationRuntimeIdFor(server, session))
   const submissionId = body.submissionId ?? body.inputId
   if (submissionId === undefined) {
     // T-07693: a cold birth's delivery class has NO invocation input — the
