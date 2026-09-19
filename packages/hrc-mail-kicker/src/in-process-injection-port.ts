@@ -24,6 +24,7 @@ import type {
  */
 export type InProcessInjectionPortDependencies = {
   db: HrcDatabase
+  nodeId: string
   registry?: KickerRegistryClient | undefined
   resolveForeignHome(scopeRef: string): Promise<ForeignHome | undefined>
   resolveRuntimeIntent(
@@ -148,13 +149,18 @@ export function createInProcessInjectionPort(
       }
     },
     localPlacementBindings: async () => ({
-      localNodeId: '',
+      localNodeId: dependencies.nodeId,
       bindings: createPlacementLedgerRepository(dependencies.db.sqlite)
         .list()
         .filter((binding) => binding.state === 'active'),
     }),
     locate: dependencies.resolveForeignHome,
-    unbornDesignations: async () => ({ localNodeId: '', designations: [] }),
+    unbornDesignations: async () => ({
+      localNodeId: dependencies.nodeId,
+      designations: [
+        ...((await dependencies.registry?.listUnbornDesignations?.(dependencies.nodeId)) ?? []),
+      ],
+    }),
     subscribeLifecycle: async (input) => {
       const unsubscribe = dependencies.subscribeLifecycle(input)
       for (const event of dependencies.db.hrcEvents.listFromHrcSeq(input.afterSeq + 1)) {

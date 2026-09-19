@@ -16,6 +16,7 @@ export function createServerMailKicker(server: HrcServerInstanceForHandlers): Ma
       store: server.db,
       port: createInProcessInjectionPort({
         db: server.db,
+        nodeId: server.federationNodeId,
         registry: server.federationRegistryClient,
         resolveForeignHome: (scopeRef) =>
           resolveForeignHome(

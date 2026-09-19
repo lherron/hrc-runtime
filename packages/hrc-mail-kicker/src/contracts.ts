@@ -1,4 +1,5 @@
 import type {
+  BirthDesignationRecord,
   BrokerEventsQueryOp,
   BrokerEventsQueryResponse,
   DispatchTurnResponse,
@@ -32,7 +33,7 @@ export type KickerRegistryConsultResult =
 
 export type KickerRegistryClient = {
   consult(scopeRef: string): Promise<KickerRegistryConsultResult>
-  listUnbornDesignations?(nodeId: string): Promise<readonly { scopeRef: string }[]>
+  listUnbornDesignations?(nodeId: string): Promise<readonly BirthDesignationRecord[]>
 }
 
 export type KickerRpcResult<T> =
