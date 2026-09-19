@@ -165,6 +165,36 @@ describe('T-06607 authenticated home-only registry endpoint', () => {
     }
   })
 
+  test('reports registry storage exhaustion as retryable, not malformed placement input', async () => {
+    const h = await harness()
+    try {
+      const unavailableRegistry = Object.create(h.registry) as typeof h.registry
+      unavailableRegistry.establish = () => {
+        throw Object.assign(new Error('database or disk is full'), { code: 'SQLITE_FULL' })
+      }
+      const handler = createBindingRegistryRequestHandler({
+        registry: unavailableRegistry,
+        peers: new Map([['lab', { nodeId: 'lab', token: new PeerToken(TOKEN) }]]),
+      })
+
+      const response = await handler(
+        post('/v1/federation/registry/establish', TOKEN, {
+          scopeRef: SCOPE,
+          homeNodeId: 'lab',
+        })
+      )
+
+      expect(response.status).toBe(503)
+      expect(await response.json()).toEqual({
+        ok: false,
+        error: 'registry_unavailable',
+        retryable: true,
+      })
+    } finally {
+      h.registry.close()
+    }
+  })
+
   test('registry database default is the backed-up federation sibling of HRC state', () => {
     expect(resolveBindingRegistryPath('/praesidium/var/state/hrc')).toBe(
       '/praesidium/var/state/federation/binding-registry.sqlite'

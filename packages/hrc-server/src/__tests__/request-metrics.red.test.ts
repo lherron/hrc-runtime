@@ -11,6 +11,7 @@ import {
   readdir,
   rm,
   stat,
+  truncate,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -20,7 +21,13 @@ import { join } from 'node:path'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { resolveSqliteBusyTimeoutMs, resolveSqliteSlowStatementThresholdMs } from '../index'
-import { measureResponseBytes, normalizeRoute, pruneServerMetricFiles } from '../request-metrics'
+import {
+  SERVER_METRICS_MAX_FILE_BYTES,
+  measureResponseBytes,
+  normalizeRoute,
+  pruneServerMetricFiles,
+  writeServerMetric,
+} from '../request-metrics'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
@@ -318,5 +325,32 @@ describe('server request metrics', () => {
     } finally {
       await chmod(metricsDir, 0o700)
     }
+  })
+
+  test('caps a UTC-day metrics file before observational data can exhaust state storage', async () => {
+    await startServer('0')
+    if (!fixture) throw new Error('fixture is not initialized')
+    const now = new Date('2026-09-19T23:00:00.000Z')
+    const metricsDir = join(fixture.stateRoot, 'metrics')
+    await mkdir(metricsDir, { recursive: true })
+    const file = join(metricsDir, 'server-2026-09-19.ndjson')
+    await writeFile(file, '')
+    // A sparse file exercises the boundary without allocating 128 MiB in the
+    // test volume.
+    await truncate(file, SERVER_METRICS_MAX_FILE_BYTES)
+
+    writeServerMetric(
+      {
+        v: 1,
+        kind: 'counter',
+        ts: now.toISOString(),
+        name: 'ledger.blob_miss',
+        value: 1,
+      },
+      now,
+      fixture.stateRoot
+    )
+
+    expect((await stat(file)).size).toBe(SERVER_METRICS_MAX_FILE_BYTES)
   })
 })

@@ -7,6 +7,7 @@ import {
   openBindingRegistry,
 } from 'hrc-store-sqlite'
 
+import { writeServerLog } from '../server-log.js'
 import type { BirthEnvelopeReader } from './birth-designation.js'
 import { BirthEnvelopeUnavailableError, designateBirthOnHost } from './birth-designation.js'
 import type { RegistryListenerConfig } from './registry-bind.js'
@@ -33,6 +34,35 @@ export type BindingRegistryEndpointControl = {
 }
 
 class InvalidRegistryRequest extends Error {}
+
+type RegistryUnavailableCategory = 'sqlite_busy' | 'sqlite_full' | 'sqlite_io'
+
+function registryUnavailableCategory(error: unknown): RegistryUnavailableCategory | undefined {
+  let candidate: unknown = error
+  for (
+    let depth = 0;
+    depth < 4 && candidate !== null && typeof candidate === 'object';
+    depth += 1
+  ) {
+    const record = candidate as Record<string, unknown>
+    const code = typeof record['code'] === 'string' ? record['code'].toUpperCase() : ''
+    if (code === 'SQLITE_FULL') return 'sqlite_full'
+    if (code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED') return 'sqlite_busy'
+    if (code.startsWith('SQLITE_IOERR') || code === 'SQLITE_CANTOPEN') return 'sqlite_io'
+    candidate = record['cause']
+  }
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  if (message.includes('database or disk is full') || message.includes('disk is full')) {
+    return 'sqlite_full'
+  }
+  if (message.includes('database is locked') || message.includes('database is busy')) {
+    return 'sqlite_busy'
+  }
+  if (message.includes('sqlite') && (message.includes('i/o') || message.includes('ioerr'))) {
+    return 'sqlite_io'
+  }
+  return undefined
+}
 
 function responseJson(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -272,10 +302,32 @@ export function createBindingRegistryRequestHandler(input: {
       }
 
       return responseJson({ ok: false, error: 'not_found' }, 404)
-    } catch {
+    } catch (error) {
       // Intentionally generic: request-controlled values and bearer material
-      // are never reflected through validation or SQLite error messages.
-      return responseJson({ ok: false, error: 'invalid_request' }, 400)
+      // are never reflected through validation or SQLite error messages. A
+      // storage fault is different from bad input, though: callers must retain
+      // the birth/establish operation and retry it rather than classify the
+      // placement as permanently refused.
+      if (error instanceof InvalidRegistryRequest) {
+        return responseJson({ ok: false, error: 'invalid_request' }, 400)
+      }
+      const unavailable = registryUnavailableCategory(error)
+      if (unavailable !== undefined) {
+        writeServerLog('ERROR', 'federation.registry.request.unavailable', {
+          method: request.method,
+          category: unavailable,
+          nodeId: peer.nodeId,
+        })
+        return responseJson({ ok: false, error: 'registry_unavailable', retryable: true }, 503)
+      }
+      writeServerLog('ERROR', 'federation.registry.request.failed', {
+        method: request.method,
+        nodeId: peer.nodeId,
+        error: error instanceof Error ? error.name : typeof error,
+      })
+      // Unknown server faults are not malformed requests either. Keep the
+      // response non-sensitive while making the operator-visible log joinable.
+      return responseJson({ ok: false, error: 'internal_error', retryable: true }, 500)
     }
   }
 }

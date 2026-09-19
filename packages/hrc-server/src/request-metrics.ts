@@ -1,10 +1,17 @@
-import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { exactRouteKey, matchLaunchSubroute, matchSessionTitleRoute } from './server-routing.js'
 
 const METRICS_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
 const SERVER_METRICS_FILE_PATTERN = /^server-\d{4}-\d{2}-\d{2}\.ndjson$/
+
+/**
+ * Metrics are observational and must never be able to exhaust the volume that
+ * holds the registry and runtime ledger. A healthy node writes far below this
+ * ceiling; a hot/reconnecting stream is sampled until the next UTC day.
+ */
+export const SERVER_METRICS_MAX_FILE_BYTES = 128 * 1024 * 1024
 
 export type ServerRequestMetricRecord = {
   v: 1
@@ -126,7 +133,14 @@ export function writeServerMetric(record: ServerMetricRecord, now: Date, stateRo
     mkdirSync(metricsDir, { recursive: true })
     pruneServerMetricFiles(metricsDir, now.getTime())
     const file = join(metricsDir, `server-${now.toISOString().slice(0, 10)}.ndjson`)
-    appendFileSync(file, `${JSON.stringify(record)}\n`, { encoding: 'utf8', flag: 'a' })
+    const line = `${JSON.stringify(record)}\n`
+    if (
+      existsSync(file) &&
+      statSync(file).size + Buffer.byteLength(line, 'utf8') > SERVER_METRICS_MAX_FILE_BYTES
+    ) {
+      return
+    }
+    appendFileSync(file, line, { encoding: 'utf8', flag: 'a' })
   } catch {
     // Metrics are observational; storage failures must never affect responses.
   }
