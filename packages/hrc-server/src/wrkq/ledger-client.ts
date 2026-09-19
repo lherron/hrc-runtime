@@ -1,28 +1,44 @@
-import {
-  type MailKickerLedger,
-  WrkqLedgerRequestError,
-  WrkqLedgerUnavailableError,
-} from 'hrc-mail-kicker'
-import type {
-  WrkqEnvelope,
-  WrkqEnvelopeBirth,
-  WrkqEnvelopeBirthEnvelopeParams,
-  WrkqEnvelopeFailParams,
-  WrkqEnvelopePendingView,
-  WrkqEnvelopePendingViewParams,
-  WrkqEnvelopePresentParams,
-  WrkqEnvelopePresentResult,
-  WrkqEnvelopeShowParams,
-  WrkqMonitorEvent,
-  WrkqMonitorEventsView,
-  WrkqMonitorEventsViewParams,
-  WrkqRoomLogView,
-  WrkqRoomLogViewParams,
-  WrkqRoomSayParams,
-  WrkqRoomSayResult,
-  WrkqRoomShowParams,
-  WrkqRoomView,
-} from 'hrc-mail-kicker'
+export type WrkqEnvelope = any
+export type WrkqEnvelopeObligation = any
+export type WrkqEnvelopeBirth = any
+export type WrkqEnvelopeBirthEnvelopeParams = any
+export type WrkqEnvelopeFailParams = any
+export type WrkqEnvelopePendingView = any
+export type WrkqEnvelopePendingViewParams = any
+export type WrkqEnvelopePresentParams = any
+export type WrkqEnvelopePresentResult = any
+export type WrkqEnvelopeShowParams = any
+export type WrkqMonitorEvent = any
+export type WrkqMonitorEventsView = any
+export type WrkqMonitorEventsViewParams = any
+export type WrkqRoomLogView = any
+export type WrkqRoomLogViewParams = any
+export type WrkqRoomSayParams = any
+export type WrkqRoomSayResult = any
+export type WrkqRoomShowParams = any
+export type WrkqRoomView = any
+
+export class WrkqLedgerUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly method: string
+  ) {
+    super(message)
+    this.name = 'WrkqLedgerUnavailableError'
+  }
+}
+
+export class WrkqLedgerRequestError extends Error {
+  constructor(
+    message: string,
+    readonly method: string,
+    readonly code: number,
+    readonly data?: unknown
+  ) {
+    super(message)
+    this.name = 'WrkqLedgerRequestError'
+  }
+}
 import { wrkqAuthorityEnvironment } from '../federation/wrkq-authority.js'
 import { writeServerLog } from '../server-log.js'
 
@@ -58,9 +74,8 @@ import { writeServerLog } from '../server-log.js'
  * on it (§8), while the kicker simply declines to drive.
  */
 
-export { WrkqLedgerRequestError, WrkqLedgerUnavailableError } from 'hrc-mail-kicker'
-
-export type WrkqLedgerClient = MailKickerLedger & {
+export type WrkqLedgerClient = {
+  pendingView(params: WrkqEnvelopePendingViewParams): Promise<WrkqEnvelopePendingView>
   /**
    * The BIRTH ENVELOPE of a target scope (T-07655): the lowest-seq
    * `reply_required` envelope ever addressed to it, in any state, or null.

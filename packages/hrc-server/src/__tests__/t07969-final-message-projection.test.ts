@@ -143,7 +143,7 @@ const NARRATION = [
   'Now the enriched `drive_in_flight` heartbeat:',
   'Now the CLI command:',
   'Now exporting the renderer and writing the tests:',
-  'Now the CLI test for `hrc mail inspect`:',
+  'Now the external injector inspection test:',
   'Now documenting the new surface:',
   'Lint clean. Re-running the full verify chain:',
   'The only verify failure is a pre-existing worktree-location test:',

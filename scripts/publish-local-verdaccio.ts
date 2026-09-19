@@ -25,7 +25,6 @@ const PACKAGES = [
   'packages/hrc-events',
   'packages/hrc-store-sqlite',
   'packages/hrc-transcript-index',
-  'packages/hrc-mail-kicker',
   'packages/hrc-capture-verifier',
   'packages/hrc-server',
   // CLIs last: they consume the libraries above. Added for F-1 T-06649 — svc

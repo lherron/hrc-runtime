@@ -1,4 +1,3 @@
-import { newestPresentationReceipt } from 'hrc-mail-kicker'
 import type {
   WrkqEnvelope,
   WrkqEnvelopeBirth,
@@ -18,13 +17,19 @@ import type {
   WrkqRoomSayResult,
   WrkqRoomShowParams,
   WrkqRoomView,
-} from 'hrc-mail-kicker'
+} from '../../wrkq/ledger-client.js'
 import type {
   WrkqLedgerClient,
   WrkqProjectEventPostParams,
   WrkqProjectEventPostResult,
 } from '../../wrkq/ledger-client.js'
 import { WrkqLedgerRequestError, WrkqLedgerUnavailableError } from '../../wrkq/ledger-client.js'
+
+function newestPresentationReceipt(envelope: {
+  presentedTo: Array<{ presentedAt: string; runtimeId?: string }>
+}) {
+  return envelope.presentedTo.at(-1)
+}
 
 /**
  * A wrkq collaboration ledger, standing in for wrkqd.

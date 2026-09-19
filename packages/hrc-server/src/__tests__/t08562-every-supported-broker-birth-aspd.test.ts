@@ -291,7 +291,7 @@ async function settle(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 100 && !predicate(); i++) await Bun.sleep(10)
 }
 
-/** The mail kicker's exact summons-birth call (hrc-mail-kicker drive/delivery.ts). */
+/** The external injector's exact summons-birth call. */
 async function kickerSummons(s: HrcSessionRecord, prompt = MARK): Promise<Response> {
   return await internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, prompt, {
     waitForCompletion: false,

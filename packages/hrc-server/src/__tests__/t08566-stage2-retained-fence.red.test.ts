@@ -169,15 +169,12 @@ describe('T-08566 retained projection fence', () => {
     const follow = mock(() => undefined)
     const acp = mock(() => undefined)
     const project = mock(() => undefined)
-    const mail = mock(() => undefined)
-    const brokerMail = mock(() => undefined)
     const drain = mock(async () => undefined)
     const finalize = mock(() => undefined)
     const fake = {
       followSubscribers: new Set([follow]),
       acpEventBridge: { observe: acp },
       sessionProjectEvents: { observe: project },
-      mailKicker: { observeLifecycleEvent: mail, observeBrokerEvent: brokerMail },
       drainDurableHeadlessTurnInputs: drain,
       finalizeSemanticTurnResponse: finalize,
     }
@@ -207,8 +204,6 @@ describe('T-08566 retained projection fence', () => {
     expect(follow).toHaveBeenCalledTimes(3)
     expect(acp).toHaveBeenCalledTimes(0)
     expect(project).toHaveBeenCalledTimes(0)
-    expect(mail).toHaveBeenCalledTimes(0)
-    expect(brokerMail).toHaveBeenCalledTimes(0)
     expect(drain).toHaveBeenCalledTimes(0)
     expect(finalize).toHaveBeenCalledTimes(0)
   })
@@ -217,8 +212,6 @@ describe('T-08566 retained projection fence', () => {
     const follow = mock(() => undefined)
     const acp = mock(() => undefined)
     const project = mock(() => undefined)
-    const mail = mock(() => undefined)
-    const brokerMail = mock(() => undefined)
     const drain = mock(async () => undefined)
     const finalize = mock(() => undefined)
     notifyEvent.call(
@@ -226,7 +219,6 @@ describe('T-08566 retained projection fence', () => {
         followSubscribers: new Set([follow]),
         acpEventBridge: { observe: acp },
         sessionProjectEvents: { observe: project },
-        mailKicker: { observeLifecycleEvent: mail, observeBrokerEvent: brokerMail },
         drainDurableHeadlessTurnInputs: drain,
         finalizeSemanticTurnResponse: finalize,
       } as never,
@@ -248,9 +240,8 @@ describe('T-08566 retained projection fence', () => {
       }
     )
     await Bun.sleep(0)
-    for (const observer of [follow, acp, project, mail, drain, finalize]) {
+    for (const observer of [follow, acp, project, drain, finalize]) {
       expect(observer).toHaveBeenCalledTimes(1)
     }
-    expect(brokerMail).toHaveBeenCalledTimes(0)
   })
 })

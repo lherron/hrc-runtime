@@ -2545,7 +2545,7 @@ const hrcmailPresentationDispositionMigration: HrcMigration = {
  * because acting on a guess is what the third state exists to avoid; reported
  * as a separate labelled count and never inside the stranded array, because a
  * population that can never empty trains readers to skip the line; and
- * answerable individually by `hrc mail inspect`, so an operator who asks about
+ * answerable individually by the external injector, so an operator who asks about
  * one still gets the truth.
  */
 const hrcmailPreMigrationDispositionMigration: HrcMigration = {

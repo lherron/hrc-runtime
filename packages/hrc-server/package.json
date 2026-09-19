@@ -27,7 +27,6 @@
     "agent-scope": "latest",
     "hrc-core": "*",
     "hrc-events": "*",
-    "hrc-mail-kicker": "*",
     "hrc-sdk": "*",
     "hrc-transcript-index": "*",
     "hrc-store-sqlite": "*",

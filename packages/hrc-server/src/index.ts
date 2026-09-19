@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import type { CaptureRecoverResponse } from 'hrc-core'
 import {
   RETAINED_EVIDENCE_PASS_LIMIT,
@@ -50,7 +50,6 @@ import type {
   SweepRuntimesResponse,
   SweepZombieRunsResponse,
 } from 'hrc-core'
-import type { MailKicker } from 'hrc-mail-kicker'
 import type { TranscriptIndexer } from 'hrc-transcript-index'
 
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
@@ -169,8 +168,6 @@ import {
   resolveCodexCliTmuxBrokerEnabled,
   resolveHeadlessCodexBrokerEnabled,
   resolveHeadlessMuseBrokerEnabled,
-  resolveHrcMailKickerEnabled,
-  resolveHrcMailKickerSweepIntervalMs,
   resolveHrcTranscriptIndexEnabled,
   resolveHrcTranscriptIndexTickIntervalMs,
   resolveMuseCliTmuxBrokerEnabled,
@@ -913,8 +910,6 @@ class HrcServerInstance implements HrcServer {
   sessionRetentionInFlight: Promise<void> | undefined
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<FirstTurnEvalSummary> | undefined
-  mailKicker: MailKicker | undefined
-  readonly mailKickerStarted: Promise<void>
   readonly transcriptIndexer: TranscriptIndexer
   readonly foreignHomeMemo = new Map<string, ForeignHome>()
   shadowTeardownTimer: ReturnType<typeof setInterval> | undefined
@@ -931,8 +926,6 @@ class HrcServerInstance implements HrcServer {
   readonly codexCliTmuxBrokerEnabled: boolean
   readonly piTuiTmuxBrokerEnabled: boolean
   readonly museCliTmuxBrokerEnabled: boolean
-  readonly hrcMailKickerEnabled: boolean
-  readonly hrcMailKickerSweepIntervalMs: number
   readonly hrcTranscriptIndexEnabled: boolean
   readonly hrcTranscriptIndexTickIntervalMs: number
   /**
@@ -1405,8 +1398,6 @@ class HrcServerInstance implements HrcServer {
     this.codexCliTmuxBrokerEnabled = resolveCodexCliTmuxBrokerEnabled(options)
     this.piTuiTmuxBrokerEnabled = resolvePiTuiTmuxBrokerEnabled(options)
     this.museCliTmuxBrokerEnabled = resolveMuseCliTmuxBrokerEnabled(options)
-    this.hrcMailKickerEnabled = resolveHrcMailKickerEnabled(options)
-    this.hrcMailKickerSweepIntervalMs = resolveHrcMailKickerSweepIntervalMs(options)
     this.hrcTranscriptIndexEnabled = resolveHrcTranscriptIndexEnabled(options)
     this.hrcTranscriptIndexTickIntervalMs = resolveHrcTranscriptIndexTickIntervalMs(options)
     this.federationNodeId = options.federationConfig?.nodeId ?? deriveNodeIdFromHostname()
@@ -1458,7 +1449,6 @@ class HrcServerInstance implements HrcServer {
     this.startTmuxAging()
     this.startSessionRetentionSweep()
     this.startFirstTurnWatchdog()
-    this.mailKickerStarted = this.startMailKicker()
     this.transcriptIndexer.start()
     this.startForeignHomeShadowTeardown()
     for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
@@ -1658,20 +1648,6 @@ class HrcServerInstance implements HrcServer {
     }
   }
 
-  /**
-   * The bridge switch is a construction boundary, not a no-op policy switch.
-   * Keeping the adapter behind a dynamic import means the disabled process does
-   * not load the private-store opening module and cannot retain an in-process
-   * delivery writer or SQLite handle alongside the external injector.
-   */
-  private async startMailKicker(): Promise<void> {
-    if (!this.hrcMailKickerEnabled) return
-    const { createServerMailKicker } = await import('./mail-kicker-adapter.js')
-    const kicker = createServerMailKicker(this)
-    this.mailKicker = kicker
-    await kicker.start()
-  }
-
   async stop(): Promise<void> {
     if (this.stopping) {
       return
@@ -1684,11 +1660,6 @@ class HrcServerInstance implements HrcServer {
       dbPath: this.options.dbPath,
       tmuxSocketPath: getTmuxSocketPath(this.options),
     })
-    // The kicker consumes this daemon through its own Unix socket. Drain its
-    // cursor-backed followers while the listener is still available; closing it
-    // first races a live fetch against Bun's socket teardown.
-    await this.mailKickerStarted
-    await this.mailKicker?.stop()
     this.server.stop()
     await this.eventForwarder?.stop()
     await this.eventIngestListener?.stop()
@@ -3051,7 +3022,7 @@ class HrcServerInstance implements HrcServer {
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,
       node: this.nodeStatus(),
-      mailKicker: this.hrcMailKickerEnabled ? 'in-process' : 'disabled',
+      mailKicker: 'absent',
       ...(peerHealth === undefined ? {} : { peerHealth }),
       capabilities: {
         semanticCore: {
@@ -3160,7 +3131,6 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     options.participantAdapterRegistry ?? new ParticipantAdapterRegistry([])
   const resolvedOptions: HrcServerOptions = {
     ...options,
-    kickerStatePath: options.kickerStatePath ?? join(options.runtimeRoot, 'hrc-mail-kicker.sqlite'),
     sqliteBusyTimeoutMs: resolveSqliteBusyTimeoutMs(options.sqliteBusyTimeoutMs),
     localPersonaAllowlist: normalizeLocalPersonaAllowlist(options.localPersonaAllowlist),
     commandRunTargets: await resolveCommandRunTargets(options.commandRunTargets),
@@ -3262,7 +3232,6 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       runtimeRoot: resolvedOptions.runtimeRoot,
     })
     server = new HrcServerInstance({ ...resolvedOptions, federationConfig }, db, tmux, lockHandle)
-    await server.mailKickerStarted
     await server.initializeEventTransport()
     // The constructor starts durable-broker reattachment concurrently. Wait
     // for its always-resolving barrier before placement repair so a refused

@@ -1,6 +1,5 @@
 import { isFalsyFeatureFlag, isTruthyFeatureFlag } from './broker-decisions.js'
 import {
-  DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS,
   DEFAULT_HRC_TRANSCRIPT_INDEX_TICK_INTERVAL_MS,
   DEFAULT_SESSION_IDLE_ARCHIVE_DAYS,
   DEFAULT_SESSION_PROJECTION_DAYS,
@@ -10,7 +9,6 @@ import {
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
   HRC_HEADLESS_MUSE_BROKER_ENABLED_ENV,
-  HRC_MAIL_KICKER_ENABLED_ENV,
   HRC_MUSE_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
   HRC_SESSION_IDLE_ARCHIVE_DAYS_ENV,
@@ -128,22 +126,6 @@ export function resolveBrokerDurableIpcEnabled(options: HrcServerOptions): boole
     process.env[HRC_BROKER_DURABLE_IPC_ENABLED_ENV],
     { defaultOn: false }
   )
-}
-
-export function resolveHrcMailKickerEnabled(options: HrcServerOptions): boolean {
-  return resolveBooleanFlag(
-    options.hrcMailKickerEnabled,
-    process.env[HRC_MAIL_KICKER_ENABLED_ENV],
-    { defaultOn: false }
-  )
-}
-
-export function resolveHrcMailKickerSweepIntervalMs(options: HrcServerOptions): number {
-  const value = options.hrcMailKickerSweepIntervalMs
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return Math.max(10, Math.floor(value))
-  }
-  return DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS
 }
 
 export function resolveHrcTranscriptIndexEnabled(options: HrcServerOptions): boolean {

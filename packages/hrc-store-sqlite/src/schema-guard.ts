@@ -18,7 +18,6 @@ import {
  * that resolves every entry against the real command registry.
  */
 export const DIRECT_STORE_OPEN_COMMANDS = [
-  'hrc mail inspect',
   'hrc admin worktrees prune',
   'hrc monitor show',
   'hrc monitor watch',

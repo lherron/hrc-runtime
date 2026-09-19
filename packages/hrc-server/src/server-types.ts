@@ -319,8 +319,6 @@ export type HrcServerOptions = {
   lockPath: string
   spoolDir: string
   dbPath: string
-  /** Private kicker delivery-state database; defaults under runtimeRoot. */
-  kickerStatePath?: string | undefined
   /**
    * SQLite lock-wait ceiling applied to every daemon-owned connection.
    * Defaults to 5000ms and can be overridden with HRC_SQLITE_BUSY_TIMEOUT_MS.
@@ -335,10 +333,6 @@ export type HrcServerOptions = {
    * child environment.
    */
   localPersonaAllowlist?: readonly string[] | undefined
-  /** T-06810 Wave 2: dark-by-default embedded mailbox kicker. */
-  hrcMailKickerEnabled?: boolean | undefined
-  /** Test/embedded periodic sweep override; production defaults to one second. */
-  hrcMailKickerSweepIntervalMs?: number | undefined
   /** Resident transcript index is default-on; override only for isolated tests. */
   hrcTranscriptIndexEnabled?: boolean | undefined
   /** Test/embedded periodic tail cadence; production defaults to 2000ms. */

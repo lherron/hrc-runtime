@@ -18,7 +18,6 @@ test('a booted foreground server handles rejected promises with deliberate fatal
     ...process.env,
     HRC_RUNTIME_DIR: runtimeRoot,
     HRC_STATE_DIR: stateRoot,
-    HRC_MAIL_KICKER_ENABLED: '0',
     HRC_SHADOW_TEARDOWN_ENABLED: '0',
     CLAUDECODE: undefined,
     CLAUDE_CODE_ENTRYPOINT: undefined,

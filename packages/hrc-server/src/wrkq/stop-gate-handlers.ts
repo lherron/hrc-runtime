@@ -25,7 +25,6 @@
  * collaboration — `messages` and the mail ENVELOPE tables — not this one.
  */
 import { parseAppSessionScopeRef, sessionRefFor } from 'hrc-core'
-import { envelopeIdSequence } from 'hrc-mail-kicker'
 import type { HrcMailStopEnvelopeSummary } from 'hrc-store-sqlite'
 
 import { normalizeTargetSessionRef } from '../messages.js'
@@ -37,6 +36,17 @@ import { json } from '../server-util.js'
 const STOP_SUMMARY_LIMIT = 8
 const STOP_BODY_PREVIEW_CHARS = 160
 const STOP_REASON_MAX_CHARS = 4_096
+
+type PendingEnvelope = {
+  id: string
+  from: { principalRef: string; scopeRef?: string }
+  roomKey: string
+  body: string
+}
+
+function envelopeIdSequence(envelopeId: string): number {
+  return Number.parseInt(envelopeId.slice(3), 10)
+}
 
 export const MAIL_HINT_TEXT = (heldCount: number): string => {
   const noun = heldCount === 1 ? 'envelope is' : 'envelopes are'
@@ -79,8 +89,8 @@ export async function handleMailStopDecision(
     const view = await this.wrkqLedger.pendingView({ scopes: [targetSessionRef] })
     const blockingIds = new Set(view.blocking)
     blocking = view.items
-      .filter((envelope) => blockingIds.has(envelope.id))
-      .map((envelope) => ({
+      .filter((envelope: PendingEnvelope) => blockingIds.has(envelope.id))
+      .map((envelope: PendingEnvelope) => ({
         envelopeId: envelope.id,
         from: envelope.from.scopeRef ?? envelope.from.principalRef,
         roomKey: envelope.roomKey,

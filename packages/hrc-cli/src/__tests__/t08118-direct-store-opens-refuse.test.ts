@@ -24,7 +24,6 @@ import { buildProgram } from '../cli/build-program'
 
 import { type ServerRuntimeStatus, formatServerRuntimeStatus } from '../cli-runtime/server-status'
 import { cmdEventsDrain } from '../events-drain'
-import { cmdMailInspect } from '../mail-inspect'
 import { cmdMonitorShow } from '../monitor-show'
 import { cmdMonitorWait } from '../monitor/wait-command'
 import { cmdMonitorWatch } from '../monitor/watch-command'
@@ -146,13 +145,6 @@ function storeMigrationIds(dbPath: string): string[] {
 }
 
 describe('T-08118 the six direct-open commands refuse a behind store', () => {
-  it('hrc mail inspect', async () => {
-    const { dbPath } = behindStateRoot()
-    const before = storeMigrationIds(dbPath)
-    await expectSchemaRefusal(() => cmdMailInspect('EN-00001', {}))
-    expect(storeMigrationIds(dbPath)).toEqual(before)
-  })
-
   it('hrc run invocation (export)', async () => {
     const { dbPath } = behindStateRoot()
     const before = storeMigrationIds(dbPath)
@@ -375,6 +367,6 @@ describe('T-08118 the refusing-commands list names real commands', () => {
     // real command path is worse than no list: it sends them to
     // "hrc: unknown command".
     expect(unresolved).toEqual([])
-    expect(DIRECT_STORE_OPEN_COMMANDS.length).toBeGreaterThanOrEqual(7)
+    expect(DIRECT_STORE_OPEN_COMMANDS.length).toBeGreaterThanOrEqual(6)
   })
 })

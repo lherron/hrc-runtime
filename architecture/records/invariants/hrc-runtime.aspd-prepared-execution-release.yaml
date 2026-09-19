@@ -225,7 +225,6 @@ source:
   - packages/hrc-server/src/presentation-operator.ts
   - packages/hrc-server/src/broker-interactive-handlers.ts
   - packages/hrc-server/src/aspd-headless-start.ts
-  - packages/hrc-mail-kicker/src/drive/delivery.ts
 required_tests:
   - just architecture-records
   - headless muse-serve route gates prove a headless muse intent prepares route headless-muse-serve and launches the frozen worker, observer births carry the observer socket on the frozen worker command, and absent/non-matching hostedDrivers refuses aspd_worker_hosting_unproven before boundary P

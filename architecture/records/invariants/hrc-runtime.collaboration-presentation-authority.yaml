@@ -96,12 +96,6 @@ source:
   - packages/hrc-core/src/final-turn-message.ts
   - packages/hrc-server/src/event-notification-handlers.ts
   - packages/hrc-server/src/wrkq/ledger-client.ts
-  - packages/hrc-mail-kicker/src/drive/delivery.ts
-  - packages/hrc-mail-kicker/src/drive/landing.ts
-  - packages/hrc-mail-kicker/src/drive/reconcile.ts
-  - packages/hrc-mail-kicker/src/terminal/disposal.ts
-  - packages/hrc-mail-kicker/src/diagnostics/inspect.ts
-  - packages/hrc-mail-kicker/src/diagnostics/stranded.ts
   - packages/hrc-store-sqlite/src/mail/delivery-repository.ts
   - packages/hrc-store-sqlite/src/migrations/schema-migrations.ts
 required_tests:
@@ -124,7 +118,7 @@ required_tests:
   - reply-is-ack, defer, operator ack, consumed_by_wait, fyi_presented, failed:ignored and failed:runtime_terminated remain the only dispositions
 last_verified:
   date: 2026-09-05
-  evidence: T-08093 landed D1 — auto-reply-handlers.ts, the candidate/intent schema and the wrkq.auto_reply.* log surface deleted; migration 0057 drops the table and columns; installed activation smoke on max3 recorded in the T-08093 artifact_dir. T-08094 landed D2/D3 — the drive attempt, slot, held batch and claim CAS deleted, migration 0058 introducing hrcmail_delivery_intents/hrcmail_presentations, and the write-ahead, landing-fact, refusal and runtime-keyed disposal gates in packages/hrc-mail-kicker/src/__tests__/t08094-steer-first-delivery.test.ts. T-08205 revision 2 was source-reviewed and approved in C-19946 on 2026-09-07; its implementation, migration and installed receipt gates remain pending, and this date is not refreshed by design approval.
+  evidence: T-08093 landed D1 — auto-reply-handlers.ts, the candidate/intent schema and the wrkq.auto_reply.* log surface deleted; migration 0057 drops the table and columns; installed activation smoke on max3 recorded in the T-08093 artifact_dir. T-08094 landed D2/D3 — the drive attempt, slot, held batch and claim CAS deleted, migration 0058 introduced hrcmail_delivery_intents/hrcmail_presentations. Phase 4 moved delivery ownership to ACP and deleted the in-process HRC owner without dropping the retained state. T-08205 revision 2 was source-reviewed and approved in C-19946 on 2026-09-07; its implementation, migration and installed receipt gates remain pending, and this date is not refreshed by design approval.
 reopen_when:
   - HRC gains any path that writes to the collaboration ledger as a principal other than agent:hrc
   - turn completion, or any other implicit signal, becomes a discharge

@@ -73,10 +73,6 @@ source:
   - packages/hrc-core/src/hrcchat-contracts.ts
   - packages/hrc-cli/src/cli/register-top.ts
   - packages/hrc-cli/src/turn/commands/turn.ts
-  - packages/hrc-mail-kicker/src/controller.ts
-  - packages/hrc-mail-kicker/src/drive/delivery.ts
-  - packages/hrc-mail-kicker/src/drive/seat.ts
-  - packages/hrc-mail-kicker/src/drive/target-driver.ts
   - packages/hrc-server/src/broker/controller.ts
 required_tests:
   - T-08562 launch-primed cold summons, cold invoke and cold enqueue on an aspd-prepared claude-code-tmux birth keep the T-07920, T-08004, T-08012 and T-08531 launch-turn, receipt and rendezvous facts

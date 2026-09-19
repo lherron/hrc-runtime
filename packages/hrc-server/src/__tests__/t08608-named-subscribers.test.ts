@@ -1,7 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
-
 import type { HrcStatusResponse, SubscriberDeclareResponse } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -15,7 +12,7 @@ import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
  * T-08608 contract: named delivery-consumer subscribers for the commit-ordinal
  * follow route — declaration, header admission (absent and undeclared are both
  * 400), per-page heartbeat through the existing consumer-receipt accounting,
- * retained refusal for named consumers, and the `mailKicker` status readback.
+ * retained refusal for named consumers, and the deletion-release status readback.
  *
  * Run with: TMPDIR=/tmp bun run --filter hrc-server test t08608-named-subscribers
  */
@@ -224,24 +221,10 @@ describe('GET /v1/broker-events/follow admission', () => {
 })
 
 describe('hrc status mailKicker readback', () => {
-  it('reports disabled without constructing a kicker or opening its private store', async () => {
+  it('reports absent after the legacy in-process owner is deleted', async () => {
     const res = await fixture.fetchSocket('/v1/status')
     expect(res.status).toBe(200)
     const body = (await res.json()) as HrcStatusResponse
-    expect(body.mailKicker).toBe('disabled')
-    expect((server as unknown as { mailKicker: unknown }).mailKicker).toBeUndefined()
-    expect(existsSync(join(fixture.runtimeRoot, 'hrc-mail-kicker.sqlite'))).toBe(false)
-  })
-
-  it('reads enabled when the server is constructed with the kicker on', async () => {
-    await server.stop()
-    await fixture.cleanup()
-    fixture = await createHrcTestFixture('hrc-t08608-kicker-')
-    server = await createHrcServer(fixture.serverOpts({ hrcMailKickerEnabled: true }))
-    const res = await fixture.fetchSocket('/v1/status')
-    expect(res.status).toBe(200)
-    expect(((await res.json()) as HrcStatusResponse).mailKicker).toBe('in-process')
-    expect((server as unknown as { mailKicker: unknown }).mailKicker).toBeDefined()
-    expect(existsSync(join(fixture.runtimeRoot, 'hrc-mail-kicker.sqlite'))).toBe(true)
+    expect(body.mailKicker).toBe('absent')
   })
 })

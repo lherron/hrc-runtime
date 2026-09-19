@@ -122,7 +122,7 @@ export async function detectLaunchdOwner(): Promise<LaunchdOwner | null> {
  * root, and whose job is not loaded in the user's gui domain.
  *
  * This is the state that produced T-07957: the plist carries the daemon's whole
- * environment (HRC_MAIL_KICKER_ENABLED, HRC_WRKQ_DB, the broker flags), and when
+ * environment (HRC_WRKQ_DB and the broker flags), and when
  * the job is not loaded `detectLaunchdOwner` returns null exactly as it does on
  * a node that has no LaunchAgent at all. `hrc server start`/`restart` then take
  * the self-daemonize path and produce a healthy, correctly-versioned daemon with

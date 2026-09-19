@@ -50,7 +50,6 @@ describe('T-08118 just install armed-window warning', () => {
     expect(lines).toContain('1 unapplied migration(s)')
     expect(lines).toContain('hrc server restart')
     for (const command of [
-      'hrc mail inspect',
       'hrc admin worktrees prune',
       'hrc monitor show',
       'hrc monitor watch',

@@ -6,7 +6,6 @@ import type {
   HrcProvider,
   HrcRuntimeSnapshot,
 } from 'hrc-core'
-import type { MailKicker } from 'hrc-mail-kicker'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { TranscriptIndexer } from 'hrc-transcript-index'
 
@@ -198,7 +197,6 @@ type HrcServerInstanceDataForHandlers = {
   /** T-07235 provision-liveness watchdog: its own cadence, not the zombie sweep's. */
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<unknown> | undefined
-  readonly mailKicker: MailKicker | undefined
   readonly transcriptIndexer: TranscriptIndexer
   stopping: boolean
   readonly staleGenerationEnabled: boolean
@@ -210,8 +208,6 @@ type HrcServerInstanceDataForHandlers = {
   readonly codexCliTmuxBrokerEnabled: boolean
   readonly piTuiTmuxBrokerEnabled: boolean
   readonly museCliTmuxBrokerEnabled: boolean
-  readonly hrcMailKickerEnabled: boolean
-  readonly hrcMailKickerSweepIntervalMs: number
   readonly hrcTranscriptIndexEnabled: boolean
   readonly hrcTranscriptIndexTickIntervalMs: number
   readonly wrkqLedger: WrkqLedgerClient

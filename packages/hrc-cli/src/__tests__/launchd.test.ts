@@ -204,7 +204,7 @@ describe('detectStrandedLaunchAgent', () => {
 
   it.if(IS_DARWIN)('returns null when the plist exists and the job IS loaded', async () => {
     const runtimeDir = join(tmpdir(), 'stranded-runtime-loaded')
-    await writeAgentPlist({ HRC_RUNTIME_DIR: runtimeDir, HRC_MAIL_KICKER_ENABLED: '1' })
+    await writeAgentPlist({ HRC_RUNTIME_DIR: runtimeDir })
     process.env.HOME = home as string
     process.env.HRC_RUNTIME_DIR = runtimeDir
     shim = await writeShim({ exitCode: 0 })
@@ -219,7 +219,6 @@ describe('detectStrandedLaunchAgent', () => {
       const runtimeDir = join(tmpdir(), 'stranded-runtime-unloaded')
       const plistPath = await writeAgentPlist({
         HRC_RUNTIME_DIR: runtimeDir,
-        HRC_MAIL_KICKER_ENABLED: '1',
         HRC_WRKQ_DB: 'rpc://127.0.0.1:7171',
         LANG: 'en_US.UTF-8',
       })
@@ -234,11 +233,7 @@ describe('detectStrandedLaunchAgent', () => {
       expect(stranded?.plistPath).toBe(plistPath)
       expect(stranded?.serviceTarget).toBe(`${stranded?.domain}/${LABEL}`)
       // Only HRC_* keys, sorted; LANG is the daemon's locale, not its wiring.
-      expect(stranded?.declaredEnvKeys).toEqual([
-        'HRC_MAIL_KICKER_ENABLED',
-        'HRC_RUNTIME_DIR',
-        'HRC_WRKQ_DB',
-      ])
+      expect(stranded?.declaredEnvKeys).toEqual(['HRC_RUNTIME_DIR', 'HRC_WRKQ_DB'])
       expect(stranded?.systemJobLoaded).toBe(false)
     }
   )
@@ -250,7 +245,7 @@ describe('detectStrandedLaunchAgent', () => {
   // missing one.
   it.if(IS_DARWIN)('reports a same-label system job that IS loaded', async () => {
     const runtimeDir = join(tmpdir(), 'stranded-runtime-two-supervisors')
-    await writeAgentPlist({ HRC_RUNTIME_DIR: runtimeDir, HRC_MAIL_KICKER_ENABLED: '1' })
+    await writeAgentPlist({ HRC_RUNTIME_DIR: runtimeDir })
     process.env.HOME = home as string
     process.env.HRC_RUNTIME_DIR = runtimeDir
     shim = await writeShim({ exitCode: 113, systemExitCode: 0 })
@@ -302,7 +297,7 @@ describe('formatStrandedLaunchAgentRefusal', () => {
     plistPath: '/Users/lherron/Library/LaunchAgents/com.praesidium.hrc-server.plist',
     serviceTarget: 'gui/501/com.praesidium.hrc-server',
     domain: 'gui/501',
-    declaredEnvKeys: ['HRC_MAIL_KICKER_ENABLED', 'HRC_WRKQ_DB'] as const,
+    declaredEnvKeys: ['HRC_WRKQ_DB'] as const,
     systemJobLoaded: false,
   }
 
@@ -310,7 +305,7 @@ describe('formatStrandedLaunchAgentRefusal', () => {
     const message = formatStrandedLaunchAgentRefusal(agent, 'restart')
     expect(message).toContain('refusing to restart an unsupervised daemon')
     expect(message).toContain(agent.plistPath)
-    expect(message).toContain('HRC_MAIL_KICKER_ENABLED, HRC_WRKQ_DB')
+    expect(message).toContain('HRC_WRKQ_DB')
     expect(message).toContain(`launchctl bootstrap ${agent.domain} ${agent.plistPath}`)
     expect(message).toContain('T-07957')
   })

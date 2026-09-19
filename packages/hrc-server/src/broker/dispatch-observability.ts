@@ -388,7 +388,7 @@ export function recordBrokerEventMilestones(input: {
     return
   }
   // T-08333: `submission.absorbed` is landed evidence of the SAME class —
-  // `hrc-mail-kicker/src/drive/landing.ts` has always treated executed and
+  // The external injector treats executed and
   // absorbed alike as landed. Absorption is NOT a turn start: the body merged
   // into a turn already running, so it originates no turn, emits no
   // `turn.started` of its own, and must not stamp a start time or a turn

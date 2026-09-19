@@ -518,7 +518,7 @@ export type PreemptSubmissionRequest = HrcSessionBoundSubmissionRequest & {
  * the caller. They are answers to different questions, and an operator reading a
  * refused hold needs to tell them apart, so the door does not collapse them into
  * one boolean. It lives here because both the HTTP door (hrc-server) and the
- * mail kicker (hrc-mail-kicker) have to name the same three answers.
+ * mail-delivery owners have to name the same three answers during migration.
  */
 export type PreemptAdmission = 'authorized' | 'authority-denied' | 'preempt-unsupported'
 

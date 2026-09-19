@@ -26,7 +26,6 @@
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-frame-render": "*",
-    "hrc-mail-kicker": "*",
     "hrc-sdk": "*",
     "hrc-server": "*",
     "hrc-store-sqlite": "*"
