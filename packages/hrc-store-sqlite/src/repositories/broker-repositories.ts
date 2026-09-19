@@ -450,6 +450,138 @@ export class BrokerInvocationRepository {
   }
 }
 
+export type SubmissionAdmissionRecord = {
+  submissionId: string
+  runId?: string | undefined
+  runtimeId?: string | undefined
+  invocationId?: string | undefined
+  door?: string | undefined
+  envelopeId?: string | undefined
+  admittedAt?: string | undefined
+  disposition?: string | undefined
+  disposedAt?: string | undefined
+}
+
+export type SubmissionDisposition =
+  | 'executed'
+  | 'absorbed'
+  | 'rejected'
+  | 'expired'
+  | 'cancelled'
+  | 'lost'
+  | 'withdrawn'
+
+/**
+ * T-08611 — durable per-submission admission ledger (`submission_admissions`).
+ *
+ * Both edges are order-independent upserts keyed on `submission_id`:
+ * - the admission edge (dispatch attach) SETs the identity columns — run,
+ *   runtime, invocation, admitted_at — but never the disposition;
+ * - the landed edge (submission.executed/absorbed and the terminal
+ *   dispositions) SETs only disposition/disposed_at, and may create a row
+ *   carrying only the disposition when the landed event wins the race.
+ *
+ * Door and envelope_id come from the HRC dispatch request, which the event
+ * mapper never sees: on conflict they keep the already-recorded value when
+ * the upsert carries none (COALESCE), so a mapper-side attach can never
+ * NULL-clobber what the dispatch attach recorded.
+ */
+export class SubmissionAdmissionRepository {
+  constructor(private readonly db: Database) {}
+
+  upsertAdmission(input: {
+    submissionId: string
+    runId?: string | undefined
+    runtimeId?: string | undefined
+    invocationId?: string | undefined
+    door?: string | undefined
+    envelopeId?: string | undefined
+    admittedAt: string
+  }): void {
+    execute(
+      this.db,
+      `INSERT INTO submission_admissions (
+         submission_id, run_id, runtime_id, invocation_id, door, envelope_id, admitted_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(submission_id) DO UPDATE SET
+         run_id = excluded.run_id,
+         runtime_id = excluded.runtime_id,
+         invocation_id = excluded.invocation_id,
+         door = COALESCE(excluded.door, submission_admissions.door),
+         envelope_id = COALESCE(excluded.envelope_id, submission_admissions.envelope_id),
+         admitted_at = excluded.admitted_at`,
+      input.submissionId,
+      input.runId ?? null,
+      input.runtimeId ?? null,
+      input.invocationId ?? null,
+      input.door ?? null,
+      input.envelopeId ?? null,
+      input.admittedAt
+    )
+  }
+
+  recordDisposition(input: {
+    submissionId: string
+    disposition: SubmissionDisposition
+    disposedAt: string
+    /**
+     * Under the retained-evidence fence a replayed landed event must never
+     * clobber a disposition the live path already committed: write only where
+     * none exists.
+     */
+    onlyIfAbsent?: boolean | undefined
+  }): void {
+    execute(
+      this.db,
+      `INSERT INTO submission_admissions (submission_id, disposition, disposed_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(submission_id) DO UPDATE SET
+         disposition = excluded.disposition,
+         disposed_at = excluded.disposed_at${
+           input.onlyIfAbsent === true ? ' WHERE submission_admissions.disposition IS NULL' : ''
+         }`,
+      input.submissionId,
+      input.disposition,
+      input.disposedAt
+    )
+  }
+
+  getBySubmissionId(submissionId: string): SubmissionAdmissionRecord | null {
+    const row = this.db
+      .query<
+        {
+          submission_id: string
+          run_id: string | null
+          runtime_id: string | null
+          invocation_id: string | null
+          door: string | null
+          envelope_id: string | null
+          admitted_at: string | null
+          disposition: string | null
+          disposed_at: string | null
+        },
+        [string]
+      >(
+        `SELECT submission_id, run_id, runtime_id, invocation_id, door,
+                envelope_id, admitted_at, disposition, disposed_at
+         FROM submission_admissions WHERE submission_id = ? LIMIT 1`
+      )
+      .get(submissionId)
+    if (row === undefined || row === null) return null
+    return {
+      submissionId: row.submission_id,
+      ...(row.run_id !== null ? { runId: row.run_id } : {}),
+      ...(row.runtime_id !== null ? { runtimeId: row.runtime_id } : {}),
+      ...(row.invocation_id !== null ? { invocationId: row.invocation_id } : {}),
+      ...(row.door !== null ? { door: row.door } : {}),
+      ...(row.envelope_id !== null ? { envelopeId: row.envelope_id } : {}),
+      ...(row.admitted_at !== null ? { admittedAt: row.admitted_at } : {}),
+      ...(row.disposition !== null ? { disposition: row.disposition } : {}),
+      ...(row.disposed_at !== null ? { disposedAt: row.disposed_at } : {}),
+    }
+  }
+}
+
 export type BrokerInvocationEventAppendInput = {
   invocationId: string
   seq: number

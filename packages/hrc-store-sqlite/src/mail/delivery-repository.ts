@@ -972,12 +972,18 @@ export class HrcMailDeliveryRepository {
     const target = normalizeTarget(targetSessionRef)
     return this.db
       .transaction(() => {
+        // T-08611: the hint counts durable submission admissions, not the
+        // write-ahead delivery intents. An outstanding enqueue submission is
+        // one admitted with a mail envelope that has no landed disposition
+        // yet — the pre-admission window, a landed submission, and a
+        // disposition committed before the admission attach all count nothing.
         const row = this.db
-          .query<{ count: number }, [string, string]>(
-            `SELECT COUNT(*) AS count FROM hrcmail_delivery_intents
-              WHERE target_session_ref = ? AND runtime_id = ? AND door = 'enqueue'`
+          .query<{ count: number }, [string]>(
+            `SELECT COUNT(*) AS count FROM submission_admissions
+              WHERE runtime_id = ? AND door = 'enqueue'
+                AND envelope_id IS NOT NULL AND disposition IS NULL`
           )
-          .get(target, runtimeId)
+          .get(runtimeId)
         const outstandingCount = row?.count ?? 0
         if (outstandingCount === 0) {
           return { outcome: 'suppressed', reason: 'no_outstanding_mail' }

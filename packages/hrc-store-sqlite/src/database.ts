@@ -34,6 +34,7 @@ import {
   PermissionDecisionRepository,
   RuntimeArtifactRepository,
   RuntimeOperationRepository,
+  SubmissionAdmissionRepository,
 } from './repositories/broker-repositories.js'
 import { EventRepository, HrcLifecycleEventRepository } from './repositories/event-repositories.js'
 import { FirstTurnWatchRepository } from './repositories/first-turn-watch-repository.js'
@@ -125,6 +126,7 @@ export type HrcDatabase = {
   lifecyclePolicies: LifecyclePolicyRepository
   runtimeOperations: RuntimeOperationRepository
   brokerInvocations: BrokerInvocationRepository
+  submissionAdmissions: SubmissionAdmissionRepository
   steerContributions: SteerContributionRepository
   retainedEvidenceOutcomes: RetainedEvidenceOutcomeRepository
   runIdOwnership: RunIdOwnershipRegistry
@@ -244,6 +246,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),
     brokerInvocations: new BrokerInvocationRepository(sqlite),
+    submissionAdmissions: new SubmissionAdmissionRepository(sqlite),
     steerContributions: new SteerContributionRepository(sqlite, runIdOwnership),
     retainedEvidenceOutcomes: new RetainedEvidenceOutcomeRepository(sqlite),
     runIdOwnership,

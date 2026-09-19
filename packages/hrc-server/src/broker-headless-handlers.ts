@@ -1211,6 +1211,17 @@ export async function executeHeadlessBrokerInputTurn(
       dispatchedInputId: result.response.submissionId,
       updatedAt: timestamp(),
     })
+    // T-08611 admission edge: the durable per-submission row. Door comes from
+    // the HRC request and envelope_id from origin — never the disposition.
+    this.db.submissionAdmissions.upsertAdmission({
+      submissionId: result.response.submissionId,
+      runId,
+      runtimeId: runtime.runtimeId,
+      invocationId,
+      door: options.submissionDoor ?? 'enqueue',
+      envelopeId: submissionOrigin(session.scopeRef, options).envelopeId,
+      admittedAt: timestamp(),
+    })
   }
 
   if (result.ok && result.response.admission === 'rejected') {

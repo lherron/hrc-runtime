@@ -174,6 +174,8 @@ export type {
   ImportedBrokerInvocationEventInput,
   BrokerInvocationUpdatePatch,
   RuntimeOperationUpdatePatch,
+  SubmissionAdmissionRecord,
+  SubmissionDisposition,
 } from './repositories/broker-repositories.js'
 export { BrokerInvocationEventConflictError } from './repositories/broker-repositories.js'
 export type { MessageChangeListener, MessageInsertInput } from './message-repository.js'

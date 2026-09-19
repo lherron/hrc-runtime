@@ -97,6 +97,7 @@ function say(body: string, sender: { principalRef: string; scopeRef?: string | u
  */
 function outstanding(...envelopes: ReturnType<typeof say>[]): void {
   const db = serverInternals(server as HrcServer).db
+  const now = timestamp()
   for (const envelope of envelopes) {
     const intent = db.mailDelivery.openIntent({
       envelopeId: envelope.id,
@@ -111,6 +112,16 @@ function outstanding(...envelopes: ReturnType<typeof say>[]): void {
     })
     if (intent === undefined) throw new Error(`failed to open intent for ${envelope.id}`)
     db.mailDelivery.attachAdmission(envelope.id, { submissionId: `sub-${envelope.id}` })
+    // T-08611: the hint reads submission_admissions — mirror the dispatch
+    // attach that follows attachAdmission in production.
+    db.submissionAdmissions.upsertAdmission({
+      submissionId: `sub-${envelope.id}`,
+      runId: RUN_ID,
+      runtimeId: RUNTIME_ID,
+      door: 'enqueue',
+      envelopeId: envelope.id,
+      admittedAt: now,
+    })
   }
 }
 
@@ -182,7 +193,7 @@ describe('T-07926 — local held-mail hint decision', () => {
   it('6. suppresses an outstanding submission bound to another runtime', async () => {
     outstanding(say('first', { principalRef: 'agent:lance' }))
     const db = serverInternals(server as HrcServer).db
-    db.sqlite.query('UPDATE hrcmail_delivery_intents SET runtime_id = ?').run('rt-other')
+    db.sqlite.query('UPDATE submission_admissions SET runtime_id = ?').run('rt-other')
     expect(await hint()).toEqual({})
   })
 
@@ -200,16 +211,15 @@ describe('T-07926 — local held-mail hint decision', () => {
   it('8. counts no steered submission: a steer is already inside the turn', async () => {
     const envelope = say('steered', { principalRef: 'agent:lance' })
     const db = serverInternals(server as HrcServer).db
-    db.mailDelivery.openIntent({
-      envelopeId: envelope.id,
-      targetSessionRef: TARGET,
-      door: 'steer',
-      form: 'full',
-      presentationId: `present-${envelope.id}`,
+    // T-08611: the hint reads submission_admissions — a steer-door admission
+    // row is what the dispatch attach records for a steered body.
+    db.submissionAdmissions.upsertAdmission({
+      submissionId: `sub-${envelope.id}`,
+      runId: RUN_ID,
       runtimeId: RUNTIME_ID,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      submittedHrcSeq: db.hrcEvents.maxHrcSeq(),
+      door: 'steer',
+      envelopeId: envelope.id,
+      admittedAt: timestamp(),
     })
     expect(await hint()).toEqual({})
   })
@@ -221,6 +231,76 @@ describe('T-07926 — local held-mail hint decision', () => {
     serverInternals(server as HrcServer).db.mailDelivery.evaluateSeatHint = () => {
       throw new Error('local store unavailable')
     }
+    expect(await hint()).toEqual({})
+  })
+})
+
+describe('T-08611 — T-08094 gate on submission_admissions', () => {
+  it('(a) counts nothing during the pre-admission window', async () => {
+    // An open intent whose dispatch has not attached yet has no admission
+    // row: the seat holds nothing.
+    const envelope = say('pre-admission', { principalRef: 'agent:lance' })
+    const db = serverInternals(server as HrcServer).db
+    db.mailDelivery.openIntent({
+      envelopeId: envelope.id,
+      targetSessionRef: TARGET,
+      door: 'enqueue',
+      form: 'full',
+      presentationId: `present-${envelope.id}`,
+      runtimeId: RUNTIME_ID,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      submittedHrcSeq: db.hrcEvents.maxHrcSeq(),
+    })
+    expect(await hint()).toEqual({})
+  })
+
+  it('(b) counts nothing for a submission landed after submission.executed', async () => {
+    const first = say('landed', { principalRef: 'agent:lance' })
+    const second = say('still held', { principalRef: 'agent:lance' })
+    outstanding(first, second)
+    const db = serverInternals(server as HrcServer).db
+    // submission.executed committed, turn.started not yet: the landed
+    // submission is no longer outstanding; the other still is.
+    db.submissionAdmissions.recordDisposition({
+      submissionId: `sub-${first.id}`,
+      disposition: 'executed',
+      disposedAt: timestamp(),
+    })
+    expect(await hint()).toMatchObject({ heldCount: 1 })
+    db.submissionAdmissions.recordDisposition({
+      submissionId: `sub-${second.id}`,
+      disposition: 'executed',
+      disposedAt: timestamp(),
+    })
+    expect(await hint()).toEqual({})
+  })
+
+  it('(c) a disposition committed before the admission attach leaves nothing outstanding', async () => {
+    const envelope = say('raced', { principalRef: 'agent:lance' })
+    const db = serverInternals(server as HrcServer).db
+    const now = timestamp()
+    // The landed event wins the race: the row carries only the disposition.
+    db.submissionAdmissions.recordDisposition({
+      submissionId: `sub-${envelope.id}`,
+      disposition: 'absorbed',
+      disposedAt: now,
+    })
+    // The late admission attach fills the identity columns and must never
+    // clear the disposition.
+    db.submissionAdmissions.upsertAdmission({
+      submissionId: `sub-${envelope.id}`,
+      runId: RUN_ID,
+      runtimeId: RUNTIME_ID,
+      door: 'enqueue',
+      envelopeId: envelope.id,
+      admittedAt: now,
+    })
+    expect(db.submissionAdmissions.getBySubmissionId(`sub-${envelope.id}`)).toMatchObject({
+      door: 'enqueue',
+      envelopeId: envelope.id,
+      disposition: 'absorbed',
+    })
     expect(await hint()).toEqual({})
   })
 })

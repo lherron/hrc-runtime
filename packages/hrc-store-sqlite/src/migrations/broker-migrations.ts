@@ -1045,6 +1045,35 @@ const retainedEvidenceMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-08611 — durable per-submission admission ledger backing the mail hint and
+ * stop gate. One row per broker submission_id (PK), filled order-independently:
+ * the admission edge (dispatch attach) SETs the identity columns but never the
+ * disposition, while the landed edge (submission.executed/absorbed and the
+ * terminal dispositions) SETs only disposition/disposed_at. A row may be
+ * created carrying only the disposition when the landed event wins the race.
+ */
+const submissionAdmissionsMigration: HrcMigration = {
+  id: '0073_submission_admissions',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS submission_admissions (
+        submission_id TEXT PRIMARY KEY,
+        run_id TEXT,
+        runtime_id TEXT,
+        invocation_id TEXT,
+        door TEXT,
+        envelope_id TEXT,
+        admitted_at TEXT,
+        disposition TEXT,
+        disposed_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_submission_admissions_runtime_outstanding
+        ON submission_admissions(runtime_id, door, envelope_id, disposition);
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -1070,4 +1099,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   participantRuntimeOwnershipRepairMigration,
   runtimeOperationAspPreparationMigration,
   retainedEvidenceMigration,
+  submissionAdmissionsMigration,
 ]

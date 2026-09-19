@@ -50,7 +50,11 @@ import {
   HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT,
   HrcErrorCode,
 } from 'hrc-core'
-import { BrokerInvocationEventConflictError, type HrcDatabase } from 'hrc-store-sqlite'
+import {
+  BrokerInvocationEventConflictError,
+  type HrcDatabase,
+  type SubmissionDisposition,
+} from 'hrc-store-sqlite'
 import { PROVIDER_TRANSCRIPT_SCHEMA } from 'spaces-harness-broker-protocol'
 import type {
   AssistantMessageCompletedPayload,
@@ -1061,6 +1065,21 @@ export class BrokerEventMapper {
     return undefined
   }
 
+  private recordRetainedSubmissionDisposition(
+    envelope: InvocationEventEnvelope,
+    disposition: SubmissionDisposition,
+    now: string
+  ): void {
+    const submissionId = this.extractSubmissionIdFromPayload(envelope.payload)
+    if (submissionId === undefined) return
+    this.db.submissionAdmissions.recordDisposition({
+      submissionId,
+      disposition,
+      disposedAt: envelope.time ?? now,
+      onlyIfAbsent: true,
+    })
+  }
+
   private extractTurnId(envelope: InvocationEventEnvelope): string | undefined {
     if (typeof envelope.turnId === 'string') return envelope.turnId
     if (envelope.payload && typeof envelope.payload === 'object' && 'turnId' in envelope.payload) {
@@ -1339,11 +1358,17 @@ export class BrokerEventMapper {
     switch (envelope.type) {
       case 'submission.executed':
       case 'turn.attributed': {
+        // T-08611: under the retained fence a replayed landed event writes a
+        // disposition only where none exists — never over live evidence.
+        if (envelope.type === 'submission.executed') {
+          this.recordRetainedSubmissionDisposition(envelope, 'executed', now)
+        }
         const ownerRunId = resolveExactTurnOwner(db, envelope)
         if (ownerRunId !== undefined) settlePriorAbsorbedAuxiliaries(db, envelope, ownerRunId, now)
         return
       }
       case 'submission.absorbed': {
+        this.recordRetainedSubmissionDisposition(envelope, 'absorbed', now)
         const ownerRunId = resolveExactTurnOwner(db, envelope)
         if (ownerRunId !== undefined) settleAbsorbedAuxiliary(db, envelope, ownerRunId, now)
         return
@@ -1355,6 +1380,19 @@ export class BrokerEventMapper {
       case 'turn.completed':
       case 'turn.failed':
       case 'turn.interrupted': {
+        const retainedDisposition =
+          envelope.type === 'submission.rejected'
+            ? 'rejected'
+            : envelope.type === 'submission.expired'
+              ? 'expired'
+              : envelope.type === 'submission.cancelled'
+                ? 'cancelled'
+                : envelope.type === 'submission.lost'
+                  ? 'lost'
+                  : undefined
+        if (retainedDisposition !== undefined) {
+          this.recordRetainedSubmissionDisposition(envelope, retainedDisposition, now)
+        }
         this.projectRetainedRunTerminal(envelope, ctx, now)
         return
       }
@@ -1639,10 +1677,31 @@ export class BrokerEventMapper {
         // exact broker type in the durable invocation ledger for `hrc monitor
         // events`; the kicker closes its local queued attempt from the wrkq ack.
         if (runId !== undefined) db.runs.update(runId, { updatedAt: now })
+        // T-08611 landed edge: the withdrawal settles the admission row even
+        // when no run owns this event.
+        const withdrawnId = this.extractSubmissionIdFromPayload(envelope.payload)
+        if (withdrawnId !== undefined) {
+          db.submissionAdmissions.recordDisposition({
+            submissionId: withdrawnId,
+            disposition: 'withdrawn',
+            disposedAt: envelope.time ?? now,
+          })
+        }
         break
       }
       case 'submission.executed':
       case 'submission.absorbed': {
+        // T-08611 landed edge: commit the disposition in this same
+        // transaction, creating the row carrying only the disposition when
+        // the landed event wins the race against the admission attach.
+        const landedId = this.extractSubmissionIdFromPayload(envelope.payload)
+        if (landedId !== undefined) {
+          db.submissionAdmissions.recordDisposition({
+            submissionId: landedId,
+            disposition: envelope.type === 'submission.executed' ? 'executed' : 'absorbed',
+            disposedAt: envelope.time ?? now,
+          })
+        }
         if (runId !== undefined) {
           const run = db.runs.getByRunId(runId)
           const launchCarriedInvoke = isLaunchCarriedInvokeCorrelationJson(
@@ -1658,6 +1717,18 @@ export class BrokerEventMapper {
               ? { brokerSubmissionId: submissionId }
               : {}),
           })
+          // T-08611 admission edge: the mapper never sees the HRC request, so
+          // door/envelope stay absent here and the upsert keeps whatever the
+          // dispatch attach recorded. Never the disposition.
+          if (submissionId !== undefined) {
+            db.submissionAdmissions.upsertAdmission({
+              submissionId,
+              runId,
+              runtimeId: ctx.runtimeId,
+              invocationId,
+              admittedAt: now,
+            })
+          }
           if (envelope.type === 'submission.executed') {
             db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
             const ownerRunId = resolveExactTurnOwner(db, envelope)
@@ -1677,6 +1748,20 @@ export class BrokerEventMapper {
       case 'submission.rejected':
       case 'submission.expired':
       case 'submission.cancelled': {
+        // T-08611 landed edge: settle the admission row in this same transaction.
+        const terminalId = this.extractSubmissionIdFromPayload(envelope.payload)
+        if (terminalId !== undefined) {
+          db.submissionAdmissions.recordDisposition({
+            submissionId: terminalId,
+            disposition:
+              envelope.type === 'submission.rejected'
+                ? 'rejected'
+                : envelope.type === 'submission.expired'
+                  ? 'expired'
+                  : 'cancelled',
+            disposedAt: envelope.time ?? now,
+          })
+        }
         if (runId !== undefined) {
           const run = db.runs.getByRunId(runId)
           if (run?.completedAt === undefined) {
@@ -1692,6 +1777,15 @@ export class BrokerEventMapper {
         break
       }
       case 'submission.lost': {
+        // T-08611 landed edge: settle the admission row in this same transaction.
+        const lostId = this.extractSubmissionIdFromPayload(envelope.payload)
+        if (lostId !== undefined) {
+          db.submissionAdmissions.recordDisposition({
+            submissionId: lostId,
+            disposition: 'lost',
+            disposedAt: envelope.time ?? now,
+          })
+        }
         if (runId !== undefined) {
           const run = db.runs.getByRunId(runId)
           if (run?.completedAt === undefined) {
