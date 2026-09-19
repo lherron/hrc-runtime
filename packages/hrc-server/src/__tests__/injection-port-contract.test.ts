@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import type { HrcInjectionPort } from 'hrc-mail-kicker'
+import { type HrcInjectionPort, createSocketInjectionPort } from 'hrc-mail-kicker'
 import { HrcClient } from 'hrc-sdk'
 
 import { appendHrcEvent } from '../hrc-event-helper.js'
@@ -37,15 +37,27 @@ afterEach(async () => {
   aspdDouble = undefined
 })
 
-function port(): HrcInjectionPort {
+function inProcessPort(): HrcInjectionPort {
   if (server === undefined) throw new Error('missing contract server')
   return kickerOf(server).port
 }
 
+function socketPort(): HrcInjectionPort {
+  return createSocketInjectionPort(new HrcClient(fixture.socketPath))
+}
+
+const implementations: readonly {
+  name: string
+  port(): HrcInjectionPort
+}[] = [
+  { name: 'in-process', port: inProcessPort },
+  { name: 'socket', port: socketPort },
+]
+
 /**
  * The shared port contract starts here rather than in a database fixture: the
  * implementation under test is bound to a real hrc-server on its temp unix
- * socket. SocketInjectionPort will execute these same cases unchanged.
+ * socket. Both implementations execute every case below unchanged.
  */
 describe('HrcInjectionPort contract — real daemon', () => {
   it('resolves a scope over the socket without caller-side placement paths', async () => {
@@ -66,55 +78,89 @@ describe('HrcInjectionPort contract — real daemon', () => {
     })
   })
 
-  it('resolves and ensures a cold target without exposing daemon state', async () => {
-    const intent = await port().resolveRuntimeIntent(SCOPE, undefined)
-    expect(intent).toBeDefined()
-    if (intent === undefined) return
-
-    const session = await port().ensureTargetSession(TARGET, intent, { persistIntent: false })
-    expect(session.scopeRef).toBe(SCOPE)
-    expect((await port().targetBySessionRef(TARGET))?.hostSessionId).toBe(session.hostSessionId)
-  })
-
-  it('checks preempt admission without creating a runtime or submission', async () => {
-    const intent = await port().resolveRuntimeIntent(SCOPE, undefined)
-    if (intent === undefined) throw new Error('contract target intent missing')
-    const target = await port().ensureTargetSession(TARGET, intent, { persistIntent: false })
-    const db = serverInternals(server as HrcServer).db
-    expect(db.runtimes.listByHostSessionId(target.hostSessionId)).toHaveLength(0)
-
-    const response = await new HrcClient(fixture.socketPath).preemptAdmission({
-      target: TARGET,
-      body: 'preflight-only',
-      origin: { principalRef: 'agent:kicker-proof', envelopeId: 'EN-preflight' },
-    })
-    expect(response.admission).toBe('authority-denied')
-    expect(db.runtimes.listByHostSessionId(target.hostSessionId)).toHaveLength(0)
-  })
-
-  it('reads lifecycle evidence through a cursor-resuming subscription', async () => {
-    const head = await port().eventsHead()
+  it('uses the named mail subscriber for cursor-resuming broker evidence', async () => {
+    const port = socketPort()
+    const head = await port.eventsHead()
     const observed: string[] = []
-    const unsubscribe = await port().subscribeLifecycle({
-      afterSeq: head.hrcSeq,
-      onEvent: (event) => observed.push(event.eventKind),
+    const unsubscribe = await port.subscribeBroker({
+      afterCommit: head.brokerCommit,
+      onEvent: (event) => observed.push(event.type),
     })
     try {
-      const intent = await port().resolveRuntimeIntent(SCOPE, undefined)
-      if (intent === undefined) throw new Error('contract target intent missing')
-      const target = await port().ensureTargetSession(TARGET, intent, { persistIntent: false })
-      const event = appendHrcEvent(serverInternals(server as HrcServer).db, 'turn.started', {
-        ts: timestamp(),
-        hostSessionId: target.hostSessionId,
-        scopeRef: target.scopeRef,
-        laneRef: target.laneRef,
-        generation: target.generation,
-        transport: 'headless',
+      serverInternals(server as HrcServer).db.brokerInvocationEvents.appendEvent({
+        invocationId: 'inv-contract-broker',
+        seq: 1,
+        time: timestamp(),
+        type: 'submission.executed',
+        runtimeId: 'rt-contract-broker',
+        payload: { submissionId: 'sub-contract-broker', turnId: 'turn-contract-broker' },
+        projectionStatus: 'projected',
       })
-      serverInternals(server as HrcServer).notifyEvent(event)
-      await waitUntil(() => observed.includes('turn.started'), 'lifecycle contract delivery')
+      await waitUntil(() => observed.includes('submission.executed'), 'broker contract delivery')
+      expect((await new HrcClient(fixture.socketPath).getSubscribers()).active).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'mail' })])
+      )
     } finally {
       unsubscribe()
     }
   })
+
+  for (const implementation of implementations) {
+    describe(implementation.name, () => {
+      it('resolves and ensures a cold target without exposing daemon state', async () => {
+        const port = implementation.port()
+        const intent = await port.resolveRuntimeIntent(SCOPE, undefined)
+        expect(intent).toBeDefined()
+        if (intent === undefined) return
+
+        const session = await port.ensureTargetSession(TARGET, intent, { persistIntent: false })
+        expect(session.scopeRef).toBe(SCOPE)
+        expect((await port.targetBySessionRef(TARGET))?.hostSessionId).toBe(session.hostSessionId)
+      })
+
+      it('checks preempt admission without creating a runtime or submission', async () => {
+        const port = implementation.port()
+        const intent = await port.resolveRuntimeIntent(SCOPE, undefined)
+        if (intent === undefined) throw new Error('contract target intent missing')
+        const target = await port.ensureTargetSession(TARGET, intent, { persistIntent: false })
+        const db = serverInternals(server as HrcServer).db
+        expect(db.runtimes.listByHostSessionId(target.hostSessionId)).toHaveLength(0)
+
+        const admission = await port.preemptAdmission(target, {
+          target: TARGET,
+          body: 'preflight-only',
+          origin: { principalRef: 'agent:kicker-proof', envelopeId: 'EN-preflight' },
+        })
+        expect(admission).toBe('authority-denied')
+        expect(db.runtimes.listByHostSessionId(target.hostSessionId)).toHaveLength(0)
+      })
+
+      it('reads lifecycle evidence through a cursor-resuming subscription', async () => {
+        const port = implementation.port()
+        const head = await port.eventsHead()
+        const observed: string[] = []
+        const unsubscribe = await port.subscribeLifecycle({
+          afterSeq: head.hrcSeq,
+          onEvent: (event) => observed.push(event.eventKind),
+        })
+        try {
+          const intent = await port.resolveRuntimeIntent(SCOPE, undefined)
+          if (intent === undefined) throw new Error('contract target intent missing')
+          const target = await port.ensureTargetSession(TARGET, intent, { persistIntent: false })
+          const event = appendHrcEvent(serverInternals(server as HrcServer).db, 'turn.started', {
+            ts: timestamp(),
+            hostSessionId: target.hostSessionId,
+            scopeRef: target.scopeRef,
+            laneRef: target.laneRef,
+            generation: target.generation,
+            transport: 'headless',
+          })
+          serverInternals(server as HrcServer).notifyEvent(event)
+          await waitUntil(() => observed.includes('turn.started'), 'lifecycle contract delivery')
+        } finally {
+          unsubscribe()
+        }
+      })
+    })
+  }
 })

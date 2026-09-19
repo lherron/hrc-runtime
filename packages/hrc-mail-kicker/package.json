@@ -25,6 +25,7 @@
   "dependencies": {
     "agent-scope": "latest",
     "hrc-core": "*",
+    "hrc-sdk": "*",
     "hrc-store-sqlite": "*",
     "spaces-harness-broker-protocol": "latest"
   },

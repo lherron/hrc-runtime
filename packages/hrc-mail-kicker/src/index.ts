@@ -1,5 +1,6 @@
 export { createInProcessInjectionPort } from './in-process-injection-port.js'
 export type { InProcessInjectionPortDependencies } from './in-process-injection-port.js'
+export { createSocketInjectionPort } from './socket-injection-port.js'
 export {
   MailKicker,
   createMailKicker,
