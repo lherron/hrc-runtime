@@ -75,8 +75,10 @@ hide which paths changed.
 
 ## Discovery and classification
 
-Recursively locate `.git` files and directories. Do not assume every top-level entry
-is a worktree, and do not stop after examining only direct children of the root.
+Enumerate every direct child of the cleanup root before recursively locating `.git`
+files and directories. Include ordinary files and symlinks: a directory-only walk can
+silently omit live-checkout symlinks and metadata files. Do not assume every top-level
+entry is a worktree, and do not stop after examining only direct children of the root.
 
 Classify each candidate as exactly one of:
 
@@ -85,12 +87,20 @@ Classify each candidate as exactly one of:
 - `standalone_clone`: a repository with its own `.git` directory.
 - `container_with_nested_repo`: a non-repository directory containing one or more Git
   roots.
+- `embedded_repository`: a Git root nested inside another candidate, such as a
+  fetched dependency clone. Grade it as part of its parent rather than treating it as
+  an independently retireable peer.
 - `generated_artifact`: a recognized install prefix, build output, smoke fixture, or
   scratch product whose structure matches an explicit rule.
+- `symlink`: a direct entry whose link and resolved target are recorded but never
+  followed for cleanup.
+- `ordinary_file`: a direct non-directory entry.
 - `unknown`: anything not proven to fit another class.
 
-`unknown` is always held. A container cannot be approved while an enclosed repository
-or unknown child remains ungraded.
+`symlink`, `ordinary_file`, and `unknown` are held unless the user separately names the
+exact entry for removal. A parent candidate cannot be approved while an embedded
+repository, enclosed repository, or unknown child remains ungraded. A dirty or
+unpreserved embedded repository blocks removal of its parent.
 
 For every Git root record:
 
@@ -122,8 +132,10 @@ ambiguous upstream, shallow history that prevents comparison, or command failure
 `HOLD`. Never continue with a stale local ref while reporting it as current.
 
 Do not suppress exit codes with `|| true` in a grading path. Capture stdout, stderr,
-and status separately. Empty output is evidence only when the command succeeded and
-the command contract says emptiness is meaningful.
+and exit status immediately, before another command or shell assignment can obscure
+it. Avoid shell-reserved variables such as zsh's read-only `status`; use a
+task-specific name such as `fetch_rc`. Empty output is evidence only when the command
+succeeded and the command contract says emptiness is meaningful.
 
 ## Cleanliness gate
 
@@ -207,9 +219,13 @@ use. Check at least:
 - Git worktree locks;
 - any repository-specific lease or task-run marker discovered during classification.
 
-Use installed operator surfaces for HRC observations. Do not restart, interrupt,
-recover, or otherwise mutate a runtime merely to make cleanup possible. An unavailable
-liveness source makes apply fail closed for affected candidates.
+Use installed operator surfaces for HRC observations, but first confirm which path
+fields they actually expose. An HRC projection that omits cwd or workspace paths cannot
+prove that no runtime uses a candidate. Local process-cwd/open-file inspection and tmux
+pane paths are the authoritative local path-use checks when HRC lacks those fields. Do
+not restart, interrupt, recover, or otherwise mutate a runtime merely to make cleanup
+possible. An unavailable required liveness source makes apply fail closed for affected
+candidates.
 
 An inactive historical HRC record may be noted without blocking when no resumable or
 live runtime depends on the path. A live or uncertain reference is a `HOLD`.
@@ -291,8 +307,9 @@ Before applying a manifest:
 
 For a registered linked worktree, invoke `git worktree remove <exact-path>` from its
 owning repository without `--force`. Afterwards, confirm the path is absent and the
-worktree registry no longer lists it. Run `git worktree prune` only after successful
-removals and report what it pruned.
+worktree registry no longer lists it. Do not run repository-global `git worktree
+prune` as part of scoped cleanup: it can remove stale registrations outside the
+approved root. Any unrelated prunable entry requires separate inventory and authority.
 
 Do not delete the associated branch during worktree retirement. Keeping the branch is
 a cheap recovery path and branch cleanup is a separate decision.
