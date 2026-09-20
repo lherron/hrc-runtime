@@ -123,9 +123,13 @@ Resolve paths without following an untrusted final symlink during mutation.
 ## Establish the comparison target
 
 Group linked worktrees by common Git directory. From the canonical checkout, fetch
-each relevant remote once with pruning enabled. Resolve the comparison target from the
-worktree's configured upstream or the remote's symbolic default branch. Do not assume
-that every repository uses `origin/main`.
+each relevant remote once with pruning enabled. Resolve the preservation target from
+the remote's symbolic default integration branch. When the user asks whether work is
+merged to main, compare explicitly with that remote's `main`; a configured feature
+upstream proves remote backup, not integration. Record a worktree's configured upstream
+as supplementary evidence only. Compare against it instead of the integration branch
+only when the user explicitly defines preservation on that branch as sufficient. Do
+not assume that every repository names its integration branch `origin/main`.
 
 Record both the remote URL and fetched target SHA. A missing remote, fetch failure,
 ambiguous upstream, shallow history that prevents comparison, or command failure is a
