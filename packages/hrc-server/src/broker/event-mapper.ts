@@ -163,7 +163,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-const RAW_DELTA_EVENT_TYPES = new Set(['assistant.message.delta', 'tool.call.delta'])
+const RAW_DELTA_EVENT_TYPES = new Set(['assistant.message.delta'])
 
 function shouldPersistBrokerEvent(envelope: InvocationEventEnvelope): boolean {
   return process.env['HRC_PERSIST_RAW_DELTAS'] === '1' || !RAW_DELTA_EVENT_TYPES.has(envelope.type)
@@ -219,6 +219,9 @@ export class BrokerEventMapper {
    * row + state) or roll back together.
    */
   apply(envelope: InvocationEventEnvelope): BrokerProjectionResult {
+    if (envelope.type === 'tool.call.delta') {
+      return this.skipToolCallDelta(envelope)
+    }
     const chunkSeqSnapshot = new Map(this.nextBufferChunkSeqByRunId)
     const run = this.db.sqlite.transaction(() => this.project(envelope))
     try {
@@ -232,6 +235,68 @@ export class BrokerEventMapper {
       }
       throw error
     }
+  }
+
+  /**
+   * Tool output fragments belong to the broker ledger, not HRC's control-plane
+   * projection. The broker stream is ordered, so advance the durable replay
+   * cursor without materialising a mirror row, disposition row, lifecycle
+   * event, or live HRC observer event. A gap is refused: replay must first
+   * supply the missing sequence rather than allowing an acknowledgement to
+   * jump over an unknown event.
+   */
+  private skipToolCallDelta(
+    envelope: InvocationEventEnvelope,
+    retained = false
+  ): BrokerProjectionResult {
+    const run = this.db.sqlite.transaction(() => {
+      const invocation = this.db.brokerInvocations.getByInvocationId(envelope.invocationId)
+      if (!invocation) {
+        throw new Error(`broker invocation not found for event: ${envelope.invocationId}`)
+      }
+      const runtime = this.db.runtimes.getByRuntimeId(invocation.runtimeId)
+      if (!runtime) {
+        throw new Error(`runtime not found for broker invocation: ${invocation.runtimeId}`)
+      }
+
+      const cursor = retained
+        ? (invocation.retainedProjectedThroughSeq ?? invocation.lastProjectedSeq ?? 0)
+        : (invocation.lastProjectedSeq ?? 0)
+      if (envelope.seq > cursor + 1) {
+        throw new Error(
+          `tool delta projection gap for ${envelope.invocationId}: expected ${cursor + 1}, received ${envelope.seq}`
+        )
+      }
+      if (envelope.seq === cursor + 1) {
+        this.db.brokerInvocations.update(envelope.invocationId, {
+          ...(retained
+            ? { retainedProjectedThroughSeq: envelope.seq }
+            : { lastProjectedSeq: envelope.seq }),
+          updatedAt: this.now(),
+        })
+      }
+
+      return {
+        // Intentional non-projection is idempotent from HRC's perspective. This
+        // also prevents controller fanout from publishing the raw delta through
+        // HRC's observer surface.
+        idempotent: true,
+        brokerEvent: {
+          invocationId: envelope.invocationId,
+          seq: envelope.seq,
+          time: envelope.time,
+          type: envelope.type,
+          runtimeId: runtime.runtimeId,
+          brokerEventJson: JSON.stringify(envelope.payload ?? null),
+          brokerEnvelopeJson: JSON.stringify(envelope),
+          projectionStatus: 'pending',
+          createdAt: envelope.time,
+        },
+        events: [],
+        lifecycleEvents: [],
+      }
+    })
+    return run()
   }
 
   /**
@@ -258,6 +323,9 @@ export class BrokerEventMapper {
    * same transaction, the durable fact that fences all later live attach.
    */
   applyRetained(envelope: InvocationEventEnvelope): BrokerProjectionResult {
+    if (envelope.type === 'tool.call.delta') {
+      return this.skipToolCallDelta(envelope, true)
+    }
     const chunkSeqSnapshot = new Map(this.nextBufferChunkSeqByRunId)
     const run = this.db.sqlite.transaction(() => {
       this.retainedProjection = true

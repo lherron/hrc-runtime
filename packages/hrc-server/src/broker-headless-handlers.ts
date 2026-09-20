@@ -905,7 +905,9 @@ export async function executeHeadlessBrokerStartTurn(
     // `started`, and nothing ever armed a reminder for what it carried.
     const runtime = await accepted
     const submissionId =
-      options.submissionDoor === undefined ? undefined : compilerPrimingSubmissionId(this.db, runtime)
+      options.submissionDoor === undefined
+        ? undefined
+        : compilerPrimingSubmissionId(this.db, runtime)
     return json({
       runId,
       hostSessionId: session.hostSessionId,

@@ -43,7 +43,11 @@ function mapper(): BrokerEventMapper {
 }
 
 describe('T-07039 raw broker delta persistence gate', () => {
-  it('leaves seq gaps while still projecting and returning live delta envelopes', () => {
+  it('keeps tool deltas exclusively in the broker ledger while advancing the cursor', () => {
+    fixture.db.brokerInvocations.update(INVOCATION_ID, {
+      lastProjectedSeq: 2,
+      updatedAt: ts(99),
+    })
     const eventMapper = mapper()
 
     eventMapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
@@ -102,7 +106,48 @@ describe('T-07039 raw broker delta persistence gate', () => {
 
     expect(assistantDelta.events).toEqual([])
     expect(toolDelta.events).toEqual([])
+    expect(toolDelta.idempotent).toBe(true)
+    expect(fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 6)).toBeNull()
     expect(fixture.db.events.listFromSeq(1)).toEqual([])
+  })
+
+  it('refuses to advance across a missing event when skipping a tool delta', () => {
+    fixture.db.brokerInvocations.update(INVOCATION_ID, {
+      lastProjectedSeq: 2,
+      updatedAt: ts(99),
+    })
+
+    expect(() =>
+      mapper().apply(
+        envelope('tool.call.delta', 4, {
+          toolCallId: TOOL_CALL_ID,
+          text: 'must not skip unknown seq 3',
+        })
+      )
+    ).toThrow('expected 3, received 4')
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(2)
+  })
+
+  it('keeps a large tool-delta burst out of every HRC projection table', () => {
+    const eventMapper = mapper()
+
+    for (let seq = 1; seq <= 2_500; seq += 1) {
+      eventMapper.apply(
+        envelope('tool.call.delta', seq, {
+          toolCallId: TOOL_CALL_ID,
+          text: `raw broker fragment ${seq}`,
+        })
+      )
+    }
+
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(
+      2_500
+    )
+    expect(fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID)).toEqual([])
+    expect(fixture.db.events.listFromSeq(1)).toEqual([])
+    expect(
+      fixture.db.sqlite.query('SELECT COUNT(*) AS count FROM broker_projection_dispositions').get()
+    ).toEqual({ count: 0 })
   })
 
   it('persists every non-delta kind by default', () => {
@@ -121,8 +166,12 @@ describe('T-07039 raw broker delta persistence gate', () => {
     expect(record?.projectionStatus).toBe('applied')
   })
 
-  it('restores both delta rows when HRC_PERSIST_RAW_DELTAS=1', () => {
+  it('never restores tool deltas when raw assistant-delta persistence is enabled', () => {
     process.env[PERSIST_RAW_DELTAS_ENV] = '1'
+    fixture.db.brokerInvocations.update(INVOCATION_ID, {
+      lastProjectedSeq: 4,
+      updatedAt: ts(99),
+    })
     const eventMapper = mapper()
 
     eventMapper.apply(
@@ -139,12 +188,10 @@ describe('T-07039 raw broker delta persistence gate', () => {
     )
 
     const rows = fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID)
-    expect(rows.map((record) => record.seq)).toEqual([5, 6])
-    expect(rows.map((record) => record.type)).toEqual([
-      'assistant.message.delta',
-      'tool.call.delta',
-    ])
+    expect(rows.map((record) => record.seq)).toEqual([5])
+    expect(rows.map((record) => record.type)).toEqual(['assistant.message.delta'])
     expect(rows.every((record) => record.projectionStatus === 'applied')).toBe(true)
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(6)
   })
 
   it('advances one contiguous committed cursor across non-mirrored deltas and rejects divergent replay', () => {
