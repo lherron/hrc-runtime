@@ -73,6 +73,12 @@ Discovery and remote fetches may run in parallel by owning repository. Review mu
 wait for fetched refs. Apply must operate one exact path at a time so a failure cannot
 hide which paths changed.
 
+Treat an owner's current, exhaustive keep list as a path allowlist, not as permission
+to preserve every entry associated with that owner or product. Record separately any
+additional path held by a mechanical safety gate, with the exact observation that
+keeps it live. Recheck transient liveness after the dependent process exits; a
+temporary hold must not silently become permanent scope expansion.
+
 ## Discovery and classification
 
 Enumerate every direct child of the cleanup root before recursively locating `.git`
