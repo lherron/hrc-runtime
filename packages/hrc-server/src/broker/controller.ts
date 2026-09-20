@@ -59,7 +59,11 @@ import {
   recordUnavailableSeatProbe,
   warnStalledSubmissions,
 } from './dispatch-observability'
-import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
+import {
+  BrokerEventMapper,
+  type BrokerProjectionResult,
+  isIgnoredBrokerDelta,
+} from './event-mapper'
 import { isRetryableInvocationFailure } from './invocation-failure'
 import { assertNoRetainedProjection } from './runtime-exclusive-owner'
 import { parseBrokerRuntimeHostingState } from './runtime-hosting'
@@ -375,7 +379,12 @@ export class HarnessBrokerController {
 
   private readonly db: HrcDatabase
   private readonly mapper: Pick<BrokerEventMapper, 'apply'> &
-    Partial<Pick<BrokerEventMapper, 'projectCaptureState' | 'projectCaptureRelease'>>
+    Partial<
+      Pick<
+        BrokerEventMapper,
+        'flushIgnoredDeltas' | 'projectCaptureState' | 'projectCaptureRelease'
+      >
+    >
   private readonly brokerClientFactory: BrokerClientFactory
   private readonly brokerUnixClientFactory: BrokerUnixClientFactory
   private readonly permissionChannel: BrokerPermissionChannel | undefined
@@ -1330,6 +1339,7 @@ export class HarnessBrokerController {
       })
       for (const envelope of replay.events) {
         const result = this.mapper.apply(envelope)
+        if (result.ignoredDelta) continue
         await this.testOnlyAfterProjectionCommitBeforeAck?.({
           runtimeId: runtime.runtimeId,
           invocationId: String(envelope.invocationId),
@@ -1337,6 +1347,7 @@ export class HarnessBrokerController {
         })
         this.afterMappedEvent(runtime.runtimeId, envelope, result)
       }
+      this.mapper.flushIgnoredDeltas?.(invocation.invocationId)
       const committedThroughSeq = this.lastProjectedBrokerSeq(invocation.invocationId)
       if (committedThroughSeq > 0) {
         const ack = await client.ackEvents({
@@ -1790,6 +1801,7 @@ export class HarnessBrokerController {
 
   private consumeEvents(runtimeId: string, events: AsyncIterable<InvocationEventEnvelope>): void {
     void (async () => {
+      let lastInvocationId: string | undefined
       try {
         for await (const envelope of events) {
           // Teardown guard: once the server is stopping (DB about to close, or
@@ -1798,7 +1810,12 @@ export class HarnessBrokerController {
           if (this.shuttingDown) {
             break
           }
+          lastInvocationId = String(envelope.invocationId)
           await this.projectBrokerEventWithBusyRetry(runtimeId, envelope)
+        }
+        if (!this.shuttingDown && lastInvocationId !== undefined) {
+          this.mapper.flushIgnoredDeltas?.(lastInvocationId)
+          await this.ackCommittedProjection(runtimeId, lastInvocationId)
         }
       } catch (error) {
         // Teardown race: the consumer can outlive the backing DB (server.stop
@@ -1881,6 +1898,13 @@ export class HarnessBrokerController {
     })
   }
 
+  /** Flush a delta-only external replay before its participant-owned ACK. */
+  flushExternalParticipantIgnoredDeltas(invocationId: string): number {
+    return (
+      this.mapper.flushIgnoredDeltas?.(invocationId) ?? this.lastProjectedBrokerSeq(invocationId)
+    )
+  }
+
   private async projectBrokerEventWithBusyRetry(
     runtimeId: string,
     envelope: InvocationEventEnvelope,
@@ -1890,6 +1914,11 @@ export class HarnessBrokerController {
     let attempt = 1
     while (!this.shuttingDown) {
       try {
+        if (isIgnoredBrokerDelta(envelope)) {
+          this.mapper.apply(envelope)
+          return
+        }
+        this.mapper.flushIgnoredDeltas?.(String(envelope.invocationId))
         const invocation = this.db.brokerInvocations.getByInvocationId(
           String(envelope.invocationId)
         )
@@ -2128,6 +2157,7 @@ export class HarnessBrokerController {
           continue
         }
         const result = this.mapper.apply(envelope)
+        if (result.ignoredDelta) continue
         await this.testOnlyAfterProjectionCommitBeforeAck?.({
           runtimeId,
           invocationId,
@@ -2139,6 +2169,8 @@ export class HarnessBrokerController {
           repairedSeqs.push(envelope.seq)
         }
       }
+      this.mapper.flushIgnoredDeltas?.(invocationId)
+      await this.ackCommittedProjection(runtimeId, invocationId)
 
       if (repairedSeqs.length > 0) {
         repairedSeqs.sort((left, right) => left - right)
@@ -2149,8 +2181,11 @@ export class HarnessBrokerController {
         })
       }
 
+      const committedThroughSeq = this.lastProjectedBrokerSeq(invocationId)
       const stillMissing = missingSeqs.filter(
-        (seq) => !this.db.brokerInvocationEvents.hasProjectionDisposition(invocationId, seq)
+        (seq) =>
+          seq > committedThroughSeq &&
+          !this.db.brokerInvocationEvents.hasProjectionDisposition(invocationId, seq)
       )
       if (stillMissing.length > 0) {
         this.logger.warn?.('broker.event_gap_unrecoverable', {

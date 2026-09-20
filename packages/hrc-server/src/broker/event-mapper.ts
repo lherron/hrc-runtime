@@ -6,8 +6,8 @@
  * broker invocation and, in ONE SQLite transaction:
  *   1. appends semantic broker events by `(invocationId, seq)` via the W1B
  *      idempotent append repo (`BrokerInvocationEventRepository.appendEvent`);
- *      raw assistant/tool deltas retain their seqs and project live but skip
- *      this durable row unless `HRC_PERSIST_RAW_DELTAS=1`;
+ *      every `*.delta` transport fragment stays exclusively in the broker
+ *      ledger and advances only a batched HRC replay cursor;
  *   2. projects the event into HRC state (runtime / run / buffer / continuation
  *      / surface / permission audit / diagnostics);
  *   3. emits canonical lifecycle rows through `HrcEventRepository`;
@@ -163,10 +163,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-const RAW_DELTA_EVENT_TYPES = new Set(['assistant.message.delta'])
+export function isIgnoredBrokerDelta(envelope: InvocationEventEnvelope): boolean {
+  return envelope.type.endsWith('.delta')
+}
 
 function shouldPersistBrokerEvent(envelope: InvocationEventEnvelope): boolean {
-  return process.env['HRC_PERSIST_RAW_DELTAS'] === '1' || !RAW_DELTA_EVENT_TYPES.has(envelope.type)
+  return !isIgnoredBrokerDelta(envelope)
 }
 
 function requestsCaptureStateRefresh(envelope: InvocationEventEnvelope): boolean {
@@ -205,6 +207,15 @@ export class BrokerEventMapper {
    * Same instance-state safety argument as `pendingLateStartEvents`.
    */
   private retainedProjection = false
+  /** Contiguous raw-delta high-waters awaiting one durable cursor flush. */
+  private readonly ignoredDeltaCursors = new Map<
+    string,
+    { throughSeq: number; runtimeId: string }
+  >()
+  private readonly retainedIgnoredDeltaCursors = new Map<
+    string,
+    { throughSeq: number; runtimeId: string }
+  >()
 
   constructor(deps: BrokerEventMapperDeps) {
     this.db = deps.db
@@ -219,13 +230,17 @@ export class BrokerEventMapper {
    * row + state) or roll back together.
    */
   apply(envelope: InvocationEventEnvelope): BrokerProjectionResult {
-    if (envelope.type === 'tool.call.delta') {
-      return this.skipToolCallDelta(envelope)
+    if (isIgnoredBrokerDelta(envelope)) {
+      return this.ignoreRawDelta(envelope)
     }
     const chunkSeqSnapshot = new Map(this.nextBufferChunkSeqByRunId)
-    const run = this.db.sqlite.transaction(() => this.project(envelope))
+    const run = this.db.sqlite.transaction(() => {
+      this.flushIgnoredDeltasInTransaction(String(envelope.invocationId), false)
+      return this.project(envelope)
+    })
     try {
       const result = run()
+      this.ignoredDeltaCursors.delete(String(envelope.invocationId))
       if (!result.idempotent) this.logBlockedUnknownCaptureWarning(envelope)
       return result
     } catch (error) {
@@ -238,65 +253,97 @@ export class BrokerEventMapper {
   }
 
   /**
-   * Tool output fragments belong to the broker ledger, not HRC's control-plane
-   * projection. The broker stream is ordered, so advance the durable replay
-   * cursor without materialising a mirror row, disposition row, lifecycle
-   * event, or live HRC observer event. A gap is refused: replay must first
-   * supply the missing sequence rather than allowing an acknowledgement to
-   * jump over an unknown event.
+   * Raw streaming fragments belong to the broker ledger, not HRC's projection.
+   * Extend only an in-memory contiguous range; the next semantic event or replay
+   * boundary folds the whole range into one durable cursor update and one ACK.
    */
-  private skipToolCallDelta(
+  private ignoreRawDelta(
     envelope: InvocationEventEnvelope,
     retained = false
   ): BrokerProjectionResult {
-    const run = this.db.sqlite.transaction(() => {
+    const cursors = retained ? this.retainedIgnoredDeltaCursors : this.ignoredDeltaCursors
+    const invocationId = String(envelope.invocationId)
+    const pending = cursors.get(invocationId)
+    let runtimeId: string
+    let cursor: number
+    if (pending !== undefined) {
+      runtimeId = pending.runtimeId
+      cursor = pending.throughSeq
+    } else {
       const invocation = this.db.brokerInvocations.getByInvocationId(envelope.invocationId)
       if (!invocation) {
         throw new Error(`broker invocation not found for event: ${envelope.invocationId}`)
       }
-      const runtime = this.db.runtimes.getByRuntimeId(invocation.runtimeId)
-      if (!runtime) {
-        throw new Error(`runtime not found for broker invocation: ${invocation.runtimeId}`)
+      runtimeId = invocation.runtimeId
+      if (!this.db.runtimes.getByRuntimeId(runtimeId)) {
+        throw new Error(`runtime not found for broker invocation: ${runtimeId}`)
       }
-
-      const cursor = retained
+      cursor = retained
         ? (invocation.retainedProjectedThroughSeq ?? invocation.lastProjectedSeq ?? 0)
         : (invocation.lastProjectedSeq ?? 0)
-      if (envelope.seq > cursor + 1) {
-        throw new Error(
-          `tool delta projection gap for ${envelope.invocationId}: expected ${cursor + 1}, received ${envelope.seq}`
-        )
-      }
-      if (envelope.seq === cursor + 1) {
-        this.db.brokerInvocations.update(envelope.invocationId, {
-          ...(retained
-            ? { retainedProjectedThroughSeq: envelope.seq }
-            : { lastProjectedSeq: envelope.seq }),
-          updatedAt: this.now(),
-        })
-      }
+    }
+    if (envelope.seq > cursor + 1) {
+      throw new Error(
+        `raw delta gap for ${envelope.invocationId}: expected ${cursor + 1}, received ${envelope.seq}`
+      )
+    }
+    if (envelope.seq === cursor + 1) {
+      cursors.set(invocationId, { throughSeq: envelope.seq, runtimeId })
+    }
 
-      return {
-        // Intentional non-projection is idempotent from HRC's perspective. This
-        // also prevents controller fanout from publishing the raw delta through
-        // HRC's observer surface.
-        idempotent: true,
-        brokerEvent: {
-          invocationId: envelope.invocationId,
-          seq: envelope.seq,
-          time: envelope.time,
-          type: envelope.type,
-          runtimeId: runtime.runtimeId,
-          brokerEventJson: JSON.stringify(envelope.payload ?? null),
-          brokerEnvelopeJson: JSON.stringify(envelope),
-          projectionStatus: 'pending',
-          createdAt: envelope.time,
-        },
-        events: [],
-        lifecycleEvents: [],
-      }
+    return {
+      ignoredDelta: true,
+      idempotent: true,
+      brokerEvent: {
+        invocationId: envelope.invocationId,
+        seq: envelope.seq,
+        time: envelope.time,
+        type: envelope.type,
+        runtimeId,
+        brokerEventJson: JSON.stringify(envelope.payload ?? null),
+        brokerEnvelopeJson: JSON.stringify(envelope),
+        projectionStatus: 'pending',
+        createdAt: envelope.time,
+      },
+      events: [],
+      lifecycleEvents: [],
+    }
+  }
+
+  /** Commit one contiguous ignored-delta range before a replay/page ACK. */
+  flushIgnoredDeltas(invocationId: string, retained = false): number {
+    const cursors = retained ? this.retainedIgnoredDeltaCursors : this.ignoredDeltaCursors
+    const pending = cursors.get(invocationId)
+    if (pending === undefined) {
+      const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
+      return retained
+        ? (invocation?.retainedProjectedThroughSeq ?? invocation?.lastProjectedSeq ?? 0)
+        : (invocation?.lastProjectedSeq ?? 0)
+    }
+    const run = this.db.sqlite.transaction(() =>
+      this.flushIgnoredDeltasInTransaction(invocationId, retained)
+    )
+    const throughSeq = run()
+    cursors.delete(invocationId)
+    return throughSeq
+  }
+
+  private flushIgnoredDeltasInTransaction(invocationId: string, retained: boolean): number {
+    const cursors = retained ? this.retainedIgnoredDeltaCursors : this.ignoredDeltaCursors
+    const pending = cursors.get(invocationId)
+    const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
+    if (!invocation) throw new Error(`broker invocation not found for event: ${invocationId}`)
+    const cursor = retained
+      ? (invocation.retainedProjectedThroughSeq ?? invocation.lastProjectedSeq ?? 0)
+      : (invocation.lastProjectedSeq ?? 0)
+    if (pending === undefined || pending.throughSeq <= cursor) return cursor
+    this.db.brokerInvocations.update(invocationId, {
+      ...(retained
+        ? { retainedProjectedThroughSeq: pending.throughSeq }
+        : { lastProjectedSeq: pending.throughSeq }),
+      updatedAt: this.now(),
     })
-    return run()
+    return pending.throughSeq
   }
 
   /**
@@ -318,16 +365,18 @@ export class BrokerEventMapper {
    * non-terminal transition, no first-turn supervision, no surface binding, no
    * derived awaiting-input rows. The caller performs no controller effects.
    *
-   * Every committed envelope — including an intentionally non-mirrored delta —
-   * also records `broker_invocations.retained_projected_through_seq` inside the
-   * same transaction, the durable fact that fences all later live attach.
+   * Every semantic envelope also records
+   * `broker_invocations.retained_projected_through_seq` in the same transaction.
+   * Contiguous delta-only ranges update that fence once at the next semantic
+   * envelope or replay boundary.
    */
   applyRetained(envelope: InvocationEventEnvelope): BrokerProjectionResult {
-    if (envelope.type === 'tool.call.delta') {
-      return this.skipToolCallDelta(envelope, true)
+    if (isIgnoredBrokerDelta(envelope)) {
+      return this.ignoreRawDelta(envelope, true)
     }
     const chunkSeqSnapshot = new Map(this.nextBufferChunkSeqByRunId)
     const run = this.db.sqlite.transaction(() => {
+      this.flushIgnoredDeltasInTransaction(String(envelope.invocationId), true)
       this.retainedProjection = true
       try {
         const result = this.project(envelope)
@@ -350,7 +399,9 @@ export class BrokerEventMapper {
       // other connections read and write the same store, and a deferred
       // read-then-write transaction fails its upgrade with SQLITE_BUSY instead of
       // waiting out busy_timeout. Same reasoning as the lifecycle append.
-      return run.immediate()
+      const result = run.immediate()
+      this.retainedIgnoredDeltaCursors.delete(String(envelope.invocationId))
+      return result
     } catch (error) {
       this.nextBufferChunkSeqByRunId.clear()
       for (const [runId, nextChunkSeq] of chunkSeqSnapshot) {
@@ -560,11 +611,9 @@ export class BrokerEventMapper {
       .update(JSON.stringify(persistedEnvelope))
       .digest('hex')}`
 
-    // (a) Idempotent append keyed by (invocationId, seq). Raw assistant/tool
-    // deltas deliberately skip this row by default (T-07039): they keep their
-    // broker seq and continue through projection + live fanout, leaving durable
-    // seq gaps. The transient record preserves the existing in-memory observer
-    // contract without writing the row. The kill switch restores the old path.
+    // (a) Idempotent append keyed by (invocationId, seq). Every raw `*.delta`
+    // fragment is intercepted before this path and remains exclusively in the
+    // broker ledger; HRC records only its contiguous replay high-water.
     // `broker_event_json` is the payload authority. Keeping payload inside the
     // envelope as well duplicated the largest broker values byte-for-byte, so
     // persist only the envelope metadata and let the store row mapper restore
@@ -612,9 +661,8 @@ export class BrokerEventMapper {
         ? { turnAttempt: persistedEnvelope.turnAttempt }
         : {}),
       brokerEventJson: JSON.stringify(persistedEnvelope.payload ?? null),
-      // Raw deltas are deliberately not persisted. Their transient observer
-      // record therefore retains the payload directly instead of relying on a
-      // store read to reconstruct it.
+      // Defensive transient shape for an event deliberately omitted from the
+      // mirrored store. Raw deltas are intercepted before reaching this path.
       brokerEnvelopeJson: JSON.stringify(persistedEnvelope),
       projectionStatus: 'pending',
       createdAt: envelope.time,

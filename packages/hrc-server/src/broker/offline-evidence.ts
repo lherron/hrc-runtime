@@ -862,6 +862,7 @@ async function readAndProject(
     for (const envelope of page.events) {
       try {
         const result = mapper.applyRetained(envelope)
+        if (result.ignoredDelta) continue
         if (!result.idempotent) recordInvocationHistory(db, runtime.runtimeId, envelope, deps.now())
         for (const event of result.lifecycleEvents) deps.notifyEvent(event)
       } catch (error) {
@@ -879,6 +880,7 @@ async function readAndProject(
         }
       }
     }
+    mapper.flushIgnoredDeltas(invocationId, true)
     lastPage = page
     afterSeq = page.nextAfterSeq
     const cursor =

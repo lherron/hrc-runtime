@@ -148,6 +148,7 @@ describe('projection mapping (ordered sequence)', () => {
   it('does not double-buffer completed assistant text already emitted as deltas', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
+    db.brokerInvocations.update(INVOCATION_ID, { lastProjectedSeq: 2, updatedAt: ts(2) })
     const tid = 'turn_delta_completed' as TurnId
     const messageId = 'msg_delta_completed'
 
@@ -194,6 +195,7 @@ describe('projection mapping (ordered sequence)', () => {
     // ("...path./Users/..."). message.started after buffered output appends '\n\n'.
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
+    db.brokerInvocations.update(INVOCATION_ID, { lastProjectedSeq: 2, updatedAt: ts(2) })
     const tid = 'turn_message_boundary' as TurnId
 
     mapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
@@ -229,9 +231,13 @@ describe('projection mapping (ordered sequence)', () => {
     mapper.apply(envelope('assistant.message.started', 8, { messageId: messageId('msg_answer') }))
     mapper.apply(
       envelope(
-        'assistant.message.delta',
+        'assistant.message.completed',
         9,
-        { messageId: messageId('msg_answer'), text: '/tmp/answer-path' },
+        {
+          messageId: messageId('msg_answer'),
+          content: [{ type: 'text', text: '/tmp/answer-path' }],
+          final: true,
+        },
         { turnId: tid }
       )
     )
@@ -242,6 +248,7 @@ describe('projection mapping (ordered sequence)', () => {
   it('does not prepend a boundary before the first assistant message', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
+    db.brokerInvocations.update(INVOCATION_ID, { lastProjectedSeq: 2, updatedAt: ts(2) })
     const tid = 'turn_first_message' as TurnId
 
     mapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
@@ -256,9 +263,13 @@ describe('projection mapping (ordered sequence)', () => {
     mapper.apply(envelope('assistant.message.started', 5, { messageId: messageId('msg_only') }))
     mapper.apply(
       envelope(
-        'assistant.message.delta',
+        'assistant.message.completed',
         6,
-        { messageId: messageId('msg_only'), text: 'single message' },
+        {
+          messageId: messageId('msg_only'),
+          content: [{ type: 'text', text: 'single message' }],
+          final: true,
+        },
         { turnId: tid }
       )
     )
@@ -266,9 +277,10 @@ describe('projection mapping (ordered sequence)', () => {
     expect(bufferTextForRun(db, RUN_ID)).toBe('single message')
   })
 
-  it('does not re-read the full run buffer while appending a long streamed message', () => {
+  it('does not touch the run buffer while discarding a long streamed message', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
+    db.brokerInvocations.update(INVOCATION_ID, { lastProjectedSeq: 2, updatedAt: ts(2) })
     const tid = 'turn_bounded_buffer_append' as TurnId
     const messageId = 'msg_bounded_buffer_append'
     const chunks = Array.from({ length: 128 }, (_, index) => `chunk-${index}\n`)

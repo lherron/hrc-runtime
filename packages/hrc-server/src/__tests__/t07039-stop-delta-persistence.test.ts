@@ -43,7 +43,7 @@ function mapper(): BrokerEventMapper {
 }
 
 describe('T-07039 raw broker delta persistence gate', () => {
-  it('keeps tool deltas exclusively in the broker ledger while advancing the cursor', () => {
+  it('keeps all streaming deltas exclusively in the broker ledger while advancing the cursor', () => {
     fixture.db.brokerInvocations.update(INVOCATION_ID, {
       lastProjectedSeq: 2,
       updatedAt: ts(99),
@@ -89,8 +89,9 @@ describe('T-07039 raw broker delta persistence gate', () => {
         .listByInvocationId(INVOCATION_ID)
         .map((record) => record.seq)
     ).toEqual([3, 4, 7])
-    expect(bufferTextForRun(fixture.db, RUN_ID)).toBe('projected delta text')
-    expect(assistantDelta.idempotent).toBe(false)
+    expect(bufferTextForRun(fixture.db, RUN_ID)).toBe('')
+    expect(assistantDelta.idempotent).toBe(true)
+    expect(assistantDelta.ignoredDelta).toBe(true)
     expect(assistantDelta.brokerEvent.id).toBeUndefined()
     expect(JSON.parse(assistantDelta.brokerEvent.brokerEnvelopeJson!)).toMatchObject({
       seq: 5,
@@ -107,7 +108,10 @@ describe('T-07039 raw broker delta persistence gate', () => {
     expect(assistantDelta.events).toEqual([])
     expect(toolDelta.events).toEqual([])
     expect(toolDelta.idempotent).toBe(true)
+    expect(toolDelta.ignoredDelta).toBe(true)
+    expect(fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 5)).toBeNull()
     expect(fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 6)).toBeNull()
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(7)
     expect(fixture.db.events.listFromSeq(1)).toEqual([])
   })
 
@@ -140,6 +144,8 @@ describe('T-07039 raw broker delta persistence gate', () => {
       )
     }
 
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(0)
+    expect(eventMapper.flushIgnoredDeltas(INVOCATION_ID)).toBe(2_500)
     expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(
       2_500
     )
@@ -166,7 +172,7 @@ describe('T-07039 raw broker delta persistence gate', () => {
     expect(record?.projectionStatus).toBe('applied')
   })
 
-  it('never restores tool deltas when raw assistant-delta persistence is enabled', () => {
+  it('never restores either delta kind when the retired raw-delta environment variable is set', () => {
     process.env[PERSIST_RAW_DELTAS_ENV] = '1'
     fixture.db.brokerInvocations.update(INVOCATION_ID, {
       lastProjectedSeq: 4,
@@ -187,10 +193,11 @@ describe('T-07039 raw broker delta persistence gate', () => {
       })
     )
 
+    eventMapper.flushIgnoredDeltas(INVOCATION_ID)
     const rows = fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID)
-    expect(rows.map((record) => record.seq)).toEqual([5])
-    expect(rows.map((record) => record.type)).toEqual(['assistant.message.delta'])
-    expect(rows.every((record) => record.projectionStatus === 'applied')).toBe(true)
+    expect(rows).toEqual([])
+    expect(fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 5)).toBeNull()
+    expect(fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 6)).toBeNull()
     expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(6)
   })
 
@@ -201,30 +208,45 @@ describe('T-07039 raw broker delta persistence gate', () => {
     })
     const eventMapper = mapper()
     const seq3 = envelope('diagnostic', 3, { level: 'info', message: 'three' })
-    const seq4 = envelope('diagnostic', 4, { level: 'info', message: 'four' })
-    const seq5 = envelope('assistant.message.delta', 5, {
+    const seq4 = envelope('assistant.message.delta', 4, {
       messageId: MESSAGE_ID,
+      text: 'non-mirrored four',
+    })
+    const seq5 = envelope('tool.call.delta', 5, {
+      toolCallId: TOOL_CALL_ID,
       text: 'non-mirrored five',
     })
+    const seq6 = envelope('diagnostic', 6, { level: 'info', message: 'six' })
 
     eventMapper.apply(seq3)
+    eventMapper.apply(seq4)
     eventMapper.apply(seq5)
     expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(3)
+    expect(fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 4)).toBeNull()
     expect(fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 5)).toBeNull()
-    expect(
-      fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 5)?.disposition
-    ).toBe('applied')
+    expect(fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 4)).toBeNull()
+    expect(fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 5)).toBeNull()
 
-    eventMapper.apply(seq4)
-    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(5)
+    eventMapper.apply(seq6)
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(6)
     expect(eventMapper.apply(seq5).idempotent).toBe(true)
-    expect(() =>
-      eventMapper.apply(
-        envelope('assistant.message.delta', 5, {
-          messageId: MESSAGE_ID,
-          text: 'divergent replay',
-        })
-      )
-    ).toThrow('conflict')
+    expect(eventMapper.apply(seq4).idempotent).toBe(true)
+  })
+
+  it('flushes retained delta-only ranges through the retained cursor only', () => {
+    const eventMapper = mapper()
+
+    eventMapper.applyRetained(
+      envelope('assistant.message.delta', 1, { messageId: MESSAGE_ID, text: 'retained one' })
+    )
+    eventMapper.applyRetained(
+      envelope('tool.call.delta', 2, { toolCallId: TOOL_CALL_ID, text: 'retained two' })
+    )
+
+    expect(eventMapper.flushIgnoredDeltas(INVOCATION_ID, true)).toBe(2)
+    const invocation = fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)
+    expect(invocation?.lastProjectedSeq).toBe(0)
+    expect(invocation?.retainedProjectedThroughSeq).toBe(2)
+    expect(fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID)).toEqual([])
   })
 })

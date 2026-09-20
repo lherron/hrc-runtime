@@ -136,6 +136,8 @@ export function getHarnessBrokerController(
         }
         return result
       },
+      flushIgnoredDeltas: (invocationId, retained) =>
+        mapper.flushIgnoredDeltas(invocationId, retained),
       projectCaptureState: (runtimeId, capture) => {
         const event = mapper.projectCaptureState(runtimeId, capture)
         if (event) this.notifyEvent(event)

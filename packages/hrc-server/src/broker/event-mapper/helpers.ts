@@ -97,6 +97,8 @@ export type BrokerEventMapperDeps = {
 export type BrokerProjectionResult = {
   /** True when the (invocationId, seq) was already applied with the same payload. */
   idempotent: boolean
+  /** Raw transport fragment intentionally excluded from every HRC projection surface. */
+  ignoredDelta?: boolean | undefined
   /** Durable raw broker row appended or idempotently found for this envelope. */
   brokerEvent: HrcBrokerInvocationEventRecord
   /** Retired raw `events`-table mirror surface; always empty (T-07040). */

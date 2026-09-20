@@ -378,6 +378,41 @@ describe('T-01811 replay reuses the live event-mapper apply() path', () => {
     expect(client.calls).not.toContain('start')
     expect(client.calls).not.toContain('input')
   })
+  it('flushes and acknowledges a delta-only replay once without projecting rows', async () => {
+    const controller = makeController(fixture)
+    const events = [
+      envelope('assistant.message.delta', 1, {
+        messageId: 'message_delta_only' as never,
+        text: 'fragment one',
+      }),
+      envelope('tool.call.delta', 2, {
+        toolCallId: 'tool_delta_only' as never,
+        text: 'fragment two',
+      }),
+    ]
+    const client = new MockDurableBrokerClient()
+    client.snapshotResponse = emptySnapshot({ currentSeq: 2, retentionFloorSeq: 1 })
+    client.attachResponse = attachResponseFor(client.snapshotResponse)
+    client.queueEventsSince({ events, currentSeq: 2, retentionFloorSeq: 1 })
+    const result = await controller.attachAndReplay({
+      runtimeId: RUNTIME_ID,
+      client,
+      attachToken: ATTACH_TOKEN,
+    })
+    expect(result.ok).toBe(true)
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(2)
+    expect(fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID)).toEqual([])
+    expect(
+      fixture.db.sqlite.query('SELECT COUNT(*) AS count FROM broker_projection_dispositions').get()
+    ).toEqual({ count: 0 })
+    expect(client.ackCalls).toEqual([
+      {
+        controllerInstanceId: SERVER_INSTANCE_ID,
+        invocationId: INVOCATION_ID,
+        throughSeq: 2,
+      },
+    ])
+  })
 })
 
 // ───────────────────────────────────────────────────────────────────────────

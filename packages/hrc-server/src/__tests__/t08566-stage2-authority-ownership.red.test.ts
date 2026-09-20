@@ -361,6 +361,7 @@ describe('T-08566 stage 2 authority and ownership', () => {
       turnId: 'turn-delta-only',
       payload: { messageId: 'msg-delta-only', text: 'retained fragment' },
     })
+    mapper.flushIgnoredDeltas('invocation_broker_w3a', true)
     expect(
       fixture.db.sqlite
         .query<{ retained_projected_through_seq: number | null }, []>(

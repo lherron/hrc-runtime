@@ -87,7 +87,12 @@ import type {
 export type DispatchContext = {
   db: HrcDatabase
   mapper: Pick<BrokerEventMapper, 'apply'> &
-    Partial<Pick<BrokerEventMapper, 'projectCaptureState' | 'projectCaptureRelease'>>
+    Partial<
+      Pick<
+        BrokerEventMapper,
+        'flushIgnoredDeltas' | 'projectCaptureState' | 'projectCaptureRelease'
+      >
+    >
   brokerClientFactory: BrokerClientFactory
   brokerUnixClientFactory: BrokerUnixClientFactory
   resolveBrokerCommand: () => string
@@ -1133,6 +1138,10 @@ export async function attachAndReplay(
     let ackedThroughSeq = lastProjectedSeq
     for (const envelope of replay.events) {
       const result = ctx.mapper.apply(envelope)
+      if (result.ignoredDelta) {
+        replayedThroughSeq = Math.max(replayedThroughSeq, envelope.seq)
+        continue
+      }
       await ctx.testOnlyAfterProjectionCommitBeforeAck?.({
         runtimeId: runtime.runtimeId,
         invocationId: String(envelope.invocationId),
@@ -1141,6 +1150,7 @@ export async function attachAndReplay(
       ctx.afterMappedEvent(runtime.runtimeId, envelope, result)
       replayedThroughSeq = Math.max(replayedThroughSeq, envelope.seq)
     }
+    ctx.mapper.flushIgnoredDeltas?.(invocation.invocationId)
 
     // The durable contiguous projection cursor is the acknowledgement
     // authority. Re-read it after every transaction and re-ack even when this

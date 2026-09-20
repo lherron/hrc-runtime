@@ -1004,6 +1004,8 @@ async function projectReplayAndAck(
     throughSeq = envelope.seq
     cleanExit ||= envelope.type === 'invocation.exited'
   }
+  const controller = server.harnessBrokerController ?? server.getHarnessBrokerController()
+  controller.flushExternalParticipantIgnoredDeltas(grant.invocationId)
   if (throughSeq !== replay.currentSeq) {
     throw new Error(
       `participant replay ended at ${throughSeq}, behind declared currentSeq ${replay.currentSeq}`
