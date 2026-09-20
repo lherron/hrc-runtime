@@ -200,7 +200,8 @@ approve solely because commit messages or task IDs match.
 The associated wrkq record can establish intent, ownership, and claimed landing SHA.
 Read its final evidence when a task ID is available. A task in `open`, `in_progress`,
 or `blocked` is a `HOLD`. A completed task is supporting evidence, not proof of Git
-containment.
+containment. A cancelled task is not automatically disposable: read the cancellation
+rationale and prove that its unique changes are obsolete or superseded before approval.
 
 Record a concise review ruling that names the upstream artifact preserving the work.
 If that mapping cannot be made confidently, retain the worktree.
@@ -309,6 +310,10 @@ Before applying a manifest:
 5. Require current HEAD and status fingerprint to match the approved record.
 6. Stop that candidate on any mismatch and continue only according to an explicit
    per-entry failure policy; never reinterpret a mismatch as approval.
+
+When the shell uses `set -e`, wrap expected-negative checks such as “registry entry is
+absent” in an `if` statement or capture their status in a context exempt from errexit.
+An expected nonzero result must not abort the remaining readback.
 
 For a registered linked worktree, invoke `git worktree remove <exact-path>` from its
 owning repository without `--force`. Afterwards, confirm the path is absent and the
