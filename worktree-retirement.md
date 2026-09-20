@@ -321,6 +321,15 @@ worktree registry no longer lists it. Do not run repository-global `git worktree
 prune` as part of scoped cleanup: it can remove stale registrations outside the
 approved root. Any unrelated prunable entry requires separate inventory and authority.
 
+If a registered linked worktree is approved for retirement but still contains local
+state worth preserving—dirty files, nested repositories, ignored evidence, or an
+otherwise uncertain payload—quarantine it with `git worktree move <exact-path>
+<quarantine-path>` from its owning repository instead of forcing removal or moving it
+behind Git's back. Confirm both that the original path is absent and that the owning
+repository's worktree registry names the quarantine destination. This produces a clean
+active root while retaining the worktree's HEAD, branch attachment, local files, and
+registry identity for recovery or later review.
+
 Do not delete the associated branch during worktree retirement. Keeping the branch is
 a cheap recovery path and branch cleanup is a separate decision.
 
@@ -352,6 +361,8 @@ partial, never summarized as complete.
 Recovery is intentionally simple:
 
 - recreate a linked worktree from its retained commit or branch;
+- move a quarantined linked worktree back with `git worktree move`, using its owning
+  repository and the destination recorded in the apply report;
 - move a quarantined standalone clone or artifact back to its recorded original path;
 - consult the unchanged audit and apply reports for the exact prior identity.
 
