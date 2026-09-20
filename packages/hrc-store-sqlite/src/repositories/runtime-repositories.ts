@@ -581,6 +581,23 @@ export class RuntimeRepository {
   }
 
   /**
+   * Scope-local runtime history for placement reads. Locate is called once per
+   * addressed mail target, so materializing the entire runtime ledger here
+   * turns routine injector reconciliation into an O(all historical runtimes)
+   * hot loop.
+   */
+  listByScopeRef(scopeRef: string): HrcRuntimeSnapshot[] {
+    return this.db
+      .query<RuntimeRow, [string]>(
+        `SELECT ${RUNTIME_COLUMNS} FROM runtimes
+          WHERE scope_ref = ?
+          ORDER BY created_at ASC, runtime_id ASC`
+      )
+      .all(scopeRef)
+      .map(mapRuntimeRow)
+  }
+
+  /**
    * The whole ledger, terminal rows included. Correct for the sweep/prune paths,
    * whose entire job is stale and terminated rows. Recurring liveness timers
    * want `listAvailable()` / `listByStatus()`.

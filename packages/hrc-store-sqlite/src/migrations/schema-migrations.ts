@@ -3594,6 +3594,17 @@ const participantLiveIncarnationBindingMigration: HrcMigration = {
   },
 }
 
+/** Injector placement lookups are scope-local; keep them off the full runtime ledger. */
+const runtimeScopeLookupIndexMigration: HrcMigration = {
+  id: '0071_runtime_scope_lookup_index',
+  apply(db) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runtimes_scope_ref
+        ON runtimes(scope_ref);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -3660,4 +3671,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   participantSuccessorEvidenceMigration,
   participantProtocolJoinMigration,
   participantLiveIncarnationBindingMigration,
+  runtimeScopeLookupIndexMigration,
 ]

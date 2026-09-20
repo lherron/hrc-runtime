@@ -82,7 +82,7 @@ function defaultObservedFor(
   return (scopeRef: string) => {
     const canonical = formatCanonicalScopeRef({ scopeRef })
     return server.db.runtimes
-      .listAll()
+      .listByScopeRef(canonical)
       .filter((row) => sameScope(row.scopeRef, canonical))
       .map((row) => ({
         runtimeId: row.runtimeId,
