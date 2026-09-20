@@ -65,6 +65,129 @@ async function setupTmuxRuntime(
   return { tmux, hostSessionId, pane }
 }
 
+async function setupHeadlessBrokerPresentationRuntime(
+  runtimeId: string,
+  presentation: 'tmux-tui' | 'observer' = 'tmux-tui',
+  stateShape: 'flat' | 'normalized' = 'flat'
+) {
+  const tmux = new TmuxManager(fixture.tmuxSocketPath)
+  await tmux.initialize()
+  const sessionName = `capture-broker-${runtimeId}`
+  await tmux.createLeaseSession(sessionName)
+  const brokerPane = await tmux.createOrInspectWindow({
+    sessionName,
+    windowName: 'broker',
+  })
+  const presentationWindowName = presentation === 'tmux-tui' ? 'tui' : 'observer'
+  const presentationPane = await tmux.createOrInspectWindow({
+    sessionName,
+    windowName: presentationWindowName,
+  })
+
+  await setTmuxPanePrompt(tmux, brokerPane.paneId, CONTROLLED_TMUX_PROMPT, 'BROKER_PANE_READY')
+  await setTmuxPanePrompt(
+    tmux,
+    presentationPane.paneId,
+    CONTROLLED_TMUX_PROMPT,
+    'PRESENTATION_PANE_READY'
+  )
+  await tmux.sendLiteral(brokerPane.paneId, 'BROKER_WINDOW_MUST_NOT_BE_CAPTURED')
+  await tmux.sendLiteral(presentationPane.paneId, 'PRESENTATION_WINDOW_CAPTURED')
+
+  const hostSessionId = `hsid-${runtimeId}`
+  seedHeadlessRuntime({
+    runtimeId,
+    hostSessionId,
+    scopeRef: runtimeId,
+    transport: 'headless',
+  })
+
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    const brokerWindow = {
+      socketPath: fixture.tmuxSocketPath,
+      sessionName,
+      windowName: 'broker',
+      sessionId: brokerPane.sessionId,
+      windowId: brokerPane.windowId,
+      paneId: brokerPane.paneId,
+    }
+    const presentationWindow = {
+      socketPath: fixture.tmuxSocketPath,
+      sessionName,
+      windowName: presentationWindowName,
+      sessionId: presentationPane.sessionId,
+      windowId: presentationPane.windowId,
+      paneId: presentationPane.paneId,
+    }
+    db.runtimes.update(runtimeId, {
+      controllerKind: 'harness-broker',
+      runtimeStateJson: {
+        broker:
+          stateShape === 'flat'
+            ? {
+                protocolVersion: 'harness-broker/0.2',
+                endpoint: {
+                  kind: 'unix-jsonrpc-ndjson',
+                  socketPath: `${fixture.runtimeRoot}/broker.sock`,
+                  attachTokenRef: { kind: 'file', path: `${fixture.runtimeRoot}/broker.token` },
+                },
+                generation: 1,
+                brokerWindow,
+                ...(presentation === 'tmux-tui'
+                  ? { tuiWindow: presentationWindow }
+                  : { observerWindow: presentationWindow }),
+              }
+            : {
+                endpoint: {
+                  kind: 'unix-jsonrpc-ndjson',
+                  socketPath: `${fixture.runtimeRoot}/broker.sock`,
+                  attachTokenRef: { kind: 'file', path: `${fixture.runtimeRoot}/broker.token` },
+                  protocolVersion: 'harness-broker/0.2',
+                },
+                substrate: {
+                  kind: 'leased-tmux',
+                  tmuxSocketPath: fixture.tmuxSocketPath,
+                  sessionName,
+                  brokerWindow: {
+                    sessionId: brokerPane.sessionId,
+                    windowId: brokerPane.windowId,
+                    paneId: brokerPane.paneId,
+                  },
+                  generation: 1,
+                  eventLedgerPath: `${fixture.runtimeRoot}/broker.ndjson`,
+                },
+                presentation:
+                  presentation === 'tmux-tui'
+                    ? {
+                        kind: 'tmux-tui',
+                        tuiWindow: {
+                          sessionId: presentationPane.sessionId,
+                          windowId: presentationPane.windowId,
+                          paneId: presentationPane.paneId,
+                        },
+                        operatorAttachTarget: true,
+                      }
+                    : {
+                        kind: 'observer',
+                        observerWindow: {
+                          sessionId: presentationPane.sessionId,
+                          windowId: presentationPane.windowId,
+                          paneId: presentationPane.paneId,
+                        },
+                        operatorAttachTarget: true,
+                      },
+              },
+      },
+      updatedAt: fixture.now(),
+    })
+  } finally {
+    db.close()
+  }
+
+  return { brokerPane, presentationPane }
+}
+
 function seedHeadlessRuntime(options: SeedRuntimeOptions): void {
   fixture.seedSession(options.hostSessionId, options.scopeRef)
   const db = openHrcDatabase(fixture.dbPath)
@@ -245,6 +368,104 @@ describe('runtime capture transport branching', () => {
       runtimeId: 'rt-capture-headless',
       transport: 'headless',
     })
+  })
+
+  it('refuses a durable broker whose configured presentation is none', async () => {
+    seedHeadlessRuntime({
+      runtimeId: 'rt-capture-broker-none',
+      hostSessionId: 'hsid-capture-broker-none',
+      scopeRef: 'capture-broker-none',
+      transport: 'headless',
+    })
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.update('rt-capture-broker-none', {
+        controllerKind: 'harness-broker',
+        runtimeStateJson: {
+          broker: {
+            endpoint: {
+              kind: 'unix-jsonrpc-ndjson',
+              socketPath: `${fixture.runtimeRoot}/broker.sock`,
+              attachTokenRef: { kind: 'file', path: `${fixture.runtimeRoot}/broker.token` },
+              protocolVersion: 'harness-broker/0.2',
+            },
+            substrate: {
+              kind: 'leased-tmux',
+              tmuxSocketPath: fixture.tmuxSocketPath,
+              sessionName: 'capture-broker-none',
+              brokerWindow: { sessionId: '$1', windowId: '@1', paneId: '%1' },
+              generation: 1,
+              eventLedgerPath: `${fixture.runtimeRoot}/broker.ndjson`,
+            },
+            presentation: { kind: 'none' },
+          },
+        },
+        updatedAt: fixture.now(),
+      })
+    } finally {
+      db.close()
+    }
+
+    const res = await capture('rt-capture-broker-none')
+
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as HrcHttpError
+    expect(body.error.message).toContain('use the runtime event stream')
+  })
+
+  it('captures only the durable TUI presentation pane for a headless broker runtime', async () => {
+    await setupHeadlessBrokerPresentationRuntime('rt-capture-broker-tui')
+
+    const res = await capture('rt-capture-broker-tui')
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { text: string }
+    expect(body.text).toContain('PRESENTATION_WINDOW_CAPTURED')
+    expect(body.text).not.toContain('BROKER_WINDOW_MUST_NOT_BE_CAPTURED')
+  })
+
+  it('captures only the durable observer presentation pane for a headless broker runtime', async () => {
+    await setupHeadlessBrokerPresentationRuntime(
+      'rt-capture-broker-observer',
+      'observer',
+      'normalized'
+    )
+
+    const res = await capture('rt-capture-broker-observer')
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { text: string }
+    expect(body.text).toContain('PRESENTATION_WINDOW_CAPTURED')
+    expect(body.text).not.toContain('BROKER_WINDOW_MUST_NOT_BE_CAPTURED')
+  })
+
+  it('fails closed when the persisted presentation pane identity no longer matches tmux', async () => {
+    await setupHeadlessBrokerPresentationRuntime('rt-capture-broker-stale')
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const runtime = db.runtimes.getByRuntimeId('rt-capture-broker-stale')!
+      const state = runtime.runtimeStateJson as Record<string, unknown>
+      const broker = state['broker'] as Record<string, unknown>
+      const tuiWindow = broker['tuiWindow'] as Record<string, unknown>
+      db.runtimes.update('rt-capture-broker-stale', {
+        runtimeStateJson: {
+          ...state,
+          broker: {
+            ...broker,
+            tuiWindow: { ...tuiWindow, paneId: '%stale-presentation-pane' },
+          },
+        },
+        updatedAt: fixture.now(),
+      })
+    } finally {
+      db.close()
+    }
+
+    const res = await capture('rt-capture-broker-stale')
+
+    expect(res.status).toBe(503)
+    const body = (await res.json()) as HrcHttpError
+    expect(body.error.message).toContain('presentation pane is unavailable or changed')
   })
 })
 

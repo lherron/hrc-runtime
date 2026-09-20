@@ -47,6 +47,8 @@ export async function seedLiveTmuxRuntime(
     '-d',
     '-s',
     sessionName,
+    '-n',
+    'main',
     '-x',
     '200',
     '-y',

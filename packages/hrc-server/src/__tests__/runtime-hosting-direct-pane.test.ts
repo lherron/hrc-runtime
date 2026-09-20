@@ -37,17 +37,70 @@
 
 import { describe, expect, it } from 'bun:test'
 
-import { canUseDirectPaneFallback } from '../broker/runtime-hosting'
+import { canUseDirectPaneFallback, getBrokerPresentationPane } from '../broker/runtime-hosting'
 
 // ── minimal runtime fixture builder ──────────────────────────────────────────
 
 import {
   flatInteractiveRuntime,
+  flatObserverRuntime,
   makeRuntime,
   noBrokerBlockRuntime,
   normalizedHeadlessRuntime,
   normalizedInteractiveRuntime,
+  normalizedObserverRuntime,
 } from './broker-runtime-hosting.fixture.js'
+
+describe('getBrokerPresentationPane', () => {
+  it('resolves the flat persisted TUI pane, never flat brokerWindow', () => {
+    expect(getBrokerPresentationPane(flatInteractiveRuntime)).toEqual({
+      socketPath: '/tmp/hrc-test/btmux/rt-123.sock',
+      sessionName: 'hrc-rt-123-g2',
+      windowName: 'tui',
+      sessionId: '$3',
+      windowId: '@8',
+      paneId: '%13',
+    })
+  })
+
+  it('resolves the flat persisted observer pane, never flat brokerWindow', () => {
+    expect(getBrokerPresentationPane(flatObserverRuntime)).toEqual({
+      socketPath: '/tmp/hrc-test/btmux/rt-123.sock',
+      sessionName: 'hrc-rt-123-g2',
+      windowName: 'observer',
+      sessionId: '$3',
+      windowId: '@9',
+      paneId: '%14',
+    })
+  })
+
+  it('resolves the TUI pane, never the broker controller pane', () => {
+    expect(getBrokerPresentationPane(normalizedInteractiveRuntime)).toEqual({
+      socketPath: '/tmp/hrc-test/btmux/rt-456.sock',
+      sessionName: 'hrc-rt-456-g4',
+      windowName: 'tui',
+      sessionId: '$9',
+      windowId: '@23',
+      paneId: '%32',
+    })
+  })
+
+  it('resolves the observer pane when it is the configured presentation', () => {
+    expect(getBrokerPresentationPane(normalizedObserverRuntime)).toEqual({
+      socketPath: '/tmp/hrc-test/btmux/rt-456.sock',
+      sessionName: 'hrc-rt-456-g4',
+      windowName: 'observer',
+      sessionId: '$9',
+      windowId: '@24',
+      paneId: '%33',
+    })
+  })
+
+  it('returns undefined for presentation.none', () => {
+    expect(getBrokerPresentationPane(normalizedHeadlessRuntime)).toBeUndefined()
+  })
+})
+
 describe('canUseDirectPaneFallback', () => {
   it('returns true for normalized interactive (presentation.kind = tmux-tui)', () => {
     expect(canUseDirectPaneFallback(normalizedInteractiveRuntime)).toBe(true)

@@ -89,6 +89,17 @@ export type BrokerRuntimeHostingState = {
   presentation: BrokerRuntimePresentation
 }
 
+/**
+ * The sole presentation pane that may be used for direct terminal operations.
+ * This intentionally has no representation for `brokerWindow`: that pane
+ * hosts the controller and is never an operator-facing surface.
+ */
+export type BrokerPresentationPane = TmuxWindowIdentity & {
+  socketPath: string
+  sessionName: string
+  windowName: 'tui' | 'observer'
+}
+
 /** A live observation of a runtime's tmux lease used to fence stale identities. */
 export type BrokerLeaseProbe = {
   tmuxSocketPath: string
@@ -627,10 +638,43 @@ export function canOperatorAttach(runtime: HrcRuntimeSnapshot): boolean {
   return kind === 'tmux-tui' || kind === 'observer'
 }
 
-/** True iff a direct-pane fallback is possible (tmux-tui or observer pane). */
+/**
+ * Resolve the configured operator-facing tmux pane from durable hosting state.
+ * `brokerWindow` is deliberately excluded: it is controller infrastructure,
+ * never a capture or attach surface.
+ */
+export function getBrokerPresentationPane(
+  runtime: HrcRuntimeSnapshot
+): BrokerPresentationPane | undefined {
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  if (hosting?.substrate.kind !== 'leased-tmux') {
+    return undefined
+  }
+
+  const base = {
+    socketPath: hosting.substrate.tmuxSocketPath,
+    sessionName: hosting.substrate.sessionName,
+  }
+  if (hosting.presentation.kind === 'tmux-tui') {
+    return {
+      ...base,
+      windowName: 'tui',
+      ...hosting.presentation.tuiWindow,
+    }
+  }
+  if (hosting.presentation.kind === 'observer') {
+    return {
+      ...base,
+      windowName: 'observer',
+      ...hosting.presentation.observerWindow,
+    }
+  }
+  return undefined
+}
+
+/** True iff a direct-pane fallback is possible from the canonical resolver. */
 export function canUseDirectPaneFallback(runtime: HrcRuntimeSnapshot): boolean {
-  const kind = parseBrokerRuntimeHostingState(runtime)?.presentation.kind
-  return kind === 'tmux-tui' || kind === 'observer'
+  return getBrokerPresentationPane(runtime) !== undefined
 }
 
 function identityMatches(a: TmuxWindowIdentity, b: TmuxWindowIdentity | undefined): boolean {

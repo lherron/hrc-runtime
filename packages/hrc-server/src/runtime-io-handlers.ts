@@ -37,7 +37,7 @@ import {
 import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
 import {
   canOperatorAttach,
-  canUseDirectPaneFallback,
+  getBrokerPresentationPane,
   hasLeasedBrokerSubstrate,
 } from './broker/runtime-hosting.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
@@ -89,8 +89,9 @@ export async function captureRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot
 ): Promise<Response> {
-  const directPaneCapture = canUseDirectPaneFallback(runtime)
-  if (runtime.transport !== 'tmux' && !directPaneCapture) {
+  const pane =
+    runtime.transport === 'tmux' ? requireTmuxPane(runtime) : getBrokerPresentationPane(runtime)
+  if (!pane) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
       'cannot capture a non-interactive runtime; use the runtime event stream instead',
@@ -101,8 +102,28 @@ export async function captureRuntime(
     )
   }
 
-  const pane = requireTmuxPane(runtime)
-  const text = await this.tmuxForPane(pane).capture(pane.paneId)
+  const tmux = this.tmuxForPane(pane)
+  const observed = await tmux.inspectPane(pane.paneId)
+  if (
+    !observed ||
+    observed.socketPath !== pane.socketPath ||
+    observed.sessionName !== pane.sessionName ||
+    observed.windowName !== pane.windowName ||
+    observed.sessionId !== pane.sessionId ||
+    observed.windowId !== pane.windowId ||
+    observed.paneId !== pane.paneId
+  ) {
+    throw new HrcRuntimeUnavailableError(
+      `runtime "${runtime.runtimeId}" presentation pane is unavailable or changed`,
+      {
+        runtimeId: runtime.runtimeId,
+        expected: pane,
+        observed,
+      }
+    )
+  }
+
+  const text = await tmux.capture(pane.paneId)
 
   const now = timestamp()
   this.db.runtimes.update(
