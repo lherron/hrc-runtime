@@ -44,10 +44,12 @@ export async function probePersistedBrokerLease(
   const sessionName = leasedSubstrate?.sessionName ?? getBrokerRuntimeTmuxSessionName(runtime)
   let brokerWindow: TmuxPaneState | null = null
   let tuiWindow: TmuxPaneState | null = null
+  let observerWindow: TmuxPaneState | null = null
   if (socketPath) {
     const leaseTmux = createTmuxManager({ socketPath })
     brokerWindow = await leaseTmux.inspectWindow({ sessionName, windowName: 'broker' })
     tuiWindow = await leaseTmux.inspectWindow({ sessionName, windowName: 'tui' })
+    observerWindow = await leaseTmux.inspectWindow({ sessionName, windowName: 'observer' })
   }
   const brokerHealth: BrokerHealthState = endpoint
     ? await probeBrokerHealth(endpoint.socketPath)
@@ -59,6 +61,7 @@ export async function probePersistedBrokerLease(
     brokerHealth,
     brokerWindow,
     tuiWindow,
+    observerWindow,
   }
 }
 
@@ -77,6 +80,7 @@ export function toBrokerLeaseProbe(probe: BrokerReattachProbe): BrokerLeaseProbe
   return {
     tmuxSocketPath: broker.socketPath,
     sessionName: broker.sessionName,
+    brokerWindowName: broker.windowName,
     brokerWindow: {
       sessionId: broker.sessionId,
       windowId: broker.windowId,
@@ -89,6 +93,17 @@ export function toBrokerLeaseProbe(probe: BrokerReattachProbe): BrokerLeaseProbe
             windowId: probe.tuiWindow.windowId,
             paneId: probe.tuiWindow.paneId,
           },
+          tuiWindowName: probe.tuiWindow.windowName,
+        }
+      : {}),
+    ...(probe.observerWindow
+      ? {
+          observerWindow: {
+            sessionId: probe.observerWindow.sessionId,
+            windowId: probe.observerWindow.windowId,
+            paneId: probe.observerWindow.paneId,
+          },
+          observerWindowName: probe.observerWindow.windowName,
         }
       : {}),
   }

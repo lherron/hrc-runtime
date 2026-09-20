@@ -457,6 +457,9 @@ export async function reconcileDurableBrokerRuntimeReattach(
     observedTuiSessionId: probe.tuiWindow?.sessionId,
     observedTuiWindowId: probe.tuiWindow?.windowId,
     observedTuiPaneId: probe.tuiWindow?.paneId,
+    observedObserverSessionId: probe.observerWindow?.sessionId,
+    observedObserverWindowId: probe.observerWindow?.windowId,
+    observedObserverPaneId: probe.observerWindow?.paneId,
   })
 
   // A draining broker is NOT dead — observe and decline to bind (the shutdown-

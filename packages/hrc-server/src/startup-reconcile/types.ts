@@ -73,6 +73,7 @@ export type BrokerReattachProbe = {
   brokerSocketLive: boolean
   brokerWindow: TmuxPaneState | null
   tuiWindow: TmuxPaneState | null
+  observerWindow?: TmuxPaneState | null
   userExited?: boolean | undefined
   /** Result of the `broker.health` round-trip; absent for legacy/raw probes. */
   brokerHealth?: BrokerHealthState | undefined

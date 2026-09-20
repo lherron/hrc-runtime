@@ -39,6 +39,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { brokerLeaseIdentityMatches, compareBrokerLeaseIdentity } from '../broker/runtime-hosting'
 import type { BrokerLeaseProbe } from '../broker/runtime-hosting'
+import { toBrokerLeaseProbe } from '../startup-reconcile/broker-probe'
 
 // ── minimal runtime fixture builder ──────────────────────────────────────────
 
@@ -48,12 +49,49 @@ import {
   NORM_SESSION,
   NORM_TMUX_SOCKET,
   flatInteractiveRuntime,
+  flatObserverRuntime,
   makeRuntime,
   noBrokerBlockRuntime,
   normalizedHeadlessRuntime,
   normalizedInteractiveRuntime,
 } from './broker-runtime-hosting.fixture.js'
 describe('brokerLeaseIdentityMatches (G4)', () => {
+  it('carries the production observer-window observation into strict identity admission', () => {
+    const probe = toBrokerLeaseProbe({
+      brokerSocketLive: true,
+      brokerHealth: 'ok',
+      brokerWindow: {
+        socketPath: FLAT_TMUX_SOCKET,
+        sessionName: FLAT_SESSION,
+        windowName: 'broker',
+        sessionId: '$3',
+        windowId: '@7',
+        paneId: '%12',
+      },
+      tuiWindow: null,
+      observerWindow: {
+        socketPath: FLAT_TMUX_SOCKET,
+        sessionName: FLAT_SESSION,
+        windowName: 'observer',
+        sessionId: '$3',
+        windowId: '@9',
+        paneId: '%14',
+      },
+    })
+
+    expect(probe).toBeDefined()
+    expect(brokerLeaseIdentityMatches(flatObserverRuntime, probe!)).toBe(true)
+    expect(
+      brokerLeaseIdentityMatches(flatObserverRuntime, { ...probe!, observerWindow: undefined })
+    ).toBe(false)
+    expect(
+      brokerLeaseIdentityMatches(flatObserverRuntime, {
+        ...probe!,
+        observerWindowName: 'tui',
+      })
+    ).toBe(false)
+  })
+
   // Probes for normalizedInteractiveRuntime (rt-456, tmux-tui)
   const interactiveProbe: BrokerLeaseProbe = {
     tmuxSocketPath: NORM_TMUX_SOCKET,
