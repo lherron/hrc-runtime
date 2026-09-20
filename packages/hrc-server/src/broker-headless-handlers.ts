@@ -31,6 +31,7 @@ import {
   prepareAspdHeadlessAttempt,
   readAspdPreparation,
 } from './aspd-headless-start.js'
+import { createBirthTimeline } from './birth-timeline.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { isClosedDbError } from './broker/controller/internal.js'
@@ -543,6 +544,18 @@ export async function startHeadlessBrokerRuntime(
   )
   const requestedTurnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...boundIntent, initialPrompt: prompt } : boundIntent
+  const presentation =
+    requestedTurnIntent.presentation?.operator ??
+    (toProfileSelector(requestedTurnIntent)?.brokerDriver === 'muse-serve' ? 'observer' : 'default')
+  const birthTimeline = createBirthTimeline({
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    hostSessionId: session.hostSessionId,
+    generation: session.generation,
+    runId,
+    presentation,
+  })
+  birthTimeline.mark('request-received')
   // T-08542: a node that declares an aspd endpoint prepares ordinary headless
   // codex-app-server there, with no facade/toolchain fallback. Headless
   // muse-serve prepares on its own route the same way.
@@ -554,7 +567,8 @@ export async function startHeadlessBrokerRuntime(
       requestedTurnIntent,
       runId,
       aspdEndpoint,
-      options
+      options,
+      birthTimeline
     )
   }
   // T-08596 (T-08569A closure): the bundled ASP execution closure is removed.
@@ -585,7 +599,8 @@ async function startAspdHeadlessBrokerRuntime(
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
-  }
+  },
+  birthTimeline: ReturnType<typeof createBirthTimeline>
 ): Promise<HrcRuntimeSnapshot> {
   const resumable =
     options.dispatchIdempotencyKey !== undefined
@@ -623,11 +638,14 @@ async function startAspdHeadlessBrokerRuntime(
       allowCompilerInitialInputWithoutIdentity: options.allowCompilerInitialInputWithoutIdentity,
       responseFormat: options.responseFormat,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+      birthTimeline,
     })
   }
+  birthTimeline.mark('aspd-preparation-frozen', { operationId })
   const { runtime, intent } = await launchAspdPreparedAttempt(server, operationId, {
     ...dispatchRunPersistence(options),
     ...(options.onAccepted ? { onAccepted: options.onAccepted } : {}),
+    birthTimeline,
     settleFailure: (error) => {
       const { record } = readAspdPreparation(server, operationId)
       return settleFailedHeadlessBrokerStart(server, {

@@ -222,6 +222,7 @@ export async function allocateSubstrateVia(
           },
         }
       : {}),
+    ...(input.birthTimeline !== undefined ? { birthTimeline: input.birthTimeline } : {}),
   })
   if (allocation.socketPath.length === 0) {
     throw new BrokerControllerError(

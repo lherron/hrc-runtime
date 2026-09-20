@@ -48,6 +48,7 @@ import type {
   CompiledRuntimePlan,
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
+import type { BirthTimeline } from './birth-timeline.js'
 import type { BrokerControllerStartInput } from './broker/controller/types.js'
 
 import { actuatorSplitRuntimeAuthority, assertActuatorSplitAdmission } from './actuator-split.js'
@@ -356,6 +357,7 @@ export type AspdPrepareInput = {
   responseFormat?: HrcTurnResponseFormat | undefined
   dispatchIdempotencyKey?: string | undefined
   timing?: PrecompileLaunchTimingContext | undefined
+  birthTimeline?: BirthTimeline | undefined
 }
 
 /** Prepare through aspd and commit boundary P. Returns the prepared operation id. */
@@ -388,6 +390,7 @@ export async function prepareAspdHeadlessAttempt(
           ...(launchCarriedPrompt.mode === 'append-to-priming' ? {} : { omitPriming: true }),
         }
       : intent
+  input.birthTimeline?.mark('aspd-compile-begin')
   const compiled = await compileBrokerRuntimePlan(
     {
       intent: compileIntent,
@@ -441,6 +444,21 @@ export async function prepareAspdHeadlessAttempt(
     })
   }
   const response = prepared.response
+  input.birthTimeline?.enrich({
+    runtimeId,
+    operationId: String(compiled.identity.operationId),
+    invocationId: String(compiled.identity.invocationId),
+    compileId: String(compiled.plan.compileId),
+    releaseId: prepared.service.release.releaseId,
+    executionReleaseId: response.executionRelease?.releaseId,
+  })
+  input.birthTimeline?.mark('aspd-compile-admitted', {
+    runtimeId,
+    operationId: String(compiled.identity.operationId),
+    invocationId: String(compiled.identity.invocationId),
+    compileId: String(compiled.plan.compileId),
+    releaseId: prepared.service.release.releaseId,
+  })
   const release = response.executionRelease
   if (release === undefined) {
     throw aspdStartError(
@@ -556,6 +574,7 @@ export async function prepareAspdHeadlessAttempt(
       { hostSessionId: session.hostSessionId, runId }
     )
   }
+  input.birthTimeline?.enrich({ presentation })
   const paths = describeAspdHostingPaths(server.options, brokerDriver, runtimeId, presentation)
   const argv = aspdWorkerArgv(
     release,
@@ -565,6 +584,13 @@ export async function prepareAspdHeadlessAttempt(
   const runtimeAuthority = actuatorSplitRuntimeAuthority(actuatorSplitAuthority)
   const requestedResponseFormat = toBrokerResponseFormat(input.responseFormat)
   const preparedAt = timestamp()
+  input.birthTimeline?.mark('aspd-preparation-commit', {
+    runtimeId,
+    operationId,
+    invocationId: String(compiled.identity.invocationId),
+    compileId: String(compiled.plan.compileId),
+    releaseId: release.releaseId,
+  })
   const aspdRouteDecision = {
     preparation: 'aspd',
     aspdEndpoint: endpoint,
@@ -799,6 +825,7 @@ export type AspdLaunchOptions = DispatchRunPersistenceOptions & {
    * this process's pending attach, which a preparation cannot outlive.
    */
   attachBeforeInvocationStart?: BrokerControllerStartInput['attachBeforeInvocationStart']
+  birthTimeline?: BirthTimeline | undefined
   settleFailure: (error: {
     code: string
     message: string
@@ -817,6 +844,16 @@ export async function launchAspdPreparedAttempt(
   options: AspdLaunchOptions
 ): Promise<{ runtime: HrcRuntimeSnapshot; intent: HrcRuntimeIntent }> {
   const { status, record } = readAspdPreparation(server, operationId)
+  options.birthTimeline?.enrich({
+    runtimeId: record.runtimeId,
+    operationId,
+    invocationId: String(record.admission.identity.invocationId),
+    compileId: String(record.admission.plan.compileId),
+    releaseId: record.aspd.release.releaseId,
+    executionReleaseId: record.executionRelease.releaseId,
+    presentation: record.hosting.presentation,
+  })
+  options.birthTimeline?.mark('aspd-prepared-attempt-read', { operationId })
   const detail = {
     operationId,
     runtimeId: record.runtimeId,
@@ -916,6 +953,7 @@ export async function launchAspdPreparedAttempt(
   }
 
   writeServerLog('INFO', 'aspd.launch.begin', { ...detail, executable })
+  options.birthTimeline?.mark('aspd-launch-authority-validated', detail)
   const controller = server.getHarnessBrokerController()
   const admission = record.admission
   const result = await controller.start({
@@ -925,6 +963,7 @@ export async function launchAspdPreparedAttempt(
     specHash: admission.specHash,
     startRequestHash: admission.startRequestHash,
     identity: admission.identity,
+    ...(options.birthTimeline !== undefined ? { birthTimeline: options.birthTimeline } : {}),
     ...(record.dispatch.runtimeAuthority !== undefined
       ? { runtimeAuthority: record.dispatch.runtimeAuthority }
       : {}),

@@ -461,6 +461,12 @@ async function startControllerAttempt(
         ctx.metricsStateRoot
       )
     }
+    input.birthTimeline?.mark(phase, {
+      runtimeId: String(input.identity.runtimeId),
+      operationId: String(input.identity.operationId),
+      invocationId: String(input.identity.invocationId),
+      ...(input.identity.runId !== undefined ? { runId: String(input.identity.runId) } : {}),
+    })
   }
   const markPhase = (phase: string): void => {
     const nowMs = performance.now()

@@ -4,6 +4,7 @@ import { access, chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 
 import type { AspToolchainBinarySelection } from '../asp-toolchain.js'
+import type { BirthTimeline } from '../birth-timeline.js'
 import type {
   BrokerTmuxAllocation,
   BrokerTmuxAllocator,
@@ -112,6 +113,8 @@ export type AllocateBrokerSubstrateInput = {
    * launch of the same never-submitted attempt is released first.
    */
   workerLaunch?: FrozenWorkerLaunch | undefined
+  /** Observational only: reports real substrate subphases to the birth timeline. */
+  birthTimeline?: BirthTimeline | undefined
 }
 
 export type FrozenWorkerLaunch = {
@@ -187,6 +190,7 @@ export async function allocateBrokerSubstrate(
 ): Promise<BrokerSubstrateAllocation> {
   const now = deps.now ?? timestamp
   const { runtimeId, hostSessionId, generation, driverKind, presentation } = input
+  const mark = (phase: string) => input.birthTimeline?.mark(phase)
 
   const paths = describeBrokerSubstratePaths(options, driverKind, runtimeId)
   const brokerIpcSocketPath = paths.brokerIpcSocketPath
@@ -194,6 +198,7 @@ export async function allocateBrokerSubstrate(
   // sockaddr_un path fails EARLY with a readable error, never a later
   // bind/connect errno.
   preflightBrokerIpcSocketPath(brokerIpcSocketPath)
+  mark('substrate-path-preflight')
 
   const workerLaunch = input.workerLaunch
   // T-08596 (T-08569A closure): the toolchain resolver is deleted. Only a
@@ -228,12 +233,14 @@ export async function allocateBrokerSubstrate(
   // leaf explicitly to guarantee rwx------.
   await mkdir(ipcDir, { recursive: true, mode: 0o700 })
   await chmod(ipcDir, 0o700)
+  mark('substrate-ipc-directory')
 
   // Allocate the attach token and persist it by REFERENCE (owner-only file). The
   // raw secret never enters runtime_state_json — only the redacted ref.
   const attachToken = deps.generateAttachToken()
   const attachTokenPath = join(ipcDir, 'attach.token')
   await writeFile(attachTokenPath, attachToken, { mode: 0o600 })
+  mark('substrate-token-ledger-setup')
 
   const tmux = deps.tmuxManagerFactory({ socketPath: btmuxSocketPath })
   if (workerLaunch !== undefined) {
@@ -241,8 +248,10 @@ export async function allocateBrokerSubstrate(
     // attempt, so a lease left by an interrupted earlier launch holds no native
     // invocation and is HRC's to reclaim before the relaunch.
     await releaseBrokerLeaseServer(deps, btmuxSocketPath, brokerIpcSocketPath)
+    mark('substrate-stale-lease-release')
   }
   await tmux.initialize()
+  mark('substrate-tmux-server-initialize')
 
   const sessionName = `hrc-${driverKind}-${runtimeId}`
   // T-01801: wire the broker's durability surface so attach-replay across a daemon
@@ -274,6 +283,7 @@ export async function allocateBrokerSubstrate(
     command: brokerCommand,
     ...(input.brokerEnv !== undefined ? { env: input.brokerEnv } : {}),
   })
+  mark('substrate-tmux-session-window-worker-spawn')
 
   // presentation='tmux-tui' adds the operator TUI window; presentation='observer'
   // adds the observer window (renderer pane, no TUI process — the driver
@@ -288,6 +298,8 @@ export async function allocateBrokerSubstrate(
     presentation === 'observer'
       ? await tmux.createOrInspectWindow({ sessionName, windowName: 'observer' })
       : undefined
+  if (presentation === 'tmux-tui') mark('substrate-tmux-tui-window')
+  if (presentation === 'observer') mark('substrate-observer-window-prepare')
 
   // Capture the broker pane's running pid for persisted identity (best effort —
   // pane ids alone are known weak; the pid/command corroborate).
@@ -298,6 +310,7 @@ export async function allocateBrokerSubstrate(
       brokerPid = proc.pid
     }
   }
+  mark('substrate-worker-process-inspect')
 
   const endpoint: BrokerRuntimeEndpoint = {
     kind: 'unix-jsonrpc-ndjson',
@@ -543,6 +556,7 @@ export function createBrokerDurableTmuxAllocator(
       generation,
       brokerEnv,
       workerLaunch,
+      birthTimeline,
     }): Promise<BrokerTmuxAllocation> => {
       const sub = await allocateBrokerSubstrate(options, deps, {
         runtimeId,
@@ -554,6 +568,7 @@ export function createBrokerDurableTmuxAllocator(
         ...(brokerEnv !== undefined ? { brokerEnv } : {}),
         // T-08556: an aspd-prepared interactive TUI launches its frozen release worker.
         ...(workerLaunch !== undefined ? { workerLaunch } : {}),
+        ...(birthTimeline !== undefined ? { birthTimeline } : {}),
       })
       // tmux-tui always yields a COMPLETE TUI window + lease; validate-and-narrow
       // the optional fields at runtime (fail-fast on a latent partial) rather than
@@ -603,6 +618,7 @@ export function createBrokerDurableHeadlessAllocator(
       generation,
       brokerEnv,
       workerLaunch,
+      birthTimeline,
     }): Promise<BrokerTmuxAllocation> => {
       const sub = await allocateBrokerSubstrate(options, deps, {
         runtimeId,
@@ -613,6 +629,7 @@ export function createBrokerDurableHeadlessAllocator(
         presentation: 'none',
         ...(brokerEnv !== undefined ? { brokerEnv } : {}),
         ...(workerLaunch !== undefined ? { workerLaunch } : {}),
+        ...(birthTimeline !== undefined ? { birthTimeline } : {}),
       })
       // No lease / tuiWindow: presentation='none' has no operator pane.
       return projectBaseAllocation(sub)
@@ -709,6 +726,7 @@ export function createBrokerTmuxTuiAllocator(
       generation,
       brokerEnv,
       workerLaunch,
+      birthTimeline,
     }): Promise<BrokerTmuxAllocation> => {
       // HRC selects ONE observer socket path (same bipc/<hash>/ leaf as b.sock) so
       // the broker launch command and the renderer dispatch env never derive it
@@ -725,6 +743,7 @@ export function createBrokerTmuxTuiAllocator(
         ...(brokerEnv !== undefined ? { brokerEnv } : {}),
         // T-08554: an aspd-prepared viewer launches its frozen release worker.
         ...(workerLaunch !== undefined ? { workerLaunch } : {}),
+        ...(birthTimeline !== undefined ? { birthTimeline } : {}),
       })
       // tmux-tui always yields a COMPLETE TUI window + lease; validate-and-narrow
       // the optional fields (fail-fast on a latent partial) rather than trusting
@@ -768,6 +787,7 @@ export function createBrokerObserverPaneAllocator(
       generation,
       brokerEnv,
       workerLaunch,
+      birthTimeline,
     }): Promise<BrokerTmuxAllocation> => {
       // HRC selects ONE observer socket path (same bipc/<hash>/ leaf as b.sock) so
       // the broker launch command and the renderer dispatch env never derive it
@@ -783,6 +803,7 @@ export function createBrokerObserverPaneAllocator(
         observerSocketPath,
         ...(brokerEnv !== undefined ? { brokerEnv } : {}),
         ...(workerLaunch !== undefined ? { workerLaunch } : {}),
+        ...(birthTimeline !== undefined ? { birthTimeline } : {}),
       })
       // observer always yields a COMPLETE observer window + lease; same
       // fail-fast narrowing as the tmux-tui allocator (T-04755).

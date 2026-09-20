@@ -122,6 +122,17 @@ export async function publishPresentation(
       },
     })
     this.notifyEvent(event)
+    writeServerLog('INFO', 'runtime.birth.presentation-published', {
+      runtimeId: current.runtimeId,
+      hostSessionId: current.hostSessionId,
+      scopeRef: current.scopeRef,
+      laneRef: current.laneRef,
+      generation: current.generation,
+      invocationId: current.activeInvocationId,
+      operationId: current.activeOperationId,
+      runId: current.activeRunId,
+      presentation: record,
+    })
   } catch (error) {
     writeServerLog('WARN', 'runtime_presentation.publish_failed', {
       runtimeId: runtime.runtimeId,

@@ -67,6 +67,7 @@ import type {
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
 import type { AspToolchainBinarySelection } from '../../asp-toolchain.js'
+import type { BirthTimeline } from '../../birth-timeline.js'
 
 import type { BrokerEventMapper } from '../event-mapper'
 import type { BrokerAttachTokenRef } from '../runtime-state'
@@ -293,6 +294,8 @@ export type BrokerTmuxAllocator = {
     brokerEnv?: Record<string, string> | undefined
     /** T-08542 — frozen aspd worker launch; bypasses ASP toolchain selection entirely. */
     workerLaunch?: { executable: string; argv: string[] } | undefined
+    /** Observational fresh-birth subphase timeline; never persisted or authoritative. */
+    birthTimeline?: BirthTimeline | undefined
   }): Promise<BrokerTmuxAllocation>
   /**
    * T-08542 — release a lease this allocator realized that never carried
@@ -475,6 +478,8 @@ export type BrokerControllerStartInput = {
   specHash: string
   startRequestHash: string
   identity: RuntimeIdentityAllocation
+  /** Ephemeral correlated birth timing; never part of compile or start bytes. */
+  birthTimeline?: BirthTimeline | undefined
   dispatchEnv?: Record<string, string> | undefined
   /** Credential channel injected into the per-runtime broker process; never persisted. */
   brokerEnv?: Record<string, string> | undefined
