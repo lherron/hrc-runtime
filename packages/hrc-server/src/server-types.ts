@@ -20,6 +20,7 @@ import type {
   SubmissionOrigin,
   TurnPolicy,
 } from 'spaces-harness-broker-protocol'
+import type { BirthTimeline } from './birth-timeline.js'
 import type { ExternalParticipantClientFactory } from './external-registration-rendezvous.js'
 import type { FederationConfig } from './federation/federation-config.js'
 import type { ParticipantAdapterRegistry } from './participant-adapter-registry.js'
@@ -99,6 +100,8 @@ export type AttachBeforeInvocationStartOption = {
 }
 
 export type DispatchRunPersistenceOptions = Pick<HrcRunRecord, 'dispatchIdempotencyKey'> & {
+  /** Process-local birth trace; observational and never persisted. */
+  birthTimeline?: BirthTimeline | undefined
   /** Admission syscall selected by the caller; never inferred from seat state. */
   submissionDoor?: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
   submissionOrigin?: SubmissionOrigin | undefined
@@ -176,6 +179,7 @@ export function dispatchRunPersistence(
 ): DispatchRunPersistenceOptions {
   return {
     dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    birthTimeline: options.birthTimeline,
     submissionDoor: options.submissionDoor,
     submissionOrigin: options.submissionOrigin,
     ttlMs: options.ttlMs,

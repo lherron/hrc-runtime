@@ -459,6 +459,10 @@ export async function prepareAspdHeadlessAttempt(
     compileId: String(compiled.plan.compileId),
     releaseId: prepared.service.release.releaseId,
   })
+  input.birthTimeline?.mark('launch-carried-input-compiled', {
+    initialInputId: String(compiled.identity.initialInputId),
+    launchCarried: compileIntent.initialPrompt !== undefined,
+  })
   const release = response.executionRelease
   if (release === undefined) {
     throw aspdStartError(

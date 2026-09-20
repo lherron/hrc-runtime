@@ -15,10 +15,12 @@ export type BirthTimeline = {
 export function createBirthTimeline(input: {
   scopeRef: string
   laneRef: string
-  hostSessionId: string
-  generation: number
-  runId: string
-  presentation: string
+  /** Stable request-level key, available before HRC mints a run. */
+  birthId?: string | undefined
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  runId?: string | undefined
+  presentation?: string | undefined
   now?: () => number
   logger?: (fields: Record<string, unknown>) => void
 }): BirthTimeline {
@@ -40,10 +42,11 @@ export function createBirthTimeline(input: {
           elapsedMs,
           scopeRef: input.scopeRef,
           laneRef: input.laneRef,
-          hostSessionId: input.hostSessionId,
-          generation: input.generation,
-          runId: input.runId,
-          presentation: input.presentation,
+          ...(input.birthId !== undefined ? { birthId: input.birthId } : {}),
+          ...(input.hostSessionId !== undefined ? { hostSessionId: input.hostSessionId } : {}),
+          ...(input.generation !== undefined ? { generation: input.generation } : {}),
+          ...(input.runId !== undefined ? { runId: input.runId } : {}),
+          ...(input.presentation !== undefined ? { presentation: input.presentation } : {}),
           ...correlation,
           ...extra,
         }

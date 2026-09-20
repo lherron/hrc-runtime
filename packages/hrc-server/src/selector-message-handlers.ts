@@ -21,6 +21,7 @@ import {
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 
 import { assertAppIdentityOwner, issueAppBirthRunGrantForCompile } from './app-session-identity.js'
+import type { BirthTimeline } from './birth-timeline.js'
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { assertReservedAddressAllowsBirth } from './participant-address-provisioning.js'
 import { requireSession } from './require-helpers.js'
@@ -241,8 +242,13 @@ export async function ensureTargetSession(
   intent: HrcRuntimeIntent,
   parsedScopeJson?: Record<string, unknown>,
   origin: 'local' | 'federated-ingress' = 'local',
-  options: { persistIntent?: boolean | undefined } = {}
+  options: {
+    persistIntent?: boolean | undefined
+    /** Ephemeral semantic-turn birth trace; never affects summon authority. */
+    birthTimeline?: BirthTimeline | undefined
+  } = {}
 ): Promise<HrcSessionRecord> {
+  const birthTimeline = options.birthTimeline
   const normalized = normalizeTargetSessionRef(sessionRef)
   const { scopeRef, laneRef } = parseSessionRef(normalized)
   assertLocalPersonaAllowed(this, scopeRef)
@@ -250,6 +256,11 @@ export async function ensureTargetSession(
   assertReservedAddressAllowsBirth(this, scopeRef, laneRef)
   const existing = findTargetSession(this.db, normalized)
   if (existing) {
+    birthTimeline?.enrich({
+      hostSessionId: existing.hostSessionId,
+      generation: existing.generation,
+    })
+    birthTimeline?.mark('session-existing')
     const now = timestamp()
     if (existing.status === 'archived' && existing.continuation?.key) {
       // Successor creation from an archived continuation is a summon: "no live
@@ -314,6 +325,7 @@ export async function ensureTargetSession(
     return requireSession(this.db, existing.hostSessionId)
   }
 
+  birthTimeline?.mark('home-resolution-begin')
   return await withSummonAuthority(
     this,
     {
@@ -328,8 +340,15 @@ export async function ensureTargetSession(
       ...(intent.provision === undefined ? {} : { provision: intent.provision }),
     },
     (claimAuthority) => {
+      // `withSummonAuthority` invokes its mint callback only after authority
+      // has resolved and any required home/designation establishment committed.
+      birthTimeline?.mark('home-resolution-designated')
       const raced = findTargetSession(this.db, normalized)
-      if (raced !== null) return raced
+      if (raced !== null) {
+        birthTimeline?.enrich({ hostSessionId: raced.hostSessionId, generation: raced.generation })
+        birthTimeline?.mark('session-raced-existing')
+        return raced
+      }
       const now = timestamp()
       const hostSessionId = createHostSessionId()
       const session: HrcSessionRecord = {
@@ -361,6 +380,11 @@ export async function ensureTargetSession(
 
       const event = this.appendEvent(created, 'session.created', { created: true, summon: true })
       this.notifyEvent(event)
+      birthTimeline?.enrich({
+        hostSessionId: created.hostSessionId,
+        generation: created.generation,
+      })
+      birthTimeline?.mark('session-created')
       return created
     }
   )

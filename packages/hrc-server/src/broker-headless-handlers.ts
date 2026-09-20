@@ -547,15 +547,26 @@ export async function startHeadlessBrokerRuntime(
   const presentation =
     requestedTurnIntent.presentation?.operator ??
     (toProfileSelector(requestedTurnIntent)?.brokerDriver === 'muse-serve' ? 'observer' : 'default')
-  const birthTimeline = createBirthTimeline({
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
+  const birthTimeline =
+    options.birthTimeline ??
+    createBirthTimeline({
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      birthId: runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runId,
+      presentation,
+    })
+  birthTimeline.enrich({
     hostSessionId: session.hostSessionId,
     generation: session.generation,
     runId,
     presentation,
   })
-  birthTimeline.mark('request-received')
+  birthTimeline.mark(
+    options.birthTimeline === undefined ? 'request-received' : 'runtime-start-entered'
+  )
   // T-08542: a node that declares an aspd endpoint prepares ordinary headless
   // codex-app-server there, with no facade/toolchain fallback. Headless
   // muse-serve prepares on its own route the same way.
@@ -894,7 +905,10 @@ export async function executeHeadlessBrokerStartTurn(
       // The attachability gate that used to stand here is redundant:
       // publishPresentation computes `operatorAttachable` itself and records it
       // either way, and the in-daemon spawn it fronts re-checks the predicate.
-      void this.publishPresentation(runtime, { signal: this.runtimeStartPresentationSignal })
+      void this.publishPresentation(runtime, {
+        signal: this.runtimeStartPresentationSignal,
+        birthTimeline: options.birthTimeline,
+      })
       if (!acceptedSettled) resolveAccepted(runtime)
       return runtime
     })

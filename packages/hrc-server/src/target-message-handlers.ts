@@ -37,6 +37,7 @@ import type {
 } from 'hrc-core'
 import { dispatchOriginFromMessageAddress } from './acp-event-bridge.js'
 import { refuseAppScopedSession } from './app-session-identity.js'
+import { createBirthTimeline } from './birth-timeline.js'
 import { shouldUseSdkTransport } from './broker-decisions.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
@@ -76,7 +77,7 @@ import {
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { isLiveProcess } from './server-lock.js'
 import { writeServerLog } from './server-log.js'
-import { normalizeOptionalQuery, parseJsonBody } from './server-parsers.js'
+import { normalizeOptionalQuery, parseJsonBody, parseSessionRef } from './server-parsers.js'
 import {
   isRuntimeUnavailableStatus,
   json,
@@ -1009,6 +1010,20 @@ export async function deliverPersistedSemanticTurnHandoff(
 ): Promise<SemanticTurnHandoffStartedResponse> {
   assertLocalPersonaAllowed(this, scopeRefOf(body.to.sessionRef))
   const summonOrigin = federationOriginNodeId(record) === undefined ? 'local' : 'federated-ingress'
+  const { scopeRef: requestedScopeRef, laneRef: requestedLaneRef } = parseSessionRef(
+    body.to.sessionRef
+  )
+  // This request record is the only correlation key that exists before summon
+  // authority selects a home and mints a session/run. It deliberately follows
+  // the launch as an ephemeral object rather than entering any authority or
+  // persistence surface.
+  const birthTimeline = createBirthTimeline({
+    scopeRef: requestedScopeRef,
+    laneRef: requestedLaneRef,
+    birthId: record.messageId,
+    presentation: 'pending',
+  })
+  birthTimeline.mark('request-received', { messageId: record.messageId })
   let session = findTargetSession(this.db, body.to.sessionRef)
   if (
     !session &&
@@ -1017,11 +1032,13 @@ export async function deliverPersistedSemanticTurnHandoff(
     // T-05161: never summon a local runtime for a Codex.app-owned address.
     !isCodexAppOwnedScopeRef(body.to.sessionRef)
   ) {
+    birthTimeline.mark('session-lookup-miss')
     session = await this.ensureTargetSession(
       body.to.sessionRef,
       body.runtimeIntent,
       body.parsedScopeJson,
-      summonOrigin
+      summonOrigin,
+      { birthTimeline }
     )
   }
 
@@ -1065,6 +1082,11 @@ export async function deliverPersistedSemanticTurnHandoff(
   }
 
   const sessionRef = formatSessionRef(session.scopeRef, session.laneRef)
+  birthTimeline.enrich({
+    hostSessionId: session.hostSessionId,
+    generation: session.generation,
+  })
+  birthTimeline.mark('session-resolved')
   this.db.messages.updateExecution(record.messageId, {
     sessionRef,
     hostSessionId: session.hostSessionId,
@@ -1073,6 +1095,7 @@ export async function deliverPersistedSemanticTurnHandoff(
 
   const intent = body.runtimeIntent ?? session.lastAppliedIntentJson
   const runId = `run-${randomUUID()}`
+  birthTimeline.enrich({ runId })
   const fromSeq = this.db.hrcEvents.maxHrcSeq() + 1
 
   try {
@@ -1147,11 +1170,16 @@ export async function deliverPersistedSemanticTurnHandoff(
       sessionRef,
     })
 
+    birthTimeline.mark('launch-carried-input-handoff', {
+      messageId: record.messageId,
+      promptLength: payload.length,
+    })
     const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
       runId,
       waitForCompletion: false,
       submissionDoor: 'enqueue',
       responseFormat: body.responseFormat,
+      birthTimeline,
       // T-07236: the DM sender IS the recorded initiating principal. Derived
       // here rather than asked for on the wire — the identity is already
       // durable on the message — so an agent-caused trip reaches ACP labelled

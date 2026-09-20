@@ -115,6 +115,7 @@ export type DispatchContext = {
     client: BrokerClientLike
     closing: boolean
     inspection?: ReturnType<typeof rehydrateInspectionCapabilities>
+    birthTimeline?: BrokerControllerStartInput['birthTimeline']
   }) => void
   consumeEvents: (runtimeId: string, events: AsyncIterable<InvocationEventEnvelope>) => void
   afterMappedEvent: (
@@ -903,6 +904,7 @@ async function startControllerAttempt(
       // T-01855: cache the freshly negotiated inspection capabilities so
       // inspection RPCs can gate on what THIS broker advertises.
       inspection: hello.capabilities.inspection,
+      ...(input.birthTimeline !== undefined ? { birthTimeline: input.birthTimeline } : {}),
     })
 
     ctx.mapper.projectCaptureState?.(String(identity.runtimeId), initialSnapshot?.capture)

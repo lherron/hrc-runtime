@@ -332,6 +332,7 @@ type ActiveBrokerRuntime = {
    * active record: cleared automatically when the runtime leaves `active`.
    */
   inspection?: BrokerInspectionCapabilities | undefined
+  birthTimeline?: BrokerControllerStartInput['birthTimeline']
 }
 
 type StagedParticipantBroker = {
@@ -653,6 +654,10 @@ export class HarnessBrokerController {
         this.intentionalClosingRuntimes.delete(record.runtimeId)
         this.clearSeatMonitor(record.runtimeId)
         this.active.set(record.runtimeId, record)
+        record.birthTimeline?.mark('seat-binding-established', {
+          runtimeId: record.runtimeId,
+          invocationId: record.invocationId,
+        })
         this.startSeatMonitor(record.runtimeId)
       },
       consumeEvents: (runtimeId, events) => this.consumeEvents(runtimeId, events),

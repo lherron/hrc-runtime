@@ -19,6 +19,7 @@
  */
 import type { HrcRuntimePresentationRecord, HrcRuntimeSnapshot } from 'hrc-core'
 
+import type { BirthTimeline } from './birth-timeline.js'
 import {
   getBrokerRuntimeTmuxAttachTarget,
   getBrokerRuntimeTmuxSocketPath,
@@ -30,6 +31,8 @@ import { writeServerLog } from './server-log.js'
 import { timestamp } from './server-util.js'
 
 export type PublishPresentationOptions = {
+  /** The in-process birth trace that led to this asynchronous publication. */
+  birthTimeline?: BirthTimeline | undefined
   /**
    * This invocation's operator terminal will attach, so the viewer is skipped
    * for THIS invocation only. Invocation-local: it rides on the event and is
@@ -131,6 +134,12 @@ export async function publishPresentation(
       invocationId: current.activeInvocationId,
       operationId: current.activeOperationId,
       runId: current.activeRunId,
+      presentation: record,
+    })
+    options.birthTimeline?.mark('viewer-presentation-published', {
+      runtimeId: current.runtimeId,
+      invocationId: current.activeInvocationId,
+      operationId: current.activeOperationId,
       presentation: record,
     })
   } catch (error) {
