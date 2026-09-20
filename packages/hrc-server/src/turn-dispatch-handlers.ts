@@ -623,13 +623,29 @@ export async function handleSubmission(
   // Read AFTER every session choice above (steer: no stale rotation, last
   // applied intent), so the classes checked belong to the incarnation the body
   // lands on. Those steer-only choices stay on the REQUESTED door on purpose.
-  const doorReport = submissionDoorReport(this, session, door)
-  const effectiveDoor = doorReport.effectiveDoor
-  const runId = `run-${randomUUID()}`
   const sessionBoundBody =
     door === 'steer'
       ? undefined
       : (body as EnqueueSubmissionRequest | InvokeSubmissionRequest | PreemptSubmissionRequest)
+  const doorReport = submissionDoorReport(this, session, door)
+  const effectiveDoor = doorReport.effectiveDoor
+  const idempotencyKey = sessionBoundBody?.idempotencyKey
+  const wait = 'wait' in body && body.wait === true
+  if (idempotencyKey !== undefined) {
+    const existing = this.db.runs.getByDispatchIdempotencyKey(session.hostSessionId, idempotencyKey)
+    if (existing !== null) {
+      return await waitForPublicDispatchStage(
+        this,
+        replayDispatchBody(this, existing),
+        wait ? 'terminal' : 'accepted',
+        true,
+        request.signal,
+        true,
+        publicDoorReport(door, doorReport)
+      )
+    }
+  }
+  const runId = `run-${randomUUID()}`
   // R7.6: resolution precedes runtime-intent validation, and this is where that
   // validation actually lives. A participant is routed by its durable linkage,
   // so it has no intent to validate and must not be asked for one -- that
@@ -652,7 +668,23 @@ export async function handleSubmission(
   }
   const invokeColdBirthPromptMode =
     door === 'invoke' ? (body as InvokeSubmissionRequest).coldBirth?.promptMode : undefined
-  const publicResponse = await dispatchPublicSubmission(this, session, intent, body.body, {
+  const operationKey =
+    idempotencyKey !== undefined ? `${session.hostSessionId}\u0000${idempotencyKey}` : undefined
+  const operations = idempotentDispatches.get(this) ?? new Map<string, InFlightIdempotentDispatch>()
+  if (!idempotentDispatches.has(this)) idempotentDispatches.set(this, operations)
+  const pending = operationKey !== undefined ? operations.get(operationKey) : undefined
+  if (pending !== undefined) {
+    return await waitForPublicDispatchStage(
+      this,
+      await pending.promise,
+      wait ? 'terminal' : 'accepted',
+      true,
+      request.signal,
+      true,
+      publicDoorReport(door, doorReport)
+    )
+  }
+  const dispatchPromise = dispatchPublicSubmission(this, session, intent, body.body, {
     runId,
     // The door response is not complete until the broker has minted its
     // submission identity. This may include provisioning a cold seat, but it
@@ -673,8 +705,18 @@ export async function handleSubmission(
     ...(sessionBoundBody?.establishedBrokerInvocationId !== undefined
       ? { establishedBrokerInvocationId: sessionBoundBody.establishedBrokerInvocationId }
       : {}),
+    ...(idempotencyKey !== undefined ? { dispatchIdempotencyKey: idempotencyKey } : {}),
     requireSubmissionIdentity: true,
   })
+  if (operationKey !== undefined) operations.set(operationKey, { promise: dispatchPromise })
+  let publicResponse: DispatchTurnResponse
+  try {
+    publicResponse = await dispatchPromise
+  } finally {
+    if (operationKey !== undefined && operations.get(operationKey)?.promise === dispatchPromise) {
+      operations.delete(operationKey)
+    }
+  }
   if (doorReport.requestedDoor !== undefined) {
     const runtimeId = publicResponse.runtimeId ?? doorReport.runtime?.runtimeId
     const invocationId =
@@ -702,7 +744,6 @@ export async function handleSubmission(
       payload,
     })
   }
-  const wait = 'wait' in body && body.wait === true
   return await waitForPublicDispatchStage(
     this,
     publicResponse,

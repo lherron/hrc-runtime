@@ -468,6 +468,8 @@ type HrcSubmissionRequestBase = {
 }
 
 type HrcSessionBoundSubmissionRequest = HrcSubmissionRequestBase & {
+  /** Caller-stable identity for replay after an ambiguous/lost response. */
+  idempotencyKey?: string | undefined
   /** Runtime intent applied at this dispatch boundary, identical to /v1/turns. */
   runtimeIntent?: HrcRuntimeIntent | undefined
   /** T-07397 surface-ownership proof, identical to /v1/turns. */

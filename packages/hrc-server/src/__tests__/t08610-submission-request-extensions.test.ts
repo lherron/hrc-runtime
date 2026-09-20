@@ -35,6 +35,7 @@ const runtimeIntent: HrcRuntimeIntent = {
 }
 
 type CapturedOptions = {
+  dispatchIdempotencyKey?: string | undefined
   ttlMs?: number | undefined
   coldBirthPromptMode?: ColdBirthPromptMode | undefined
 }
@@ -64,11 +65,15 @@ function installDispatchDouble(): void {
     options: CapturedOptions
   ) => {
     captured.push({
+      ...(options.dispatchIdempotencyKey !== undefined
+        ? { dispatchIdempotencyKey: options.dispatchIdempotencyKey }
+        : {}),
       ...(options.ttlMs !== undefined ? { ttlMs: options.ttlMs } : {}),
       ...(options.coldBirthPromptMode !== undefined
         ? { coldBirthPromptMode: options.coldBirthPromptMode }
         : {}),
     })
+    await new Promise((resolve) => setTimeout(resolve, 5))
     return Response.json({
       submissionId: 'sub-t08610',
       admission: 'admitted',
@@ -127,6 +132,17 @@ describe('invoke parser: ttlMs + coldBirth', () => {
     expect(parseSubmissionRequest(invokeBody(), 'invoke')).not.toHaveProperty('ttlMs')
   })
 
+  it('accepts a stable idempotency key on session-bound doors but not steer', () => {
+    expect(
+      parseSubmissionRequest(invokeBody({ idempotencyKey: 'failure-notice-1' }), 'enqueue')
+    ).toMatchObject({ idempotencyKey: 'failure-notice-1' })
+    const { runtimeIntent: _runtimeIntent, ...steer } = invokeBody({
+      idempotencyKey: 'failure-notice-1',
+    })
+    void _runtimeIntent
+    expect(() => parseSubmissionRequest(steer, 'steer')).toThrow('unknown field "idempotencyKey"')
+  })
+
   it('rejects bad promptMode, empty coldBirth, and unknown coldBirth fields', () => {
     expect(() =>
       parseSubmissionRequest(invokeBody({ coldBirth: { promptMode: 'launch' } }), 'invoke')
@@ -176,6 +192,19 @@ describe('invoke parser: ttlMs + coldBirth', () => {
 })
 
 describe('POST /v1/submissions/invoke option flow', () => {
+  it('coalesces concurrent retries carrying the same idempotency key', async () => {
+    const body = invokeBody({ idempotencyKey: 'failure-notice-1' })
+    const [first, replay] = await Promise.all([
+      fixture.postJson('/v1/submissions/invoke', body),
+      fixture.postJson('/v1/submissions/invoke', body),
+    ])
+
+    expect(first.status).toBe(202)
+    expect(replay.status).toBe(202)
+    expect(captured).toEqual([{ dispatchIdempotencyKey: 'failure-notice-1' }])
+    expect(await replay.json()).toMatchObject({ replayed: true })
+  })
+
   it('carries ttlMs and coldBirth.promptMode into dispatch', async () => {
     const res = await fixture.postJson(
       '/v1/submissions/invoke',

@@ -677,7 +677,9 @@ export function parseSubmissionRequest(
     ...(door === 'enqueue' || door === 'preempt' || door === 'invoke' ? ['ttlMs'] : []),
     // A steer joins the running turn or starts one, so it has a turn to wait on.
     'wait',
-    ...(door === 'steer' ? [] : ['turnPolicy', 'runtimeIntent', 'establishedBrokerInvocationId']),
+    ...(door === 'steer'
+      ? []
+      : ['idempotencyKey', 'turnPolicy', 'runtimeIntent', 'establishedBrokerInvocationId']),
     ...(door === 'invoke' ? ['coldBirth'] : []),
   ]
   rejectUnknownFields(input, allowed)
@@ -710,6 +712,7 @@ export function parseSubmissionRequest(
   }
   if (door === 'steer') return { ...common, ...(wait !== undefined ? { wait } : {}) }
 
+  const idempotencyKey = readOptionalNonEmptyStringField(input, 'idempotencyKey')
   const turnPolicy = requireOptionalOneOf(
     input['turnPolicy'],
     ['open', 'guarded'],
@@ -728,6 +731,7 @@ export function parseSubmissionRequest(
   const coldBirth = door === 'invoke' ? parseOptionalInvokeColdBirth(input['coldBirth']) : undefined
   return {
     ...common,
+    ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
     ...(ttlMs !== undefined ? { ttlMs } : {}),
     ...(coldBirth !== undefined ? { coldBirth } : {}),
     ...(turnPolicy !== undefined ? { turnPolicy } : {}),
