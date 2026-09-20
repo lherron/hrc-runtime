@@ -133,9 +133,10 @@ ambiguous upstream, shallow history that prevents comparison, or command failure
 
 Do not suppress exit codes with `|| true` in a grading path. Capture stdout, stderr,
 and exit status immediately, before another command or shell assignment can obscure
-it. Avoid shell-reserved variables such as zsh's read-only `status`; use a
-task-specific name such as `fetch_rc`. Empty output is evidence only when the command
-succeeded and the command contract says emptiness is meaningful.
+it. Avoid shell-special variables such as zsh's read-only `status` and its `path`
+array, which is tied to `PATH`; use task-specific names such as `fetch_rc` and
+`candidate_path`. Empty output is evidence only when the command succeeded and the
+command contract says emptiness is meaningful.
 
 ## Cleanliness gate
 
