@@ -612,10 +612,17 @@ export async function handleSubmission(
       } satisfies HrcSubmissionResponse)
     }
   }
+  const sessionBoundBody =
+    door === 'steer'
+      ? undefined
+      : (body as EnqueueSubmissionRequest | InvokeSubmissionRequest | PreemptSubmissionRequest)
   if (body.freshContext === true) {
     const rotation = await this.rotateSessionContext(session, {
       relaunch: false,
       dropContinuation: true,
+      ...(sessionBoundBody?.runtimeIntent !== undefined
+        ? { runtimeIntent: sessionBoundBody.runtimeIntent }
+        : {}),
       reason: `submission-${door}-fresh-context`,
     })
     session = requireSession(this.db, rotation.hostSessionId)
@@ -623,10 +630,6 @@ export async function handleSubmission(
   // Read AFTER every session choice above (steer: no stale rotation, last
   // applied intent), so the classes checked belong to the incarnation the body
   // lands on. Those steer-only choices stay on the REQUESTED door on purpose.
-  const sessionBoundBody =
-    door === 'steer'
-      ? undefined
-      : (body as EnqueueSubmissionRequest | InvokeSubmissionRequest | PreemptSubmissionRequest)
   const doorReport = submissionDoorReport(this, session, door)
   const effectiveDoor = doorReport.effectiveDoor
   const idempotencyKey = sessionBoundBody?.idempotencyKey

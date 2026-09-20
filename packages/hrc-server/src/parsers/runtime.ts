@@ -1050,11 +1050,20 @@ export function parseClearContextRequest(input: unknown): ClearContextRequest {
   }
   const relaunch = readOptionalBooleanField(input, 'relaunch')
   const dropContinuation = readOptionalBooleanField(input, 'dropContinuation')
+  const runtimeIntent = input['runtimeIntent']
+  if (runtimeIntent !== undefined && !isRecord(runtimeIntent)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runtimeIntent must be an object',
+      { field: 'runtimeIntent' }
+    )
+  }
 
   return {
     hostSessionId: hostSessionId.trim(),
     ...(typeof relaunch === 'boolean' ? { relaunch } : {}),
     ...(typeof dropContinuation === 'boolean' ? { dropContinuation } : {}),
+    ...(runtimeIntent !== undefined ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) } : {}),
   }
 }
 

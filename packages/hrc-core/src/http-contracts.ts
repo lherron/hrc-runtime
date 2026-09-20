@@ -738,6 +738,7 @@ export type ClearContextRequest = {
   hostSessionId: string
   relaunch?: boolean | undefined
   dropContinuation?: boolean | undefined
+  runtimeIntent?: HrcRuntimeIntent | undefined
 }
 
 export type ClearContextResponse = {

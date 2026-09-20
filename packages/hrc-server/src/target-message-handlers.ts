@@ -1052,6 +1052,7 @@ export async function deliverPersistedSemanticTurnHandoff(
     const rotation = await this.rotateSessionContext(session, {
       relaunch: false,
       dropContinuation: true,
+      ...(body.runtimeIntent !== undefined ? { runtimeIntent: body.runtimeIntent } : {}),
       reason: 'semantic-turn-fresh-context',
     })
     session = requireSession(this.db, rotation.hostSessionId)

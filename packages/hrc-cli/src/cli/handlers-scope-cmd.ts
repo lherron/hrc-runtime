@@ -329,6 +329,7 @@ export async function cmdRun(
         ? await client.clearContext({
             hostSessionId: resolved.hostSessionId,
             dropContinuation: true,
+            runtimeIntent: intent,
           })
         : resolved
     const hasPrompt = prompt !== undefined && prompt.length > 0
@@ -728,6 +729,7 @@ export async function cmdStart(args: string[]): Promise<void> {
         ? await client.clearContext({
             hostSessionId: resolved.hostSessionId,
             dropContinuation: true,
+            runtimeIntent: intent,
           })
         : resolved
     const runtime = await executeManagedStart(client, {

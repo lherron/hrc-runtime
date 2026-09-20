@@ -59,6 +59,14 @@ type Internal = {
   db: HrcDatabase
   options: { runtimeRoot: string }
   harnessBrokerController?: HarnessBrokerController
+  rotateSessionContext(
+    session: HrcSessionRecord,
+    options: {
+      relaunch: boolean
+      dropContinuation?: boolean | undefined
+      runtimeIntent?: HrcRuntimeIntent | undefined
+    }
+  ): Promise<{ hostSessionId: string }>
   dispatchTurnForSession(
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent | undefined,
@@ -241,6 +249,60 @@ describe('headless muse-serve route selection', () => {
 })
 
 describe('headless muse-serve birth through aspd', () => {
+  it('fresh rotation drops a prior per-birth opt-out and reapplies the observer node policy', async () => {
+    const prior = await session()
+    internal().db.sessions.updateIntent(
+      prior.hostSessionId,
+      { ...museIntent(), presentation: { operator: 'none' } },
+      new Date().toISOString()
+    )
+    const seeded = internal().db.sessions.getByHostSessionId(prior.hostSessionId)
+    if (seeded === null) throw new Error('seeded session missing')
+
+    const rotation = await internal().rotateSessionContext(seeded, {
+      relaunch: false,
+      dropContinuation: true,
+    })
+    const successor = internal().db.sessions.getByHostSessionId(rotation.hostSessionId)
+    if (successor === null) throw new Error('successor session missing')
+
+    expect(successor.lastAppliedIntentJson?.presentation?.operator).toBeUndefined()
+    const response = await kickerSummons(successor)
+    expect(response.status).toBe(200)
+    await settle(() => ledger.startCalls.length === 1)
+
+    const [op] = operations(successor.hostSessionId)
+    expect(op?.record.hosting.presentation).toBe('observer')
+    expect(op?.record.dispatch.routeDecision).toMatchObject({
+      operatorPresentation: 'observer',
+      operatorPresentationSource: 'node-default',
+    })
+  })
+
+  it('fresh rotation preserves an explicit successor opt-out', async () => {
+    const prior = await seedMuse()
+    const explicitNone = { ...museIntent(), presentation: { operator: 'none' as const } }
+    const rotation = await internal().rotateSessionContext(prior, {
+      relaunch: false,
+      dropContinuation: true,
+      runtimeIntent: explicitNone,
+    })
+    const successor = internal().db.sessions.getByHostSessionId(rotation.hostSessionId)
+    if (successor === null) throw new Error('successor session missing')
+
+    expect(successor.lastAppliedIntentJson?.presentation?.operator).toBe('none')
+    const response = await kickerSummons(successor)
+    expect(response.status).toBe(200)
+    await settle(() => ledger.startCalls.length === 1)
+
+    const [op] = operations(successor.hostSessionId)
+    expect(op?.record.hosting.presentation).toBe('none')
+    expect(op?.record.dispatch.routeDecision).toMatchObject({
+      operatorPresentation: 'none',
+      operatorPresentationSource: 'request',
+    })
+  })
+
   it('mail summons prepares route headless-muse-serve with the observer viewer and launches the frozen worker', async () => {
     const s = await seedMuse()
     const response = await kickerSummons(s)

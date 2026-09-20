@@ -3,6 +3,7 @@ import type {
   ClearContextResponse,
   HrcAppSessionRef,
   HrcAppSessionSpec,
+  HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from 'hrc-core'
@@ -156,6 +157,7 @@ export async function rotateSessionContext(
     dropContinuation?: boolean | undefined
     managed?: AppManagedSessionRecord | undefined
     relaunchSpec?: HrcAppSessionSpec | undefined
+    runtimeIntent?: HrcRuntimeIntent | undefined
     reason?: string | undefined
     /**
      * Extra statements to execute inside the SAME transaction as the successor
@@ -186,6 +188,12 @@ export async function rotateSessionContext(
   const effectiveSpec = resolveClearContextSpec(managed, options.relaunchSpec, options.relaunch)
   const reason = options.reason ?? 'clear-context'
   const now = timestamp()
+  const inheritedIntent = session.lastAppliedIntentJson
+  const successorIntent =
+    options.runtimeIntent ??
+    (options.dropContinuation === true && inheritedIntent !== undefined
+      ? withoutPerBirthOperatorChoice(inheritedIntent)
+      : inheritedIntent)
   const nextSession: HrcSessionRecord = {
     hostSessionId: createHostSessionId(),
     scopeRef: session.scopeRef,
@@ -196,9 +204,7 @@ export async function rotateSessionContext(
     createdAt: now,
     updatedAt: now,
     ancestorScopeRefs: session.ancestorScopeRefs,
-    ...(session.lastAppliedIntentJson
-      ? { lastAppliedIntentJson: session.lastAppliedIntentJson }
-      : {}),
+    ...(successorIntent ? { lastAppliedIntentJson: successorIntent } : {}),
     ...(!options.dropContinuation && session.continuation
       ? { continuation: session.continuation }
       : {}),
@@ -297,6 +303,19 @@ export async function rotateSessionContext(
     generation: nextSession.generation,
     priorHostSessionId: session.hostSessionId,
   } satisfies ClearContextResponse
+}
+
+/**
+ * A dropped continuation is a new birth, not a replay of the prior birth.
+ * Keep the reusable execution/provisioning intent, but make an omitted operator
+ * presentation choice consult node policy again. Callers that deliberately
+ * choose a presentation for the successor pass `runtimeIntent` explicitly.
+ */
+function withoutPerBirthOperatorChoice(intent: HrcRuntimeIntent): HrcRuntimeIntent {
+  if (intent.presentation?.operator === undefined) return intent
+  const { operator: _operator, ...presentation } = intent.presentation
+  const { presentation: _priorPresentation, ...rest } = intent
+  return Object.keys(presentation).length > 0 ? { ...rest, presentation } : rest
 }
 
 export async function invalidateHostContext(

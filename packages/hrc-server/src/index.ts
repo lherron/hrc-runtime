@@ -2576,6 +2576,7 @@ class HrcServerInstance implements HrcServer {
           await this.rotateSessionContext(session, {
             relaunch: body.relaunch === true,
             dropContinuation: body.dropContinuation === true,
+            ...(body.runtimeIntent !== undefined ? { runtimeIntent: body.runtimeIntent } : {}),
           })
         )
       })
@@ -2586,6 +2587,7 @@ class HrcServerInstance implements HrcServer {
       await this.rotateSessionContext(session, {
         relaunch: body.relaunch === true,
         dropContinuation: body.dropContinuation === true,
+        ...(body.runtimeIntent !== undefined ? { runtimeIntent: body.runtimeIntent } : {}),
         ...(managed ? { managed } : {}),
       })
     )
