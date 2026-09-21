@@ -32,6 +32,19 @@ const HOST_SESSION_ID = 'hsid-wait-bounded'
 const RUNTIME_ID = 'rt-wait-bounded'
 const MESSAGE_ID = 'msg-wait-bounded'
 const RUN_ID = 'run-wait-bounded'
+const COMPETING_WRITER_SOURCE = String.raw`
+  import { Database } from 'bun:sqlite'
+
+  const db = new Database(process.env.T08679_DB_PATH)
+  db.exec('PRAGMA journal_mode = WAL; BEGIN EXCLUSIVE')
+  db.query('UPDATE runtimes SET updated_at = updated_at WHERE runtime_id = ?').run(
+    process.env.T08679_RUNTIME_ID
+  )
+  console.log('LOCKED')
+  await Bun.sleep(Number(process.env.T08679_HOLD_MS))
+  db.exec('COMMIT')
+  db.close()
+`
 const session = {
   hostSessionId: HOST_SESSION_ID,
   scopeRef: SCOPE_REF,
@@ -157,6 +170,24 @@ async function runWait(args: string[]): Promise<number> {
     throw error
   }
   throw new Error('cmdMonitorWait did not report an exit code')
+}
+
+async function holdCompetingWrite(holdMs: number): Promise<ReturnType<typeof Bun.spawn>> {
+  const writer = Bun.spawn({
+    cmd: [process.execPath, '-e', COMPETING_WRITER_SOURCE],
+    env: {
+      ...process.env,
+      T08679_DB_PATH: join(stateRoot, 'state.sqlite'),
+      T08679_RUNTIME_ID: RUNTIME_ID,
+      T08679_HOLD_MS: String(holdMs),
+    },
+    stdout: 'pipe',
+  })
+  const reader = writer.stdout.getReader()
+  const first = await reader.read()
+  reader.releaseLock()
+  expect(new TextDecoder().decode(first.value)).toContain('LOCKED')
+  return writer
 }
 
 function installTargetedSpies() {
@@ -406,4 +437,24 @@ describe('Bundle 2 — wait parity and cursor fences', () => {
       expect.objectContaining({ runtimeId: RUNTIME_ID })
     )
   })
+})
+
+describe('T-08679 — live wait tolerates a competing broker write', () => {
+  for (const [name, selector] of [
+    ['exact runtime', `runtime:${RUNTIME_ID}`],
+    ['exact target', `test@hrc-runtime:${TASK_ID}`],
+  ] as const) {
+    it(`${name} remains armed across transient SQLite write contention`, async () => {
+      installTargetedSpies()
+      appendLifecycleEvent('turn.started')
+
+      const wait = runWait([selector, '--until', 'turn-finished', '--timeout', '2s'])
+      await Bun.sleep(100)
+      const writer = await holdCompetingWrite(400)
+      expect(await writer.exited).toBe(0)
+      appendLifecycleEvent('turn.completed')
+
+      expect(await wait).toBe(0)
+    })
+  }
 })

@@ -160,11 +160,15 @@ export function createHrcDatabase(
   }
 
   const db = new Database(path)
+  // Install the busy handler before any pragma that can require a database
+  // lock. Read-side clients reopen the live WAL store while the daemon is
+  // writing; auto_vacuum must wait for that transient writer instead of
+  // surfacing SQLITE_BUSY to callers such as `hrc monitor wait`.
+  db.exec(`PRAGMA busy_timeout = ${resolveBusyTimeoutMs(options.busyTimeoutMs)};`)
   // auto_vacuum must be selected before the first table is created. On a fresh
   // file SQLite installs the incremental-vacuum pointer map as migrations run;
   // on an existing mode-0 file this remains a no-op until an offline VACUUM.
   db.exec('PRAGMA auto_vacuum = INCREMENTAL;')
-  db.exec(`PRAGMA busy_timeout = ${resolveBusyTimeoutMs(options.busyTimeoutMs)};`)
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec('PRAGMA foreign_keys = ON;')
   return db
