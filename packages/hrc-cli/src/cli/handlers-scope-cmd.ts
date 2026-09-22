@@ -178,7 +178,11 @@ export function failedRunPhases(
       ...(serverPhases.length === 0 ? {} : { children: [...serverPhases] }),
     },
     ...(failedIndex < 0 ? [] : CLIENT_RUN_PHASES.slice(failedIndex + 1)).map(
-      (id): PhaseRecord => ({ id, status: 'not-reached' })
+      (id): PhaseRecord => ({
+        id,
+        status: 'not-reached',
+        reason: `not reached after ${failed.id}`,
+      })
     ),
   ]
 }

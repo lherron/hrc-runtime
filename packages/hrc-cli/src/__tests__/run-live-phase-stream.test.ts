@@ -156,7 +156,7 @@ describe('a thrown client operation keeps its record (AC5)', () => {
     expect(failedRunPhases(completed, { id: 'prepare-run', ms: 812 }, [])).toEqual([
       ...completed,
       { id: 'prepare-run', status: 'error', ms: 812 },
-      { id: 'attach', status: 'not-reached' },
+      { id: 'attach', status: 'not-reached', reason: 'not reached after prepare-run' },
     ])
   })
 
@@ -168,7 +168,7 @@ describe('a thrown client operation keeps its record (AC5)', () => {
     expect(failedRunPhases(completed, { id: 'prepare-run', ms: 812 }, serverPhases)).toEqual([
       ...completed,
       { id: 'prepare-run', status: 'error', ms: 812, children: serverPhases },
-      { id: 'attach', status: 'not-reached' },
+      { id: 'attach', status: 'not-reached', reason: 'not reached after prepare-run' },
     ])
   })
 
@@ -176,8 +176,8 @@ describe('a thrown client operation keeps its record (AC5)', () => {
     expect(failedRunPhases(completed.slice(0, 1), { id: 'create-session', ms: 30 }, [])).toEqual([
       completed[0],
       { id: 'create-session', status: 'error', ms: 30 },
-      { id: 'prepare-run', status: 'not-reached' },
-      { id: 'attach', status: 'not-reached' },
+      { id: 'prepare-run', status: 'not-reached', reason: 'not reached after create-session' },
+      { id: 'attach', status: 'not-reached', reason: 'not reached after create-session' },
     ])
   })
 
@@ -194,7 +194,7 @@ describe('a thrown client operation keeps its record (AC5)', () => {
       ]),
     })
     expect(h.writes.slice(3).join('')).toBe(
-      `${CLEAR}  ✗ prepare run  812ms\n    ✗ check identity + admission  2ms  refused\n  – attach terminal\n  total  836ms\n`
+      `${CLEAR}  ✗ prepare run  812ms\n    ✗ check identity + admission  2ms  refused\n  – attach terminal  not reached after prepare-run\n  total  836ms\n`
     )
   })
 })
