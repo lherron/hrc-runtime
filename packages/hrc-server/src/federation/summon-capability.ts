@@ -470,6 +470,17 @@ export function createSummonCapabilityObserver(
     }
 
     const harnessId = adapterIdFor(hint, resolved.effectiveHarness)
+    // ASP v2 owns profile/target/directive selection. A placement-bearing v2
+    // request deliberately omits the harness, so the gate may verify the
+    // placement facts above but must not pre-resolve or reject that omission.
+    // The compile path will resolve and validate the effective selection.
+    if (
+      harnessId === undefined &&
+      hint?.placement !== undefined &&
+      hint.harness?.id === undefined
+    ) {
+      return { outcome: 'capable' }
+    }
     if (harnessId === undefined && resolved.effectiveHarness !== undefined) {
       return incapable(
         'harness',

@@ -95,6 +95,24 @@ describe('node materialization capability observer', () => {
     expect(await observer(SCOPE, hint())).toEqual({ outcome: 'capable' })
   })
 
+  test('omitted request harness abstains from harness-specific capability gating', async () => {
+    await mkdir(join(userHome, '.codex'), { recursive: true })
+    await writeFile(join(userHome, '.codex', 'auth.json'), '{}')
+    const observedHarnesses: string[] = []
+    const observer = createSummonCapabilityObserver({
+      env: {},
+      userHome,
+      detectHarness: async (harness) => {
+        observedHarnesses.push(harness)
+        return { available: true }
+      },
+    })
+
+    const omitted = hint({ harness: { provider: 'openai', interactive: false } })
+    expect(await observer(SCOPE, omitted)).toEqual({ outcome: 'capable' })
+    expect(observedHarnesses).toEqual([])
+  })
+
   test('launchd workspace cwd resolves a sibling project through the ASP placement resolver', async () => {
     await mkdir(join(projectRoot, '.git'), { recursive: true })
     await mkdir(join(userHome, '.codex'), { recursive: true })
