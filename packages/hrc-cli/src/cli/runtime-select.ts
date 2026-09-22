@@ -119,9 +119,11 @@ export async function bindGhosttySurfaceIfPresent(
 
 export async function spawnAttachDescriptor(
   client: HrcClient,
-  descriptor: AttachDescriptor
+  descriptor: AttachDescriptor,
+  beforeSpawn?: () => void
 ): Promise<ReturnType<typeof Bun.spawn>> {
   await bindGhosttySurfaceIfPresent(client, descriptor)
+  beforeSpawn?.()
   return Bun.spawn(descriptor.argv, {
     stdin: 'inherit',
     stdout: 'inherit',

@@ -374,24 +374,25 @@ export async function cmdRun(
     })
 
     const tAttach = performance.now()
-    const attached = await spawnAttachDescriptor(client, prepared.attach)
+    const attached = await spawnAttachDescriptor(client, prepared.attach, () => {
+      livePhases.push({
+        id: 'attach',
+        status: 'ok',
+        ms: Number((performance.now() - tAttach).toFixed(1)),
+      })
+      if (verbose) {
+        renderRunDiagnostics(
+          {
+            releases: prepared.diagnostics.releases,
+            ids: prepared.diagnostics.ids,
+            phases: [{ id: 'resolve-scope', status: 'ok', ms: resolveScopeMs }, ...livePhases],
+          },
+          { totalLabel: 'ready' }
+        )
+      }
+    })
     attachHandoffReached = true
     markLaunch('spawnAttach', tAttach)
-    livePhases.push({
-      id: 'attach',
-      status: 'ok',
-      ms: Number((performance.now() - tAttach).toFixed(1)),
-    })
-    if (verbose) {
-      renderRunDiagnostics(
-        {
-          releases: prepared.diagnostics.releases,
-          ids: prepared.diagnostics.ids,
-          phases: [{ id: 'resolve-scope', status: 'ok', ms: resolveScopeMs }, ...livePhases],
-        },
-        { totalLabel: 'ready' }
-      )
-    }
 
     if (prepared.status === 'prepared') {
       const tResume = performance.now()
