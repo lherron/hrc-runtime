@@ -1,3 +1,4 @@
+import { maskDiagnosticString } from 'hrc-core'
 import type { HrcLifecycleEvent } from 'hrc-core'
 
 /**
@@ -9,11 +10,7 @@ import type { HrcLifecycleEvent } from 'hrc-core'
  */
 
 export function redactSecrets(value: string): string {
-  return value
-    .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED]')
-    .replace(/sk-ant-[^\s"'`\\]+/g, '[REDACTED]')
-    .replace(/Bearer\s+eyJ[^\s"'`\\]+/g, 'Bearer [REDACTED]')
-    .replace(/\b(password|api_key|apikey|token|secret)=([^\s"'`\\&]+)/gi, '$1=[REDACTED]')
+  return maskDiagnosticString(value)
 }
 
 export function mechanicalSummary(events: HrcLifecycleEvent[], phase: string): string {

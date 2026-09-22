@@ -759,6 +759,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "createPhaseRecorder",
+      "kind": "value",
+      "file": "packages/hrc-core/src/run-diagnostics.ts",
+      "hash": "hrc-core|createPhaseRecorder|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "createToolResultSpillStub",
       "kind": "value",
       "file": "packages/hrc-core/src/tool-result-storage.ts",
@@ -1267,6 +1275,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|formatCanonicalSessionRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "formatDiagnosticDuration",
+      "kind": "value",
+      "file": "packages/hrc-core/src/run-diagnostics.ts",
+      "hash": "hrc-core|formatDiagnosticDuration|value",
       "count": 1
     },
     {
@@ -3399,6 +3415,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "isDiagnosticSecretKey",
+      "kind": "value",
+      "file": "packages/hrc-core/src/run-diagnostics.ts",
+      "hash": "hrc-core|isDiagnosticSecretKey|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "isExactStartRuntimeRequest",
       "kind": "value",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -3711,6 +3735,30 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "maskDiagnosticArgv",
+      "kind": "value",
+      "file": "packages/hrc-core/src/run-diagnostics.ts",
+      "hash": "hrc-core|maskDiagnosticArgv|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "maskDiagnosticEnvironment",
+      "kind": "value",
+      "file": "packages/hrc-core/src/run-diagnostics.ts",
+      "hash": "hrc-core|maskDiagnosticEnvironment|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "maskDiagnosticString",
+      "kind": "value",
+      "file": "packages/hrc-core/src/run-diagnostics.ts",
+      "hash": "hrc-core|maskDiagnosticString|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "MONITOR_EXIT_CODES",
       "kind": "value",
       "file": "packages/hrc-core/src/monitor/exit-codes.ts",
@@ -3851,6 +3899,38 @@
       "kind": "value",
       "file": "packages/hrc-core/src/placement-policy.ts",
       "hash": "hrc-core|parseWorktreePorcelain|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PhaseObservationSink",
+      "kind": "type",
+      "file": "packages/hrc-core/src/run-diagnostics.ts",
+      "hash": "hrc-core|PhaseObservationSink|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PhaseRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/run-diagnostics.ts",
+      "hash": "hrc-core|PhaseRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PhaseRecorder",
+      "kind": "type",
+      "file": "packages/hrc-core/src/run-diagnostics.ts",
+      "hash": "hrc-core|PhaseRecorder|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PhaseStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/run-diagnostics.ts",
+      "hash": "hrc-core|PhaseStatus|type",
       "count": 1
     },
     {

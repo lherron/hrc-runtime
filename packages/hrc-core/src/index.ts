@@ -98,6 +98,20 @@ export type {
   HrcCliRpcMetricsHook,
 } from './cli-metrics.js'
 export {
+  createPhaseRecorder,
+  formatDiagnosticDuration,
+  isDiagnosticSecretKey,
+  maskDiagnosticArgv,
+  maskDiagnosticEnvironment,
+  maskDiagnosticString,
+} from './run-diagnostics.js'
+export type {
+  PhaseObservationSink,
+  PhaseRecord,
+  PhaseRecorder,
+  PhaseStatus,
+} from './run-diagnostics.js'
+export {
   BROKER_TO_HRC_LIFECYCLE_POLICY_HASH,
   BROKER_TO_HRC_LIFECYCLE_POLICY_ID,
   BROKER_TO_HRC_LIFECYCLE_KIND,

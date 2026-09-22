@@ -1,6 +1,6 @@
 import { readSync } from 'node:fs'
 
-import { HrcDomainError, HrcErrorCode } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode, formatDiagnosticDuration } from 'hrc-core'
 import type { FinalSummaryRecoveryResult, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
@@ -167,24 +167,6 @@ export async function waitForAttachProcess(
   fatal(`attach command exited with code ${exitCode}`)
 }
 
-/** Format a millisecond span as `1h02m`, `4m12s`, or `9s`. */
-function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) {
-    return '—'
-  }
-  const totalSec = Math.round(ms / 1000)
-  const h = Math.floor(totalSec / 3600)
-  const m = Math.floor((totalSec % 3600) / 60)
-  const s = totalSec % 60
-  if (h > 0) {
-    return `${h}h${String(m).padStart(2, '0')}m`
-  }
-  if (m > 0) {
-    return `${m}m${String(s).padStart(2, '0')}s`
-  }
-  return `${s}s`
-}
-
 /** Local wall-clock `HH:MM:SS` for an ISO timestamp, or `—` when unparseable. */
 function formatClock(iso: string | undefined): string {
   if (!iso) {
@@ -231,7 +213,10 @@ function formatSessionSummary(finalSummary: unknown, scopeLabel: string): string
     '',
     dim(title) + dim(topRule),
     dim('  driver    ') + driver.padEnd(20) + dim('exit   ') + exit,
-    dim('  duration  ') + formatDuration(durationMs).padEnd(20) + dim('turns  ') + String(turns),
+    dim('  duration  ') +
+      formatDiagnosticDuration(durationMs).padEnd(20) +
+      dim('turns  ') +
+      String(turns),
     dim('  started   ') + formatClock(startedAt).padEnd(20) + dim('ended  ') + formatClock(endedAt),
     dim('─'.repeat(width)),
     '',
