@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 
-import { recordCliLaunch } from 'hrc-core'
+import { maskDiagnosticArgv, maskDiagnosticEnvironment, recordCliLaunch } from 'hrc-core'
 import type {
   BrokerRunPreview,
   CliLaunchPhase,
@@ -284,7 +284,8 @@ export async function cmdRun(
         intent,
         restartStyle,
         prompt,
-        scope.placement?.resolution.reason
+        scope.placement?.resolution.reason,
+        jsonOutput
       )
       return
     }
@@ -348,7 +349,9 @@ export async function cmdRun(
 
     if (prepared.status === 'prepared') {
       const tResume = performance.now()
-      await client.resumeAttachedRun({ pendingStartId: prepared.pendingStartId })
+      await client.resumeAttachedRun({
+        pendingStartId: prepared.pendingStartId,
+      })
       markLaunch('resumeAttachedRun', tResume)
     }
     markLaunch('total(pre-attach)', launchT0)
@@ -496,7 +499,10 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
 
     let priorHostSessionId = pinnedHostSessionId
     if (prior) {
-      const current = await client.resolveSession({ sessionRef, create: false })
+      const current = await client.resolveSession({
+        sessionRef,
+        create: false,
+      })
       if (!current.found) {
         throw new Error(`cannot resume prior session for "${scopeInput}": no session exists`)
       }
@@ -551,7 +557,9 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
 
     const attached = await spawnAttachDescriptor(client, prepared.attach)
     if (prepared.status === 'prepared') {
-      await client.resumeAttachedRun({ pendingStartId: prepared.pendingStartId })
+      await client.resumeAttachedRun({
+        pendingStartId: prepared.pendingStartId,
+      })
     }
     await waitForAttachProcess(attached, client, hostSessionId)
     await renderSessionSummary(client, prepared.attach.bindingFence.runtimeId, scopeInput)
@@ -656,7 +664,8 @@ export async function cmdStart(args: string[]): Promise<void> {
         intent,
         restartStyle,
         prompt,
-        scope.placement?.resolution.reason
+        scope.placement?.resolution.reason,
+        jsonOutput
       )
       return
     }
@@ -771,10 +780,11 @@ type RunPreviewWriter = (s: string) => void
  * Key-sorted env entries with long values elided, for the dry-run env block.
  */
 function previewEnvEntries(env: Record<string, string>): Array<[string, string]> {
-  return Object.keys(env)
+  const masked = maskDiagnosticEnvironment(env)
+  return Object.keys(masked)
     .sort()
     .map((key): [string, string] => {
-      const value = env[key] ?? ''
+      const value = masked[key] ?? ''
       return [
         key,
         value.length > PREVIEW_ENV_VALUE_MAX_CHARS
@@ -800,6 +810,7 @@ export async function renderBrokerPlanPreview(
 ): Promise<boolean> {
   const nativeWorker = brokerPreview.process.execution === 'native-worker'
   const processArgs = nativeWorker ? [] : (brokerPreview.process.args ?? [])
+  const displayProcessArgs = maskDiagnosticArgv(processArgs)
   const processCommand = nativeWorker ? undefined : brokerPreview.process.command
   // Prefer the resolved prompt zones: they are the only source that covers
   // every route (codex passes no prompt flag and no prompt file) and the only
@@ -816,7 +827,10 @@ export async function renderBrokerPlanPreview(
         }
       : (argvSystemPrompt ??
         (fileSystemPrompt !== undefined
-          ? { content: fileSystemPrompt, mode: brokerPreview.systemPromptMode ?? 'append' }
+          ? {
+              content: fileSystemPrompt,
+              mode: brokerPreview.systemPromptMode ?? 'append',
+            }
           : undefined))
   const primingPrompt = brokerPreview.primingPrompt ?? extractPrimingFromArgv(processArgs)
 
@@ -905,7 +919,10 @@ export async function renderBrokerPlanPreview(
 
   await displayPrompts({
     ...(systemPrompt !== undefined
-      ? { systemPrompt: systemPrompt.content, systemPromptMode: systemPrompt.mode }
+      ? {
+          systemPrompt: systemPrompt.content,
+          systemPromptMode: systemPrompt.mode,
+        }
       : {}),
     ...(brokerPreview.reminderContent !== undefined
       ? { reminderContent: brokerPreview.reminderContent }
@@ -927,7 +944,7 @@ export async function renderBrokerPlanPreview(
     betweenLines: lines,
     ...(processCommand === undefined
       ? {}
-      : { command: formatDisplayCommand(processCommand, processArgs) }),
+      : { command: formatDisplayCommand(processCommand, displayProcessArgs) }),
     showCommand: !nativeWorker,
   })
 
@@ -944,30 +961,27 @@ export async function printLocalRunPreview(
   intent: HrcRuntimeIntent,
   restartStyle: 'reuse_pty' | 'fresh_pty',
   prompt: string | undefined,
-  placementReason: string | undefined
+  placementReason: string | undefined,
+  jsonOutput = false
 ): Promise<void> {
   const w: RunPreviewWriter = (s: string) => {
     process.stdout.write(`${s}\n`)
   }
-
-  w(`hrc ${command} ${scope} --dry-run  (daemon plan preview — no side effects)`)
-  if (placementReason) {
-    w(`  placement:    ${placementReason}`)
-  }
-  // Request facts are CLI-local and print in every branch; only the compiled
-  // plan facts below need the daemon.
-  w(`  sessionRef:   ${sessionRef}`)
-  w(`  restartStyle: ${restartStyle}`)
-  w(`  agentRoot:    ${intent.placement.agentRoot}`)
-  w(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
-  w(`  provider:     ${intent.harness.provider}`)
-  w(`  cwd:          ${intent.placement.cwd}`)
 
   // Pi is a retired HRC-local harness, not a selectable v2 ASP harness. Keep
   // its established diagnostic offline: asking the daemon to compile it would
   // manufacture a selection request from a compatibility-shaped intent.
   if (intent.harness.id === 'pi') {
     const harnessId = intent.harness.id ?? intent.harness.provider
+    if (jsonOutput) {
+      printJson({
+        preview: null,
+        diagnostics: { releases: {}, ids: {}, phases: [] },
+        reason: `no broker route for harness "${harnessId}"`,
+      })
+      return
+    }
+    w(`hrc ${command} ${scope} --dry-run  (daemon plan preview — no side effects)`)
     w('')
     w(
       `  no broker route for harness "${harnessId}" (provider ${intent.harness.provider}, interactive ${intent.harness.interactive}); nothing to preview`
@@ -979,35 +993,30 @@ export async function printLocalRunPreview(
     return
   }
   const client = createClient()
-  let daemonFailed = false
-  const brokerPreview = await client
-    .fetchRunPreview({ intent, sessionRef, restartStyle, promptLength: prompt?.length })
-    .catch((err: unknown) => {
-      daemonFailed = true
-      w('')
-      w(`  (daemon preview failed: ${err instanceof Error ? err.message : String(err)})`)
-      return undefined
+  const brokerPreview = await client.fetchRunPreview({
+    intent,
+    sessionRef,
+    restartStyle,
+    promptLength: prompt?.length,
+  })
+  if (jsonOutput) {
+    printJson({
+      preview: brokerPreview,
+      diagnostics: brokerPreview.diagnostics,
     })
-  if (brokerPreview) {
-    const rendered = await renderBrokerPlanPreview(w, brokerPreview, prompt)
-    if (rendered) {
-      return
-    }
+    return
   }
-
-  const harnessId = intent.harness.id ?? intent.harness.provider
-  w('')
-  if (daemonFailed) {
-    w(`  daemon preview unavailable for harness "${harnessId}"; nothing to preview`)
-  } else {
-    w(
-      `  no broker preview for harness "${harnessId}" (provider ${intent.harness.provider}, interactive ${intent.harness.interactive}); nothing to preview`
-    )
+  w(`hrc ${command} ${scope} --dry-run  (daemon plan preview — no side effects)`)
+  if (placementReason) {
+    w(`  placement:    ${placementReason}`)
   }
-  w('')
-  w('  Note: this preview shows the daemon-compiled plan. Server-side')
-  w('  details (existing runtime, PTY state, tmux session) are not consulted.')
-  w('  Run without --dry-run to execute.')
+  w(`  sessionRef:   ${sessionRef}`)
+  w(`  restartStyle: ${restartStyle}`)
+  w(`  agentRoot:    ${intent.placement.agentRoot}`)
+  w(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
+  w(`  provider:     ${intent.harness.provider}`)
+  w(`  cwd:          ${intent.placement.cwd}`)
+  await renderBrokerPlanPreview(w, brokerPreview, prompt)
 }
 
 function readOptionalUtf8(path: string | undefined): string | undefined {
@@ -1110,7 +1119,9 @@ export async function cmdAttach(args: string[]): Promise<void> {
       throw new Error(`no session exists for "${target}". Start one with: hrc start ${target}`)
     }
 
-    const runtimes = await client.listRuntimes({ hostSessionId: resolved.hostSessionId })
+    const runtimes = await client.listRuntimes({
+      hostSessionId: resolved.hostSessionId,
+    })
     const runtime = selectLatestUsableRuntime(runtimes)
     if (!runtime) {
       throw new Error(

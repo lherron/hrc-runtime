@@ -67,6 +67,20 @@ export function emitScopeCommandErrorJson(
         message: err instanceof Error ? err.message : String(err),
         detail: {} as Record<string, unknown>,
       }
+  const detail = base.detail as Record<string, unknown>
+  const diagnostics = {
+    releases: {
+      ...(detail['aspdRelease'] !== undefined ? { aspd: detail['aspdRelease'] } : {}),
+      ...(detail['executionRelease'] !== undefined
+        ? { execution: detail['executionRelease'] }
+        : {}),
+    },
+    ids:
+      typeof detail['ids'] === 'object' && detail['ids'] !== null
+        ? detail['ids']
+        : ({} as Record<string, string>),
+    phases: Array.isArray(detail['phases']) ? detail['phases'] : [],
+  }
   printJson({
     error: {
       ...base,
@@ -74,6 +88,7 @@ export function emitScopeCommandErrorJson(
       scope: scopeInput,
       ...(sessionRef ? { sessionRef } : {}),
     },
+    diagnostics,
   })
   const usage =
     stableCode === 'invalid_input' ||
@@ -112,7 +127,10 @@ export function explainScopeCommandError(
   }
 
   if (isHrcDomainErrorLike(err)) {
-    const detail = (err.detail ?? {}) as { scopeRef?: string; sessionRef?: string }
+    const detail = (err.detail ?? {}) as {
+      scopeRef?: string
+      sessionRef?: string
+    }
     const storedScope = detail.scopeRef
 
     // Hydration guard: server rejected a stored non-canonical scopeRef

@@ -144,7 +144,9 @@ describe('POST /v1/declarations/resolve (T-08564 Phase A red)', () => {
     expect(response.status).toBe(200)
     expect(body.intent.placement).not.toHaveProperty('projectRoot')
     const params = requestParams(aspd!, 'aspc.resolveRuntimeDeclaration')
-    expect((params['context'] as Record<string, unknown>)['project']).toEqual({ mode: 'none' })
+    expect((params['context'] as Record<string, unknown>)['project']).toEqual({
+      mode: 'none',
+    })
   })
 
   test('maps configured_context_mismatch to malformed_request without fallback', async () => {
@@ -174,7 +176,10 @@ describe('POST /v1/declarations/resolve (T-08564 Phase A red)', () => {
 
     expect(response.status).toBe(503)
     expect(body.error.code).toBe('runtime_unavailable')
-    expect(body.error.detail).toMatchObject({ code: 'aspd_unavailable', route: 'aspd' })
+    expect(body.error.detail).toMatchObject({
+      code: 'aspd_unavailable',
+      route: 'aspd',
+    })
   })
 
   test('fails closed when resolveRuntimeDeclaration is not advertised', async () => {
@@ -208,7 +213,10 @@ describe('POST /v1/declarations/resolve (T-08564 Phase A red)', () => {
 
 describe('invalid profile with no valid target (T-08564 E1, T-08578 etag 10; activation #8 capture)', () => {
   for (const variant of [
-    { name: 'projectless (project mode none)', overrides: { projectRoot: undefined } },
+    {
+      name: 'projectless (project mode none)',
+      overrides: { projectRoot: undefined },
+    },
     { name: 'project root without a selected target', overrides: {} },
   ]) {
     test(`${variant.name}: birth proceeds with no harness id, no provision block, and the NO-provisioning WARN`, async () => {
@@ -297,6 +305,20 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
     expect(methods).toContain('aspc.compileHarnessInvocation')
     expect(methods).toContain('aspc.inspectRuntimePlacement')
     expect(JSON.stringify(body)).toContain(release.releaseId)
+    expect(body.diagnostics).toMatchObject({
+      releases: {
+        aspd: {
+          releaseId: release.releaseId,
+          sourceCommit: release.sourceCommit,
+        },
+      },
+      ids: { compileId: 'compile_t08564' },
+      phases: [
+        { id: 'compile', status: 'ok' },
+        { id: 'admission', status: 'ok' },
+        { id: 'inspect-prompt', status: 'ok' },
+      ],
+    })
   })
 
   // Astra EN-14276 (G1 audit A1/A6): the inspection context names the same
@@ -321,8 +343,15 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
       string,
       unknown
     >
-    expect(context['project']).toEqual({ mode: 'root', projectRoot, projectId: 'hrc-runtime' })
-    expect(context['provisionDirectives']).toEqual({ harness: 'codex', model: 'x' })
+    expect(context['project']).toEqual({
+      mode: 'root',
+      projectRoot,
+      projectId: 'hrc-runtime',
+    })
+    expect(context['provisionDirectives']).toEqual({
+      harness: 'codex',
+      model: 'x',
+    })
     expect(context['taskId']).toBe('T-08564')
   })
 
@@ -330,14 +359,22 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
   // inspection carries the compiled placement correlation, and the identical
   // dispatchEnv (inert), only on a connection advertising the capability.
   test('PC-1: inspection carries the compiled correlation and dispatchEnv when the capability is advertised', async () => {
-    await boot({ capabilities: { inspectRuntimePlacementPreparationCorrelation: true } })
+    await boot({
+      capabilities: { inspectRuntimePlacementPreparationCorrelation: true },
+    })
     const correlation = {
-      sessionRef: { scopeRef: 'agent:smokey:project:hrc-runtime:task:T-08564', laneRef: 'main' },
+      sessionRef: {
+        scopeRef: 'agent:smokey:project:hrc-runtime:task:T-08564',
+        laneRef: 'main',
+      },
     }
     const dispatchEnv = { T08564_PC1_PROBE: 'caller-value' }
     const base = managedIntent()
     const { response } = await post('/v1/previews/run', {
-      intent: { ...base, placement: { ...base.placement, correlation, dispatchEnv } },
+      intent: {
+        ...base,
+        placement: { ...base.placement, correlation, dispatchEnv },
+      },
       sessionRef: 'agent:smokey:project:hrc-runtime:task:T-08564/lane:main',
       restartStyle: 'fresh',
     })
@@ -356,12 +393,19 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
   })
 
   test('PC-1: a connection without the capability refuses the preview instead of omitting the correlation', async () => {
-    await boot({ capabilities: { inspectRuntimePlacementPreparationCorrelation: undefined } })
+    await boot({
+      capabilities: {
+        inspectRuntimePlacementPreparationCorrelation: undefined,
+      },
+    })
     const { response, body } = await post('/v1/previews/run', previewBody())
 
     expect(response.status).toBe(503)
     expect(body.error.code).toBe('runtime_unavailable')
-    expect(body.error.detail).toMatchObject({ code: 'aspd_capability_missing', route: 'aspd' })
+    expect(body.error.detail).toMatchObject({
+      code: 'aspd_capability_missing',
+      route: 'aspd',
+    })
     const methods = aspd!.connections.flatMap((connection) => connection.methods)
     expect(methods).not.toContain('aspc.inspectRuntimePlacement')
   })
@@ -399,6 +443,40 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
 
     expect(response.status).toBe(503)
     expect(body.error.code).toBe('runtime_unavailable')
-    expect(body.error.detail).toMatchObject({ code: 'aspd_unavailable', route: 'aspd' })
+    expect(body.error.detail).toMatchObject({
+      code: 'aspd_unavailable',
+      route: 'aspd',
+    })
+  })
+
+  test('returns a typed rejection with phase records instead of null', async () => {
+    await boot({ compileRejected: true })
+    const { response, body } = await post('/v1/previews/run', previewBody())
+
+    expect(response.status).toBe(503)
+    expect(body.error).toMatchObject({
+      code: 'runtime_unavailable',
+      detail: {
+        code: 'compile-not-ok',
+        admissionCode: 'compile-not-ok',
+        failingPhase: 'admission',
+        aspdRelease: { releaseId: release.releaseId },
+        phases: [
+          { id: 'compile', status: 'ok' },
+          { id: 'admission', status: 'error' },
+        ],
+      },
+    })
+  })
+
+  test('fails truthfully when prompt inspection is unavailable', async () => {
+    await boot({ inspectNonOk: true })
+    const { response, body } = await post('/v1/previews/run', previewBody())
+
+    expect(response.status).toBe(503)
+    expect(body.error.detail).toMatchObject({
+      code: 'prompt-inspection-unavailable',
+      failingPhase: 'inspect-prompt',
+    })
   })
 })

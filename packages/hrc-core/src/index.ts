@@ -657,6 +657,7 @@ export type {
   ResolvedDeclarationAgentSources,
   RunPreviewRequest,
   RunPreviewResponse,
+  RunDiagnostics,
 } from './declaration-contracts.js'
 export type {
   BuildHrcRuntimeIntentInput,
@@ -678,10 +679,7 @@ export {
   agentHomeRelativeSibling,
   taskTokens,
 } from './placement-policy.js'
-export type {
-  GitWorktree,
-  CanonicalProjectRoot,
-} from './placement-policy.js'
+export type { GitWorktree, CanonicalProjectRoot } from './placement-policy.js'
 export type {
   HarnessTransport,
   ResolvePlacementRequest,

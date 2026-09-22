@@ -25,6 +25,7 @@ import {
   HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
   type ResolveRuntimeIntentResponse,
+  createPhaseRecorder,
   formatProfileProvisioningStrippedWarning,
   resolveStateRoot,
   splitSessionRef,
@@ -81,7 +82,9 @@ type ResolveByScopeBody = ResolveBodyOptions & {
 type ResolveBody = ResolveByPathsBody | ResolveByScopeBody
 
 function badRequest(message: string, field: string): HrcBadRequestError {
-  return new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, message, { field })
+  return new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, message, {
+    field,
+  })
 }
 
 function requireString(body: Record<string, unknown>, field: string): string {
@@ -277,7 +280,9 @@ function declarationContext(body: ResolveByPathsBody): AspcRuntimeDeclarationCon
       ? { agentSources: body.agentSources }
       : {}),
     ...(Object.keys(directives).length > 0
-      ? { provisionDirectives: directives as Record<string, string | number | boolean> }
+      ? {
+          provisionDirectives: directives as Record<string, string | number | boolean>,
+        }
       : {}),
   }
 }
@@ -424,7 +429,9 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
       execution: {
         preferredMode: body.preferredMode,
         ...(body.allowInteractiveSurfaceReuse !== undefined
-          ? { allowInteractiveSurfaceReuse: body.allowInteractiveSurfaceReuse }
+          ? {
+              allowInteractiveSurfaceReuse: body.allowInteractiveSurfaceReuse,
+            }
           : {}),
       },
       ...(body.initialPrompt !== undefined ? { initialPrompt: body.initialPrompt } : {}),
@@ -447,7 +454,10 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
   })
 }
 
-function parsePreviewBody(input: unknown): { intent: HrcRuntimeIntent; sessionRef: string } {
+function parsePreviewBody(input: unknown): {
+  intent: HrcRuntimeIntent
+  sessionRef: string
+} {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
@@ -492,13 +502,19 @@ function previewInspectionContext(
     agentRoot,
     project:
       typeof projectRoot === 'string'
-        ? { mode: 'root', projectRoot, ...(projectId !== undefined ? { projectId } : {}) }
+        ? {
+            mode: 'root',
+            projectRoot,
+            ...(projectId !== undefined ? { projectId } : {}),
+          }
         : { mode: 'none' },
     cwd: String(placement['cwd'] ?? projectRoot ?? agentRoot),
     runMode: (placement['runMode'] as AspcRuntimeDeclarationContext['runMode']) ?? 'task',
     ...(taskId !== undefined ? { taskId } : {}),
     ...(Object.keys(directives).length > 0
-      ? { provisionDirectives: directives as Record<string, string | number | boolean> }
+      ? {
+          provisionDirectives: directives as Record<string, string | number | boolean>,
+        }
       : {}),
   }
 }
@@ -553,47 +569,78 @@ export async function handleRunPreview(request: Request): Promise<Response> {
     async ({ service, client }) => {
       const runtimeId = `dry-rt-${randomUUID()}`
       const aspHome = getAspHome()
-      const compiled = await compileBrokerRuntimePlan(
-        {
-          intent: previewIntent,
-          scopeRef: sessionRef.includes('/lane:')
-            ? splitSessionRef(sessionRef).scopeRef
-            : sessionRef,
-          hostSessionId: 'dry-run-host-session',
-          generation: 0,
-          continuation: undefined,
-        },
-        {
-          compileHarnessInvocation: (compileRequest) =>
-            client.compileHarnessInvocation({ ...compileRequest, aspHome }),
-          ids: previewCompileIds(runtimeId),
-          timing: createPrecompileLaunchTimingContext('preview', runtimeId, resolveStateRoot()),
-        }
+      const phases = createPhaseRecorder()
+      const compiled = await phases.step('compile', () =>
+        compileBrokerRuntimePlan(
+          {
+            intent: previewIntent,
+            scopeRef: sessionRef.includes('/lane:')
+              ? splitSessionRef(sessionRef).scopeRef
+              : sessionRef,
+            hostSessionId: 'dry-run-host-session',
+            generation: 0,
+            continuation: undefined,
+          },
+          {
+            compileHarnessInvocation: (compileRequest) =>
+              client.compileHarnessInvocation({ ...compileRequest, aspHome }),
+            ids: previewCompileIds(runtimeId),
+            timing: createPrecompileLaunchTimingContext('preview', runtimeId, resolveStateRoot()),
+          }
+        )
       )
       if (!compiled.admitted) {
-        return json(null)
+        await phases
+          .step('admission', () => {
+            throw new Error(compiled.code)
+          })
+          .catch(() => undefined)
+        throw new HrcRuntimeUnavailableError('ASP rejected the compiled preview plan', {
+          code: 'compile-not-ok',
+          admissionCode: compiled.code,
+          rejectedBy: compiled.rejectedBy,
+          failingPhase: 'admission',
+          phases: phases.records(),
+          aspdRelease: service.release,
+          ids: Object.fromEntries(
+            Object.entries(compiled.identity).filter(([, value]) => typeof value === 'string')
+          ),
+          ...(compiled.admissionDiagnostic === undefined
+            ? {}
+            : { admissionDiagnostic: compiled.admissionDiagnostic }),
+          diagnostics: compiled.diagnostics,
+        })
       }
+      await phases.step('admission', () => undefined)
 
       // PC-1: the inspection carries the correlation and dispatchEnv the same
       // preview compiled. The compile echoes the intent placement through its
       // request, so these are the compiled values; dispatchEnv stays inert.
       const compiledPlacement = previewIntent.placement as unknown as Record<string, unknown>
-      const inspected = await client.inspectRuntimePlacement({
-        schemaVersion: 'aspc-inspect-runtime-placement-request/v1',
-        context: previewInspectionContext(previewIntent, sessionRef),
-        preparationCorrelation: compiledPlacement[
-          'correlation'
-        ] as AspcInspectRuntimePlacementRequest['preparationCorrelation'],
-        dispatchEnv: compiledPlacement['dispatchEnv'] as Record<string, string> | undefined,
-      })
-      const prompt: PromptProjection = inspected.ok
-        ? projectPrompt(inspected.prompt)
-        : {
-            promptResolution: {
-              state: 'unavailable',
-              declaration: inspected.declaration,
-            },
-          }
+      let inspected: Awaited<ReturnType<typeof client.inspectRuntimePlacement>>
+      try {
+        inspected = await phases.step('inspect-prompt', async () => {
+          const result = await client.inspectRuntimePlacement({
+            schemaVersion: 'aspc-inspect-runtime-placement-request/v1',
+            context: previewInspectionContext(previewIntent, sessionRef),
+            preparationCorrelation: compiledPlacement[
+              'correlation'
+            ] as AspcInspectRuntimePlacementRequest['preparationCorrelation'],
+            dispatchEnv: compiledPlacement['dispatchEnv'] as Record<string, string> | undefined,
+          })
+          if (!result.ok) throw new Error('prompt inspection unavailable')
+          return result
+        })
+      } catch (error) {
+        throw new HrcRuntimeUnavailableError('ASP prompt inspection was unavailable', {
+          code: 'prompt-inspection-unavailable',
+          failingPhase: 'inspect-prompt',
+          phases: phases.records(),
+          aspdRelease: service.release,
+          cause: error instanceof Error ? error.message : String(error),
+        })
+      }
+      const prompt: PromptProjection = projectPrompt(inspected.prompt)
       const preview = projectBrokerRunPreview(compiled, prompt.zones)
       return json({
         ...preview,
@@ -608,6 +655,30 @@ export async function handleRunPreview(request: Request): Promise<Response> {
               },
             }
           : {}),
+        diagnostics: {
+          releases: {
+            aspd: service.release,
+            ...(compiled.executionRelease === undefined
+              ? {}
+              : {
+                  execution: {
+                    releaseId: compiled.executionRelease.releaseId,
+                    sourceCommit: compiled.executionRelease.sourceCommit,
+                  },
+                }),
+          },
+          ids: {
+            ...Object.fromEntries(
+              Object.entries(compiled.identity).flatMap(([key, value]) =>
+                typeof value === 'string' ? [[key, value]] : []
+              )
+            ),
+            compileId: compiled.plan.compileId,
+            planHash: compiled.plan.planHash,
+          },
+          selection: compiled.plan.selection,
+          phases: phases.records(),
+        },
       })
     }
   )

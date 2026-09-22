@@ -176,9 +176,21 @@ export type BrokerRunPreview = {
   release?: { releaseId: string; sourceCommit: string } | undefined
 }
 
-export type RunPreviewResponse =
-  | (BrokerRunPreview & { promptResolution?: Record<string, unknown> | undefined })
-  | null
+export type RunDiagnostics = {
+  releases: {
+    hrc?: { releaseId?: string | undefined; sourceCommit?: string | undefined } | undefined
+    aspd?: { releaseId: string; sourceCommit: string } | undefined
+    execution?: { releaseId: string; sourceCommit: string } | undefined
+  }
+  ids: Record<string, string>
+  selection?: BrokerRunPreview['selection'] | undefined
+  phases: import('./run-diagnostics.js').PhaseRecord[]
+}
+
+export type RunPreviewResponse = BrokerRunPreview & {
+  promptResolution?: Record<string, unknown> | undefined
+  diagnostics: RunDiagnostics
+}
 
 export type ResolvePlacementRequest = {
   /** Canonical scope ref (`agent:<id>[:project:<p>][:task:<t>][:role:<r>][/lane:<l>]`). */

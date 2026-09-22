@@ -42,6 +42,7 @@ export type AspdObservationOptions = {
   resolve?: ResolveScript
   prompt?: PromptScript
   inspectNonOk?: boolean
+  compileRejected?: boolean
   identityRole?: string
   invalidAgentProfile?: boolean
   invalidAgentProfileNoTarget?: boolean
@@ -156,9 +157,16 @@ function resolveOkResponse(
       },
       projectTargets: { state: 'absent', code: 'not_declared' },
       selectedTarget: { state: 'absent', code: 'not_declared' },
-      priming: { state: 'valid', code: 'parsed', contentHash: 'sha256:priming' },
+      priming: {
+        state: 'valid',
+        code: 'parsed',
+        contentHash: 'sha256:priming',
+      },
     },
-    identity: { operator: false, ...(identityRole !== undefined ? { role: identityRole } : {}) },
+    identity: {
+      operator: false,
+      ...(identityRole !== undefined ? { role: identityRole } : {}),
+    },
     policy: {
       claimsTask: false,
       placement: {
@@ -216,7 +224,11 @@ function resolveInvalidResponse(context: Record<string, unknown>): Record<string
     agentSources: agentSources(context),
     searchedAgentRoots: [],
     source: {
-      agentProfile: { state: 'valid', code: 'parsed', contentHash: 'sha256:agent-profile' },
+      agentProfile: {
+        state: 'valid',
+        code: 'parsed',
+        contentHash: 'sha256:agent-profile',
+      },
       projectTargets: { state: 'invalid', diagnostics: [diagnostic] },
       selectedTarget: { state: 'absent', code: 'not_declared' },
       priming: { state: 'absent', code: 'not_declared' },
@@ -445,7 +457,12 @@ function resolveAbsentProfileCallerRootResponse(
   const absent = { state: 'absent', code: 'not_declared' }
   return capturedDegradedResponse(
     context,
-    { agentProfile: absent, projectTargets: absent, selectedTarget: absent, priming: absent },
+    {
+      agentProfile: absent,
+      projectTargets: absent,
+      selectedTarget: absent,
+      priming: absent,
+    },
     {
       scalars: { yolo: false, remote: false },
       effectiveHarness: 'claude',
@@ -545,7 +562,9 @@ function resolveFixtureResponse(
     { ...context, agentRoot: hit.agentRoot },
     hit.role ?? identityRole
   ) as Record<string, unknown> & {
-    provisioning: Record<string, unknown> & { scalars: Record<string, unknown> }
+    provisioning: Record<string, unknown> & {
+      scalars: Record<string, unknown>
+    }
     source: Record<string, Record<string, unknown>>
     policy: Record<string, unknown>
   }
@@ -620,7 +639,11 @@ function inspectDeclaration(context: Record<string, unknown>): Record<string, un
     agentSources: agentSources(context),
     searchedAgentRoots: [],
     source: {
-      agentProfile: { state: 'valid', code: 'parsed', contentHash: 'sha256:agent-profile' },
+      agentProfile: {
+        state: 'valid',
+        code: 'parsed',
+        contentHash: 'sha256:agent-profile',
+      },
       projectTargets: { state: 'absent', code: 'not_declared' },
       selectedTarget: { state: 'absent', code: 'not_declared' },
       priming: { state: 'absent', code: 'not_declared' },
@@ -641,7 +664,11 @@ function inspectionResult(context: Record<string, unknown>): Record<string, unkn
   const effective = { kind: 'effective' }
   const contribution = {
     contributions: [
-      { kind: 'runtime-plan', sourceId: 'canonical-compile', sourceRef: 'agent-runtime-plan/v1' },
+      {
+        kind: 'runtime-plan',
+        sourceId: 'canonical-compile',
+        sourceRef: 'agent-runtime-plan/v1',
+      },
     ],
   }
   return {
@@ -667,7 +694,12 @@ function inspectionResult(context: Record<string, unknown>): Record<string, unkn
           reason: 'fixture prompt resolution failed',
         },
         provenance: { contributions: [] },
-        value: { zone: 'prompt', name: 'template:resolution', sourceType: 'inline', order: 0 },
+        value: {
+          zone: 'prompt',
+          name: 'template:resolution',
+          sourceType: 'inline',
+          order: 0,
+        },
       },
       {
         kind: 'capability',
@@ -688,7 +720,11 @@ function inspectionResult(context: Record<string, unknown>): Record<string, unkn
         partId: 'harness:selected',
         disposition: effective,
         provenance: contribution,
-        value: { family: 'claude-code', runtime: 'claude-code-cli', provider: 'anthropic' },
+        value: {
+          family: 'claude-code',
+          runtime: 'claude-code-cli',
+          provider: 'anthropic',
+        },
       },
       {
         kind: 'model',
@@ -702,18 +738,30 @@ function inspectionResult(context: Record<string, unknown>): Record<string, unkn
         partId: 'artifact:bundle',
         disposition: effective,
         provenance: contribution,
-        value: { artifactKind: 'bundle', bundleIdentity: 'bundle:t08564-inspection' },
+        value: {
+          artifactKind: 'bundle',
+          bundleIdentity: 'bundle:t08564-inspection',
+        },
       },
       {
         kind: 'execution-profile',
         partId: 'execution-profile:profile_t08564',
         disposition: effective,
         provenance: contribution,
-        value: { profileId: 'profile_t08564', controllerKind: 'harness-broker' },
+        value: {
+          profileId: 'profile_t08564',
+          controllerKind: 'harness-broker',
+        },
       },
     ],
-    completeness: { kind: 'partial', missingPartIds: ['prompt:template:resolution'] },
-    freshness: { kind: 'unknown', reason: 'The canonical compile produced no lock hash' },
+    completeness: {
+      kind: 'partial',
+      missingPartIds: ['prompt:template:resolution'],
+    },
+    freshness: {
+      kind: 'unknown',
+      reason: 'The canonical compile produced no lock hash',
+    },
     diagnostics: [
       {
         kind: 'resolution',
@@ -846,16 +894,28 @@ function compileResponse(params: Record<string, unknown>, serving: Release) {
   const spec: HarnessInvocationSpec = {
     specVersion: 'harness-broker.invocation/v1',
     invocationId,
-    harness: { frontend: 'codex', provider: 'openai', driver: 'codex-app-server' },
+    harness: {
+      frontend: 'codex',
+      provider: 'openai',
+      driver: 'codex-app-server',
+    },
     process: {
       command: '/Users/lherron/.local/bin/codex',
       args: ['--enable', 'goals', 'app-server'],
       cwd,
       lockedEnv,
       harnessTransport: { kind: 'jsonrpc-stdio' },
-      limits: { startupTimeoutMs: 20_000, turnTimeoutMs: 900_000, stopGraceMs: 5_000 },
+      limits: {
+        startupTimeoutMs: 20_000,
+        turnTimeoutMs: 900_000,
+        stopGraceMs: 5_000,
+      },
     },
-    interaction: { mode: 'headless', turnConcurrency: 'single', inputQueue: 'fifo' },
+    interaction: {
+      mode: 'headless',
+      turnConcurrency: 'single',
+      inputQueue: 'fifo',
+    },
     driver: {
       kind: 'codex-app-server',
       approvalPolicy: 'never',
@@ -1134,12 +1194,31 @@ export function startAspdObservationDouble(
                 : inspectResponse(context, options.prompt ?? 'present')
             )
           } else if (message.method === 'aspc.compileHarnessInvocation') {
-            reply(socket as never, message.id, compileResponse(params, serving))
+            reply(
+              socket as never,
+              message.id,
+              options.compileRejected === true
+                ? {
+                    schemaVersion: 'aspc-compile-harness-invocation-response/v2',
+                    ok: false,
+                    diagnostics: [
+                      {
+                        level: 'error',
+                        code: 'fixture_compile_rejected',
+                        message: 'fixture compile rejected',
+                      },
+                    ],
+                  }
+                : compileResponse(params, serving)
+            )
           } else {
             send(socket as never, {
               jsonrpc: '2.0',
               id: message.id,
-              error: { code: -32601, message: `method not found: ${message.method}` },
+              error: {
+                code: -32601,
+                message: `method not found: ${message.method}`,
+              },
             })
           }
         }
