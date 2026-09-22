@@ -150,6 +150,8 @@ export type HrcAdmissionDiagnostic = {
   expected?: unknown
   actual: unknown
   message: string
+  check?: 'plan-identity' | 'start-request-identity' | undefined
+  fields?: Array<{ name: string; requested: unknown; compiled: unknown }> | undefined
 }
 
 /** True when the intent carries an initial user turn (prompt and/or attachments). */
@@ -414,51 +416,65 @@ const allocatedPlanIdentityFields: readonly (keyof RuntimeIdentityAllocation)[] 
 
 type IdentityMismatch = { field: string; expected: unknown; actual: unknown }
 
-function firstAllocatedIdentityMismatch(
+function allocatedIdentityMismatches(
   planIdentity: Record<string, unknown>,
   identity: RuntimeIdentityAllocation
-): IdentityMismatch | undefined {
-  const field = allocatedPlanIdentityFields.find((key) => planIdentity[key] !== identity[key])
-  return field === undefined
-    ? undefined
-    : { field: `plan.identity.${field}`, expected: identity[field], actual: planIdentity[field] }
+): IdentityMismatch[] {
+  return allocatedPlanIdentityFields.flatMap((field) =>
+    planIdentity[field] === identity[field]
+      ? []
+      : [
+          {
+            field: `plan.identity.${field}`,
+            expected: identity[field],
+            actual: planIdentity[field],
+          },
+        ]
+  )
 }
 
-function firstCanonicalStartIdentityMismatch(
+function canonicalStartIdentityMismatches(
   startRequest: Record<string, unknown>,
   identity: RuntimeIdentityAllocation,
   hosting: Record<string, unknown>
-): IdentityMismatch | undefined {
+): IdentityMismatch[] {
+  const mismatches: IdentityMismatch[] = []
   const spec = isRecord(startRequest['spec']) ? startRequest['spec'] : {}
   if (spec['invocationId'] !== identity.invocationId) {
-    return {
+    mismatches.push({
       field: 'startRequest.spec.invocationId',
       expected: identity.invocationId,
       actual: spec['invocationId'],
-    }
+    })
   }
   const correlation = spec['correlation']
   if (!isRecord(correlation)) {
-    return { field: 'startRequest.spec.correlation', expected: 'object', actual: correlation }
-  }
-  const correlationFields: readonly (keyof RuntimeIdentityAllocation)[] = [
-    'requestId',
-    'operationId',
-    'hostSessionId',
-    'runtimeId',
-    'runId',
-    'traceId',
-  ]
-  const field = correlationFields.find((key) => correlation[key] !== identity[key])
-  if (field !== undefined) {
-    return {
-      field: `startRequest.spec.correlation.${field}`,
-      expected: identity[field],
-      actual: correlation[field],
+    mismatches.push({
+      field: 'startRequest.spec.correlation',
+      expected: 'object',
+      actual: correlation,
+    })
+  } else {
+    const correlationFields: readonly (keyof RuntimeIdentityAllocation)[] = [
+      'requestId',
+      'operationId',
+      'hostSessionId',
+      'runtimeId',
+      'runId',
+      'traceId',
+    ]
+    for (const field of correlationFields) {
+      if (correlation[field] !== identity[field]) {
+        mismatches.push({
+          field: `startRequest.spec.correlation.${field}`,
+          expected: identity[field],
+          actual: correlation[field],
+        })
+      }
     }
   }
   if (identity.initialInputId === undefined) {
-    return undefined
+    return mismatches
   }
   const initialInput = startRequest['initialInput']
   // T-08712: a terminal-hosted execution delivers its first turn through the
@@ -466,16 +482,17 @@ function firstCanonicalStartIdentityMismatch(
   // no input id to echo. HRC still binds the turn by the echoed runId above.
   // Any execution that does carry initialInput must echo the allocation.
   if (initialInput === undefined && hosting['terminalHost'] === 'tmux') {
-    return undefined
+    return mismatches
   }
   const inputId = isRecord(initialInput) ? initialInput['inputId'] : undefined
-  return inputId === identity.initialInputId
-    ? undefined
-    : {
-        field: 'startRequest.initialInput.inputId',
-        expected: identity.initialInputId,
-        actual: inputId,
-      }
+  if (inputId !== identity.initialInputId) {
+    mismatches.push({
+      field: 'startRequest.initialInput.inputId',
+      expected: identity.initialInputId,
+      actual: inputId,
+    })
+  }
+  return mismatches
 }
 
 function describeValue(value: unknown): string {
@@ -503,6 +520,33 @@ function admissionRefusal(
         expected !== undefined
           ? `${field}: expected ${describeValue(expected)}, got ${describeValue(actual)}`
           : `${field}: invalid value ${describeValue(actual)}`,
+    },
+  }
+}
+
+function identityAdmissionRefusal(
+  check: 'plan-identity' | 'start-request-identity',
+  fields: IdentityMismatch[]
+): { admitted: false; code: V2ExecutionRejectionCode; diagnostic: HrcAdmissionDiagnostic } {
+  const first = fields[0]
+  if (first === undefined)
+    throw new Error('identity refusal requires at least one mismatched field')
+  const refusal = admissionRefusal(
+    'execution-identity-mismatch',
+    first.field,
+    first.actual,
+    first.expected
+  )
+  return {
+    ...refusal,
+    diagnostic: {
+      ...refusal.diagnostic,
+      check,
+      fields: fields.map((field) => ({
+        name: field.field,
+        requested: field.expected ?? null,
+        compiled: field.actual ?? null,
+      })),
     },
   }
 }
@@ -602,23 +646,19 @@ function admitV2Execution(
     return admissionRefusal('execution-selection-invalid', 'plan.selection', plan.selection)
   }
   if (!isRecord(plan.agent) || plan.agent.id !== agentId) {
-    return admissionRefusal(
-      'execution-identity-mismatch',
-      'plan.agent.id',
-      isRecord(plan.agent) ? plan.agent.id : undefined,
-      agentId
-    )
+    return identityAdmissionRefusal('plan-identity', [
+      {
+        field: 'plan.agent.id',
+        actual: isRecord(plan.agent) ? plan.agent.id : undefined,
+        expected: agentId,
+      },
+    ])
   }
-  const planIdentityMismatch = isRecord(plan.identity)
-    ? firstAllocatedIdentityMismatch(plan.identity, identity)
-    : { field: 'plan.identity', expected: 'object', actual: plan.identity }
-  if (planIdentityMismatch !== undefined) {
-    return admissionRefusal(
-      'execution-identity-mismatch',
-      planIdentityMismatch.field,
-      planIdentityMismatch.actual,
-      planIdentityMismatch.expected
-    )
+  const planIdentityMismatches = isRecord(plan.identity)
+    ? allocatedIdentityMismatches(plan.identity, identity)
+    : [{ field: 'plan.identity', expected: 'object', actual: plan.identity }]
+  if (planIdentityMismatches.length > 0) {
+    return identityAdmissionRefusal('plan-identity', planIdentityMismatches)
   }
   const execution = plan.execution
   if (!isRecord(execution)) {
@@ -692,18 +732,13 @@ function admitV2Execution(
       typed.driver
     )
   }
-  const startIdentityMismatch = firstCanonicalStartIdentityMismatch(
+  const startIdentityMismatches = canonicalStartIdentityMismatches(
     startRequestRecord,
     identity,
     typed.hosting as unknown as Record<string, unknown>
   )
-  if (startIdentityMismatch !== undefined) {
-    return admissionRefusal(
-      'execution-identity-mismatch',
-      startIdentityMismatch.field,
-      startIdentityMismatch.actual,
-      startIdentityMismatch.expected
-    )
+  if (startIdentityMismatches.length > 0) {
+    return identityAdmissionRefusal('start-request-identity', startIdentityMismatches)
   }
   // v2 declares the canonical start-request hash. compatibilityHash is a
   // broader producer cache/reuse key, not a spec hash, so HRC must not invent

@@ -522,12 +522,18 @@ describe('v2 compile request carrier', () => {
   it('names the differing field, expected and actual on every identity refusal', async () => {
     const planMismatch = validResponse()
     planMismatch.plan.identity.traceId = 'other-trace'
+    planMismatch.plan.identity.runtimeId = 'other-runtime'
     expect(await compile(planMismatch)).toMatchObject({
       rejectedBy: 'hrc-admission',
       admissionDiagnostic: {
-        field: 'plan.identity.traceId',
-        expected: 'trace-1',
-        actual: 'other-trace',
+        check: 'plan-identity',
+        field: 'plan.identity.runtimeId',
+        expected: 'runtime-1',
+        actual: 'other-runtime',
+        fields: [
+          { name: 'plan.identity.runtimeId', requested: 'runtime-1', compiled: 'other-runtime' },
+          { name: 'plan.identity.traceId', requested: 'trace-1', compiled: 'other-trace' },
+        ],
       },
     })
 
@@ -545,9 +551,17 @@ describe('v2 compile request carrier', () => {
     ).spec.correlation.operationId = 'other-operation'
     expect(await compile(correlationMismatch)).toMatchObject({
       admissionDiagnostic: {
+        check: 'start-request-identity',
         field: 'startRequest.spec.correlation.operationId',
         expected: 'op-1',
         actual: 'other-operation',
+        fields: [
+          {
+            name: 'startRequest.spec.correlation.operationId',
+            requested: 'op-1',
+            compiled: 'other-operation',
+          },
+        ],
       },
     })
   })
