@@ -184,6 +184,8 @@ export type RunDiagnostics = {
   }
   ids: Record<string, string>
   selection?: BrokerRunPreview['selection'] | undefined
+  /** ASP-owned frozen execution metadata, when the diagnostic route supplies it. */
+  execution?: BrokerRunPreview['execution'] | undefined
   phases: import('./run-diagnostics.js').PhaseRecord[]
 }
 
