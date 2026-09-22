@@ -156,6 +156,33 @@ export function createLiveRunPhaseStream(
   }
 }
 
+const CLIENT_RUN_PHASES = ['resolve-scope', 'create-session', 'prepare-run', 'attach'] as const
+
+/**
+ * The timeline of a run whose client operation threw (T-08708 AC5): completed
+ * steps, the in-flight step as failed with its duration (server-supplied
+ * phases, when present, as its children), and later client steps not-reached.
+ */
+export function failedRunPhases(
+  completed: readonly PhaseRecord[],
+  failed: { id: string; ms: number },
+  serverPhases: readonly PhaseRecord[]
+): PhaseRecord[] {
+  const failedIndex = CLIENT_RUN_PHASES.indexOf(failed.id as (typeof CLIENT_RUN_PHASES)[number])
+  return [
+    ...completed,
+    {
+      id: failed.id,
+      status: 'error',
+      ms: failed.ms,
+      ...(serverPhases.length === 0 ? {} : { children: [...serverPhases] }),
+    },
+    ...(failedIndex < 0 ? [] : CLIENT_RUN_PHASES.slice(failedIndex + 1)).map(
+      (id): PhaseRecord => ({ id, status: 'not-reached' })
+    ),
+  ]
+}
+
 /**
  * A local CLI start is a HUMAN typing at a terminal (T-07236).
  *
@@ -395,14 +422,21 @@ export async function cmdRun(
   let attachHandoffReached = false
   const livePhases: PhaseRecord[] = []
   const liveStream = verbose && !dryRun ? createLiveRunPhaseStream() : undefined
+  // The client step in progress, so a throw keeps its duration and status.
+  let inFlight: { id: string; startedAt: number } | undefined
+  const beginLivePhase = (id: string): void => {
+    inFlight = { id, startedAt: performance.now() }
+    liveStream?.begin(id)
+  }
   const recordLivePhase = (phase: PhaseRecord): void => {
+    inFlight = undefined
     livePhases.push(phase)
     liveStream?.complete(phase)
   }
-  const localResolveStartedAt = performance.now()
-  let resolveScopeMs: number | undefined
   // No live counter for resolve-scope: it may prompt to register the scope, and
   // an in-place counter would overwrite that prompt.
+  inFlight = { id: 'resolve-scope', startedAt: performance.now() }
+  const localResolveStartedAt = inFlight.startedAt
   try {
     const scope = await resolveManagedScopeContext(scopeInput, {
       projectIdOverride,
@@ -410,8 +444,7 @@ export async function cmdRun(
       registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
     })
     const scopeMs = Number((performance.now() - localResolveStartedAt).toFixed(1))
-    resolveScopeMs = scopeMs
-    liveStream?.complete({ id: 'resolve-scope', status: 'ok', ms: scopeMs })
+    recordLivePhase({ id: 'resolve-scope', status: 'ok', ms: scopeMs })
     sessionRef = scope.sessionRef
     const intent = await buildManagedRunIntent(scope, { prompt, debug })
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
@@ -452,7 +485,7 @@ export async function cmdRun(
     }
 
     const tResolve = performance.now()
-    liveStream?.begin('create-session')
+    beginLivePhase('create-session')
     const resolved = await client.resolveSession({
       sessionRef,
       runtimeIntent: intent,
@@ -483,7 +516,7 @@ export async function cmdRun(
     const hasPrompt = prompt !== undefined && prompt.length > 0
 
     const tPrepare = performance.now()
-    liveStream?.begin('prepare-run')
+    beginLivePhase('prepare-run')
     const prepared = await client.prepareAttachedRun({
       hostSessionId: targetSession.hostSessionId,
       intent,
@@ -499,7 +532,7 @@ export async function cmdRun(
     })
 
     const tAttach = performance.now()
-    liveStream?.begin('attach')
+    beginLivePhase('attach')
     const attached = await spawnAttachDescriptor(client, prepared.attach, () => {
       // Last write before tmux owns the terminal: completing the phase clears
       // the in-place counter, and finish prints only what was not streamed.
@@ -512,7 +545,7 @@ export async function cmdRun(
         {
           releases: prepared.diagnostics.releases,
           ids: prepared.diagnostics.ids,
-          phases: [{ id: 'resolve-scope', status: 'ok', ms: scopeMs }, ...livePhases],
+          phases: livePhases,
         },
         { totalLabel: 'ready' }
       )
@@ -543,8 +576,12 @@ export async function cmdRun(
     await renderSessionSummary(client, prepared.attach.bindingFence.runtimeId, scopeInput)
   } catch (err) {
     liveStream?.clear()
-    if (liveStream !== undefined && isHrcDomainErrorLike(err)) {
-      const detail = (err.detail ?? {}) as Record<string, unknown>
+    const failed = inFlight
+    if (liveStream !== undefined && (failed !== undefined || isHrcDomainErrorLike(err))) {
+      const detail = (isHrcDomainErrorLike(err) ? (err.detail ?? {}) : {}) as Record<
+        string,
+        unknown
+      >
       const serverPhases = Array.isArray(detail['phases'])
         ? (detail['phases'] as PhaseRecord[])
         : []
@@ -558,15 +595,17 @@ export async function cmdRun(
           typeof detail['ids'] === 'object' && detail['ids'] !== null
             ? (detail['ids'] as Record<string, string>)
             : {},
-        phases: [
-          {
-            id: 'resolve-scope',
-            status: 'ok',
-            ms: resolveScopeMs ?? Number((performance.now() - localResolveStartedAt).toFixed(1)),
-          },
-          ...livePhases,
-          ...serverPhases,
-        ],
+        phases:
+          failed === undefined
+            ? [...livePhases, ...serverPhases]
+            : failedRunPhases(
+                livePhases,
+                {
+                  id: failed.id,
+                  ms: Number((performance.now() - failed.startedAt).toFixed(1)),
+                },
+                serverPhases
+              ),
       })
     }
     if (jsonOutput && !attachHandoffReached) {

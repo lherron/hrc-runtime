@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 
-import { createLiveRunPhaseStream } from '../cli/handlers-scope-cmd'
+import { createLiveRunPhaseStream, failedRunPhases } from '../cli/handlers-scope-cmd'
 
 const CLEAR = '\r\x1b[2K'
 
@@ -143,5 +143,58 @@ describe('live run phase stream never alters the run', () => {
       h.stream.finish({ releases: {}, ids: {}, phases: [] })
     }).not.toThrow()
     expect(h.ticking()).toBe(false)
+  })
+})
+
+describe('a thrown client operation keeps its record (AC5)', () => {
+  const completed = [
+    { id: 'resolve-scope', status: 'ok' as const, ms: 4 },
+    { id: 'create-session', status: 'ok' as const, ms: 20 },
+  ]
+
+  it('marks the in-flight step failed with its duration and later client steps not-reached', () => {
+    expect(failedRunPhases(completed, { id: 'prepare-run', ms: 812 }, [])).toEqual([
+      ...completed,
+      { id: 'prepare-run', status: 'error', ms: 812 },
+      { id: 'attach', status: 'not-reached' },
+    ])
+  })
+
+  it('preserves server-supplied failing children under the failed client step', () => {
+    const serverPhases = [
+      { id: 'compile', status: 'ok' as const, ms: 500 },
+      { id: 'admission', status: 'error' as const, ms: 2, reason: 'refused' },
+    ]
+    expect(failedRunPhases(completed, { id: 'prepare-run', ms: 812 }, serverPhases)).toEqual([
+      ...completed,
+      { id: 'prepare-run', status: 'error', ms: 812, children: serverPhases },
+      { id: 'attach', status: 'not-reached' },
+    ])
+  })
+
+  it('a thrown resolveSession fails create-session and never reaches prepare or attach', () => {
+    expect(failedRunPhases(completed.slice(0, 1), { id: 'create-session', ms: 30 }, [])).toEqual([
+      completed[0],
+      { id: 'create-session', status: 'error', ms: 30 },
+      { id: 'prepare-run', status: 'not-reached' },
+      { id: 'attach', status: 'not-reached' },
+    ])
+  })
+
+  it('renders through finish after the streamed prefix, clearing the counter', () => {
+    const h = harness(true)
+    h.stream.complete(completed[0])
+    h.stream.complete(completed[1])
+    h.stream.begin('prepare-run')
+    h.stream.finish({
+      releases: {},
+      ids: {},
+      phases: failedRunPhases(completed, { id: 'prepare-run', ms: 812 }, [
+        { id: 'admission', status: 'error', ms: 2, reason: 'refused' },
+      ]),
+    })
+    expect(h.writes.slice(3).join('')).toBe(
+      `${CLEAR}  ✗ prepare run  812ms\n    ✗ check identity + admission  2ms  refused\n  – attach terminal\n  total  836ms\n`
+    )
   })
 })
