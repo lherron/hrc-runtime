@@ -37,11 +37,11 @@ export function resolveLaunchModel(intent: HrcRuntimeIntent): string | undefined
  *
  * `HrcHarnessIntent` has no reasoning field at all, so unlike the model there
  * is nothing to prefer over the directive — the overlaid `provision` is the
- * only source, which is precisely why `+reasoning=` could never reach a
+ * only source, which is precisely why `+reasoning_effort=` could never reach a
  * process before now.
  */
 export function resolveLaunchReasoning(intent: HrcRuntimeIntent): string | undefined {
-  return intent.provision?.reasoning
+  return intent.provision?.reasoning_effort
 }
 
 /** The compile boundary's closed reasoning vocabulary. */
@@ -49,7 +49,7 @@ export type CompileReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
 
 /**
  * The same value on the compile hop, whose contract declares a CLOSED enum
- * while `[provisioning].reasoning` is harness-neutral text.
+ * while `[provisioning].reasoning_effort` is harness-neutral text.
  *
  * Passed through rather than dropped when it is not one of the four: the value
  * was already validated at the sender against the resolved harness's own

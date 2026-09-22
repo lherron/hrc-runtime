@@ -639,7 +639,10 @@ describe('T-08560 keyless doors and reprovision ordering (D3, D4)', () => {
     aspd.stop()
     const response = await fixture.postJson('/v1/runtimes/start', {
       hostSessionId: s.hostSessionId,
-      intent: interactiveIntent(),
+      // Preserve omission: the frozen producer selection, rather than HRC's
+      // interactive caller hint, decides whether a live realization can be
+      // reprovisioned.
+      intent: headlessIntent(),
       restartStyle: 'fresh_pty',
     })
     expect(response.status).toBe(503)
@@ -709,12 +712,13 @@ describe('T-08560 joins, backstop and durable IPC on the aspd route', () => {
     const s = await seedInteractive()
     const summoned = await kickerSummons(s)
     expect(summoned.status).toBeLessThan(300)
+    const startSession = await session('agent:t08560-start:project:hrc-runtime:task:T-08560')
     const started = await fixture.postJson('/v1/runtimes/start', {
-      hostSessionId: s.hostSessionId,
+      hostSessionId: startSession.hostSessionId,
       intent: interactiveIntent(),
     })
     expect(started.status).toBeLessThan(300)
-    expect(aspd.compileCalls).toBe(1)
+    expect(aspd.compileCalls).toBe(2)
     expect(facadeCalls).toBe(0)
   })
 })

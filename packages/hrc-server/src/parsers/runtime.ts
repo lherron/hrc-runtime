@@ -146,12 +146,16 @@ export function parseListRunsFilter(url: URL): ListRunsFilter {
 }
 
 function parseInlineHarness(harness: Record<string, unknown>): HrcRuntimeIntent['harness'] {
-  const provider = requireOneOf(
-    requireTrimmedStringField(harness, 'provider'),
-    ['anthropic', 'openai', 'meta'],
-    'harness.provider must be "anthropic", "openai", or "meta"',
-    { field: 'harness.provider' }
-  )
+  const providerValue = readOptionalNonEmptyStringField(harness, 'provider')
+  const provider =
+    providerValue === undefined
+      ? undefined
+      : requireOneOf(
+          providerValue,
+          ['anthropic', 'openai', 'meta'],
+          'harness.provider must be "anthropic", "openai", or "meta"',
+          { field: 'harness.provider' }
+        )
 
   const interactive = harness['interactive']
   if (typeof interactive !== 'boolean') {
@@ -163,8 +167,8 @@ function parseInlineHarness(harness: Record<string, unknown>): HrcRuntimeIntent[
   }
 
   return {
-    provider: provider as HrcProvider,
     interactive,
+    ...(provider !== undefined ? { provider: provider as HrcProvider } : {}),
     ...(typeof harness['id'] === 'string' ? { id: harness['id'] as HrcHarness } : {}),
     ...(typeof harness['fallback'] === 'string' ? { fallback: harness['fallback'] } : {}),
     ...(harness['model'] !== undefined ? { model: String(harness['model']) } : {}),
@@ -184,6 +188,8 @@ export function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIn
     : resolveHarnessFromPlacement(placement, execution)
 
   const presentation = parseOptionalPresentationIntent(input['presentation'])
+  const selection = parseOptionalHarnessSelection(input['selection'])
+  const summonDirectives = parseOptionalSummonHarnessDirectives(input['summonDirectives'])
   // T-07398: re-validated HERE, at the dispatch boundary, then carried verbatim.
   // Every surface that already accepts a runtimeIntent therefore accepts a
   // directive block without a new request-body field of its own.
@@ -192,12 +198,110 @@ export function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIn
   return {
     placement: placement as HrcRuntimePlacement,
     harness: resolvedHarness,
+    ...(selection === undefined ? {} : { selection }),
+    ...(summonDirectives === undefined ? {} : { summonDirectives }),
     ...(provision === undefined ? {} : { provision }),
     ...(isRecord(execution) ? { execution: execution as HrcRuntimeIntent['execution'] } : {}),
     ...(isRecord(launch) ? { launch: launch as HrcRuntimeIntent['launch'] } : {}),
     ...(typeof initialPrompt === 'string' ? { initialPrompt } : {}),
     ...(attachments !== undefined ? { attachments } : {}),
     ...(presentation !== undefined ? { presentation } : {}),
+  }
+}
+
+function parseOptionalHarnessSelection(value: unknown): HrcRuntimeIntent['selection'] | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selection must be an object', {
+      field: 'selection',
+    })
+  }
+  const harness = value['harness']
+  const modelProvider = readOptionalNonEmptyStringField(value, 'modelProvider')
+  const model = readOptionalNonEmptyStringField(value, 'model')
+  const reasoningEffort = value['reasoningEffort']
+  const presentation = value['presentation']
+  if (presentation !== undefined && typeof presentation !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'selection.presentation must be a boolean',
+      { field: 'selection.presentation' }
+    )
+  }
+  return {
+    ...(harness === undefined
+      ? {}
+      : {
+          harness: requireOneOf(
+            harness,
+            ['agent-harness', 'claude', 'codex', 'muse'],
+            'selection.harness must be "agent-harness", "claude", "codex", or "muse"',
+            { field: 'selection.harness' }
+          ) as NonNullable<HrcRuntimeIntent['selection']>['harness'],
+        }),
+    ...(modelProvider === undefined ? {} : { modelProvider }),
+    ...(model === undefined ? {} : { model }),
+    ...(reasoningEffort === undefined
+      ? {}
+      : {
+          reasoningEffort: requireOneOf(
+            reasoningEffort,
+            ['low', 'medium', 'high', 'xhigh'],
+            'selection.reasoningEffort must be "low", "medium", "high", or "xhigh"',
+            { field: 'selection.reasoningEffort' }
+          ) as NonNullable<HrcRuntimeIntent['selection']>['reasoningEffort'],
+        }),
+    ...(presentation === undefined ? {} : { presentation }),
+  }
+}
+
+function parseOptionalSummonHarnessDirectives(
+  value: unknown
+): HrcRuntimeIntent['summonDirectives'] | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'summonDirectives must be an object',
+      { field: 'summonDirectives' }
+    )
+  }
+  const harness = value['harness']
+  const modelProvider = readOptionalNonEmptyStringField(value, 'model_provider')
+  const model = readOptionalNonEmptyStringField(value, 'model')
+  const reasoningEffort = value['reasoning_effort']
+  const presentation = value['presentation']
+  if (presentation !== undefined && typeof presentation !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'summonDirectives.presentation must be a boolean',
+      { field: 'summonDirectives.presentation' }
+    )
+  }
+  return {
+    ...(harness === undefined
+      ? {}
+      : {
+          harness: requireOneOf(
+            harness,
+            ['agent-harness', 'claude', 'codex', 'muse'],
+            'summonDirectives.harness must be "agent-harness", "claude", "codex", or "muse"',
+            { field: 'summonDirectives.harness' }
+          ) as NonNullable<HrcRuntimeIntent['summonDirectives']>['harness'],
+        }),
+    ...(modelProvider === undefined ? {} : { model_provider: modelProvider }),
+    ...(model === undefined ? {} : { model }),
+    ...(reasoningEffort === undefined
+      ? {}
+      : {
+          reasoning_effort: requireOneOf(
+            reasoningEffort,
+            ['low', 'medium', 'high', 'xhigh'],
+            'summonDirectives.reasoning_effort must be "low", "medium", "high", or "xhigh"',
+            { field: 'summonDirectives.reasoning_effort' }
+          ) as NonNullable<HrcRuntimeIntent['summonDirectives']>['reasoning_effort'],
+        }),
+    ...(presentation === undefined ? {} : { presentation }),
   }
 }
 

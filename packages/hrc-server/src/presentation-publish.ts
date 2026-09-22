@@ -47,7 +47,7 @@ export type PublishPresentationOptions = {
  * Fold this invocation into the persisted record. Normally monotone in
  * `viewerRequested` and latest-wins in `viewerWindow`; `operatorAttachable`
  * always reflects the hosting state as of this invocation. An explicit
- * birth-time `viewer = "none"` overrides a prior request: monotonicity prevents
+ * birth-time `presentation.operator = "none"` overrides a prior request: monotonicity prevents
  * panes that should exist from being un-requested, while this declaration says
  * the seat is not watched and no pane should exist at all.
  */
@@ -94,7 +94,8 @@ export async function publishPresentation(
     const record = foldPresentationRecord(current.presentation, {
       operatorAttachable,
       operatorAttachPending,
-      viewer: session?.lastAppliedIntentJson?.provision?.viewer,
+      viewer:
+        session?.lastAppliedIntentJson?.presentation?.operator === 'none' ? 'none' : undefined,
       viewerWindow: session?.lastAppliedIntentJson?.presentation?.viewerWindow,
     })
 

@@ -22,18 +22,33 @@ async function writeManifest(dir: string, manifest: Record<string, unknown>): Pr
 /** A workspace with a root install and a set of `<package>/node_modules/<dep>` copies. */
 async function makeTree(options: {
   overrides: Record<string, unknown>
+  dependencies?: Record<string, string>
+  lock?: string
   rootInstalled?: Record<string, string>
   nested?: Record<string, Record<string, string>>
+  packageDependencies?: Record<string, Record<string, string>>
 }): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'doctor-'))
   temporaryRoots.push(root)
-  await writeManifest(root, { name: 'fixture', overrides: options.overrides })
+  await writeManifest(root, {
+    name: 'fixture',
+    overrides: options.overrides,
+    ...(options.dependencies ? { dependencies: options.dependencies } : {}),
+  })
+  if (options.lock !== undefined) {
+    await writeFile(join(root, 'bun.lock'), options.lock)
+  }
 
   for (const [dependency, version] of Object.entries(options.rootInstalled ?? {})) {
     await writeManifest(join(root, 'node_modules', dependency), { name: dependency, version })
   }
   for (const [pkg, deps] of Object.entries(options.nested ?? {})) {
-    await writeManifest(join(root, 'packages', pkg), { name: pkg })
+    await writeManifest(join(root, 'packages', pkg), {
+      name: pkg,
+      ...(options.packageDependencies?.[pkg]
+        ? { dependencies: options.packageDependencies[pkg] }
+        : {}),
+    })
     for (const [dependency, version] of Object.entries(deps)) {
       await writeManifest(join(root, 'packages', pkg, 'node_modules', dependency), {
         name: dependency,
@@ -56,16 +71,66 @@ describe('parseRoot', () => {
 })
 
 describe('governedDependencies', () => {
-  test('are the root overrides naming one exact version', async () => {
+  test('include exact root overrides and the ASP coherence tuple', async () => {
     const root = await makeTree({
       overrides: { '@types/bun': '1.3.14', ranged: '^1.0.0', redirected: 'workspace:*' },
     })
 
-    expect(await governedDependencies(root)).toEqual(['@types/bun'])
+    const governed = await governedDependencies(root)
+    expect(governed).toContain('@types/bun')
+    expect(governed).toContain('agent-scope')
+    expect(governed).toContain('spaces-harness-broker-protocol')
   })
 })
 
 describe('findStaleCopies', () => {
+  test('reports a stale ASP coherence package even when manifests retain the latest specifier', async () => {
+    const root = await makeTree({
+      overrides: {},
+      dependencies: { 'agent-scope': 'latest' },
+      rootInstalled: { 'agent-scope': '0.1.1-dev.new' },
+      nested: { 'hrc-core': { 'agent-scope': '0.1.1-dev.old' } },
+      packageDependencies: { 'hrc-core': { 'agent-scope': 'latest' } },
+    })
+
+    const { stale } = await findStaleCopies(root, root)
+    expect(stale).toEqual([
+      {
+        where: join('packages', 'hrc-core', 'node_modules', 'agent-scope'),
+        dependency: 'agent-scope',
+        version: '0.1.1-dev.old',
+        rootVersion: '0.1.1-dev.new',
+      },
+    ])
+  })
+
+  test('uses the repo lock for ASP copies when a parent install is stale', async () => {
+    const installRoot = await mkdtemp(join(tmpdir(), 'doctor-parent-install-'))
+    temporaryRoots.push(installRoot)
+    await writeManifest(join(installRoot, 'node_modules', 'agent-scope'), {
+      name: 'agent-scope',
+      version: '0.1.1-dev.parent-old',
+    })
+    const root = await makeTree({
+      overrides: {},
+      dependencies: { 'agent-scope': 'latest' },
+      lock: '"agent-scope": ["agent-scope@0.1.1-dev.lock-current"]\n',
+      rootInstalled: { 'agent-scope': '0.1.1-dev.lock-current' },
+      nested: { 'hrc-core': { 'agent-scope': '0.1.1-dev.nested-old' } },
+      packageDependencies: { 'hrc-core': { 'agent-scope': 'latest' } },
+    })
+
+    const { stale } = await findStaleCopies(root, installRoot)
+    expect(stale).toEqual([
+      {
+        where: join('packages', 'hrc-core', 'node_modules', 'agent-scope'),
+        dependency: 'agent-scope',
+        version: '0.1.1-dev.nested-old',
+        rootVersion: '0.1.1-dev.lock-current',
+      },
+    ])
+  })
+
   test('reports a nested copy whose version differs from the root resolution', async () => {
     const root = await makeTree({
       overrides: { '@types/bun': '1.3.14' },
@@ -173,6 +238,35 @@ describe('findStaleCopies', () => {
 })
 
 describe('pruning', () => {
+  test('prunes a stale latest-spec ASP coherence package', async () => {
+    const root = await makeTree({
+      overrides: {},
+      dependencies: { 'agent-scope': 'latest' },
+      rootInstalled: { 'agent-scope': '0.1.1-dev.new' },
+      nested: { 'hrc-core': { 'agent-scope': '0.1.1-dev.old' } },
+      packageDependencies: { 'hrc-core': { 'agent-scope': 'latest' } },
+    })
+    const stalePath = join(root, 'packages', 'hrc-core', 'node_modules', 'agent-scope')
+
+    const check = Bun.spawnSync([
+      'bun',
+      join(import.meta.dir, 'workspace-doctor.ts'),
+      '--root',
+      root,
+      '--check',
+    ])
+    expect(check.exitCode).toBe(1)
+
+    const prune = Bun.spawnSync([
+      'bun',
+      join(import.meta.dir, 'workspace-doctor.ts'),
+      '--root',
+      root,
+    ])
+    expect(prune.exitCode).toBe(0)
+    expect(existsSync(stalePath)).toBe(false)
+  })
+
   test('removes the stale directory and leaves the healthy one', async () => {
     const root = await makeTree({
       overrides: { '@types/bun': '1.3.14' },

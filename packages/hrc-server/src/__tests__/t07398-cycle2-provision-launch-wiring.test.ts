@@ -14,6 +14,7 @@ import {
   type V2RuntimeCompileRequest,
   compileBrokerRuntimePlan,
 } from '../agent-spaces-adapter/compile-adapter'
+import { resolveLaunchReasoning } from '../agent-spaces-adapter/provision-launch'
 
 const DIRECTED_MODEL = 'sonnet'
 const NOW = '2026-09-22T00:00:00.000Z'
@@ -54,6 +55,14 @@ function directedIntent(harness: HrcRuntimeIntent['harness']): HrcRuntimeIntent 
 }
 
 describe('T-07398 cycle 2 item 1 — provisioning directives reach the launch path', () => {
+  it('reads the canonical reasoning_effort provisioning scalar', () => {
+    const intent = {
+      provision: { reasoning_effort: DIRECTED_REASONING },
+    } as unknown as HrcRuntimeIntent
+
+    expect(resolveLaunchReasoning(intent)).toBe(DIRECTED_REASONING)
+  })
+
   it('compile-adapter forwards directed model and reasoning as raw summon directives', async () => {
     const captured: { request?: V2RuntimeCompileRequest } = {}
 

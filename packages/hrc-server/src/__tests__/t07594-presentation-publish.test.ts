@@ -110,8 +110,10 @@ function seedRuntime(presentationKind: 'tmux-tui' | 'none'): HrcRuntimeSnapshot 
   })
 }
 
-function seedSession(options: { viewerWindow?: string; viewer?: string } = {}): void {
-  const { viewerWindow, viewer } = options
+function seedSession(
+  options: { viewerWindow?: string; operator?: 'none' | 'tmux-tui' } = {}
+): void {
+  const { viewerWindow, operator } = options
   fixture.db.sessions.insert({
     hostSessionId: HOST_SESSION_ID,
     scopeRef: SCOPE_REF,
@@ -121,13 +123,19 @@ function seedSession(options: { viewerWindow?: string; viewer?: string } = {}): 
     createdAt: PAST,
     updatedAt: PAST,
     ancestorScopeRefs: [],
-    ...(viewerWindow === undefined && viewer === undefined
+    ...(viewerWindow === undefined && operator === undefined
       ? {}
       : {
           lastAppliedIntentJson: {
             harness: { id: 'claude-code', provider: 'anthropic' },
-            ...(viewerWindow === undefined ? {} : { presentation: { viewerWindow } }),
-            ...(viewer === undefined ? {} : { provision: { viewer } }),
+            ...(viewerWindow === undefined && operator === undefined
+              ? {}
+              : {
+                  presentation: {
+                    ...(viewerWindow === undefined ? {} : { viewerWindow }),
+                    ...(operator === undefined ? {} : { operator }),
+                  },
+                }),
           } as never,
         }),
   })
@@ -256,8 +264,8 @@ describe('publishPresentation — persisted record (§5.1)', () => {
     expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.presentation?.viewerRequested).toBe(true)
   })
 
-  it('explicit viewer=none overrides a prior viewer request for the generation', async () => {
-    seedSession({ viewer: 'none' })
+  it('explicit presentation.operator=none overrides a prior viewer request for the generation', async () => {
+    seedSession({ operator: 'none' })
     const runtime = seedRuntime('tmux-tui')
     fixture.db.runtimes.update(RUNTIME_ID, {
       presentation: { operatorAttachable: true, viewerRequested: true },
@@ -272,8 +280,8 @@ describe('publishPresentation — persisted record (§5.1)', () => {
     })
   })
 
-  it('viewer=auto follows the legacy monotone request path', async () => {
-    seedSession({ viewer: 'auto' })
+  it('operator presentation other than none follows the monotone request path', async () => {
+    seedSession({ operator: 'tmux-tui' })
     const runtime = seedRuntime('tmux-tui')
 
     await publishPresentation.call(fixture.server, runtime, { operatorAttachPending: false })
