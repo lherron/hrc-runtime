@@ -26,6 +26,7 @@ import {
   HrcUnprocessableEntityError,
   type ResolveRuntimeIntentResponse,
   formatProfileProvisioningStrippedWarning,
+  resolveStateRoot,
   splitSessionRef,
 } from 'hrc-core'
 import { getAspHome } from 'hrc-core'
@@ -47,6 +48,7 @@ import {
 } from './broker-run-preview.js'
 import { observedRuntimeBundle } from './observed-runtime-bundle.js'
 import { resolvePlacementInProcess } from './placements-resolve.js'
+import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
 import { isRecord, parseJsonBody } from './server-parsers.js'
 import { json } from './server-util.js'
 
@@ -565,6 +567,7 @@ export async function handleRunPreview(request: Request): Promise<Response> {
           compileHarnessInvocation: (compileRequest) =>
             client.compileHarnessInvocation({ ...compileRequest, aspHome }),
           ids: previewCompileIds(runtimeId),
+          timing: createPrecompileLaunchTimingContext('preview', runtimeId, resolveStateRoot()),
         }
       )
       if (!compiled.admitted) {

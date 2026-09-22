@@ -64,7 +64,10 @@ import {
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import type { SelectedExecution, SelectedExecutionPlan } from './broker/selected-execution.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
-import type { PrecompileLaunchTimingContext } from './precompile-launch-timing.js'
+import {
+  type PrecompileLaunchTimingContext,
+  createPrecompileLaunchTimingContext,
+} from './precompile-launch-timing.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { type DispatchRunPersistenceOptions, dispatchRunPersistence } from './server-types.js'
@@ -260,6 +263,13 @@ export async function prepareAspdHeadlessAttempt(
 ): Promise<string> {
   const { session, intent, runId, endpoint } = input
   const runtimeId = `rt-${randomUUID()}`
+  const timing =
+    input.timing ??
+    createPrecompileLaunchTimingContext(
+      input.interactive === undefined ? 'headless' : 'interactive',
+      runtimeId,
+      server.options.stateRoot
+    )
   const hrcDispatchEnv = buildManagedBrokerDispatchEnv({
     baseEnv: mergeEnv(buildHrcCorrelationEnv(intent), intent.launch),
     db: server.db,
@@ -319,7 +329,7 @@ export async function prepareAspdHeadlessAttempt(
         prepared = await prepareThroughAspd(endpoint, { ...request, aspHome })
         return prepared.response
       },
-      ...(input.timing ? { timing: input.timing } : {}),
+      timing,
       ids: {
         requestId: () => `req-${randomUUID()}`,
         operationId: () => `op-${randomUUID()}`,

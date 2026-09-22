@@ -42,9 +42,24 @@ export async function observePrecompileLaunchSpan<T>(
   timing: PrecompileLaunchTimingContext,
   operation: () => Promise<T>
 ): Promise<T> {
+  const startedAt = performance.now()
+  let boundWarningEmitted = false
+  const boundTimer =
+    timing.boundMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          boundWarningEmitted = true
+          emitTiming(timing.logger, 'warn', {
+            phase,
+            transport: timing.transport,
+            runtimeId: timing.runtimeId,
+            boundMs: timing.boundMs,
+            durMs: performance.now() - startedAt,
+          })
+        }, timing.boundMs)
   const recorder = createPhaseRecorder({
     sink: (record) => {
-      if (record.status === 'warn') {
+      if (record.status === 'warn' && !boundWarningEmitted) {
         emitTiming(timing.logger, 'warn', {
           phase,
           transport: timing.transport,
@@ -56,11 +71,15 @@ export async function observePrecompileLaunchSpan<T>(
       if (record.ms !== undefined) emitSpan(timing, phase, record.ms)
     },
   })
-  return recorder.step(
-    phase,
-    operation,
-    timing.boundMs === undefined ? undefined : { limitMs: timing.boundMs }
-  )
+  try {
+    return await recorder.step(
+      phase,
+      operation,
+      timing.boundMs === undefined ? undefined : { limitMs: timing.boundMs }
+    )
+  } finally {
+    if (boundTimer !== undefined) clearTimeout(boundTimer)
+  }
 }
 
 function emitTiming(
