@@ -53,6 +53,8 @@ import {
 import { observedRuntimeBundle } from './observed-runtime-bundle.js'
 import { resolvePlacementInProcess } from './placements-resolve.js'
 import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
+import { projectHrcReleaseIdentity } from './release-provenance.js'
+import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { isRecord, parseJsonBody } from './server-parsers.js'
 import { json } from './server-util.js'
 
@@ -556,7 +558,10 @@ function projectPrompt(prompt: AspcRuntimePromptObservation): PromptProjection {
   }
 }
 
-export async function handleRunPreview(request: Request): Promise<Response> {
+export async function handleRunPreview(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
   const { intent, sessionRef } = parsePreviewBody(await parseJsonBody(request))
   const previewIntent = resolvePreviewIntent(intent)
   // One admitted connection serves both operations, so the plan and the prompt
@@ -564,6 +569,7 @@ export async function handleRunPreview(request: Request): Promise<Response> {
   // correlation capability on the same connection: absent, the preview is
   // refused with aspd_capability_missing instead of an uncorrelated inspection.
   const phases = createPhaseRecorder()
+  const hrcRelease = projectHrcReleaseIdentity(this.capturedRelease)
   try {
     return await withAspdObservationSession(
       [
@@ -661,6 +667,7 @@ export async function handleRunPreview(request: Request): Promise<Response> {
             : {}),
           diagnostics: {
             releases: {
+              ...(hrcRelease === undefined ? {} : { hrc: hrcRelease }),
               aspd: service.release,
               ...(compiled.executionRelease === undefined
                 ? {}

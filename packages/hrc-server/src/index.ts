@@ -1130,7 +1130,7 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/declarations/resolve')]: (request) =>
       handleResolveRuntimeIntent(request),
     [exactRouteKey('POST', '/v1/placements/resolve')]: (request) => handleResolvePlacement(request),
-    [exactRouteKey('POST', '/v1/previews/run')]: (request) => handleRunPreview(request),
+    [exactRouteKey('POST', '/v1/previews/run')]: (request) => handleRunPreview.call(this, request),
     [exactRouteKey('POST', '/v1/app-sessions/ensure')]: (request) =>
       this.handleEnsureAppSession(request),
     [exactRouteKey('GET', '/v1/app-sessions')]: (_request, url) =>

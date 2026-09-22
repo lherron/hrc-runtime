@@ -33,6 +33,16 @@ type CapturedUnmanagedRelease = Omit<
 
 export type CapturedServerRelease = CapturedAtomicRelease | CapturedUnmanagedRelease
 
+export function projectHrcReleaseIdentity(
+  captured: CapturedServerRelease
+): { releaseId: string; sourceCommit: string } | undefined {
+  if (captured.mode !== 'atomic') return undefined
+  return {
+    releaseId: captured.releaseId,
+    sourceCommit: captured.hrcBuild.sourceCommit,
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }

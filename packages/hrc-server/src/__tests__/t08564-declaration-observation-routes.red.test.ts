@@ -324,6 +324,29 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
     })
   })
 
+  test('names the running HRC release from the daemon captured atomic manifest', async () => {
+    await boot()
+    const captured = (server as unknown as { capturedRelease: unknown }).capturedRelease
+    Object.defineProperty(server, 'capturedRelease', {
+      configurable: true,
+      value: {
+        mode: 'atomic',
+        releaseId: 'hrc-t08708-preview',
+        hrcBuild: { sourceCommit: 'd'.repeat(40) },
+      },
+    })
+    try {
+      const { response, body } = await post('/v1/previews/run', previewBody())
+      expect(response.status).toBe(200)
+      expect(body.diagnostics.releases.hrc).toEqual({
+        releaseId: 'hrc-t08708-preview',
+        sourceCommit: 'd'.repeat(40),
+      })
+    } finally {
+      Object.defineProperty(server, 'capturedRelease', { configurable: true, value: captured })
+    }
+  })
+
   // Astra EN-14276 (G1 audit A1/A6): the inspection context names the same
   // project and effective directives the compile sees. The project id comes from
   // the session scope and differs from the project directory basename; the

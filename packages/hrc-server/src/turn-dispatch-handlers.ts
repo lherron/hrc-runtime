@@ -99,6 +99,7 @@ import {
   startBirthOf,
   withFrozenOperatorPresentation,
 } from './presentation-operator.js'
+import { projectHrcReleaseIdentity } from './release-provenance.js'
 import {
   brokerRuntimeRefusesAdmissionClass,
   brokerRuntimeSupportsAdmissionClass,
@@ -1601,13 +1602,7 @@ export async function handlePrepareAttachedRun(
   // of broker-start, whose existing measurement still spans them.
   const observation: AttachedRunObservation = { phases: createPhaseRecorder() }
   const attach = { pendingStartId, observation }
-  const hrcRelease =
-    this.capturedRelease.mode === 'atomic'
-      ? {
-          releaseId: this.capturedRelease.releaseId,
-          sourceCommit: this.capturedRelease.hrcBuild.sourceCommit,
-        }
-      : undefined
+  const hrcRelease = projectHrcReleaseIdentity(this.capturedRelease)
   const diagnostics = (runtimeId?: string) => ({
     releases: {
       ...(hrcRelease === undefined ? {} : { hrc: hrcRelease }),
