@@ -2,12 +2,18 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 
-import { maskDiagnosticArgv, maskDiagnosticEnvironment, recordCliLaunch } from 'hrc-core'
+import {
+  formatDiagnosticDuration,
+  maskDiagnosticArgv,
+  maskDiagnosticEnvironment,
+  recordCliLaunch,
+} from 'hrc-core'
 import type {
   BrokerRunPreview,
   CliLaunchPhase,
   DispatchTurnRequest,
   HrcRuntimeIntent,
+  PhaseObservationSink,
   PhaseRecord,
   RunDiagnostics,
 } from 'hrc-core'
@@ -42,6 +48,113 @@ import {
 import { createClient, fatal } from './shared.js'
 
 type ManagedStartClient = Pick<HrcClient, 'dispatchTurn' | 'startRuntime'>
+
+const CLEAR_LINE = '\r\x1b[2K'
+
+/** Renderer lines for completed phases, in the renderer's own vocabulary. */
+function renderPhaseLines(phases: PhaseRecord[]): string[] {
+  const lines: string[] = []
+  renderRunDiagnostics({ releases: {}, ids: {}, phases }, { write: (line) => lines.push(line) })
+  return lines.slice(0, -1)
+}
+
+export type LiveRunPhaseStream = {
+  /** A client-side phase is now in progress; a TTY shows a live elapsed counter. */
+  begin(id: string): void
+  /** A phase completed: clear the counter and print its lines (with any children). */
+  complete: PhaseObservationSink
+  /** Erase the in-place counter. Must run before anything else owns the terminal. */
+  clear(): void
+  /** Print what was not already streamed: remaining phases, envelope, and the total. */
+  finish(diagnostics: RunDiagnostics, options?: { totalLabel?: 'total' | 'ready' }): void
+}
+
+/**
+ * `hrc run -v` streams client-side phases as they complete (T-08708 AC3).
+ * Server substeps arrive atomically as children of `prepare-run`. Off a TTY
+ * only plain completed lines are written. Rendering never alters the run: every
+ * entry point swallows its own errors.
+ */
+export function createLiveRunPhaseStream(
+  options: {
+    output?: { isTTY?: boolean; write(chunk: string): unknown }
+    now?: () => number
+    every?: (fn: () => void, ms: number) => () => void
+  } = {}
+): LiveRunPhaseStream {
+  const output = options.output ?? process.stderr
+  const tty = output.isTTY === true
+  const now = options.now ?? (() => performance.now())
+  const every =
+    options.every ??
+    ((fn: () => void, ms: number) => {
+      const timer = setInterval(fn, ms)
+      timer.unref?.()
+      return () => clearInterval(timer)
+    })
+  const streamed: string[] = []
+  let stopTicker: (() => void) | undefined
+  let inPlace = false
+
+  const guard =
+    <A extends unknown[]>(fn: (...args: A) => void) =>
+    (...args: A): void => {
+      try {
+        fn(...args)
+      } catch {
+        // Diagnostics output must never change the run's outcome.
+      }
+    }
+  const clear = (): void => {
+    const stop = stopTicker
+    stopTicker = undefined
+    stop?.()
+    if (!inPlace) return
+    inPlace = false
+    output.write(CLEAR_LINE)
+  }
+  const writeLines = (lines: string[]): void => {
+    if (lines.length > 0) output.write(`${lines.join('\n')}\n`)
+  }
+
+  return {
+    begin: guard((id: string) => {
+      clear()
+      if (!tty) return
+      const startedAt = now()
+      const inProgress = (renderPhaseLines([{ id, status: 'ok' }])[0] ?? `  ✓ ${id}`).replace(
+        '✓',
+        '…'
+      )
+      const paint = (): void => {
+        inPlace = true
+        output.write(`${CLEAR_LINE}${inProgress}  ${formatDiagnosticDuration(now() - startedAt)}`)
+      }
+      paint()
+      stopTicker = every(guard(paint), 100)
+    }),
+    complete: guard((phase: Readonly<PhaseRecord>) => {
+      clear()
+      const lines = renderPhaseLines([phase as PhaseRecord])
+      streamed.push(...lines)
+      writeLines(lines)
+    }),
+    clear: guard(clear),
+    finish: guard((diagnostics: RunDiagnostics, finishOptions = {}) => {
+      clear()
+      const lines: string[] = []
+      renderRunDiagnostics(diagnostics, { ...finishOptions, write: (line) => lines.push(line) })
+      const total = lines.pop()
+      const phaseLines = renderPhaseLines(diagnostics.phases)
+      const envelope = lines
+        .slice(0, lines.length - phaseLines.length)
+        .filter((line) => line !== '')
+      const alreadyStreamed = streamed.every((line, index) => phaseLines[index] === line)
+      const remaining = alreadyStreamed ? phaseLines.slice(streamed.length) : phaseLines
+      writeLines([...remaining, ...envelope, ...(total === undefined ? [] : [total])])
+    }),
+  }
+}
 
 /**
  * A local CLI start is a HUMAN typing at a terminal (T-07236).
@@ -281,14 +394,24 @@ export async function cmdRun(
   let sessionRef: string | undefined
   let attachHandoffReached = false
   const livePhases: PhaseRecord[] = []
+  const liveStream = verbose && !dryRun ? createLiveRunPhaseStream() : undefined
+  const recordLivePhase = (phase: PhaseRecord): void => {
+    livePhases.push(phase)
+    liveStream?.complete(phase)
+  }
   const localResolveStartedAt = performance.now()
+  let resolveScopeMs: number | undefined
+  // No live counter for resolve-scope: it may prompt to register the scope, and
+  // an in-place counter would overwrite that prompt.
   try {
     const scope = await resolveManagedScopeContext(scopeInput, {
       projectIdOverride,
       projectRootOverride,
       registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
     })
-    const resolveScopeMs = Number((performance.now() - localResolveStartedAt).toFixed(1))
+    const scopeMs = Number((performance.now() - localResolveStartedAt).toFixed(1))
+    resolveScopeMs = scopeMs
+    liveStream?.complete({ id: 'resolve-scope', status: 'ok', ms: scopeMs })
     sessionRef = scope.sessionRef
     const intent = await buildManagedRunIntent(scope, { prompt, debug })
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
@@ -304,7 +427,7 @@ export async function cmdRun(
         scope.placement?.resolution.reason,
         jsonOutput,
         verbose,
-        resolveScopeMs
+        scopeMs
       )
       return
     }
@@ -329,6 +452,7 @@ export async function cmdRun(
     }
 
     const tResolve = performance.now()
+    liveStream?.begin('create-session')
     const resolved = await client.resolveSession({
       sessionRef,
       runtimeIntent: intent,
@@ -340,7 +464,7 @@ export async function cmdRun(
       summonIntent: 'explicit_local',
     })
     markLaunch('resolveSession', tResolve)
-    livePhases.push({
+    recordLivePhase({
       id: 'create-session',
       status: 'ok',
       ms: Number((performance.now() - tResolve).toFixed(1)),
@@ -359,6 +483,7 @@ export async function cmdRun(
     const hasPrompt = prompt !== undefined && prompt.length > 0
 
     const tPrepare = performance.now()
+    liveStream?.begin('prepare-run')
     const prepared = await client.prepareAttachedRun({
       hostSessionId: targetSession.hostSessionId,
       intent,
@@ -366,7 +491,7 @@ export async function cmdRun(
       ...(hasPrompt ? { prompt } : {}),
     })
     markLaunch('prepareAttachedRun', tPrepare)
-    livePhases.push({
+    recordLivePhase({
       id: 'prepare-run',
       status: 'ok',
       ms: Number((performance.now() - tPrepare).toFixed(1)),
@@ -374,22 +499,23 @@ export async function cmdRun(
     })
 
     const tAttach = performance.now()
+    liveStream?.begin('attach')
     const attached = await spawnAttachDescriptor(client, prepared.attach, () => {
-      livePhases.push({
+      // Last write before tmux owns the terminal: completing the phase clears
+      // the in-place counter, and finish prints only what was not streamed.
+      recordLivePhase({
         id: 'attach',
         status: 'ok',
         ms: Number((performance.now() - tAttach).toFixed(1)),
       })
-      if (verbose) {
-        renderRunDiagnostics(
-          {
-            releases: prepared.diagnostics.releases,
-            ids: prepared.diagnostics.ids,
-            phases: [{ id: 'resolve-scope', status: 'ok', ms: resolveScopeMs }, ...livePhases],
-          },
-          { totalLabel: 'ready' }
-        )
-      }
+      liveStream?.finish(
+        {
+          releases: prepared.diagnostics.releases,
+          ids: prepared.diagnostics.ids,
+          phases: [{ id: 'resolve-scope', status: 'ok', ms: scopeMs }, ...livePhases],
+        },
+        { totalLabel: 'ready' }
+      )
     })
     attachHandoffReached = true
     markLaunch('spawnAttach', tAttach)
@@ -416,12 +542,13 @@ export async function cmdRun(
     // the broker-pushed session summary recorded at graceful /quit, if any.
     await renderSessionSummary(client, prepared.attach.bindingFence.runtimeId, scopeInput)
   } catch (err) {
-    if (verbose && isHrcDomainErrorLike(err)) {
+    liveStream?.clear()
+    if (liveStream !== undefined && isHrcDomainErrorLike(err)) {
       const detail = (err.detail ?? {}) as Record<string, unknown>
       const serverPhases = Array.isArray(detail['phases'])
         ? (detail['phases'] as PhaseRecord[])
         : []
-      renderRunDiagnostics({
+      liveStream.finish({
         releases: {
           ...(detail['aspdRelease'] !== undefined
             ? { aspd: detail['aspdRelease'] as RunDiagnostics['releases']['aspd'] }
@@ -435,7 +562,7 @@ export async function cmdRun(
           {
             id: 'resolve-scope',
             status: 'ok',
-            ms: Number((performance.now() - localResolveStartedAt).toFixed(1)),
+            ms: resolveScopeMs ?? Number((performance.now() - localResolveStartedAt).toFixed(1)),
           },
           ...livePhases,
           ...serverPhases,
