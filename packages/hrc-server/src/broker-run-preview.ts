@@ -53,6 +53,23 @@ export function previewCompileIds(runtimeId: string) {
   }
 }
 
+/** The admitted execution as previews and run diagnostics report it. */
+export function projectBrokerRunExecution(
+  compiled: Extract<Awaited<ReturnType<typeof compileBrokerRuntimePlan>>, { admitted: true }>
+): BrokerRunPreview['execution'] {
+  return {
+    recipeId: compiled.execution.recipeId,
+    driver: compiled.execution.driver,
+    protocol: compiled.execution.protocol,
+    hosting: compiled.execution.hosting,
+    presentationFulfillment: compiled.execution.presentationFulfillment,
+    ...(compiled.execution.presentationSurface !== undefined
+      ? { presentationSurface: compiled.execution.presentationSurface }
+      : {}),
+    profile: compiled.execution.profile,
+  }
+}
+
 /**
  * T-08564: project an admitted compile into the preview shape. Shared by the
  * in-process CLI preview and the daemon's aspd-backed preview route so both
@@ -91,17 +108,7 @@ export function projectBrokerRunPreview(
     specHash: compiled.specHash,
     startRequestHash: compiled.startRequestHash,
     selection: compiled.plan.selection,
-    execution: {
-      recipeId: compiled.execution.recipeId,
-      driver: compiled.execution.driver,
-      protocol: compiled.execution.protocol,
-      hosting: compiled.execution.hosting,
-      presentationFulfillment: compiled.execution.presentationFulfillment,
-      ...(compiled.execution.presentationSurface !== undefined
-        ? { presentationSurface: compiled.execution.presentationSurface }
-        : {}),
-      profile: compiled.execution.profile,
-    },
+    execution: projectBrokerRunExecution(compiled),
     process: previewProcess,
     initialInput: compiled.startRequest.initialInput !== undefined,
     ...(typeof launchInitialPrompt === 'string'

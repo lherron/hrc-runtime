@@ -1641,6 +1641,7 @@ async function startAspdInteractiveBrokerRuntime(
       endpoint: options.endpoint,
       responseFormat: options.responseFormat,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+      observation: options.attachBeforeInvocationStart?.observation,
     })
   }
   // T-08560 D1: the launch-carried report comes only from the committed frozen

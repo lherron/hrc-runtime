@@ -5,6 +5,7 @@ import {
   HrcErrorCode,
   HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
+  createPhaseRecorder,
   isExactStartRuntimeRequest,
   isSuffixStartRuntimeRequest,
   validateFence,
@@ -131,6 +132,7 @@ import {
 } from './server-parsers.js'
 import type {
   AttachBeforeInvocationStartOption,
+  AttachedRunObservation,
   CoalescedQueuedMember,
   DispatchRunPersistenceOptions,
   PendingAttachedRunOperation,
@@ -1594,17 +1596,45 @@ export async function handlePrepareAttachedRun(
   const startedAt = performance.now()
   const elapsed = (since: number): number =>
     Math.max(0, Number((performance.now() - since).toFixed(1)))
+  // T-08708: the preparation records its real compile + admission here and
+  // names the execution and releases it admitted. They are their own rows ahead
+  // of broker-start, whose existing measurement still spans them.
+  const observation: AttachedRunObservation = { phases: createPhaseRecorder() }
+  const attach = { pendingStartId, observation }
+  const hrcRelease =
+    this.capturedRelease.mode === 'atomic'
+      ? {
+          releaseId: this.capturedRelease.releaseId,
+          sourceCommit: this.capturedRelease.hrcBuild.sourceCommit,
+        }
+      : undefined
   const diagnostics = (runtimeId?: string) => ({
-    releases: {},
+    releases: {
+      ...(hrcRelease === undefined ? {} : { hrc: hrcRelease }),
+      ...observation.releases,
+    },
     ids: {
       pendingStartId,
       hostSessionId: session.hostSessionId,
       ...(runtimeId === undefined ? {} : { runtimeId }),
     },
+    ...(observation.execution === undefined ? {} : { execution: observation.execution }),
     phases: structuredClone(phases),
   })
 
   const brokerStartAt = performance.now()
+  const pushBrokerStart = (
+    status: 'ok' | 'error',
+    extra: Pick<PhaseRecord, 'reason'> = {}
+  ): void => {
+    const clientPhases = phases.splice(0)
+    phases.push(...observation.phases.records(), ...clientPhases, {
+      id: 'broker-start',
+      status,
+      ms: elapsed(brokerStartAt),
+      ...extra,
+    })
+  }
   const operation = (async (): Promise<AttachedRunResult> => {
     // T-08556 (§1.4): on a node that declares an aspd endpoint, a Codex attached
     // run selects its runtime only through the start singleflight (join first,
@@ -1618,7 +1648,7 @@ export async function handlePrepareAttachedRun(
         startIntent,
         body.restartStyle ?? 'reuse_pty',
         {
-          attachBeforeInvocationStart: { pendingStartId },
+          attachBeforeInvocationStart: attach,
           attachedRunDoor: true,
           ...(body.prompt && body.prompt.length > 0
             ? {
@@ -1641,7 +1671,7 @@ export async function handlePrepareAttachedRun(
       const response = await this.dispatchTurnForSession(session, body.intent, body.prompt, {
         runId: `run-${randomUUID()}`,
         waitForCompletion: false,
-        attachBeforeInvocationStart: { pendingStartId },
+        attachBeforeInvocationStart: attach,
       })
       return await dispatchTurnResponseJson(response)
     }
@@ -1650,7 +1680,7 @@ export async function handlePrepareAttachedRun(
       session,
       body.intent,
       body.restartStyle ?? 'reuse_pty',
-      { attachBeforeInvocationStart: { pendingStartId } }
+      { attachBeforeInvocationStart: attach }
     )
     return toStartRuntimeResponse(runtime)
   })()
@@ -1691,7 +1721,7 @@ export async function handlePrepareAttachedRun(
     }
 
     if (winner.kind === 'prepared') {
-      phases.push({ id: 'broker-start', status: 'ok', ms: elapsed(brokerStartAt) })
+      pushBrokerStart('ok')
       phases.push({
         id: 'broker-ready',
         status: 'ok',
@@ -1717,7 +1747,7 @@ export async function handlePrepareAttachedRun(
       } satisfies PrepareAttachedRunResponse)
     }
 
-    phases.push({ id: 'broker-start', status: 'ok', ms: elapsed(brokerStartAt) })
+    pushBrokerStart('ok')
     phases.push({
       id: 'broker-ready',
       status: 'skipped',
@@ -1734,10 +1764,7 @@ export async function handlePrepareAttachedRun(
     } satisfies PrepareAttachedRunResponse)
   } catch (error) {
     if (!phases.some((phase) => phase.id === 'broker-start')) {
-      phases.push({
-        id: 'broker-start',
-        status: 'error',
-        ms: elapsed(brokerStartAt),
+      pushBrokerStart('error', {
         reason: error instanceof Error ? error.message : String(error),
       })
     }
@@ -1755,11 +1782,18 @@ export async function handlePrepareAttachedRun(
     if (error instanceof HrcRuntimeUnavailableError) {
       error.detail['phases'] = structuredClone(phases)
       error.detail['ids'] = diagnostics().ids
-      error.detail['failingPhase'] ??= phases.find((phase) => phase.status === 'error')?.id
+      error.detail['failingPhase'] ??= innermostFailingPhase(phases)
       error.detail['elapsedMs'] = elapsed(startedAt)
     }
     throw error
   }
+}
+
+/** The deepest failed phase along the first failing branch. */
+function innermostFailingPhase(phases: readonly PhaseRecord[]): string | undefined {
+  const failed = phases.find((phase) => phase.status === 'error')
+  if (failed === undefined) return undefined
+  return innermostFailingPhase(failed.children ?? []) ?? failed.id
 }
 
 export async function handleResumeAttachedRun(

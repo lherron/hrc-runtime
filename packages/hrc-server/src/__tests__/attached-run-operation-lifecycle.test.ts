@@ -32,6 +32,12 @@ const runtime = {
   updatedAt: session.updatedAt,
 } as HrcRuntimeSnapshot
 
+const unmanagedRelease = {
+  mode: 'unmanaged',
+  packagePath: '/fixture/hrc-server',
+  processStartedAt: session.createdAt,
+} as const
+
 describe('attached-run operation lifecycle', () => {
   it('keeps a prepared run resumable after its accepted response settles', async () => {
     let settleAccepted!: () => void
@@ -51,6 +57,7 @@ describe('attached-run operation lifecycle', () => {
         },
       },
       attachedRunOperations,
+      capturedRelease: unmanagedRelease,
       maybeAutoRotateStaleSession: async () => ({ session }),
       dispatchTurnForSession: async () => {
         await accepted
@@ -152,6 +159,7 @@ describe('attached-run operation lifecycle', () => {
         },
       },
       attachedRunOperations,
+      capturedRelease: unmanagedRelease,
       maybeAutoRotateStaleSession: async () => ({ session }),
       // The launch pipeline (e.g. its ASP compile) never settles within the wait.
       dispatchTurnForSession: () => new Promise<never>(() => undefined),

@@ -39,7 +39,10 @@ import type {
   AspcRuntimePromptObservation,
 } from 'spaces-aspc-protocol'
 
-import { withAspdObservationSession } from './agent-spaces-adapter/aspd-observation-client.js'
+import {
+  connectObservationUnix,
+  withAspdObservationSession,
+} from './agent-spaces-adapter/aspd-observation-client.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import {
   type BrokerRunPreviewPromptZones,
@@ -560,126 +563,141 @@ export async function handleRunPreview(request: Request): Promise<Response> {
   // facts always come from the same aspd release. PC-1 admits the preparation
   // correlation capability on the same connection: absent, the preview is
   // refused with aspd_capability_missing instead of an uncorrelated inspection.
-  return await withAspdObservationSession(
-    [
-      'compileHarnessInvocation',
-      'inspectRuntimePlacement',
-      'inspectRuntimePlacementPreparationCorrelation',
-    ],
-    async ({ service, client }) => {
-      const runtimeId = `dry-rt-${randomUUID()}`
-      const aspHome = getAspHome()
-      const phases = createPhaseRecorder()
-      const compiled = await phases.step('compile', () =>
-        compileBrokerRuntimePlan(
-          {
-            intent: previewIntent,
-            scopeRef: sessionRef.includes('/lane:')
-              ? splitSessionRef(sessionRef).scopeRef
-              : sessionRef,
-            hostSessionId: 'dry-run-host-session',
-            generation: 0,
-            continuation: undefined,
-          },
-          {
-            compileHarnessInvocation: (compileRequest) =>
-              client.compileHarnessInvocation({ ...compileRequest, aspHome }),
-            ids: previewCompileIds(runtimeId),
-            timing: createPrecompileLaunchTimingContext('preview', runtimeId, resolveStateRoot()),
-          }
-        )
-      )
-      if (!compiled.admitted) {
-        await phases
-          .step('admission', () => {
-            throw new Error(compiled.code)
-          })
-          .catch(() => undefined)
-        throw new HrcRuntimeUnavailableError('ASP rejected the compiled preview plan', {
-          code: 'compile-not-ok',
-          admissionCode: compiled.code,
-          rejectedBy: compiled.rejectedBy,
-          failingPhase: 'admission',
-          phases: phases.records(),
-          aspdRelease: service.release,
-          ids: Object.fromEntries(
-            Object.entries(compiled.identity).filter(([, value]) => typeof value === 'string')
-          ),
-          ...(compiled.admissionDiagnostic === undefined
-            ? {}
-            : { admissionDiagnostic: compiled.admissionDiagnostic }),
-          diagnostics: compiled.diagnostics,
-        })
-      }
-      await phases.step('admission', () => undefined)
-
-      // PC-1: the inspection carries the correlation and dispatchEnv the same
-      // preview compiled. The compile echoes the intent placement through its
-      // request, so these are the compiled values; dispatchEnv stays inert.
-      const compiledPlacement = previewIntent.placement as unknown as Record<string, unknown>
-      let inspected: Awaited<ReturnType<typeof client.inspectRuntimePlacement>>
-      try {
-        inspected = await phases.step('inspect-prompt', async () => {
-          const result = await client.inspectRuntimePlacement({
-            schemaVersion: 'aspc-inspect-runtime-placement-request/v1',
-            context: previewInspectionContext(previewIntent, sessionRef),
-            preparationCorrelation: compiledPlacement[
-              'correlation'
-            ] as AspcInspectRuntimePlacementRequest['preparationCorrelation'],
-            dispatchEnv: compiledPlacement['dispatchEnv'] as Record<string, string> | undefined,
-          })
-          if (!result.ok) throw new Error('prompt inspection unavailable')
-          return result
-        })
-      } catch (error) {
-        throw new HrcRuntimeUnavailableError('ASP prompt inspection was unavailable', {
-          code: 'prompt-inspection-unavailable',
-          failingPhase: 'inspect-prompt',
-          phases: phases.records(),
-          aspdRelease: service.release,
-          cause: error instanceof Error ? error.message : String(error),
-        })
-      }
-      const prompt: PromptProjection = projectPrompt(inspected.prompt)
-      const preview = projectBrokerRunPreview(compiled, prompt.zones)
-      return json({
-        ...preview,
-        ...(prompt.promptResolution !== undefined
-          ? { promptResolution: prompt.promptResolution }
-          : {}),
-        ...(preview.release === undefined
-          ? {
-              release: {
-                releaseId: service.release.releaseId,
-                sourceCommit: service.release.sourceCommit,
-              },
+  const phases = createPhaseRecorder()
+  try {
+    return await withAspdObservationSession(
+      [
+        'compileHarnessInvocation',
+        'inspectRuntimePlacement',
+        'inspectRuntimePlacementPreparationCorrelation',
+      ],
+      async ({ service, client }) => {
+        const runtimeId = `dry-rt-${randomUUID()}`
+        const aspHome = getAspHome()
+        const compiled = await phases.step('compile', () =>
+          compileBrokerRuntimePlan(
+            {
+              intent: previewIntent,
+              scopeRef: sessionRef.includes('/lane:')
+                ? splitSessionRef(sessionRef).scopeRef
+                : sessionRef,
+              hostSessionId: 'dry-run-host-session',
+              generation: 0,
+              continuation: undefined,
+            },
+            {
+              compileHarnessInvocation: (compileRequest) =>
+                client.compileHarnessInvocation({ ...compileRequest, aspHome }),
+              ids: previewCompileIds(runtimeId),
+              timing: createPrecompileLaunchTimingContext('preview', runtimeId, resolveStateRoot()),
             }
-          : {}),
-        diagnostics: {
-          releases: {
-            aspd: service.release,
-            ...(compiled.executionRelease === undefined
-              ? {}
-              : {
-                  execution: {
-                    releaseId: compiled.executionRelease.releaseId,
-                    sourceCommit: compiled.executionRelease.sourceCommit,
-                  },
-                }),
-          },
-          ids: {
-            ...Object.fromEntries(
-              Object.entries(compiled.identity).flatMap(([key, value]) =>
-                typeof value === 'string' ? [[key, value]] : []
-              )
+          )
+        )
+        if (!compiled.admitted) {
+          await phases
+            .step('admission', () => {
+              throw new Error(compiled.code)
+            })
+            .catch(() => undefined)
+          throw new HrcRuntimeUnavailableError('ASP rejected the compiled preview plan', {
+            code: 'compile-not-ok',
+            admissionCode: compiled.code,
+            rejectedBy: compiled.rejectedBy,
+            failingPhase: 'admission',
+            phases: phases.records(),
+            aspdRelease: service.release,
+            ids: Object.fromEntries(
+              Object.entries(compiled.identity).filter(([, value]) => typeof value === 'string')
             ),
-            compileId: compiled.plan.compileId,
-            planHash: compiled.plan.planHash,
+            ...(compiled.admissionDiagnostic === undefined
+              ? {}
+              : { admissionDiagnostic: compiled.admissionDiagnostic }),
+            diagnostics: compiled.diagnostics,
+          })
+        }
+        await phases.step('admission', () => undefined)
+
+        // PC-1: the inspection carries the correlation and dispatchEnv the same
+        // preview compiled. The compile echoes the intent placement through its
+        // request, so these are the compiled values; dispatchEnv stays inert.
+        const compiledPlacement = previewIntent.placement as unknown as Record<string, unknown>
+        let inspected: Awaited<ReturnType<typeof client.inspectRuntimePlacement>>
+        try {
+          inspected = await phases.step('inspect-prompt', async () => {
+            const result = await client.inspectRuntimePlacement({
+              schemaVersion: 'aspc-inspect-runtime-placement-request/v1',
+              context: previewInspectionContext(previewIntent, sessionRef),
+              preparationCorrelation: compiledPlacement[
+                'correlation'
+              ] as AspcInspectRuntimePlacementRequest['preparationCorrelation'],
+              dispatchEnv: compiledPlacement['dispatchEnv'] as Record<string, string> | undefined,
+            })
+            if (!result.ok) throw new Error('prompt inspection unavailable')
+            return result
+          })
+        } catch (error) {
+          throw new HrcRuntimeUnavailableError('ASP prompt inspection was unavailable', {
+            code: 'prompt-inspection-unavailable',
+            failingPhase: 'inspect-prompt',
+            phases: phases.records(),
+            aspdRelease: service.release,
+            cause: error instanceof Error ? error.message : String(error),
+          })
+        }
+        const prompt: PromptProjection = projectPrompt(inspected.prompt)
+        const preview = projectBrokerRunPreview(compiled, prompt.zones)
+        return json({
+          ...preview,
+          ...(prompt.promptResolution !== undefined
+            ? { promptResolution: prompt.promptResolution }
+            : {}),
+          ...(preview.release === undefined
+            ? {
+                release: {
+                  releaseId: service.release.releaseId,
+                  sourceCommit: service.release.sourceCommit,
+                },
+              }
+            : {}),
+          diagnostics: {
+            releases: {
+              aspd: service.release,
+              ...(compiled.executionRelease === undefined
+                ? {}
+                : {
+                    execution: {
+                      releaseId: compiled.executionRelease.releaseId,
+                      sourceCommit: compiled.executionRelease.sourceCommit,
+                    },
+                  }),
+            },
+            ids: {
+              ...Object.fromEntries(
+                Object.entries(compiled.identity).flatMap(([key, value]) =>
+                  typeof value === 'string' ? [[key, value]] : []
+                )
+              ),
+              compileId: compiled.plan.compileId,
+              planHash: compiled.plan.planHash,
+            },
+            selection: compiled.plan.selection,
+            execution: preview.execution,
+            phases: phases.records(),
           },
-          selection: compiled.plan.selection,
-          phases: phases.records(),
-        },
-      })
+        })
+      },
+      process.env,
+      (options) => phases.step('aspd-connect', () => connectObservationUnix(options))
+    )
+  } catch (error) {
+    // A refusal before the route's own phases (connect, hello admission) keeps
+    // what was recorded; only a failed record names the failing phase.
+    if (error instanceof HrcRuntimeUnavailableError && error.detail['phases'] === undefined) {
+      const records = phases.records()
+      error.detail['phases'] = records
+      const failed = records.find((phase) => phase.status === 'error')
+      if (failed !== undefined) error.detail['failingPhase'] ??= failed.id
     }
-  )
+    throw error
+  }
 }

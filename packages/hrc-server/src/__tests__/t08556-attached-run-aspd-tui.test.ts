@@ -411,6 +411,107 @@ describe('T-08556 attached-run cold birth', () => {
     expect(delivered).toHaveLength(0)
   })
 
+  // T-08708 AC4: the live door reports the aspd connect, compile and HRC
+  // admission it actually ran as their own rows, before the broker start whose
+  // existing measurement is preserved (it spans the compile; nothing is split).
+  it('reports the live aspd connect, compile and admission as sibling phases', async () => {
+    const s = await session()
+    const response = await fixture.postJson('/v1/runs/prepare-attached', {
+      hostSessionId: s.hostSessionId,
+      intent: runIntent(),
+    })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      pendingStartId: string
+      diagnostics: {
+        phases: Array<Record<string, any>>
+        execution?: Record<string, unknown>
+        releases: Record<string, unknown>
+      }
+    }
+    // The admitted execution, as the compile froze it; never re-resolved.
+    expect(body.diagnostics.execution).toMatchObject({
+      recipeId: 'fixture-attached-terminal',
+      driver: 'codex-app-server',
+    })
+    // The aspd that compiled and the execution release it admitted. The test
+    // server is unmanaged (no release manifest), so no HRC release is claimed.
+    expect(body.diagnostics.releases).toEqual({
+      aspd: { releaseId: releaseA.releaseId, sourceCommit: releaseA.sourceCommit },
+      execution: { releaseId: releaseA.releaseId, sourceCommit: releaseA.sourceCommit },
+    })
+    const phases = body.diagnostics.phases
+    expect(phases.map((phase) => phase.id)).toEqual([
+      'compile',
+      'admission',
+      'save-preparation',
+      'broker-start',
+      'broker-ready',
+    ])
+    const byId = (id: string) => phases.find((phase) => phase.id === id)!
+    const compile = byId('compile')
+    expect(compile).toMatchObject({ status: 'ok' })
+    expect(compile.children.map((phase: { id: string }) => phase.id)).toEqual([
+      'aspd-connect',
+      'other',
+    ])
+    expect(byId('admission')).toMatchObject({ status: 'ok' })
+    expect(byId('broker-start')).toMatchObject({ status: 'ok' })
+    expect(byId('broker-start').children).toBeUndefined()
+    for (const phase of [compile, byId('admission'), compile.children[0], byId('broker-start')]) {
+      expect(typeof phase.ms).toBe('number')
+    }
+    const resumed = await fixture.postJson('/v1/runs/resume-attached', {
+      pendingStartId: body.pendingStartId,
+    })
+    expect(resumed.status).toBe(200)
+  })
+
+  it('names the running HRC release only from its captured atomic manifest', async () => {
+    const captured = (server as unknown as { capturedRelease: unknown }).capturedRelease
+    Object.defineProperty(server, 'capturedRelease', {
+      configurable: true,
+      value: {
+        mode: 'atomic',
+        releaseId: 'hrc-t08708-release',
+        hrcBuild: { sourceCommit: 'c'.repeat(40) },
+      },
+    })
+    try {
+      const s = await session()
+      const { prepared } = await attachedRun(s.hostSessionId)
+      expect(
+        (prepared as unknown as { diagnostics: { releases: unknown } }).diagnostics.releases
+      ).toMatchObject({
+        hrc: { releaseId: 'hrc-t08708-release', sourceCommit: 'c'.repeat(40) },
+        aspd: { releaseId: releaseA.releaseId },
+      })
+    } finally {
+      Object.defineProperty(server, 'capturedRelease', { configurable: true, value: captured })
+    }
+  })
+
+  it('an HRC admission refusal keeps the failing admission row and its duration', async () => {
+    aspd.planIdentityOverride = { traceId: 'trace-forged' }
+    const s = await session()
+    const refused = await refusedAttachedRun(s.hostSessionId)
+    expect(refused.status).toBe(503)
+    const detail = refused.body.error.detail
+    expect(detail.code).toBe('admission-rejected')
+    expect(detail.failingPhase).toBe('admission')
+    expect(
+      detail.phases.map((phase: { id: string; status: string }) => [phase.id, phase.status])
+    ).toEqual([
+      ['compile', 'ok'],
+      ['admission', 'error'],
+      ['save-preparation', 'ok'],
+      ['broker-start', 'error'],
+      ['broker-ready', 'not-reached'],
+    ])
+    expect(typeof detail.phases[2].ms).toBe('number')
+    expect(ledger.commands).toHaveLength(0)
+  })
+
   it('-p is delivered exactly once, into the runtime the start produced, after it exists', async () => {
     const s = await session()
     const { runtimeId } = await attachedRun(s.hostSessionId, { prompt: 'MARK-once' })

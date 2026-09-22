@@ -1,4 +1,5 @@
 import type {
+  BrokerRunPreview,
   HrcBrokerInvocationEventRecord,
   HrcCommandLaunchSpec,
   HrcDispatchOrigin,
@@ -11,7 +12,9 @@ import type {
   HrcProvider,
   HrcRunRecord,
   HrcRuntimeSnapshot,
+  PhaseRecorder,
   ReconcileActiveRunReason,
+  RunDiagnostics,
   SweepZombieRunResult,
 } from 'hrc-core'
 import type { HrcLifecycleQueryFilters } from 'hrc-store-sqlite'
@@ -97,6 +100,17 @@ export type InvokeFirstTurnRendezvous = {
 
 export type AttachBeforeInvocationStartOption = {
   pendingStartId: string
+  /**
+   * T-08708: the attached-run door's diagnostics sink. The preparation records
+   * its compile + admission phases here and names the execution it admitted.
+   */
+  observation?: AttachedRunObservation | undefined
+}
+
+export type AttachedRunObservation = {
+  phases: PhaseRecorder
+  execution?: BrokerRunPreview['execution'] | undefined
+  releases?: Pick<RunDiagnostics['releases'], 'aspd' | 'execution'> | undefined
 }
 
 export type DispatchRunPersistenceOptions = Pick<HrcRunRecord, 'dispatchIdempotencyKey'> & {

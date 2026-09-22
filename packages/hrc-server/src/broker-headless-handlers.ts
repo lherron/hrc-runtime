@@ -34,7 +34,6 @@ import { createBirthTimeline } from './birth-timeline.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { isClosedDbError } from './broker/controller/internal.js'
-import type { BrokerControllerStartInput } from './broker/controller/types.js'
 import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import { recordStartBirth, startBirthOfIntent } from './presentation-operator.js'
@@ -51,6 +50,7 @@ import { omitPersistedSelectionForReuse } from './selector-message-handlers/sele
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import {
+  type AttachBeforeInvocationStartOption,
   type CoalescedQueuedMember,
   type DispatchRunPersistenceOptions,
   dispatchOriginRunFields,
@@ -532,7 +532,7 @@ export async function startHeadlessBrokerRuntime(
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
     coldBirthPromptMode?: 'replace-priming' | 'append-to-priming' | undefined
     /** The attached door pauses only after a producer-declared surface is leased. */
-    attachBeforeInvocationStart?: BrokerControllerStartInput['attachBeforeInvocationStart']
+    attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
   // R-4.3.2: never born a substitute runtime at a reserved participant
@@ -616,7 +616,7 @@ async function startAspdHeadlessBrokerRuntime(
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
-    attachBeforeInvocationStart?: BrokerControllerStartInput['attachBeforeInvocationStart']
+    attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
   },
   birthTimeline: ReturnType<typeof createBirthTimeline>
 ): Promise<HrcRuntimeSnapshot> {
@@ -659,6 +659,7 @@ async function startAspdHeadlessBrokerRuntime(
       responseFormat: options.responseFormat,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
       birthTimeline,
+      observation: options.attachBeforeInvocationStart?.observation,
     })
   }
   birthTimeline.mark('aspd-preparation-frozen', { operationId })

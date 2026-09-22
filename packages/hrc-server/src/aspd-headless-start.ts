@@ -26,6 +26,7 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
   HrcTurnResponseFormat,
+  PhaseRecorder,
 } from 'hrc-core'
 import { getAspHome } from 'hrc-core'
 import type {
@@ -47,6 +48,7 @@ import {
   type AspdPreparationResult,
   type AspdServiceIdentity,
   configuredAspdEndpoint,
+  connectAspdUnix,
   prepareThroughAspd,
 } from './agent-spaces-adapter/aspd-preparation-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
@@ -61,6 +63,7 @@ import {
   type BrokerSubstratePaths,
   describeBrokerSubstratePaths,
 } from './broker-interactive-handlers/substrate-allocator.js'
+import { projectBrokerRunExecution } from './broker-run-preview.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import type { SelectedExecution, SelectedExecutionPlan } from './broker/selected-execution.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
@@ -70,7 +73,11 @@ import {
 } from './precompile-launch-timing.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import { type DispatchRunPersistenceOptions, dispatchRunPersistence } from './server-types.js'
+import {
+  type AttachedRunObservation,
+  type DispatchRunPersistenceOptions,
+  dispatchRunPersistence,
+} from './server-types.js'
 import { timestamp } from './server-util.js'
 import { automaticContinuationForSession } from './session-continuation-reuse.js'
 import { getBrokerObserverSocketPath } from './tmux-socket.js'
@@ -288,6 +295,8 @@ export type AspdPrepareInput = {
   dispatchIdempotencyKey?: string | undefined
   timing?: PrecompileLaunchTimingContext | undefined
   birthTimeline?: BirthTimeline | undefined
+  /** T-08708: the attached-run door's diagnostics sink; observational only. */
+  observation?: AttachedRunObservation | undefined
 }
 
 /** Prepare through aspd and commit boundary P. Returns the prepared operation id. */
@@ -339,44 +348,61 @@ export async function prepareAspdHeadlessAttempt(
           return promptlessIntent
         })()
   input.birthTimeline?.mark('aspd-compile-begin')
-  const compiled = await compileBrokerRuntimePlan(
-    {
-      intent: compileIntent,
-      scopeRef: session.scopeRef,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      dispatchEnv: hrcDispatchEnv,
-      continuation:
-        input.interactive !== undefined
-          ? input.interactive.continuation
-          : toRuntimeContinuationRef(automaticContinuationForSession(server.db, session)),
-      ...(input.policy !== undefined ? { policy: input.policy } : {}),
-      allowCompilerInitialInputWithoutIdentity: input.allowCompilerInitialInputWithoutIdentity,
-      responseFormat: input.responseFormat,
-    },
-    {
-      // T-08555: the worker's codex home hangs off ASP_HOME. Send HRC's own, the
-      // one every other route (standalone codex-tui included) resolves, so a
-      // continuation minted on either route resumes on the other instead of
-      // depending on the aspd daemon's environment matching HRC's.
-      compileHarnessInvocation: async (request) => {
-        prepared = await prepareThroughAspd(endpoint, { ...request, aspHome })
-        return prepared.response
+  const observation = input.observation
+  const compile = (phases: PhaseRecorder | undefined) =>
+    compileBrokerRuntimePlan(
+      {
+        intent: compileIntent,
+        scopeRef: session.scopeRef,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        dispatchEnv: hrcDispatchEnv,
+        continuation:
+          input.interactive !== undefined
+            ? input.interactive.continuation
+            : toRuntimeContinuationRef(automaticContinuationForSession(server.db, session)),
+        ...(input.policy !== undefined ? { policy: input.policy } : {}),
+        allowCompilerInitialInputWithoutIdentity: input.allowCompilerInitialInputWithoutIdentity,
+        responseFormat: input.responseFormat,
       },
-      timing,
-      ids: {
-        requestId: () => `req-${randomUUID()}`,
-        operationId: () => `op-${randomUUID()}`,
-        runtimeId: () => runtimeId,
-        invocationId: () => `inv-${randomUUID()}`,
-        initialInputId: () => `input-${randomUUID()}`,
-        runId: () => runId,
-        traceId: () => `trace-${randomUUID()}`,
-      },
-    }
-  )
+      {
+        // T-08555: the worker's codex home hangs off ASP_HOME. Send HRC's own, the
+        // one every other route (standalone codex-tui included) resolves, so a
+        // continuation minted on either route resumes on the other instead of
+        // depending on the aspd daemon's environment matching HRC's.
+        compileHarnessInvocation: async (request) => {
+          prepared = await prepareThroughAspd(
+            endpoint,
+            { ...request, aspHome },
+            phases === undefined
+              ? undefined
+              : (options) => phases.step('aspd-connect', () => connectAspdUnix(options))
+          )
+          return prepared.response
+        },
+        timing,
+        ids: {
+          requestId: () => `req-${randomUUID()}`,
+          operationId: () => `op-${randomUUID()}`,
+          runtimeId: () => runtimeId,
+          invocationId: () => `inv-${randomUUID()}`,
+          initialInputId: () => `input-${randomUUID()}`,
+          runId: () => runId,
+          traceId: () => `trace-${randomUUID()}`,
+        },
+      }
+    )
+  const compiled =
+    observation === undefined
+      ? await compile(undefined)
+      : await observation.phases.step('compile', compile)
 
   if (!compiled.admitted) {
+    await observation?.phases
+      .step('admission', () => {
+        throw new Error(compiled.code)
+      })
+      .catch(() => undefined)
     // T-08713: an ASP compile failure (`compile-not-ok`) carries ASP's
     // diagnostics; HRC refusing a successful compile (`admission-rejected`)
     // carries HRC's own, naming the field that failed. The mail injector
@@ -417,6 +443,24 @@ export async function prepareAspdHeadlessAttempt(
     })
   }
   const response = prepared.response
+  if (observation !== undefined) {
+    await observation.phases.step('admission', () => undefined)
+    observation.execution = projectBrokerRunExecution(compiled)
+    observation.releases = {
+      aspd: {
+        releaseId: prepared.service.release.releaseId,
+        sourceCommit: prepared.service.release.sourceCommit,
+      },
+      ...(response.executionRelease === undefined
+        ? {}
+        : {
+            execution: {
+              releaseId: response.executionRelease.releaseId,
+              sourceCommit: response.executionRelease.sourceCommit,
+            },
+          }),
+    }
+  }
   input.birthTimeline?.enrich({
     runtimeId,
     operationId: String(compiled.identity.operationId),

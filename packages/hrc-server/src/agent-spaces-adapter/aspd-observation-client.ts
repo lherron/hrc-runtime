@@ -39,7 +39,7 @@ export type AspdObservationConnect = (options: {
   socketPath: string
 }) => Promise<AspdObservationClient>
 
-const connectObservationUnix: AspdObservationConnect = ({ socketPath }) =>
+export const connectObservationUnix: AspdObservationConnect = ({ socketPath }) =>
   AspcUnixClient.connect({ socketPath, clientInfo: { name: 'hrc-server' } })
 
 export type AspdObservationSession = {

@@ -305,6 +305,7 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
     expect(methods).toContain('aspc.compileHarnessInvocation')
     expect(methods).toContain('aspc.inspectRuntimePlacement')
     expect(JSON.stringify(body)).toContain(release.releaseId)
+    expect(body.diagnostics.execution).toMatchObject({ driver: expect.any(String) })
     expect(body.diagnostics).toMatchObject({
       releases: {
         aspd: {
@@ -313,7 +314,9 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
         },
       },
       ids: { compileId: 'compile_t08564' },
+      execution: body.execution,
       phases: [
+        { id: 'aspd-connect', status: 'ok' },
         { id: 'compile', status: 'ok' },
         { id: 'admission', status: 'ok' },
         { id: 'inspect-prompt', status: 'ok' },
@@ -406,6 +409,11 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
       code: 'aspd_capability_missing',
       route: 'aspd',
     })
+    // The connect succeeded; the hello refusal is not a connect failure.
+    expect(body.error.detail.phases).toEqual([
+      expect.objectContaining({ id: 'aspd-connect', status: 'ok' }),
+    ])
+    expect(body.error.detail).not.toHaveProperty('failingPhase')
     const methods = aspd!.connections.flatMap((connection) => connection.methods)
     expect(methods).not.toContain('aspc.inspectRuntimePlacement')
   })
@@ -446,7 +454,10 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
     expect(body.error.detail).toMatchObject({
       code: 'aspd_unavailable',
       route: 'aspd',
+      failingPhase: 'aspd-connect',
+      phases: [{ id: 'aspd-connect', status: 'error' }],
     })
+    expect(typeof body.error.detail.phases[0].ms).toBe('number')
   })
 
   test('returns a typed rejection with phase records instead of null', async () => {
@@ -462,6 +473,7 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
         failingPhase: 'admission',
         aspdRelease: { releaseId: release.releaseId },
         phases: [
+          { id: 'aspd-connect', status: 'ok' },
           { id: 'compile', status: 'ok' },
           { id: 'admission', status: 'error' },
         ],

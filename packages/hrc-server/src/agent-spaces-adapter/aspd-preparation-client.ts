@@ -62,7 +62,7 @@ export type AspdConnect = (options: {
   timeoutMs?: number | undefined
 }) => Promise<AspdClientLike>
 
-const connectAspdUnix: AspdConnect = ({ socketPath, timeoutMs }) =>
+export const connectAspdUnix: AspdConnect = ({ socketPath, timeoutMs }) =>
   AspcUnixClient.connect({
     socketPath,
     clientInfo: { name: 'hrc-server' },
