@@ -18,6 +18,66 @@ export type FakeDaemonScript = {
   declaration?:
     | Record<string, unknown>
     | ((request: Record<string, unknown>) => Record<string, unknown>)
+  preview?:
+    | Record<string, unknown>
+    | ((request: Record<string, unknown>) => Record<string, unknown>)
+}
+
+/** Minimal admitted daemon preview used by CLI-only fixtures. */
+export function fakeRunPreview(request: Record<string, unknown>): Record<string, unknown> {
+  const intent = (request['intent'] ?? {}) as Record<string, unknown>
+  const placement = (intent['placement'] ?? {}) as Record<string, unknown>
+  return {
+    controllerKind: 'harness-broker',
+    specHash: 'spec-fixture',
+    startRequestHash: 'request-fixture',
+    selection: {
+      harness: 'codex',
+      modelProvider: 'openai',
+      model: 'fixture-model',
+      presentation: true,
+      provenance: {
+        harness: 'fixture',
+        modelProvider: 'fixture',
+        model: 'fixture',
+        presentation: 'fixture',
+      },
+    },
+    execution: {
+      recipeId: 'fixture-recipe',
+      driver: 'fixture-driver',
+      protocol: 'harness-broker/0.2',
+      hosting: {
+        executionTransport: 'headless',
+        terminalRequired: false,
+        processExecution: 'native-worker',
+      },
+      presentationFulfillment: 'attachable',
+      profile: {
+        profileId: 'fixture-profile',
+        profileHash: 'profile-fixture',
+        compatibilityHash: 'compat-fixture',
+        startRequestHash: 'request-fixture',
+      },
+    },
+    process: { execution: 'native-worker', cwd: placement['cwd'] ?? process.cwd() },
+    initialInput: false,
+    inputQueue: 'broker',
+    warnings: [],
+    env: {},
+    planHash: 'plan-fixture',
+    compileId: 'compile-fixture',
+    release: { releaseId: 'fake-aspd', sourceCommit: 'fixture' },
+    diagnostics: {
+      releases: { aspd: { releaseId: 'fake-aspd', sourceCommit: 'fixture' } },
+      ids: { compileId: 'compile-fixture', planHash: 'plan-fixture' },
+      phases: [
+        { id: 'compile', status: 'ok', ms: 1 },
+        { id: 'admission', status: 'ok', ms: 1 },
+        { id: 'inspect-prompt', status: 'ok', ms: 1 },
+      ],
+    },
+  }
 }
 
 export type FakeDaemon = {
@@ -90,6 +150,19 @@ export function startFakeDaemon(script: FakeDaemonScript): FakeDaemon {
             { status: 422 }
           )
         }
+      }
+      if (url.pathname === '/v1/previews/run' && request.method === 'POST') {
+        if (script.preview === undefined) {
+          return Response.json(
+            { error: { code: 'unsupported_capability', message: 'no preview script' } },
+            { status: 404 }
+          )
+        }
+        const payload =
+          typeof script.preview === 'function'
+            ? script.preview(body as Record<string, unknown>)
+            : script.preview
+        return Response.json(payload)
       }
       if (proxySocket !== undefined) {
         // The request body was already consumed above for request logging;

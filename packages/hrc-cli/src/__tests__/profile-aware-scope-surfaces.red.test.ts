@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { main } from '../cli.js'
-import { type FakeDaemon, startFakeDaemon } from './fake-daemon.js'
+import { type FakeDaemon, fakeRunPreview, startFakeDaemon } from './fake-daemon.js'
 
 type CliResult = {
   stdout: string
@@ -142,6 +142,7 @@ beforeEach(async () => {
   // Project-local agents root wins (the fixture's asp-targets.toml declares
   // agents-root = "agents"); its profile role becomes the scope default.
   daemon = startFakeDaemon({
+    preview: fakeRunPreview,
     placement: () => ({
       agentId: 'clod',
       projectId: 'proj',

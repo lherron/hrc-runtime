@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import { parseScopeRef } from 'agent-scope'
 import { getAgentsRoot, getAspHome } from 'hrc-core'
 
-import { type FakeDaemon, startFakeDaemon } from './fake-daemon.js'
+import { type FakeDaemon, fakeRunPreview, startFakeDaemon } from './fake-daemon.js'
 import { resolveFixtureHarnessCatalogEntry } from './old-local-engine/fixture-catalog.js'
 import { parseFixtureAgentProfile } from './old-local-engine/fixture-profile.js'
 import { resolveHrcAgentPlacementPaths } from './old-local-engine/project-placement.js'
@@ -44,6 +44,7 @@ function readRoleOperator(agentRoot: string): { role?: string; operator: boolean
 
 export function startOldEngineDaemon(): FakeDaemon {
   return startFakeDaemon({
+    preview: fakeRunPreview,
     placement: (request) => {
       const scopeRef = request['scopeRef']
       let agentId = request['agentId']
