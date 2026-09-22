@@ -111,7 +111,7 @@ describe('explainScopeCommandError — RUNTIME_UNAVAILABLE rendering', () => {
 
     expect(out).toContain('reason: admission-rejected')
     expect(out).toContain('admission: execution-identity-mismatch')
-    expect(out).toContain('why: execution-identity-mismatch')
+    expect(out).not.toContain('why: execution-identity-mismatch')
     expect(out).toContain('where: admission (after 1.21s)')
     expect(out).toContain('aspd: rel-t8712 @ 9aff8211')
     expect(out).toContain('ids: runId run-t8712  compileId cmp-t8712')
