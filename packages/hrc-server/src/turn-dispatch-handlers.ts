@@ -636,6 +636,12 @@ export async function handleSubmission(
   const effectiveDoor = doorReport.effectiveDoor
   const idempotencyKey = sessionBoundBody?.idempotencyKey
   const wait = 'wait' in body && body.wait === true
+  const invokeColdBirthPromptMode =
+    door === 'invoke' ? (body as InvokeSubmissionRequest).coldBirth?.promptMode : undefined
+  // A non-waiting cold invoke needs only the durable launch receipt. The
+  // provider's invocation.start RPC may remain open for the whole first turn;
+  // waiting for it here turns upstream model latency into an injector timeout.
+  const allowLaunchReceipt = door === 'invoke' && !wait && invokeColdBirthPromptMode !== undefined
   if (idempotencyKey !== undefined) {
     const existing = this.db.runs.getByDispatchIdempotencyKey(session.hostSessionId, idempotencyKey)
     if (existing !== null) {
@@ -671,8 +677,6 @@ export async function handleSubmission(
       door,
     })
   }
-  const invokeColdBirthPromptMode =
-    door === 'invoke' ? (body as InvokeSubmissionRequest).coldBirth?.promptMode : undefined
   const operationKey =
     idempotencyKey !== undefined ? `${session.hostSessionId}\u0000${idempotencyKey}` : undefined
   const operations = idempotentDispatches.get(this) ?? new Map<string, InFlightIdempotentDispatch>()
@@ -691,10 +695,10 @@ export async function handleSubmission(
   }
   const dispatchPromise = dispatchPublicSubmission(this, session, intent, body.body, {
     runId,
-    // The door response is not complete until the broker has minted its
-    // submission identity. This may include provisioning a cold seat, but it
-    // never waits for turn execution; disposition waiting remains below.
-    waitForCompletion: true,
+    // An ordinary submission response is not complete until the broker has
+    // minted its identity. A non-waiting cold invoke instead ends at the
+    // durable start graph so provider execution cannot hold the launch RPC.
+    waitForCompletion: !allowLaunchReceipt,
     submissionDoor: effectiveDoor,
     submissionOrigin: body.origin,
     origin: runOriginFromSubmission(body.origin),
@@ -878,6 +882,9 @@ function replayDispatchBody(
           }
         : {}),
     },
+    ...(run.brokerSubmissionId !== undefined
+      ? { submissionId: run.brokerSubmissionId, admission: 'admitted' as const }
+      : {}),
   }
   const outcome = terminalOutcome(run.status)
   return publicDispatchBody(base, outcome === undefined ? 'accepted' : 'terminal', {
@@ -1956,11 +1963,21 @@ async function dispatchAdmittedTurnForSession(
     assertActuatorSplitRouteAdmission(normalizedInputIntent, 'broker')
     return await withObservation(
       await this.handleHeadlessBrokerDispatchTurn(session, normalizedInputIntent, prompt, runId, {
-        waitForCompletion: options.waitForCompletion,
+        // Submission doors wait at the public projection layer after the
+        // durable broker admission exists. Do not make the fresh v2 birth wait
+        // for the first provider turn merely to mint that receipt.
+        waitForCompletion: options.submissionDoor === undefined ? options.waitForCompletion : false,
         repairCorrelation: options.repairCorrelation,
         responseFormat: options.responseFormat,
         coalescedMembers: options.coalescedMembers,
         ...dispatchRunPersistence(options),
+        coldBirthPromptMode:
+          options.coldBirthPromptMode ??
+          (options.launchPromptOnColdBirth
+            ? 'replace-priming'
+            : submissionDoorCarriesColdLaunch(options.submissionDoor)
+              ? 'append-to-priming'
+              : undefined),
       })
     )
   }

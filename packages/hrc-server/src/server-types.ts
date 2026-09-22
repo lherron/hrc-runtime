@@ -109,6 +109,11 @@ export type DispatchRunPersistenceOptions = Pick<HrcRunRecord, 'dispatchIdempote
   turnPolicy?: TurnPolicy | undefined
   freshContext?: boolean | undefined
   /**
+   * Explicit caller-owned cold-birth prompt carriage. It is threaded through
+   * start helpers without becoming selection or producer policy.
+   */
+  coldBirthPromptMode?: 'replace-priming' | 'append-to-priming' | undefined
+  /**
    * Per-request override for the `first_turn_missing` watchdog window
    * (T-07235), in milliseconds. Rides the shared dispatch-persistence options
    * because every prompt-dispatch origin threads them; consumed once, at arm
@@ -185,6 +190,7 @@ export function dispatchRunPersistence(
     ttlMs: options.ttlMs,
     turnPolicy: options.turnPolicy,
     freshContext: options.freshContext,
+    coldBirthPromptMode: options.coldBirthPromptMode,
     firstTurnTimeoutMs: options.firstTurnTimeoutMs,
     origin: options.origin,
   }

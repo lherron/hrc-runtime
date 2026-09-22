@@ -313,6 +313,76 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
     expect(run?.brokerSubmissionId).toBe(inputId)
   })
 
+  it('cold invoke acknowledges the durable start graph before invocation.start returns', async () => {
+    const s = await seedInteractive()
+    let releaseStart!: () => void
+    ledger.startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    const request = {
+      target: s.hostSessionId,
+      body: MARK,
+      origin: { principalRef: 'agent:mable', envelopeId: 'EN-T8560-HELD' },
+      runtimeIntent: interactiveIntent(),
+      wait: false,
+      coldBirth: { promptMode: 'replace-priming' as const },
+      idempotencyKey: 'held-cold-invoke',
+    }
+    const responsePromise = fixture.postJson('/v1/submissions/invoke', request)
+    await settle(() => ledger.startCalls.length === 1)
+    expect(ledger.startCalls).toHaveLength(1)
+
+    try {
+      const earlyResponse = await Promise.race([
+        responsePromise,
+        Bun.sleep(500).then(() => undefined),
+      ])
+      expect(earlyResponse).toBeDefined()
+      if (earlyResponse === undefined)
+        throw new Error('cold invoke remained blocked on provider start')
+      expect(earlyResponse.status).toBe(202)
+      const body = (await earlyResponse.json()) as Record<string, unknown>
+      const initialInputId = ledger.startCalls[0]?.request.initialInput?.inputId
+      expect(body).toMatchObject({
+        hostSessionId: s.hostSessionId,
+        generation: s.generation,
+        transport: 'headless',
+        admission: 'admitted',
+        submissionId: initialInputId,
+        stage: 'accepted',
+      })
+      expect(body.runtimeId).toBeString()
+      expect(body.runId).toBeString()
+      expect(body.observation).toMatchObject({
+        broker: { selector: { runId: body.runId, runtimeId: body.runtimeId } },
+      })
+      const run = internal().db.runs.getByRunId(body.runId as string)
+      expect(run).toMatchObject({
+        hostSessionId: s.hostSessionId,
+        runtimeId: body.runtimeId,
+        brokerSubmissionId: initialInputId,
+        status: 'accepted',
+      })
+
+      const replay = await fixture.postJson('/v1/submissions/invoke', request)
+      expect(replay.status).toBe(202)
+      expect(await replay.json()).toMatchObject({
+        runId: body.runId,
+        runtimeId: body.runtimeId,
+        submissionId: initialInputId,
+        admission: 'admitted',
+        replayed: true,
+      })
+      expect(aspd.compileCalls).toBe(1)
+      expect(ledger.startCalls).toHaveLength(1)
+      expect(initialInputText(ledger.startCalls[0]?.request)).toBe(MARK)
+      expect(delivered).toEqual([])
+    } finally {
+      releaseStart()
+      await responsePromise
+    }
+  })
+
   it('POST /v1/turns: append-to-priming, key frozen, applied intent prompt-free', async () => {
     const s = await seedInteractive()
     const response = await fixture.postJson('/v1/turns', {

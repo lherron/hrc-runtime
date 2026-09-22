@@ -530,6 +530,7 @@ export async function startHeadlessBrokerRuntime(
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
+    coldBirthPromptMode?: 'replace-priming' | 'append-to-priming' | undefined
     /** The attached door pauses only after a producer-declared surface is leased. */
     attachBeforeInvocationStart?: BrokerControllerStartInput['attachBeforeInvocationStart']
   } = {}
@@ -647,6 +648,14 @@ async function startAspdHeadlessBrokerRuntime(
       runId,
       endpoint,
       allowCompilerInitialInputWithoutIdentity: options.allowCompilerInitialInputWithoutIdentity,
+      ...(options.coldBirthPromptMode !== undefined
+        ? {
+            launchCarriedPrompt: {
+              prompt: requestedTurnIntent.initialPrompt ?? '',
+              mode: options.coldBirthPromptMode,
+            },
+          }
+        : {}),
       responseFormat: options.responseFormat,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
       birthTimeline,
@@ -787,6 +796,7 @@ export async function executeHeadlessBrokerStartTurn(
     waitForCompletion?: boolean | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
+    coldBirthPromptMode?: 'replace-priming' | 'append-to-priming' | undefined
   },
   runtimeStartOwnership?:
     | {
@@ -829,11 +839,15 @@ export async function executeHeadlessBrokerStartTurn(
     // With a prompt, `identity.initialInputId` exists and the v2 compile
     // admission requires the execution dispatch request to echo it exactly.
     ...(prompt.length === 0 ? { allowCompilerInitialInputWithoutIdentity: true } : {}),
+    ...(options.coldBirthPromptMode !== undefined
+      ? { coldBirthPromptMode: options.coldBirthPromptMode }
+      : {}),
     responseFormat: options.responseFormat,
     ...dispatchRunPersistence(options),
     onAccepted: (runtime) => {
       const acceptedAt = timestamp()
       const acceptedRun = this.db.runs.getByRunId(runId)
+      const submissionId = compilerPrimingSubmissionId(this.db, runtime)
       if (acceptedRun === null) {
         this.db.runs.insert({
           runId,
@@ -848,6 +862,9 @@ export async function executeHeadlessBrokerStartTurn(
           updatedAt: acceptedAt,
           invocationId: runtime.activeInvocationId,
           operationId: runtime.activeOperationId,
+          ...(submissionId !== undefined
+            ? { brokerSubmissionId: submissionId, dispatchedInputId: submissionId }
+            : {}),
           dispatchIdempotencyKey: options.dispatchIdempotencyKey,
           ...dispatchOriginRunFields(options),
         })
@@ -856,10 +873,12 @@ export async function executeHeadlessBrokerStartTurn(
           runtimeId: runtime.runtimeId,
           invocationId: runtime.activeInvocationId,
           operationId: runtime.activeOperationId,
+          ...(submissionId !== undefined
+            ? { brokerSubmissionId: submissionId, dispatchedInputId: submissionId }
+            : {}),
           updatedAt: acceptedAt,
         })
       }
-      const submissionId = compilerPrimingSubmissionId(this.db, runtime)
       if (submissionId !== undefined && options.submissionDoor !== undefined) {
         // A cold launch carries the caller's input as the compiler start
         // request's initial input. Persist the same submission identity and
