@@ -58,7 +58,7 @@ import type {
   InvocationStopRequest,
   InvocationStopResponse,
 } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile, CompiledRuntimePlan } from 'spaces-runtime-contracts'
+import type { RuntimeCompileRequest } from 'spaces-runtime-contracts'
 
 import { type BrokerClientLike, HarnessBrokerController } from '../broker/controller'
 // RED: this module does not exist yet — the import fails until WS-A lands it.
@@ -68,11 +68,13 @@ import {
   preflightLifecyclePolicyCapabilities,
   resolveLifecyclePolicyOverlay,
 } from '../broker/lifecycle-overlay'
+import type { SelectedExecution, SelectedExecutionPlan } from '../broker/selected-execution'
 
 import {
-  makeBrokerProfile,
-  makeCompileResponse,
+  makeHrcPolicy,
   makeIdentity,
+  makeSelectedExecution,
+  makeSelectedExecutionPlan,
   neutralStartRequestHash,
 } from './broker-compile-fixtures'
 
@@ -335,9 +337,9 @@ describe('T-01787 lifecycle overlay — compiler-closure boundary guard', () => 
     expect(serialize(dispatched)).not.toContain('keep-alive')
     expect(serialize(dispatched)).not.toContain(overlay.policyHash)
 
-    // The selected execution profile is untouched.
-    expect(serialize(input.profile.harnessInvocation.startRequest)).not.toContain('lifecycle')
-    expect(Object.hasOwn(input.profile as object, 'lifecyclePolicy')).toBe(false)
+    // The producer-selected execution is untouched.
+    expect(serialize(input.execution.dispatchRequest.startRequest)).not.toContain('lifecycle')
+    expect(Object.hasOwn(input.execution as object, 'lifecyclePolicy')).toBe(false)
 
     // But the overlay WAS delivered out-of-band.
     expect(fake.startCalls[0]?.lifecyclePolicy).toEqual(overlay)
@@ -480,24 +482,22 @@ async function makeFixture(): Promise<TestFixture> {
 }
 
 function makeStartInput(): {
-  plan: CompiledRuntimePlan
-  profile: BrokerExecutionProfile
+  plan: SelectedExecutionPlan
+  execution: SelectedExecution
+  hrcPolicy: RuntimeCompileRequest['hrcPolicy']
   startRequest: InvocationStartRequest
-  specHash: string
   startRequestHash: string
   identity: ReturnType<typeof makeIdentity>
   dispatchEnv: Record<string, string>
 } {
   const identity = makeIdentity()
-  const { profile, startRequest } = makeBrokerProfile(identity)
-  const response = makeCompileResponse(identity, [profile])
-  if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
+  const { execution, startRequest } = makeSelectedExecution(identity)
   return {
-    plan: response.plan,
-    profile,
+    plan: makeSelectedExecutionPlan(),
+    execution,
+    hrcPolicy: makeHrcPolicy(),
     startRequest,
-    specHash: profile.harnessInvocation.specHash,
-    startRequestHash: profile.harnessInvocation.startRequestHash,
+    startRequestHash: execution.profile.startRequestHash,
     identity,
     dispatchEnv: { HRC_DISPATCH: 'yes' },
   }

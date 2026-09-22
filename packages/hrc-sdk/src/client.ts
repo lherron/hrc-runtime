@@ -670,8 +670,17 @@ export class HrcClient {
     return this.postJson<HrcSubmissionResponse>('/v1/submissions/enqueue', request)
   }
 
-  async invoke(request: InvokeSubmissionRequest): Promise<HrcSubmissionResponse> {
-    return this.postJson<HrcSubmissionResponse>('/v1/submissions/invoke', request)
+  async invoke(request: InvokeSubmissionRequest & { wait: true }): Promise<HrcSubmissionResponse>
+  async invoke(
+    request: InvokeSubmissionRequest
+  ): Promise<HrcSubmissionResponse | DispatchTurnResponse>
+  async invoke(
+    request: InvokeSubmissionRequest
+  ): Promise<HrcSubmissionResponse | DispatchTurnResponse> {
+    return this.postJson<HrcSubmissionResponse | DispatchTurnResponse>(
+      '/v1/submissions/invoke',
+      request
+    )
   }
 
   async preempt(request: PreemptSubmissionRequest): Promise<HrcSubmissionResponse> {

@@ -29,8 +29,6 @@ import {
   FakeBrokerClient,
   NOW,
   type TestFixture,
-  capabilityRequirements,
-  invocationCapabilities,
   makeFixture,
   makeStartInput,
 } from './fixtures/broker-controller.fixture'
@@ -118,40 +116,6 @@ describe('desktop observer external ownership timing', () => {
     expect(result.ok).toBe(true)
     expect(isExternalLifecycleOwner(result.ok ? result.runtime : runtimeRow()!)).toBe(true)
     expect(isExternalLifecycleOwner(runtimeRow()!)).toBe(true)
-  })
-
-  it('survives a post-start admission FAILURE', async () => {
-    // `markStartedInvocationFailed` also rebuilds `runtimeStateJson` wholesale,
-    // with `status: 'failed'`. This is the worst case to lose ownership in: the
-    // runtime looks dead and unowned, so the ordinary reaper would treat a live
-    // desktop conversation's observer as its own corpse.
-    const fake = new FakeBrokerClient()
-    // The started invocation no longer offers what the profile REQUIRES. Both
-    // halves are needed: the shared fixture profile declares
-    // `expectedCapabilities: {}`, so degrading the response alone admits fine.
-    fake.startResponse = {
-      ...fake.startResponse,
-      capabilities: {
-        ...invocationCapabilities(),
-        input: { ...invocationCapabilities().input, user: false },
-      },
-    }
-    const input = makeStartInput()
-    const result = await controllerFor(fake).start({
-      ...input,
-      profile: {
-        ...input.profile,
-        expectedCapabilities: capabilityRequirements(),
-      } as typeof input.profile,
-      brokerClient: fake,
-      lifecycleOwner: 'external',
-    })
-
-    expect(result.ok).toBe(false)
-    const row = runtimeRow()
-    expect(row).not.toBeNull()
-    expect(row?.status).toBe('failed')
-    expect(isExternalLifecycleOwner(row!)).toBe(true)
   })
 
   it('survives a broker that dies mid-start, after the row exists', async () => {

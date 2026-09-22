@@ -13,6 +13,17 @@ Those amendments control any conflicting revision-6 or historical revision-5
 text. Source baseline is accepted foundation 0e5a0557 plus current published
 ASP pin 57b58166. Parked source is reusable work, not an accepted implementation.
 
+## V2 descriptor amendment (T-08690)
+
+For the v2 cutover, the external participant carrier is
+`ParticipantBrokerDescriptor`, not an ordinary compile profile. This amendment
+supersedes earlier unqualified “profile” terminology: HRC freezes the descriptor
+with allocated identity and endpoint, but never accepts or translates an
+`agent-runtime-profile/v1` `BrokerExecutionProfile`. The physical legacy
+`prepared_profile_json` store is drained or retired before cutover. HRC B is
+installed and restarted while ASP A remains active; main aspd activates ASP B
+only at the coordinated cutover.
+
 ## R7.1 Honest storage before attachment (EN-12457 F1)
 
 Migrate `participant_registrations` once, preserving existing registration IDs,
@@ -44,14 +55,14 @@ therefore have a stable retry identity without an additional token.
 
 ## R7.2 Attachment is the durable work trigger (EN-12457 F2)
 
-An IDENTITY_MINTED attempt with NULL profile/environment is not runnable
+An IDENTITY_MINTED attempt with NULL participant descriptor/environment is not runnable
 establishment work. Enforce this predicate in both startup work enumeration and
 the worker immediately before effects. It consumes no retries, records no
-profile-missing failure and cannot exhaust merely by waiting for a participant.
+descriptor-missing failure and cannot exhaust merely by waiting for a participant.
 The same exclusion applies to callback-local scheduling; no timer can bypass it.
 
 The attachment transaction rechecks the current attempt/epoch, persists the
-validated profile/environment and endpoint, transitions to PREPARED, and arms
+validated descriptor/environment and endpoint, transitions to PREPARED, and arms
 the existing establishment work as pending in the SAME transaction. Only this
 first successful preparation resets its not-yet-used establishment retry budget.
 An identical attachment retry never resets an already-running/exhausted prepared
@@ -71,11 +82,11 @@ is the existing HRC continuation object or null. resumeState is one of
 request/result, never proof that native model context was successfully restored.
 There is no new claim of native-resume success based on joining, HELLO or an ACK.
 
-If carried is true, the supplied profile's existing
+If carried is true, the supplied `ParticipantBrokerDescriptor`'s frozen
 `harnessInvocation.startRequest.spec.continuation` MUST express exactly the
 selected continuation in the existing published continuation format. If false,
-that field must be absent. Validate before freezing the profile; do not modify a
-frozen profile or recompute its hashes to conceal a different start request.
+that field must be absent. Validate before freezing the descriptor; do not modify a
+frozen descriptor or recompute its hashes to conceal a different start request.
 Reject a mismatching attachment with `participant_continuation_mismatch`, leaving
 the registration and its selected record intact and delivery pending. Repeat
 registration returns the same selection. Recheck HRC clear/disabled-reuse barriers
@@ -85,7 +96,7 @@ A clear arriving after freeze follows existing cancellation/fencing rules, not
 an in-place mutation of the immutable start tuple.
 
 The participant receives the selection over the protocol and can compose its
-profile directly. Do not depend on the withdrawn ASP admission extension. A
+descriptor directly. Do not depend on the withdrawn ASP admission extension. A
 post-join prepare helper may only serve a selected continuation when its real
 published preparation interface can carry it; otherwise report unsupported and
 use the direct attachment path. No HRC-local substitute producer declaration.
@@ -146,7 +157,7 @@ rotation or provisioning. For an active attached participant, validate the
 current session/generation, attempt/epoch, runtime and broker invocation linkage,
 then submit to that exact existing runtime through the existing broker submission
 doors. Do not select an arbitrary latest runtime, compile a new launch plan,
-synthesize lastAppliedIntentJson, or change the frozen profile to deliver input.
+synthesize lastAppliedIntentJson, or change the frozen descriptor to deliver input.
 Existing generic keyed participants use their durable attempt linkage even when
 they have no direct-host binding. Nonparticipant dispatch keeps its existing path.
 
@@ -255,7 +266,7 @@ still requires HRC's own committed launch record and implemented lifecycle guard
 For legacy requests, `participantKey` is used when supplied; otherwise HRC
 allocates and returns a key, which the caller must retain for retries. HRC no
 longer discovers a permanent key by running adapter code. Existing registrations
-retain their stored keys, sessions, generations, attempts and frozen profiles.
+retain their stored keys, sessions, generations, attempts and frozen descriptors.
 A retry that cannot identify an existing registration cannot silently claim it.
 `processToken` and `evidence` remain accepted optional compatibility fields and
 are ignored for joining, identity, retry matching and continuation. They are not
@@ -273,7 +284,7 @@ reservation, session and current binding/attempt identities. It allocates the
 future runtimeId as an identifier on the binding/attempt, but does not insert a
 `runtimes` row before attachment supplies the required transport, harness and
 provider. The existing materialization step inserts that row after broker hello;
-no nullable runtime columns or invented profile values are introduced. No generic
+no nullable runtime columns or invented descriptor values are introduced. No generic
 Codex harness is launched by this mint callback. The registered response follows
 the durable commit, without waiting for driver readiness.
 
@@ -286,14 +297,14 @@ transfer another live process's address. Registration at an occupied address
 with a different incarnation follows the existing explicit succession procedure.
 
 The registration and attempt storage must represent **registered, attachment
-pending** without a prepared execution profile. Use the existing
+pending** without a prepared participant descriptor. Use the existing
 `REGISTERED -> IDENTITY_MINTED` transition during identity allocation and retain
-`IDENTITY_MINTED` while preparation is pending; do not fabricate a profile or call it PREPARED,
+`IDENTITY_MINTED` while preparation is pending; do not fabricate a descriptor or call it PREPARED,
 or run model execution to finish the registration transaction. One schema
 migration rebuilds the attempt table to narrow runtime_id uniqueness as specified
 in R6.5. Both states already exist in migration 0064; no state CHECK extension
 is needed. Preserve the existing
-paired-NULL profile/environment CHECK: both values remain NULL before preparation.
+paired-NULL descriptor/environment CHECK: both values remain NULL before preparation.
 If another required attempt-table constraint change is identified, combine it
 with this rebuild rather than rebuilding the same table twice. Preserve all existing
 rows, indexes, triggers and foreign-key relationships, including prepared/active
@@ -313,23 +324,23 @@ that input was delivered or a model ran.
 
 A participant can supply `socketPath` at registration or later through
 `POST /v1/participants/attach`, with exact fields `{registrationId, attemptId,
-attachEpoch, socketPath, profile}`. `profile` is the existing published
-`BrokerExecutionProfile`, composed using the identities already returned by HRC.
+attachEpoch, socketPath, descriptor}`. `descriptor` is the published
+`ParticipantBrokerDescriptor`, composed using the identities already returned by HRC.
 This message is scoped to the current attempt. A byte-equivalent retry converges;
-a conflicting profile or endpoint cannot overwrite a frozen current attempt.
+a conflicting descriptor or endpoint cannot overwrite a frozen current attempt.
 Changing a bridge after activation uses H1, not an in-place replacement.
 
-HRC validates the existing profile/identity/ownership contract and persists it
+HRC validates the descriptor identity/ownership contract and persists it
 before install/ensure/attach/activation, reusing the established work chain and
 frozen-start semantics. Invalid or unsupported delivery configuration leaves the
 participant registered with an attachment error and pending addressed work. It
 never births an unrelated generic harness at the reserved address.
 
-A locally configured ASP `prepare` helper may still compose the profile **after
+A locally configured ASP `prepare` helper may still compose the descriptor **after
 join** from the participant's supplied metadata and allocated identity. It has no
 admit call or authority to undo the registration. The Arris helper/driver may read
 its existing descriptor to locate its control socket at this stage. Alternatively
-the participant supplies its broker endpoint/profile directly. HRC need not know
+the participant supplies its broker endpoint/descriptor directly. HRC need not know
 the application control protocol. Queue, steer, truthful host execution admission,
 capture and events remain the ordinary broker/driver contract. No thread APIs,
 interrupt or preempt requirement is added.
@@ -417,7 +428,7 @@ adapter permission path is intentionally removed for those consumers too.
    reconnect converge; no duplicate address and no generic cold birth.
 4. Registered-but-unattached work survives daemon restart and stays pending;
    later real broker attachment enables queue and steer without another join.
-5. Exact attachment retry, stale epoch, incompatible profile and unavailable
+5. Exact attachment retry, stale epoch, incompatible descriptor and unavailable
    driver preserve registration and never repeat model input.
 6. H1/H2 and prior-writer recovery obey the surviving replacement contract.
 7. HRC continuation carry/clear/disabled-reuse cases use only its own records;
@@ -549,7 +560,7 @@ open and that its prior writer is terminated.
 | Class-policy config and its exact-key validator | `packages/hrc-server/src/registration-classes-config.ts:29-40, 78-160` | amended additively in §3.2 |
 | Registration endpoint, request parsing, unsupported-field refusal | `packages/hrc-server/src/participant-registration-handlers.ts:124-170` | amended additively in §3.1 |
 | Roster mutex serialization of registration | `participant-registration-handlers.ts:217` (`roster:<agent>:<project>`) | reused verbatim as the succession mutex (§5) |
-| Three freeze boundaries: prepared profile → hosting intent → realized hosting → frozen dispatch | `participant-registration-handlers.ts:355-371`; `participant-hosting-intent.ts:86-197`; `participant-realization.ts:37-47`; attempt columns `participant-registration-repository.ts:76-100` | unchanged |
+| Three freeze boundaries: prepared descriptor → hosting intent → realized hosting → frozen dispatch | `participant-registration-handlers.ts:355-371`; `participant-hosting-intent.ts:86-197`; `participant-realization.ts:37-47`; attempt columns `participant-registration-repository.ts:76-100` | unchanged |
 | `installIdentity` → `hello` → `ensureInvocation` receipt fencing, at-most-once driver start | `participant-establishment.ts:64-99, 218-310` | unchanged |
 | Staged attach + activation compare-and-set | `participant-establishment.ts:503-577`, `participant-registration-repository.ts:378-407` (`confirmInitialActivation`, `confirmReattachment`) | unchanged; §6 adds a precondition, not a new CAS |
 | External-ownership fence (`lifecycleOwner: 'external'`) read across sweep, startup reconcile, dispose, interrupt/terminate, rotation, GC, controller | `external-participant-lifecycle.ts:16-18` plus ~30 call sites | unchanged; §3.2 changes only *how the value is chosen* |
@@ -1596,7 +1607,7 @@ Named atomic units. TX-2 … TX-5 exist today and are unchanged.
 | Unit | Contents | Notes |
 | --- | --- | --- |
 | **TX-1 admit + bind** | held-reservation check, binding row created in `BINDING`, registration row, attempt identity, opaque preparation, session/continuity rows | inside the roster mutex, after placement; extends today's `participant-registration-handlers.ts:268-285` transaction |
-| TX-2 | freeze prepared profile + dispatch env | `freezePreparedBoundaryIfAbsent` |
+| TX-2 | freeze prepared descriptor + dispatch env | `freezePreparedBoundaryIfAbsent` |
 | TX-3 | persist hosting intent | `setSnapshotIfAbsent('hostingIntentJson')` |
 | TX-4 | persist realized hosting, then frozen dispatch | unchanged |
 | TX-5 | install acknowledgement, then activation CAS + runtime state + `runtime.ensured` | unchanged; §10.1 adds a precondition |

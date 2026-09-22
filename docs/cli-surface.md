@@ -27,6 +27,21 @@ For target-handle syntax used throughout this page, see
 `hrc-runtime/target-handles`. For the messaging CLI (`hrcchat`), see
 `hrc-runtime/hrcchat-messaging`.
 
+## ASP v2 selection contract (T-08690; pending Daedalus review)
+
+For a new broker birth this surface conveys only optional request intent. HRC
+preserves omission in optional camelCase `requested` overrides. Source-distinct
+raw summon overrides use `selectionContext.summonDirectives` with exactly
+`harness`, `model_provider`, `model`, `reasoning_effort`, and boolean
+`presentation`; explicit false is not lost. ASP alone merges strict-v4 profile,
+schema-2 target, summon directives and request overrides, then selects and
+validates the execution, worker and driver.
+No CLI/HRC flag resolves a profile/target or chooses a route, driver or
+presentation default. The Codex-specific viewer paragraphs below are historical
+v1 behavior and do not define v2 flags: v1 selectors and aliases are refused,
+not adapted. Explicit presentation mismatch leaves a live runtime untouched;
+omission does not request a new birth.
+
 ## `run` / `start` / `attach` — managed runtime lifecycle
 
 ```bash

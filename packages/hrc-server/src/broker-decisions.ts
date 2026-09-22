@@ -9,7 +9,7 @@ import type {
 } from 'hrc-core'
 import { harnessFrontendToHrcHarness } from 'hrc-core'
 import { type InvocationStartRequest, isCredentialEnvKey } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile, RuntimeContinuationRef } from 'spaces-runtime-contracts'
+import type { RuntimeContinuationRef } from 'spaces-runtime-contracts'
 
 import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import {
@@ -20,6 +20,21 @@ import {
 } from './server-constants.js'
 import { isRecord } from './server-parsers.js'
 import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
+
+/**
+ * Ordinary v2 birth has no HRC-side harness/provider/driver route.  ASP owns
+ * selection and returns the frozen execution/hosting contract.  The only
+ * retained local birth distinction is an explicitly requested operator
+ * surface: it needs the legacy interactive attach choreography before an
+ * execution exists.
+ *
+ * `selection.presentation: false` is intentionally not read here. It is a
+ * producer compile override, not an HRC viewer route choice.
+ */
+export function isProducerSelectedOrdinaryBirth(intent: HrcRuntimeIntent): boolean {
+  const operator = intent.presentation?.operator
+  return operator !== 'tmux-tui' && operator !== 'observer'
+}
 
 export function validateEnsureRuntimeIntent(
   intent: HrcRuntimeIntent,
@@ -626,24 +641,6 @@ export function decideInteractiveTmuxBrokerStartRoute(
   return { route: 'legacy-tmux' }
 }
 
-export function decideInteractiveTmuxExecutionRoute(
-  intent: HrcRuntimeIntent,
-  profile: BrokerExecutionProfile,
-  options: { brokerFlagEnabled: boolean; allowedBrokerDriver: InteractiveTmuxBrokerDriver }
-): InteractiveTmuxExecutionRoute {
-  if (!options.brokerFlagEnabled) {
-    return 'legacy-tmux'
-  }
-  if (!isInteractiveTmuxBrokerIntent(intent)) {
-    return 'legacy-tmux'
-  }
-  return profile.interactionMode === 'interactive' &&
-    profile.brokerDriver === options.allowedBrokerDriver &&
-    profile.brokerTerminal?.host === 'tmux'
-    ? 'broker'
-    : 'legacy-tmux'
-}
-
 export async function runInteractiveTmuxRoute<T>(
   route: InteractiveTmuxExecutionRoute,
   executors: {
@@ -1006,6 +1003,10 @@ export function toLatestRuntimeAdmissionView(
     return null
   }
 
+  // Producer-selected v2 rows intentionally have no HRC legacy provider
+  // projection. They cannot enter legacy interactive reuse admission.
+  if (runtime.provider === undefined) return null
+
   const brokerDriver = getBrokerRuntimeDriver(runtime)
   return {
     controllerKind: runtime.controllerKind,
@@ -1043,6 +1044,7 @@ export function toLiveInteractiveRuntimeReuseView(
   if (!runtime) {
     return null
   }
+  if (runtime.provider === undefined) return null
   return {
     controllerKind: runtime.controllerKind,
     transport: runtime.transport,

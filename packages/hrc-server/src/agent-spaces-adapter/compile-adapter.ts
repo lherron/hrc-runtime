@@ -2,10 +2,10 @@
  * Broker COMPILE ADAPTER (T-01695 / T-01690 Wave W2).
  *
  * Translates an HrcRuntimeIntent (+ overlays) into a RuntimeCompileRequest,
- * compiles it through the injected ASPC JSON-RPC facade client, runs the W2
- * profile selector, and returns a verified + frozen plan / profile /
- * startRequest / dispatchEnv / identities. It does NOT spawn the broker route
- * itself (W3B/W4 own that).
+ * compiles it through the injected ASPC JSON-RPC client and admits exactly one
+ * producer-selected v2 execution. It returns the verified frozen execution,
+ * canonical dispatch request, identities, and dispatch environment. It does
+ * NOT spawn the broker route itself (the hosting slice owns that).
  *
  * Key invariants:
  *  - Runtime identities are allocated BEFORE compile and mirrored into both
@@ -21,28 +21,29 @@
  * contracts). It must NEVER import launch/exec.ts, spaces-harness-codex, or
  * spaces-harness-broker internals.
  *
- * FLAG DARKNESS: nothing here is wired into a live dispatch path; it is
- * unreachable unless an explicit caller (W3B/W4, behind
- * HRC_HEADLESS_CODEX_BROKER_ENABLED) invokes it.
+ * Selection authority: HRC never maps an intent to a provider, profile,
+ * driver, terminal, or presentation. Omitted values remain omitted for ASP to
+ * resolve from its own profile/target/default precedence.
  */
 
-import type { HrcRuntimeIntent, HrcTurnResponseFormat } from 'hrc-core'
+import { parseScopeRef } from 'agent-scope'
+import {
+  type HrcRuntimeIntent,
+  type HrcTurnResponseFormat,
+  parseAppSessionScopeRef,
+} from 'hrc-core'
 import type {
   AspcCompileHarnessInvocationRequest,
   AspcCompileHarnessInvocationResponse,
-  AspcProfileSelector,
+  AspcExecutionRelease,
 } from 'spaces-aspc-protocol'
 import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
+import { neutralSpecHash, neutralStartRequestHash } from 'spaces-runtime-contracts'
 import type {
-  BrokerExecutionProfile,
   CompileDiagnostic,
-  CompiledRuntimePlan,
-  HarnessFamily,
-  HarnessRuntime,
   HostSessionId,
   InputId,
   InvocationId,
-  ProviderDomain,
   RequestId,
   RunId,
   RuntimeCompileRequest,
@@ -53,16 +54,12 @@ import type {
   TraceId,
 } from 'spaces-runtime-contracts'
 
+import type { SelectedExecution, SelectedExecutionPlan } from '../broker/selected-execution.js'
 import {
   type PrecompileLaunchTimingContext,
   observePrecompileLaunchSpan,
 } from '../precompile-launch-timing.js'
-import {
-  type BrokerProfileRejectionCode,
-  selectBrokerExecutionProfile,
-} from './compile-profile-selector'
 import { optional } from './optional.js'
-import { resolveCompileReasoningEffort, resolveLaunchModel } from './provision-launch.js'
 
 /**
  * Allocates the runtime identities used by a single compile+dispatch operation.
@@ -91,6 +88,8 @@ export type BrokerCompileAdapterDeps = {
 
 export type BrokerCompileAdapterInput = {
   intent: HrcRuntimeIntent
+  /** The authoritative scope identity from which v2 derives agent.id. */
+  scopeRef: string
   hostSessionId: string
   generation: number
   /** Dispatch-time only channel; never hashed. Passed to startInvocationFromRequest at dispatch. */
@@ -108,12 +107,17 @@ export type BrokerCompileAdapterInput = {
 export type BrokerCompileAdapterResult =
   | {
       admitted: true
-      profile: BrokerExecutionProfile
-      /** Verified + frozen. NEVER mutate. */
+      /** The one producer-selected execution, verified and frozen at admission. */
+      execution: V2SelectedExecution
+      /** Immutable producer plan metadata and resolved selection/provenance. */
+      plan: V2SelectedExecutionPlan
+      /** Exact HRC-owned policy submitted in the v2 compile request. */
+      hrcPolicy: RuntimeCompileRequest['hrcPolicy']
+      /** Immutable worker release returned alongside the selected execution. */
+      executionRelease?: AspcExecutionRelease | undefined
       startRequest: InvocationStartRequest
       specHash: string
       startRequestHash: string
-      plan: CompiledRuntimePlan
       identity: RuntimeIdentityAllocation
       /** Dispatch-time channel for W3B; absent from all hashed material. */
       dispatchEnv?: Record<string, string> | undefined
@@ -121,7 +125,7 @@ export type BrokerCompileAdapterResult =
     }
   | {
       admitted: false
-      code: BrokerProfileRejectionCode
+      code: V2ExecutionRejectionCode
       identity: RuntimeIdentityAllocation
       diagnostics?: CompileDiagnostic[] | undefined
     }
@@ -176,223 +180,405 @@ function toCompileAttachments(
   })
 }
 
-function toRequestedHarnessRoute(harness: HrcRuntimeIntent['harness']): {
-  modelProvider: ProviderDomain
-  harnessFamily?: HarnessFamily | undefined
-  preferredHarnessRuntime?: HarnessRuntime | undefined
-} {
-  const preferredHarnessRuntime = toPreferredHarnessRuntime(harness.id)
-  const harnessFamily = toHarnessFamily(harness.provider, preferredHarnessRuntime)
-  return {
-    modelProvider: harness.provider,
-    ...(harnessFamily ? { harnessFamily } : {}),
-    ...(preferredHarnessRuntime ? { preferredHarnessRuntime } : {}),
-  }
-}
+type V2RequestedSelection = NonNullable<HrcRuntimeIntent['selection']>
+type V2SummonDirectives = NonNullable<HrcRuntimeIntent['summonDirectives']>
 
-function toPreferredHarnessRuntime(
-  harnessId: HrcRuntimeIntent['harness']['id']
-): HarnessRuntime | undefined {
-  switch (harnessId) {
-    case 'claude-code':
-      return 'claude-code-cli'
-    case 'codex-cli':
-      return 'codex-cli'
-    case 'pi':
-    case 'pi-cli':
-      return 'pi-cli'
-    case 'pi-sdk':
-      return 'pi-sdk'
-    case 'muse-cli':
-      return 'muse-cli'
-    default:
-      return undefined
-  }
-}
-
-function toHarnessFamily(
-  provider: HrcRuntimeIntent['harness']['provider'],
-  runtime: HarnessRuntime | undefined
-): HarnessFamily | undefined {
-  if (runtime === 'claude-code-cli' || runtime === 'claude-agent-sdk') return 'claude-code'
-  if (runtime === 'codex-cli') return 'codex'
-  if (runtime === 'pi-cli' || runtime === 'pi-sdk') return 'pi'
-  if (runtime === 'muse-cli') return 'muse'
-  return provider === 'openai' ? 'codex' : 'claude-code'
-}
-
-export function toProfileSelector(intent: HrcRuntimeIntent): AspcProfileSelector | undefined {
-  if (intent.harness.interactive === true) {
-    const runtime = toPreferredHarnessRuntime(intent.harness.id)
-    if (runtime === 'claude-code-cli') {
-      return { brokerDriver: 'claude-code-tmux' }
-    }
-    if (runtime === 'codex-cli') {
-      return { brokerDriver: 'codex-app-server' }
-    }
-    if (runtime === 'pi-cli') {
-      return { brokerDriver: 'pi-tui-tmux' }
-    }
-    if (runtime === 'muse-cli') {
-      return { brokerDriver: 'muse-cli-tmux' }
-    }
-    return undefined
-  }
-
-  const runtime = toPreferredHarnessRuntime(intent.harness.id)
-  if (runtime === 'pi-sdk') {
-    return { brokerDriver: 'pi-sdk' }
-  }
-  if (runtime === 'codex-cli' || intent.harness.provider === 'openai') {
-    return { brokerDriver: 'codex-app-server' }
-  }
-  if (runtime === 'muse-cli' || intent.harness.provider === 'meta') {
-    return { brokerDriver: 'muse-serve' }
-  }
-  return undefined
-}
-
-function jsonEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b)
-}
-
-const START_REQUEST_DIFF_MAX_ENTRIES = 8
-const START_REQUEST_DIFF_MAX_PATH_CHARS = 256
-const START_REQUEST_DIFF_MAX_VALUE_CHARS = 256
-const START_REQUEST_SECRET_KEY_PATTERN =
-  /token|secret|key|password|passwd|pwd|authorization|auth|credential|bearer|cookie/i
-
-type StartRequestFieldDiff = {
-  path: string
-  daemonValue: string
-  cliValue: string
-  redacted: boolean
-  truncated: boolean
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function escapeJsonPointerSegment(segment: string): string {
-  return segment.replaceAll('~', '~0').replaceAll('/', '~1')
-}
-
-function renderDiffPath(segments: string[]): { value: string; truncated: boolean } {
-  const pointer = `/${segments.map(escapeJsonPointerSegment).join('/')}`
-  if (pointer.length <= START_REQUEST_DIFF_MAX_PATH_CHARS) {
-    return { value: pointer, truncated: false }
-  }
-  return {
-    value: `${pointer.slice(0, START_REQUEST_DIFF_MAX_PATH_CHARS)}… [path truncated]`,
-    truncated: true,
-  }
-}
-
-function renderDiffValue(value: unknown): { value: string; truncated: boolean } {
-  let rendered: string
-  try {
-    const json = JSON.stringify(value)
-    rendered = json === undefined ? String(value) : json
-  } catch {
-    rendered = String(value)
-  }
-
-  if (rendered.length <= START_REQUEST_DIFF_MAX_VALUE_CHARS) {
-    return { value: rendered, truncated: false }
-  }
-  return {
-    value: `${rendered.slice(0, START_REQUEST_DIFF_MAX_VALUE_CHARS)}… [value truncated]`,
-    truncated: true,
-  }
-}
-
-function collectStartRequestDiffs(
-  daemonValue: unknown,
-  cliValue: unknown,
-  path: string[],
-  diffs: StartRequestFieldDiff[],
-  state: { entryCapReached: boolean }
-): void {
-  if (jsonEqual(daemonValue, cliValue)) return
-  if (diffs.length >= START_REQUEST_DIFF_MAX_ENTRIES) {
-    state.entryCapReached = true
-    return
-  }
-
-  const renderedPath = renderDiffPath(path)
-  if (path.some((segment) => START_REQUEST_SECRET_KEY_PATTERN.test(segment))) {
-    diffs.push({
-      path: renderedPath.value,
-      daemonValue: '[REDACTED]',
-      cliValue: '[REDACTED]',
-      redacted: true,
-      truncated: renderedPath.truncated,
-    })
-    return
-  }
-
-  if (Array.isArray(daemonValue) && Array.isArray(cliValue)) {
-    const length = Math.max(daemonValue.length, cliValue.length)
-    for (let index = 0; index < length; index += 1) {
-      collectStartRequestDiffs(
-        daemonValue[index],
-        cliValue[index],
-        [...path, String(index)],
-        diffs,
-        state
-      )
-    }
-    return
-  }
-
-  if (isJsonObject(daemonValue) && isJsonObject(cliValue)) {
-    const keys = [...new Set([...Object.keys(daemonValue), ...Object.keys(cliValue)])].sort()
-    for (const key of keys) {
-      collectStartRequestDiffs(daemonValue[key], cliValue[key], [...path, key], diffs, state)
-    }
-    return
-  }
-
-  const daemon = renderDiffValue(daemonValue)
-  const cli = renderDiffValue(cliValue)
-  diffs.push({
-    path: renderedPath.value,
-    daemonValue: daemon.value,
-    cliValue: cli.value,
-    redacted: false,
-    truncated: renderedPath.truncated || daemon.truncated || cli.truncated,
-  })
-}
-
-function describeStartRequestDiff(daemonStartRequest: unknown, cliStartRequest: unknown): string {
-  const diffs: StartRequestFieldDiff[] = []
-  const state = { entryCapReached: false }
-  collectStartRequestDiffs(daemonStartRequest, cliStartRequest, [], diffs, state)
-
-  const lines = diffs.map((diff) => {
-    const flags = [diff.redacted ? 'values redacted' : '', diff.truncated ? 'output truncated' : '']
-      .filter(Boolean)
-      .join('; ')
-    const suffix = flags.length > 0 ? ` (${flags})` : ''
-    return `${diff.path}: daemon=${diff.daemonValue}, CLI=${diff.cliValue}${suffix}`
-  })
-  if (state.entryCapReached) {
-    lines.push(
-      `Additional differences omitted; output capped at ${START_REQUEST_DIFF_MAX_ENTRIES} paths.`
-    )
-  }
-  if (lines.length === 0) {
-    lines.push(
-      'Start requests have different JSON serialization but no differing leaf value was found.'
-    )
-  }
-  return `Start request field diff (daemon-recompiled vs CLI-compiled):\n${lines.join('\n')}`
+/**
+ * Project the already-established HRC scope into ASP's v2 agent identity.
+ * App sessions are HRC-owned `app:<appId>` scopes and deliberately do not
+ * satisfy agent-scope's `agent:<agentId>` grammar; their validated app id is
+ * the v2 agent id. Every agent scope retains agent-scope's canonical parsing.
+ * This is identity projection only, never selection authority.
+ */
+function v2AgentIdForScope(scopeRef: string): string {
+  const app = parseAppSessionScopeRef(scopeRef)
+  return app?.appId ?? parseScopeRef(scopeRef).agentId
 }
 
 /**
- * Allocate identities, build a RuntimeCompileRequest, compile, select+verify the
- * broker profile, and return a verified/frozen plan. Does not execute anything.
+ * The local structural v2 request view keeps this source slice buildable until
+ * the immutable producer tuple is pulled. It mirrors the public ASP v2 wire;
+ * the final dependency advance replaces the temporary structural boundary with
+ * the exported package type, without changing its bytes.
+ */
+export type V2RuntimeCompileRequest = {
+  schemaVersion: 'agent-runtime-compile-request/v2'
+  agent: { id: string }
+  identity: RuntimeIdentityAllocation
+  placement: RuntimeCompileRequest['placement']
+  selectionContext?: { summonDirectives?: V2SummonDirectives | undefined } | undefined
+  requested: V2RequestedSelection
+  materialization: RuntimeCompileRequest['materialization']
+  hrcPolicy: RuntimeCompileRequest['hrcPolicy']
+  continuation?: RuntimeCompileRequest['continuation'] | undefined
+  correlation: RuntimeCorrelation
+}
+
+/** One execution is the complete producer-selected launch and hosting contract. */
+export type V2SelectedExecution = SelectedExecution
+export type V2SelectedExecutionPlan = SelectedExecutionPlan
+
+type V2CompiledPlan = V2SelectedExecutionPlan & {
+  agent: { id: string }
+  identity: RuntimeIdentityAllocation
+  execution: V2SelectedExecution
+}
+
+type V2CompileResponse = {
+  schemaVersion: 'aspc-compile-harness-invocation-response/v2'
+  ok: true
+  plan: V2CompiledPlan
+  diagnostics: CompileDiagnostic[]
+  executionRelease?: AspcExecutionRelease | undefined
+}
+
+export type V2ExecutionRejectionCode =
+  | 'compile-not-ok'
+  | 'v2-envelope-required'
+  | 'v2-plan-required'
+  | 'execution-invalid'
+  | 'execution-protocol-invalid'
+  | 'execution-hosting-invalid'
+  | 'execution-presentation-invalid'
+  | 'execution-profile-invalid'
+  | 'execution-selection-invalid'
+  | 'execution-driver-mismatch'
+  | 'execution-hash-mismatch'
+  | 'execution-identity-mismatch'
+  | 'execution-release-invalid'
+
+function hasOwnKeys(value: Record<string, unknown>): boolean {
+  return Object.keys(value).length > 0
+}
+
+/**
+ * Build the only v2 selection carrier. It intentionally reads neither
+ * `intent.harness` nor `intent.provision`: those are old HRC-owned/merged
+ * surfaces and turning either into a compile value would reintroduce local
+ * profile, target, provider, or driver selection.
+ */
+export function buildV2CompileRequest(input: {
+  intent: HrcRuntimeIntent
+  scopeRef: string
+  identity: RuntimeIdentityAllocation
+  dispatchEnv?: Record<string, string> | undefined
+  continuation?: RuntimeCompileRequest['continuation'] | undefined
+  policy?: RuntimeCompileRequest['hrcPolicy'] | undefined
+  responseFormat?: HrcTurnResponseFormat | undefined
+}): V2RuntimeCompileRequest {
+  const { intent } = input
+  const placement = {
+    ...intent.placement,
+    ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
+  }
+  const requested = { ...(intent.selection ?? {}) }
+  const summonDirectives = { ...(intent.summonDirectives ?? {}) }
+
+  return {
+    schemaVersion: 'agent-runtime-compile-request/v2',
+    agent: { id: v2AgentIdForScope(input.scopeRef) },
+    identity: input.identity,
+    placement,
+    ...(hasOwnKeys(summonDirectives) ? { selectionContext: { summonDirectives } } : {}),
+    requested,
+    materialization: {
+      ...(intent.initialPrompt !== undefined ? { initialPrompt: intent.initialPrompt } : {}),
+      ...(intent.omitPriming !== undefined ? { omitPriming: intent.omitPriming } : {}),
+      ...(toCompileAttachments(intent.attachments) !== undefined
+        ? { attachments: toCompileAttachments(intent.attachments) }
+        : {}),
+      ...(intent.taskContext !== undefined ? { taskContext: intent.taskContext } : {}),
+      ...(input.responseFormat?.kind === 'json_schema'
+        ? { responseFormat: input.responseFormat }
+        : {}),
+    },
+    hrcPolicy: input.policy ?? {},
+    ...(input.continuation ? { continuation: input.continuation } : {}),
+    correlation: {
+      requestId: input.identity.requestId,
+      operationId: input.identity.operationId,
+      hostSessionId: input.identity.hostSessionId,
+      generation: input.identity.generation,
+      runtimeId: input.identity.runtimeId,
+      invocationId: input.identity.invocationId,
+      traceId: input.identity.traceId,
+      ...optional('runId', input.identity.runId),
+      scopeRef: input.scopeRef,
+    },
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value)
+    for (const key of Object.keys(value)) {
+      deepFreeze((value as Record<string, unknown>)[key])
+    }
+  }
+  return value
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0
+}
+
+function hasV2CompileEnvelope(response: unknown): boolean {
+  return (
+    isRecord(response) &&
+    response['schemaVersion'] === 'aspc-compile-harness-invocation-response/v2'
+  )
+}
+
+function hasValidHosting(hosting: Record<string, unknown>): boolean {
+  const transport = hosting['executionTransport']
+  const processExecution = hosting['processExecution']
+  const terminalRequired = hosting['terminalRequired']
+  const terminalHost = hosting['terminalHost']
+
+  if (
+    typeof terminalRequired !== 'boolean' ||
+    (terminalHost !== undefined && terminalHost !== 'tmux') ||
+    terminalRequired !== (terminalHost === 'tmux')
+  ) {
+    return false
+  }
+
+  if (transport === 'jsonrpc-stdio') {
+    return processExecution === 'broker-process'
+  }
+  if (transport === 'pty') {
+    return processExecution === 'broker-process' && terminalRequired
+  }
+  if (transport === 'native-worker') {
+    return processExecution === 'native-worker'
+  }
+  return false
+}
+
+function hasCoherentPresentation(
+  execution: Record<string, unknown>,
+  hosting: Record<string, unknown>
+): boolean {
+  const fulfillment = execution['presentationFulfillment']
+  const surface = execution['presentationSurface']
+  if (
+    fulfillment !== 'intrinsic' &&
+    fulfillment !== 'attachable' &&
+    fulfillment !== 'birth-variant'
+  ) {
+    return false
+  }
+  if (fulfillment === 'intrinsic' && hosting['terminalRequired'] !== true) {
+    return false
+  }
+  if (surface === undefined) {
+    return true
+  }
+  if (!isRecord(surface) || fulfillment !== 'attachable') {
+    return false
+  }
+  if (
+    (surface['transport'] !== 'terminal' && surface['transport'] !== 'websocket-unix') ||
+    surface['terminalHost'] !== 'tmux'
+  ) {
+    return false
+  }
+  // A terminal surface is the worker terminal itself; an attachable websocket
+  // surface may attach to a tmux renderer even when the worker is headless.
+  return surface['transport'] !== 'terminal' || hosting['terminalRequired'] === true
+}
+
+const allocatedPlanIdentityFields: readonly (keyof RuntimeIdentityAllocation)[] = [
+  'requestId',
+  'operationId',
+  'hostSessionId',
+  'generation',
+  'runtimeId',
+  'invocationId',
+  'initialInputId',
+  'runId',
+  'traceId',
+]
+
+function hasMatchingAllocatedIdentity(
+  planIdentity: Record<string, unknown>,
+  identity: RuntimeIdentityAllocation
+): boolean {
+  return allocatedPlanIdentityFields.every((field) => planIdentity[field] === identity[field])
+}
+
+function hasMatchingCanonicalStartIdentity(
+  startRequest: Record<string, unknown>,
+  identity: RuntimeIdentityAllocation
+): boolean {
+  const spec = startRequest['spec']
+  if (!isRecord(spec) || spec['invocationId'] !== identity.invocationId) {
+    return false
+  }
+  const correlation = spec['correlation']
+  if (!isRecord(correlation)) {
+    return false
+  }
+  const correlationFields: readonly (keyof RuntimeIdentityAllocation)[] = [
+    'requestId',
+    'operationId',
+    'hostSessionId',
+    'runtimeId',
+    'runId',
+    'traceId',
+  ]
+  if (!correlationFields.every((field) => correlation[field] === identity[field])) {
+    return false
+  }
+  if (identity.initialInputId === undefined) {
+    return true
+  }
+  const initialInput = startRequest['initialInput']
+  return isRecord(initialInput) && initialInput['inputId'] === identity.initialInputId
+}
+
+function hasValidSelection(selection: unknown): boolean {
+  if (!isRecord(selection) || !isRecord(selection['provenance'])) return false
+  const provenance = selection['provenance']
+  const sources = new Set([
+    'agent-profile',
+    'project-target',
+    'summon-directive',
+    'compile-request',
+    'catalog-default',
+  ])
+  return (
+    isNonEmptyString(selection['harness']) &&
+    isNonEmptyString(selection['modelProvider']) &&
+    isNonEmptyString(selection['model']) &&
+    typeof selection['presentation'] === 'boolean' &&
+    ['harness', 'modelProvider', 'model', 'presentation'].every(
+      (field) => typeof provenance[field] === 'string' && sources.has(provenance[field])
+    ) &&
+    (selection['reasoningEffort'] === undefined
+      ? provenance['reasoningEffort'] === undefined
+      : isNonEmptyString(selection['reasoningEffort']) &&
+        typeof provenance['reasoningEffort'] === 'string' &&
+        sources.has(provenance['reasoningEffort']))
+  )
+}
+
+function hasDurablePlanMetadata(plan: Record<string, unknown>): boolean {
+  return (
+    isNonEmptyString(plan['planHash']) &&
+    isNonEmptyString(plan['compileId']) &&
+    isNonEmptyString(plan['createdAt']) &&
+    Array.isArray(plan['diagnostics'])
+  )
+}
+
+function hasValidExecutionRelease(release: unknown): release is AspcExecutionRelease {
+  if (!isRecord(release) || !isRecord(release['worker'])) return false
+  const worker = release['worker']
+  return (
+    isNonEmptyString(release['releaseId']) &&
+    isNonEmptyString(release['sourceCommit']) &&
+    isNonEmptyString(release['builtAt']) &&
+    isNonEmptyString(release['releaseRoot']) &&
+    isNonEmptyString(worker['protocol']) &&
+    isNonEmptyString(worker['executable']) &&
+    Array.isArray(worker['argvPrefix']) &&
+    worker['argvPrefix'].every((entry) => typeof entry === 'string')
+  )
+}
+
+/** Validate the singular producer-selected v2 execution without choosing a driver. */
+function admitV2Execution(
+  response: unknown,
+  identity: RuntimeIdentityAllocation,
+  agentId: string
+):
+  | { admitted: true; plan: V2CompiledPlan; execution: V2SelectedExecution }
+  | { admitted: false; code: V2ExecutionRejectionCode } {
+  if (!hasV2CompileEnvelope(response) || !isRecord(response)) {
+    return { admitted: false, code: 'v2-envelope-required' }
+  }
+  if (response['ok'] !== true || !isRecord(response['plan'])) {
+    return { admitted: false, code: 'v2-plan-required' }
+  }
+  const plan = response['plan'] as V2CompiledPlan
+  if (plan.schemaVersion !== 'agent-runtime-plan/v2' || !hasDurablePlanMetadata(plan)) {
+    return { admitted: false, code: 'v2-plan-required' }
+  }
+  if (!hasValidSelection(plan.selection)) {
+    return { admitted: false, code: 'execution-selection-invalid' }
+  }
+  if (
+    !isRecord(plan.agent) ||
+    plan.agent.id !== agentId ||
+    !isRecord(plan.identity) ||
+    !hasMatchingAllocatedIdentity(plan.identity, identity)
+  ) {
+    return { admitted: false, code: 'execution-identity-mismatch' }
+  }
+  const execution = plan.execution
+  if (
+    !isRecord(execution) ||
+    !isNonEmptyString(execution.recipeId) ||
+    !isNonEmptyString(execution.driver) ||
+    !isRecord(execution.hosting) ||
+    !isRecord(execution.profile) ||
+    !isRecord(execution.dispatchRequest) ||
+    !isRecord(execution.dispatchRequest.startRequest)
+  ) {
+    return { admitted: false, code: 'execution-invalid' }
+  }
+  if (execution.protocol !== 'harness-broker/0.2') {
+    return { admitted: false, code: 'execution-protocol-invalid' }
+  }
+  if (!hasValidHosting(execution.hosting)) {
+    return { admitted: false, code: 'execution-hosting-invalid' }
+  }
+  if (!hasCoherentPresentation(execution, execution.hosting)) {
+    return { admitted: false, code: 'execution-presentation-invalid' }
+  }
+  if (
+    !isNonEmptyString(execution.profile.profileId) ||
+    !isNonEmptyString(execution.profile.profileHash) ||
+    !isNonEmptyString(execution.profile.compatibilityHash) ||
+    !isNonEmptyString(execution.profile.startRequestHash)
+  ) {
+    return { admitted: false, code: 'execution-profile-invalid' }
+  }
+  const typed = execution as V2SelectedExecution
+  const startRequest = typed.dispatchRequest.startRequest
+  const startRequestRecord = startRequest as unknown as Record<string, unknown>
+  const startSpec = startRequestRecord['spec']
+  if (
+    !isRecord(startSpec) ||
+    !isRecord(startSpec['driver']) ||
+    !isNonEmptyString(startSpec['driver']['kind']) ||
+    startSpec['driver']['kind'] !== typed.driver
+  ) {
+    return { admitted: false, code: 'execution-driver-mismatch' }
+  }
+  if (!hasMatchingCanonicalStartIdentity(startRequestRecord, identity)) {
+    return { admitted: false, code: 'execution-identity-mismatch' }
+  }
+  // v2 declares the canonical start-request hash. compatibilityHash is a
+  // broader producer cache/reuse key, not a spec hash, so HRC must not invent
+  // an equality between the two domains.
+  if (neutralStartRequestHash(startRequest) !== typed.profile.startRequestHash) {
+    return { admitted: false, code: 'execution-hash-mismatch' }
+  }
+  // Freeze the complete producer graph at admission. The plan carries selection
+  // provenance and the singular execution carries the dispatch bytes; later
+  // persistence must never observe a caller-mutated response object.
+  return { admitted: true, plan: deepFreeze(plan), execution: deepFreeze(typed) }
+}
+
+/**
+ * Allocate identities, build a v2 request, compile, and validate/freeze the
+ * one returned execution. Does not execute anything.
  */
 export async function compileBrokerRuntimePlan(
   input: BrokerCompileAdapterInput,
@@ -417,76 +603,43 @@ export async function compileBrokerRuntimePlan(
       : {}),
   }
 
-  // (2) Mirror the SAME values into correlation.
-  const correlation: RuntimeCorrelation = {
-    requestId: identity.requestId,
-    operationId: identity.operationId,
-    hostSessionId: identity.hostSessionId,
-    generation: identity.generation,
-    runtimeId: identity.runtimeId,
-    invocationId: identity.invocationId,
-    traceId: identity.traceId,
-    ...optional('runId', identity.runId),
-  }
-
-  // (3) Translate intent + overlays. dispatchEnv rides on placement as a
-  //     dispatch-time channel (contracts RuntimePlacement carries arbitrary
-  //     keys); it is NOT part of the hashed startRequest/spec material.
-  const placement = {
-    ...intent.placement,
-    ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
-  }
-
-  const launchModel = resolveLaunchModel(intent)
-  const launchReasoningEffort = resolveCompileReasoningEffort(intent)
-  const request: RuntimeCompileRequest = {
-    schemaVersion: 'agent-runtime-compile-request/v1',
+  // (3) Translate only explicit v2 request selection and raw summon
+  // directives. ASP owns all omitted values and the complete selection merge.
+  const request = buildV2CompileRequest({
+    intent,
+    scopeRef: input.scopeRef,
     identity,
-    placement,
-    requested: {
-      ...toRequestedHarnessRoute(intent.harness),
-      interactionMode:
-        intent.harness.id === 'pi-sdk' && intent.execution?.preferredMode === 'nonInteractive'
-          ? 'nonInteractive'
-          : intent.harness.interactive
-            ? 'interactive'
-            : 'headless',
-      // T-07398: the directive-overlaid launch route on the compile hop.
-      // Truthiness, NOT `optional()`: this request is hashed upstream
-      // (recomputeStartRequestHash / jsonEqual) and the field it replaces used
-      // the truthiness idiom, so an empty value must keep dropping the key
-      // rather than diverging the hash.
-      ...(launchModel ? { model: launchModel } : {}),
-      ...(launchReasoningEffort ? { reasoningEffort: launchReasoningEffort } : {}),
-    },
-    materialization: {
-      initialPrompt: intent.initialPrompt,
-      ...(intent.omitPriming !== undefined ? { omitPriming: intent.omitPriming } : {}),
-      attachments: toCompileAttachments(intent.attachments),
-      taskContext: intent.taskContext,
-      ...(input.responseFormat?.kind === 'json_schema'
-        ? { responseFormat: input.responseFormat }
-        : {}),
-    },
-    hrcPolicy: input.policy ?? {},
-    correlation,
+    ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
     ...(input.continuation ? { continuation: input.continuation } : {}),
-  }
+    ...(input.policy ? { policy: input.policy } : {}),
+    ...(input.responseFormat ? { responseFormat: input.responseFormat } : {}),
+  })
 
   // (4) Compile through ASPC, then statically admit + hash-verify the broker
   //     profile HRC will dispatch. ASPC returns the exact dispatch envelope; HRC
   //     still verifies the selected startRequest/hash/identity contract before
   //     trusting it.
-  const profileSelector = toProfileSelector(intent)
   const compile = () =>
     deps.compileHarnessInvocation({
-      compileRequest: request,
+      // The installed v1 declaration cannot name this v2 structure until the
+      // producer tuple advances. The wire is deliberately explicit above; this
+      // boundary cast is removed with that atomic dependency advance.
+      compileRequest: request as unknown as RuntimeCompileRequest,
       ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
-      ...(profileSelector ? { profileSelector } : {}),
     })
   const response = deps.timing
     ? await observePrecompileLaunchSpan('precompile-compile-rpc', deps.timing, compile)
     : await compile()
+  // Reject the legacy ASPC response envelope before looking at its success bit:
+  // accepting a v1 failure here would keep a second compatibility path alive.
+  if (!hasV2CompileEnvelope(response)) {
+    return {
+      admitted: false,
+      code: 'v2-envelope-required',
+      identity,
+      diagnostics: response.diagnostics,
+    }
+  }
   if (!response.ok) {
     return {
       admitted: false,
@@ -496,9 +649,7 @@ export async function compileBrokerRuntimePlan(
     }
   }
 
-  const selection = selectBrokerExecutionProfile(response.compileResponse, identity, {
-    allowCompilerInitialInputWithoutIdentity: input.allowCompilerInitialInputWithoutIdentity,
-  })
+  const selection = admitV2Execution(response, identity, v2AgentIdForScope(input.scopeRef))
 
   if (!selection.admitted) {
     return {
@@ -509,37 +660,36 @@ export async function compileBrokerRuntimePlan(
     }
   }
 
-  if (!jsonEqual(response.dispatchRequest.startRequest, response.startRequest)) {
+  const responseRelease = (response as unknown as V2CompileResponse).executionRelease
+  if (responseRelease !== undefined && !hasValidExecutionRelease(responseRelease)) {
     return {
       admitted: false,
-      code: 'start-request-hash-mismatch',
+      code: 'execution-release-invalid',
       identity,
-      diagnostics: [
-        ...response.diagnostics,
-        {
-          level: 'error',
-          code: 'start-request-field-diff',
-          message: describeStartRequestDiff(
-            response.dispatchRequest.startRequest,
-            response.startRequest
-          ),
-          plane: 'asp-compiler',
-        },
-      ],
+      diagnostics: response.diagnostics,
     }
   }
 
   return {
     admitted: true,
-    profile: selection.profile,
-    startRequest: selection.startRequest,
-    specHash: selection.specHash,
-    startRequestHash: selection.startRequestHash,
-    plan: response.plan,
+    execution: selection.execution,
+    hrcPolicy: deepFreeze(request.hrcPolicy),
+    ...(responseRelease !== undefined ? { executionRelease: deepFreeze(responseRelease) } : {}),
+    plan: deepFreeze({
+      schemaVersion: selection.plan.schemaVersion,
+      planHash: selection.plan.planHash,
+      compileId: selection.plan.compileId,
+      createdAt: selection.plan.createdAt,
+      diagnostics: selection.plan.diagnostics,
+      selection: selection.plan.selection,
+    }),
+    startRequest: selection.execution.dispatchRequest.startRequest,
+    specHash: neutralSpecHash(selection.execution.dispatchRequest.startRequest.spec),
+    startRequestHash: selection.execution.profile.startRequestHash,
     identity,
-    ...(response.dispatchRequest.dispatchEnv
-      ? { dispatchEnv: response.dispatchRequest.dispatchEnv }
+    ...(selection.execution.dispatchRequest.dispatchEnv
+      ? { dispatchEnv: selection.execution.dispatchRequest.dispatchEnv }
       : {}),
-    diagnostics: response.diagnostics,
+    diagnostics: (response as unknown as V2CompileResponse).diagnostics,
   }
 }

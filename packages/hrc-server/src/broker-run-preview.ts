@@ -5,12 +5,6 @@ import type { BrokerRunPreview, BrokerRunPreviewPromptZones, HrcRuntimeIntent } 
 export type { BrokerRunPreview, BrokerRunPreviewPromptZones } from 'hrc-core'
 
 import type { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
-import {
-  isInteractiveTmuxBrokerIntent,
-  normalizeClaudeInteractiveBrokerIntent,
-  shouldRedirectClaudeToInteractiveBroker,
-  shouldUseHeadlessTransport,
-} from './broker-decisions.js'
 
 /**
  * The priming prompt, wherever the selected route puts it. Claude carries it in
@@ -38,17 +32,12 @@ function resolvePrimingPrompt(
 }
 
 /**
- * The broker-routable intent a preview compiles, or undefined when the intent has
- * no broker plan to preview (the caller then falls back to the direct spec view).
+ * A preview is an ordinary v2 compile. ASP decides whether the producer can
+ * select an execution; HRC must not reject or redirect it based on a local
+ * harness, provider, mode, or driver inference.
  */
-export function resolvePreviewIntent(intent: HrcRuntimeIntent): HrcRuntimeIntent | undefined {
-  const previewIntent = shouldRedirectClaudeToInteractiveBroker(intent)
-    ? normalizeClaudeInteractiveBrokerIntent(intent)
-    : intent
-  if (!isInteractiveTmuxBrokerIntent(previewIntent) && !shouldUseHeadlessTransport(previewIntent)) {
-    return undefined
-  }
-  return previewIntent
+export function resolvePreviewIntent(intent: HrcRuntimeIntent): HrcRuntimeIntent {
+  return intent
 }
 
 /** Dry-run identities: nothing a preview compiles can collide with a real launch. */
@@ -80,32 +69,45 @@ export function projectBrokerRunPreview(
     launchInitialPrompt,
     compiled.startRequest.initialInput
   )
-  const warnings = (compiled.profile.diagnostics ?? [])
-    .filter((diagnostic) => diagnostic.level !== 'error')
-    .map((diagnostic) => diagnostic.message)
+  const warnings = (compiled.plan.diagnostics ?? []).flatMap((diagnostic) => {
+    if (
+      typeof diagnostic !== 'object' ||
+      diagnostic === null ||
+      (diagnostic as { level?: unknown }).level === 'error' ||
+      typeof (diagnostic as { message?: unknown }).message !== 'string'
+    ) {
+      return []
+    }
+    return [(diagnostic as { message: string }).message]
+  })
+  const process = spec.process
+  const previewProcess: BrokerRunPreview['process'] =
+    'execution' in process && process.execution === 'native-worker'
+      ? { execution: 'native-worker', cwd: process.cwd }
+      : { command: process.command, args: process.args, cwd: process.cwd }
 
   return {
     controllerKind: 'harness-broker',
-    brokerDriver: compiled.profile.brokerDriver,
-    interactionMode: compiled.profile.interactionMode,
-    profileId: compiled.profile.profileId,
-    profileHash: compiled.profile.profileHash,
     specHash: compiled.specHash,
     startRequestHash: compiled.startRequestHash,
-    process: {
-      command: spec.process.command,
-      args: spec.process.args,
-      cwd: spec.process.cwd,
+    selection: compiled.plan.selection,
+    execution: {
+      recipeId: compiled.execution.recipeId,
+      driver: compiled.execution.driver,
+      protocol: compiled.execution.protocol,
+      hosting: compiled.execution.hosting,
+      presentationFulfillment: compiled.execution.presentationFulfillment,
+      ...(compiled.execution.presentationSurface !== undefined
+        ? { presentationSurface: compiled.execution.presentationSurface }
+        : {}),
+      profile: compiled.execution.profile,
     },
+    process: previewProcess,
     initialInput: compiled.startRequest.initialInput !== undefined,
     ...(typeof launchInitialPrompt === 'string'
       ? { launchInitialPromptLength: launchInitialPrompt.length }
       : {}),
     inputQueue: spec.interaction?.inputQueue ?? 'none',
-    interrupt: compiled.profile.expectedCapabilities.turns.interrupt,
-    ...(compiled.profile.brokerTerminal?.host === 'tmux'
-      ? { resource: 'runtime-owned broker tmux lease socket' }
-      : {}),
     warnings,
     ...(typeof spec.launch?.systemPromptFile === 'string'
       ? { systemPromptFile: spec.launch.systemPromptFile }
@@ -118,13 +120,13 @@ export function projectBrokerRunPreview(
     env,
     planHash: compiled.plan.planHash,
     compileId: compiled.plan.compileId,
-    bundleIdentity: compiled.plan.resolvedBundle.bundleIdentity,
-    model: {
-      provider: compiled.plan.model.provider,
-      modelId: compiled.plan.model.modelId,
-      ...(compiled.plan.model.requestedModel !== undefined
-        ? { requestedModel: compiled.plan.model.requestedModel }
-        : {}),
-    },
+    ...(compiled.executionRelease !== undefined
+      ? {
+          release: {
+            releaseId: compiled.executionRelease.releaseId,
+            sourceCommit: compiled.executionRelease.sourceCommit,
+          },
+        }
+      : {}),
   }
 }

@@ -64,6 +64,17 @@ describe('HarnessBrokerController', () => {
       'completed'
     )
     expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.controllerKind).toBe('harness-broker')
+    expect(
+      fixture.db.runtimes.getByRuntimeId('runtime_w2')?.runtimeStateJson?.['selection']
+    ).toEqual(input.plan.selection)
+    expect(
+      JSON.parse(fixture.db.compiledRuntimePlans.getByPlanHash('planhash_w2')!.planProjectionJson)
+        .selection
+    ).toEqual(input.plan.selection)
+    const persistedRuntime = fixture.db.runtimes.getByRuntimeId('runtime_w2')
+    expect(persistedRuntime?.harness).toBeUndefined()
+    expect(persistedRuntime?.provider).toBeUndefined()
+    expect(persistedRuntime?.runtimeStateJson?.['selection']).toEqual(input.plan.selection)
     expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.invocationState).toBe(
       'ready'
     )
@@ -99,6 +110,41 @@ describe('HarnessBrokerController', () => {
     expect(
       fixture.db.runtimes.getByRuntimeId('runtime_w2')?.runtimeStateJson?.['authority']
     ).toEqual(runtimeAuthority)
+  })
+
+  it('preserves non-default HRC permission and input policy through runtime persistence', async () => {
+    const fake = new FakeBrokerClient()
+    const input = makeStartInput()
+    const hrcPolicy = {
+      permissionPolicy: {
+        mode: 'ask-client' as const,
+        timeoutMs: 3_000,
+        defaultDecision: 'deny' as const,
+        surface: 'api' as const,
+        audit: true as const,
+      },
+      inputPolicy: {
+        readyInput: 'start-turn' as const,
+        busy: { whenBusy: 'queue' as const, maxDepth: 7 },
+        supportedKinds: ['user', 'steer'] as const,
+        attachmentPolicy: { localImages: true, fileRefs: false },
+      },
+      disallowedTools: ['shell'],
+    }
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+      serverInstanceId: 'server-test',
+    })
+
+    const result = await controller.start({ ...input, hrcPolicy, brokerClient: fake })
+
+    expect(result.ok).toBe(true)
+    const state = fixture.db.runtimes.getByRuntimeId('runtime_w2')?.runtimeStateJson
+    expect(state?.['hrcPolicy']).toEqual(hrcPolicy)
+    expect(state?.['permission']).toMatchObject({ policy: hrcPolicy.permissionPolicy })
+    expect(state?.['input']).toMatchObject({ policy: hrcPolicy.inputPolicy })
   })
 
   it('PRIMARY gate: rejects json_schema via the DECLARED driver capability when the broker driver does not advertise finalResponse (T-05142)', async () => {
@@ -428,11 +474,57 @@ describe('HarnessBrokerController', () => {
     // stdio seam refuses; the injected broker client is the supported seam for
     // this dispatch-persistence shape.
     const result = await controller.start({
-      plan: response.plan,
-      profile,
-      startRequest,
-      specHash: profile.harnessInvocation.specHash,
-      startRequestHash: profile.harnessInvocation.startRequestHash,
+      execution: {
+        recipeId: 'fixture-interactive-v2',
+        driver: profile.brokerDriver,
+        protocol: 'harness-broker/0.2',
+        hosting: {
+          executionTransport: 'pty',
+          terminalRequired: true,
+          terminalHost: 'tmux',
+          processExecution: 'broker-process',
+        },
+        presentationFulfillment: 'intrinsic',
+        profile: {
+          profileId: profile.profileId,
+          profileHash: profile.profileHash,
+          compatibilityHash: profile.compatibilityHash,
+          startRequestHash: profile.harnessInvocation.startRequestHash,
+        },
+        dispatchRequest: { startRequest },
+      },
+      plan: {
+        schemaVersion: 'agent-runtime-plan/v2',
+        planHash: response.plan.planHash,
+        compileId: response.plan.compileId,
+        createdAt: response.plan.createdAt,
+        diagnostics: [],
+        selection: {
+          harness: 'claude',
+          modelProvider: 'anthropic',
+          model: 'claude-test',
+          reasoningEffort: 'high',
+          presentation: true,
+          provenance: {
+            harness: 'compile-request',
+            modelProvider: 'compile-request',
+            model: 'compile-request',
+            reasoningEffort: 'compile-request',
+            presentation: 'compile-request',
+          },
+        },
+        resolvedBundle: { bundleIdentity: 'fixture-interactive-v2' },
+        model: { provider: 'anthropic', modelId: 'claude-test' },
+      },
+      hrcPolicy: {
+        permissionPolicy: { mode: 'deny', audit: true },
+        inputPolicy: {
+          readyInput: 'start-turn',
+          busy: { whenBusy: 'reject' },
+          supportedKinds: ['user'],
+          attachmentPolicy: { localImages: true, fileRefs: true },
+        },
+      },
       identity,
       dispatchEnv: { HRC_DISPATCH: 'yes' },
       brokerClient: fake,

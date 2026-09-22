@@ -189,7 +189,11 @@ describe('T-08553 per-request operator presentation', () => {
   }
 
   function noViewerIntent(): HrcRuntimeIntent {
-    return { ...headlessIntent(), presentation: { operator: 'none' } }
+    return {
+      ...headlessIntent(),
+      selection: { presentation: false },
+      presentation: { operator: 'none' },
+    }
   }
 
   async function turn(hostSessionId: string, runtimeIntent: unknown, extra = {}) {
@@ -232,17 +236,14 @@ describe('T-08553 per-request operator presentation', () => {
     expect(decideMuseServePresentation({ ...base, requestedOperator: 'tmux-tui' })).toBe('none')
   })
 
-  // The interactive handler is observed here, so no preparation is expected. On a
-  // real configured node that interactive birth is itself aspd-prepared (T-08560).
-  it('omitted choice keeps the node Codex redirect: routed to the interactive handler, not the headless aspd route', async () => {
+  it('omitted choice reaches ASP unchanged instead of reselecting a local interactive route', async () => {
     const recorded = await bootMax3Node()
     const s = await session()
     const response = await turn(s.hostSessionId, headlessIntent())
-    expect(response.status).toBe(503)
-    expect(recorded).toHaveLength(1)
-    expect(recorded[0]?.intent.harness.interactive).toBe(true)
-    expect(aspd.compileCalls).toBe(0)
-    expect(operationsFor(s.hostSessionId)).toEqual([])
+    expect(response.status).toBeLessThan(300)
+    expect(recorded).toHaveLength(0)
+    expect(aspd.compileCalls).toBe(1)
+    expect(operationsFor(s.hostSessionId)).toMatchObject([{ status: 'completed' }])
   })
 
   it('explicit none stays headless on a redirecting node and prepares through aspd with source request', async () => {
@@ -256,8 +257,8 @@ describe('T-08553 per-request operator presentation', () => {
     const preparation = JSON.parse(op?.preparation_json ?? '{}')
     expect(preparation.dispatch.routeDecision).toMatchObject({
       preparation: 'aspd',
-      operatorPresentation: 'none',
-      operatorPresentationSource: 'request',
+      hostingPresentation: 'none',
+      selectedBy: 'producer-selected-execution',
     })
     expect(preparation.hosting.presentation).toBe('none')
     expect(preparation.intent.presentation).toEqual({ operator: 'none' })
@@ -280,10 +281,11 @@ describe('T-08553 per-request operator presentation', () => {
     expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toEqual([])
   })
 
-  it('refuses an interactive intent and the Claude redirect with presentation_operator_unsupported', async () => {
+  it('forwards legacy interactive and Claude harness metadata through the ordinary v2 door', async () => {
     await server.stop()
     await bootServer({ codexCliTmuxBrokerEnabled: true })
     const s = await session()
+    const claudeSession = await session('agent:t08553claude:project:hrc-runtime:task:T-08553')
     const interactive = {
       ...noViewerIntent(),
       harness: { provider: 'openai', id: 'codex-cli', interactive: true },
@@ -295,15 +297,13 @@ describe('T-08553 per-request operator presentation', () => {
     }
     const internalServer = server as unknown as { claudeCodeTmuxBrokerEnabled: boolean }
     Object.defineProperty(internalServer, 'claudeCodeTmuxBrokerEnabled', { value: true })
-    for (const intent of [interactive, claude]) {
-      const response = await turn(s.hostSessionId, intent)
-      expect(response.status).toBe(422)
-      const body = (await response.json()) as { error: { code: string } }
-      expect(body.error.code).toBe('presentation_operator_unsupported')
-    }
-    expect(aspd.compileCalls).toBe(0)
-    expect(operationsFor(s.hostSessionId)).toEqual([])
-    expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toEqual([])
+    const interactiveResponse = await turn(s.hostSessionId, interactive)
+    const claudeResponse = await turn(claudeSession.hostSessionId, claude)
+    expect(interactiveResponse.status).toBeLessThan(300)
+    expect(claudeResponse.status).toBeLessThan(300)
+    expect(aspd.compileCalls).toBe(2)
+    expect(operationsFor(s.hostSessionId)).toMatchObject([{ status: 'completed' }])
+    expect(operationsFor(claudeSession.hostSessionId)).toMatchObject([{ status: 'completed' }])
   })
 
   it('refuses explicit none against a live viewer or interactive surface and leaves it untouched', async () => {

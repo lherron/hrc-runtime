@@ -15,12 +15,77 @@ import type {
   InvocationStartResponse,
 } from 'spaces-harness-broker-protocol'
 import type { RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
+import { neutralStartRequestHash } from 'spaces-runtime-contracts'
 
-import {
-  makeBrokerProfile,
-  makeCompileResponse,
-  makeInteractiveTmuxProfile,
-} from '../broker-compile-fixtures'
+import { makeBrokerProfile, makeInteractiveTmuxProfile } from '../broker-compile-fixtures'
+
+/**
+ * A fixture declaration of what ASP has already selected.  It is deliberately
+ * independent of the raw HRC request: tests may inspect that request, but the
+ * double never uses it to choose an execution.
+ */
+export type AspdProducerResult = {
+  selection: {
+    harness: string
+    modelProvider: string
+    model: string
+    reasoningEffort?: string | undefined
+    presentation: boolean
+    provenance?: Record<string, string> | undefined
+  }
+  execution: {
+    recipeId: string
+    driver: string
+    hosting:
+      | {
+          executionTransport: 'jsonrpc-stdio'
+          terminalRequired: false
+          processExecution: 'broker-process'
+        }
+      | {
+          executionTransport: 'pty'
+          terminalRequired: true
+          terminalHost: 'tmux'
+          processExecution: 'broker-process'
+        }
+    presentationFulfillment: 'intrinsic' | 'attachable' | 'birth-variant'
+    presentationSurface?: { transport: 'terminal' | 'websocket-unix'; terminalHost: 'tmux' }
+  }
+}
+
+export function producerResult(
+  result: Partial<AspdProducerResult> & {
+    execution?: Partial<AspdProducerResult['execution']>
+  } = {}
+): AspdProducerResult {
+  const execution = result.execution ?? {}
+  return {
+    selection: {
+      harness: 'agent-harness',
+      modelProvider: 'openai-codex',
+      model: 'gpt-5.5',
+      presentation: false,
+      provenance: {
+        harness: 'catalog-default',
+        modelProvider: 'catalog-default',
+        model: 'catalog-default',
+        presentation: 'catalog-default',
+      },
+      ...result.selection,
+    },
+    execution: {
+      recipeId: 'fixture-agent-harness',
+      driver: 'codex-app-server',
+      hosting: {
+        executionTransport: 'jsonrpc-stdio',
+        terminalRequired: false,
+        processExecution: 'broker-process',
+      },
+      presentationFulfillment: 'attachable',
+      ...execution,
+    } as AspdProducerResult['execution'],
+  }
+}
 
 export type Release = {
   releaseId: string
@@ -73,6 +138,10 @@ export type AspdDouble = {
   compileAspHomes: Array<string | undefined>
   /** The materialization of each compile request, in order (T-08560). */
   compileMaterializations: Array<Record<string, unknown>>
+  /** Raw v2 requested fields received by the producer, in order. */
+  compileRequested: Array<Record<string, unknown>>
+  /** Frozen producer output to emit for every compile. */
+  producerResult: AspdProducerResult
   openConnections: number
   helloOverride?: Record<string, unknown> | undefined
   omitExecutionRelease?: boolean | undefined
@@ -81,9 +150,9 @@ export type AspdDouble = {
    * field (a retained pre-binding release); any value is sent verbatim.
    */
   hostedDrivers?: unknown
-  /** The `profileSelector` carried by each compile request, in order (T-08562). */
+  /** Retained raw-request observation for older fixture consumers; always undefined on v2. */
   compileSelectors: Array<Record<string, unknown> | undefined>
-  /** T-08562: force the selected interactive driver (driver-substitution gate). */
+  /** Retained fixture field; it never influences the producer result. */
   selectDriverOverride?: string | undefined
   /** The `continuation` carried by each compile request, in order (T-08562). */
   compileContinuations: unknown[]
@@ -101,6 +170,8 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
     compileCalls: 0,
     compileAspHomes: [],
     compileMaterializations: [],
+    compileRequested: [],
+    producerResult: producerResult(),
     compileSelectors: [],
     compileContinuations: [],
     openConnections: 0,
@@ -170,6 +241,7 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
             state.compileAspHomes.push(message.params?.aspHome)
             const materialization = message.params.compileRequest.materialization ?? {}
             state.compileMaterializations.push(materialization)
+            state.compileRequested.push(message.params.compileRequest.requested ?? {})
             state.compileSelectors.push(message.params?.profileSelector)
             state.compileContinuations.push(message.params.compileRequest.continuation)
             if (state.compileFailureCode !== undefined) {
@@ -204,44 +276,92 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
               materialization.initialPrompt.length > 0
                 ? materialization.initialPrompt
                 : undefined
-            // T-08562: the selected driver follows the request's profileSelector; a
-            // non-Codex tmux driver carries the prompt as launch material (the
-            // launch-argv compiler shape), never as broker initialInput.
-            const selectedDriver =
-              state.selectDriverOverride ??
-              (message.params?.profileSelector?.brokerDriver as string | undefined) ??
-              'codex-app-server'
-            const launchArgvDriver = selectedDriver !== 'codex-app-server'
-            const { profile, startRequest } =
-              message.params.compileRequest.requested?.interactionMode === 'interactive'
-                ? makeInteractiveTmuxProfile(identity, {
-                    brokerDriver: selectedDriver as never,
-                    withInitialInput:
-                      !launchArgvDriver &&
-                      interactivePrompt !== undefined &&
-                      identity.initialInputId !== undefined,
-                    ...(interactivePrompt !== undefined && !launchArgvDriver
-                      ? { initialInputText: interactivePrompt }
-                      : {}),
-                    ...(interactivePrompt !== undefined && launchArgvDriver
-                      ? { launchInitialPrompt: interactivePrompt }
-                      : {}),
-                  })
-                : makeBrokerProfile(identity, {
-                    initialInputText: message.params.compileRequest.materialization.initialPrompt,
-                    brokerDriver: selectedDriver,
-                  })
-            const compileResponse = makeCompileResponse(identity, [profile])
-            if (!compileResponse.ok) throw new Error('fixture compile rejected')
+            const selected = state.producerResult
+            const selectedDriver = selected.execution.driver
+            const terminalRequired = selected.execution.hosting.terminalRequired
+            // The v2 producer declares one execution; a fixture must not infer
+            // a second dispatch shape from the selected driver's legacy name.
+            // A canonical initial input remains identity-bound when allocated.
+            const launchArgvDriver = false
+            const { profile, startRequest } = terminalRequired
+              ? makeInteractiveTmuxProfile(identity, {
+                  brokerDriver: selectedDriver as never,
+                  withInitialInput:
+                    !launchArgvDriver &&
+                    interactivePrompt !== undefined &&
+                    identity.initialInputId !== undefined,
+                  ...(interactivePrompt !== undefined && !launchArgvDriver
+                    ? { initialInputText: interactivePrompt }
+                    : {}),
+                  ...(interactivePrompt !== undefined && launchArgvDriver
+                    ? { launchInitialPrompt: interactivePrompt }
+                    : {}),
+                })
+              : makeBrokerProfile(identity, {
+                  initialInputText: message.params.compileRequest.materialization.initialPrompt,
+                  brokerDriver: selectedDriver,
+                })
+            // The public v2 contract carries a singular, already selected
+            // execution.  Keep using the old fixture builders only for their
+            // honest broker start-request construction; the v1 profile/plan
+            // envelope itself must never cross this double's socket.
+            const startSpec = startRequest.spec as unknown as Record<string, unknown>
+            startSpec['driver'] = {
+              ...(startSpec['driver'] as Record<string, unknown>),
+              kind: selectedDriver,
+            }
+            startSpec['harness'] = {
+              ...(startSpec['harness'] as Record<string, unknown>),
+              driver: selectedDriver,
+            }
+            startSpec['correlation'] = {
+              ...(startSpec['correlation'] as Record<string, unknown>),
+              requestId: identity.requestId,
+              operationId: identity.operationId,
+              hostSessionId: identity.hostSessionId,
+              runtimeId: identity.runtimeId,
+              runId: identity.runId,
+              traceId: identity.traceId,
+            }
             reply(socket as never, message.id, {
-              schemaVersion: 'aspc-compile-harness-invocation-response/v1',
+              schemaVersion: 'aspc-compile-harness-invocation-response/v2',
               ok: true,
-              compileResponse,
-              plan: compileResponse.plan,
-              selectedProfile: profile,
-              startRequest,
-              dispatchRequest: { startRequest },
               diagnostics: [],
+              plan: {
+                schemaVersion: 'agent-runtime-plan/v2',
+                agent: message.params.compileRequest.agent,
+                identity,
+                planHash: `plan-${String(identity.operationId)}`,
+                compileId: `compile-${String(identity.operationId)}`,
+                createdAt: '2026-09-22T00:00:00.000Z',
+                diagnostics: [],
+                selection: {
+                  ...selected.selection,
+                  provenance: selected.selection.provenance ?? {
+                    harness: 'catalog-default',
+                    modelProvider: 'catalog-default',
+                    model: 'catalog-default',
+                    presentation: 'catalog-default',
+                  },
+                },
+                execution: {
+                  recipeId: selected.execution.recipeId,
+                  driver: selectedDriver,
+                  protocol: 'harness-broker/0.2',
+                  hosting: selected.execution.hosting,
+                  presentationFulfillment: selected.execution.presentationFulfillment,
+                  ...(selected.execution.presentationSurface !== undefined
+                    ? { presentationSurface: selected.execution.presentationSurface }
+                    : {}),
+                  profile: {
+                    profileId: profile.profileId,
+                    profileHash: profile.profileHash,
+                    compatibilityHash: profile.compatibilityHash,
+                    startRequestHash: neutralStartRequestHash(startRequest),
+                  },
+                  dispatchRequest: { startRequest },
+                },
+              },
               ...(state.omitExecutionRelease
                 ? {}
                 : {
@@ -272,6 +392,7 @@ export type HostingLedger = {
   killedServers: string[]
   startCalls: Array<{ request: InvocationStartRequest; dispatch: unknown }>
   attachCalls: number
+  startGate?: Promise<void> | undefined
   helloReleaseOverride?: BrokerHelloResponse['release'] | null | undefined
   startThrows?: Error | undefined
   onFirstHostingEffect?: (() => void) | undefined
@@ -352,6 +473,7 @@ export function workerClient(
     async startInvocationFromRequest(request: InvocationStartRequest, dispatch: unknown) {
       ledger.startCalls.push({ request, dispatch })
       if (ledger.startThrows) throw ledger.startThrows
+      await ledger.startGate
       return {
         invocationId: String(request.spec.invocationId),
         response: {

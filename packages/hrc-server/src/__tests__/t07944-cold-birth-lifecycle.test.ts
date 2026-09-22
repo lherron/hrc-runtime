@@ -88,20 +88,40 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
       db.compiledRuntimePlans.insert({
         planHash: PLAN_HASH,
         compileId: 'compile-t07944',
-        schemaVersion: '1',
+        schemaVersion: 'agent-runtime-plan/v2',
         compilerName: 'asp',
         compilerVersion: '0.0.0-test',
         planProjectionJson: JSON.stringify({
-          executionProfiles: [
-            {
-              profileHash: PROFILE_HASH,
-              harnessInvocation: {
-                startRequest: { initialInput: { inputId: PRIMING_INPUT_ID } },
-              },
-            },
-          ],
+          schemaVersion: 'agent-runtime-plan/v2',
+          execution: {
+            dispatchRequest: { startRequest: { initialInput: { inputId: PRIMING_INPUT_ID } } },
+          },
         }),
         createdAt: seed.acceptedAt,
+      })
+      db.runtimeOperations.insert({
+        operationId: seed.operationId,
+        runtimeId: seed.runtimeId,
+        runId: seed.runId,
+        hostSessionId: seed.hostSessionId,
+        generation: 1,
+        operationKind: 'broker_invocation',
+        controller: 'harness-broker',
+        compileId: 'compile-t07944',
+        planHash: PLAN_HASH,
+        startupMethod: 'aspd',
+        status: 'started',
+        routeDecisionJson: JSON.stringify({ selectedBy: 'producer-selected-execution' }),
+        preparationJson: JSON.stringify({
+          admission: {
+            plan: { schemaVersion: 'agent-runtime-plan/v2' },
+            execution: {
+              dispatchRequest: { startRequest: { initialInput: { inputId: PRIMING_INPUT_ID } } },
+            },
+          },
+        }),
+        createdAt: seed.acceptedAt,
+        updatedAt: seed.runtimeActivityAt,
       })
       db.runtimes.insert({
         runtimeId: seed.runtimeId,
@@ -129,7 +149,7 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
         invocationId: seed.invocationId,
         operationId: seed.operationId,
         runtimeId: seed.runtimeId,
-        brokerProtocol: 'harness-broker/0.1',
+        brokerProtocol: 'harness-broker/0.2',
         brokerDriver: 'codex-app-server',
         invocationState: 'running',
         capabilitiesJson: JSON.stringify({ turns: 'single' }),
@@ -224,7 +244,7 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
       // Accepted 75 minutes ago: far past the 30m silence threshold on the
       // run's own clock.
       acceptedAt: isoMinutesAgo(75),
-      // But the seat emitted a broker event a minute ago — it is working.
+      // The seat emitted a broker event a minute ago — it is working.
       runtimeActivityAt: isoMinutesAgo(1),
       primingTerminal: false,
     })

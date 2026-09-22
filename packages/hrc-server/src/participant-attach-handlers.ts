@@ -3,8 +3,8 @@ import { isAbsolute } from 'node:path'
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import {
-  type BrokerExecutionProfile,
   type ParticipantAdapterPreparationRequest,
+  type ParticipantBrokerDescriptor,
   validateParticipantAdapterPreparation,
 } from 'spaces-runtime-contracts'
 
@@ -24,7 +24,7 @@ import { json, timestamp } from './server-util.js'
  * the line.
  *
  * The message is scoped to one attempt and one epoch. A byte-equivalent retry
- * converges; a different profile under the same identity cannot overwrite a
+ * converges; a different descriptor under the same identity cannot overwrite a
  * frozen one, because changing a bridge after activation is a replacement
  * operation and not an edit.
  */
@@ -47,12 +47,12 @@ export type AttachParticipantResponse =
 
 export type AttachParticipantRequest =
   | {
-      kind: 'profile'
+      kind: 'descriptor'
       registrationId: string
       attemptId: string
       attachEpoch: number
       socketPath?: string | undefined
-      profile: BrokerExecutionProfile
+      descriptor: ParticipantBrokerDescriptor
       dispatchEnv?: Record<string, string> | undefined
     }
   | {
@@ -92,7 +92,7 @@ export function parseAttachParticipantRequest(input: unknown): AttachParticipant
     'attemptId',
     'attachEpoch',
     'socketPath',
-    'profile',
+    'descriptor',
     'dispatchEnv',
     'resumeUnsupported',
     'reason',
@@ -110,14 +110,14 @@ export function parseAttachParticipantRequest(input: unknown): AttachParticipant
 
   // R7.3's alternative shape. It is a truthful report that the driver cannot
   // resume native state, NOT an eligibility veto over the address, so it stays
-  // a distinct message rather than an optional flag on a profile attachment.
+  // a distinct message rather than an optional flag on a descriptor attachment.
   if (body['resumeUnsupported'] !== undefined) {
     if (body['resumeUnsupported'] !== true) {
       malformed('resumeUnsupported must be true when present', 'resumeUnsupported')
     }
-    if (body['profile'] !== undefined || body['socketPath'] !== undefined) {
+    if (body['descriptor'] !== undefined || body['socketPath'] !== undefined) {
       malformed(
-        'resumeUnsupported cannot be combined with a profile attachment',
+        'resumeUnsupported cannot be combined with a descriptor attachment',
         'resumeUnsupported'
       )
     }
@@ -130,9 +130,9 @@ export function parseAttachParticipantRequest(input: unknown): AttachParticipant
     }
   }
 
-  const profile = body['profile']
-  if (typeof profile !== 'object' || profile === null || Array.isArray(profile)) {
-    malformed('profile must be a broker execution profile object', 'profile')
+  const descriptor = body['descriptor']
+  if (typeof descriptor !== 'object' || descriptor === null || Array.isArray(descriptor)) {
+    malformed('descriptor must be a participant broker descriptor object', 'descriptor')
   }
   const socketPath = body['socketPath']
   if (
@@ -155,36 +155,36 @@ export function parseAttachParticipantRequest(input: unknown): AttachParticipant
     malformed('dispatchEnv must be a record of strings when provided', 'dispatchEnv')
   }
   return {
-    kind: 'profile',
+    kind: 'descriptor',
     registrationId,
     attemptId,
     attachEpoch,
     ...(socketPath === undefined ? {} : { socketPath: (socketPath as string).trim() }),
-    profile: profile as BrokerExecutionProfile,
+    descriptor: descriptor as ParticipantBrokerDescriptor,
     ...(dispatchEnv === undefined ? {} : { dispatchEnv: dispatchEnv as Record<string, string> }),
   }
 }
 
 /**
- * The continuation the profile actually asks the harness for.
+ * The continuation the descriptor actually asks the harness for.
  *
  * R7.3 requires this to express exactly what HRC selected, and to be absent
- * when HRC selected nothing. A profile that quietly carries a continuation HRC
+ * when HRC selected nothing. A descriptor that quietly carries a continuation HRC
  * did not choose would make a resume that HRC never authorized look like the
  * ordinary start it was frozen as.
  */
-function profileContinuation(profile: BrokerExecutionProfile): unknown {
-  const invocation = (profile as { harnessInvocation?: { startRequest?: { spec?: unknown } } })
+function descriptorContinuation(descriptor: ParticipantBrokerDescriptor): unknown {
+  const invocation = (descriptor as { harnessInvocation?: { startRequest?: { spec?: unknown } } })
     .harnessInvocation
   const spec = invocation?.startRequest?.spec as { continuation?: unknown } | undefined
   return spec?.continuation
 }
 
 /**
- * Build the published preparation request this profile is validated against.
+ * Build the published preparation request this descriptor is validated against.
  *
  * `validateParticipantAdapterPreparation` reads `join` and `identity` only --
- * it is the existing binding check between a profile and the identities HRC
+ * it is the existing binding check between a descriptor and the identities HRC
  * allocated, which is exactly what an attachment needs. The remaining three
  * fields are structural requirements of the published request type that the
  * validator never consults; they carry the registration's real values when it
@@ -300,19 +300,19 @@ export async function handleAttachParticipant(
     } satisfies AttachParticipantResponse)
   }
 
-  // R7.3's profile/selection agreement, checked BEFORE the profile is frozen.
-  // Recomputing hashes to make a mismatched profile fit would conceal a
+  // R7.3's descriptor/selection agreement, checked BEFORE it is frozen.
+  // Recomputing hashes to make a mismatched descriptor fit would conceal a
   // different start request, so the mismatch is refused instead.
   const selection = attempt.continuation
   const carried = selection?.carried === true
-  const supplied = profileContinuation(body.profile)
+  const supplied = descriptorContinuation(body.descriptor)
   if (!carried && supplied !== undefined) {
     return json(
       {
         status: 'rejected',
         reason: 'participant_continuation_mismatch',
         detail:
-          'HRC selected no continuation for this attempt, so the profile start request must not carry one',
+          'HRC selected no continuation for this attempt, so the descriptor start request must not carry one',
       } satisfies AttachParticipantResponse,
       409
     )
@@ -325,7 +325,7 @@ export async function handleAttachParticipant(
           status: 'rejected',
           reason: 'participant_continuation_mismatch',
           detail:
-            'the profile start request does not express exactly the continuation HRC selected for this attempt',
+            'the descriptor start request does not express exactly the continuation HRC selected for this attempt',
         } satisfies AttachParticipantResponse,
         409
       )
@@ -335,7 +335,7 @@ export async function handleAttachParticipant(
   const preparationRequest = preparationRequestFor(registration, attempt)
   const validated = validateParticipantAdapterPreparation(preparationRequest, {
     status: 'prepared',
-    profile: body.profile,
+    descriptor: body.descriptor,
     ...(body.dispatchEnv === undefined ? {} : { dispatchEnv: body.dispatchEnv }),
   })
   if (!validated.ok) {
@@ -343,7 +343,7 @@ export async function handleAttachParticipant(
     return json(
       {
         status: 'rejected',
-        reason: 'participant_profile_invalid',
+        reason: 'participant_descriptor_invalid',
         detail: validated.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '),
       } satisfies AttachParticipantResponse,
       409
@@ -371,13 +371,13 @@ export async function handleAttachParticipant(
   }
 
   const now = timestamp()
-  const profileJson = serializedJson(body.profile)
+  const descriptorJson = serializedJson(body.descriptor)
   const dispatchEnvJson = serializedJson(body.dispatchEnv)
   const attached = this.db.sqlite.transaction(() => {
-    const didAttach = this.db.participantRegistrations.attachPreparedProfile({
+    const didAttach = this.db.participantRegistrations.attachPreparedDescriptor({
       attemptId: attempt.attemptId,
       attachEpoch: attempt.attachEpoch,
-      preparedProfileJson: profileJson,
+      preparedDescriptorJson: descriptorJson,
       adapterDispatchEnvJson: dispatchEnvJson,
       ...(body.socketPath === undefined ? {} : { attachSocketPath: body.socketPath }),
       resumeState: carried ? 'requested' : 'not_requested',
@@ -407,7 +407,7 @@ export async function handleAttachParticipant(
     // Zero rows changed means the attempt was already prepared. A retry that
     // carries the same bytes converges; different bytes are a replacement
     // request, which is not something an attachment may perform in place.
-    if (persisted?.preparedProfileJson === profileJson) {
+    if (persisted?.preparedDescriptorJson === descriptorJson) {
       return json({
         status: 'attached',
         registrationId: registration.registrationId,
@@ -425,7 +425,7 @@ export async function handleAttachParticipant(
         status: 'rejected',
         reason: 'participant_attach_conflict',
         detail:
-          'this attempt already froze a different profile; changing a bridge after activation is a replacement operation, not an attachment',
+          'this attempt already froze a different descriptor; changing a bridge after activation is a replacement operation, not an attachment',
       } satisfies AttachParticipantResponse,
       409
     )
@@ -439,7 +439,7 @@ export async function handleAttachParticipant(
       this.db.participantRegistrations.getRegistrationById(registration.registrationId) ??
       registration
     // A hosting-intent failure is a delivery-configuration problem, not a
-    // reason to 500: the profile is already durable, so the truthful answer is
+    // reason to 500: the descriptor is already durable, so the truthful answer is
     // that the participant is attached-but-not-yet-hostable and its work waits.
     const withIntent = await persistHostingIntentIfRequired(this, current, persisted).catch(
       () => null
@@ -450,7 +450,7 @@ export async function handleAttachParticipant(
           status: 'pending',
           reason: 'participant_hosting_intent_unavailable',
           detail:
-            'the attached profile is durable but HRC could not persist its hosting intent; addressed work stays pending',
+            'the attached descriptor is durable but HRC could not persist its hosting intent; addressed work stays pending',
         } satisfies AttachParticipantResponse,
         200
       )
@@ -466,7 +466,7 @@ export async function handleAttachParticipant(
     prepared: true,
     observation: {
       state: 'attached',
-      detail: 'the participant profile is durable and its establishment work is armed',
+      detail: 'the participant descriptor is durable and its establishment work is armed',
     },
   } satisfies AttachParticipantResponse)
 }

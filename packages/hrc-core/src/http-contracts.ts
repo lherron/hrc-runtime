@@ -857,8 +857,10 @@ export type InspectRuntimeResponse = {
   laneRef: string
   generation: number
   transport: 'tmux' | 'headless' | 'sdk' | string
-  harness: HrcHarness
-  provider: HrcProvider
+  /** Legacy adapter identity; absent for producer-selected v2 runtimes. */
+  harness?: HrcHarness | undefined
+  /** Legacy adapter identity; absent for producer-selected v2 runtimes. */
+  provider?: HrcProvider | undefined
   /**
    * The model the broker reported as actually running (T-08583), with the
    * source that reported it. Null when no identity has been reported.
@@ -1150,7 +1152,8 @@ export type BrokerInspectResponse = {
   runtimeId: string
   source: OperatorInspectSource
   transport: string
-  harness: HrcHarness
+  /** Legacy adapter identity; absent for producer-selected v2 runtimes. */
+  harness?: HrcHarness | undefined
   status: string
   lastActivityAt: string | null
   /** Broker read model (broker-backed runtimes only). Passed through verbatim. */

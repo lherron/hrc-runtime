@@ -24,6 +24,8 @@ describe('T-08584 pi dry-run no-route fallthrough', () => {
   it('prints the one-line no-route reason and no "spec build failed"', async () => {
     const chunks: string[] = []
     const originalWrite = process.stdout.write
+    const originalRuntimeDir = process.env['HRC_RUNTIME_DIR']
+    process.env['HRC_RUNTIME_DIR'] = `/tmp/t08584-no-daemon-${Date.now()}-${Math.random()}`
     process.stdout.write = ((chunk: unknown): boolean => {
       chunks.push(String(chunk))
       return true
@@ -40,6 +42,11 @@ describe('T-08584 pi dry-run no-route fallthrough', () => {
       )
     } finally {
       process.stdout.write = originalWrite
+      if (originalRuntimeDir === undefined) {
+        process.env['HRC_RUNTIME_DIR'] = undefined
+      } else {
+        process.env['HRC_RUNTIME_DIR'] = originalRuntimeDir
+      }
     }
     const output = chunks.join('')
     expect(output).toContain('no broker route for harness "pi"')

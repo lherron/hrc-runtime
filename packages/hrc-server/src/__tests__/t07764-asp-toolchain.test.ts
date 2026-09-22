@@ -14,9 +14,10 @@ import { HarnessBrokerController } from '../broker/controller'
 import { aspdUnconfiguredError } from '../server-util'
 
 import {
-  makeCompileResponse,
+  makeHrcPolicy,
   makeIdentity,
-  makeInteractiveTmuxProfile,
+  makeSelectedExecutionPlan,
+  makeSelectedInteractiveTmuxExecution,
 } from './broker-compile-fixtures'
 import {
   FakeBrokerClient,
@@ -68,9 +69,7 @@ describe('T-08596 ASP toolchain closure', () => {
     ]
     const commands: string[] = []
     const identity = makeIdentity()
-    const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
-    const compiled = makeCompileResponse(identity, [profile])
-    if (!compiled.ok) throw new Error('fixture compile failed')
+    const { execution } = makeSelectedInteractiveTmuxExecution(identity)
     const controller = new HarnessBrokerController({
       db: fixture.db,
       brokerClientFactory: async (options) => {
@@ -88,11 +87,9 @@ describe('T-08596 ASP toolchain closure', () => {
     })
     try {
       const result = await controller.start({
-        plan: compiled.plan,
-        profile,
-        startRequest,
-        specHash: profile.harnessInvocation.specHash,
-        startRequestHash: profile.harnessInvocation.startRequestHash,
+        execution,
+        plan: makeSelectedExecutionPlan(),
+        hrcPolicy: makeHrcPolicy(),
         identity,
       })
       expect(result.ok).toBe(false)
@@ -118,9 +115,7 @@ describe('T-08596 ASP toolchain closure', () => {
     ]
     const commands: string[] = []
     const identity = makeIdentity()
-    const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
-    const compiled = makeCompileResponse(identity, [profile])
-    if (!compiled.ok) throw new Error('fixture compile failed')
+    const { execution } = makeSelectedInteractiveTmuxExecution(identity)
     const controller = new HarnessBrokerController({
       db: fixture.db,
       brokerCommand: '/test/seam/harness-broker',
@@ -139,11 +134,9 @@ describe('T-08596 ASP toolchain closure', () => {
     })
     try {
       const result = await controller.start({
-        plan: compiled.plan,
-        profile,
-        startRequest,
-        specHash: profile.harnessInvocation.specHash,
-        startRequestHash: profile.harnessInvocation.startRequestHash,
+        execution,
+        plan: makeSelectedExecutionPlan(),
+        hrcPolicy: makeHrcPolicy(),
         identity,
       })
       expect(result.ok).toBe(true)

@@ -57,7 +57,7 @@ async function waitForPersistedMessages(expected: number): Promise<void> {
 }
 
 describe('T-07202 semantic-DM cold-provision single-flight', () => {
-  it('converges three crossing DMs onto one interactive broker runtime', async () => {
+  it('converges three crossing DMs onto one producer-selected broker runtime', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     const beforeDb = openHrcDatabase(fixture.dbPath)
     try {
@@ -77,15 +77,15 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
     let startCalls = 0
     const startPrompts: string[] = []
     const reusedPrompts: Array<{ prompt: string; runtimeId: string }> = []
-    const presentationSignals: Array<AbortSignal | undefined> = []
-    ;(server as any).startInteractiveTmuxBrokerRuntime = async (
+    ;(server as any).startHeadlessBrokerRuntime = async (
       _session: unknown,
-      turnIntent: HrcRuntimeIntent,
+      _turnIntent: HrcRuntimeIntent,
+      prompt: string,
       _runId: string,
       options: { onAccepted?: (runtime: HrcRuntimeSnapshot) => void }
     ) => {
       startCalls += 1
-      startPrompts.push(turnIntent.initialPrompt ?? '')
+      startPrompts.push(prompt)
       firstStartEntered()
       const call = startCalls
       await startGate
@@ -100,7 +100,7 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
           scopeRef: SCOPE_REF,
           laneRef: 'default',
           generation: resolved.generation,
-          transport: 'tmux',
+          transport: 'headless',
           harness: 'claude-code',
           provider: 'anthropic',
           status: 'ready',
@@ -120,13 +120,7 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
         db.close()
       }
     }
-    ;(server as any).publishPresentation = async (
-      _runtime: unknown,
-      options?: { signal?: AbortSignal }
-    ) => {
-      presentationSignals.push(options?.signal)
-    }
-    ;(server as any).executeInteractiveBrokerInputTurn = async (
+    ;(server as any).dispatchQueuedHeadlessTurnInput = async (
       session: { hostSessionId: string; generation: number },
       runtime: HrcRuntimeSnapshot,
       prompt: string,
@@ -138,9 +132,9 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
         hostSessionId: session.hostSessionId,
         generation: session.generation,
         runtimeId: runtime.runtimeId,
-        transport: 'tmux',
+        transport: 'headless',
         status: 'started',
-        supportsInFlightInput: true,
+        supportsInFlightInput: false,
       })
     }
 
@@ -176,24 +170,18 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
         distinctResponseRuntimeIds: new Set(runtimeIds).size,
         initialPrompts: startPrompts,
         reusedPrompts,
-        presentationSignals: presentationSignals.length,
       }).toEqual({
         startsWhileAllRequestsWereInFlight: 1,
         runtimeCount: 1,
         distinctResponseRuntimeIds: 1,
-        // A cold managed-interactive start now preaccepts the run and submits
-        // every prompt through the same broker door, so the first prompt has a
-        // submission identity and observation cursor just like later turns.
-        initialPrompts: [''],
+        // A v2 producer-selected birth carries the initiating DM as its frozen
+        // compile input. Crossing DMs join the accepted runtime afterwards.
+        initialPrompts: [expect.stringContaining('crossing DM 1')],
         reusedPrompts: [
-          { prompt: expect.stringContaining('crossing DM 1'), runtimeId: runtimes[0]!.runtimeId },
           { prompt: expect.stringContaining('crossing DM 2'), runtimeId: runtimes[0]!.runtimeId },
           { prompt: expect.stringContaining('crossing DM 3'), runtimeId: runtimes[0]!.runtimeId },
         ],
-        presentationSignals: 1,
       })
-      expect(presentationSignals[0]).toBeInstanceOf(AbortSignal)
-      expect(presentationSignals[0]?.aborted).toBe(false)
     } finally {
       afterDb.close()
     }

@@ -4,12 +4,11 @@ import { join } from 'node:path'
 
 import { afterEach, expect, test } from 'bun:test'
 
-import { createControlledParticipantAdapter } from 'agent-spaces/testing'
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import { createParticipantHostingIntent } from '../participant-hosting-intent.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
+import { makeParticipantBrokerDescriptor } from './fixtures/participant-broker-descriptor.fixture.js'
 
 const temporaryRoots: string[] = []
 
@@ -60,40 +59,17 @@ function server(runtimeRoot: string): HrcServerInstanceForHandlers {
   } as unknown as HrcServerInstanceForHandlers
 }
 
-async function controlledProfile(): Promise<BrokerExecutionProfile> {
-  const adapter = createControlledParticipantAdapter({
-    adapterId: 'controlled-participant',
-    workspaceCwd: '/tmp/participant-workspace',
-    driver: 'noop-driver',
-  })
-  const result = await adapter.prepare({
-    classId: 'class-participant-served',
-    join: 'participant-served',
-    participantKey: 'key-participant-served',
-    workspaceCwd: '/tmp/participant-workspace',
-    preparation: {},
-    identity: {
-      requestId: 'req-hosting-intent',
-      operationId: 'op-hosting-intent',
-      hostSessionId: 'hsid-hosting-intent',
-      generation: 1,
-      runtimeId: 'rt-hosting-intent',
-      invocationId: 'inv-hosting-intent',
-    },
-    scopeRef: 'agent:larry:project:hrc-runtime:task:participant-hosting-intent',
-    laneRef: 'main',
-    attachEpoch: 1,
-  })
-  if (result.status !== 'prepared') throw new Error('controlled adapter did not prepare')
-  return result.profile
-}
-
 test('records requested presentation and serves the participant-owned endpoint', async () => {
   const runtimeRoot = await mkdtemp(join(tmpdir(), 't08349 path '))
   temporaryRoots.push(runtimeRoot)
-  const baseProfile = await controlledProfile()
-  const servedProfile: BrokerExecutionProfile = {
-    ...baseProfile,
+  const servedDescriptor = makeParticipantBrokerDescriptor({
+    requestId: 'req-hosting-intent',
+    operationId: 'op-hosting-intent',
+    hostSessionId: 'hsid-hosting-intent',
+    generation: 1,
+    runtimeId: 'rt-hosting-intent',
+    invocationId: 'inv-hosting-intent',
+    cwd: '/tmp/participant-workspace',
     interactionMode: 'interactive',
     brokerTerminal: {
       host: 'tmux',
@@ -102,12 +78,12 @@ test('records requested presentation and serves the participant-owned endpoint',
       operatorAttach: true,
       exposurePolicy: { mode: 'broker-reports-target', targetKind: 'tmux-session' },
     },
-  }
+  })
   const served = await createParticipantHostingIntent(
     server(runtimeRoot),
     registration(),
     attempt('rt served intent'),
-    servedProfile
+    servedDescriptor
   )
   expect(served.presentation).toEqual({ kind: 'tmux-tui' })
   expect('hrcHosted' in served).toBe(false)

@@ -323,7 +323,9 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     const { record } = readAspdPreparation(internal(), operation!.operation_id)
     expect(record.executionRelease.releaseId).toBe(releaseA.releaseId)
     expect(record.aspd.release.releaseId).toBe(releaseA.releaseId)
-    expect(record.response.dispatchRequest.startRequest).toEqual(ledger.startCalls[0]!.request)
+    expect(record.admission.execution.dispatchRequest.startRequest).toEqual(
+      ledger.startCalls[0]!.request
+    )
     const persisted = persistedAspdExecutionRelease(
       internal().db.runtimes.getByRuntimeId(runtime.runtimeId)!
     )
@@ -350,7 +352,7 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     const body = (await response.json()) as { submissionId?: string; admission?: string }
     const [operation] = operationsFor(s.hostSessionId)
     const { record } = readAspdPreparation(internal(), operation!.operation_id)
-    const inputId = record.admission.startRequest.initialInput.inputId
+    const inputId = record.admission.execution.dispatchRequest.startRequest.initialInput!.inputId
     expect(body).toEqual({
       runId: 'run-t08542-injector',
       hostSessionId: s.hostSessionId,

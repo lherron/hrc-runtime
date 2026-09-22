@@ -45,8 +45,8 @@ export type RuntimeRow = {
   generation: number
   launch_id: string | null
   transport: string
-  harness: HrcRuntimeSnapshot['harness']
-  provider: HrcRuntimeSnapshot['provider']
+  harness: HrcRuntimeSnapshot['harness'] | null
+  provider: HrcRuntimeSnapshot['provider'] | null
   status: string
   status_changed_at: string | null
   tmux_json: string | null

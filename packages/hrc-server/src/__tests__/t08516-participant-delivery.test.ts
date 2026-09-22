@@ -109,7 +109,7 @@ function world(
     runtimeId,
     ...(patch.omitBinding === true ? {} : { hostBindingId: 'bind-delivery' }),
     state: 'ACTIVE',
-    preparedProfileJson: '{"kind":"harness-broker"}',
+    preparedDescriptorJson: '{"kind":"participant-broker-descriptor/v1"}',
     adapterDispatchEnvJson: '{}',
     recoveryDisposition: 'unresolved',
     establishmentWorkState: 'completed',
@@ -235,7 +235,7 @@ describe('T-08516 participant delivery linkage (R7.6)', () => {
 
     test('an unattached attempt is never made reconnectable', () => {
       const delivery = resolveWithController(undefined, {
-        attempt: { preparedProfileJson: undefined, adapterDispatchEnvJson: undefined },
+        attempt: { preparedDescriptorJson: undefined, adapterDispatchEnvJson: undefined },
       })
       expect(delivery).toMatchObject({ kind: 'pending', reason: 'participant_attachment_pending' })
     })
@@ -252,7 +252,7 @@ describe('T-08516 participant delivery linkage (R7.6)', () => {
   describe('pending, not failed', () => {
     test('no frozen profile is attachment pending', () => {
       const delivery = resolve({
-        attempt: { preparedProfileJson: undefined, adapterDispatchEnvJson: undefined },
+        attempt: { preparedDescriptorJson: undefined, adapterDispatchEnvJson: undefined },
       })
       expect(delivery).toMatchObject({ kind: 'pending', reason: 'participant_attachment_pending' })
     })

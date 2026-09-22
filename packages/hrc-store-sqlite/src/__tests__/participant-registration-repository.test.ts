@@ -54,7 +54,7 @@ describe('T-08516 reconnect arming (R7.6 durable bounded retry)', () => {
     db.participantRegistrations.insertAttempt(
       attempt({
         state: 'ACTIVE',
-        preparedProfileJson: '{"kind":"harness-broker"}',
+        preparedDescriptorJson: '{"kind":"participant-broker-descriptor/v1"}',
         adapterDispatchEnvJson: '{}',
         establishmentWorkState: 'completed',
         ...patch,
@@ -148,7 +148,7 @@ describe('T-08516 reconnect arming (R7.6 durable bounded retry)', () => {
           invocationId: 'inv-participant-2',
           runtimeId: 'rt-participant-2',
           state: 'ACTIVE',
-          preparedProfileJson: '{"kind":"harness-broker"}',
+          preparedDescriptorJson: '{"kind":"participant-broker-descriptor/v1"}',
           adapterDispatchEnvJson: '{}',
           establishmentWorkState: 'completed',
         })
@@ -184,7 +184,7 @@ describe('T-08349 generic participant persistence boundaries', () => {
         )
       ).toEqual(registration())
       expect(
-        db.participantRegistrations.freezePreparedBoundaryIfAbsent(
+        db.participantRegistrations.freezePreparedDescriptorIfAbsent(
           'patt-1',
           '{"profile":"opaque"}',
           '{"adapter":"env"}',
@@ -192,7 +192,7 @@ describe('T-08349 generic participant persistence boundaries', () => {
         )
       ).toBe(true)
       expect(
-        db.participantRegistrations.freezePreparedBoundaryIfAbsent(
+        db.participantRegistrations.freezePreparedDescriptorIfAbsent(
           'patt-1',
           '{"profile":"replacement"}',
           '{"adapter":"replacement"}',
@@ -200,7 +200,7 @@ describe('T-08349 generic participant persistence boundaries', () => {
         )
       ).toBe(false)
       expect(db.participantRegistrations.getAttempt('patt-1')).toMatchObject({
-        preparedProfileJson: '{"profile":"opaque"}',
+        preparedDescriptorJson: '{"profile":"opaque"}',
         adapterDispatchEnvJson: '{"adapter":"env"}',
       })
     } finally {

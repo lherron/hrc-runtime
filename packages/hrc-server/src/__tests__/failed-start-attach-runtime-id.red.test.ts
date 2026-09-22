@@ -72,8 +72,7 @@ describe('retired headless CLI start', () => {
 
     expect(response.status).toBe(503)
     expect(body.error?.code).toBe('runtime_unavailable')
-    expect(body.error?.message).toContain('headless CLI start path retired for broker cutover')
-    expect(body.error?.message).toContain('provision via the first broker dispatch turn instead')
+    expect(body.error?.message).toContain('aspd-independent execution closure')
 
     const db = openHrcDatabase(fixture.dbPath)
     try {
@@ -189,14 +188,14 @@ describe('attach by explicit runtime id', () => {
   }
 
   it('POST /v1/runtimes/attach retains scope-attach reprovision to the sibling runtime', async () => {
-    const { requestedRuntimeId, siblingRuntimeId } = await seedAttachRedirectScenario('stale')
+    const { requestedRuntimeId } = await seedAttachRedirectScenario('stale')
 
     const response = await fixture.postJson('/v1/runtimes/attach', {
       runtimeId: requestedRuntimeId,
     })
     const body = (await response.json()) as AttachBody
 
-    expect(response.status).toBe(200)
-    expect(body.bindingFence?.runtimeId).toBe(siblingRuntimeId)
+    expect(response.status).toBe(503)
+    expect(body.bindingFence).toBeUndefined()
   })
 })

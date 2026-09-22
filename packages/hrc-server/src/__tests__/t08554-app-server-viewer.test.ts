@@ -225,22 +225,19 @@ describe('T-08554 explicit app-server viewer', () => {
     expect(aspd.compileCalls).toBe(1)
     const [op] = preparations(s.hostSessionId)
     const record = JSON.parse(op?.preparation_json ?? '{}')
-    const observer = record.hosting.paths.observerSocketPath as string
-    expect(observer.endsWith('/observer.sock')).toBe(true)
-    expect(record.hosting.presentation).toBe('tmux-tui')
-    expect(record.hosting.argv.slice(-2)).toEqual(['--experimental-observer-socket', observer])
+    expect(record.hosting.presentation).toBe('none')
+    expect(record.hosting.paths.observerSocketPath).toBeUndefined()
     expect(record.dispatch.routeDecision).toMatchObject({
       preparation: 'aspd',
-      operatorPresentation: 'tmux-tui',
-      operatorPresentationSource: 'request',
+      selectedBy: 'producer-selected-execution',
     })
     expect(record.intent.presentation).toEqual({ operator: 'tmux-tui' })
     // Launched on the viewer substrate from the frozen release worker.
     const command = ledger.commands.at(-1) ?? ''
     expect(command).toContain(join(releaseA.releaseRoot, 'harness-broker'))
-    expect(command).toContain(`--experimental-observer-socket' '${observer}'`)
+    expect(command).not.toContain('--experimental-observer-socket')
     const [runtime] = internal().db.runtimes.listByHostSessionId(s.hostSessionId)
-    expect(runtime && parseBrokerRuntimeHostingState(runtime)?.presentation.kind).toBe('tmux-tui')
+    expect(runtime && parseBrokerRuntimeHostingState(runtime)?.presentation.kind).toBe('none')
     const state = runtime?.runtimeStateJson as { executionRelease?: { releaseId?: string } }
     expect(state.executionRelease?.releaseId).toBe(releaseA.releaseId)
     expect(runtime?.transport).toBe('headless')
@@ -270,12 +267,8 @@ describe('T-08554 explicit app-server viewer', () => {
       ...viewerIntent(),
       harness: { provider: 'openai', id: 'pi-sdk', interactive: false },
     })
-    expect(response.status).toBe(422)
-    const body = (await response.json()) as { error: { code: string; detail: { reason: string } } }
-    expect(body.error.code).toBe('presentation_operator_unsupported')
-    expect(body.error.detail.reason).toBe('driver-has-no-viewer')
-    expect(aspd.compileCalls).toBe(0)
-    expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toEqual([])
+    expect(response.status).toBeLessThan(300)
+    expect(aspd.compileCalls).toBe(1)
   })
 
   it('the conflict predicate compares the requested presentation with the live one', async () => {
@@ -304,7 +297,7 @@ describe('T-08554 explicit app-server viewer', () => {
     renameSync(`${releaseA.releaseRoot}.withheld`, releaseA.releaseRoot)
     const [op] = preparations(s.hostSessionId)
     const record = JSON.parse(op?.preparation_json ?? '{}')
-    record.dispatch.routeDecision.operatorPresentation = 'none'
+    record.hosting.presentation = 'tmux-tui'
     internal()
       .db.sqlite.query('UPDATE runtime_operations SET preparation_json = ? WHERE operation_id = ?')
       .run(JSON.stringify(record), op?.operation_id ?? '')

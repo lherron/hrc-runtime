@@ -1,4 +1,3 @@
-import { createControlledParticipantAdapter } from 'agent-spaces/testing'
 import type {
   ParticipantAdapter,
   WriterEvidence,
@@ -6,6 +5,7 @@ import type {
   WriterRetirementRequest,
 } from 'spaces-runtime-contracts'
 import type { HrcServerInstanceForHandlers } from '../../server-instance-context.js'
+import { makeParticipantBrokerDescriptor } from './participant-broker-descriptor.fixture.js'
 
 export type T08517EvidenceMode =
   | 'retired-recovered'
@@ -26,7 +26,6 @@ export function createT08517EvidenceAdapter(
   mode: () => T08517EvidenceMode,
   beforeAnswer: () => void
 ): ParticipantAdapter {
-  const base = createControlledParticipantAdapter({ adapterId, workspaceCwd })
   const answer = (request: WriterRetirementRequest | WriterInspectionRequest): WriterEvidence => {
     beforeAnswer()
     const current = mode()
@@ -64,9 +63,20 @@ export function createT08517EvidenceAdapter(
     }
   }
   return {
-    adapterId: base.adapterId,
-    admit: (request) => base.admit(request),
-    prepare: (request) => base.prepare(request),
+    adapterId,
+    admit: () => ({ status: 'pending', reason: 'attach supplies participant preparation' }),
+    prepare: (request) => ({
+      status: 'prepared',
+      descriptor: makeParticipantBrokerDescriptor({
+        requestId: request.identity.requestId,
+        operationId: request.identity.operationId,
+        hostSessionId: request.identity.hostSessionId,
+        generation: request.identity.generation,
+        runtimeId: request.identity.runtimeId,
+        invocationId: request.identity.invocationId,
+        cwd: workspaceCwd,
+      }),
+    }),
     retireWriter: answer,
     inspectWriter: answer,
   }

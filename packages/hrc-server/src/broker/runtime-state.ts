@@ -1,9 +1,9 @@
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import type { InvocationRuntimeContext } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import type { BrokerTmuxAllocation } from './controller'
 import { isRecord } from './json'
+import type { SelectedExecution } from './selected-execution'
 
 export type RuntimeControlState = {
   mode: string
@@ -245,16 +245,16 @@ export function runtimeStatusFromInvocationState(state: string): string {
   return 'starting'
 }
 
-export function isBrokerTmuxProfile(profile: BrokerExecutionProfile): boolean {
-  return (
-    profile.interactionMode === 'interactive' &&
-    profile.brokerTerminal?.host === 'tmux' &&
-    typeof profile.brokerDriver === 'string'
-  )
+/**
+ * v2 hosting is declared by the producer. These helpers intentionally know no
+ * driver, provider, intent, or profile vocabulary.
+ */
+export function executionUsesTerminalSurface(execution: SelectedExecution): boolean {
+  return execution.hosting.terminalRequired
 }
 
-export function usesHeadlessBrokerSubstrate(profile: BrokerExecutionProfile): boolean {
-  return profile.interactionMode === 'headless' || profile.interactionMode === 'nonInteractive'
+export function executionUsesHeadlessSubstrate(execution: SelectedExecution): boolean {
+  return !execution.hosting.terminalRequired
 }
 
 export function toDispatchRuntime(

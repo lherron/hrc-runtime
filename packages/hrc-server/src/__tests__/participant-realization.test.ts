@@ -4,13 +4,11 @@ import { join } from 'node:path'
 
 import { afterEach, expect, test } from 'bun:test'
 
-import { createControlledParticipantAdapter } from 'agent-spaces/testing'
 import {
   type ParticipantAttempt,
   type ParticipantRegistration,
   openHrcDatabase,
 } from 'hrc-store-sqlite'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import { HarnessBrokerController } from '../broker/controller.js'
 import {
@@ -22,6 +20,7 @@ import {
 import { createParticipantHostingIntent } from '../participant-hosting-intent.js'
 import { realizeAndFreezeParticipantDispatch } from '../participant-realization.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
+import { makeParticipantBrokerDescriptor } from './fixtures/participant-broker-descriptor.fixture.js'
 
 const temporaryRoots: string[] = []
 
@@ -144,32 +143,16 @@ function attempt(registrationId: string, runtimeId: string): ParticipantAttempt 
   }
 }
 
-async function profileFor(input: ParticipantAttempt): Promise<BrokerExecutionProfile> {
-  const adapter = createControlledParticipantAdapter({
-    adapterId: 'controlled-participant',
-    workspaceCwd: '/tmp/participant-workspace',
-    driver: 'noop-driver',
+function descriptorFor(input: ParticipantAttempt) {
+  return makeParticipantBrokerDescriptor({
+    requestId: input.requestId,
+    operationId: input.operationId,
+    hostSessionId: 'hsid-participant-realization',
+    generation: 1,
+    runtimeId: input.runtimeId,
+    invocationId: input.invocationId,
+    cwd: '/tmp/participant-workspace',
   })
-  const prepared = await adapter.prepare({
-    classId: 'class-participant-served',
-    join: 'participant-served',
-    participantKey: 'key-participant-served',
-    workspaceCwd: '/tmp/participant-workspace',
-    preparation: {},
-    identity: {
-      requestId: input.requestId,
-      operationId: input.operationId,
-      hostSessionId: 'hsid-participant-realization',
-      generation: 1,
-      runtimeId: input.runtimeId,
-      invocationId: input.invocationId,
-    },
-    scopeRef: 'agent:larry:project:hrc-runtime:task:participant-realization',
-    laneRef: 'main',
-    attachEpoch: 1,
-  })
-  if (prepared.status !== 'prepared') throw new Error('controlled profile was not prepared')
-  return prepared.profile
 }
 
 test('persists actual HRC leases then freezes the unchanged start request before any ensure', async () => {
@@ -231,9 +214,14 @@ test('persists actual HRC leases then freezes the unchanged start request before
   try {
     const servedRegistration = registration()
     const servedAttempt = attempt(servedRegistration.registrationId, 'rt-served')
-    const preparedServed = await profileFor(servedAttempt)
-    const servedProfile: BrokerExecutionProfile = {
-      ...preparedServed,
+    const servedDescriptor = makeParticipantBrokerDescriptor({
+      requestId: servedAttempt.requestId,
+      operationId: servedAttempt.operationId,
+      hostSessionId: servedRegistration.hostSessionId,
+      generation: servedRegistration.generation,
+      runtimeId: servedAttempt.runtimeId,
+      invocationId: servedAttempt.invocationId,
+      cwd: servedRegistration.workspaceCwd ?? '/tmp/participant-workspace',
       interactionMode: 'interactive',
       brokerTerminal: {
         host: 'tmux',
@@ -242,17 +230,17 @@ test('persists actual HRC leases then freezes the unchanged start request before
         operatorAttach: true,
         exposurePolicy: { mode: 'broker-reports-target', targetKind: 'tmux-session' },
       },
-    }
+    })
     const servedIntent = await createParticipantHostingIntent(
       server,
       servedRegistration,
       servedAttempt,
-      servedProfile
+      servedDescriptor
     )
     db.participantRegistrations.insertRegistration(servedRegistration)
     db.participantRegistrations.insertAttempt({
       ...servedAttempt,
-      preparedProfileJson: JSON.stringify(servedProfile),
+      preparedDescriptorJson: JSON.stringify(servedDescriptor),
       adapterDispatchEnvJson: 'null',
       hostingIntentJson: JSON.stringify(servedIntent),
     })
@@ -402,12 +390,12 @@ test('retries replay failure after activation CAS without reclassification or de
       ...attempt(stagedRegistration.registrationId, 'rt-stage'),
       activationClassification: 'resume' as const,
     }
-    const stagedProfile = await profileFor(stagedAttempt)
+    const stagedDescriptor = descriptorFor(stagedAttempt)
     const stagedIntent = await createParticipantHostingIntent(
       server,
       stagedRegistration,
       stagedAttempt,
-      stagedProfile
+      stagedDescriptor
     )
     db.sessions.insert({
       hostSessionId: stagedRegistration.hostSessionId,
@@ -423,7 +411,7 @@ test('retries replay failure after activation CAS without reclassification or de
     db.participantRegistrations.insertRegistration(stagedRegistration)
     db.participantRegistrations.insertAttempt({
       ...stagedAttempt,
-      preparedProfileJson: JSON.stringify(stagedProfile),
+      preparedDescriptorJson: JSON.stringify(stagedDescriptor),
       adapterDispatchEnvJson: 'null',
       hostingIntentJson: JSON.stringify(stagedIntent),
     })
@@ -445,12 +433,12 @@ test('retries replay failure after activation CAS without reclassification or de
     })
     expect(db.runtimeOperations.getByOperationId(stagedAttempt.operationId)).toMatchObject({
       startupMethod: 'broker.ensureInvocation',
-      selectedProfileHash: stagedProfile.profileHash,
+      selectedProfileHash: stagedDescriptor.descriptorHash,
     })
     expect(db.brokerInvocations.getByInvocationId(stagedAttempt.invocationId)).toMatchObject({
       invocationState: 'ready',
       lastProjectedSeq: 0,
-      startRequestHash: stagedProfile.harnessInvocation.startRequestHash,
+      startRequestHash: stagedDescriptor.harnessInvocation.startRequestHash,
     })
 
     // Losing an unactivated candidate leaves the durable attempt staged. Its

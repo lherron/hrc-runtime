@@ -413,7 +413,7 @@ describe('hrcchat minimal server routes', () => {
     const dm = (await dmRes.json()) as SemanticDmResponse
     expect(dm.execution).toBeUndefined()
     expect(dm.request.execution.state).toBe('failed')
-    expect(dm.request.execution.errorMessage).toContain('headless legacy execution is unavailable')
+    expect(dm.request.execution.errorMessage).toContain('aspd-independent execution closure')
 
     const db = openHrcDatabase(ctx.fixture.dbPath)
     try {

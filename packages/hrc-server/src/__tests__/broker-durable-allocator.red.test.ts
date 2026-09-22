@@ -48,11 +48,7 @@ import { HarnessBrokerController } from '../broker/controller'
 import type { BrokerClientLike } from '../broker/controller'
 import { makeFrozenWorkerLaunch } from './fixtures/frozen-substrate'
 
-import {
-  makeCompileResponse,
-  makeIdentity,
-  makeInteractiveTmuxProfile,
-} from './broker-compile-fixtures'
+import { makeIdentity, makeInteractiveTmuxProfile } from './broker-compile-fixtures'
 
 const NOW = '2026-06-01T20:00:00.000Z'
 
@@ -481,6 +477,69 @@ function durableAllocationStub(): Record<string, unknown> {
   }
 }
 
+/**
+ * The controller receives the ASP-produced v2 execution envelope, not a v1
+ * profile for HRC to select or interpret.  The historical profile helper is
+ * used only to make an honest broker-wire request and its neutral hashes; none
+ * of that profile crosses the controller boundary.
+ */
+function makeInteractiveV2StartInput(identity: ReturnType<typeof makeIdentity>) {
+  const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
+  return {
+    execution: {
+      recipeId: 'fixture-claude-code-tmux',
+      driver: 'claude-code-tmux',
+      protocol: 'harness-broker/0.2' as const,
+      hosting: {
+        executionTransport: 'pty' as const,
+        terminalRequired: true,
+        terminalHost: 'tmux' as const,
+        processExecution: 'broker-process' as const,
+      },
+      presentationFulfillment: 'intrinsic' as const,
+      profile: {
+        profileId: profile.profileId,
+        profileHash: profile.profileHash,
+        compatibilityHash: profile.compatibilityHash,
+        startRequestHash: profile.harnessInvocation.startRequestHash,
+      },
+      dispatchRequest: { startRequest },
+    },
+    plan: {
+      schemaVersion: 'agent-runtime-plan/v2' as const,
+      planHash: 'planhash-v2-durable-tmux',
+      compileId: 'compile-v2-durable-tmux',
+      createdAt: NOW,
+      diagnostics: [],
+      selection: {
+        harness: 'claude',
+        modelProvider: 'anthropic',
+        model: 'claude-test',
+        reasoningEffort: 'high',
+        presentation: true,
+        provenance: {
+          harness: 'agent-profile' as const,
+          modelProvider: 'agent-profile' as const,
+          model: 'agent-profile' as const,
+          reasoningEffort: 'project-target' as const,
+          presentation: 'summon-directive' as const,
+        },
+      },
+    },
+    hrcPolicy: {
+      permissionPolicy: { mode: 'deny' as const, audit: true },
+      inputPolicy: {
+        readyInput: 'start-turn' as const,
+        busy: { whenBusy: 'reject' as const },
+        supportedKinds: ['user'],
+        attachmentPolicy: { localImages: true, fileRefs: true },
+      },
+    },
+    identity,
+    dispatchEnv: { HRC_DISPATCH: 'yes' },
+  }
+}
+
 describe('T-01812 Phase 3 — connectUnix wiring + persisted broker identity', () => {
   let fixture: Fixture
   beforeEach(async () => {
@@ -496,10 +555,6 @@ describe('T-01812 Phase 3 — connectUnix wiring + persisted broker identity', (
       invocationId: 'invocation_tmux',
       runId: 'run_tmux',
     })
-    const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
-    const response = makeCompileResponse(identity, [profile])
-    if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
-
     const stdioFactoryCalls: unknown[] = []
     const unixFactoryCalls: Array<{ socketPath: string }> = []
     const fake = new FakeDurableBrokerClient()
@@ -519,15 +574,7 @@ describe('T-01812 Phase 3 — connectUnix wiring + persisted broker identity', (
       now: () => NOW,
     } as unknown as ConstructorParameters<typeof HarnessBrokerController>[0])
 
-    const result = await controller.start({
-      plan: response.plan,
-      profile,
-      startRequest,
-      specHash: profile.harnessInvocation.specHash,
-      startRequestHash: profile.harnessInvocation.startRequestHash,
-      identity,
-      dispatchEnv: { HRC_DISPATCH: 'yes' },
-    })
+    const result = await controller.start(makeInteractiveV2StartInput(identity))
 
     expect(result.ok).toBe(true)
     // Durable-interactive route dials the allocated Unix socket.
@@ -543,10 +590,6 @@ describe('T-01812 Phase 3 — connectUnix wiring + persisted broker identity', (
       invocationId: 'invocation_tmux',
       runId: 'run_tmux',
     })
-    const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
-    const response = makeCompileResponse(identity, [profile])
-    if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
-
     const fake = new FakeDurableBrokerClient()
     const controller = new HarnessBrokerController({
       db: fixture.db,
@@ -556,15 +599,7 @@ describe('T-01812 Phase 3 — connectUnix wiring + persisted broker identity', (
       now: () => NOW,
     } as unknown as ConstructorParameters<typeof HarnessBrokerController>[0])
 
-    const result = await controller.start({
-      plan: response.plan,
-      profile,
-      startRequest,
-      specHash: profile.harnessInvocation.specHash,
-      startRequestHash: profile.harnessInvocation.startRequestHash,
-      identity,
-      dispatchEnv: { HRC_DISPATCH: 'yes' },
-    })
+    const result = await controller.start(makeInteractiveV2StartInput(identity))
     expect(result.ok).toBe(true)
 
     const runtime = fixture.db.runtimes.getByRuntimeId('runtime_tmux')

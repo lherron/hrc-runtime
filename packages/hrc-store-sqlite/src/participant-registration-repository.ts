@@ -158,8 +158,8 @@ export type ParticipantAttempt = {
    */
   hostBindingId?: string | undefined
   state: ParticipantAttemptState
-  /** The first validated adapter profile/request snapshot, before any spawn. */
-  preparedProfileJson?: string | undefined
+  /** The first validated final participant descriptor, before any spawn. */
+  preparedDescriptorJson?: string | undefined
   adapterDispatchEnvJson?: string | undefined
   /** HRC-owned executable, paths, token reference, and requested presentation. */
   hostingIntentJson?: string | undefined
@@ -297,7 +297,7 @@ const NON_RUNNABLE_ATTEMPT_PREDICATE = `
 export function isNonRunnableEstablishmentAttempt(attempt: ParticipantAttempt): boolean {
   return (
     attempt.state === 'IDENTITY_MINTED' &&
-    attempt.preparedProfileJson === undefined &&
+    attempt.preparedDescriptorJson === undefined &&
     attempt.replacementIntentJson === undefined
   )
 }
@@ -355,7 +355,7 @@ function mapAttempt(row: ParticipantAttemptRow): ParticipantAttempt {
     state: row.state,
     ...(row.prepared_profile_json === null
       ? {}
-      : { preparedProfileJson: row.prepared_profile_json }),
+      : { preparedDescriptorJson: row.prepared_profile_json }),
     ...(row.adapter_dispatch_env_json === null
       ? {}
       : { adapterDispatchEnvJson: row.adapter_dispatch_env_json }),
@@ -546,7 +546,7 @@ export class ParticipantRegistrationRepository {
       record.runtimeId,
       record.hostBindingId ?? null,
       record.state,
-      record.preparedProfileJson ?? null,
+      record.preparedDescriptorJson ?? null,
       record.adapterDispatchEnvJson ?? null,
       record.hostingIntentJson ?? null,
       record.realizedHostingJson ?? null,
@@ -947,15 +947,15 @@ export class ParticipantRegistrationRepository {
    * R7.2's attachment transaction, as one conditional UPDATE.
    *
    * The guard is what makes "only the first successful preparation resets the
-   * budget" true: it requires the profile columns to still be NULL, so a
+   * budget" true: it requires the descriptor columns to still be NULL, so a
    * retry against an already-prepared attempt changes zero rows and cannot
    * reach the `establishment_attempt_count = 0` this statement performs. The
    * epoch is rechecked in the same predicate, so a stale attach never lands.
    */
-  attachPreparedProfile(input: {
+  attachPreparedDescriptor(input: {
     attemptId: string
     attachEpoch: number
-    preparedProfileJson: string
+    preparedDescriptorJson: string
     adapterDispatchEnvJson: string
     attachSocketPath?: string | undefined
     resumeState?: ParticipantResumeState | undefined
@@ -982,7 +982,7 @@ export class ParticipantRegistrationRepository {
             AND adapter_dispatch_env_json IS NULL`
       )
       .run(
-        input.preparedProfileJson,
+        input.preparedDescriptorJson,
         input.adapterDispatchEnvJson,
         input.attachSocketPath ?? null,
         input.resumeState ?? null,
@@ -1185,9 +1185,9 @@ export class ParticipantRegistrationRepository {
    * Freeze one durable boundary once. A retry can observe its existing bytes,
    * but no caller may replace them under the same attempt identity.
    */
-  freezePreparedBoundaryIfAbsent(
+  freezePreparedDescriptorIfAbsent(
     attemptId: string,
-    preparedProfileJson: string,
+    preparedDescriptorJson: string,
     /** JSON `null` represents an omitted adapter dispatch environment. */
     adapterDispatchEnvJson: string,
     updatedAt: string
@@ -1200,7 +1200,7 @@ export class ParticipantRegistrationRepository {
             AND prepared_profile_json IS NULL
             AND adapter_dispatch_env_json IS NULL`
       )
-      .run(preparedProfileJson, adapterDispatchEnvJson, updatedAt, attemptId)
+      .run(preparedDescriptorJson, adapterDispatchEnvJson, updatedAt, attemptId)
     return result.changes === 1
   }
 

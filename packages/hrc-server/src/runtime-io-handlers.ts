@@ -18,13 +18,13 @@ import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
 import { assertAppIdentityOwner, issueAppBirthRunGrantForCompile } from './app-session-identity.js'
 import {
   decideHeadlessExecutionRoute,
-  decideInteractiveBrokerAdmission,
   decideInteractiveTmuxBrokerStartRoute,
   getBrokerRuntimeTmuxAttachTarget,
   getBrokerRuntimeTmuxLeasedPaneId,
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
   isMatchingInteractiveTmuxBrokerRuntime,
+  isProducerSelectedOrdinaryBirth,
   normalizeClaudeInteractiveBrokerIntent,
   normalizeCodexInteractiveBrokerIntent,
   normalizeRuntimeProvisionIntent,
@@ -32,7 +32,6 @@ import {
   shouldRedirectClaudeToInteractiveBroker,
   shouldRedirectCodexToInteractiveBroker,
   shouldUseHeadlessTransport,
-  toLatestRuntimeAdmissionView,
 } from './broker-decisions.js'
 import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
 import {
@@ -44,24 +43,20 @@ import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
   assertAttachedRunReusesHeadless,
-  assertBirthJoinAdmitted,
   assertNoOperatorPresentationConflict,
   assertOperatorPresentationRoutable,
   createStartBirthDecision,
   decideCrossingBirthRoute,
   decideRedirectOffCodexRoute,
   findEstablishedBrokerRuntime,
-  isAttachedRunAspdCodexIntent,
   isOmittedChoiceCodexRequest,
   recordStartBirth,
   requestsOperatorPresentation,
   scopeHasLiveHeadlessBrokerRuntime,
   startBirthOf,
   startBirthOfIntent,
-  startBirthOfRuntime,
 } from './presentation-operator.js'
 import {
-  isBrokerRuntimeInputDispatchable,
   isBrokerRuntimeTransitional,
   requireKnownRuntime,
   requireRuntime,
@@ -69,7 +64,11 @@ import {
   requireTmuxPane,
 } from './require-helpers.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
-import { findLatestSessionRuntime, getReusableHeadlessRuntimeForSession } from './runtime-select.js'
+import {
+  assertV2SelectionCompatibleForReuse,
+  findLatestSessionRuntime,
+  getReusableHeadlessRuntimeForSession,
+} from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import type { AttachBeforeInvocationStartOption, AttachDescriptorResponse } from './server-types.js'
@@ -327,11 +326,7 @@ export async function startRuntimeForSession(
   options: {
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     operatorAttachPending?: boolean | undefined
-    /**
-     * T-08556 (§1.4): this start is the attached-run door's operation. With an
-     * aspd endpoint configured, a Codex intent's selection, birth and prompt
-     * delivery all happen inside ONE operation this door registers.
-     */
+    /** This start is the attached-run door's operation. */
     attachedRunDoor?: boolean | undefined
     /** §1.4 "Joining a registered start": the newborn a joined start produced. */
     attachedRunJoinedRuntimeId?: string | undefined
@@ -343,8 +338,11 @@ export async function startRuntimeForSession(
 ): Promise<HrcRuntimeSnapshot> {
   assertLocalPersonaAllowed(this, session.scopeRef)
   assertAppIdentityOwner(session)
-  const attachedRunAspdSelection =
-    options.attachedRunDoor === true && isAttachedRunAspdCodexIntent(intent)
+  // An attached run is a generic door.  It cannot inspect the request to
+  // predict a driver or a surface: ASP admits the execution first, and the
+  // controller exposes the attach gate only when that execution allocated a
+  // leased presentation surface.
+  const attachedRunDoor = options.attachedRunDoor === true
   // Generic participant scopes are likewise permanent externally-owned
   // addresses. Establishment enters through the participant broker path, so an
   // ordinary cold-start here would create a competing HRC-owned writer.
@@ -361,7 +359,7 @@ export async function startRuntimeForSession(
   const existingOperation = this.runtimeStartOperations.get(session.hostSessionId)
   if (
     existingOperation &&
-    attachedRunAspdSelection &&
+    attachedRunDoor &&
     existingOperation !== options.attachedRunJoinedOperation
   ) {
     // T-08556 (§1.4): never return another start's result as this door's. A
@@ -377,7 +375,7 @@ export async function startRuntimeForSession(
       attachedRunJoinedOperation: existingOperation,
     })
   }
-  if (existingOperation && !attachedRunAspdSelection) {
+  if (existingOperation && !attachedRunDoor) {
     const runtime = await existingOperation
     assertActuatorSplitRuntimeReuse(intent, runtime)
     // T-08553: joining a boot is reuse; a conflicting live presentation refuses.
@@ -392,6 +390,15 @@ export async function startRuntimeForSession(
     let existingRuntime = findLatestSessionRuntime(this.db, session.hostSessionId)
     if (existingRuntime) {
       existingRuntime = await this.reconcileTmuxRuntimeLiveness(existingRuntime)
+      if (
+        existingRuntime.controllerKind === 'harness-broker' &&
+        !isRuntimeUnavailableStatus(existingRuntime.status)
+      ) {
+        // The producer's frozen selection is the only reuse identity. In
+        // particular, a request that omits selection does not force a local
+        // default back onto an established runtime.
+        assertV2SelectionCompatibleForReuse(existingRuntime, intent)
+      }
     }
     // T-08556 (§1.4): the attached-run door's selection. The selected runtime
     // is marked operator-attach-pending and receives the door's prompt by
@@ -405,7 +412,7 @@ export async function startRuntimeForSession(
       }
       return runtime
     }
-    if (attachedRunAspdSelection) {
+    if (attachedRunDoor) {
       const joined =
         options.attachedRunJoinedRuntimeId !== undefined
           ? this.db.runtimes.getByRuntimeId(options.attachedRunJoinedRuntimeId)
@@ -419,25 +426,13 @@ export async function startRuntimeForSession(
           : undefined
       // Rules 1–2: a live joined newborn is never replaced.
       if (liveJoined !== undefined) {
-        decideCrossingBirthRoute(intent, startBirthOfRuntime(liveJoined))
-        if (liveJoined.transport === 'tmux') {
-          assertBirthJoinAdmitted(
-            intent,
-            liveJoined,
-            {
-              route: 'interactive',
-              claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
-              piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
-              museCliTmuxBrokerEnabled: this.museCliTmuxBrokerEnabled,
-            },
-            isBrokerRuntimeInputDispatchable(this.db, liveJoined)
-          )
-        } else {
-          assertAttachedRunReusesHeadless(liveJoined, {
-            transitional: isBrokerRuntimeTransitional(this.db, liveJoined),
-          })
-        }
-        startBirth.decide(startBirthOfRuntime(liveJoined))
+        // The attached door consumes an execution that has already been
+        // admitted and allocated.  Legacy provider/harness birth classifiers
+        // cannot participate in this decision.
+        assertAttachedRunReusesHeadless(liveJoined, {
+          transitional: isBrokerRuntimeTransitional(this.db, liveJoined),
+        })
+        startBirth.decide(undefined)
         return await attachedRunSelected(liveJoined)
       }
       // Rule 5: an established headless runtime of any harness or state is never
@@ -450,10 +445,81 @@ export async function startRuntimeForSession(
           assertAttachedRunReusesHeadless(established, {
             transitional: isBrokerRuntimeTransitional(this.db, established),
           })
-          startBirth.decide(startBirthOfRuntime(established))
+          startBirth.decide(undefined)
           return await attachedRunSelected(established)
         }
       }
+    }
+    // An ordinary v2 start never selects a provider, harness, profile or
+    // driver locally. ASP compiles the raw request and HRC hosts its frozen
+    // execution. Only an explicit operator surface keeps the older interactive
+    // attach choreography below.
+    if (isProducerSelectedOrdinaryBirth(intent)) {
+      startBirth.decide(undefined)
+      const presentationOptions = {
+        operatorAttachPending:
+          options.attachBeforeInvocationStart !== undefined ||
+          options.operatorAttachPending === true,
+      }
+      if (
+        existingRuntime?.controllerKind === 'harness-broker' &&
+        !isRuntimeUnavailableStatus(existingRuntime.status) &&
+        restartStyle !== 'fresh_pty'
+      ) {
+        assertActuatorSplitRuntimeReuse(intent, existingRuntime)
+        if (attachedRunDoor) return await attachedRunSelected(existingRuntime)
+        await this.publishPresentation(existingRuntime, presentationOptions)
+        const initialPrompt = intent.initialPrompt ?? ''
+        if (initialPrompt.length > 0) {
+          const runId = `run-${randomUUID()}`
+          if (existingRuntime.transport === 'tmux') {
+            await this.executeInteractiveBrokerInputTurn(
+              session,
+              existingRuntime,
+              initialPrompt,
+              runId,
+              { waitForCompletion: true }
+            )
+          } else {
+            await this.executeHeadlessBrokerInputTurn(
+              session,
+              existingRuntime,
+              initialPrompt,
+              runId,
+              { waitForCompletion: true }
+            )
+          }
+        }
+        return requireRuntime(this.db, existingRuntime.runtimeId)
+      }
+
+      const startRunId = `run-${randomUUID()}`
+      issueAppBirthRunGrantForCompile(this.db, session, intent, startRunId)
+      if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
+        this.markRuntimeStaleForBrokerReprovision(session, existingRuntime, {
+          reason: 'producer-selected-ordinary-start-reprovision',
+          route: 'producer-selected-execution',
+        })
+      }
+      const initialPrompt = intent.initialPrompt ?? ''
+      const runtime = await this.startHeadlessBrokerRuntime(
+        session,
+        intent,
+        initialPrompt,
+        startRunId,
+        {
+          ...(hasInitialUserTurn(intent) ? {} : { allowCompilerInitialInputWithoutIdentity: true }),
+          ...(options.attachBeforeInvocationStart !== undefined
+            ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
+            : {}),
+        }
+      )
+      await this.publishPresentation(runtime, presentationOptions)
+      if (attachedRunDoor) return await attachedRunSelected(runtime)
+      if (initialPrompt.length > 0) {
+        await this.waitForHeadlessBrokerRunCompletion(startRunId, runtime.runtimeId)
+      }
+      return requireRuntime(this.db, runtime.runtimeId)
     }
     const highRiskActuatorSplit =
       normalizeActuatorSplitPolicy(intent.execution?.actuatorSplit)?.mode === 'high-risk'
@@ -470,7 +536,7 @@ export async function startRuntimeForSession(
       ? !highRiskActuatorSplit &&
         !requestsOperatorPresentation(intent) &&
         shouldRedirectCodexToInteractiveBroker(intent) &&
-        !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId, intent)
+        !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId)
       : !claudeRedirect &&
         isOmittedChoiceCodexRequest(intent) &&
         decideRedirectOffCodexRoute(
@@ -521,9 +587,7 @@ export async function startRuntimeForSession(
       if (headlessRoute === 'broker') {
         const reusableBrokerRuntime = getReusableHeadlessRuntimeForSession(
           this.db,
-          session.hostSessionId,
-          startIntent.harness.provider,
-          startIntent.harness.id
+          session.hostSessionId
         )
         // Idempotent reuse ONLY for a real broker headless runtime that has a
         // continuation. A legacy (non-broker) or continuation-less runtime is
@@ -593,12 +657,7 @@ export async function startRuntimeForSession(
       }
 
       // SDK (anthropic) start hard-fails; legacy-exec start fails closed.
-      const reusableRuntime = getReusableHeadlessRuntimeForSession(
-        this.db,
-        session.hostSessionId,
-        startIntent.harness.provider,
-        startIntent.harness.id
-      )
+      const reusableRuntime = getReusableHeadlessRuntimeForSession(this.db, session.hostSessionId)
       if (
         reusableRuntime &&
         automaticContinuationForRuntime(this.db, session, reusableRuntime)?.key
@@ -646,7 +705,7 @@ export async function startRuntimeForSession(
         )
       ) {
         assertActuatorSplitRuntimeReuse(normalizedIntent, existingRuntime)
-        if (attachedRunAspdSelection) return await attachedRunSelected(existingRuntime)
+        if (attachedRunDoor) return await attachedRunSelected(existingRuntime)
         await this.publishPresentation(existingRuntime, presentationOptions)
         return existingRuntime
       }
@@ -671,7 +730,7 @@ export async function startRuntimeForSession(
               : {}),
           }),
       })
-      if (attachedRunAspdSelection) return await attachedRunSelected(runtime)
+      if (attachedRunDoor) return await attachedRunSelected(runtime)
       await this.publishPresentation(runtime, presentationOptions)
       if ((normalizedIntent.initialPrompt ?? '').length > 0) {
         await this.waitForInteractiveBrokerRunCompletion(startRunId, runtime.runtimeId)
@@ -874,96 +933,27 @@ export async function attachRuntimeEffectfully(
       requireKnownRuntime(this.db, refreshedRuntime.runtimeId)
     )
 
-    // T-08554: a live headless broker runtime that presents the app-server viewer
-    // is attached as it is. Interactive admission below only reuses tmux-transport
-    // brokers and would stale-mark and replace this runtime.
+    // Attachment consumes the already-realized execution. It never reconstructs
+    // an interactive intent or replaces the runtime from historical request
+    // fields; a v1 retained tmux runtime remains attachable as evidence only.
     if (
       latestRuntime.controllerKind === 'harness-broker' &&
-      latestRuntime.transport !== 'tmux' &&
       !isRuntimeUnavailableStatus(latestRuntime.status) &&
-      latestRuntime.status !== 'failed' &&
-      canOperatorAttach(latestRuntime)
+      latestRuntime.status !== 'failed'
     ) {
       return this.attachRuntime(latestRuntime)
     }
-
-    const latestIntent =
-      session.lastAppliedIntentJson ??
-      ({
-        placement: {
-          agentRoot: process.cwd(),
-          projectRoot: process.cwd(),
-          cwd: process.cwd(),
-          runMode: 'task',
-          bundle: { kind: 'compose', compose: [] },
-          dryRun: true,
-        },
-        harness: {
-          provider: latestRuntime.provider,
-          interactive: true,
-        },
-        execution: {
-          preferredMode: 'interactive',
-        },
-      } satisfies HrcRuntimeIntent)
-    const interactiveIntent = {
-      ...latestIntent,
-      harness: {
-        ...latestIntent.harness,
-        interactive: true,
-      },
-      execution: {
-        ...latestIntent.execution,
-        preferredMode: 'interactive',
-      },
-    } satisfies HrcRuntimeIntent
-
-    const admission = decideInteractiveBrokerAdmission(
-      interactiveIntent,
-      toLatestRuntimeAdmissionView(latestRuntime),
-      {
-        claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
-        piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
-        museCliTmuxBrokerEnabled: this.museCliTmuxBrokerEnabled,
-      }
-    )
-    if (admission.decision === 'runtime-unavailable') {
-      throw new HrcRuntimeUnavailableError(admission.reason, {
-        runtimeId: latestRuntime.runtimeId,
-        hostSessionId: latestRuntime.hostSessionId,
-        route: 'interactive-broker-attach',
-      })
+    if (latestRuntime.transport === 'tmux' && !isRuntimeUnavailableStatus(latestRuntime.status)) {
+      return this.attachRuntime(latestRuntime, { allowLegacyTmuxAttach: true })
     }
-    if (admission.decision === 'broker-reuse') {
-      return this.attachRuntime(latestRuntime)
-    }
-    if (options.strictRuntimeId === true) {
-      throw new HrcRuntimeUnavailableError(
-        'explicit runtime attach cannot reprovision to a different runtime',
-        {
-          runtimeId: latestRuntime.runtimeId,
-          hostSessionId: latestRuntime.hostSessionId,
-          admissionDecision: admission.decision,
-          route: 'interactive-broker-attach-by-id',
-        }
-      )
-    }
-    if (admission.decision === 'stale-and-reprovision') {
-      this.markRuntimeStaleForBrokerReprovision(session, latestRuntime, {
-        reason: 'attach-broker-reprovision',
-        allowedBrokerDriver: admission.allowedBrokerDriver,
-      })
-    }
-
-    const brokerRuntime = await this.startRuntimeForSession(
-      session,
-      interactiveIntent,
-      'reuse_pty',
-      {
-        operatorAttachPending: true,
-      }
-    )
-    return this.attachRuntime(requireKnownRuntime(this.db, brokerRuntime.runtimeId))
+    throw new HrcRuntimeUnavailableError('runtime cannot be attached without replacing it', {
+      runtimeId: latestRuntime.runtimeId,
+      hostSessionId: latestRuntime.hostSessionId,
+      controllerKind: latestRuntime.controllerKind,
+      transport: latestRuntime.transport,
+      replacementRequired: true,
+      ...(options.strictRuntimeId === true ? { strictRuntimeId: true } : {}),
+    })
   })().finally(() => {
     this.runtimeAttachOperations.delete(refreshedRuntime.runtimeId)
   })

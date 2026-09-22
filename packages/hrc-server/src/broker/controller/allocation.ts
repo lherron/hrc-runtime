@@ -7,7 +7,7 @@
  * is part of the controller's public export surface.
  */
 
-import { isBrokerTmuxProfile } from '../runtime-state'
+import { executionUsesTerminalSurface } from '../runtime-state'
 import { BrokerControllerError } from './errors'
 import type { BrokerControllerStartInput, BrokerTmuxAllocation, BrokerTmuxAllocator } from './types'
 
@@ -21,19 +21,11 @@ export type AllocationContext = {
 }
 
 /**
- * T-04921 (T-04905 Phase A) — read the HRC-owned operator-presentation policy off
- * the dispatch `routeDecision`. The handler layer computes it via
- * `decideCodexAppServerPresentation` (policy is the trigger, driver applicability
- * is the gate) and stamps `operatorPresentation` here. Returns `'tmux-tui'` ONLY
- * when the route explicitly selected tmux-tui presentation; anything else (no route
- * decision, no field, or `'none'`) is ordinary headless.
+ * An attachable producer surface declares the resource HRC must allocate. The
+ * route decision is audit material only and has no presentation authority.
  */
 export function isTmuxTuiRoute(input: BrokerControllerStartInput): boolean {
-  const routeDecision = input.routeDecision
-  if (typeof routeDecision !== 'object' || routeDecision === null) {
-    return false
-  }
-  return (routeDecision as { operatorPresentation?: unknown }).operatorPresentation === 'tmux-tui'
+  return input.execution.presentationSurface?.transport === 'terminal'
 }
 
 /**
@@ -42,11 +34,7 @@ export function isTmuxTuiRoute(input: BrokerControllerStartInput): boolean {
  * the tmux-tui route this is policy-selected, never driver-name-selected.
  */
 export function isObserverPaneRoute(input: BrokerControllerStartInput): boolean {
-  const routeDecision = input.routeDecision
-  if (typeof routeDecision !== 'object' || routeDecision === null) {
-    return false
-  }
-  return (routeDecision as { operatorPresentation?: unknown }).operatorPresentation === 'observer'
+  return input.execution.presentationSurface?.transport === 'websocket-unix'
 }
 
 /** A viewer-pane route carrying an operator-attachable renderer surface. */
@@ -66,7 +54,7 @@ export async function allocateTmuxIfRequired(
   ctx: AllocationContext,
   input: BrokerControllerStartInput
 ): Promise<BrokerTmuxAllocation | undefined> {
-  if (!isBrokerTmuxProfile(input.profile)) {
+  if (!executionUsesTerminalSurface(input.execution)) {
     return undefined
   }
   if (!ctx.tmuxAllocator) {
@@ -75,8 +63,8 @@ export async function allocateTmuxIfRequired(
       'interactive broker-tmux profile requires an HRC tmux allocator',
       {
         runtimeId: String(input.identity.runtimeId),
-        brokerDriver: input.profile.brokerDriver,
-        brokerTerminal: input.profile.brokerTerminal,
+        brokerDriver: input.execution.driver,
+        hosting: input.execution.hosting,
       }
     )
   }
@@ -107,7 +95,7 @@ export async function allocateHeadlessSubstrate(
     )
   }
   const runtimeId = String(input.identity.runtimeId)
-  const driver = input.profile.brokerDriver
+  const driver = input.execution.driver
   const runtimeRoot = ctx.env?.['HRC_RUNTIME_ROOT'] ?? '/tmp/hrc-runtime'
   const ipcDir = `${runtimeRoot}/bipc/${runtimeId}`
   const brokerIpcSocketPath = `${ipcDir}/b.sock`
@@ -153,7 +141,7 @@ export async function allocateTmuxTuiSubstrate(
       'codex-app-server tmux-tui route requires an HRC tmux-tui allocator',
       {
         runtimeId: String(input.identity.runtimeId),
-        brokerDriver: input.profile.brokerDriver,
+        brokerDriver: input.execution.driver,
       }
     )
   }
@@ -177,7 +165,7 @@ export async function allocateObserverPaneSubstrate(
       'observer route requires an HRC observer-pane allocator',
       {
         runtimeId: String(input.identity.runtimeId),
-        brokerDriver: input.profile.brokerDriver,
+        brokerDriver: input.execution.driver,
       }
     )
   }
@@ -212,7 +200,7 @@ export async function allocateSubstrateVia(
     runtimeId: String(input.identity.runtimeId),
     hostSessionId: String(input.identity.hostSessionId),
     generation: input.identity.generation,
-    brokerDriver: input.profile.brokerDriver,
+    brokerDriver: input.execution.driver,
     ...(input.brokerEnv !== undefined ? { brokerEnv: input.brokerEnv } : {}),
     ...(input.aspdExecution !== undefined
       ? {
@@ -230,7 +218,7 @@ export async function allocateSubstrateVia(
       'tmux allocator returned an empty socket path',
       {
         runtimeId: String(input.identity.runtimeId),
-        brokerDriver: input.profile.brokerDriver,
+        brokerDriver: input.execution.driver,
       }
     )
   }

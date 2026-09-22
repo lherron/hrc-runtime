@@ -58,6 +58,8 @@ function insertRuntime(
     runtimeId: string
     status?: string | undefined
     transport?: 'headless' | 'tmux' | undefined
+    harness?: string | null | undefined
+    provider?: string | null | undefined
     supportsInflightInput?: boolean | undefined
     lastActivityAt?: string | undefined
     updatedAt?: string | undefined
@@ -71,8 +73,8 @@ function insertRuntime(
     laneRef: input.laneRef,
     generation: 1,
     transport: input.transport ?? 'tmux',
-    harness: 'codex-cli',
-    provider: 'openai',
+    harness: input.harness === undefined ? 'codex-cli' : input.harness,
+    provider: input.provider === undefined ? 'openai' : input.provider,
     status: input.status ?? 'ready',
     supportsInflightInput: input.supportsInflightInput ?? true,
     adopted: false,
@@ -182,6 +184,33 @@ describe('session_index maintained projection', () => {
       db.runtimes.updateStatus('rt-a', 'detached', '2026-08-11T10:06:00.000Z')
       expect(db.sessionIndex.listPage({ limit: 10 }).items[0]).toMatchObject({
         effectiveStatus: 'detached',
+        lastActivityAt: '2026-08-11T10:02:00.000Z',
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  test('projects nullable v2 runtime identity from canonical runtime state', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const seeded = seedCurrent(db, { hostSessionId: 'hsid-v2' })
+      insertRuntime(db, {
+        hostSessionId: 'hsid-v2',
+        scopeRef: seeded.scopeRef,
+        laneRef: seeded.laneRef,
+        runtimeId: 'rt-v2',
+        transport: 'headless',
+        harness: null,
+        provider: null,
+        status: 'ready',
+        supportsInflightInput: false,
+        lastActivityAt: '2026-08-11T10:02:00.000Z',
+      })
+
+      expect(db.sessionIndex.listPage({ limit: 10 }).items[0]).toMatchObject({
+        effectiveStatus: 'active',
+        executionMode: 'headless',
         lastActivityAt: '2026-08-11T10:02:00.000Z',
       })
     } finally {

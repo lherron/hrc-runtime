@@ -31,7 +31,6 @@ import type {
   InvocationStartRequest,
   InvocationStartResponse,
 } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import { type BrokerClientLike, HarnessBrokerController } from '../broker/controller'
 import {
@@ -41,69 +40,27 @@ import {
   hasLeasedBrokerSubstrate,
   parseBrokerRuntimeHostingState,
 } from '../broker/runtime-hosting'
+import type { SelectedExecution } from '../broker/selected-execution'
 import { toTargetRuntimeView } from '../target-view'
-import { makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
+import {
+  makeHrcPolicy,
+  makeIdentity,
+  makeSelectedExecution,
+  makeSelectedExecutionPlan,
+} from './broker-compile-fixtures'
 
 const NOW = '2026-06-04T12:00:00.000Z'
 
-// ── Headless durable v0.2 profile (same fixture as core reds) ─────────────────
+// ── Producer-selected headless durable v2 execution ──────────────────────────
 
-function makeHeadlessDurableProfile(identity: ReturnType<typeof makeIdentity>): {
-  profile: BrokerExecutionProfile
+function makeHeadlessDurableExecution(identity: ReturnType<typeof makeIdentity>): {
+  execution: SelectedExecution
   startRequest: InvocationStartRequest
 } {
-  const spec = {
-    specVersion: 'harness-broker.invocation/v1',
-    invocationId: identity.invocationId,
-    harness: { frontend: 'codex', provider: 'openai', driver: 'codex-app-server' },
-    process: {
-      command: 'codex',
-      args: ['app-server'],
-      cwd: '/tmp/work',
-      lockedEnv: { CODEX_HOME: '/tmp/work/.codex' },
-      harnessTransport: { kind: 'jsonrpc-stdio' },
-    },
-    interaction: { mode: 'headless', turnConcurrency: 'single' },
-    driver: { kind: 'codex-app-server', model: 'gpt-5-codex' },
-    correlation: {
-      requestId: String(identity.requestId),
-      operationId: String(identity.operationId),
-      runtimeId: String(identity.runtimeId),
-      invocationId: String(identity.invocationId),
-    },
-  }
-  const startRequest = {
-    spec,
-    initialInput: {
-      inputId: String(identity.initialInputId),
-      kind: 'user',
-      content: [{ type: 'text', text: 'hello durable headless hatch test' }],
-    },
-  } as unknown as InvocationStartRequest
-  const profile = {
-    schemaVersion: 'agent-runtime-profile/v1',
-    profileId: 'profile_codex_headless_durable_hatch',
-    profileHash: 'profilehash_headless_durable_hatch',
-    compatibilityHash: 'compat_headless_durable_hatch',
-    kind: 'harness-broker',
-    interactionMode: 'headless',
-    brokerProtocol: 'harness-broker/0.2',
+  return makeSelectedExecution(identity, {
     brokerDriver: 'codex-app-server',
-    brokerOwnership: 'hrc-owned-process',
-    expectedCapabilities: {},
-    harnessInvocation: {
-      startRequest,
-      specHash: 'spechash_headless_durable_hatch',
-      startRequestHash: 'startrequesthash_headless_durable_hatch',
-    },
-    policy: {
-      permissionPolicy: { mode: 'deny', audit: true },
-      inputPolicy: {},
-      exposurePolicy: {},
-    },
-    observability: {},
-  } as unknown as BrokerExecutionProfile
-  return { profile, startRequest }
+    initialInputText: 'hello durable headless hatch test',
+  })
 }
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
@@ -362,15 +319,11 @@ async function startWithIdentity(
     hostSessionId: 'hostSession_hatch' as ReturnType<typeof makeIdentity>['hostSessionId'],
     ...identityOverride,
   })
-  const { profile, startRequest } = makeHeadlessDurableProfile(identity)
-  const response = makeCompileResponse(identity, [profile])
-  if (!response.ok) throw new Error('fixture compile failed')
+  const { execution } = makeHeadlessDurableExecution(identity)
   const result = await controller.start({
-    plan: response.plan,
-    profile,
-    startRequest,
-    specHash: profile.harnessInvocation.specHash,
-    startRequestHash: profile.harnessInvocation.startRequestHash,
+    plan: makeSelectedExecutionPlan(),
+    execution,
+    hrcPolicy: makeHrcPolicy(),
     identity,
     dispatchEnv: {},
   })

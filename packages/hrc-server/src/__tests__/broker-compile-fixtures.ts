@@ -16,12 +16,71 @@ import {
   neutralSpecHash as sharedNeutralSpecHash,
   neutralStartRequestHash as sharedNeutralStartRequestHash,
 } from 'spaces-runtime-contracts'
-import type {
-  BrokerExecutionProfile,
-  CompiledRuntimePlan,
-  RuntimeCompileResponse,
-  RuntimeIdentityAllocation,
-} from 'spaces-runtime-contracts'
+import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
+
+import type { SelectedExecution, SelectedExecutionPlan } from '../broker/selected-execution'
+
+/**
+ * Historical v1 fixture data retained solely by legacy controller tests. It is
+ * not an ASP contract type and must never cross the v2 compile adapter.
+ */
+export type LegacyBrokerExecutionProfile = {
+  schemaVersion: 'agent-runtime-profile/v1'
+  profileId: string
+  profileHash: string
+  compatibilityHash: string
+  kind: 'harness-broker'
+  interactionMode: 'headless' | 'interactive' | 'nonInteractive'
+  brokerProtocol: 'harness-broker/0.2'
+  brokerDriver: string
+  brokerOwnership: 'hrc-owned-process'
+  brokerTerminal?: { host: string } | undefined
+  expectedCapabilities: Record<string, unknown>
+  harnessInvocation: {
+    startRequest: InvocationStartRequest
+    specHash: string
+    startRequestHash: string
+  }
+  policy: {
+    permissionPolicy: { mode: 'deny'; audit: boolean }
+    inputPolicy: Record<string, unknown>
+    exposurePolicy: Record<string, unknown>
+  }
+  observability: Record<string, unknown>
+  diagnostics?: unknown[] | undefined
+}
+
+export type LegacyRuntimeCompileResponse =
+  | {
+      schemaVersion: 'agent-runtime-compile-response/v1'
+      ok: true
+      plan: {
+        schemaVersion: 'agent-runtime-plan/v1'
+        compiler: { name: string; version: string }
+        compileId: string
+        planHash: string
+        createdAt: string
+        identity: RuntimeIdentityAllocation
+        placement: {
+          agentRoot: string
+          runMode: string
+          bundle: { kind: string; compose: string[] }
+        }
+        resolvedBundle: { bundleIdentity: string }
+        harness: { family: string; runtime: string; provider: string }
+        model: { provider: string; modelId: string }
+        executionProfiles: LegacyBrokerExecutionProfile[]
+        artifacts: { bundleIdentity: string }
+        lockedEnv: { lockedEnvKeys: string[] }
+        diagnostics: unknown[]
+      }
+      diagnostics: unknown[]
+    }
+  | {
+      schemaVersion: 'agent-runtime-compile-response/v1'
+      ok: false
+      diagnostics: Array<{ level: 'error'; code: string; message: string; plane: 'asp-compiler' }>
+    }
 
 export function neutralSpecHash(spec: HarnessInvocationSpec): string {
   return sharedNeutralSpecHash(spec)
@@ -29,6 +88,127 @@ export function neutralSpecHash(spec: HarnessInvocationSpec): string {
 
 export function neutralStartRequestHash(startRequest: InvocationStartRequest): string {
   return sharedNeutralStartRequestHash(startRequest)
+}
+
+/**
+ * The v2 controller seam accepts one producer-selected execution, not a
+ * profile selected by HRC. The legacy helper below remains only to construct
+ * the canonical broker startRequest whose neutral hash this fixture proves.
+ */
+export type SelectedExecutionFixtureOpts = FixtureOpts & {
+  presentationSurface?: SelectedExecution['presentationSurface']
+  presentationFulfillment?: SelectedExecution['presentationFulfillment']
+}
+
+export function makeSelectedExecution(
+  identity: RuntimeIdentityAllocation,
+  opts: SelectedExecutionFixtureOpts = {}
+): { execution: SelectedExecution; startRequest: InvocationStartRequest } {
+  const { profile, startRequest } = makeBrokerProfile(identity, opts)
+  const interactive = profile.interactionMode === 'interactive'
+  return {
+    execution: {
+      recipeId: `fixture-${profile.brokerDriver}`,
+      driver: profile.brokerDriver,
+      protocol: 'harness-broker/0.2',
+      hosting: interactive
+        ? {
+            executionTransport: 'pty',
+            terminalRequired: true,
+            terminalHost: 'tmux',
+            processExecution: 'broker-process',
+          }
+        : {
+            executionTransport: 'jsonrpc-stdio',
+            terminalRequired: false,
+            processExecution: 'broker-process',
+          },
+      presentationFulfillment: opts.presentationFulfillment ?? 'attachable',
+      ...(opts.presentationSurface ? { presentationSurface: opts.presentationSurface } : {}),
+      profile: {
+        profileId: profile.profileId,
+        profileHash: profile.profileHash,
+        compatibilityHash: profile.compatibilityHash,
+        startRequestHash: neutralStartRequestHash(startRequest),
+      },
+      dispatchRequest: { startRequest },
+    },
+    startRequest,
+  }
+}
+
+/**
+ * The terminal-hosted counterpart of makeSelectedExecution.  It retains the
+ * legacy helper only to make the hash-bound broker start request; callers see
+ * the final singular v2 execution declaration.
+ */
+export function makeSelectedInteractiveTmuxExecution(
+  identity: RuntimeIdentityAllocation,
+  opts: InteractiveTmuxFixtureOpts = {}
+): { execution: SelectedExecution; startRequest: InvocationStartRequest } {
+  const { profile, startRequest } = makeInteractiveTmuxProfile(identity, opts)
+  return {
+    execution: {
+      recipeId: `fixture-${profile.brokerDriver}`,
+      driver: profile.brokerDriver,
+      protocol: 'harness-broker/0.2',
+      hosting: {
+        executionTransport: 'pty',
+        terminalRequired: true,
+        terminalHost: 'tmux',
+        processExecution: 'broker-process',
+      },
+      presentationFulfillment: 'attachable',
+      presentationSurface: { transport: 'terminal', terminalHost: 'tmux' },
+      profile: {
+        profileId: profile.profileId,
+        profileHash: profile.profileHash,
+        compatibilityHash: profile.compatibilityHash,
+        startRequestHash: neutralStartRequestHash(startRequest),
+      },
+      dispatchRequest: { startRequest },
+    },
+    startRequest,
+  }
+}
+
+export function makeSelectedExecutionPlan(
+  opts: Partial<SelectedExecutionPlan> = {}
+): SelectedExecutionPlan {
+  return {
+    schemaVersion: 'agent-runtime-plan/v2',
+    planHash: 'planhash_v2_fixture',
+    compileId: 'compile_v2_fixture',
+    createdAt: '2026-09-22T00:00:00.000Z',
+    diagnostics: [],
+    selection: {
+      harness: 'codex',
+      modelProvider: 'openai-codex',
+      model: 'gpt-5-codex',
+      reasoningEffort: 'high',
+      presentation: false,
+      provenance: {
+        harness: 'agent-profile',
+        modelProvider: 'agent-profile',
+        model: 'agent-profile',
+        reasoningEffort: 'project-target',
+        presentation: 'agent-profile',
+      },
+    },
+    ...opts,
+  }
+}
+
+export function makeHrcPolicy(): RuntimeCompileRequest['hrcPolicy'] {
+  return {
+    permissionPolicy: { mode: 'deny', audit: true },
+    inputPolicy: {
+      readyInput: 'start-turn',
+      busy: { whenBusy: 'reject' },
+      supportedKinds: ['user'],
+      attachmentPolicy: { localImages: true, fileRefs: true },
+    },
+  }
 }
 
 /**
@@ -57,7 +237,7 @@ export type FixtureOpts = {
   /** Override the spec.invocationId (to test identity mismatch). */
   invocationId?: string
   /** Override the initialInput.inputId (to test initial-input mismatch). */
-  initialInputId?: string | undefined
+  initialInputId?: NonNullable<InvocationStartRequest['initialInput']>['inputId'] | undefined
   /** Whether to include an initialInput at all. */
   withInitialInput?: boolean
   /**
@@ -68,7 +248,7 @@ export type FixtureOpts = {
    */
   initialInputText?: string | undefined
   /** Profile-level diagnostics. */
-  diagnostics?: CompiledRuntimePlan['diagnostics']
+  diagnostics?: unknown[]
   /** profileId for the candidate. */
   profileId?: string
   /** Override brokerDriver (to test non-codex). */
@@ -80,18 +260,18 @@ export type FixtureOpts = {
 }
 
 /**
- * Build a single valid headless codex-app-server BrokerExecutionProfile whose
- * specHash + startRequestHash are computed honestly via the selector's
- * hash-neutral projection.
+ * Build a historical v1 profile fixture whose start request hashes are honest.
+ * Production compilation accepts only the singular v2 execution envelope.
  */
 export function makeBrokerProfile(
   identity: RuntimeIdentityAllocation,
   opts: FixtureOpts = {}
-): { profile: BrokerExecutionProfile; startRequest: InvocationStartRequest } {
+): { profile: LegacyBrokerExecutionProfile; startRequest: InvocationStartRequest } {
   const invocationId = (opts.invocationId ?? identity.invocationId) as
     | RuntimeIdentityAllocation['invocationId']
     | undefined
   const withInitialInput = opts.withInitialInput ?? identity.initialInputId !== undefined
+  const initialInputId = opts.initialInputId ?? identity.initialInputId
 
   const spec: HarnessInvocationSpec = {
     specVersion: 'harness-broker.invocation/v1',
@@ -116,16 +296,16 @@ export function makeBrokerProfile(
 
   const startRequest: InvocationStartRequest = {
     spec,
-    ...(withInitialInput
+    ...(withInitialInput && initialInputId !== undefined
       ? {
           initialInput: {
-            inputId: (opts.initialInputId ?? identity.initialInputId) as string,
+            inputId: initialInputId,
             kind: 'user',
             content: [{ type: 'text', text: opts.initialInputText ?? 'hello broker' }],
           },
         }
       : {}),
-  } as InvocationStartRequest
+  }
 
   const specHash = neutralSpecHash(spec)
   const startRequestHash = neutralStartRequestHash(startRequest)
@@ -151,7 +331,7 @@ export function makeBrokerProfile(
     },
     observability: {},
     ...(opts.diagnostics ? { diagnostics: opts.diagnostics } : {}),
-  } as unknown as BrokerExecutionProfile
+  } satisfies LegacyBrokerExecutionProfile
 
   return { profile, startRequest }
 }
@@ -174,7 +354,7 @@ export type InteractiveTmuxFixtureOpts = {
    */
   withInitialInput?: boolean
   /** Override the initialInput.inputId (to test a stale/mismatched echo). */
-  initialInputId?: string
+  initialInputId?: NonNullable<InvocationStartRequest['initialInput']>['inputId']
 }
 
 /** An interactive claude-code-tmux broker profile. */
@@ -184,8 +364,9 @@ export function makeInteractiveTmuxProfile(
     invocationId: 'invocation_tmux' as RuntimeIdentityAllocation['invocationId'],
   }),
   opts: InteractiveTmuxFixtureOpts = {}
-): { profile: BrokerExecutionProfile; startRequest: InvocationStartRequest } {
+): { profile: LegacyBrokerExecutionProfile; startRequest: InvocationStartRequest } {
   const withInitialInput = opts.withInitialInput ?? identity.initialInputId !== undefined
+  const initialInputId = opts.initialInputId ?? identity.initialInputId
   const brokerDriver = opts.brokerDriver ?? 'claude-code-tmux'
   const frontend =
     brokerDriver === 'claude-code-tmux'
@@ -231,16 +412,16 @@ export function makeInteractiveTmuxProfile(
   }
   const startRequest: InvocationStartRequest = {
     spec,
-    ...(withInitialInput && identity.initialInputId
+    ...(withInitialInput && initialInputId !== undefined
       ? {
           initialInput: {
-            inputId: (opts.initialInputId ?? identity.initialInputId) as string,
+            inputId: initialInputId,
             kind: 'user',
             content: [{ type: 'text', text: opts.initialInputText ?? `hello ${brokerDriver}` }],
           },
         }
       : {}),
-  } as InvocationStartRequest
+  }
   const specHash = neutralSpecHash(spec)
   const startRequestHash = neutralStartRequestHash(startRequest)
 
@@ -265,7 +446,7 @@ export function makeInteractiveTmuxProfile(
         exposurePolicy: {},
       },
       observability: {},
-    } as unknown as BrokerExecutionProfile,
+    } satisfies LegacyBrokerExecutionProfile,
     startRequest,
   }
 }
@@ -273,9 +454,9 @@ export function makeInteractiveTmuxProfile(
 /** Wrap one-or-more profiles into a successful compile response. */
 export function makeCompileResponse(
   identity: RuntimeIdentityAllocation,
-  profiles: BrokerExecutionProfile[]
-): RuntimeCompileResponse {
-  const plan = {
+  profiles: LegacyBrokerExecutionProfile[]
+): LegacyRuntimeCompileResponse {
+  const plan: Extract<LegacyRuntimeCompileResponse, { ok: true }>['plan'] = {
     schemaVersion: 'agent-runtime-plan/v1',
     compiler: { name: 'agent-spaces', version: '0.0.0-test' },
     compileId: 'compile_w2',
@@ -294,23 +475,23 @@ export function makeCompileResponse(
     artifacts: { bundleIdentity: 'bundle_w2' },
     lockedEnv: { lockedEnvKeys: ['CODEX_HOME'] },
     diagnostics: [],
-  } as unknown as CompiledRuntimePlan
+  }
 
   return {
     schemaVersion: 'agent-runtime-compile-response/v1',
     ok: true,
     plan,
     diagnostics: [],
-  } as RuntimeCompileResponse
+  }
 }
 
 /** A failed (ok:false) compile response. */
-export function makeFailedCompileResponse(): RuntimeCompileResponse {
+export function makeFailedCompileResponse(): LegacyRuntimeCompileResponse {
   return {
     schemaVersion: 'agent-runtime-compile-response/v1',
     ok: false,
     diagnostics: [
       { level: 'error', code: 'compile-failed', message: 'boom', plane: 'asp-compiler' },
     ],
-  } as RuntimeCompileResponse
+  }
 }

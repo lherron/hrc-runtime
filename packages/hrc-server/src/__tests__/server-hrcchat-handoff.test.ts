@@ -9,7 +9,7 @@ import { createHrcchatMinimalFixture } from './fixtures/hrcchat-minimal.fixture'
 describe('hrcchat minimal server routes', () => {
   const ctx = createHrcchatMinimalFixture()
 
-  it('semantic turn handoff fails closed when headless codex would use legacy exec', async () => {
+  it('semantic turn handoff fails closed when the v2 broker birth has no ASP endpoint', async () => {
     await ctx.restartServer({
       headlessCodexBrokerEnabled: false,
       codexCliTmuxBrokerEnabled: false,
@@ -47,7 +47,7 @@ describe('hrcchat minimal server routes', () => {
       error?: { code?: string; message?: string }
     }
     expect(errorBody.error?.code).toBe('runtime_unavailable')
-    expect(errorBody.error?.message).toContain('headless legacy execution is unavailable')
+    expect(errorBody.error?.message).toContain('aspd-independent execution closure')
 
     const requestListRes = await ctx.fixture.postJson('/v1/messages/query', {
       phases: ['request'],
@@ -58,7 +58,7 @@ describe('hrcchat minimal server routes', () => {
       (message) => message.body === 'handoff to detached turn'
     )
     expect(request?.execution.state).toBe('failed')
-    expect(request?.execution.errorMessage).toContain('headless legacy execution is unavailable')
+    expect(request?.execution.errorMessage).toContain('aspd-independent execution closure')
   })
 
   it('semantic turn handoff stales live non-broker tmux instead of literal delivery', async () => {
@@ -130,7 +130,7 @@ describe('hrcchat minimal server routes', () => {
       error?: { code?: string; message?: string }
     }
     expect(errorBody.error?.code).toBe('runtime_unavailable')
-    expect(errorBody.error?.message).toContain('headless legacy execution is unavailable')
+    expect(errorBody.error?.message).toContain('aspd-independent execution closure')
 
     const captured = await tmux.capture(pane.paneId)
     expect(captured).not.toContain('must be sent literally')

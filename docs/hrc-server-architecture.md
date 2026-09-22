@@ -6,6 +6,33 @@
 
 This document describes the architecture **as shipped today**. It records only current facts. It deliberately omits any forward-looking vocabulary or routing redesign that has not landed.
 
+## Governing v2 migration boundary (T-08690; pending Daedalus review)
+
+The implementation description below is v1-era observation, not authority for
+the v2 cutover. The target HRC seam accepts one ASP producer-selected execution;
+it does not select an execution profile, resolve profile/target defaults, choose
+a driver, or classify presentation into a local route. It preserves omitted
+optional camelCase `requested` fields and forwards source-distinct raw summon
+directives only as `harness`, `model_provider`, `model`, `reasoning_effort`, and
+boolean `presentation` under `selectionContext.summonDirectives`. ASP owns
+strict-v4 profile and schema-2
+target merging, validation and selection; HRC atomically persists the completed
+response before generic hosting from `execution.hosting`.
+
+External participant attachment is separate from ordinary compile. Its sole v2
+carrier is `ParticipantBrokerDescriptor`, frozen with allocated participant
+identity and endpoint; HRC neither accepts nor translates an
+`agent-runtime-profile/v1` `BrokerExecutionProfile`. The legacy
+`prepared_profile_json` reconnect path is drained or retired before cutover.
+
+At cutover, v1 plans and old `lastAppliedIntentJson` selectors are not parsed.
+Only contract-neutral persisted endpoint/lease/runtime/invocation identity may
+reattach a v1 broker; its historical hashes are opaque fences. Any path needing
+compile or reprovision births v2. ACTIVE external participant attempts are
+drained or retired because reconnect reads `prepared_profile_json`. This is a
+design contract for the successor implementation, not a claim that current source
+already implements it.
+
 ---
 
 ## 1. What hrc-server is

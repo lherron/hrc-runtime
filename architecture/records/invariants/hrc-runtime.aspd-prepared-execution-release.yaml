@@ -2,279 +2,85 @@ id: hrc-runtime.aspd-prepared-execution-release
 kind: invariant
 status: active
 owner_project: hrc-runtime
-scope: HRC-hosted broker preparation (codex-app-server, muse-serve, claude-code-tmux and pi-tui-tmux), release binding, hosting evidence, launch, reattachment, and declaration or preview observation through configured aspd
+scope: HRC v2 producer-selected execution preparation, generic hosting, frozen launch, reuse, reattachment, and matched ASP/HRC activation
 predicate: >
-  When HRC_ASPD_SOCKET is configured, an HRC-hosted headless
-  codex-app-server runtime with effective operator presentation none prepares
-  only through
-  one per-preparation connection to that absolute node-local endpoint. HRC
-  requires aspc/0.1, Unix transport, compileHarnessInvocation capability, and
-  service release identity; it neither requires a cohosted broker nor falls back
-  to an HRC-spawned compiler. Before any worker-hosting effect, one transaction
-  commits the complete successful compile response, execution release, exact
-  worker launch description, HRC-composed dispatch environment and lifecycle
-  overlay, identity allocation, admission results, and dispatch idempotency key
-  as a prepared runtime operation. Launch takes only that operation identity,
-  rereads and validates the persisted bytes, and never re-prepares or rebinds
-  them to the active ASP release. The worker executable resolves within the
-  retained release whose manifest identity matches the frozen release, its argv
-  is the frozen ASP prefix plus HRC-owned hosting flags, and its hello protocol
-  and compiled release identity must match before invocation.start. The complete
-  start graph, actual hosting binding, negotiated protocol, release identity,
-  caller identity fences, dispatch environment, and lifecycle policy commit
-  before invocation.start. A prepared operation proves no invocation.start was
-  submitted and may be resumed only by an explicit same-host-session,
-  same-idempotency-key caller retry; startup never auto-launches it.
-  Interactive and headless preparations freeze the caller's key alike. A
-  resume launches only a preparation of the route the retry selected;
-  otherwise it refuses with the HRC-internal reason
-  aspd_preparation_route_changed and the operation stays prepared. A door that
-  carries no caller key, including the mail kicker, never resumes a prepared
-  operation, and the kicker's classification of a thrown dispatch as uncertain
-  is unchanged. Once the
-  start graph commits, a missing or failed start result never authorizes an
-  automatic invocation.start replay, and a transport-uncertain start remains
-  uncertain. Active worker control, event replay and acknowledgement, and daemon
-  restart reattachment use the persisted endpoint and identity without aspd;
-  reattachment verifies the frozen worker protocol and release identity on the
-  candidate connection before attach. Other harness and presentation routes,
-  participant establishment, caller-policy and admission authority,
-  continuation selection, environment ownership, HRC resource ownership, and
-  projection-before-acknowledgement laws remain unchanged. [T-08562: Claude and Pi TUI broker births
-  are on this route; pi-sdk, codex-cli-tmux, hosted participant brokers and the
-  Codex Desktop observer are not. Headless muse-serve births prepare on route
-  headless-muse-serve with presentation none or the observer viewer: the
-  frozen paths carry the observer socket, the worker argv serves it, and the
-  driver launches its renderer into the controller-allocated observer pane.
-  The hostedDrivers evidence rule above already covers muse-serve:
-  the frozen executionRelease must list it.] Effective operator
-  presentation is an explicit per-request presentation.operator none when
-  present, otherwise the node default unchanged; an explicit none also exempts
-  that Codex dispatch from the node's Codex interactive redirect, as a
-  responseFormat does, while an explicit choice changes no omitted-choice
-  routing; the
-  request choice is accepted
-  only as none, only on the headless broker route and never with a viewer
-  placement, is persisted in the applied intent and route decision with its
-  source, is never re-evaluated when a frozen preparation resumes, and never
-  replaces a live runtime: a live runtime of the scope whose presentation is not
-  none, whether a tmux-tui viewer or an interactive tmux surface, refuses the
-  request with presentation_conflict and is left untouched. As amended for the
-  explicit app-server viewer, presentation.operator also accepts tmux-tui, which
-  exempts that Codex dispatch from the interactive redirect and places the
-  headless codex-app-server with HRC's tmux-tui renderer viewer on this route,
-  while an omitted choice resolving to a node-default tmux-tui is governed by
-  the node-default amendment below; both accepted values are refused off the
-  headless
-  codex-app-server broker route; any request whose presentation differs from
-  the scope's live runtime is refused with presentation_conflict and left
-  untouched. Such an attempt freezes its tmux-tui presentation and observer
-  socket in the launch description, launches only on the tmux-tui substrate from
-  those persisted bytes, and its renderer runs from the same execution release
-  as the worker. Operator attach to a live operator-attachable headless broker
-  runtime returns its existing attach descriptor without interactive admission,
-  stale-marking or reprovision, and attach, detach and reattach never require
-  aspd or change worker identity or execution release. As amended for the
-  node-default app-server viewer, the route also covers an omitted choice whose
-  node default is tmux-tui, recorded with operatorPresentationSource
-  node-default. The Codex
-  interactive redirect control no longer decides whether an explicit interactive
-  Codex intent is admissible; with the control on, Codex start and dispatch
-  routing is otherwise unchanged. With the control off, a non-interactive Codex
-  request without an explicit presentation is routed by its scope's established
-  runtime, meaning the most recent harness-broker runtime of the host session
-  whose status is neither unavailable nor failed, of any provider, harness,
-  driver or invocation state, before
-  responseFormat, actuator-split or node defaults are considered. A tmux
-  transport selects interactive admission, which alone decides reuse, birth
-  join, refusal or fenced replacement, and which the actuator-split route
-  admission refuses for high-risk requests. A headless transport of the same
-  provider and harness selects the headless route. A headless transport of any
-  other provider or harness refuses established_runtime_harness_mismatch without
-  effect. An in-flight start is routed by its recorded birth transport,
-  provider and harness, awaiting only that decision and never the boot: a
-  same-harness birth selects its transport's admission, and a same-harness tmux
-  birth is joined only when interactive admission, evaluated against the
-  newborn with the caller's surface-reuse policy and ownership proof, decides
-  broker-reuse; every point that joins an in-flight start re-derives the route
-  from the birth it actually joins and refuses an unrecorded, foreign or
-  differently routed start, so a start swapped in after routing is never
-  consumed under the earlier route; a foreign-harness birth
-  refuses before effect (established_runtime_harness_mismatch for headless,
-  start_in_flight_harness_mismatch for tmux, since a newborn is never
-  admission-replaced), and a start that recorded no birth is awaited in full and
-  never treated as absent. No rule starts a runtime of another transport beside
-  an established one. With nothing established, the request runs headless
-  codex-app-server
-  with the node presentation default on this route. An intent that arrives
-  interactive goes to interactive broker admission for the interactive Codex
-  app-server TUI backend, whose births on a configured node are aspd-prepared
-  as amended below. No rollback pairs a
-  release that gates interactive Codex admission on the redirect control with
-  that control off. Every aspd compile on this route carries HRC's resolved
-  ASP_HOME as the request aspHome and records it in the route decision, so the
-  worker's codex home, and therefore continuation resume, is the same store the
-  standalone interactive route uses, independent of the aspd daemon environment.
-  As amended for every supported broker birth, the same aspHome governs Claude
-  and Pi bundle materialization, so a bundle prepared on either route is the
-  store the other route uses; Claude continuation transcripts live in the
-  native Claude configuration and are independent of it.
-  As amended for every interactive Codex birth door, on a configured node
-  every new interactive codex-app-server birth prepares through aspd,
-  whichever door requests it: attached run, cold attach, turn dispatch, mail
-  summons, submission doors, target and selector messages, reprovision,
-  explicit start, ensure, rotation relaunch, or a received federation claim.
-  It freezes route interactive-codex-tui, presentation codex-tui, its door
-  class (attached-run or interactive-birth), and the interactive start request
-  at boundary P. It requires durable IPC and launches
-  only on the interactive tmux substrate from the persisted preparation. The
-  worker, codex-tui wrapper, and hook receiver all execute from that frozen
-  execution release; there is no resolver or facade fallback. No interactive
-  codex-app-server birth on a configured node is facade-prepared or
-  resolver-launched, and none falls back when aspd or launch validation
-  refuses. A refusal before boundary P leaves no operation, runtime, lease, or
-  tmux server. A refusal after it leaves the operation prepared with its
-  refusal recorded. For the attached-run door (hrc run, hrc resume),
-  selection, birth, and initial-prompt delivery occur inside one operation
-  registered in the host session's start singleflight. Before joining an
-  existing operation,
-  the door classifies its recorded birth and refuses a foreign provider or
-  harness; after a same-harness or unrecorded operation settles, the door
-  re-enters and registers its own operation carrying the joined newborn's
-  identity. A joined tmux newborn is reusable only when provider and harness
-  match and interactive admission against that newborn and the caller's intent
-  decides broker-reuse; it is never admission-replaced. A joined or established
-  headless runtime is never stale-marked, replaced, or started beside: only a
-  settled operator-attachable openai codex-cli viewer is reused, while a
-  no-viewer, transitional, or foreign runtime is refused and left untouched.
-  Explicit force-restart may replace only when no live joined newborn governs
-  the selection. On the attached-run door an initial prompt is not part of the
-  frozen start request; after attached-start resume it is submitted exactly
-  once by the selected runtime's identity-specific input executor under turn
-  admission, before the registered operation is removed. A cold-birth prompt
-  carried by any other door is compiled into the preparation exactly as the
-  facade compiles it, with its priming replaced for a launch-primed summons
-  and appended for a submission door. It is persisted only in the frozen start
-  request, recorded as launch-carried with its priming mode, and never
-  persisted in the applied intent. It is reported to the dispatch door as
-  launch-carried only after boundary P commits an admitted interactive
-  profile, so the dispatch door never submits it separately. A prepared
-  operation proves the prompt was never applied. No session-level reselection,
-  admission,
-  stale-marking, or reprovision may redirect that prompt. Detach, reattach,
-  and daemon restart of the resulting runtime do not require aspd. A door that
-  replaces a live runtime stale-marks it before preparation, as on the facade
-  route, so a preparation or pre-start launch refusal leaves that scope with
-  no live runtime until its next birth. Ensure births stay unregistered in the
-  start singleflight.
-  As amended for every supported broker birth, on a configured node every new
-  interactive claude-code-tmux and pi-tui-tmux birth prepares through aspd by
-  the same doors, door classes, launch-carried prompt, keyed resume,
-  keyless-door, stale-mark ordering, no-fallback, durable-IPC and reattach
-  rules as an interactive codex-app-server birth, freezing a non-Codex
-  interactive route with its admitted driver, that driver's hosting paths and
-  the leased TUI presentation. A launch-carried prompt for these drivers is
-  frozen only where the compiler places it in the start request (the harness
-  launch prompt), never as broker initial input and never in the applied
-  intent, and its run provenance is the launch-argv class: no dispatched input
-  id, the launch-carried invocation marker for submission doors and the mail
-  kicker. HRC admits an interactive preparation by hosting requirements
-  (interactive tmux terminal, supported worker protocol, durable IPC, and
-  equality with the driver the door requested), never by a driver-name list.
-  Before launching any selected driver other than codex-app-server, HRC
-  requires the frozen executionRelease.worker.hostedDrivers to contain that
-  driver, before boundary P and again from persisted bytes at launch; absence
-  or mismatch refuses aspd_worker_hosting_unproven with no hosting effect.
-  codex-app-server remains admissible without that evidence. A keyed resume
-  launches only a preparation whose frozen route and driver both match the
-  retry's selection; otherwise aspd_preparation_route_changed. The deprecated
-  codex-cli-tmux driver and the non-interactive pi-sdk driver are not on this
-  route, and HRC never requests a pi-sdk preparation from aspd. Declaration and preview observations share this configured
-  endpoint and hello admission boundary without creating or resuming a prepared
-  operation. Both calls composing one preview use one admitted connection and
-  one aspd release identity.
-authority: headless muse-serve route amendment (this change; Daedalus review pending), 2026-09-18; wrkq:T-08562 every supported broker birth amendment (mable acceptance EN-13464, dependency wording Astra EN-13470; Daedalus approval EN-13574 on f5940449), 2026-09-17; wrkq:T-08564 revision 4 architecture approval, 2026-09-17; wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus approval EN-13058 on 038454ba), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39; in-flight birth amendment approval EN-12966 on 4cbcb04c; continuation-store aspHome amendment approval EN-12972 on d9012d25), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
+  Before any worker-hosting effect HRC accepts exactly one ASP v2 selected
+  execution and atomically persists the complete successful compile response,
+  raw request selection carrier, execution hash, identity allocation, canonical
+  dispatch request, execution release, hosting declaration, admission result,
+  lifecycle overlay and idempotency key as boundary P. It then allocates concrete
+  resources from execution.hosting, validates executable containment and positive
+  hostedDrivers membership for the selected driver, and launches only from the
+  reread frozen bytes. Retry, replay, warm control and restart never compile,
+  re-resolve, reselect, or bind a preparation to the active aspd release. A
+  prepared v2 operation proves invocation.start was not submitted; only the
+  same host-session and idempotency key may resume it, and startup never
+  auto-launches it. A retry whose immutable request identity differs refuses and
+  leaves the operation prepared. Missing or uncertain invocation.start never
+  authorizes replay. HRC owns generic resource allocation, endpoint/lease/
+  presentation persistence, runtime identity, dispatch overlays, reuse,
+  reattach, projection, reaping and public control; ASP owns selection and the
+  executable execution shape. Presentation is a producer-resolved boolean input
+  to birth, not a HRC route selector; an explicit presentation mismatch never
+  mutates or silently replaces a live runtime, while omission reuses its
+  established birth variant when ordinary lifecycle admission permits it. This is
+  a clean v2 cutover. HRC neither accepts nor translates v1 selection
+  fields, plural profiles, profile hashes, route choices, aliases or driver
+  requests. Existing v1 harness-broker prepared operations are cancelled or
+  abandoned and never resumed by v2. At activation HRC requires zero
+  incompatible harness-broker prepared operations and zero accepted headless
+  runs with dispatched_input_id NULL; it re-runs that inventory immediately
+  before activation. It may retain only durable v1
+  broker workers whose reattachment uses contract-neutral persisted endpoint,
+  lease, runtime and invocation identity. selectedProfileHash and
+  startRequestHash remain opaque attach fences; HRC does not parse an old plan
+  or session.lastAppliedIntentJson selectors. A retained v1 worker may attach,
+  replay, accept input, interrupt, terminate and preserve its continuation
+  identity, but an operation that needs compilation, reprovisioning or old-plan
+  interpretation refuses and is reborn under v2. ACTIVE external participant
+  attempts are drained or retired: their reconnect parses prepared_profile_json
+  and no v2 compatibility reader exists. A matched cutover records the HRC and ASP
+  A rollback pair before effects,
+  installs/restarts HRC B first while ASP A still serves, confirms B rejects
+  old/v1 compilation before P and that the activation inventory is empty, then
+  activates ASP B at the same endpoint and reads selected==running plus HRC's
+  observed aspd release identity. The first persisted v2 preparation is the
+  irreversible boundary: before it the recorded A pair may be restored; after
+  it rollback to v1 is forbidden and correction is fix-forward. Acceptance
+  proves stable retained runtime, invocation and continuation identities through
+  tmux replay, input, interrupt and terminate, plus v2 reprovision of a dead
+  seat using its old continuation. Reattachment uses persisted connection
+  identity without aspd and verifies frozen release/protocol identity before
+  attach.
+authority: wrkq:T-08690 producer-owned v2 consumer and cutover amendment, pending Daedalus review; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
 source:
-  - wrkq:T-08562
-  - wrkq:T-08561
-  - packages/hrc-server/src/agent-spaces-adapter/compile-profile-selector.ts
-  - wrkq:T-08564
-  - wrkq:T-08560
-  - wrkq:T-08556
-  - commit:91a7d9c3
-  - wrkq:T-08555
-  - commit:d9012d25
-  - commit:494fef39
-  - wrkq:T-08542
-  - wrkq:T-08553
-  - wrkq:T-08554
-  - commit:e5d2c31f
-  - commit:bf3e539e
+  - wrkq:T-08690
   - docs/aspd-headless-codex-integration.md
+  - docs/harness-broker-substrate-spec.md
   - architecture/records/invariants/hrc-runtime.asp-toolchain-selection.yaml
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
-  - packages/hrc-server/src/broker-headless-handlers.ts
-  - packages/hrc-server/src/agent-spaces-adapter/compile-adapter.ts
+  - packages/hrc-server/src/agent-spaces-adapter/aspd-preparation-client.ts
   - packages/hrc-server/src/broker/controller/dispatch.ts
   - packages/hrc-server/src/broker/controller/persistence.ts
-  - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
-  - packages/hrc-server/src/turn-dispatch-handlers.ts
+  - packages/hrc-server/src/broker/runtime-hosting.ts
   - packages/hrc-server/src/startup-reconcile.ts
-  - packages/hrc-server/src/runtime-io-handlers.ts
-  - packages/hrc-server/src/presentation-operator.ts
-  - packages/hrc-server/src/broker-interactive-handlers.ts
-  - packages/hrc-server/src/aspd-headless-start.ts
 required_tests:
   - just architecture-records
-  - headless muse-serve route gates prove a headless muse intent prepares route headless-muse-serve and launches the frozen worker, observer births carry the observer socket on the frozen worker command, and absent/non-matching hostedDrivers refuses aspd_worker_hosting_unproven before boundary P
-  - T-08562 route gates prove every claude-code-tmux and pi-tui-tmux birth door on a configured node prepares through aspd with its driver, route and door class and never reaches the facade or resolver, while codex-cli-tmux, pi-sdk and an unset endpoint keep their paths
-  - T-08562 admission gates prove generic hosting-shape admission, driver equality with the request, and aspd_worker_hosting_unproven for absent, malformed or non-matching hostedDrivers before boundary P and at launch, with codex-app-server admissible without it
-  - T-08562 launch-argv prompt gates prove replace-priming and append-to-priming Claude and Pi prompts are frozen once in the start request, absent from the applied intent, reported after boundary P, never submitted again, and carry launch-carried invocation provenance
-  - T-08562 isolated then shared max3 installed acceptance covers Claude and Pi door classes, hosting evidence, frozen release worker and helpers, prompt exactly once, aspd outage, pre-binding release refusal, A to B with a live A Claude worker, restart reattachment, Codex regression, the preserved Pi SDK route and pi-sdk producer refusal, the resolver population statement, and independent grade
-  - T-08560 route gates prove every interactive codex-app-server birth door on a configured node prepares through aspd with its door class and never reaches the facade, while other drivers and an unset endpoint keep the facade
-  - T-08560 launch-carried prompt gates prove replace-priming and append-to-priming prompts are frozen once in the start request, absent from the applied intent, reported launch-carried only after boundary P, never submitted again, and bound to the initial input identity at B4, while an after-boot selector prompt is delivered once by runtime identity
-  - T-08560 retry gates prove a keyed interactive preparation freezes its key and resumes on the frozen release, a route mismatch refuses aspd_preparation_route_changed untouched, and keyless doors including the mail kicker leave refused preparations prepared and never auto-launched
-  - T-08560 ordering gates prove reprovision doors stale-mark before preparation and leave no operation, runtime, lease, or tmux server on a pre-boundary-P refusal, joins and participant backstops hold on the aspd route, and ensure stays unregistered
-  - T-08560 isolated then shared max3 installed acceptance covers every door class, frozen release worker and wrapper, prompt exactly once, keyed retry across activation, aspd outage, A to B activation with a live A interactive worker, never-started lease cleanup on a non-attached door, restart reattachment, unchanged attached run and other drivers, and independent grade
-  - T-08542 configured-route negotiation and no-fallback gates cover unavailable incompatible unidentified and connection-closed aspd plus missing executionRelease
-  - T-08542 boundary-P transaction and readback gates prove complete immutable preparation precedes hosting and launch consumes persisted bytes only
-  - T-08542 same-key retry launches the frozen A preparation after B activation while startup performs no automatic launch and a new preparation selects B
-  - T-08542 worker path argv protocol and release mismatches refuse before invocation.start and interrupted pre-start hosting is reclaimed without rebinding
-  - T-08542 start-boundary gates distinguish prepared from transport-uncertain state and never replay an uncertain invocation.start
-  - T-08542 installed fixed-HRC A-B rollback and aspd-outage matrix keeps existing A and B workers controllable
-  - T-08542 daemon restart with aspd unavailable reattaches A and B only after candidate-connection release identity verification and preserves event continuity and acknowledgement ordering
-  - T-08553 presentation precedence gates prove omitted choice on a redirect-on node keeps the Codex interactive redirect and node presentation default and explicit none stays headless and selects the aspd route with source request
-  - T-08553 presentation validation gates refuse non-none values viewer placement and interactive or redirected routes before any runtime effect
-  - T-08553 existing-scope gates refuse none against a live tmux-tui runtime without delivery stale-marking or reprovision and deliver omitted or matching choices
-  - T-08553 shared max3 installed acceptance covers omitted-choice control, no-viewer aspd A, conflict refusal, and fixed-HRC B activation with the A worker still usable
-  - T-08554 explicit tmux-tui gates prove redirect exemption, aspd route selection with source request, node-default tmux-tui staying on the facade when HRC_ASPD_SOCKET is unset, driver and route refusals, and presentation_conflict both directions
-  - T-08554 frozen tmux-tui launch description carries presentation and observer socket, launch refuses a mismatch, and the aspd execution launches only on the tmux-tui substrate when frozen so
-  - T-08554 operator attach to a live headless tmux-tui runtime returns its attach descriptor with no admission stale-marking or reprovision
-  - agent-spaces release worker launches its renderer through its own release executable while checkout and package brokers keep the bun entry launch
-  - T-08554 isolated installed acceptance covers aspd A viewer, attach detach reattach identity, fixed-HRC B activation with the attached A viewer usable and a fresh B viewer, refusals, aspd-absent HRC restart recovery, and unchanged omitted-choice routing on a redirect-on node; then shared max3 delivery and independent grade
-  - T-08555 precedence gates at both start and dispatch doors prove configured node-default tmux-tui selects aspd with source node-default; redirect-on doors keep their pre-change routing; with the redirect off an established tmux runtime of any harness (including transitional) receives omitted, responseFormat, surface-refusing and high-risk requests only through interactive admission or its refusal, an established same-harness headless runtime (including transitional) stays on the headless route, a foreign-harness headless runtime refuses established_runtime_harness_mismatch untouched, a crossing same-harness birth takes its transport (a tmux birth join admitted only by broker-reuse, refusing surface-reuse refusals, non-matching ownership proofs and non-reusable newborns), a start swapped in after routing is refused at the join (unclassified, foreign or changed route), a crossing foreign birth of either transport refuses and an unrecorded in-flight start is awaited, the headless queue-behind-boot contract still holds, no cross-transport start occurs, and explicit interactive Codex stays admissible
-  - T-08555 isolated then shared max3 installed acceptance covers default cold launch through ordinary doors with aspd preparation worker viewer and renderer from the active release, attach detach reattach identity, no-viewer opt-out, conflicts, pre-existing live codex-tui and app-server scopes preserved across the configuration change, aspd-outage refusal of new default executions, paired plist-plus-release rollback record, resume of a standalone-born continuation on the default route, and independent grade
-  - T-08556 crossing gates prove the attached-run door classifies a registered birth before awaiting it, refuses a foreign tmux birth, accepts a same-harness tmux newborn only through broker-reuse admission, re-enters under its own registered operation, and neither duplicates nor admission-replaces a joined runtime
-  - T-08556 attached-run selection gates prove established and joined headless runtimes receive viewer reuse, no-viewer conflict, transitional refusal, or foreign-harness refusal without stale-marking or a second runtime, while explicit force-restart with no live joined newborn remains the only replacement path
-  - T-08556 identity-delivery gates prove an initial prompt traverses turn admission and the selected runtime's input executor exactly once before the start operation deregisters, cannot be redirected by a crossing registered start or dispatch, and targets no replacement inserted for the session
-  - T-08556 frozen interactive route gates prove boundary-P persistence, durable-IPC refusal, allocator and controller route admission, worker hello binding, and worker wrapper and hook execution from one retained execution release with no resolver fallback
-  - T-08556 isolated then shared max3 acceptance covers real attached Codex TUI input, initial prompt identity, warm reuse and detach, headless viewer reuse and conflicts, cold-attach birth (facade before T-08560), aspd outage, retained-release activation and rollback ordering, restart reattachment, and cancelled attach cleanup
-  - T-08564 D-14 and D-14a P-1/P-2 gates prove preview plan and prompt parity, one admitted connection and release identity, and unchanged non-preview routes
-last_verified: 2026-09-18 headless muse-serve route implementation, installed evidence pending, Daedalus review pending; 2026-09-17 T-08562 design approval EN-13574 on f5940449; implementation and installed evidence pending; 2026-09-17 T-08564 revision 4 design approval; implementation and installed evidence pending; 2026-09-17 T-08560 design approval EN-13058 on 038454ba; 2026-09-16 T-08556 design approval on 91a7d9c3; prior T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934), plus T-08554 amendment approval EN-12940
+  - v2 preparation atomically persists the complete selected response before hosting, and launch consumes only reread frozen bytes
+  - same-key retry resumes frozen v2 bytes; no retry restart or warm path re-resolves ASP selection or replays uncertain invocation.start
+  - generic execution.hosting allocation and all-driver hostedDrivers proof gate every birth; presentation false does not remove required process-container resources
+  - activation preflight rejects nonzero incompatible harness-broker prepared operations or accepted headless runs without dispatched input, and is rerun immediately before ASP activation
+  - retained v1 durable brokers prove stable runtime invocation and continuation IDs through tmux replay input interrupt and terminate without parsing v1 plan or lastAppliedIntentJson
+  - an active external participant attempt is drained or retired rather than reconnected through prepared_profile_json
+  - isolated A-to-B acceptance records the rollback pair before first v2 persistence, proves HRC B rejects ASP A/v1 compile before P, observes selected and running ASP B identities, then proves a fresh v2 birth and dead-seat v2 reprovision using old continuation
+  - corrupted frozen execution release, unavailable aspd before boundary P, and post-boundary release/worker mismatch refuse without fallback or reprepare
+last_verified: final ASP v2 installed acceptance proved 9/9 harness/presentation/default cases, 8/8 invalid-wire refusals, four accepted identities, and agent-harness default against source 631e7b246aaede313ee6e0aacd71e766f26ae07c / tuple 0.1.1-dev.20260921215301 / release asp-631e7b246aae-20260922T025351Z-01f30b; HRC implementation, activation preflight and coordinated installed acceptance pending
 reopen_when:
-  - the non-Codex interactive route, its hosting-evidence requirement, the codex-app-server exemption, or the set of drivers excluded from the route changes
-  - the configured route or fallback behavior changes
-  - declaration or preview observation stops sharing the configured endpoint and hello admission boundary or one preview can combine aspd release identities
-  - the interactive birth door set, door class, launch-carried prompt freezing, keyed interactive resume, route fence, or keyless-door prepared behavior changes
-  - per-request presentation precedence, accepted values, doors, persistence, or existing-scope behavior changes
-  - node-default presentation routing, the Codex redirect control's scope, or omitted-choice live-runtime delivery changes
-  - preparation connection negotiation or release selection changes
-  - boundary-P or start-graph persistence ordering changes
-  - prepared retry auto-launch uncertain-start or idempotency semantics change
-  - worker launch path hello release binding or retained-release validation changes
-  - reattachment depends on aspd or stops verifying the candidate worker release
-  - attached-run door selection, registered-start joining, identity-bound initial-prompt delivery, durable interactive substrate, or interactive execution-release binding changes
-  - caller identity environment lifecycle resource-ownership projection or acknowledgement authority changes on this route
+  - ASP v2 compile request/response, selected execution, release identity, or hosting declaration changes
+  - boundary-P persistence ordering, retry, replay, dispatch, or worker release validation changes
+  - reuse, presentation mismatch, startup reattachment, opaque v1 attach-fence, continuation, or external participant disposition changes
+  - activation preflight, matched HRC/ASP ordering, rollback boundary, or fix-forward law changes
+  - any fallback, v1 selector adapter, profile/target resolution, driver exception, or old-plan parser is introduced
 supersedes: []
 superseded_by: []

@@ -91,7 +91,7 @@ describe('T-08338 cold dispatch routing', () => {
     await fixture.cleanup()
   })
 
-  it('redirects ordinary cold Codex dispatch but leaves schema-bearing cold dispatch headless', async () => {
+  it('sends ordinary and schema-bearing cold dispatches to producer-selected hosting', async () => {
     const resolved = await fixture.resolveSession(SCOPE)
     const internal = server as unknown as HrcServerInstanceForHandlers
     const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
@@ -145,9 +145,9 @@ describe('T-08338 cold dispatch routing', () => {
       },
     })
 
-    expect(routes.map(({ route }) => route)).toEqual(['interactive', 'headless'])
-    expect(routes[0]?.intent.harness.interactive).toBe(true)
-    expect(routes[0]?.intent.execution?.preferredMode).toBe('interactive')
+    expect(routes.map(({ route }) => route)).toEqual(['headless', 'headless'])
+    expect(routes[0]?.intent.harness.interactive).toBe(false)
+    expect(routes[0]?.intent.execution?.preferredMode).toBe('nonInteractive')
     expect(routes[1]?.intent.harness.interactive).toBe(false)
     expect(routes[1]?.intent.execution?.preferredMode).toBe('nonInteractive')
   })

@@ -25,6 +25,7 @@ import { aspdInteractiveBrokerEndpoint } from '../aspd-headless-start'
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
+  createBrokerObserverPaneAllocator,
   createBrokerTmuxTuiAllocator,
 } from '../broker-interactive-handlers/substrate-allocator'
 import { HarnessBrokerController } from '../broker/controller'
@@ -36,6 +37,7 @@ import {
   type HostingLedger,
   type Release,
   makeRelease,
+  producerResult,
   startAspdDouble,
   tmuxManagerDouble,
   workerClient,
@@ -92,12 +94,61 @@ function baseIntent(): HrcRuntimeIntent {
 
 /** What `hrc run` sends: `buildManagedRunIntent`. */
 function runIntent(): HrcRuntimeIntent {
-  const base = baseIntent()
-  return {
-    ...base,
-    harness: { ...base.harness, interactive: true },
-    execution: { preferredMode: 'interactive' },
-  }
+  // The attached door preserves an omitted selection. ASP's declared result,
+  // not this HRC input, decides whether a presentation lease is allocated.
+  return baseIntent()
+}
+
+function terminalProducerResult() {
+  return producerResult({
+    selection: {
+      harness: 'agent-harness',
+      modelProvider: 'openai-codex',
+      model: 'gpt-5.5',
+      presentation: true,
+    },
+    execution: {
+      recipeId: 'fixture-attached-terminal',
+      driver: 'codex-app-server',
+      hosting: {
+        executionTransport: 'pty',
+        terminalRequired: true,
+        terminalHost: 'tmux',
+        processExecution: 'broker-process',
+      },
+      presentationFulfillment: 'attachable',
+      presentationSurface: { transport: 'terminal', terminalHost: 'tmux' },
+    },
+  })
+}
+
+function headlessProducerResult(attachable: boolean) {
+  return producerResult({
+    selection: {
+      harness: 'agent-harness',
+      modelProvider: 'openai-codex',
+      model: 'gpt-5.5',
+      presentation: attachable,
+    },
+    execution: {
+      recipeId: attachable ? 'fixture-headless-attachable' : 'fixture-headless-none',
+      driver: 'codex-app-server',
+      hosting: {
+        executionTransport: 'jsonrpc-stdio',
+        terminalRequired: false,
+        processExecution: 'broker-process',
+      },
+      presentationFulfillment: 'attachable',
+      ...(attachable
+        ? {
+            presentationSurface: {
+              transport: 'websocket-unix' as const,
+              terminalHost: 'tmux' as const,
+            },
+          }
+        : {}),
+    },
+  })
 }
 
 async function session(scope = SCOPE): Promise<HrcSessionRecord> {
@@ -159,6 +210,10 @@ async function bootServer(overrides: { durableIpc?: boolean } = {}): Promise<voi
       createBrokerDurableHeadlessAllocator(internal().options, deps('attach-t08556'))
     ),
     tmuxTuiAllocator: createBrokerTmuxTuiAllocator(internal().options, deps('attach-t08556-v')),
+    observerPaneAllocator: createBrokerObserverPaneAllocator(
+      internal().options,
+      deps('attach-t08556-o')
+    ),
     now: () => new Date().toISOString(),
   } as unknown as ConstructorParameters<typeof HarnessBrokerController>[0])
 
@@ -190,6 +245,7 @@ beforeEach(async () => {
   releaseA = makeRelease(join(scratch, 'releases'), 'a')
   const aspdSocket = join(scratch, 'aspd.sock')
   aspd = startAspdDouble(aspdSocket, releaseA)
+  aspd.producerResult = terminalProducerResult()
   setEnv('HRC_ASPD_SOCKET', aspdSocket)
   setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
@@ -273,21 +329,25 @@ function runtimes(hostSessionId: string) {
 }
 
 async function startHeadless(hostSessionId: string, operator?: 'none' | 'tmux-tui') {
+  const savedProducerResult = aspd.producerResult
+  aspd.producerResult = headlessProducerResult(operator !== 'none')
   const intent = baseIntent()
-  const response = await fixture.postJson('/v1/runtimes/start', {
-    hostSessionId,
-    intent: operator ? { ...intent, presentation: { operator } } : intent,
-  })
-  expect(response.status).toBe(200)
-  return (await response.json()) as HrcRuntimeSnapshot
+  try {
+    const response = await fixture.postJson('/v1/runtimes/start', {
+      hostSessionId,
+      intent: operator ? { ...intent, presentation: { operator } } : intent,
+    })
+    expect(response.status).toBe(200)
+    return (await response.json()) as HrcRuntimeSnapshot
+  } finally {
+    aspd.producerResult = savedProducerResult
+  }
 }
 
 // ── Route key ─────────────────────────────────────────────────────────────────
 
 describe('T-08556 route key', () => {
-  // T-08560 (§1.5.1): the door no longer enters the predicate. T-08562 (§1.6.2):
-  // neither does the driver, except the named codex-cli-tmux deprecation fence.
-  it('every interactive driver except the deprecated codex-cli-tmux selects aspd on a configured node; an unset socket selects none', () => {
+  it('the configured endpoint is generic; an unset socket selects none', () => {
     const env = { HRC_ASPD_SOCKET: '/tmp/aspd.sock' }
     for (const driver of ['codex-app-server', 'claude-code-tmux', 'pi-tui-tmux'] as const) {
       expect(aspdInteractiveBrokerEndpoint({ allowedBrokerDriver: driver }, env)).toBe(
@@ -295,16 +355,16 @@ describe('T-08556 route key', () => {
       )
       expect(aspdInteractiveBrokerEndpoint({ allowedBrokerDriver: driver }, {})).toBeUndefined()
     }
-    expect(
-      aspdInteractiveBrokerEndpoint({ allowedBrokerDriver: 'codex-cli-tmux' }, env)
-    ).toBeUndefined()
+    expect(aspdInteractiveBrokerEndpoint({ allowedBrokerDriver: 'codex-cli-tmux' }, env)).toBe(
+      '/tmp/aspd.sock'
+    )
   })
 })
 
 // ── Cold birth ────────────────────────────────────────────────────────────────
 
 describe('T-08556 attached-run cold birth', () => {
-  it('prepares the interactive TUI through aspd, freezes it, and launches the release worker after attach', async () => {
+  it('prepares the producer-selected terminal execution and launches its frozen worker after attach', async () => {
     const s = await session()
     const { prepared, runtimeId } = await attachedRun(s.hostSessionId)
 
@@ -312,16 +372,15 @@ describe('T-08556 attached-run cold birth', () => {
     expect(facadeCalls).toBe(0)
     expect(aspd.compileCalls).toBe(1)
     const [record] = preparations(s.hostSessionId)
-    expect(record.route).toBe('interactive-codex-tui')
-    expect(record.hosting.presentation).toBe('codex-tui')
+    expect(record.route).toBe('producer-selected-execution')
+    expect(record.hosting.presentation).toBe('terminal')
     expect(record.hosting.argv).not.toContain('--experimental-observer-socket')
     expect(record.dispatch.routeDecision).toMatchObject({
       preparation: 'aspd',
-      door: 'attached-run',
-      durableInteractiveRoute: 'durable-ipc',
+      selectedBy: 'producer-selected-execution',
       aspHome: join(scratch, 'caller-asp-home'),
     })
-    expect(record.admission.startRequest.initialInput).toBeUndefined()
+    expect(record.admission.execution.dispatchRequest.startRequest.initialInput).toBeUndefined()
     // The broker window runs the frozen release executable, never the resolver.
     expect(ledger.commands).toHaveLength(1)
     expect(ledger.commands[0]).toContain(join(releaseA.releaseRoot, 'harness-broker'))
@@ -342,7 +401,9 @@ describe('T-08556 attached-run cold birth', () => {
     expect(aspd.compileCalls).toBe(1)
     expect(delivered).toEqual([{ transport: 'tmux', runtimeId, prompt: 'MARK-once' }])
     expect(ledger.startCalls).toHaveLength(1)
-    expect(preparations(s.hostSessionId)[0].admission.startRequest.initialInput).toBeUndefined()
+    expect(
+      preparations(s.hostSessionId)[0].admission.execution.dispatchRequest.startRequest.initialInput
+    ).toBeUndefined()
   })
 
   it('aspd unavailable refuses before any hosting effect, with no facade fallback', async () => {
@@ -357,19 +418,17 @@ describe('T-08556 attached-run cold birth', () => {
     aspd = startAspdDouble(join(scratch, 'aspd-unused.sock'), releaseA)
   })
 
-  it('durable interactive IPC off refuses aspd_route_requires_durable_ipc before preparation', async () => {
+  it('does not apply a local durable-interactive feature gate to a producer-selected result', async () => {
     await server.stop()
     await bootServer({ durableIpc: false })
     const s = await session()
-    const refused = await refusedAttachedRun(s.hostSessionId)
-    expect(refused.status).toBe(503)
-    expect(JSON.stringify(refused.body)).toContain('aspd_route_requires_durable_ipc')
-    expect(aspd.compileCalls).toBe(0)
+    const started = await attachedRun(s.hostSessionId)
+    expect(started.prepared.status).toBe('prepared')
+    expect(aspd.compileCalls).toBe(1)
     expect(facadeCalls).toBe(0)
   })
 
-  // T-08560 (§1.5): a non-attached door's interactive Codex birth is on the route too.
-  it('a non-attached interactive Codex birth prepares through aspd with door interactive-birth (facade not reached)', async () => {
+  it('a non-attached door hosts the same producer-selected execution (facade not reached)', async () => {
     const s = await session()
     const runtime = await internal().startInteractiveTmuxBrokerRuntime(
       s,
@@ -383,7 +442,7 @@ describe('T-08556 attached-run cold birth', () => {
     expect(facadeCalls).toBe(0)
     expect(aspd.compileCalls).toBe(1)
     const [record] = preparations(s.hostSessionId)
-    expect(record.route).toBe('interactive-codex-tui')
+    expect(record.route).toBe('producer-selected-execution')
     expect(record.dispatch.routeDecision.door).toBe('interactive-birth')
     expect(runtime.transport).toBe('tmux')
   })
@@ -436,13 +495,13 @@ describe('T-08556 attached run against an established runtime', () => {
   it('a live no-viewer runtime is refused presentation_conflict, untouched', async () => {
     const s = await session()
     await startHeadless(s.hostSessionId, 'none')
-    const before = JSON.stringify(runtimes(s.hostSessionId))
+    const before = runtimes(s.hostSessionId).map((runtime) => runtime.runtimeId)
     const compiles = aspd.compileCalls
 
     const refused = await refusedAttachedRun(s.hostSessionId, { prompt: 'nope' })
     expect(refused.status).toBe(409)
     expect(JSON.stringify(refused.body)).toContain('presentation_conflict')
-    expect(JSON.stringify(runtimes(s.hostSessionId))).toBe(before)
+    expect(runtimes(s.hostSessionId).map((runtime) => runtime.runtimeId)).toEqual(before)
     expect(aspd.compileCalls).toBe(compiles)
     expect(delivered).toHaveLength(0)
   })
@@ -457,26 +516,25 @@ describe('T-08556 attached run against an established runtime', () => {
       invocationState: 'stopping',
       updatedAt: new Date().toISOString(),
     })
-    const before = JSON.stringify(runtimes(s.hostSessionId))
+    const before = runtimes(s.hostSessionId).map((runtime) => runtime.runtimeId)
 
     const refused = await refusedAttachedRun(s.hostSessionId)
     expect(refused.status).toBe(503)
     expect(JSON.stringify(refused.body)).toContain('attached_run_runtime_transitional')
-    expect(JSON.stringify(runtimes(s.hostSessionId))).toBe(before)
+    expect(runtimes(s.hostSessionId).map((runtime) => runtime.runtimeId)).toEqual(before)
   })
 
-  it('a foreign-harness headless runtime is refused, untouched', async () => {
+  it('a realized attachable runtime is reused despite historical harness fields', async () => {
     const s = await session()
     const viewer = await startHeadless(s.hostSessionId)
     internal().db.sqlite.run(`UPDATE runtimes SET harness = 'agent-harness' WHERE runtime_id = ?`, [
       viewer.runtimeId,
     ])
-    const before = JSON.stringify(runtimes(s.hostSessionId))
+    const before = runtimes(s.hostSessionId).map((runtime) => runtime.runtimeId)
 
-    const refused = await refusedAttachedRun(s.hostSessionId)
-    expect(refused.status).toBe(503)
-    expect(JSON.stringify(refused.body)).toContain('established_runtime_harness_mismatch')
-    expect(JSON.stringify(runtimes(s.hostSessionId))).toBe(before)
+    const attached = await attachedRun(s.hostSessionId)
+    expect(attached.runtimeId).toBe(viewer.runtimeId)
+    expect(runtimes(s.hostSessionId).map((runtime) => runtime.runtimeId)).toEqual(before)
   })
 })
 
@@ -513,8 +571,8 @@ describe('T-08556 attached run crossing a registered start', () => {
       expect(result.runtimeId).toBe(joined.runtimeId)
       expect(result.prepared.status).toBe('started')
       expect(
-        preparations(s.hostSessionId).filter((p) => p.route === 'interactive-codex-tui')
-      ).toHaveLength(0)
+        preparations(s.hostSessionId).filter((p) => p.route === 'producer-selected-execution')
+      ).toHaveLength(1)
       const live = runtimes(s.hostSessionId).filter(
         (r) => r.status !== 'terminated' && r.status !== 'stale'
       )
@@ -575,7 +633,11 @@ describe('T-08556 attached run crossing a registered start', () => {
     expect(ledger.commands).toHaveLength(1)
     expect(facadeCalls).toBe(0)
     expect(delivered).toEqual([
-      { transport: 'tmux', runtimeId: prepared.runtimeId as string, prompt: 'crossing-dispatch' },
+      {
+        transport: 'headless',
+        runtimeId: prepared.runtimeId as string,
+        prompt: 'crossing-dispatch',
+      },
     ])
   })
 
@@ -608,7 +670,7 @@ describe('T-08556 attached run crossing a registered start', () => {
     internal().runtimeStartOperations.delete(s.hostSessionId)
 
     expect(refused.status).toBe(503)
-    expect(JSON.stringify(refused.body)).toContain('start_in_flight_not_reusable')
+    expect(JSON.stringify(refused.body)).toContain('attached_run_runtime_transitional')
     expect(aspd.compileCalls).toBe(compiles)
     expect(internal().db.runtimes.getByRuntimeId(born.runtimeId)?.status).toBe(newborn.status)
     expect(delivered).toHaveLength(0)

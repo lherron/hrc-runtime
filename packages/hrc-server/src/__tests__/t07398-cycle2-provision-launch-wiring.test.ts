@@ -1,46 +1,22 @@
 /**
- * T-07398 DEFECT CYCLE 2, item 1 — an overridable scalar directive must reach
- * the LAUNCHED PROCESS, not just the database.
- *
- * `+model=sonnet` is parsed, validated, carried on the intent and persisted to
- * `lastAppliedIntentJson` — and then dropped on the floor at the launch
- * boundary. Every launch path reads `intent.harness.model`, which no sender
- * ever populates from a directive (only `+harness=` survives, and only because
- * `buildHrcRuntimeIntent` re-resolves the provider/id from it). Nothing anywhere
- * reads `intent.provision.model`. Live proof: a runtime born from
- * `+model=sonnet` launched with `--model opus` in the process table and
- * self-reported claude-opus-5 (C-15425 / DM #230).
- *
- * These cases are deliberately at the live adapters — the last thing between
- * an intent and an actual process — because that is where the acceptance lives
- * ("process args AND self-report show sonnet"). Cycle 1's bar had no launch-path
- * case at all, which is exactly why it could not catch this.
- *
- * The intent shape under test is the one that really reaches launch: `provision`
- * carries the directive and `harness.model` is UNSET, so agent-spaces falls back
- * to the profile default. An implementation may satisfy this by folding
- * `provision` into the harness route inside (or just before) each adapter — but
- * the guarantee has to hold at the adapter, since that is the shape the
- * persisted intent actually has.
- *
- * WHERE `reasoning` IS OBSERVABLE. The surviving live boundary (the broker
- * compile adapter; T-08584 retired the direct cli-adapter preview builder)
- * carries its own reasoning field, so it is asserted exactly there:
- *   - compile-adapter -> `RuntimeCompileRequest.requested.reasoningEffort`
- * Because `reasoningEffort` is a field of its own, the cheap fix of projecting
- * the overlaid model onto `harness.model` — which the adapter already reads —
- * cannot turn this file green.
+ * T-07398 cycle 2 — summon directives reach ASP unchanged. v2 makes ASP the
+ * sole selector: HRC forwards raw snake_case directives and only persists the
+ * producer-selected realization it receives back.
  */
 
 import { describe, expect, it } from 'bun:test'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
-import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
+import { neutralStartRequestHash } from 'spaces-runtime-contracts'
+import type { RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
-import { compileBrokerRuntimePlan } from '../agent-spaces-adapter/compile-adapter'
-import { makeBrokerProfile, makeCompileResponse } from './broker-compile-fixtures'
+import {
+  type V2RuntimeCompileRequest,
+  compileBrokerRuntimePlan,
+} from '../agent-spaces-adapter/compile-adapter'
 
 const DIRECTED_MODEL = 'sonnet'
+const NOW = '2026-09-22T00:00:00.000Z'
 /**
  * Kept inside the compile boundary's closed enum ('low'|'medium'|'high'|'xhigh')
  * so this bar never has to invent a harness mapping table — the spec assigns
@@ -68,41 +44,101 @@ function placement(): HrcRuntimeIntent['placement'] {
   } as HrcRuntimeIntent['placement']
 }
 
-/** The persisted shape after a `+model=sonnet` birth: directive set, harness.model absent. */
+/** The persisted v2 input: directives remain raw until ASP selects execution. */
 function directedIntent(harness: HrcRuntimeIntent['harness']): HrcRuntimeIntent {
   return {
     placement: placement(),
     harness,
-    provision: { model: DIRECTED_MODEL, reasoning: DIRECTED_REASONING },
+    summonDirectives: { model: DIRECTED_MODEL, reasoning_effort: DIRECTED_REASONING },
   } as unknown as HrcRuntimeIntent
 }
 
 describe('T-07398 cycle 2 item 1 — provisioning directives reach the launch path', () => {
-  it('compile-adapter: the broker compile request requests the directed model AND reasoning', async () => {
-    const captured: { request?: RuntimeCompileRequest } = {}
+  it('compile-adapter forwards directed model and reasoning as raw summon directives', async () => {
+    const captured: { request?: V2RuntimeCompileRequest } = {}
 
-    await compileBrokerRuntimePlan(
+    const result = await compileBrokerRuntimePlan(
       {
         intent: directedIntent({ provider: 'openai', interactive: false, id: 'codex-cli' }),
+        scopeRef: 'agent:clod:project:hrc-runtime:task:t07398c2',
         hostSessionId: 'hostSession_T1',
         generation: 1,
       },
       {
         compileHarnessInvocation: async (request) => {
-          captured.request = request.compileRequest
+          captured.request = request.compileRequest as unknown as V2RuntimeCompileRequest
           const identity = request.compileRequest.identity as RuntimeIdentityAllocation
-          const { profile } = makeBrokerProfile(identity)
-          const compileResponse = makeCompileResponse(identity, [profile])
-          if (!compileResponse.ok) throw new Error('fixture compile response unexpectedly failed')
           return {
-            schemaVersion: 'aspc-compile-harness-invocation-response/v1',
+            schemaVersion: 'aspc-compile-harness-invocation-response/v2',
             ok: true,
-            compileResponse,
-            plan: compileResponse.plan,
-            selectedProfile: profile,
-            startRequest: profile.harnessInvocation.startRequest,
-            dispatchRequest: { startRequest: profile.harnessInvocation.startRequest },
-            diagnostics: compileResponse.diagnostics,
+            diagnostics: [],
+            plan: {
+              schemaVersion: 'agent-runtime-plan/v2',
+              agent: { id: 'clod' },
+              identity,
+              planHash: 'plan-t07398-v2',
+              compileId: 'compile-t07398-v2',
+              createdAt: NOW,
+              diagnostics: [],
+              selection: {
+                harness: 'codex',
+                modelProvider: 'openai-codex',
+                model: DIRECTED_MODEL,
+                reasoningEffort: DIRECTED_REASONING,
+                presentation: false,
+                provenance: {
+                  harness: 'agent-profile',
+                  modelProvider: 'agent-profile',
+                  model: 'summon-directive',
+                  reasoningEffort: 'summon-directive',
+                  presentation: 'agent-profile',
+                },
+              },
+              execution: {
+                recipeId: 'codex-app-server',
+                driver: 'codex-app-server',
+                protocol: 'harness-broker/0.2',
+                hosting: {
+                  executionTransport: 'jsonrpc-stdio',
+                  terminalRequired: false,
+                  processExecution: 'broker-process',
+                },
+                presentationFulfillment: 'attachable',
+                profile: {
+                  profileId: 'profile-t07398-v2',
+                  profileHash: 'profile-hash-t07398-v2',
+                  compatibilityHash: 'compatibility-t07398-v2',
+                  startRequestHash: neutralStartRequestHash({
+                    spec: {
+                      invocationId: identity.invocationId,
+                      driver: { kind: 'codex-app-server' },
+                      correlation: {
+                        requestId: identity.requestId,
+                        operationId: identity.operationId,
+                        hostSessionId: identity.hostSessionId,
+                        runtimeId: identity.runtimeId,
+                        traceId: identity.traceId,
+                      },
+                    },
+                  } as never),
+                },
+                dispatchRequest: {
+                  startRequest: {
+                    spec: {
+                      invocationId: identity.invocationId,
+                      driver: { kind: 'codex-app-server' },
+                      correlation: {
+                        requestId: identity.requestId,
+                        operationId: identity.operationId,
+                        hostSessionId: identity.hostSessionId,
+                        runtimeId: identity.runtimeId,
+                        traceId: identity.traceId,
+                      },
+                    },
+                  },
+                },
+              },
+            },
           }
         },
         ids: {
@@ -117,7 +153,25 @@ describe('T-07398 cycle 2 item 1 — provisioning directives reach the launch pa
       }
     )
 
-    expect(captured.request?.requested.model).toBe(DIRECTED_MODEL)
-    expect(captured.request?.requested.reasoningEffort).toBe(DIRECTED_REASONING)
+    expect(captured.request).toMatchObject({
+      agent: { id: 'clod' },
+      requested: {},
+      selectionContext: {
+        summonDirectives: { model: DIRECTED_MODEL, reasoning_effort: DIRECTED_REASONING },
+      },
+    })
+    expect(result).toMatchObject({
+      admitted: true,
+      plan: {
+        selection: {
+          model: DIRECTED_MODEL,
+          reasoningEffort: DIRECTED_REASONING,
+          provenance: {
+            model: 'summon-directive',
+            reasoningEffort: 'summon-directive',
+          },
+        },
+      },
+    })
   })
 })

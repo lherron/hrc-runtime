@@ -10,7 +10,6 @@ import type {
   HrcRuntimeIntent,
 } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
-import { resolvePreviewIntent } from 'hrc-server'
 
 import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from './dry-run-display.js'
 
@@ -799,12 +798,15 @@ export async function renderBrokerPlanPreview(
   brokerPreview: BrokerRunPreview,
   prompt: string | undefined
 ): Promise<boolean> {
+  const nativeWorker = brokerPreview.process.execution === 'native-worker'
+  const processArgs = nativeWorker ? [] : (brokerPreview.process.args ?? [])
+  const processCommand = nativeWorker ? undefined : brokerPreview.process.command
   // Prefer the resolved prompt zones: they are the only source that covers
   // every route (codex passes no prompt flag and no prompt file) and the only
   // one carrying the reminder and per-section sizes `asp run --dry-run` shows.
   // The argv/file readings remain as fallbacks for a route that somehow has an
   // inline prompt but no resolvable context template.
-  const argvSystemPrompt = extractSystemPromptFromArgv(brokerPreview.process.args)
+  const argvSystemPrompt = extractSystemPromptFromArgv(processArgs)
   const fileSystemPrompt = readOptionalUtf8(brokerPreview.systemPromptFile)
   const systemPrompt =
     brokerPreview.systemPrompt !== undefined
@@ -816,30 +818,55 @@ export async function renderBrokerPlanPreview(
         (fileSystemPrompt !== undefined
           ? { content: fileSystemPrompt, mode: brokerPreview.systemPromptMode ?? 'append' }
           : undefined))
-  const primingPrompt =
-    brokerPreview.primingPrompt ?? extractPrimingFromArgv(brokerPreview.process.args)
+  const primingPrompt = brokerPreview.primingPrompt ?? extractPrimingFromArgv(processArgs)
 
   const lines: string[] = []
   lines.push('  brokerPlan:   available')
   lines.push(`  controller:   ${brokerPreview.controllerKind}`)
-  lines.push(`  driver:       ${brokerPreview.brokerDriver}`)
-  lines.push(`  interaction:  ${brokerPreview.interactionMode}`)
   lines.push(
-    `  model:        ${brokerPreview.model.modelId}${
-      brokerPreview.model.requestedModel !== undefined &&
-      brokerPreview.model.requestedModel !== brokerPreview.model.modelId
-        ? ` (requested ${brokerPreview.model.requestedModel})`
-        : ''
-    }`
+    `  selection.harness: ${brokerPreview.selection.harness} (${brokerPreview.selection.provenance.harness})`
   )
-  lines.push(`  bundle:       ${brokerPreview.bundleIdentity}`)
-  lines.push(`  profileId:    ${brokerPreview.profileId}`)
-  lines.push(`  profileHash:  ${brokerPreview.profileHash}`)
+  lines.push(
+    `  selection.modelProvider: ${brokerPreview.selection.modelProvider} (${brokerPreview.selection.provenance.modelProvider})`
+  )
+  lines.push(
+    `  selection.model: ${brokerPreview.selection.model} (${brokerPreview.selection.provenance.model})`
+  )
+  if (brokerPreview.selection.reasoningEffort !== undefined) {
+    lines.push(
+      `  selection.reasoningEffort: ${brokerPreview.selection.reasoningEffort} (${brokerPreview.selection.provenance.reasoningEffort ?? 'unknown'})`
+    )
+  }
+  lines.push(
+    `  selection.presentation: ${brokerPreview.selection.presentation} (${brokerPreview.selection.provenance.presentation})`
+  )
+  lines.push(`  recipe:       ${brokerPreview.execution.recipeId}`)
+  lines.push(`  driver:       ${brokerPreview.execution.driver}`)
+  lines.push(`  protocol:     ${brokerPreview.execution.protocol}`)
+  lines.push(
+    `  hosting:      ${brokerPreview.execution.hosting.executionTransport} / ${brokerPreview.execution.hosting.processExecution} / terminal=${brokerPreview.execution.hosting.terminalRequired ? 'yes' : 'no'}`
+  )
+  lines.push(`  fulfillment:  ${brokerPreview.execution.presentationFulfillment}`)
+  if (brokerPreview.execution.presentationSurface !== undefined) {
+    lines.push(
+      `  surface:      ${brokerPreview.execution.presentationSurface.transport} / ${brokerPreview.execution.presentationSurface.terminalHost}`
+    )
+  }
+  lines.push(`  profileId:    ${brokerPreview.execution.profile.profileId}`)
+  lines.push(`  profileHash:  ${brokerPreview.execution.profile.profileHash}`)
+  lines.push(`  compatibilityHash: ${brokerPreview.execution.profile.compatibilityHash}`)
   lines.push(`  compileId:    ${brokerPreview.compileId}`)
   lines.push(`  planHash:     ${brokerPreview.planHash}`)
   lines.push(`  specHash:     ${brokerPreview.specHash}`)
   lines.push(`  requestHash:  ${brokerPreview.startRequestHash}`)
   lines.push(`  cwd:          ${brokerPreview.process.cwd}`)
+  if (brokerPreview.release !== undefined) {
+    lines.push(`  release:      ${brokerPreview.release.releaseId}`)
+    lines.push(`  sourceCommit: ${brokerPreview.release.sourceCommit}`)
+  }
+  if (nativeWorker) {
+    lines.push('  execution:    native-worker')
+  }
   lines.push(`  initialInput: ${brokerPreview.initialInput ? 'yes' : 'no'}`)
   // `launchInitialPromptLength` is the claude-route field; codex carries its
   // priming as the initial user turn, so fall back to the resolved priming
@@ -856,9 +883,8 @@ export async function renderBrokerPlanPreview(
     }`
   )
   lines.push(`  inputQueue:   ${brokerPreview.inputQueue}`)
-  lines.push(`  interrupt:    ${brokerPreview.interrupt}`)
-  if (brokerPreview.resource) {
-    lines.push(`  resource:     ${brokerPreview.resource}`)
+  if (brokerPreview.execution.hosting.terminalHost !== undefined) {
+    lines.push(`  terminalHost: ${brokerPreview.execution.hosting.terminalHost}`)
   }
   if (brokerPreview.systemPromptFile !== undefined) {
     lines.push(`  promptFile:   ${brokerPreview.systemPromptFile}`)
@@ -899,8 +925,10 @@ export async function renderBrokerPlanPreview(
       ? { nearMaxChars: brokerPreview.nearMaxChars }
       : {}),
     betweenLines: lines,
-    command: formatDisplayCommand(brokerPreview.process.command, brokerPreview.process.args),
-    showCommand: true,
+    ...(processCommand === undefined
+      ? {}
+      : { command: formatDisplayCommand(processCommand, processArgs) }),
+    showCommand: !nativeWorker,
   })
 
   w('')
@@ -935,13 +963,10 @@ export async function printLocalRunPreview(
   w(`  provider:     ${intent.harness.provider}`)
   w(`  cwd:          ${intent.placement.cwd}`)
 
-  // T-08596 (T-08569A closure): the preview is compiled by the daemon
-  // (`POST /v1/previews/run`). No local facade spawn and no local plan build.
-  // An intent with no broker route never reaches the daemon: the no-route
-  // reason below is offline and side-effect free. Otherwise an unreachable
-  // daemon throws the SDK's typed `hrc_daemon_unreachable` refusal, which the
-  // caller's error envelope carries.
-  if (resolvePreviewIntent(intent) === undefined) {
+  // Pi is a retired HRC-local harness, not a selectable v2 ASP harness. Keep
+  // its established diagnostic offline: asking the daemon to compile it would
+  // manufacture a selection request from a compatibility-shaped intent.
+  if (intent.harness.id === 'pi') {
     const harnessId = intent.harness.id ?? intent.harness.provider
     w('')
     w(

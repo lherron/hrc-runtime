@@ -5,14 +5,15 @@ import { buildScopeRef, parseScopeRef, validateScopeRef } from 'agent-scope'
 import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import {
-  type BrokerExecutionProfile,
   type JsonValue,
   type ParticipantAdapter,
   type ParticipantAdapterPreparationRequest,
+  type ParticipantBrokerDescriptor,
   type WriterEvidence,
   validateParticipantAdapterPreparation,
 } from 'spaces-runtime-contracts'
 
+import { parseParticipantBrokerDescriptor } from './participant-broker-descriptor.js'
 import { scheduleParticipantEstablishment } from './participant-establishment.js'
 import {
   type DirectJoinRequest,
@@ -128,7 +129,7 @@ function registeredResponse(
   // registration can legitimately have no execution profile yet, and calling
   // that `prepared` would assert a frozen start tuple that does not exist.
   const observation: { state: 'prepared' | 'attachment_pending'; detail: string } =
-    attempt.preparedProfileJson === undefined
+    attempt.preparedDescriptorJson === undefined
       ? {
           state: 'attachment_pending',
           detail:
@@ -213,15 +214,15 @@ export async function persistHostingIntentIfRequired(
   attempt: ParticipantAttempt
 ): Promise<ParticipantAttempt | null> {
   if (attempt.hostingIntentJson !== undefined) return attempt
-  if (attempt.preparedProfileJson === undefined || attempt.state !== 'PREPARED') return null
+  if (attempt.preparedDescriptorJson === undefined || attempt.state !== 'PREPARED') return null
 
-  let profile: BrokerExecutionProfile
+  let descriptor: ParticipantBrokerDescriptor
   try {
-    profile = JSON.parse(attempt.preparedProfileJson) as BrokerExecutionProfile
+    descriptor = parseParticipantBrokerDescriptor(attempt.preparedDescriptorJson)
   } catch {
     return null
   }
-  const intent = await createParticipantHostingIntent(server, registration, attempt, profile)
+  const intent = await createParticipantHostingIntent(server, registration, attempt, descriptor)
   const now = timestamp()
   const persisted = server.db.sqlite.transaction(() => {
     const snapshot = server.db.participantRegistrations.setSnapshotIfAbsent(
@@ -834,7 +835,7 @@ export async function handleRegisterParticipant(
       }
       const resolvedRegistration = registration
       const resolvedAttempt = attempt
-      if (resolvedAttempt.preparedProfileJson !== undefined) {
+      if (resolvedAttempt.preparedDescriptorJson !== undefined) {
         const withHostingIntent = await persistHostingIntentIfRequired(
           this,
           resolvedRegistration,
@@ -908,9 +909,9 @@ export async function handleRegisterParticipant(
 
       const now = timestamp()
       const frozen = this.db.sqlite.transaction(() => {
-        const didFreeze = this.db.participantRegistrations.freezePreparedBoundaryIfAbsent(
+        const didFreeze = this.db.participantRegistrations.freezePreparedDescriptorIfAbsent(
           resolvedAttempt.attemptId,
-          serializedJson(preparedValue.profile),
+          serializedJson(preparedValue.descriptor),
           serializedJson(preparedValue.dispatchEnv),
           now
         )
@@ -924,7 +925,7 @@ export async function handleRegisterParticipant(
       })()
       if (!frozen) {
         const current = this.db.participantRegistrations.getAttempt(resolvedAttempt.attemptId)
-        if (current?.preparedProfileJson !== undefined)
+        if (current?.preparedDescriptorJson !== undefined)
           return registeredResponse(resolvedRegistration, false, current)
         return {
           status: 'pending',

@@ -505,15 +505,23 @@ export function identityProjection(env: Record<string, string>): Record<string, 
   )
 }
 
-export function expectBirthAutoDispatch(input: {
+export async function expectBirthAutoDispatch(input: {
   hostSessionId: string
-  runtimeId: string
   body: string
-  callIndex?: number
-}): void {
-  const callIndex = input.callIndex ?? 0
-  const start = ledger?.startCalls[callIndex]
-  const enqueue = ledger?.enqueueCalls[callIndex]
+  expectedStartCount: number
+  enqueueIndex?: number
+}): Promise<void> {
+  const enqueueIndex = input.enqueueIndex ?? 0
+  await settle(() => (ledger?.enqueueCalls.length ?? 0) > enqueueIndex)
+  const enqueue = ledger?.enqueueCalls[enqueueIndex]
+  const invocationId = enqueue === undefined ? undefined : String(enqueue.request.invocationId)
+  const start = ledger?.startCalls.find(
+    (call) => String(call.request.spec.invocationId) === invocationId
+  )
+  const runtimeId =
+    invocationId === undefined
+      ? undefined
+      : internal.db.brokerInvocations.getByInvocationId(invocationId)?.runtimeId
   const run = internal.db.sqlite
     .query<
       {
@@ -526,51 +534,30 @@ export function expectBirthAutoDispatch(input: {
       `SELECT host_session_id, runtime_id, generation
          FROM runs WHERE host_session_id = ? AND runtime_id = ?`
     )
-    .get(input.hostSessionId, input.runtimeId)
+    .get(input.hostSessionId, runtimeId ?? '')
 
   expect({
     birthCount: ledger?.startCalls.length,
-    runtimes: internal.db.runtimes.listByHostSessionId(input.hostSessionId).map((runtime) => ({
-      runtimeId: runtime.runtimeId,
-      status: runtime.status,
-      activeInvocationId: runtime.activeInvocationId,
-      activeRunId: runtime.activeRunId,
-      controllerKind: runtime.controllerKind,
-      transport: runtime.transport,
-      provider: runtime.provider,
-      brokerDriver: runtime.brokerDriver,
-      tmuxJson: runtime.tmuxJson,
-      invocationState:
-        runtime.activeInvocationId === undefined
-          ? undefined
-          : internal.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
-              ?.invocationState,
-    })),
+    runtimeId,
     request: enqueue?.request,
     response: enqueue?.response,
-    bornInvocationId: start === undefined ? undefined : String(start.request.spec.invocationId),
+    bornInvocationId: invocationId,
     run,
   }).toEqual({
-    birthCount: callIndex + 1,
-    runtimes: [
-      expect.objectContaining({
-        runtimeId: input.runtimeId,
-        status: 'ready',
-        activeInvocationId: expect.any(String),
-      }),
-    ],
+    birthCount: input.expectedStartCount,
+    runtimeId: expect.any(String),
     request: expect.objectContaining({
       invocationId: start === undefined ? undefined : String(start.request.spec.invocationId),
       body: input.body,
     }),
     response: {
-      submissionId: `submission-t08576-${callIndex + 1}`,
+      submissionId: `submission-t08576-${enqueueIndex + 1}`,
       admission: 'admitted',
     },
     bornInvocationId: expect.any(String),
     run: {
       host_session_id: input.hostSessionId,
-      runtime_id: input.runtimeId,
+      runtime_id: runtimeId,
       generation: 1,
     },
   })

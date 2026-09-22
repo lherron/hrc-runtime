@@ -43,10 +43,10 @@ import { BROKER_PROTOCOL_VERSION, BROKER_TRANSPORT, BROKER_TRANSPORT_UNIX } from
 import type { BrokerEventMapper, BrokerProjectionResult } from '../event-mapper'
 import { parseBrokerRuntimeHostingState } from '../runtime-hosting'
 import {
-  isBrokerTmuxProfile,
+  executionUsesHeadlessSubstrate,
+  executionUsesTerminalSurface,
   runtimeStatusFromInvocationState,
   toDispatchRuntime,
-  usesHeadlessBrokerSubstrate,
 } from '../runtime-state'
 import {
   allocateTmuxIfRequired,
@@ -368,7 +368,7 @@ async function releaseNeverStartedLease(
     observer: allocators.observerPaneAllocator,
   } as const
   const viewerRoute = viewerPaneRouteOf(input)
-  const owner = isBrokerTmuxProfile(input.profile)
+  const owner = executionUsesTerminalSurface(input.execution)
     ? allocators.tmuxAllocator
     : viewerRoute !== undefined
       ? viewerAllocators[viewerRoute]
@@ -410,13 +410,13 @@ function resolveViewerPaneDispatch(
   dispatchEnv: Record<string, string> | undefined
 } {
   const viewerPaneRoute =
-    usesHeadlessBrokerSubstrate(input.profile) &&
+    executionUsesHeadlessSubstrate(input.execution) &&
     viewerPaneRouteOf(input) !== undefined &&
     tmuxAllocation?.lease !== undefined
   let dispatchRuntime: InvocationRuntimeContext | undefined
   if (
     tmuxAllocation !== undefined &&
-    usesHeadlessBrokerSubstrate(input.profile) &&
+    executionUsesHeadlessSubstrate(input.execution) &&
     !viewerPaneRoute
   ) {
     dispatchRuntime = undefined
@@ -479,33 +479,16 @@ async function startControllerAttempt(
   let tmuxAllocation: BrokerTmuxAllocation | undefined
   let spawnedSelection: AspToolchainBinarySelection | undefined
   let invocationStartSent = false
-  // T-08554: the tmux-tui viewer substrate is allowed because the route decision
-  // it is selected by is the frozen preparation's own (launch checks it matches
-  // the frozen hosting presentation).
-  // T-08556: the interactive tmux substrate is allowed only for a frozen
-  // interactive preparation (`interactive-codex-tui`, or T-08562's
-  // `interactive-tmux-broker`); each route launches only on its own.
-  const aspdInteractiveRoute =
-    input.aspdExecution?.route === 'interactive-codex-tui' ||
-    input.aspdExecution?.route === 'interactive-tmux-broker'
-  if (
-    input.aspdExecution !== undefined &&
-    (input.brokerClient !== undefined ||
-      (aspdInteractiveRoute
-        ? !isBrokerTmuxProfile(input.profile)
-        : !usesHeadlessBrokerSubstrate(input.profile)))
-  ) {
+  if (input.aspdExecution !== undefined && input.brokerClient !== undefined) {
     return {
       ok: false,
       error: new BrokerControllerError(
         'aspd_route_profile_mismatch',
-        aspdInteractiveRoute
-          ? 'an aspd-prepared interactive execution launches only on the interactive tmux substrate'
-          : 'an aspd-prepared execution launches only on the headless broker substrate',
+        'an aspd-prepared controller start owns its worker connection and cannot accept a caller broker client',
         {
           runtimeId: String(input.identity.runtimeId),
           operationId: input.aspdExecution.operationId,
-          brokerDriver: input.profile.brokerDriver,
+          brokerDriver: input.execution.driver,
         }
       ),
     }
@@ -524,11 +507,14 @@ async function startControllerAttempt(
     // substrate (presentation='none') + Unix v0.2 IPC, exactly like the durable
     // interactive route. Durability truth still comes from the negotiated hello +
     // persisted substrate/endpoint, never from a compile-time marker or flag.
-    if (input.brokerClient === undefined && isBrokerTmuxProfile(input.profile)) {
+    if (input.brokerClient === undefined && executionUsesTerminalSurface(input.execution)) {
       tmuxAllocation = await allocateTmuxIfRequired(ctx.allocationContext(), input)
       attempt.tmuxAllocation = tmuxAllocation
       markPhase('broker-tmux-alloc')
-    } else if (input.brokerClient === undefined && usesHeadlessBrokerSubstrate(input.profile)) {
+    } else if (
+      input.brokerClient === undefined &&
+      executionUsesHeadlessSubstrate(input.execution)
+    ) {
       // Headless durable cutover (spec §10.4): allocate a leased-tmux substrate
       // with presentation='none' (broker window + Unix IPC + token + ledger, NO
       // TUI, NO operator attach) and DIAL it over Unix v0.2 instead of spawning
@@ -610,9 +596,8 @@ async function startControllerAttempt(
         ctx.markBrokerClosing(String(input.identity.runtimeId), refusal.code, client)
         await client.close().catch(() => undefined)
         if (tmuxAllocation !== undefined) {
-          // T-08556: the interactive route's lease belongs to the interactive allocator.
           const allocation = ctx.allocationContext()
-          const releasing = aspdInteractiveRoute
+          const releasing = executionUsesTerminalSurface(input.execution)
             ? allocation.tmuxAllocator
             : allocation.headlessSubstrateAllocator
           await releasing?.release?.(tmuxAllocation).catch(() => undefined)
@@ -643,7 +628,7 @@ async function startControllerAttempt(
     if (hello.protocolVersion !== BROKER_PROTOCOL_VERSION) {
       const detail = {
         runtimeId: String(input.identity.runtimeId),
-        brokerDriver: input.profile.brokerDriver,
+        brokerDriver: input.execution.driver,
         selectedProtocol: hello.protocolVersion,
         requiredProtocol: BROKER_PROTOCOL_VERSION,
         endpointKind: durableSocketPath ? BROKER_TRANSPORT_UNIX : BROKER_TRANSPORT,
@@ -662,7 +647,7 @@ async function startControllerAttempt(
       }
     }
 
-    const admission = admitBrokerHello(input.profile, hello, expectedNegotiation)
+    const admission = admitBrokerHello(input.execution.driver, hello, expectedNegotiation)
     if (!admission.ok) {
       ctx.logger.warn?.('harness broker pre-start admission rejected', admission.detail)
       ctx.markBrokerClosing(String(identity.runtimeId), 'pre-start-admission-rejected', client)
@@ -681,9 +666,11 @@ async function startControllerAttempt(
     // value (survives even when compile drops `initialInput`) and fall back to
     // the compiled start request for callers that do not thread it.
     const requestedResponseFormat =
-      input.requestedResponseFormat ?? input.startRequest.initialInput?.responseFormat
-    const responseFormatRoute =
-      input.profile.interactionMode === 'interactive' ? 'interactive-broker' : 'broker'
+      input.requestedResponseFormat ??
+      input.execution.dispatchRequest.startRequest.initialInput?.responseFormat
+    const responseFormatRoute = executionUsesTerminalSurface(input.execution)
+      ? 'terminal-broker'
+      : 'broker'
 
     // PRIMARY gate (fail-closed): the aspc/broker-DECLARED driver capability from
     // the negotiated hello is authoritative. preflightDriverSupportsResponseFormat
@@ -694,7 +681,7 @@ async function startControllerAttempt(
     // REQUESTED format, not `startRequest.initialInput` (which compile drops for
     // launch-argv-primed profiles, the original fail-open).
     const responseFormatAdmission = preflightDriverSupportsResponseFormat({
-      profile: input.profile,
+      driver: input.execution.driver,
       hello,
       responseFormat: requestedResponseFormat,
       route: responseFormatRoute,
@@ -736,7 +723,7 @@ async function startControllerAttempt(
     // requested format (T-05142 invariant).
     if (
       requestedResponseFormat?.kind === 'json_schema' &&
-      input.startRequest.initialInput?.responseFormat === undefined
+      input.execution.dispatchRequest.startRequest.initialInput?.responseFormat === undefined
     ) {
       const detail = {
         capability: 'finalResponse.jsonSchema',
@@ -745,7 +732,7 @@ async function startControllerAttempt(
         required: { jsonSchema: true, perTurn: true },
         actual: null,
         runtimeId: String(input.identity.runtimeId),
-        brokerDriver: input.profile.brokerDriver,
+        brokerDriver: input.execution.driver,
         reason: 'initial-input-not-deliverable',
       }
       ctx.logger.warn?.('harness broker response-format undeliverable on start path', detail)
@@ -766,7 +753,7 @@ async function startControllerAttempt(
     // the route/profile lifecycle capabilities. This gate refuses to dispatch
     // an uncertified idle-ttl/recycle-child/safe-retry overlay. Broker dispatch
     // validation remains authoritative.
-    preflightBrokerLifecyclePolicy(input.profile, input.lifecyclePolicy)
+    preflightBrokerLifecyclePolicy(input.execution.driver, input.lifecyclePolicy)
 
     if (tmuxAllocation === undefined) {
       tmuxAllocation = await allocateTmuxIfRequired(ctx.allocationContext(), input)
@@ -799,19 +786,23 @@ async function startControllerAttempt(
     invocationStartSent = true
     attempt.invocationStartSent = true
     const startResult = input.lifecyclePolicy
-      ? await client.startInvocationFromRequest(input.startRequest, {
+      ? await client.startInvocationFromRequest(input.execution.dispatchRequest.startRequest, {
           dispatchEnv,
           runtime: dispatchRuntime,
           lifecyclePolicy: input.lifecyclePolicy,
         })
-      : await client.startInvocationFromRequest(input.startRequest, dispatchEnv, dispatchRuntime)
+      : await client.startInvocationFromRequest(
+          input.execution.dispatchRequest.startRequest,
+          dispatchEnv,
+          dispatchRuntime
+        )
     // Encompasses the driver's start() (e.g. codex's load-bearing paste-readiness
     // sleep + launch-command paste), so this is usually the largest broker phase.
     markPhase('broker-invocation-start')
     emitPhase('broker-start-total', Number((performance.now() - timingStartMs).toFixed(1)))
 
     const invocationAdmission = admitStartedInvocation(
-      input.profile,
+      input.execution.driver,
       hello,
       startResult.response.capabilities
     )
@@ -953,7 +944,7 @@ async function startControllerAttempt(
       scopeRef: session?.scopeRef,
       laneRef: session?.laneRef,
       sessionRef: session ? `${session.scopeRef}/lane:${session.laneRef}` : undefined,
-      cwd: input.profile.harnessInvocation.startRequest.spec.process.cwd,
+      cwd: input.execution.dispatchRequest.startRequest.spec.process.cwd,
     })
     return { ok: false, error: controllerError }
   }

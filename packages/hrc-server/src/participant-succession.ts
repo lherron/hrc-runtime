@@ -117,7 +117,7 @@ function identityResult(
       resumeState: attempt.resumeState ?? 'not_requested',
     },
     created,
-    attached: attempt.preparedProfileJson !== undefined,
+    attached: attempt.preparedDescriptorJson !== undefined,
   }
 }
 

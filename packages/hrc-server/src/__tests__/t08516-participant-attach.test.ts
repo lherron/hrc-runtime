@@ -1,18 +1,20 @@
 /**
  * T-08516 (8504A) — attachment: what makes a joined address runnable.
  *
- * Contract revision 7, R6.4, R7.2 and R7.3. The profile every case attaches is
- * composed by the shipped `createControlledParticipantAdapter`, driven with the
- * identities HRC actually returned, rather than hand-written here: a profile
- * this suite wrote itself could agree with a mistake in HRC's own identity
- * binding and prove nothing about it.
+ * Contract revision 7, R6.4, R7.2 and R7.3. Every case attaches the final
+ * published participant descriptor, composed from identities HRC actually
+ * returned rather than a database read.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
-import { createControlledParticipantAdapter } from 'agent-spaces/testing'
 import { openHrcDatabase } from 'hrc-store-sqlite'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
+import {
+  type ParticipantBrokerDescriptor,
+  neutralParticipantBrokerDescriptorHash,
+  neutralSpecHash,
+  neutralStartRequestHash,
+} from 'spaces-runtime-contracts'
 
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
@@ -74,7 +76,7 @@ describe('T-08516 participant attachment', () => {
     expect(registered.body['status']).toBe('registered')
     hostSessionId = registered.body['hostSessionId'] as string
     const identity = registered.body['identity'] as Identity
-    // R6.4's response must carry everything the profile is validated against;
+    // R6.4's response must carry everything the descriptor is validated against;
     // without these a participant cannot compose a valid attachment at all.
     for (const field of ['requestId', 'operationId'] as const) {
       expect(identity[field]).toBeString()
@@ -83,47 +85,75 @@ describe('T-08516 participant attachment', () => {
     return identity
   }
 
-  /**
-   * A profile the published adapter composed from what HRC ACTUALLY RETURNED.
-   *
-   * Every identity below comes from the register response, never from a store
-   * read. That distinction is the test: a real external participant has only
-   * the response, and an earlier version of this helper sourced requestId and
-   * operationId from the database, which let it compose a profile no real
-   * participant could. A live Arris join is what exposed that, and reading
-   * them here keeps the same gap from reopening.
-   */
-  async function composeProfile(
-    identity: Identity,
-    generation = 1
-  ): Promise<BrokerExecutionProfile> {
-    const adapter = createControlledParticipantAdapter({
-      adapterId: 't08516-attach-adapter',
-      workspaceCwd: fixture.tmpDir,
-      driver: 'noop-driver',
-    })
-    const prepared = await adapter.prepare({
-      classId: 't08516-attach-class',
-      join: 'participant-served',
-      // Structural filler for the published request type; the validator this
-      // feeds reads `join` and `identity` only.
-      participantKey: 'fixture',
-      workspaceCwd: fixture.tmpDir,
-      preparation: null,
-      identity: {
-        requestId: identity.requestId,
-        operationId: identity.operationId,
-        hostSessionId: hostSessionId,
-        generation,
-        runtimeId: identity.runtimeId,
-        invocationId: identity.invocationId as never,
+  /** A final participant descriptor composed only from the join response. */
+  function composeDescriptor(identity: Identity, generation = 1): ParticipantBrokerDescriptor {
+    const descriptor = {
+      schemaVersion: 'participant-broker-descriptor/v1',
+      descriptorId: `descriptor-${identity.attemptId}`,
+      descriptorHash: '',
+      compatibilityHash: `compatibility-${identity.attemptId}`,
+      interactionMode: 'headless',
+      expectedCapabilities: {},
+      brokerProtocol: 'harness-broker/0.2',
+      brokerDriver: 'noop-driver',
+      brokerOwnership: 'participant-owned-process',
+      harnessInvocation: {
+        startRequest: {
+          spec: {
+            specVersion: 'harness-broker.invocation/v1',
+            invocationId: identity.invocationId,
+            labels: { participant: 't08516-attach' },
+            harness: { frontend: 'test', provider: 'test', driver: 'noop-driver' },
+            process: {
+              command: 'noop-driver',
+              args: [],
+              cwd: fixture.tmpDir,
+              lockedEnv: {},
+              harnessTransport: { kind: 'pipes' },
+            },
+            interaction: { mode: 'headless', turnConcurrency: 'single', inputQueue: 'none' },
+            driver: { kind: 'noop-driver' },
+            correlation: {
+              runtimeId: identity.runtimeId,
+              hostSessionId,
+              generation: String(generation),
+              invocationId: identity.invocationId,
+              startRequestHash: '',
+              selectedProfileHash: '',
+            },
+          },
+        },
+        specHash: '',
+        startRequestHash: '',
       },
-      scopeRef: SCOPE,
-      laneRef: identity.laneRef,
-      attachEpoch: identity.attachEpoch,
-    })
-    if (prepared.status !== 'prepared') throw new Error('controlled adapter refused to prepare')
-    return prepared.profile
+      policy: {
+        permissionPolicy: { mode: 'deny', audit: true },
+        inputPolicy: {
+          readyInput: 'start-turn',
+          busy: { whenBusy: 'queue', maxDepth: 1 },
+          supportedKinds: ['user'],
+          attachmentPolicy: { localImages: false, fileRefs: false },
+        },
+        exposurePolicy: { mode: 'none' },
+      },
+      observability: {
+        correlation: {
+          requestId: identity.requestId,
+          operationId: identity.operationId,
+          hostSessionId,
+          generation,
+          runtimeId: identity.runtimeId,
+          invocationId: identity.invocationId,
+        },
+      },
+    } as unknown as ParticipantBrokerDescriptor
+    const startRequest = descriptor.harnessInvocation.startRequest
+    descriptor.harnessInvocation.specHash = neutralSpecHash(startRequest.spec)
+    descriptor.harnessInvocation.startRequestHash = neutralStartRequestHash(startRequest)
+    startRequest.spec.correlation.startRequestHash = descriptor.harnessInvocation.startRequestHash
+    descriptor.descriptorHash = neutralParticipantBrokerDescriptorHash(descriptor)
+    startRequest.spec.correlation.selectedProfileHash = descriptor.descriptorHash
+    return descriptor
   }
 
   function withStore<T>(read: (db: ReturnType<typeof openHrcDatabase>) => T): T {
@@ -152,16 +182,16 @@ describe('T-08516 participant attachment', () => {
    * R6.4's "or later through POST /v1/participants/attach" path.
    */
   function attach(body: Record<string, unknown>): Promise<Response> {
-    // A resume report is not a profile attachment and carries no endpoint; the
+    // A resume report is not a descriptor attachment and carries no endpoint; the
     // parser refuses the combination, which is the shape difference itself.
     const endpoint =
       body['resumeUnsupported'] === undefined ? { socketPath: `${fixture.tmpDir}/broker.sock` } : {}
     return fixture.postJson('/v1/participants/attach', { ...endpoint, ...body })
   }
 
-  test('a valid attachment freezes the profile and arms the existing work', async () => {
+  test('a valid descriptor attachment freezes exact bytes and arms the existing work', async () => {
     const identity = await join()
-    const profile = await composeProfile(identity)
+    const descriptor = composeDescriptor(identity)
 
     const attached = await observe(
       await attach({
@@ -169,7 +199,7 @@ describe('T-08516 participant attachment', () => {
         attemptId: identity.attemptId,
         attachEpoch: identity.attachEpoch,
         socketPath: `${fixture.tmpDir}/broker.sock`,
-        profile,
+        descriptor,
       })
     )
 
@@ -181,7 +211,7 @@ describe('T-08516 participant attachment', () => {
     await server?.stop()
     server = undefined
     const stored = readAttempt(identity.attemptId)
-    expect(stored['prepared_profile_json']).toBe(JSON.stringify(profile))
+    expect(stored['prepared_profile_json']).toBe(JSON.stringify(descriptor))
     expect(stored['attach_socket_path']).toBe(`${fixture.tmpDir}/broker.sock`)
     expect(
       withStore((db) =>
@@ -192,12 +222,12 @@ describe('T-08516 participant attachment', () => {
 
   test('an identical retry converges and does not reset a spent retry budget', async () => {
     const identity = await join()
-    const profile = await composeProfile(identity)
+    const descriptor = composeDescriptor(identity)
     const request = {
       registrationId: identity.registrationId,
       attemptId: identity.attemptId,
       attachEpoch: identity.attachEpoch,
-      profile,
+      descriptor,
     }
     await attach(request)
 
@@ -226,14 +256,14 @@ describe('T-08516 participant attachment', () => {
     expect(stored['establishment_last_error']).toBe('broker unreachable')
   })
 
-  test('a different profile cannot overwrite a frozen attempt', async () => {
+  test('a different descriptor cannot overwrite a frozen attempt', async () => {
     const identity = await join()
-    const profile = await composeProfile(identity)
+    const descriptor = composeDescriptor(identity)
     await attach({
       registrationId: identity.registrationId,
       attemptId: identity.attemptId,
       attachEpoch: identity.attachEpoch,
-      profile,
+      descriptor,
     })
     const frozen = readAttempt(identity.attemptId)['prepared_profile_json']
 
@@ -242,28 +272,28 @@ describe('T-08516 participant attachment', () => {
         registrationId: identity.registrationId,
         attemptId: identity.attemptId,
         attachEpoch: identity.attachEpoch,
-        profile: { ...profile, brokerOwnership: 'hrc-owned-process' },
+        descriptor: { ...descriptor, brokerOwnership: 'hrc-owned-process' },
       })
     )
 
     expect(conflicting.status).toBe(409)
     expect(conflicting.body['reason']).toBeOneOf([
       'participant_attach_conflict',
-      'participant_profile_invalid',
+      'participant_descriptor_invalid',
     ])
     expect(readAttempt(identity.attemptId)['prepared_profile_json']).toBe(frozen as string)
   })
 
   test('a stale attempt or epoch is refused and changes nothing', async () => {
     const identity = await join()
-    const profile = await composeProfile(identity)
+    const descriptor = composeDescriptor(identity)
 
     for (const stale of [
       { attemptId: identity.attemptId, attachEpoch: identity.attachEpoch + 1 },
       { attemptId: 'participant-attempt-superseded', attachEpoch: identity.attachEpoch },
     ]) {
       const refused = await observe(
-        await attach({ registrationId: identity.registrationId, ...stale, profile })
+        await attach({ registrationId: identity.registrationId, ...stale, descriptor })
       )
       expect(refused.status).toBe(409)
       expect(refused.body['reason']).toBe('participant_attach_epoch_stale')
@@ -280,21 +310,21 @@ describe('T-08516 participant attachment', () => {
         registrationId: 'participant-registration-absent',
         attemptId: 'participant-attempt-absent',
         attachEpoch: 1,
-        profile: {},
+        descriptor: {},
       })
     )
     expect(refused.status).toBe(409)
     expect(refused.body['reason']).toBe('participant_registration_unknown')
   })
 
-  test('refuses a profile that carries a continuation HRC did not select', async () => {
+  test('refuses a descriptor that carries a continuation HRC did not select', async () => {
     const identity = await join()
-    const profile = (await composeProfile(identity)) as unknown as {
+    const descriptor = composeDescriptor(identity) as unknown as {
       harnessInvocation: { startRequest: { spec: Record<string, unknown> } }
     }
     // A first join carries nothing forward, so a start request that asks the
     // harness to resume is asking for something HRC never authorized.
-    const smuggled = structuredClone(profile)
+    const smuggled = structuredClone(descriptor)
     smuggled.harnessInvocation.startRequest.spec['continuation'] = {
       continuationId: 'not-selected-by-hrc',
     }
@@ -304,7 +334,7 @@ describe('T-08516 participant attachment', () => {
         registrationId: identity.registrationId,
         attemptId: identity.attemptId,
         attachEpoch: identity.attachEpoch,
-        profile: smuggled as unknown as BrokerExecutionProfile,
+        descriptor: smuggled as unknown as ParticipantBrokerDescriptor,
       })
     )
 
@@ -317,24 +347,67 @@ describe('T-08516 participant attachment', () => {
     expect(stored['continuation_reason']).toBe('no_continuation')
   })
 
-  test('a profile bound to the wrong identity is refused without freezing', async () => {
+  test('a descriptor bound to the wrong identity is refused without freezing', async () => {
     const identity = await join()
-    const wrong = await composeProfile({ ...identity, runtimeId: 'rt-not-allocated-by-hrc' })
+    const wrong = composeDescriptor({ ...identity, runtimeId: 'rt-not-allocated-by-hrc' })
 
     const refused = await observe(
       await attach({
         registrationId: identity.registrationId,
         attemptId: identity.attemptId,
         attachEpoch: identity.attachEpoch,
-        profile: wrong,
+        descriptor: wrong,
       })
     )
 
     expect(refused.status).toBe(409)
-    expect(refused.body['reason']).toBe('participant_profile_invalid')
+    expect(refused.body['reason']).toBe('participant_descriptor_invalid')
     const stored = readAttempt(identity.attemptId)
     expect(stored['prepared_profile_json']).toBeNull()
     expect(stored['establishment_attempt_count']).toBe(0)
+  })
+
+  test('a retired agent-runtime-profile/v1 object is refused before any attachment effect', async () => {
+    const identity = await join()
+    const retiredProfile = {
+      schemaVersion: 'agent-runtime-profile/v1',
+      profileId: 'retired-profile',
+      profileHash: 'retired-hash',
+    }
+
+    const refused = await observe(
+      await attach({
+        registrationId: identity.registrationId,
+        attemptId: identity.attemptId,
+        attachEpoch: identity.attachEpoch,
+        descriptor: retiredProfile,
+      })
+    )
+
+    expect(refused.status).toBe(409)
+    expect(refused.body['reason']).toBe('participant_descriptor_invalid')
+    const stored = readAttempt(identity.attemptId)
+    expect(stored['prepared_profile_json']).toBeNull()
+    expect(stored['state']).toBe('IDENTITY_MINTED')
+    expect(stored['attach_socket_path']).toBeNull()
+  })
+
+  test('a descriptor hash disagreement is refused before persistence', async () => {
+    const identity = await join()
+    const descriptor = composeDescriptor(identity)
+
+    const refused = await observe(
+      await attach({
+        registrationId: identity.registrationId,
+        attemptId: identity.attemptId,
+        attachEpoch: identity.attachEpoch,
+        descriptor: { ...descriptor, descriptorHash: 'descriptor-hash-disagreement' },
+      })
+    )
+
+    expect(refused.status).toBe(409)
+    expect(refused.body['reason']).toBe('participant_descriptor_invalid')
+    expect(readAttempt(identity.attemptId)['prepared_profile_json']).toBeNull()
   })
 
   test('an unsupported native resume is an outcome, not a retraction', async () => {
@@ -367,7 +440,7 @@ describe('T-08516 participant attachment', () => {
 
   test('attachment persists the endpoint and the hosting intent it needs', async () => {
     const identity = await join()
-    const profile = await composeProfile(identity)
+    const descriptor = composeDescriptor(identity)
 
     // A live Arris attach exhausted its whole retry budget on "participant
     // attempt is missing hosting intent" because attachment armed the work
@@ -379,7 +452,7 @@ describe('T-08516 participant attachment', () => {
         registrationId: identity.registrationId,
         attemptId: identity.attemptId,
         attachEpoch: identity.attachEpoch,
-        profile,
+        descriptor,
       })
     )
     expect(attached.body).toMatchObject({ status: 'attached', prepared: true })
@@ -395,12 +468,12 @@ describe('T-08516 participant attachment', () => {
 
   test('a classless join never fabricates a class into its lifecycle policy', async () => {
     const identity = await join()
-    const profile = await composeProfile(identity)
+    const descriptor = composeDescriptor(identity)
     await attach({
       registrationId: identity.registrationId,
       attemptId: identity.attemptId,
       attachEpoch: identity.attachEpoch,
-      profile,
+      descriptor,
     })
 
     // The route id is interpolated from the class, and a classless direct join
@@ -416,7 +489,7 @@ describe('T-08516 participant attachment', () => {
 
   test('a participant-served attachment without any endpoint is refused', async () => {
     const identity = await join()
-    const profile = await composeProfile(identity)
+    const descriptor = composeDescriptor(identity)
 
     // Neither the join nor this attachment names an endpoint, and a
     // participant-served registration cannot be hosted without one. It is a
@@ -426,7 +499,7 @@ describe('T-08516 participant attachment', () => {
         registrationId: identity.registrationId,
         attemptId: identity.attemptId,
         attachEpoch: identity.attachEpoch,
-        profile,
+        descriptor,
       })
     )
     expect(refused.status).toBe(409)
@@ -443,12 +516,12 @@ describe('T-08516 participant attachment', () => {
     expect(readAttempt(identity.attemptId)['establishment_work_state']).toBe('pending')
     expect(withStore((db) => db.participantRegistrations.listEstablishmentWork())).toEqual([])
 
-    const profile = await composeProfile(identity)
+    const descriptor = composeDescriptor(identity)
     await attach({
       registrationId: identity.registrationId,
       attemptId: identity.attemptId,
       attachEpoch: identity.attachEpoch,
-      profile,
+      descriptor,
     })
     await server?.stop()
     server = undefined

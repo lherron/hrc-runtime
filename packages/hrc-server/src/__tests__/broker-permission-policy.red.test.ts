@@ -52,11 +52,14 @@ import type {
   PermissionDecision,
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
-
 import { type BrokerClientLike, HarnessBrokerController } from '../broker/controller'
 
-import { makeBrokerProfile, makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
+import {
+  makeHrcPolicy,
+  makeIdentity,
+  makeSelectedExecution,
+  makeSelectedExecutionPlan,
+} from './broker-compile-fixtures'
 import { envelope } from './broker-event-mapper-fixtures'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -341,27 +344,12 @@ function makePermStartInput(
     invocationId: INVOCATION_ID as ReturnType<typeof makeIdentity>['invocationId'],
   })
 
-  // Build profile with the specified permissionPolicy (override the default 'deny').
-  const { profile: baseProfile, startRequest } = makeBrokerProfile(identity)
-  const profile: BrokerExecutionProfile = {
-    ...baseProfile,
-    policy: {
-      ...baseProfile.policy,
-      permissionPolicy,
-    },
-  } as unknown as BrokerExecutionProfile
-
-  const response = makeCompileResponse(identity, [profile])
-  if (!response.ok) {
-    throw new Error('fixture compile response unexpectedly failed')
-  }
+  const { execution } = makeSelectedExecution(identity)
 
   return {
-    plan: response.plan,
-    profile,
-    startRequest,
-    specHash: profile.harnessInvocation.specHash,
-    startRequestHash: profile.harnessInvocation.startRequestHash,
+    execution,
+    plan: makeSelectedExecutionPlan(),
+    hrcPolicy: { ...makeHrcPolicy(), permissionPolicy },
     identity,
     dispatchEnv: { HRC_DISPATCH: 'yes' },
   }

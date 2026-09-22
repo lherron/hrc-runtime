@@ -28,22 +28,50 @@ export function compilerPrimingSubmissionId(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot
 ): string | undefined {
-  if (runtime.planHash === undefined || runtime.selectedProfileHash === undefined) return undefined
-  const record = db.compiledRuntimePlans.getByPlanHash(runtime.planHash)
+  const operation =
+    runtime.activeOperationId !== undefined
+      ? db.runtimeOperations.getByOperationId(runtime.activeOperationId)
+      : undefined
+  // The operation's frozen v2 admission is the durable source for execution
+  // bytes. The compact compiled-plan projection intentionally retains only
+  // selection/provenance, so it cannot be used to rediscover an input id.
+  if (operation?.preparationJson !== undefined) {
+    try {
+      const preparation = JSON.parse(operation.preparationJson) as {
+        admission?: {
+          plan?: { schemaVersion?: unknown }
+          execution?: {
+            dispatchRequest?: { startRequest?: { initialInput?: { inputId?: unknown } } }
+          }
+        }
+      }
+      if (preparation.admission?.plan?.schemaVersion === 'agent-runtime-plan/v2') {
+        const inputId =
+          preparation.admission.execution?.dispatchRequest?.startRequest?.initialInput?.inputId
+        if (typeof inputId === 'string' && inputId.length > 0) return inputId
+      }
+    } catch {
+      // The plan fallback below retains ordinary historical compatibility.
+    }
+  }
+  // The controller's just-started snapshot is intentionally smaller than the
+  // persisted runtime row. Boundary P already bound its active operation to a
+  // plan, so use that durable link until the returned snapshot is refreshed.
+  const planHash = runtime.planHash ?? operation?.planHash
+  if (planHash === undefined) return undefined
+  const record = db.compiledRuntimePlans.getByPlanHash(planHash)
   if (record === null) return undefined
   try {
     const plan = JSON.parse(record.planProjectionJson) as {
-      executionProfiles?: Array<{
-        profileHash?: unknown
-        harnessInvocation?: {
-          startRequest?: { initialInput?: { inputId?: unknown } }
-        }
-      }>
+      schemaVersion?: unknown
+      execution?: {
+        dispatchRequest?: { startRequest?: { initialInput?: { inputId?: unknown } } }
+      }
     }
-    const selected = plan.executionProfiles?.find(
-      (profile) => profile.profileHash === runtime.selectedProfileHash
-    )
-    const inputId = selected?.harnessInvocation?.startRequest?.initialInput?.inputId
+    // Retained v1 plan bytes are attach/replay evidence only. Never reopen
+    // their plural profile selection during a v2 runtime decision.
+    if (plan.schemaVersion !== 'agent-runtime-plan/v2') return undefined
+    const inputId = plan.execution?.dispatchRequest?.startRequest?.initialInput?.inputId
     return typeof inputId === 'string' && inputId.length > 0 ? inputId : undefined
   } catch {
     return undefined

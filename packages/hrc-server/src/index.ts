@@ -461,7 +461,6 @@ export {
   decideInteractiveBrokerAdmission,
   decideInteractiveTmuxBrokerContinuation,
   decideInteractiveTmuxBrokerStartRoute,
-  decideInteractiveTmuxExecutionRoute,
   decideLegacyRuntimeStartupDisposition,
   extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,

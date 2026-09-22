@@ -1,13 +1,9 @@
 import { parseScopeRef, resolveQualifiedScopeInput } from 'agent-scope'
-import type { ProvisioningScalars } from 'agent-scope'
-import {
-  type ObservedRuntimeIntentPlacement,
-  assembleHrcRuntimeIntent,
-  buildInvalidProfileWarning,
-} from 'hrc-core'
+import { buildInvalidProfileWarning } from 'hrc-core'
 import type { HrcRuntimeIntent } from 'hrc-core'
 
 import { withAspdObservationSession } from '../agent-spaces-adapter/aspd-observation-client.js'
+import { observedRuntimeBundle } from '../observed-runtime-bundle.js'
 import { resolvePlacementInProcess } from '../placements-resolve.js'
 
 /**
@@ -99,29 +95,24 @@ export async function buildKickRuntimeIntent(
           })
         )
       }
-      return assembleHrcRuntimeIntent(
-        {
-          provisioning: {
-            provider: declaration.provisioning.provider,
-            frontend: declaration.provisioning.frontend,
-            effectiveHarness: declaration.provisioning.effectiveHarness,
-            scalars: declaration.provisioning.scalars,
-          },
-          placement: {
-            agentRoot: declaration.placement.agentRoot,
-            ...(declaration.placement.projectRoot !== undefined
-              ? { projectRoot: declaration.placement.projectRoot }
-              : {}),
-            cwd: declaration.placement.cwd,
-            runMode: declaration.placement.runMode,
-            bundle: declaration.placement.bundle as ObservedRuntimeIntentPlacement['bundle'],
-          },
+      const bundle = observedRuntimeBundle(declaration.placement.bundle)
+      if (bundle === undefined) return undefined
+      return {
+        placement: {
+          agentRoot: declaration.placement.agentRoot,
+          ...(declaration.placement.projectRoot !== undefined
+            ? { projectRoot: declaration.placement.projectRoot }
+            : {}),
+          cwd: declaration.placement.cwd,
+          runMode: declaration.placement.runMode,
+          bundle,
+          dryRun: false,
         },
-        {
-          interactive: false,
-          preferredMode: 'nonInteractive',
-        }
-      )
+        // ASP realization is observation evidence, never selection authority
+        // for the later ordinary v2 compile request.
+        harness: { interactive: false },
+        execution: { preferredMode: 'nonInteractive' },
+      }
     })
   } catch {
     return undefined
@@ -138,14 +129,20 @@ export async function buildKickRuntimeIntent(
 function parseKickDirectives(
   scopeRef: string,
   materializationIntent: string | undefined
-): Partial<ProvisioningScalars> | undefined {
+): Record<string, string | number | boolean> | undefined {
   const block = materializationIntent?.trim()
   if (block === undefined || block.length === 0) return undefined
   try {
     const resolved = resolveQualifiedScopeInput(
       `${scopeRef}${block.startsWith('+') ? '' : '+'}${block}`
     )
-    return resolved.directives
+    const directives: Record<string, string | number | boolean> = {}
+    for (const [key, value] of Object.entries(resolved.directives ?? {})) {
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        directives[key] = value
+      }
+    }
+    return directives
   } catch {
     return undefined
   }

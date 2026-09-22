@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
-import { createControlledParticipantAdapter } from 'agent-spaces/testing'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 import {
-  neutralBrokerExecutionProfileHash,
+  neutralParticipantBrokerDescriptorHash,
   neutralSpecHash,
   neutralStartRequestHash,
 } from 'spaces-runtime-contracts'
@@ -18,6 +16,7 @@ import type { HrcServer, RegistrationClassConfig } from '../index.js'
 import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
 import { registerDirectParticipant } from '../participant-host-registration.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { makeParticipantBrokerDescriptor } from './fixtures/participant-broker-descriptor.fixture.js'
 import {
   type T08517EvidenceMode,
   createT08517EvidenceAdapter,
@@ -166,52 +165,37 @@ describe('T-08517 host participant succession', () => {
     }
   }
 
-  async function successorProfile(
+  function successorDescriptor(
     result: Record<string, unknown>,
     continuation?: Record<string, unknown>
-  ): Promise<BrokerExecutionProfile> {
+  ) {
     const identity = result['identity'] as Record<string, unknown>
-    const adapter = createControlledParticipantAdapter({
-      adapterId: ADAPTER_ID,
-      workspaceCwd: fixture.tmpDir,
-      driver: 'noop-driver',
+    const descriptor = makeParticipantBrokerDescriptor({
+      requestId: identity['requestId'] as string,
+      operationId: identity['operationId'] as string,
+      hostSessionId: result['hostSessionId'] as string,
+      generation: result['generation'] as number,
+      runtimeId: identity['runtimeId'] as string,
+      invocationId: identity['invocationId'] as string,
+      cwd: fixture.tmpDir,
     })
-    const prepared = await adapter.prepare({
-      classId: CLASS_ID,
-      join: 'participant-served',
-      participantKey: PARTICIPANT_KEY,
-      workspaceCwd: fixture.tmpDir,
-      preparation: null,
-      identity: {
-        requestId: identity['requestId'] as string,
-        operationId: identity['operationId'] as string,
-        hostSessionId: result['hostSessionId'] as string,
-        generation: result['generation'] as number,
-        runtimeId: identity['runtimeId'] as string,
-        invocationId: identity['invocationId'] as never,
-      },
-      scopeRef: SCOPE,
-      laneRef: identity['laneRef'] as string,
-      attachEpoch: identity['attachEpoch'] as number,
-    })
-    if (prepared.status !== 'prepared') throw new Error('controlled adapter refused profile')
-    if (continuation === undefined) return prepared.profile
+    if (continuation === undefined) return descriptor
 
-    const profile = structuredClone(prepared.profile)
-    profile.harnessInvocation.startRequest.spec.continuation = continuation as never
-    profile.harnessInvocation.specHash = neutralSpecHash(
-      profile.harnessInvocation.startRequest.spec
+    const carried = structuredClone(descriptor)
+    carried.harnessInvocation.startRequest.spec.continuation = continuation as never
+    carried.harnessInvocation.specHash = neutralSpecHash(
+      carried.harnessInvocation.startRequest.spec
     )
-    profile.harnessInvocation.startRequestHash = neutralStartRequestHash(
-      profile.harnessInvocation.startRequest
+    carried.harnessInvocation.startRequestHash = neutralStartRequestHash(
+      carried.harnessInvocation.startRequest
     )
-    profile.profileHash = neutralBrokerExecutionProfileHash(profile)
-    profile.harnessInvocation.startRequest.spec.correlation = {
-      ...profile.harnessInvocation.startRequest.spec.correlation,
-      startRequestHash: profile.harnessInvocation.startRequestHash,
-      selectedProfileHash: profile.profileHash,
+    carried.descriptorHash = neutralParticipantBrokerDescriptorHash(carried)
+    carried.harnessInvocation.startRequest.spec.correlation = {
+      ...carried.harnessInvocation.startRequest.spec.correlation,
+      startRequestHash: carried.harnessInvocation.startRequestHash,
+      selectedProfileHash: carried.descriptorHash,
     }
-    return profile
+    return carried
   }
 
   test('H1 advances attempt/epoch/invocation while preserving binding runtime and session', async () => {
@@ -433,7 +417,7 @@ describe('T-08517 host participant succession', () => {
         attemptId: identity['attemptId'],
         attachEpoch: identity['attachEpoch'],
         socketPath: `${fixture.tmpDir}/host-b.sock`,
-        profile: await successorProfile(successor),
+        descriptor: successorDescriptor(successor),
       })
     )
     expect(mismatch).toMatchObject({
@@ -442,7 +426,7 @@ describe('T-08517 host participant succession', () => {
     })
     expect(
       server!.db.participantRegistrations.getAttempt(identity['attemptId'] as string)
-        ?.preparedProfileJson
+        ?.preparedDescriptorJson
     ).toBeUndefined()
 
     const unsupported = await json(
@@ -487,13 +471,13 @@ describe('T-08517 host participant succession', () => {
         attemptId: identity['attemptId'],
         attachEpoch: identity['attachEpoch'],
         socketPath: `${fixture.tmpDir}/host-b.sock`,
-        profile: await successorProfile(successor, continuation),
+        descriptor: successorDescriptor(successor, continuation),
       })
     )
     expect(attached).toMatchObject({ status: 'attached', prepared: true })
     expect(
       server!.db.participantRegistrations.getAttempt(identity['attemptId'] as string)
-    ).toMatchObject({ resumeState: 'requested', preparedProfileJson: expect.any(String) })
+    ).toMatchObject({ resumeState: 'requested', preparedDescriptorJson: expect.any(String) })
   })
 
   test('live conflict refuses and unknown evidence holds without disposing the predecessor', async () => {

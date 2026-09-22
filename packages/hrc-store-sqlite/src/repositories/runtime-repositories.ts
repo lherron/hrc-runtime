@@ -429,8 +429,8 @@ export class RuntimeRepository {
       record.generation,
       record.launchId ?? null,
       record.transport,
-      record.harness,
-      record.provider,
+      record.harness ?? null,
+      record.provider ?? null,
       record.status,
       record.statusChangedAt && record.statusChangedAt !== 'unknown'
         ? record.statusChangedAt

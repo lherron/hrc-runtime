@@ -110,22 +110,19 @@ describe('broker submission wait follows the disposition ledger', () => {
 
   it('holds a cold caller invoke until compiler priming reaches terminal on the event projection', async () => {
     const planHash = 'plan-compiler-priming'
-    const profileHash = 'profile-compiler-priming'
     const submissionId = 'input-compiler-priming'
     const turnId = 'turn-compiler-priming'
     fixture.db.compiledRuntimePlans.insert({
       planHash,
       compileId: 'compile-compiler-priming',
-      schemaVersion: 'agent-runtime-plan/v1',
+      schemaVersion: 'agent-runtime-plan/v2',
       compilerName: 'agent-spaces',
       compilerVersion: 'test',
       planProjectionJson: JSON.stringify({
-        executionProfiles: [
-          {
-            profileHash,
-            harnessInvocation: { startRequest: { initialInput: { inputId: submissionId } } },
-          },
-        ],
+        schemaVersion: 'agent-runtime-plan/v2',
+        execution: {
+          dispatchRequest: { startRequest: { initialInput: { inputId: submissionId } } },
+        },
       }),
       createdAt: new Date().toISOString(),
     })
@@ -138,7 +135,6 @@ describe('broker submission wait follows the disposition ledger', () => {
         runtimeId: Q_RUNTIME_ID,
         activeInvocationId: Q_INVOCATION_ID,
         planHash,
-        selectedProfileHash: profileHash,
       } as never,
       new AbortController().signal
     )
@@ -296,21 +292,18 @@ describe('broker submission wait follows the disposition ledger', () => {
 
   it('lost is terminal for compiler priming correlation', async () => {
     const planHash = 'plan-lost-compiler-priming'
-    const profileHash = 'profile-lost-compiler-priming'
     const submissionId = 'input-lost-compiler-priming'
     fixture.db.compiledRuntimePlans.insert({
       planHash,
       compileId: 'compile-lost-compiler-priming',
-      schemaVersion: 'agent-runtime-plan/v1',
+      schemaVersion: 'agent-runtime-plan/v2',
       compilerName: 'agent-spaces',
       compilerVersion: 'test',
       planProjectionJson: JSON.stringify({
-        executionProfiles: [
-          {
-            profileHash,
-            harnessInvocation: { startRequest: { initialInput: { inputId: submissionId } } },
-          },
-        ],
+        schemaVersion: 'agent-runtime-plan/v2',
+        execution: {
+          dispatchRequest: { startRequest: { initialInput: { inputId: submissionId } } },
+        },
       }),
       createdAt: new Date().toISOString(),
     })
@@ -323,7 +316,6 @@ describe('broker submission wait follows the disposition ledger', () => {
           runtimeId: Q_RUNTIME_ID,
           activeInvocationId: Q_INVOCATION_ID,
           planHash,
-          selectedProfileHash: profileHash,
         } as never,
         new AbortController().signal
       )

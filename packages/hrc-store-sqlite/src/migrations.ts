@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite'
 
 import { brokerMigrations } from './migrations/broker-migrations.js'
+import { runtimeLegacyIdentityNullableMigration } from './migrations/runtime-legacy-identity-nullability.js'
 import { schemaMigrations } from './migrations/schema-migrations.js'
 import { sessionTitleCascadeMigrations } from './migrations/session-title-cascade-migrations.js'
 import { sessionTitleMigrations } from './migrations/session-title-migrations.js'
@@ -13,6 +14,9 @@ export const phase1Migrations: readonly HrcMigration[] = [
   ...brokerMigrations,
   ...sessionTitleMigrations,
   ...sessionTitleCascadeMigrations,
+  // Must run after broker migrations have added every runtime column that the
+  // nullable-identity rebuild preserves.
+  runtimeLegacyIdentityNullableMigration,
 ]
 
 /**
@@ -241,7 +245,34 @@ export function runMigrations(db: Database): void {
     }
   })
 
-  applyPending.immediate(pending)
+  const foreignKeyRebuild = pending.find((migration) => migration.requiresForeignKeysDisabled)
+  if (foreignKeyRebuild === undefined) {
+    applyPending.immediate(pending)
+  } else {
+    const before = pending.slice(0, pending.indexOf(foreignKeyRebuild))
+    if (before.length > 0) applyPending.immediate(before)
+
+    // SQLite cannot drop a referenced table while FK enforcement is active.
+    // This dedicated migration copies the parent under the same public name,
+    // so its already-copied keys satisfy every child when enforcement returns.
+    db.exec('PRAGMA foreign_keys = OFF;')
+    try {
+      db.transaction((migration: HrcMigration) => {
+        migration.apply(db)
+        execute(
+          db,
+          'INSERT INTO hrc_migrations (id, applied_at) VALUES (?, ?)',
+          migration.id,
+          new Date().toISOString()
+        )
+      })(foreignKeyRebuild)
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON;')
+    }
+
+    const after = pending.slice(pending.indexOf(foreignKeyRebuild) + 1)
+    if (after.length > 0) applyPending.immediate(after)
+  }
 
   if (upgradingExistingStore) {
     const actor = resolveMigrationActor()

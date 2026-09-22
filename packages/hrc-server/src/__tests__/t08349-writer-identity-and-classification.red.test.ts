@@ -26,7 +26,6 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
-import { createControlledParticipantAdapter } from 'agent-spaces/testing'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type {
   ParticipantAdapter,
@@ -41,6 +40,7 @@ import type { HrcServer, HrcServerOptions, RegistrationClassConfig } from '../in
 import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
 import { isAbsorbingParticipantAttempt } from '../participant-writer-evidence.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { makeParticipantBrokerDescriptor } from './fixtures/participant-broker-descriptor.fixture.js'
 
 type GenericParticipantClass = {
   classId: string
@@ -84,7 +84,6 @@ function capturingAdapter(
   workspaceCwd: string,
   evidence: Pick<WriterEvidence, 'writePath' | 'liveness' | 'priorRecovery'>
 ): { adapter: ParticipantAdapter; asked: WriterRef[] } {
-  const base = createControlledParticipantAdapter({ adapterId, workspaceCwd })
   const asked: WriterRef[] = []
   const answer = (request: WriterRetirementRequest | WriterInspectionRequest): WriterEvidence => {
     asked.push({ ...request.writerRef })
@@ -98,9 +97,20 @@ function capturingAdapter(
   return {
     asked,
     adapter: {
-      adapterId: base.adapterId,
-      admit: (input) => base.admit(input),
-      prepare: (input) => base.prepare(input),
+      adapterId,
+      admit: () => ({ status: 'pending', reason: 'not used by direct registration' }),
+      prepare: (input) => ({
+        status: 'prepared',
+        descriptor: makeParticipantBrokerDescriptor({
+          requestId: input.identity.requestId,
+          operationId: input.identity.operationId,
+          hostSessionId: input.identity.hostSessionId,
+          generation: input.identity.generation,
+          runtimeId: input.identity.runtimeId,
+          invocationId: input.identity.invocationId,
+          cwd: workspaceCwd,
+        }),
+      }),
       retireWriter: answer,
       inspectWriter: answer,
     },
@@ -536,7 +546,7 @@ describe('T-08349 compatibility fields after admission withdrawal', () => {
         registration?.registrationId ?? ''
       )
       expect(attempt).toMatchObject({ state: 'IDENTITY_MINTED', establishmentWorkState: 'pending' })
-      expect(attempt?.preparedProfileJson).toBeUndefined()
+      expect(attempt?.preparedDescriptorJson).toBeUndefined()
     } finally {
       db.close()
     }

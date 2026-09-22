@@ -132,22 +132,15 @@ export function toTargetState(
 }
 
 export function toTargetCapabilities(
-  session: HrcSessionRecord,
+  _session: HrcSessionRecord,
   runtime: HrcTargetRuntimeView | undefined,
   state: HrcTargetState
 ): TargetCapabilityView {
   const modesSupported = new Set<'headless' | 'nonInteractive'>()
-  if (
-    runtime?.transport === 'sdk' ||
-    session.lastAppliedIntentJson?.harness.interactive === false
-  ) {
+  if (runtime?.transport === 'sdk') {
     modesSupported.add('nonInteractive')
   }
-  if (
-    runtime?.transport === 'tmux' ||
-    runtime?.transport === 'headless' ||
-    session.lastAppliedIntentJson?.harness.interactive === true
-  ) {
+  if (runtime?.transport === 'tmux' || runtime?.transport === 'headless') {
     modesSupported.add('headless')
   }
 
@@ -156,7 +149,9 @@ export function toTargetCapabilities(
     state,
     modesSupported: supported,
     defaultMode: supported[0] ?? 'none',
-    dmReady: supported.length > 0 || session.lastAppliedIntentJson !== undefined,
+    // Readiness is a live execution fact. A historical request is not a
+    // selected profile/driver and must not make an unborn target appear ready.
+    dmReady: supported.length > 0,
     sendReady: runtime?.supportsLiteralSend ?? false,
     peekReady: runtime?.supportsCapture ?? false,
   }

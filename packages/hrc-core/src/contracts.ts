@@ -140,7 +140,12 @@ export type HrcEventTail = {
 }
 
 export type HrcHarnessIntent = {
-  provider: HrcProvider
+  /**
+   * Legacy routing metadata. Omitted ordinary v2 births leave provider
+   * selection to ASP rather than projecting its realized value back into an
+   * HRC request.
+   */
+  provider?: HrcProvider | undefined
   interactive: boolean
   id?: HrcHarness | undefined
   fallback?: string | undefined
@@ -279,9 +284,38 @@ export type HrcPresentationIntent = {
   operator?: 'none' | 'tmux-tui' | 'observer' | undefined
 }
 
+/**
+ * Explicit v2 compile-request overrides. These fields are intentionally
+ * optional: absence belongs to ASP's profile/target/default precedence, while
+ * an explicit `false` presentation is a real override.
+ */
+export type HrcRequestedHarnessSelection = {
+  harness?: 'agent-harness' | 'claude' | 'codex' | 'muse' | undefined
+  modelProvider?: string | undefined
+  model?: string | undefined
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | undefined
+  presentation?: boolean | undefined
+}
+
+/**
+ * Raw per-summon values. Snake case deliberately distinguishes this lower
+ * precedence source from the explicit compile-request overrides above.
+ */
+export type HrcSummonHarnessDirectives = {
+  harness?: 'agent-harness' | 'claude' | 'codex' | 'muse' | undefined
+  model_provider?: string | undefined
+  model?: string | undefined
+  reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | undefined
+  presentation?: boolean | undefined
+}
+
 export type HrcRuntimeIntent = {
   placement: RuntimePlacement
   harness: HrcHarnessIntent
+  /** Producer-owned v2 selection request; HRC neither fills nor normalizes it. */
+  selection?: HrcRequestedHarnessSelection | undefined
+  /** Raw per-summon v2 directives; forwarded only at selectionContext.summonDirectives. */
+  summonDirectives?: HrcSummonHarnessDirectives | undefined
   /**
    * T-07398 — the effective `[provisioning]` top-level scalars this runtime is
    * born with, after the profile+target merge and any per-summon directive
@@ -501,8 +535,10 @@ export type HrcRuntimeSnapshot = {
   generation: number
   launchId?: string | undefined
   transport: string
-  harness: HrcHarness
-  provider: HrcProvider
+  /** Legacy adapter identity. Producer-selected v2 executions leave this absent. */
+  harness?: HrcHarness | undefined
+  /** Legacy adapter identity. Producer-selected v2 executions leave this absent. */
+  provider?: HrcProvider | undefined
   status: string
   /** Causal timestamp of the most recent runtime status transition. */
   statusChangedAt?: string | undefined

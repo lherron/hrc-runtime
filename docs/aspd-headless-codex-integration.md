@@ -1,4 +1,112 @@
-# HRC headless Codex preparation through aspd (T-08542)
+# HRC producer-selected execution preparation through aspd
+
+## Governing v2 consumer amendment (T-08690; approved EN-16020)
+
+This section governs the ASP v2 cutover. It supersedes every conflicting
+Codex-specific selector, node-default, route, profile, driver-exception, and
+v1-retry statement below. The older T-08542 through T-08596 narrative remains
+as historical evidence for frozen-release and broker-lifecycle behavior; it is
+not an alternate v2 contract.
+
+### Boundary and compile request
+
+ASP is the producer of one selected execution. It loads strict-v4
+`agent-profile.toml` and schema-2 `asp-targets.toml`, merges agent profile,
+project target, raw summon directives, then explicit request overrides, and
+performs defaults, combination validation, recipe, worker, and driver
+selection. Final accepted ASP v2 evidence is source commit
+`631e7b246aaede313ee6e0aacd71e766f26ae07c`, coherent tuple
+`0.1.1-dev.20260921215301`, isolated accepted release
+`asp-631e7b246aae-20260922T025351Z-01f30b`. Installed acceptance proved all
+9 harness/presentation/default cases, all 8 invalid-wire refusals, four
+identities, and the `agent-harness` default. HRC has not yet advanced this tuple
+or activated main aspd; those remain the coordinated cutover.
+
+HRC sends omissions as omissions in two source-distinct inputs. Explicit request
+overrides use only the optional camelCase fields under `compileRequest.requested`:
+`harness`, `modelProvider`, `model`, `reasoningEffort`, and `presentation`. Raw
+per-summon overrides use `compileRequest.selectionContext.summonDirectives` and
+contain only present fields with these snake_case names:
+
+```text
+harness
+model_provider
+model
+reasoning_effort
+presentation
+```
+
+`presentation` is boolean when present; false remains false. HRC has no local
+presentation default or route selection. It must reject removed v1 selectors,
+aliases, plural profile selection and driver requests rather than translating
+them. The required precedence proof is profile provider/model, then project
+reasoning effort, then summon `presentation=false`, then explicit request
+`presentation=true`, with compile-request provenance.
+
+### Frozen generic hosting
+
+Before boundary P, HRC validates a compatible aspd service and exactly one
+producer-selected execution. At P it atomically persists the complete successful
+response, raw selection carrier, execution hash, canonical dispatch request,
+execution release, hosting declaration, admission result, allocated identity,
+lifecycle overlay, and idempotency key. Only then does it allocate concrete
+resources from `execution.hosting`. It launches from reread frozen bytes only;
+retry, warm control, replay and restart never compile, reselect or bind to the
+currently active ASP release.
+
+Every selected driver requires positive
+`executionRelease.worker.hostedDrivers` membership both before hosting and at
+launch. There is no Codex or other driver exception. HRC owns only hosting,
+identity, durable endpoint/lease/presentation state, dispatch overlays, reuse,
+projection and lifecycle control. `presentation=false` never means that HRC may
+omit process-container or other hosting resources the selected execution needs.
+A failed/incompatible/unidentified service, malformed selected execution,
+containment failure, or hosting-evidence failure refuses before effects and
+never falls back to a facade, resolver, local profile, or driver choice.
+
+An explicit presentation mismatch against a live worker refuses without
+altering it. An omitted presentation carries no replacement instruction and may
+reuse the established birth variant through ordinary lifecycle admission. A
+prepared operation proves `invocation.start` was not submitted; only the same
+host session and idempotency key may resume its immutable bytes, and startup
+never auto-launches it. Uncertain `invocation.start` is never replayed.
+
+### Clean cutover and activation law
+
+There is no v1 compatibility reader. Existing v1 preparations are explicitly
+cancelled or abandoned and never resumed under v2. Immediately before activating
+ASP B, HRC B requires—and reruns—the inventory showing zero incompatible
+harness-broker prepared operations and zero accepted headless runs with
+`dispatched_input_id` NULL. It retains a v1
+broker only when reattachment is contract-neutral: persisted endpoint, tmux
+lease, runtime identity and invocation identity are sufficient. Historical
+`selectedProfileHash` and `startRequestHash` are opaque attach fences, not
+selection inputs; `session.lastAppliedIntentJson` old selectors are never read.
+Such a retained worker may attach, replay, receive input, interrupt, terminate
+and retain continuation identity. Any path requiring compilation,
+reprovisioning or v1-plan interpretation refuses and births v2 instead. ACTIVE
+external participant attempts are drained or retired because their reconnect
+parses `prepared_profile_json`; no compatibility reader is introduced.
+
+External participant attachment is a v2 participant boundary, not an ordinary
+compile profile. Its sole external descriptor is `ParticipantBrokerDescriptor`.
+HRC validates and freezes that descriptor with the participant's allocated
+identity and endpoint, but never accepts, translates, or reconnects an
+`agent-runtime-profile/v1` `BrokerExecutionProfile`. A legacy
+`prepared_profile_json` row is drained or retired before cutover rather than
+adapted. This does not authorize main aspd activation: HRC B is installed and
+restarted while ASP A still serves, and ASP B activates only at the coordinated
+cutover point above.
+
+Record the HRC A/ASP A rollback pair before work. Install and restart HRC B
+while ASP A still serves; prove B refuses A/v1 compilation before P and the
+activation inventory is empty. Activate ASP B at the unchanged endpoint and
+read back selected==running plus HRC's observed ASP release identity. The first
+persisted v2 preparation is irreversible: before it the recorded A pair may be
+restored; after it v1 rollback is forbidden and correction is fix-forward.
+Canary acceptance proves stable runtime, invocation and continuation IDs through
+tmux replay, input, interrupt and terminate, then a dead-seat v2 reprovision
+using the retained old continuation.
 
 Status: implementation spec for T-08542; Daedalus APPROVE EN-12902 (records
 `248138b9`). Governing design: `asp-hrc-split-proposal.md` at `bf3e539e`
@@ -89,7 +197,7 @@ reattach law that §1.5 established for `codex-app-server`. Each birth launches 
 worker and every ASP-owned helper (hook bridge, tmux launch runner) from one
 frozen execution release.
 
-HRC admits the prepared profile by generic hosting requirements (interactive
+HRC admits the prepared selected execution by generic hosting requirements (interactive
 tmux terminal, supported worker protocol, durable IPC, and the driver the door
 asked for). It no longer uses a driver-name list. Before launching any driver
 other than `codex-app-server` on this route, HRC requires positive hosting
@@ -113,7 +221,7 @@ resolver-governed, §1.6 supersedes that sentence.
 ## 1. Route and configuration
 
 **Route.** HRC-hosted headless Codex: a non-interactive runtime intent whose
-compile profile selector is `brokerDriver: codex-app-server`, with EFFECTIVE
+v1-era request selector is `brokerDriver: codex-app-server`, with EFFECTIVE
 operator presentation `none` (no `tmux-tui` viewer), or (T-08554, §1.2) with
 presentation `tmux-tui` selected by an explicit request. The effective
 presentation is the request's explicit choice when present (§1.1, §1.2),
@@ -265,7 +373,7 @@ no existing caller migrates [superseded by §1.3 decision 2]. With `HRC_ASPD_SOC
 **Validation.** `'tmux-tui'` is refused before any runtime, operation or
 hosting effect exactly where `'none'` is (interactive intent, Claude redirect,
 not the headless broker route: `presentation_operator_unsupported`), and
-additionally when the intent's compile profile selector is not
+additionally when the intent's v1-era request selector is not
 `brokerDriver: codex-app-server` (`presentation_operator_unsupported`, reason
 `driver-has-no-viewer`), because the presentation decision is driver-gated and
 would otherwise silently resolve `none`. Any value other than the two:
@@ -752,7 +860,7 @@ with:
   executionReleaseId, aspHome }` [T-08560: `door` is the two-value door class
   `attached-run` | `interactive-birth`, §1.5.1].
 
-Admission requires the selected profile to be `codex-app-server` with
+Admission requires the selected execution to be `codex-app-server` with
 `interactionMode: interactive` and the tmux broker terminal [T-08562: on the Codex
 route; the non-Codex interactive route admits by hosting requirements plus hosting
 evidence, §1.6.3]. Anything else is
@@ -1523,7 +1631,7 @@ calling door exactly as §1.5.1 states for Codex.
 preparation as follows. The ordering around it is unchanged: compile, identity
 and hash admission (`compileBrokerRuntimePlan`), then `execution_release_missing`
 (`:357-368`).
-1. **Hosting shape (replaces `routeMatches` `:370-392`).** The selected profile
+1. **Hosting shape (replaces `routeMatches` `:370-392`).** The selected execution
    satisfies all of:
    - `kind: 'harness-broker'`;
    - `interactionMode: 'interactive'`;
@@ -1989,9 +2097,9 @@ Transactions are single SQLite writes; effects happen only between them.
    `aspd_capability_missing`, `aspd_release_unidentified`,
    `aspd_connection_closed` (explicitly not retried). Preparation starts no
    worker and no native harness.
-2. **Admit (pure).** Existing `compileBrokerRuntimePlan` hash/identity/profile
+2. **Admit (pure).** Existing `compileBrokerRuntimePlan` hash/identity/execution
    checks, then: `executionRelease` present (`execution_release_missing`);
-   selected profile is headless `codex-app-server` [T-08556/T-08560: or, on the
+   selected execution is headless `codex-app-server` [T-08556/T-08560: or, on the
    interactive route, interactive `codex-app-server` with the tmux terminal, §1.4;
    T-08562: or a hosting-shape-admitted interactive tmux profile with hosting
    evidence, §1.6.3, else also `aspd_worker_hosting_unproven`]
@@ -2966,7 +3074,7 @@ never as a pass by absence (mable EN-13464).
   `resolveBrokerBinary` reached. `codex-cli-tmux` at the chokepoint reaches the
   facade. The socket unset reaches the facade for all.
 - **G-B-admission:**
-  - selected profile with a non-tmux terminal, a headless mode, a non-v0.2
+  - selected execution with a non-tmux terminal, a headless mode, a non-v0.2
     protocol, or a driver different from the requested one: each
     `aspd_route_profile_mismatch` before P;
   - durable IPC off: `aspd_route_requires_durable_ipc` with no compile;

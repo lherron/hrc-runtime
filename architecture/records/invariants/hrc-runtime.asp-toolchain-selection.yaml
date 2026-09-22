@@ -2,66 +2,51 @@ id: hrc-runtime.asp-toolchain-selection
 kind: invariant
 status: active
 owner_project: hrc-runtime
-scope: HRC-owned ASP child-process, aspd observation, and aspd-prepared worker selection and compatibility boundary
+scope: HRC consumption of the producer-selected ASP v2 execution and configured aspd preparation service
 predicate: >
-  T-08596 (T-08569A closure, Daedalus approval EN-14687): the ASP toolchain
-  resolver is deleted and governs NOTHING on any node. There is no
-  per-binary command override, no HRC_ASP_TOOLCHAIN_ROOT, no bundled
-  resolveHoistedBinary arm, and no facade/broker binary selection at spawn
-  time; the resolver module retains only shared selection types, the hello
-  observation registry, and an admin status projection that reports the
-  resolver retired with no selectable binaries. Every broker birth launches
-  only from a frozen aspd preparation (worker executable and argv committed
-  under hrc-runtime.aspd-prepared-execution-release); a birth with no frozen
-  worker launch — unconfigured node (HRC_ASPD_SOCKET unset), deprecated
-  codex-cli-tmux driver, non-interactive pi-sdk broker, legacy stdio seam, or
-  local CLI preview — refuses loudly with the typed `aspd_unconfigured`
-  refusal (daemon unreachable for the CLI preview: `hrc_daemon_unreachable`),
-  never an ENOENT from a missing bin. The configured aspd-prepared routes
-  (headless codex-app-server at presentation none or tmux-tui, interactive
-  codex-app-server, claude-code-tmux, pi-tui-tmux) are unchanged: HRC spawns
-  no ASP compiler child and launches the worker only from the frozen
-  executionRelease, with no fallback. Incompatible facade, aspd, or broker
-  protocol/capability hellos fail closed before invocation work. Admin status
-  keeps the aspd service projection distinct from the retired toolchain
-  projection, and the immutable installed contract set is governed by
-  hrc-runtime.observable-release (aspContracts, not an ASP build tuple).
-authority: headless muse-serve route amendment (this change; Daedalus review pending), 2026-09-18; wrkq:T-08596 toolchain closure amendment (Daedalus approval EN-14687, 2026-09-18); wrkq:T-08562 every supported broker birth amendment (mable acceptance EN-13464, dependency wording Astra EN-13470; Daedalus approval EN-13574 on f5940449), 2026-09-17; wrkq:T-08564 revision 4 architecture approval, 2026-09-17; wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus approval EN-13058 on 038454ba), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
+  HRC owns no harness, model provider, model, reasoning-effort, profile, target,
+  recipe, driver, or presentation default selection. For a new broker birth it
+  sends one v2 compile request to configured aspd and preserves absence in both
+  selection sources. Explicit request overrides use only the optional camelCase
+  requested fields harness, modelProvider, model, reasoningEffort and
+  presentation. Raw per-summon overrides use only
+  selectionContext.summonDirectives with the snake_case keys harness,
+  model_provider, model, reasoning_effort and presentation. It forwards an
+  explicit false unchanged and does not resolve,
+  normalize, fill, compare, or resend agent-profile.toml or asp-targets.toml
+  values. ASP alone loads strict v4 profiles and schema-2 targets, merges profile,
+  project target, summon directives, then request overrides, and validates the
+  result before selecting the recipe, worker and driver. HRC admits only the one
+  producer-selected execution returned by a compatible aspd protocol, allocates
+  resources solely from execution.hosting, and launches only from its frozen
+  execution release. Presentation false never authorizes terminal-free hosting.
+  HRC has no compiler child, resolver, facade, local default, driver-name list or
+  fallback. Every selected driver, without a Codex exception, requires positive
+  executionRelease.worker.hostedDrivers membership before hosting and again from
+  persisted bytes at launch. Removed v1 selectors, aliases and profile adapters
+  are rejected, never translated. A configured endpoint that is unavailable,
+  incompatible, unidentified, or returns no valid selected execution refuses
+  before effects. Declaration and preview observation may use the same service
+  admission boundary but do not create or reinterpret a preparation.
+authority: wrkq:T-08690 producer-owned v2 consumer amendment, pending Daedalus review; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
 source:
-  - wrkq:T-08562
-  - wrkq:T-08564
-  - wrkq:T-08560
-  - wrkq:T-08556
-  - commit:91a7d9c3
-  - wrkq:T-08555
-  - commit:494fef39
-  - wrkq:T-08542
-  - wrkq:T-08554
-  - commit:e5d2c31f
+  - wrkq:T-08690
   - docs/aspd-headless-codex-integration.md
+  - docs/harness-broker-substrate-spec.md
   - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
-  - wrkq:T-07764
-  - architecture/records/invariants/hrc-runtime.observable-release.yaml
-  - packages/hrc-server/src/option-resolvers.ts
-  - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
+  - architecture/records/invariants/hrc-runtime.declaration-observation-consumer.yaml
+  - packages/hrc-server/src/agent-spaces-adapter/aspd-preparation-client.ts
   - packages/hrc-server/src/broker/controller.ts
   - packages/hrc-server/src/broker/controller/dispatch.ts
-  - packages/hrc-server/src/broker/capabilities.ts
+  - packages/hrc-server/src/broker/runtime-hosting.ts
 required_tests:
   - just architecture-records
-  - T-08596 closure: every birth with no frozen worker launch (unconfigured node, deprecated codex-cli-tmux, pi-sdk, legacy stdio seam) refuses with aspd_unconfigured; no route consults a resolver
-  - T-08596 closure: admin status reports the toolchain resolver retired with no selectable binaries
-  - T-08596 closure: the CLI dry-run preview compiles through the daemon with no local facade spawn
-  - T-08562 configured claude-code-tmux and pi-tui-tmux births launch worker and helpers from the frozen executionRelease with no resolver consultation
-  - T-08542 configured aspd route launches its worker from the frozen executionRelease with no resolver consultation
-  - headless muse-serve route: a configured headless muse-serve birth launches its worker from the frozen executionRelease with no resolver consultation
-  - T-08554 explicit tmux-tui aspd route launches its worker from the frozen executionRelease with no resolver consultation, its renderer runs from that release payload
-  - T-08555 configured node-default tmux-tui headless codex-app-server prepares through aspd with no resolver consultation
-  - T-08556 configured attached-run interactive Codex birth launches the worker wrapper and hook receiver from one frozen executionRelease with no resolver consultation or fallback
-  - T-08560 every configured interactive codex-app-server birth door launches its worker wrapper and hook receiver from the frozen executionRelease with no resolver consultation or fallback
-  - T-08564 D-14 proves the broker-plan preview observes through aspd without an HRC-owned facade spawn or resolver fallback (the D-15 direct preview is retired by T-08584)
-  - T-08542 aspd outage incompatibility and missing execution release refuse without resolver fallback or worker hosting
-last_verified: 2026-09-18 headless muse-serve route implementation, installed evidence pending, Daedalus review pending; 2026-09-17 T-08562 design approval EN-13574 on f5940449; implementation and installed evidence pending; 2026-09-17 T-08564 revision 4 design approval; implementation and installed evidence pending; 2026-09-17 T-08560 design approval EN-13058 on 038454ba; 2026-09-16 T-08556 design approval on 91a7d9c3; prior T-08542 design approval, T-08553 shared acceptance, and T-08554 amendment approval EN-12940
-reopen_when: A node-default presentation's route selection, an ASP child spawn or preview site, aspd-prepared or observation route, selection precedence, external-root or execution-release semantics, compatibility handshake, toolchain or aspd status projection, or in-process ASP dependency boundary changes.
+  - v2 compile fixtures prove omitted selection reaches ASP absent, raw snake_case summon directives are forwarded unchanged, and explicit presentation false survives
+  - installed ASP precedence proves profile provider/model, project reasoning effort, summon presentation false, then explicit presentation true with compile-request provenance
+  - every supported selected driver has positive hostedDrivers evidence before boundary P and again from frozen bytes at launch; no driver exemption exists
+  - removed v1 selectors aliases and profile adapters refuse before any preparation or hosting effect
+  - unavailable incompatible unidentified or malformed aspd selection refuses before effects and never falls back to a facade resolver or local choice
+last_verified: final ASP v2 installed acceptance proved 9/9 harness/presentation/default cases, 8/8 invalid-wire refusals, four accepted identities, and agent-harness default against source 631e7b246aaede313ee6e0aacd71e766f26ae07c / tuple 0.1.1-dev.20260921215301 / release asp-631e7b246aae-20260922T025351Z-01f30b; HRC dependency advance, implementation and installed acceptance pending
+reopen_when: ASP v2 selection wire or precedence, the producer-selected execution or hosting declaration, supported-driver evidence, aspd admission protocol, HRC fallback boundary, or declaration/preview observation boundary changes.
 supersedes: []
 superseded_by: []

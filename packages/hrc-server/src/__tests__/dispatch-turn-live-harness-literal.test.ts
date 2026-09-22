@@ -1,7 +1,7 @@
 /**
  * dispatchTurn against a legacy tmux runtime with a live interactive harness
- * must not deliver harness input via literal send-keys. The broker cutover
- * stales the legacy runtime and fails closed if a broker cannot be started.
+ * must not deliver harness input via literal send-keys. The v2 producer route
+ * fails closed before altering the established legacy runtime when ASP is absent.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
@@ -30,7 +30,7 @@ afterEach(async () => {
 })
 
 describe('dispatchTurn against live interactive harness', () => {
-  it('does not literal-deliver into a live non-broker tmux runtime', async () => {
+  it('does not literal-deliver into or alter a live non-broker tmux runtime', async () => {
     const tmux = new TmuxManager(fixture.tmuxSocketPath)
     await tmux.initialize()
 
@@ -120,13 +120,13 @@ describe('dispatchTurn against live interactive harness', () => {
 
     const eventsDb = openHrcDatabase(fixture.dbPath)
     try {
-      expect(eventsDb.runtimes.getByRuntimeId(runtimeId)?.status).toBe('stale')
+      expect(eventsDb.runtimes.getByRuntimeId(runtimeId)?.status).toBe('ready')
       const events = eventsDb.hrcEvents.listFromHrcSeq(1) as Array<{
         eventKind: string
         payload?: Record<string, unknown>
       }>
       expect(events.some((e) => e.eventKind === 'turn.accepted')).toBe(false)
-      expect(events.some((e) => e.eventKind === 'runtime.stale')).toBe(true)
+      expect(events.some((e) => e.eventKind === 'runtime.stale')).toBe(false)
     } finally {
       eventsDb.close()
     }

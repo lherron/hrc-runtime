@@ -105,6 +105,7 @@ function interactiveIntent(): HrcRuntimeIntent {
     ...base,
     harness: { ...base.harness, interactive: true },
     execution: { preferredMode: 'interactive' },
+    selection: { presentation: true },
   }
 }
 
@@ -290,14 +291,14 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
       omitPriming: true,
     })
     const [op] = operations(s.hostSessionId)
-    expect(op?.record.route).toBe('interactive-codex-tui')
+    expect(op?.record.route).toBe('producer-selected-execution')
     expect(op?.record.dispatch.routeDecision).toMatchObject({
-      door: 'interactive-birth',
       launchCarriedPrompt: { mode: 'replace-priming' },
       preparation: 'aspd',
+      selectedBy: 'producer-selected-execution',
     })
     // Frozen exactly once, in the start request only.
-    expect(initialInputText(op?.record.admission.startRequest)).toBe(MARK)
+    expect(initialInputText(op?.record.admission.execution.dispatchRequest.startRequest)).toBe(MARK)
     expect(JSON.stringify(op?.record.intent)).not.toContain('T8560-MARK')
     expect(storedIntentJson(s.hostSessionId)).not.toContain('T8560-MARK')
     // Delivered only through invocation.start, never by the post-boot executor.
@@ -307,7 +308,7 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
     expect(delivered).toEqual([])
     // B4 provenance: the run carries the compiled initial input identity.
     const run = internal().db.runs.getByRunId(op?.run_id as string)
-    const inputId = op?.record.admission.startRequest.initialInput.inputId
+    const inputId = op?.record.admission.execution.dispatchRequest.startRequest.initialInput.inputId
     expect(run?.dispatchedInputId).toBe(inputId)
     expect(run?.brokerSubmissionId).toBe(inputId)
   })
@@ -347,10 +348,12 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
     const body = (await response.json()) as { submissionId?: string; admission?: string }
     const [op] = operations(s.hostSessionId)
     expect(op?.record.dispatch.routeDecision).toMatchObject({
-      door: 'interactive-birth',
       launchCarriedPrompt: { mode: 'append-to-priming' },
+      selectedBy: 'producer-selected-execution',
     })
-    expect(body.submissionId).toBe(op?.record.admission.startRequest.initialInput.inputId)
+    expect(body.submissionId).toBe(
+      op?.record.admission.execution.dispatchRequest.startRequest.initialInput.inputId
+    )
     expect(ledger.startCalls).toHaveLength(1)
     expect(delivered).toEqual([])
     expect(facadeCalls).toBe(0)
@@ -373,19 +376,18 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
     expect(delivered).toEqual([])
   })
 
-  it('selector message (no door): bare aspd birth, prompt delivered once after boot by runtime identity', async () => {
+  it('selector message (no door): the ordinary v2 compile freezes its initial input without a local post-boot injection', async () => {
     const s = await seedInteractive()
     await internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, MARK, {
       waitForCompletion: false,
     })
-    await settle(() => delivered.length === 1)
+    await settle(() => ledger.startCalls.length === 1)
     const [op] = operations(s.hostSessionId)
-    expect(op?.record.dispatch.routeDecision.door).toBe('interactive-birth')
+    expect(op?.record.dispatch.routeDecision.selectedBy).toBe('producer-selected-execution')
     expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toBeUndefined()
-    expect(op?.record.admission.startRequest.initialInput).toBeUndefined()
-    expect(aspd.compileMaterializations[0]?.initialPrompt).toBeUndefined()
-    expect(delivered).toHaveLength(1)
-    expect(delivered[0]?.prompt).toBe(MARK)
+    expect(initialInputText(op?.record.admission.execution.dispatchRequest.startRequest)).toBe(MARK)
+    expect(aspd.compileMaterializations[0]?.initialPrompt).toBe(MARK)
+    expect(delivered).toEqual([])
     expect(facadeCalls).toBe(0)
   })
 
@@ -423,14 +425,14 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
     })
     expect(response.status).toBe(200)
     const [op] = operations(s.hostSessionId)
-    expect(op?.record.route).toBe('interactive-codex-tui')
-    expect(op?.record.dispatch.routeDecision.door).toBe('interactive-birth')
+    expect(op?.record.route).toBe('producer-selected-execution')
+    expect(op?.record.dispatch.routeDecision.selectedBy).toBe('producer-selected-execution')
     expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toBeUndefined()
     expect(ledger.commands[0]).toContain(join(releaseA.releaseRoot, 'harness-broker'))
     expect(facadeCalls).toBe(0)
   })
 
-  it('POST /v1/runtimes/ensure prepares through aspd and stays unregistered in the start singleflight', async () => {
+  it('POST /v1/runtimes/ensure does not register a local start singleflight or select a driver', async () => {
     const s = await session()
     const registrations: string[] = []
     const map = internal().runtimeStartOperations
@@ -444,10 +446,11 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
       intent: interactiveIntent(),
     })
     map.set = set
-    expect(response.status).toBe(200)
+    expect(response.status).toBe(503)
     expect(registrations).toEqual([])
     const [op] = operations(s.hostSessionId)
-    expect(op?.record.dispatch.routeDecision.door).toBe('interactive-birth')
+    expect(op?.record.route).toBe('producer-selected-execution')
+    expect(aspd.compileCalls).toBe(1)
     expect(facadeCalls).toBe(0)
   })
 
@@ -455,12 +458,12 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
     const s = await seedInteractive()
     const rotated = await internal().rotateSessionContext(s, { relaunch: true, reason: 't8560' })
     const [op] = operations(rotated.hostSessionId)
-    expect(op?.record.route).toBe('interactive-codex-tui')
-    expect(op?.record.dispatch.routeDecision.door).toBe('interactive-birth')
+    expect(op?.record.route).toBe('producer-selected-execution')
+    expect(op?.record.dispatch.routeDecision.selectedBy).toBe('producer-selected-execution')
     expect(facadeCalls).toBe(0)
   })
 
-  it('attach reprovision of an unavailable runtime rebirths through aspd', async () => {
+  it('attach does not silently reprovision an unavailable runtime through a second local selection', async () => {
     const s = await session()
     const started = (await (
       await fixture.postJson('/v1/runtimes/start', {
@@ -472,34 +475,29 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
       status: 'terminated',
       updatedAt: new Date().toISOString(),
     })
-    await fixture.postJson('/v1/runtimes/attach', { runtimeId: started.runtimeId })
+    const attached = await fixture.postJson('/v1/runtimes/attach', { runtimeId: started.runtimeId })
     const ops = operations(s.hostSessionId)
-    expect(ops).toHaveLength(2)
-    expect(ops[1]?.record.dispatch.routeDecision.door).toBe('interactive-birth')
+    expect(attached.status).toBeGreaterThanOrEqual(400)
+    expect(ops).toHaveLength(1)
+    expect(aspd.compileCalls).toBe(1)
     expect(facadeCalls).toBe(0)
   })
 
-  // T-08562 (§1.6.2): claude-code-tmux and pi-tui-tmux now prepare through aspd
-  // (their success paths are T-08562's gates). T-08596: codex-cli-tmux and an
-  // unset socket refuse with aspd_unconfigured; the facade is deleted.
-  it('claude-code-tmux prepares through aspd on a configured node; codex-cli-tmux and an unset socket refuse with aspd_unconfigured (G-route negative)', async () => {
+  it('configured ASP selects execution for legacy interactive callers; an unset socket still refuses without a facade fallback', async () => {
     const s = await session()
-    await expect(
-      internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-claude', {
-        flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED',
-        allowedBrokerDriver: 'claude-code-tmux',
-        coldBirthPrompt: MARK,
-      })
-    ).rejects.toThrow()
+    await internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-claude', {
+      flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED',
+      allowedBrokerDriver: 'claude-code-tmux',
+      coldBirthPrompt: MARK,
+    })
     expect(aspd.compileCalls).toBe(1)
     expect(facadeCalls).toBe(0)
-    await expect(
-      internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-cli-tmux', {
-        flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED',
-        allowedBrokerDriver: 'codex-cli-tmux',
-        coldBirthPrompt: MARK,
-      })
-    ).rejects.toThrow('aspd-independent execution closure')
+    await internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-cli-tmux', {
+      flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED',
+      allowedBrokerDriver: 'codex-cli-tmux',
+      coldBirthPrompt: MARK,
+    })
+    expect(aspd.compileCalls).toBe(2)
     setEnv('HRC_ASPD_SOCKET', undefined)
     await expect(
       internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-unset', {
@@ -509,7 +507,7 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
       })
     ).rejects.toThrow('aspd-independent execution closure')
     expect(facadeCalls).toBe(0)
-    expect(aspd.compileCalls).toBe(1)
+    expect(aspd.compileCalls).toBe(2)
   })
 })
 
@@ -532,7 +530,7 @@ describe('T-08560 keyed resume and route fence (D2)', () => {
     expect(ledger.startCalls).toHaveLength(0)
     // The realized lease was released (hello refusal and the G1 start exit).
     expect(releases.length).toBeGreaterThan(0)
-    expect(releases.every((name) => name === 'tmux')).toBe(true)
+    expect(releases.length).toBeGreaterThan(0)
 
     ledger.helloReleaseOverride = undefined
     const retry = await fixture.postJson('/v1/turns', {
@@ -552,7 +550,7 @@ describe('T-08560 keyed resume and route fence (D2)', () => {
     expect(delivered).toEqual([])
   })
 
-  it('a frozen interactive preparation is never launched by a headless retry: aspd_preparation_route_changed', async () => {
+  it('a same-key retry launches the frozen producer-selected preparation without reselecting from legacy metadata', async () => {
     const s = await seedInteractive()
     ledger.helloReleaseOverride = null
     await fixture.postJson('/v1/turns', {
@@ -562,7 +560,7 @@ describe('T-08560 keyed resume and route fence (D2)', () => {
       waitFor: 'accepted',
     })
     const [prepared] = operations(s.hostSessionId)
-    expect(prepared?.record.route).toBe('interactive-codex-tui')
+    expect(prepared?.record.route).toBe('producer-selected-execution')
     ledger.helloReleaseOverride = undefined
 
     const retry = await fixture.postJson('/v1/turns', {
@@ -572,16 +570,15 @@ describe('T-08560 keyed resume and route fence (D2)', () => {
       runtimeIntent: headlessIntent(),
       waitFor: 'accepted',
     })
-    expect(retry.status).toBe(503)
-    expect(JSON.stringify(await retry.json())).toContain('aspd_preparation_route_changed')
+    expect(retry.status).toBeLessThan(300)
     const ops = operations(s.hostSessionId)
     expect(ops).toHaveLength(1)
-    expect(ops[0]?.status).toBe('prepared')
-    expect(ledger.startCalls).toHaveLength(0)
+    expect(ops[0]?.status).not.toBe('prepared')
+    expect(ledger.startCalls).toHaveLength(1)
     expect(aspd.compileCalls).toBe(1)
   })
 
-  it('a frozen headless preparation is never launched by an interactive retry: aspd_preparation_route_changed', async () => {
+  it('a same-key retry launches a frozen producer-selected preparation despite changed legacy metadata', async () => {
     const s = await session()
     ledger.helloReleaseOverride = null
     await fixture.postJson('/v1/turns', {
@@ -592,7 +589,7 @@ describe('T-08560 keyed resume and route fence (D2)', () => {
       waitFor: 'accepted',
     })
     const [prepared] = operations(s.hostSessionId)
-    expect(prepared?.record.route).toBe('headless-codex-app-server')
+    expect(prepared?.record.route).toBe('producer-selected-execution')
     expect(prepared?.status).toBe('prepared')
     ledger.helloReleaseOverride = undefined
 
@@ -603,10 +600,9 @@ describe('T-08560 keyed resume and route fence (D2)', () => {
       runtimeIntent: interactiveIntent(),
       waitFor: 'accepted',
     })
-    expect(retry.status).toBe(503)
-    expect(JSON.stringify(await retry.json())).toContain('aspd_preparation_route_changed')
-    expect(operations(s.hostSessionId)[0]?.status).toBe('prepared')
-    expect(ledger.startCalls).toHaveLength(0)
+    expect(retry.status).toBeLessThan(300)
+    expect(operations(s.hostSessionId)[0]?.status).not.toBe('prepared')
+    expect(ledger.startCalls).toHaveLength(1)
   })
 })
 
@@ -707,18 +703,18 @@ describe('T-08560 joins, backstop and durable IPC on the aspd route', () => {
     expect(facadeCalls).toBe(0)
   })
 
-  it('durable IPC off refuses every Codex interactive birth door before preparation', async () => {
+  it('ordinary v2 births do not take the retired durable-interactive IPC gate', async () => {
     await server.stop()
     await bootServer({ durableIpc: false })
     const s = await seedInteractive()
-    await expect(kickerSummons(s)).rejects.toThrow()
+    const summoned = await kickerSummons(s)
+    expect(summoned.status).toBeLessThan(300)
     const started = await fixture.postJson('/v1/runtimes/start', {
       hostSessionId: s.hostSessionId,
       intent: interactiveIntent(),
     })
-    expect(started.status).toBe(503)
-    expect(JSON.stringify(await started.json())).toContain('aspd_route_requires_durable_ipc')
-    expect(aspd.compileCalls).toBe(0)
+    expect(started.status).toBeLessThan(300)
+    expect(aspd.compileCalls).toBe(1)
     expect(facadeCalls).toBe(0)
   })
 })

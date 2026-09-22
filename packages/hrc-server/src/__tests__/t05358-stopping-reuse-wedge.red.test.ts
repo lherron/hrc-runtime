@@ -57,6 +57,8 @@ type SeedOpts = {
   /** broker invocation lifecycle state */
   invocationState: string
   durable?: boolean
+  provider?: 'anthropic' | 'openai'
+  harness?: 'claude-code' | 'codex-app-server'
 }
 
 function seedRuntime(opts: SeedOpts): void {
@@ -71,8 +73,8 @@ function seedRuntime(opts: SeedOpts): void {
     laneRef: LANE_REF,
     generation: 1,
     transport: 'headless',
-    harness: 'codex-app-server',
-    provider: 'openai',
+    harness: opts.harness ?? 'codex-app-server',
+    provider: opts.provider ?? 'openai',
     status,
     supportsInflightInput: true,
     adopted: false,
@@ -186,6 +188,21 @@ describe('T-05358 stopping-state runtime reuse wedge', () => {
       getReusableHeadlessRuntimeForSession(db, HOST_SESSION_ID, 'openai', 'codex-app-server')
         ?.runtimeId
     ).toBe('rt-busy')
+  })
+
+  it('reuses the established broker regardless of its legacy provider/harness labels', () => {
+    // v2 reuse is keyed by the frozen realization, checked by the caller. This
+    // selector must not pre-filter by deprecated HRC provider/harness aliases.
+    seedRuntime({
+      runtimeId: 'rt-established-other-label',
+      status: 'ready',
+      invocationState: 'ready',
+      provider: 'anthropic',
+      harness: 'claude-code',
+    })
+    expect(getReusableHeadlessRuntimeForSession(db, HOST_SESSION_ID)?.runtimeId).toBe(
+      'rt-established-other-label'
+    )
   })
 
   it('durable reattach selector also skips a `stopping` durable runtime', () => {

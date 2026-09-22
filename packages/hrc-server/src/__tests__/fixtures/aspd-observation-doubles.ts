@@ -10,11 +10,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { HarnessInvocationSpec, InvocationStartRequest } from 'spaces-harness-broker-protocol'
-import {
-  type RuntimeIdentityAllocation,
-  neutralSpecHash,
-  neutralStartRequestHash,
-} from 'spaces-runtime-contracts'
+import { type RuntimeIdentityAllocation, neutralStartRequestHash } from 'spaces-runtime-contracts'
 
 import type { Release } from './aspd-route-doubles'
 import { resolveFixtureHarnessCatalogEntry } from './fixture-catalog.js'
@@ -793,8 +789,8 @@ function inspectNonOkResponse(): Record<string, unknown> {
 }
 
 /**
- * Copied from evidence/double-parity/live-dryrun-compile/capture.json
- * `response.result`; request-derived identity and placement values stay dynamic.
+ * Preview compiler double. It emits the same singular v2 execution envelope
+ * that ordinary compilation admits; no v1 profile list is retained here.
  */
 function compileResponse(params: Record<string, unknown>, serving: Release) {
   const compileRequest = (params['compileRequest'] ?? {}) as Record<string, unknown>
@@ -869,113 +865,49 @@ function compileResponse(params: Record<string, unknown>, serving: Release) {
     correlation,
   }
   const startRequest: InvocationStartRequest = { spec }
-  const profile = {
-    schemaVersion: 'agent-runtime-profile/v1',
-    profileId: 'profile_t08564',
-    kind: 'harness-broker',
-    interactionMode: 'headless',
-    expectedCapabilities: {
-      input: {
-        user: 'required',
-        steer: 'optional',
-        appendContext: 'optional',
-        localImages: 'optional',
-        fileRefs: 'forbidden',
-        queue: 'required',
-      },
-      turns: { concurrency: 'single', interrupt: 'optional' },
-      continuation: 'optional',
-      permissions: 'none',
-      events: {
-        assistantDeltas: 'optional',
-        toolCalls: 'required',
-        usage: 'optional',
-        diagnostics: 'optional',
-      },
-      control: {
-        stop: 'optional',
-        dispose: 'optional',
-        reconcile: 'optional',
-        attachReplay: 'optional',
-      },
-      lifecycle: {
-        runtimeRetention: ['keep-alive'],
-        harnessRecovery: ['none'],
-        turnRetry: ['none'],
-        generationFencing: 'optional',
-        permissionCancellation: 'optional',
-      },
-    },
-    brokerProtocol: 'harness-broker/0.2',
-    brokerDriver: 'codex-app-server',
-    brokerOwnership: 'hrc-owned-process',
-    harnessInvocation: {
-      startRequest,
-      specHash: neutralSpecHash(spec),
-      startRequestHash: neutralStartRequestHash(startRequest),
-    },
-    policy: {
-      permissionPolicy: { mode: 'deny', audit: true },
-      inputPolicy: {
-        readyInput: 'start-turn',
-        busy: { whenBusy: 'reject' },
-        supportedKinds: ['user'],
-        attachmentPolicy: { localImages: true, fileRefs: false },
-      },
-      exposurePolicy: { mode: 'none' },
-    },
-    observability: { correlation: identity },
-    profileHash: 'profilehash_t08564',
-    compatibilityHash: 'compat_t08564',
-  }
-  const plan = {
-    schemaVersion: 'agent-runtime-plan/v1',
-    compiler: { name: 'agent-spaces', version: 't08564-double' },
-    compileId: 'compile_t08564',
-    createdAt: '2026-09-17T07:51:25.901Z',
-    identity,
-    placement,
-    resolvedBundle: {
-      bundleIdentity: 'bundle:t08564',
-      runMode: 'task',
-      cwd,
-      instructions: [
-        {
-          slot: 'soul',
-          ref: 'agent-root:///SOUL.md',
-          contentHash: 'sha256:t08564-soul',
-        },
-      ],
-      spaces: [],
-    },
-    omitPriming: false,
-    harness: { family: 'codex', runtime: 'codex-cli', provider: 'openai' },
-    model: { provider: 'openai', modelId: 'gpt-5.6-terra' },
-    executionProfiles: [profile],
-    artifacts: {
-      materializedBundleRoot: `${codexHome}/bundles/.versions/t08564/smokey/codex`,
-      systemPromptFile: `${codexHome}/bundles/.versions/t08564/smokey/codex/.asp-runtime-artifacts/system-prompts/t08564/system-prompt.md`,
-      bundleIdentity: 'bundle:t08564',
-    },
-    lockedEnv: { lockedEnvKeys: Object.keys(lockedEnv).sort() },
-    diagnostics: [],
-    planHash: 'planhash_t08564',
-  }
-  const runtimeCompile = {
-    schemaVersion: 'agent-runtime-compile-response/v1',
-    ok: true,
-    plan,
-    diagnostics: [],
-  }
   return {
-    schemaVersion: 'aspc-compile-harness-invocation-response/v1',
+    schemaVersion: 'aspc-compile-harness-invocation-response/v2',
     ok: true,
-    compileResponse: runtimeCompile,
-    plan,
-    selectedProfile: profile,
-    startRequest,
-    dispatchRequest: { startRequest },
     diagnostics: [],
+    plan: {
+      schemaVersion: 'agent-runtime-plan/v2',
+      agent: compileRequest['agent'],
+      identity,
+      compileId: 'compile_t08564',
+      planHash: 'planhash_t08564',
+      createdAt: '2026-09-17T07:51:25.901Z',
+      diagnostics: [],
+      selection: {
+        harness: 'agent-harness',
+        modelProvider: 'openai-codex',
+        model: 'gpt-5.5',
+        presentation: false,
+        provenance: {
+          harness: 'catalog-default',
+          modelProvider: 'catalog-default',
+          model: 'catalog-default',
+          presentation: 'catalog-default',
+        },
+      },
+      execution: {
+        recipeId: 'fixture-codex-app-server',
+        driver: 'codex-app-server',
+        protocol: 'harness-broker/0.2',
+        hosting: {
+          executionTransport: 'jsonrpc-stdio',
+          terminalRequired: false,
+          processExecution: 'broker-process',
+        },
+        presentationFulfillment: 'attachable',
+        profile: {
+          profileId: 'profile_t08564',
+          profileHash: 'profilehash_t08564',
+          compatibilityHash: 'compat_t08564',
+          startRequestHash: neutralStartRequestHash(startRequest),
+        },
+        dispatchRequest: { startRequest },
+      },
+    },
     executionRelease: {
       releaseId: serving.releaseId,
       sourceCommit: serving.sourceCommit,

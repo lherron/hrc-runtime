@@ -103,22 +103,61 @@ export type BrokerRunPreviewPromptZones = {
 
 export type BrokerRunPreview = {
   controllerKind: 'harness-broker'
-  brokerDriver: string
-  interactionMode: string
-  profileId: string
-  profileHash: string
   specHash: string
   startRequestHash: string
-  process: {
-    command: string
-    args: string[]
-    cwd: string
+  /** Producer-resolved selection, including the precedence source for every field. */
+  selection: {
+    harness: string
+    modelProvider: string
+    model: string
+    reasoningEffort?: string | undefined
+    presentation: boolean
+    provenance: {
+      harness: string
+      modelProvider: string
+      model: string
+      reasoningEffort?: string | undefined
+      presentation: string
+    }
   }
+  /** The one frozen execution HRC will host; never a reconstructed profile. */
+  execution: {
+    recipeId: string
+    driver: string
+    protocol: string
+    hosting: {
+      executionTransport: string
+      terminalRequired: boolean
+      terminalHost?: string | undefined
+      processExecution: string
+    }
+    presentationFulfillment: 'intrinsic' | 'attachable' | 'birth-variant'
+    presentationSurface?:
+      | { transport: 'terminal' | 'websocket-unix'; terminalHost: 'tmux' }
+      | undefined
+    profile: {
+      profileId: string
+      profileHash: string
+      compatibilityHash: string
+      startRequestHash: string
+    }
+  }
+  process:
+    | {
+        command: string
+        args: string[]
+        cwd: string
+        execution?: never
+      }
+    | {
+        execution: 'native-worker'
+        cwd: string
+        command?: never
+        args?: never
+      }
   initialInput: boolean
   launchInitialPromptLength?: number | undefined
   inputQueue: string
-  interrupt: string
-  resource?: string | undefined
   warnings: string[]
   systemPromptFile?: string | undefined
   systemPromptMode?: 'append' | 'replace' | undefined
@@ -133,19 +172,12 @@ export type BrokerRunPreview = {
   env: Record<string, string>
   planHash: string
   compileId: string
-  bundleIdentity: string
-  model: {
-    provider: string
-    modelId: string
-    requestedModel?: string | undefined
-  }
+  /** ASP daemon release that compiled this preview, when the daemon supplied it. */
+  release?: { releaseId: string; sourceCommit: string } | undefined
 }
 
 export type RunPreviewResponse =
-  | (BrokerRunPreview & {
-      promptResolution?: Record<string, unknown> | undefined
-      release?: { releaseId: string; sourceCommit: string } | undefined
-    })
+  | (BrokerRunPreview & { promptResolution?: Record<string, unknown> | undefined })
   | null
 
 export type ResolvePlacementRequest = {

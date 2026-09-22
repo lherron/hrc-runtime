@@ -70,6 +70,7 @@ import {
 import { assertReservedAddressAllowsBirth } from './participant-address-provisioning.js'
 import { isBrokerRuntimeInputDispatchable, requireSession } from './require-helpers.js'
 import { findLatestRuntime } from './runtime-select.js'
+import { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
 import {
   HRC_BUSY_HEADLESS_DM_REJECTION_CODE,
   HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE,
@@ -527,7 +528,10 @@ async function createNotifiedSessionSuccessor(
   assertReservedAddressAllowsBirth(server, session.scopeRef, session.laneRef)
   const capabilityIntent = await normalizeLocalProjectSuccessorIntent(
     session.scopeRef,
-    intent ?? session.lastAppliedIntentJson,
+    intent ??
+      (session.lastAppliedIntentJson === undefined
+        ? undefined
+        : omitPersistedSelectionForReuse(session.lastAppliedIntentJson)),
     origin
   )
   return await withSummonAuthority(
@@ -544,7 +548,6 @@ async function createNotifiedSessionSuccessor(
         : {
             capabilityHint: {
               placement: capabilityIntent.placement,
-              harness: capabilityIntent.harness,
             },
             // T-07398: the successor's birth reads the same directive block.
             ...(capabilityIntent.provision === undefined
@@ -1093,7 +1096,11 @@ export async function deliverPersistedSemanticTurnHandoff(
     generation: session.generation,
   })
 
-  const intent = body.runtimeIntent ?? session.lastAppliedIntentJson
+  const intent =
+    body.runtimeIntent ??
+    (session.lastAppliedIntentJson === undefined
+      ? undefined
+      : omitPersistedSelectionForReuse(session.lastAppliedIntentJson))
   const runId = `run-${randomUUID()}`
   birthTimeline.enrich({ runId })
   const fromSeq = this.db.hrcEvents.maxHrcSeq() + 1
@@ -1515,7 +1522,8 @@ export function completeDirectiveOnlyIntent(
   // Truthiness, not `=== undefined`: a persisted-but-null intent would spread
   // to `{}` and silently rebuild the very fragment this function exists to
   // remove.
-  const base = findTargetSession(server.db, sessionRef)?.lastAppliedIntentJson
+  const persisted = findTargetSession(server.db, sessionRef)?.lastAppliedIntentJson
+  const base = omitPersistedSelectionForReuse(persisted)
   if (!base) return undefined
   return { ...base, ...(intent.provision === undefined ? {} : { provision: intent.provision }) }
 }
@@ -1731,7 +1739,11 @@ export async function executeSemanticTurn(
   warnings?: HrcDeliveryWarning[] | undefined
   delivery?: HrcDeliveryOutcome | undefined
 }> {
-  const baseIntent = body.runtimeIntent ?? session.lastAppliedIntentJson
+  const baseIntent =
+    body.runtimeIntent ??
+    (session.lastAppliedIntentJson === undefined
+      ? undefined
+      : omitPersistedSelectionForReuse(session.lastAppliedIntentJson))
   if (!baseIntent) return {}
 
   try {

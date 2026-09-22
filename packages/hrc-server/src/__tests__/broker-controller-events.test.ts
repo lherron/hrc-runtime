@@ -12,9 +12,10 @@ import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import { HarnessBrokerController } from '../broker/controller'
 
 import {
-  makeCompileResponse,
+  makeHrcPolicy,
   makeIdentity,
-  makeInteractiveTmuxProfile,
+  makeSelectedExecutionPlan,
+  makeSelectedInteractiveTmuxExecution,
 } from './broker-compile-fixtures'
 import { envelope } from './broker-event-mapper-fixtures'
 
@@ -47,9 +48,7 @@ describe('HarnessBrokerController', () => {
       invocationId: 'invocation_attach_first',
       runId: 'run_attach_first',
     })
-    const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
-    const response = makeCompileResponse(identity, [profile])
-    if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
+    const { execution } = makeSelectedInteractiveTmuxExecution(identity)
     fake.helloResponse.drivers = [
       {
         kind: 'claude-code-tmux',
@@ -102,11 +101,9 @@ describe('HarnessBrokerController', () => {
     // T-08596: the injected broker client is the supported seam; the legacy
     // stdio seam refuses without it.
     const startPromise = controller.start({
-      plan: response.plan,
-      profile,
-      startRequest,
-      specHash: profile.harnessInvocation.specHash,
-      startRequestHash: profile.harnessInvocation.startRequestHash,
+      execution,
+      plan: makeSelectedExecutionPlan(),
+      hrcPolicy: makeHrcPolicy(),
       identity,
       dispatchEnv: { HRC_DISPATCH: 'yes' },
       brokerClient: fake,
@@ -854,54 +851,6 @@ describe('HarnessBrokerController', () => {
     expect(fake.callOrder).toContain('start')
     expect(fixture.db.runtimeOperations.getByOperationId('runtimeOperation_w2')?.status).toBe(
       'completed'
-    )
-  })
-
-  it('fails closed after start when effective invocation caps violate the profile', async () => {
-    const fake = new FakeBrokerClient()
-    const rawCaps = invocationCapabilities()
-    rawCaps.input.queue = true
-    const effectiveCaps = invocationCapabilities()
-    effectiveCaps.input.queue = true
-    fake.helloResponse.drivers = [
-      {
-        kind: 'codex-app-server',
-        version: '0.1.2-test',
-        available: true,
-        capabilities: rawCaps,
-      },
-    ]
-    fake.startResponse = {
-      ...fake.startResponse,
-      capabilities: effectiveCaps,
-    }
-    const input = makeStartInput()
-    input.profile.expectedCapabilities = capabilityRequirements({ queue: 'forbidden' })
-    const controller = new HarnessBrokerController({
-      db: fixture.db,
-      brokerClientFactory: async () => fake,
-      now: () => NOW,
-    })
-
-    const result = await controller.start({ ...input, brokerClient: fake })
-
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error.code).toBe('broker_invocation_admission_rejected')
-      expect(result.error.detail['missing']).toEqual(['input.queue.forbidden'])
-      expect(result.error.detail['effectiveCapabilities']).toEqual(effectiveCaps)
-    }
-    expect(fake.callOrder).toContain('start')
-    expect(fake.callOrder).toContain('dispose')
-    expect(fake.callOrder).toContain('close')
-    expect(fixture.db.compiledRuntimePlans.getByPlanHash('planhash_w2')).not.toBeNull()
-    expect(fixture.db.runtimeOperations.getByOperationId('runtimeOperation_w2')?.status).toBe(
-      'failed'
-    )
-    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.status).toBe('failed')
-    expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('failed')
-    expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.invocationState).toBe(
-      'failed'
     )
   })
 

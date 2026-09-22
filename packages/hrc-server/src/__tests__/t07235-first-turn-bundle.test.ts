@@ -268,6 +268,33 @@ describe('bundle assembly', () => {
     expect(bundle.launchShape?.continuationKey).toBeUndefined()
   })
 
+  it('does not recover the launch model from a persisted legacy session intent', async () => {
+    fixture = await makeFixture({
+      ...SPEC_WITH_PROMPTS,
+      sdk: undefined,
+    })
+    // A session intent is raw request history. It cannot be used to invent a
+    // model for a frozen v2 execution diagnostic when the invocation projection
+    // did not carry one.
+    fixture.db.sessions.updateIntent(
+      HOST_SESSION_ID,
+      { harness: { model: 'retired-session-model' } } as never,
+      NOW
+    )
+
+    const { bundle } = await assembleFirstTurnBundle(
+      {
+        db: fixture.db,
+        options: { runtimeRoot: fixture.runtimeRoot },
+        budgetMs: 2_000,
+        now: () => NOW,
+      },
+      watchRecord()
+    )
+
+    expect(bundle.launchShape?.model).toBeUndefined()
+  })
+
   it('writes the manifest (and no pane file when nothing was captured)', async () => {
     fixture = await makeFixture(SPEC_WITH_PROMPTS)
     const { bundleDir } = await assembleFirstTurnBundle(

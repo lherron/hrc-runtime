@@ -30,7 +30,7 @@ import { isRuntimeUnavailableStatus } from './server-util.js'
  * The linkage actually enforced, in order, because a comment that claims more
  * than the code checks is worse than no comment:
  *   1. the registration's session and generation match the session addressed;
- *   2. the attempt has a frozen profile (otherwise: attachment pending);
+ *   2. the attempt has a frozen descriptor (otherwise: attachment pending);
  *   3. the attempt is ACTIVE -- a nonterminal runtime alone is NOT activated
  *      attachment, and an absorbing attempt will never serve;
  *   4. for a DIRECT join, the attempt's host binding exists, is BOUND, and
@@ -109,7 +109,7 @@ export function resolveParticipantDelivery(
 
   // Registered but not attached. This is the ordinary pre-attachment state, not
   // a fault, and the work waits rather than being refused permanently.
-  if (attempt.preparedProfileJson === undefined) {
+  if (attempt.preparedDescriptorJson === undefined) {
     return refuse(
       'pending',
       'participant_attachment_pending',

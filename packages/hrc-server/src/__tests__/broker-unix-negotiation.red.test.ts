@@ -65,9 +65,9 @@ import * as brokerRuntimeState from '../broker/runtime-state'
 import * as optionResolvers from '../option-resolvers'
 
 import {
-  makeBrokerProfile,
   makeIdentity,
-  makeInteractiveTmuxProfile,
+  makeSelectedExecution,
+  makeSelectedInteractiveTmuxExecution,
 } from './broker-compile-fixtures'
 
 const STDIO: BrokerTransportKind = 'stdio-jsonrpc-ndjson'
@@ -108,20 +108,20 @@ type ExpectedNegotiation = {
   transport: BrokerTransportKind
 }
 const DURABLE_ROUTE: ExpectedNegotiation = { protocolVersion: V2, transport: UNIX }
-const STDIO_ROUTE: ExpectedNegotiation = { protocolVersion: V1, transport: STDIO }
+const STDIO_ROUTE: ExpectedNegotiation = { protocolVersion: V2, transport: STDIO }
 
 // admitBrokerHello takes (profile, hello) today; the third per-route arg is the
 // pinned Phase-1 contract. Cast keeps this test compiling before the signature
 // widens (bun runs without type-checking; the cast documents intent).
 const admit = admitBrokerHello as unknown as (
-  profile: Parameters<typeof admitBrokerHello>[0],
+  driverKind: string,
   hello: BrokerHelloResponse,
   expected?: ExpectedNegotiation
 ) => ReturnType<typeof admitBrokerHello>
 
 describe('T-01810 Phase 1 — per-route admitBrokerHello negotiation', () => {
-  const { profile: durableProfile } = makeInteractiveTmuxProfile() // brokerDriver: claude-code-tmux
-  const { profile: stdioProfile } = makeBrokerProfile(makeIdentity()) // brokerDriver: codex-app-server
+  const { execution: durableExecution } = makeSelectedInteractiveTmuxExecution(makeIdentity())
+  const { execution: stdioExecution } = makeSelectedExecution(makeIdentity())
 
   it('ADMITS a unix/v2 hello on a route expecting unix/v2 (RED today)', () => {
     const hello = makeHello({
@@ -129,7 +129,7 @@ describe('T-01810 Phase 1 — per-route admitBrokerHello negotiation', () => {
       transports: [UNIX],
       driverKind: 'claude-code-tmux',
     })
-    const result = admit(durableProfile, hello, DURABLE_ROUTE)
+    const result = admit(durableExecution.driver, hello, DURABLE_ROUTE)
     // Today admitBrokerHello compares against the GLOBAL stdio/v1 const, so a
     // unix/v2 hello is rejected (protocolVersion + transport "missing"). RED.
     expect(result.missing).toEqual([])
@@ -138,33 +138,33 @@ describe('T-01810 Phase 1 — per-route admitBrokerHello negotiation', () => {
 
   it('REJECTS a stdio/v1 hello on a route expecting unix/v2 (RED today)', () => {
     const hello = makeHello({
-      protocolVersion: V1,
+      protocolVersion: 'harness-broker/0.1',
       transports: [STDIO],
       driverKind: 'claude-code-tmux',
     })
-    const result = admit(durableProfile, hello, DURABLE_ROUTE)
+    const result = admit(durableExecution.driver, hello, DURABLE_ROUTE)
     // Today the global const IS stdio/v1, so this hello is wrongly ADMITTED. RED.
     expect(result.ok).toBe(false)
   })
 
-  it('ADMITS a stdio/v1 hello on a route expecting stdio/v1 (headless route stays green)', () => {
+  it('ADMITS a stdio/v2 hello on a route expecting stdio/v2', () => {
     const hello = makeHello({
-      protocolVersion: V1,
+      protocolVersion: V2,
       transports: [STDIO],
       driverKind: 'codex-app-server',
     })
-    const result = admit(stdioProfile, hello, STDIO_ROUTE)
+    const result = admit(stdioExecution.driver, hello, STDIO_ROUTE)
     expect(result.missing).toEqual([])
     expect(result.ok).toBe(true)
   })
 
-  it('REJECTS a unix/v2 hello on a route expecting stdio/v1 (cross-route)', () => {
+  it('REJECTS a unix/v2 hello on a route expecting stdio/v2 (cross-route)', () => {
     const hello = makeHello({
       protocolVersion: V2,
       transports: [UNIX],
       driverKind: 'codex-app-server',
     })
-    const result = admit(stdioProfile, hello, STDIO_ROUTE)
+    const result = admit(stdioExecution.driver, hello, STDIO_ROUTE)
     expect(result.ok).toBe(false)
   })
 
@@ -177,14 +177,14 @@ describe('T-01810 Phase 1 — per-route admitBrokerHello negotiation', () => {
       transports: [STDIO],
       driverKind: 'codex-app-server',
     })
-    expect(admitBrokerHello(stdioProfile, v1Hello).ok).toBe(false)
+    expect(admitBrokerHello(stdioExecution.driver, v1Hello).ok).toBe(false)
 
     const v2Hello = makeHello({
       protocolVersion: V2,
       transports: [STDIO],
       driverKind: 'codex-app-server',
     })
-    expect(admitBrokerHello(stdioProfile, v2Hello).ok).toBe(true)
+    expect(admitBrokerHello(stdioExecution.driver, v2Hello).ok).toBe(true)
   })
 })
 

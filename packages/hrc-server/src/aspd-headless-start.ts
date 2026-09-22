@@ -14,16 +14,9 @@
  *    the controller, whose existing start graph (B4) moves the row to `starting`
  *    before invocation.start.
  *
- * T-08556 (§1.4): the same two boundaries also carry the interactive
- * codex-app-server + codexTui birth of the attached-run door (`hrc run`,
- * `hrc resume`), frozen as route `interactive-codex-tui`. T-08560 (§1.5): every
- * door's interactive codex-app-server birth takes that route, with its door
- * class and any launch-carried cold-birth prompt frozen at boundary P.
- *
- * T-08562 (§1.6): every claude-code-tmux and pi-tui-tmux interactive birth takes
- * the same boundaries as route `interactive-tmux-broker`, admitted by hosting
- * shape plus equality with the requested driver, and launched only when the
- * frozen execution release carries positive hosting evidence for that driver.
+ * Every v2 producer-selected execution, including terminal and native-worker
+ * forms, crosses these same two boundaries. HRC validates the resource shape
+ * and frozen release but never reselects a named driver route.
  */
 import { randomUUID } from 'node:crypto'
 
@@ -39,15 +32,8 @@ import type {
   AspcCompileHarnessInvocationResponse,
   AspcExecutionRelease,
 } from 'spaces-aspc-protocol'
-import type {
-  BrokerLifecyclePolicyOverlay,
-  InvocationStartRequest,
-} from 'spaces-harness-broker-protocol'
-import type {
-  BrokerExecutionProfile,
-  CompiledRuntimePlan,
-  RuntimeIdentityAllocation,
-} from 'spaces-runtime-contracts'
+import type { BrokerLifecyclePolicyOverlay } from 'spaces-harness-broker-protocol'
+import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 import type { BirthTimeline } from './birth-timeline.js'
 import type { BrokerControllerStartInput } from './broker/controller/types.js'
 
@@ -64,16 +50,9 @@ import {
   prepareThroughAspd,
 } from './agent-spaces-adapter/aspd-preparation-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
-import {
-  compileBrokerRuntimePlan,
-  toProfileSelector,
-} from './agent-spaces-adapter/compile-adapter.js'
-import { isInteractiveTmuxBrokerProfile } from './agent-spaces-adapter/compile-profile-selector.js'
+import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import {
   type InteractiveTmuxBrokerDriver,
-  decideCodexAppServerPresentation,
-  decideInteractiveTmuxExecutionRoute,
-  decideMuseServePresentation,
   extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
   toRuntimeContinuationRef,
@@ -83,15 +62,9 @@ import {
   describeBrokerSubstratePaths,
 } from './broker-interactive-handlers/substrate-allocator.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
+import type { SelectedExecution, SelectedExecutionPlan } from './broker/selected-execution.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import type { PrecompileLaunchTimingContext } from './precompile-launch-timing.js'
-import { operatorPresentationSource } from './presentation-operator.js'
-import {
-  HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV,
-  HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
-  HRC_HEADLESS_MUSE_BROKER_ENABLED_ENV,
-  HRC_MUSE_SERVE_OPERATOR_PRESENTATION_ENV,
-} from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { type DispatchRunPersistenceOptions, dispatchRunPersistence } from './server-types.js'
@@ -101,9 +74,6 @@ import { getBrokerObserverSocketPath } from './tmux-socket.js'
 import { toBrokerResponseFormat } from './turn-response-format.js'
 
 export const ASPD_PREPARATION_SCHEMA = 'hrc-aspd-preparation/v1'
-const ASPD_BROKER_DRIVER = 'codex-app-server'
-const ASPD_MUSE_BROKER_DRIVER = 'muse-serve'
-
 type OkCompileResponse = Extract<AspcCompileHarnessInvocationResponse, { ok: true }>
 
 /**
@@ -112,17 +82,7 @@ type OkCompileResponse = Extract<AspcCompileHarnessInvocationResponse, { ok: tru
  * headless muse-serve route admits that driver with presentation none or the
  * observer viewer).
  */
-export type AspdPreparationRoute =
-  | 'headless-codex-app-server'
-  | 'headless-muse-serve'
-  | 'interactive-codex-tui'
-  | 'interactive-tmux-broker'
-
-/**
- * T-08562 (§1.6.2): the one named deprecation fence. `codex-cli-tmux` keeps its
- * current (facade) path; it has no release binding and no door emits it.
- */
-const ASPD_DEPRECATED_INTERACTIVE_DRIVER = 'codex-cli-tmux'
+export type AspdPreparationRoute = 'producer-selected-execution'
 
 /** The frozen preparation persisted in `runtime_operations.preparation_json`. */
 export type AspdPreparationRecord = {
@@ -140,26 +100,15 @@ export type AspdPreparationRecord = {
   response: OkCompileResponse
   executionRelease: AspcExecutionRelease
   admission: {
-    plan: CompiledRuntimePlan
-    profile: BrokerExecutionProfile
-    startRequest: InvocationStartRequest
-    specHash: string
-    startRequestHash: string
+    execution: SelectedExecution
+    plan: SelectedExecutionPlan
+    hrcPolicy: RuntimeCompileRequest['hrcPolicy']
     identity: RuntimeIdentityAllocation
   }
   hosting: {
-    /**
-     * The admitted broker driver: `codex-app-server` on the Codex routes; the
-     * admitted `claude-code-tmux` or `pi-tui-tmux` on `interactive-tmux-broker`
-     * (T-08562). HRC's hosting paths are keyed on it.
-     */
+    /** Producer-selected diagnostic key used only to name per-runtime paths. */
     driverKind: string
-    /**
-     * `none` or the `tmux-tui` viewer (T-08553–T-08555) on the headless route;
-     * `codex-tui`, the leased interactive TUI pane, on the interactive Codex route
-     * (T-08556); `interactive-tui`, the leased TUI pane of a non-Codex driver, on
-     * `interactive-tmux-broker` (T-08562).
-     */
+    /** A resource projection derived solely from the admitted execution. */
     presentation: AspdHostingPresentation
     executable: string
     argv: string[]
@@ -176,47 +125,10 @@ export type AspdPreparationRecord = {
   startOutcome?: 'rejected' | 'uncertain' | undefined
 }
 
-/**
- * The presentations the headless route hosts: ordinary headless (`none`), the
- * codex tmux-tui viewer, and the muse-serve observer viewer. T-08542:
- * refusing anything else is deliberate.
- */
-type AspdHostingPresentation = 'none' | 'tmux-tui' | 'codex-tui' | 'interactive-tui' | 'observer'
+type AspdHostingPresentation = 'none' | 'terminal' | 'attachable'
 
 /** HRC's deterministic hosting paths; a viewer adds its observer socket. */
 type AspdHostingPaths = BrokerSubstratePaths & { observerSocketPath?: string | undefined }
-
-/**
- * The operator presentation this route hosts for an intent, or undefined when
- * the intent is not on this route: effective `none` or `tmux-tui`, from an
- * explicit request (T-08553/T-08554) or the node default (T-08555, §1.3
- * decision 2).
- */
-function aspdRoutePresentation(
-  intent: HrcRuntimeIntent,
-  env: Record<string, string | undefined>
-): AspdHostingPresentation | undefined {
-  if (intent.harness.interactive === true) return undefined
-  const brokerDriver = toProfileSelector(intent)?.brokerDriver
-  if (brokerDriver === ASPD_MUSE_BROKER_DRIVER) {
-    // The observer viewer is hosted on this route (observer pane + socket;
-    // the driver launches its renderer there), so the decision stands as-is.
-    return decideMuseServePresentation({
-      operatorPresentation: env[HRC_MUSE_SERVE_OPERATOR_PRESENTATION_ENV],
-      brokerDriver,
-      requestedOperator: intent.presentation?.operator,
-    })
-  }
-  if (brokerDriver !== ASPD_BROKER_DRIVER) return undefined
-  const decided = decideCodexAppServerPresentation({
-    operatorPresentation: env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
-    brokerDriver: ASPD_BROKER_DRIVER,
-    requestedOperator: intent.presentation?.operator,
-  })
-  // The codex decider never selects the muse-serve 'observer' viewer; narrow
-  // the widened OperatorPresentation back to the aspd hosting union.
-  return decided === 'observer' ? 'none' : decided
-}
 
 function describeAspdHostingPaths(
   options: HrcServerInstanceForHandlers['options'],
@@ -225,41 +137,12 @@ function describeAspdHostingPaths(
   presentation: AspdHostingPresentation
 ): AspdHostingPaths {
   const paths = describeBrokerSubstratePaths(options, driverKind, runtimeId)
-  return presentation === 'tmux-tui' || presentation === 'observer'
+  return presentation === 'attachable'
     ? {
         ...paths,
         observerSocketPath: getBrokerObserverSocketPath(options, driverKind, runtimeId),
       }
     : paths
-}
-
-/**
- * T-08562 (§1.6.3): the positive hosting evidence a frozen release carries for
- * its worker, read from the optional `executionRelease.worker.hostedDrivers`
- * (untyped in HRC's locked protocol; the thin client passes the result through).
- * A malformed value is treated as absent.
- */
-function hostedDriversOf(release: AspcExecutionRelease): string[] | undefined {
-  const value = (release.worker as { hostedDrivers?: unknown }).hostedDrivers
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? (value as string[])
-    : undefined
-}
-
-/**
- * T-08562 (§1.6.3): any driver other than codex-app-server launches on the aspd
- * route only when the frozen release lists it in `hostedDrivers`. codex-app-server
- * is exempt: its binding is already proven, so retained releases keep serving it.
- */
-function workerHostingUnproven(
-  release: AspcExecutionRelease,
-  brokerDriver: string
-): { hostedDrivers: string[] | null } | undefined {
-  if (brokerDriver === ASPD_BROKER_DRIVER) return undefined
-  const hostedDrivers = hostedDriversOf(release)
-  return hostedDrivers?.includes(brokerDriver) === true
-    ? undefined
-    : { hostedDrivers: hostedDrivers ?? null }
 }
 
 function aspdWorkerArgv(
@@ -283,20 +166,25 @@ function aspdWorkerArgv(
 /**
  * T-08556 (§1.4), T-08560 (§1.5.1), T-08562 (§1.6.2) — the interactive route:
  * every interactive broker birth, whichever door requests it, on a node that
- * declares an aspd endpoint. Returns the endpoint, or undefined for an
- * unconfigured node and for the deprecated `codex-cli-tmux` fence.
+ * declares an aspd endpoint. The named driver is a legacy door input, never
+ * preparation authority.
  */
 export function aspdInteractiveBrokerEndpoint(
   input: { allowedBrokerDriver: InteractiveTmuxBrokerDriver },
   env: Record<string, string | undefined> = process.env
 ): string | undefined {
-  if (input.allowedBrokerDriver === ASPD_DEPRECATED_INTERACTIVE_DRIVER) return undefined
+  void input
   return configuredAspdEndpoint(env)
 }
 
-/** T-08562: the frozen interactive route an admitted driver launches on. */
-export function aspdInteractiveRouteFor(brokerDriver: string): AspdPreparationRoute {
-  return brokerDriver === ASPD_BROKER_DRIVER ? 'interactive-codex-tui' : 'interactive-tmux-broker'
+/** A retry never reselects a route; it names the single v2 preparation kind. */
+export function aspdInteractiveRouteFor(_brokerDriver: string): AspdPreparationRoute {
+  return 'producer-selected-execution'
+}
+
+function presentationForExecution(execution: SelectedExecution): AspdHostingPresentation {
+  if (execution.hosting.terminalRequired) return 'terminal'
+  return execution.presentationSurface?.transport === 'websocket-unix' ? 'attachable' : 'none'
 }
 
 /**
@@ -307,10 +195,11 @@ export function aspdInteractiveRouteFor(brokerDriver: string): AspdPreparationRo
  * or undefined for every other route.
  */
 export function aspdHeadlessBrokerEndpoint(
-  intent: HrcRuntimeIntent,
+  _intent: HrcRuntimeIntent,
   env: Record<string, string | undefined> = process.env
 ): string | undefined {
-  if (aspdRoutePresentation(intent, env) === undefined) return undefined
+  // The endpoint decides only service availability. Driver, terminal, and
+  // presentation arrive after compile in the producer-selected execution.
   return configuredAspdEndpoint(env)
 }
 
@@ -348,8 +237,12 @@ export type AspdInteractivePreparation = {
 export type AspdPrepareInput = {
   session: HrcSessionRecord
   intent: HrcRuntimeIntent
+  /** HRC-owned policy forwarded unchanged in the compile request and frozen at P. */
+  policy?: RuntimeCompileRequest['hrcPolicy'] | undefined
   /** Present for the interactive route (§1.4); absent for the headless route. */
   interactive?: AspdInteractivePreparation | undefined
+  /** Door-owned prompt carriage is frozen at compile, never used to select execution. */
+  launchCarriedPrompt?: { prompt: string; mode: AspdLaunchCarriedPromptMode } | undefined
   preparedAuthority?: Parameters<typeof assertActuatorSplitAdmission>[0]['preparedAuthority']
   runId: string
   endpoint: string
@@ -381,7 +274,7 @@ export async function prepareAspdHeadlessAttempt(
   // T-08560 D1: the facade's compile-only intent. The prompt reaches only the
   // frozen start request; `record.intent`, which the caller persists as the
   // applied intent, stays prompt-free.
-  const launchCarriedPrompt = input.interactive?.launchCarriedPrompt
+  const launchCarriedPrompt = input.launchCarriedPrompt ?? input.interactive?.launchCarriedPrompt
   const compileIntent: HrcRuntimeIntent =
     launchCarriedPrompt !== undefined
       ? {
@@ -390,10 +283,22 @@ export async function prepareAspdHeadlessAttempt(
           ...(launchCarriedPrompt.mode === 'append-to-priming' ? {} : { omitPriming: true }),
         }
       : intent
+  const persistedIntent: HrcRuntimeIntent =
+    launchCarriedPrompt === undefined
+      ? intent
+      : (() => {
+          const {
+            initialPrompt: _initialPrompt,
+            omitPriming: _omitPriming,
+            ...promptlessIntent
+          } = intent
+          return promptlessIntent
+        })()
   input.birthTimeline?.mark('aspd-compile-begin')
   const compiled = await compileBrokerRuntimePlan(
     {
       intent: compileIntent,
+      scopeRef: session.scopeRef,
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       dispatchEnv: hrcDispatchEnv,
@@ -401,6 +306,7 @@ export async function prepareAspdHeadlessAttempt(
         input.interactive !== undefined
           ? input.interactive.continuation
           : toRuntimeContinuationRef(automaticContinuationForSession(server.db, session)),
+      ...(input.policy !== undefined ? { policy: input.policy } : {}),
       allowCompilerInitialInputWithoutIdentity: input.allowCompilerInitialInputWithoutIdentity,
       responseFormat: input.responseFormat,
     },
@@ -477,74 +383,23 @@ export async function prepareAspdHeadlessAttempt(
     )
   }
   const interactive = input.interactive
-  // T-08562 (§1.6.3): an interactive preparation is admitted by hosting shape
-  // (interactive, supported protocol, tmux terminal) plus equality with the
-  // driver the door requested; no driver-name list.
-  const routeMatches =
-    interactive === undefined
-      ? (compiled.profile.brokerDriver === ASPD_BROKER_DRIVER ||
-          compiled.profile.brokerDriver === ASPD_MUSE_BROKER_DRIVER) &&
-        compiled.profile.interactionMode === 'headless'
-      : isInteractiveTmuxBrokerProfile(compiled.profile) &&
-        compiled.profile.brokerDriver === interactive.brokerDriver &&
-        decideInteractiveTmuxExecutionRoute(compileIntent, compiled.profile, {
-          brokerFlagEnabled: true,
-          allowedBrokerDriver: interactive.brokerDriver,
-        }) === 'broker'
-  if (!routeMatches) {
-    throw aspdStartError(
-      'aspd_route_profile_mismatch',
-      interactive === undefined
-        ? 'aspd selected a profile outside the headless broker route'
-        : `aspd selected a profile outside the interactive ${interactive.brokerDriver} route`,
-      {
-        hostSessionId: session.hostSessionId,
-        runId,
-        brokerDriver: compiled.profile.brokerDriver,
-        interactionMode: compiled.profile.interactionMode,
-        ...(interactive !== undefined ? { requestedBrokerDriver: interactive.brokerDriver } : {}),
-      }
-    )
-  }
-  const hostingUnproven = workerHostingUnproven(release, compiled.profile.brokerDriver)
-  if (hostingUnproven !== undefined) {
-    writeServerLog('WARN', 'aspd.preparation.hosting_unproven', {
-      hostSessionId: session.hostSessionId,
-      runId,
-      brokerDriver: compiled.profile.brokerDriver,
-      hostedDrivers: hostingUnproven.hostedDrivers,
-      executionReleaseId: release.releaseId,
-    })
-    throw aspdStartError(
-      'aspd_worker_hosting_unproven',
-      `the aspd execution release does not prove it hosts ${compiled.profile.brokerDriver}; refusing without fallback`,
-      {
-        hostSessionId: session.hostSessionId,
-        runId,
-        brokerDriver: compiled.profile.brokerDriver,
-        hostedDrivers: hostingUnproven.hostedDrivers,
-        executionReleaseId: release.releaseId,
-        aspdRelease: prepared.service.release,
-      }
-    )
-  }
-  const permissionMode = compiled.profile.policy.permissionPolicy.mode
-  if (permissionMode === 'ask-client') {
-    throw aspdStartError(
-      'ask_client_unsupported',
-      'ask-client permission mode is unsupported for HRC-owned broker dispatch',
-      { hostSessionId: session.hostSessionId, runId, permissionMode }
-    )
-  }
   const actuatorSplitAuthority = await assertActuatorSplitAdmission({
-    intent,
+    intent: persistedIntent,
     route: interactive === undefined ? 'broker' : 'interactive-broker',
-    startRequest: compiled.startRequest,
+    startRequest: compiled.execution.dispatchRequest.startRequest,
     preparedAuthority: input.preparedAuthority,
   })
 
-  const mergedDispatchEnv = { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv }
-  if (extractPiSdkBrokerCredentialEnv(mergedDispatchEnv, compiled.startRequest) !== undefined) {
+  const mergedDispatchEnv = {
+    ...(compiled.execution.dispatchRequest.dispatchEnv ?? {}),
+    ...hrcDispatchEnv,
+  }
+  if (
+    extractPiSdkBrokerCredentialEnv(
+      mergedDispatchEnv,
+      compiled.execution.dispatchRequest.startRequest
+    ) !== undefined
+  ) {
     // Broker-process credentials are never persisted; this route carries none.
     throw aspdStartError(
       'aspd_route_profile_mismatch',
@@ -552,32 +407,18 @@ export async function prepareAspdHeadlessAttempt(
       { hostSessionId: session.hostSessionId, runId }
     )
   }
-  const dispatchEnv = filterBrokerDispatchEnvForLockedEnv(mergedDispatchEnv, compiled.startRequest)
+  const dispatchEnv = filterBrokerDispatchEnvForLockedEnv(
+    mergedDispatchEnv,
+    compiled.execution.dispatchRequest.startRequest
+  )
   const lifecyclePolicy = resolveLifecyclePolicyOverlay({
-    routeId: `${interactive === undefined ? 'headless-broker' : 'interactive-broker'}:${compiled.profile.brokerDriver}`,
+    routeId: `${interactive === undefined ? 'headless-broker' : 'interactive-broker'}:${compiled.execution.driver}`,
     brokerRoute: true,
   })
   const operationId = String(compiled.identity.operationId)
-  const brokerDriver = compiled.profile.brokerDriver
-  const route: AspdPreparationRoute =
-    interactive === undefined
-      ? brokerDriver === ASPD_MUSE_BROKER_DRIVER
-        ? 'headless-muse-serve'
-        : 'headless-codex-app-server'
-      : aspdInteractiveRouteFor(brokerDriver)
-  const presentation: AspdHostingPresentation | undefined =
-    interactive === undefined
-      ? aspdRoutePresentation(intent, process.env)
-      : route === 'interactive-codex-tui'
-        ? 'codex-tui'
-        : 'interactive-tui'
-  if (presentation === undefined) {
-    throw aspdStartError(
-      'aspd_route_profile_mismatch',
-      'intent left the aspd route between selection and preparation',
-      { hostSessionId: session.hostSessionId, runId }
-    )
-  }
+  const brokerDriver = compiled.execution.driver
+  const route: AspdPreparationRoute = 'producer-selected-execution'
+  const presentation = presentationForExecution(compiled.execution)
   input.birthTimeline?.enrich({ presentation })
   const paths = describeAspdHostingPaths(server.options, brokerDriver, runtimeId, presentation)
   const argv = aspdWorkerArgv(
@@ -607,23 +448,21 @@ export async function prepareAspdHeadlessAttempt(
     interactive === undefined
       ? {
           route: 'broker',
-          flag:
-            brokerDriver === ASPD_MUSE_BROKER_DRIVER
-              ? HRC_HEADLESS_MUSE_BROKER_ENABLED_ENV
-              : HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
-          selectedBy: 'aspdHeadlessBrokerEndpoint',
+          selectedBy: 'producer-selected-execution',
           headlessRoute: 'durable-leased',
           brokerTransport: 'unix-jsonrpc-ndjson',
-          operatorPresentation: presentation,
-          operatorPresentationSource: operatorPresentationSource(intent),
+          hostingPresentation: presentation,
+          ...(launchCarriedPrompt !== undefined
+            ? { launchCarriedPrompt: { mode: launchCarriedPrompt.mode } }
+            : {}),
           ...aspdRouteDecision,
         }
       : {
           // T-08556 (§1.4), T-08560 (§1.5), T-08562 (§1.6): an interactive birth by any door.
           route: 'broker',
           flag: interactive.flagEnvName,
-          selectedBy: 'decideInteractiveTmuxExecutionRoute',
-          durableInteractiveRoute: 'durable-ipc',
+          selectedBy: 'producer-selected-execution',
+          durableInteractiveRoute: 'producer-selected-execution',
           brokerTransport: 'unix-jsonrpc-ndjson',
           durableRouteSelectedBy: 'decideBrokerDurableInteractiveRoute',
           door: interactive.door,
@@ -649,10 +488,8 @@ export async function prepareAspdHeadlessAttempt(
     executionRelease: release,
     admission: {
       plan: compiled.plan,
-      profile: compiled.profile,
-      startRequest: compiled.startRequest,
-      specHash: compiled.specHash,
-      startRequestHash: compiled.startRequestHash,
+      execution: compiled.execution,
+      hrcPolicy: compiled.hrcPolicy,
       identity: compiled.identity,
     },
     hosting: {
@@ -669,7 +506,7 @@ export async function prepareAspdHeadlessAttempt(
       ...(runtimeAuthority !== undefined ? { runtimeAuthority } : {}),
       ...(requestedResponseFormat !== undefined ? { requestedResponseFormat } : {}),
     },
-    intent,
+    intent: persistedIntent,
   }
 
   // Boundary P: one transaction, before any hosting effect.
@@ -678,8 +515,8 @@ export async function prepareAspdHeadlessAttempt(
       planHash: String(compiled.plan.planHash),
       compileId: String(compiled.plan.compileId),
       schemaVersion: compiled.plan.schemaVersion,
-      compilerName: compiled.plan.compiler.name,
-      compilerVersion: compiled.plan.compiler.version,
+      compilerName: 'aspc',
+      compilerVersion: 'v2',
       planProjectionJson: JSON.stringify(compiled.plan),
       diagnosticsJson: JSON.stringify(compiled.plan.diagnostics ?? []),
       createdAt: compiled.plan.createdAt,
@@ -694,8 +531,8 @@ export async function prepareAspdHeadlessAttempt(
       controller: 'harness-broker',
       compileId: String(compiled.plan.compileId),
       planHash: String(compiled.plan.planHash),
-      selectedProfileId: String(compiled.profile.profileId),
-      selectedProfileHash: String(compiled.profile.profileHash),
+      selectedProfileId: String(compiled.execution.profile.profileId),
+      selectedProfileHash: String(compiled.execution.profile.profileHash),
       startupMethod: 'broker.startInvocationFromRequest',
       turnDelivery: 'invocation.input',
       status: 'prepared',
@@ -756,11 +593,12 @@ export function assertPreparedAspdAttemptRoute(
   selected: { route: AspdPreparationRoute; driverKind: string },
   hostSessionId: string
 ): void {
-  // T-08562 (§1.6.6): route AND driver; two non-Codex drivers share a route.
-  if (resumable.route === selected.route && resumable.driverKind === selected.driverKind) return
+  // v2 has one producer-selected preparation kind. A retry must never turn a
+  // diagnostic driver string into a second HRC route or selection decision.
+  if (resumable.route === selected.route) return
   throw aspdStartError(
     'aspd_preparation_route_changed',
-    `the frozen aspd preparation is ${resumable.route}/${resumable.driverKind}; this retry selected ${selected.route}/${selected.driverKind}`,
+    `the frozen aspd preparation is ${resumable.route}; this retry selected ${selected.route}`,
     {
       reason: 'aspd_preparation_route_changed',
       operationId: resumable.operationId,
@@ -768,6 +606,7 @@ export function assertPreparedAspdAttemptRoute(
       hostSessionId,
       frozenRoute: resumable.route,
       selectedRoute: selected.route,
+      // Retained as diagnostic evidence only; neither value selects hosting.
       frozenDriver: resumable.driverKind,
       selectedDriver: selected.driverKind,
     }
@@ -903,57 +742,18 @@ export async function launchAspdPreparedAttempt(
     record.hosting.presentation
   )
   const expectedArgv = aspdWorkerArgv(record.executionRelease, record, currentPaths)
-  // The route and its presentation are one frozen fact: the interactive TUI
-  // route hosts only `codex-tui`, the headless route only its decided viewer.
-  const interactiveDoor =
-    record.dispatch.routeDecision['door'] === 'attached-run' ||
-    record.dispatch.routeDecision['door'] === 'interactive-birth'
-  const presentationMatchesRoute =
-    record.route === 'interactive-codex-tui'
-      ? record.hosting.presentation === 'codex-tui' &&
-        record.hosting.driverKind === ASPD_BROKER_DRIVER &&
-        interactiveDoor
-      : record.route === 'interactive-tmux-broker'
-        ? // T-08562 (§1.6.4): the frozen driver is bound back to the admitted profile.
-          record.hosting.presentation === 'interactive-tui' &&
-          record.hosting.driverKind !== ASPD_BROKER_DRIVER &&
-          record.hosting.driverKind === record.admission.profile.brokerDriver &&
-          interactiveDoor
-        : record.route === 'headless-codex-app-server'
-          ? record.hosting.driverKind === ASPD_BROKER_DRIVER &&
-            record.hosting.presentation !== 'codex-tui' &&
-            record.hosting.presentation !== 'interactive-tui' &&
-            record.dispatch.routeDecision['operatorPresentation'] === record.hosting.presentation
-          : record.route === 'headless-muse-serve'
-            ? record.hosting.driverKind === ASPD_MUSE_BROKER_DRIVER &&
-              (record.hosting.presentation === 'none' ||
-                record.hosting.presentation === 'observer') &&
-              record.dispatch.routeDecision['operatorPresentation'] === record.hosting.presentation
-            : false
+  const launchMatchesAdmission =
+    record.route === 'producer-selected-execution' &&
+    record.hosting.driverKind === record.admission.execution.driver &&
+    record.hosting.presentation === presentationForExecution(record.admission.execution)
   if (
     JSON.stringify(expectedArgv) !== JSON.stringify(record.hosting.argv) ||
     JSON.stringify(currentPaths) !== JSON.stringify(record.hosting.paths) ||
-    !presentationMatchesRoute
+    !launchMatchesAdmission
   ) {
     refuse('launch_description_mismatch', 'frozen worker launch description no longer matches', {
       frozenArgv: record.hosting.argv,
     })
-  }
-
-  // T-08562 (§1.6.3): re-check the hosting evidence from persisted bytes.
-  const launchHostingUnproven = workerHostingUnproven(
-    record.executionRelease,
-    record.admission.profile.brokerDriver
-  )
-  if (launchHostingUnproven !== undefined) {
-    refuse(
-      'aspd_worker_hosting_unproven',
-      `the frozen execution release does not prove it hosts ${record.admission.profile.brokerDriver}`,
-      {
-        brokerDriver: record.admission.profile.brokerDriver,
-        hostedDrivers: launchHostingUnproven.hostedDrivers,
-      }
-    )
   }
 
   writeServerLog('INFO', 'aspd.launch.begin', { ...detail, executable })
@@ -961,11 +761,9 @@ export async function launchAspdPreparedAttempt(
   const controller = server.getHarnessBrokerController()
   const admission = record.admission
   const result = await controller.start({
+    execution: admission.execution,
     plan: admission.plan,
-    profile: admission.profile,
-    startRequest: admission.startRequest,
-    specHash: admission.specHash,
-    startRequestHash: admission.startRequestHash,
+    hrcPolicy: admission.hrcPolicy,
     identity: admission.identity,
     ...(options.birthTimeline !== undefined ? { birthTimeline: options.birthTimeline } : {}),
     ...(record.dispatch.runtimeAuthority !== undefined
@@ -985,7 +783,6 @@ export async function launchAspdPreparedAttempt(
       : {}),
     aspdExecution: {
       operationId,
-      route: record.route,
       release: record.executionRelease,
       executable,
       argv: record.hosting.argv,

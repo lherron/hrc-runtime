@@ -34,6 +34,7 @@ import {
   type HostingLedger,
   type Release,
   makeRelease,
+  producerResult,
   startAspdDouble,
   tmuxManagerDouble,
   workerClient,
@@ -42,7 +43,6 @@ import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-
 
 const SCOPE = 'agent:museheadless:project:hrc-runtime:task:primary'
 const MARK = 'MUSE-HEADLESS-MARK reply with exactly this marker'
-const HOSTED = ['codex-app-server', 'muse-serve']
 
 let fixture: HrcServerTestFixture
 let server: HrcServer
@@ -159,12 +159,26 @@ beforeEach(async () => {
   releaseA = makeRelease(join(scratch, 'releases'), 'a')
   aspdSocket = join(scratch, 'aspd.sock')
   aspd = startAspdDouble(aspdSocket, releaseA)
-  aspd.hostedDrivers = HOSTED
+  aspd.producerResult = producerResult({
+    selection: {
+      harness: 'muse',
+      modelProvider: 'muse',
+      model: 'muse-test',
+      presentation: false,
+    },
+    execution: {
+      recipeId: 'fixture-muse-headless',
+      driver: 'muse-serve',
+      hosting: {
+        executionTransport: 'jsonrpc-stdio',
+        terminalRequired: false,
+        processExecution: 'broker-process',
+      },
+      presentationFulfillment: 'attachable',
+    },
+  })
   setEnv('HRC_ASPD_SOCKET', aspdSocket)
   setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', undefined)
-  // Mirror the max3 node default that caught the live seat: the observer
-  // viewer has no aspd-route hosting, so the route hosts it as none.
-  setEnv('HRC_MUSE_SERVE_OPERATOR_PRESENTATION', 'observer')
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
   setEnv('ASP_HOME', join(scratch, 'caller-asp-home'))
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
@@ -227,29 +241,28 @@ describe('headless muse-serve route selection', () => {
     )
   })
 
-  it('admits observer muse requests, and refuses interactive intents and unconfigured nodes', () => {
+  it('uses the configured endpoint for every raw request and refuses an unconfigured node', () => {
     const observer = {
       ...museIntent(),
       presentation: { operator: 'observer' },
     } as HrcRuntimeIntent
     expect(aspdHeadlessBrokerEndpoint(observer, { HRC_ASPD_SOCKET: aspdSocket })).toBe(aspdSocket)
-    expect(
-      aspdHeadlessBrokerEndpoint(museIntent(), {
-        HRC_ASPD_SOCKET: aspdSocket,
-        HRC_MUSE_SERVE_OPERATOR_PRESENTATION: 'observer',
-      })
-    ).toBe(aspdSocket)
+    expect(aspdHeadlessBrokerEndpoint(museIntent(), { HRC_ASPD_SOCKET: aspdSocket })).toBe(
+      aspdSocket
+    )
     const interactive = {
       ...museIntent(),
       harness: { provider: 'meta', id: 'muse-cli', interactive: true },
     } as HrcRuntimeIntent
-    expect(aspdHeadlessBrokerEndpoint(interactive, { HRC_ASPD_SOCKET: aspdSocket })).toBeUndefined()
+    expect(aspdHeadlessBrokerEndpoint(interactive, { HRC_ASPD_SOCKET: aspdSocket })).toBe(
+      aspdSocket
+    )
     expect(aspdHeadlessBrokerEndpoint(museIntent(), {})).toBeUndefined()
   })
 })
 
 describe('headless muse-serve birth through aspd', () => {
-  it('fresh rotation drops a prior per-birth opt-out and reapplies the observer node policy', async () => {
+  it('fresh rotation preserves omission; producer realization remains frozen', async () => {
     const prior = await session()
     internal().db.sessions.updateIntent(
       prior.hostSessionId,
@@ -272,10 +285,10 @@ describe('headless muse-serve birth through aspd', () => {
     await settle(() => ledger.startCalls.length === 1)
 
     const [op] = operations(successor.hostSessionId)
-    expect(op?.record.hosting.presentation).toBe('observer')
+    expect(op?.record.hosting.presentation).toBe('none')
     expect(op?.record.dispatch.routeDecision).toMatchObject({
-      operatorPresentation: 'observer',
-      operatorPresentationSource: 'node-default',
+      preparation: 'aspd',
+      selectedBy: 'producer-selected-execution',
     })
   })
 
@@ -298,12 +311,12 @@ describe('headless muse-serve birth through aspd', () => {
     const [op] = operations(successor.hostSessionId)
     expect(op?.record.hosting.presentation).toBe('none')
     expect(op?.record.dispatch.routeDecision).toMatchObject({
-      operatorPresentation: 'none',
-      operatorPresentationSource: 'request',
+      preparation: 'aspd',
+      selectedBy: 'producer-selected-execution',
     })
   })
 
-  it('mail summons prepares route headless-muse-serve with the observer viewer and launches the frozen worker', async () => {
+  it('mail summons launches the producer-selected frozen worker without HRC route selection', async () => {
     const s = await seedMuse()
     const response = await kickerSummons(s)
     expect(response.status).toBe(200)
@@ -311,46 +324,36 @@ describe('headless muse-serve birth through aspd', () => {
 
     expect(facadeCalls).toBe(0)
     expect(aspd.compileCalls).toBe(1)
-    expect(aspd.compileSelectors[0]).toEqual({ brokerDriver: 'muse-serve' })
+    expect(aspd.compileSelectors[0]).toBeUndefined()
+    expect(aspd.compileRequested[0]).toEqual({})
     const [op] = operations(s.hostSessionId)
-    expect(op?.record.route).toBe('headless-muse-serve')
+    expect(op?.record.route).toBe('producer-selected-execution')
     expect(op?.record.hosting).toMatchObject({
       driverKind: 'muse-serve',
-      presentation: 'observer',
+      presentation: 'none',
     })
-    expect(op?.record.executionRelease.worker.hostedDrivers).toEqual(HOSTED)
     expect(op?.record.dispatch.routeDecision).toMatchObject({
       preparation: 'aspd',
-      flag: 'HRC_HEADLESS_MUSE_BROKER_ENABLED',
-      selectedBy: 'aspdHeadlessBrokerEndpoint',
-      operatorPresentation: 'observer',
+      selectedBy: 'producer-selected-execution',
     })
-    // Launched from the frozen release with the observer socket on the worker
-    // command and the frozen paths.
+    // Launched from the frozen release and its producer-selected paths.
     expect(ledger.commands[0]).toContain(join(releaseA.releaseRoot, 'harness-broker'))
     expect(ledger.commands[0]).toContain(op?.record.hosting.paths.brokerIpcSocketPath)
     expect(op?.record.hosting.paths.sessionName).toContain('muse-serve')
-    expect(op?.record.hosting.paths.observerSocketPath).toContain('observer.sock')
-    expect(ledger.commands[0]).toContain(op?.record.hosting.paths.observerSocketPath)
-    expect(ledger.commands[0]).toContain('--experimental-observer-socket')
+    expect(op?.record.hosting.paths.observerSocketPath).toBeUndefined()
+    expect(ledger.commands[0]).not.toContain('--experimental-observer-socket')
     expect(ledger.startCalls).toHaveLength(1)
   })
 
-  it('hostedDrivers lacking muse-serve refuses aspd_worker_hosting_unproven with no hosting effect', async () => {
-    aspd.hostedDrivers = ['codex-app-server']
+  it('a producer-declared release remains the only hosting authority', async () => {
     const s = await seedMuse()
     const error = await prepareAspdHeadlessAttempt(server as never, {
       session: s,
       intent: museIntent(),
       runId: 'run-muse-unproven',
       endpoint: aspdSocket,
-    }).catch((e: unknown) => e)
-    expect(JSON.stringify((error as { detail?: unknown }).detail)).toContain(
-      'aspd_worker_hosting_unproven'
-    )
-    expect(operations(s.hostSessionId)).toEqual([])
-    expect(ledger.commands).toHaveLength(0)
-    expect(ledger.startCalls).toHaveLength(0)
+    })
+    expect(error).toEqual(expect.any(String))
     expect(facadeCalls).toBe(0)
   })
 })

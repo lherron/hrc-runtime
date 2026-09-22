@@ -10,7 +10,6 @@ import type {
   InvocationCapabilities,
   InvocationResponseFormat,
 } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 export function toBrokerResponseFormat(
   responseFormat: HrcTurnResponseFormat | undefined
@@ -49,7 +48,7 @@ export function assertRuntimeSupportsResponseFormat(input: {
 }
 
 export function preflightDriverSupportsResponseFormat(input: {
-  profile: BrokerExecutionProfile
+  driver: string
   hello: BrokerHelloResponse
   responseFormat: HrcTurnResponseFormat | undefined
   route: string
@@ -58,9 +57,7 @@ export function preflightDriverSupportsResponseFormat(input: {
   if (input.responseFormat?.kind !== 'json_schema') {
     return { ok: true }
   }
-  const driver = input.hello.drivers.find(
-    (candidate) => candidate.kind === input.profile.brokerDriver
-  )
+  const driver = input.hello.drivers.find((candidate) => candidate.kind === input.driver)
   const actual = driver?.capabilities?.finalResponse ?? null
   if (
     driver?.capabilities?.finalResponse?.jsonSchema === true &&
@@ -76,14 +73,14 @@ export function preflightDriverSupportsResponseFormat(input: {
       responseFormat: input.responseFormat,
       actual,
       runtimeId: input.runtimeId,
-      brokerDriver: input.profile.brokerDriver,
+      brokerDriver: input.driver,
       driver: driver
         ? {
             kind: driver.kind,
             available: driver.available,
             ...(driver.unavailableReason ? { unavailableReason: driver.unavailableReason } : {}),
           }
-        : { kind: input.profile.brokerDriver, missing: true },
+        : { kind: input.driver, missing: true },
     }),
   }
 }

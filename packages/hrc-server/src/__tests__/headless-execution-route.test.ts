@@ -53,10 +53,8 @@ import { describe, expect, it } from 'bun:test'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
 import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import * as hrc from '../index'
-import { makeInteractiveTmuxProfile } from './broker-compile-fixtures'
 
 type Harness = HrcRuntimeIntent['harness']
 type HeadlessExecutionRoute = 'sdk' | 'broker' | 'legacy-exec'
@@ -103,19 +101,6 @@ const runHeadlessRoute = (
     ) => Promise<T>
   }
 ).runHeadlessRoute
-
-const decideInteractiveTmuxExecutionRoute = (
-  hrc as unknown as {
-    decideInteractiveTmuxExecutionRoute?: (
-      intent: HrcRuntimeIntent,
-      profile: BrokerExecutionProfile,
-      options: {
-        brokerFlagEnabled: boolean
-        allowedBrokerDriver: 'claude-code-tmux' | 'codex-app-server' | 'codex-cli-tmux'
-      }
-    ) => InteractiveTmuxExecutionRoute
-  }
-).decideInteractiveTmuxExecutionRoute
 
 const decideInteractiveTmuxBrokerStartRoute = (
   hrc as unknown as {
@@ -173,10 +158,6 @@ describe('W4 cutover seam — exports exist', () => {
 
   it('exports extractPiSdkBrokerCredentialEnv', () => {
     expect(typeof extractPiSdkBrokerCredentialEnv).toBe('function')
-  })
-
-  it('exports decideInteractiveTmuxExecutionRoute', () => {
-    expect(typeof decideInteractiveTmuxExecutionRoute).toBe('function')
   })
 
   it('exports decideInteractiveTmuxBrokerStartRoute', () => {
@@ -469,129 +450,6 @@ describe('filterBrokerDispatchEnvForLockedEnv — broker dispatch contract', () 
     expect(extractPiSdkBrokerCredentialEnv!(env, startRequest)).toEqual({
       OPENAI_API_KEY: 'api-key-secret',
     })
-  })
-})
-
-describe('decideInteractiveTmuxExecutionRoute — claude-code-tmux flag', () => {
-  const interactiveClaudeIntent = intent(
-    { provider: 'anthropic', interactive: true, id: 'claude-code' },
-    'interactive'
-  )
-
-  it('flag OFF keeps interactive claude-code-tmux on the legacy tmux launch path', () => {
-    const { profile } = makeInteractiveTmuxProfile()
-
-    expect(
-      decideInteractiveTmuxExecutionRoute!(interactiveClaudeIntent, profile, {
-        brokerFlagEnabled: false,
-        allowedBrokerDriver: 'claude-code-tmux',
-      })
-    ).toBe('legacy-tmux')
-  })
-
-  it('flag ON selects broker only by interactive tmux brokerDriver/terminal metadata', () => {
-    const { profile } = makeInteractiveTmuxProfile()
-
-    expect(
-      decideInteractiveTmuxExecutionRoute!(interactiveClaudeIntent, profile, {
-        brokerFlagEnabled: true,
-        allowedBrokerDriver: 'claude-code-tmux',
-      })
-    ).toBe('broker')
-  })
-
-  it('does not let the claude-code-tmux flag affect the headless codex route', () => {
-    const headlessCodex = intent({ provider: 'openai', interactive: false, id: 'codex-cli' })
-
-    expect(
-      decideHeadlessExecutionRoute!(headlessCodex, {
-        brokerFlagEnabled: false,
-        museBrokerFlagEnabled: false,
-      })
-    ).toBe('legacy-exec')
-  })
-
-  it('does not select the claude-code-tmux route for another interactive tmux broker driver', () => {
-    const { profile } = makeInteractiveTmuxProfile()
-    const codexTmuxProfile = {
-      ...profile,
-      brokerDriver: 'codex-cli-tmux',
-    } as BrokerExecutionProfile
-
-    expect(
-      decideInteractiveTmuxExecutionRoute!(interactiveClaudeIntent, codexTmuxProfile, {
-        brokerFlagEnabled: true,
-        allowedBrokerDriver: 'claude-code-tmux',
-      })
-    ).toBe('legacy-tmux')
-  })
-})
-
-describe('decideInteractiveTmuxExecutionRoute — codex-cli-tmux flag', () => {
-  const interactiveCodexIntent = intent(
-    { provider: 'openai', interactive: true, id: 'codex-cli' },
-    'interactive'
-  )
-
-  function makeCodexCliTmuxProfile(): BrokerExecutionProfile {
-    const { profile } = makeInteractiveTmuxProfile()
-    return { ...profile, brokerDriver: 'codex-cli-tmux' } as BrokerExecutionProfile
-  }
-
-  it('flag OFF keeps interactive codex-cli-tmux on the legacy tmux launch path', () => {
-    const profile = makeCodexCliTmuxProfile()
-
-    expect(
-      decideInteractiveTmuxExecutionRoute!(interactiveCodexIntent, profile, {
-        brokerFlagEnabled: false,
-        allowedBrokerDriver: 'codex-cli-tmux',
-      })
-    ).toBe('legacy-tmux')
-  })
-
-  it('flag ON selects broker for a codex-cli-tmux profile + interactive openai intent', () => {
-    const profile = makeCodexCliTmuxProfile()
-
-    expect(
-      decideInteractiveTmuxExecutionRoute!(interactiveCodexIntent, profile, {
-        brokerFlagEnabled: true,
-        allowedBrokerDriver: 'codex-cli-tmux',
-      })
-    ).toBe('broker')
-  })
-
-  it('does not select codex-cli-tmux route for a claude-code-tmux profile', () => {
-    const { profile } = makeInteractiveTmuxProfile()
-
-    expect(
-      decideInteractiveTmuxExecutionRoute!(interactiveCodexIntent, profile, {
-        brokerFlagEnabled: true,
-        allowedBrokerDriver: 'codex-cli-tmux',
-      })
-    ).toBe('legacy-tmux')
-  })
-
-  it('does not let the codex-cli-tmux flag affect the claude-code-tmux route', () => {
-    const interactiveClaudeIntent = intent(
-      { provider: 'anthropic', interactive: true, id: 'claude-code' },
-      'interactive'
-    )
-    const { profile } = makeInteractiveTmuxProfile()
-
-    // claude-code-tmux flag ON (separate flag) still works for claude intent
-    expect(
-      decideInteractiveTmuxExecutionRoute!(interactiveClaudeIntent, profile, {
-        brokerFlagEnabled: true,
-        allowedBrokerDriver: 'claude-code-tmux',
-      })
-    ).toBe('broker')
-    // codex-cli-tmux flag (this test's flag) does NOT admit claude profile
-    expect(
-      decideInteractiveTmuxExecutionRoute!(interactiveClaudeIntent, profile, {
-        brokerFlagEnabled: true,
-        allowedBrokerDriver: 'codex-cli-tmux',
-      })
-    ).toBe('legacy-tmux')
   })
 })
 

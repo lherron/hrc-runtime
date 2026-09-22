@@ -1,12 +1,53 @@
 # Harness Broker Substrate Spec: Leased tmux as the Default `harness-broker/0.2` Substrate
 
-Status: CANONICAL — reflects the shipped implementation as of 2026-06-07.  
+Status: CANONICAL — shipped substrate facts plus the governing T-08690 v2 consumer amendment.
 Supersedes: `HEADLESS_TMUX.md`, `broker-gaps.md`, `docs/harness-broker-hrc-run-requirements.md`, `docs/T-01862-IMPL-PLAN.md`, `docs/T-01862-PH2-DELETION-MAP.md` (all collapsed into this doc and removed).  
 Date: 2026-06-07 (originated 2026-06-04 as the T-01862 implementation spec)  
 Primary systems: HRC runtime control plane, agent-spaces compiler/contracts, Harness Broker protocol/runtime  
 Protocol constraint (shipped): `harness-broker/0.1` is decommissioned. Active source/test code carries only `harness-broker/0.2`.
 
 > This document originated as the T-01862 implementation spec and is retained as the canonical broker-substrate spec. Sections framed as "Implementation Plan" / "Migration Strategy" describe the now-shipped design. Where the original spec's intent differs from the shipped code, the shipped behavior is annotated inline (see §8, §11.1, §12.2, §15). Consolidated durable facts from the superseded docs are in Appendix A.
+
+## Governing T-08690 v2 consumer amendment (pending Daedalus review)
+
+This amendment supersedes any contradictory statement that HRC selects among
+ASP profiles, resolves harness/provider/model/driver/presentation defaults, or
+uses a local selector to determine hosting. HRC submits one request to ASP
+and receives one producer-selected execution. It preserves omission in optional
+camelCase `requested` overrides and forwards source-distinct raw per-summon
+`selectionContext.summonDirectives` keys: `harness`, `model_provider`, `model`,
+`reasoning_effort`, and boolean `presentation`.
+ASP loads and merges strict-v4 `agent-profile.toml`, schema-2
+`asp-targets.toml`, summon directives, and request overrides; it owns all
+defaults, validation, recipe, worker and driver selection.
+
+HRC persists the complete successful selected execution before effects and hosts
+it generically from `execution.hosting`. Its concrete lease/endpoint/presentation
+resources remain HRC-owned. Every driver must be positively named in
+`executionRelease.worker.hostedDrivers`; no driver exception exists. Explicit
+presentation mismatch refuses without live replacement; omission carries no
+replacement command. Removed v1 selectors, aliases, plural profiles and profile
+adapters are refused, not translated.
+
+For the clean v2 activation, cancel or abandon v1 prepared operations. Retain a
+live v1 broker only through persisted contract-neutral endpoint, lease, runtime
+and invocation identity: `selectedProfileHash` and `startRequestHash` are opaque
+attach fences, old `lastAppliedIntentJson` selectors are never interpreted, and
+any compile/reprovision path refuses then births v2. Drain or retire ACTIVE
+external participant attempts because their reconnect parses `prepared_profile_json`.
+Immediately before ASP activation, prove zero incompatible harness-broker
+prepared operations and zero accepted headless runs lacking a dispatched input.
+Record the A rollback pair,
+start HRC B while ASP A still serves and prove B rejects v1 compile before P,
+then activate ASP B. The first persisted v2 preparation ends rollback-to-v1;
+subsequent correction is fix-forward.
+
+External participant attachment is not an ordinary compiler profile. Its v2
+wire carries a `ParticipantBrokerDescriptor`, frozen with its allocated
+participant identity and endpoint. HRC must neither accept nor translate an
+`agent-runtime-profile/v1` `BrokerExecutionProfile`; a legacy
+`prepared_profile_json` reconnect is drained or retired before cutover. This
+does not alter the HRC-B-before-ASP-B order or authorize main aspd activation.
 
 ## 1. Summary
 
@@ -110,9 +151,9 @@ HRC owns runtime reality. For this work, HRC owns:
 ```text
 route admission
 runtime identity
-runtime reuse and selection
+runtime reuse of a frozen selected execution
 run/invocation persistence
-selected-profile persistence
+frozen selected-execution persistence
 broker process deployment
 broker endpoint allocation
 daemon-independent substrate allocation
@@ -126,7 +167,9 @@ lifecycle overlays
 activity/zombie reconciliation
 ```
 
-HRC must not reconstruct or mutate ASP-compiled harness execution mechanics. It may select, persist, hash-check, and dispatch a compiled broker profile; it may not patch the selected `InvocationStartRequest`.
+HRC must not reconstruct or mutate ASP-compiled harness execution mechanics. It
+may persist, hash-check, and dispatch ASP's singular selected execution; it may
+not patch the frozen `InvocationStartRequest`.
 
 For this proposal, HRC is the only system that should know these concrete values:
 
@@ -145,7 +188,9 @@ operator attach command
 
 ### 6.2 Agent Spaces Compiler and Runtime Contracts
 
-ASP owns reproducible runtime construction. It compiles requested model/harness/runtime/materialization/policy inputs into immutable execution profiles.
+ASP owns reproducible runtime construction. It compiles requested
+model/harness/runtime/materialization/policy inputs into one immutable selected
+execution and its generic hosting declaration.
 
 ASP owns:
 
@@ -154,7 +199,7 @@ RuntimeCompileRequest
 RuntimeCompileResponse
 CompiledRuntimePlan
 RuntimeExecutionProfile
-BrokerExecutionProfile
+Historical retired pre-v2 name: BrokerExecutionProfile
 HarnessInvocationSpec
 InvocationStartRequest
 process.command / args / cwd / lockedEnv
@@ -210,18 +255,20 @@ Harness Broker must not import HRC, write HRC DB rows, expose native driver even
 ### 7.1 Seam A: HRC to ASP Compiler
 
 ```text
-HRC RuntimeCompileRequest
-  -> ASP RuntimeCompileResponse / CompiledRuntimePlan
-  -> HRC selects one RuntimeExecutionProfile
+HRC v2 compile request
+  -> ASP v2 compile response with singular selected execution
+  -> HRC admits and hosts execution.hosting
 ```
 
 Contract:
 
-1. HRC supplies user intent, placement, continuation refs, materialization hints, and policy inputs.
-2. ASP returns an immutable plan.
-3. HRC selects one `BrokerExecutionProfile`.
-4. HRC persists profile/start hashes.
-5. HRC dispatches the selected profile’s `harnessInvocation.startRequest` unchanged.
+1. HRC supplies placement, continuation, materialization and policy inputs plus
+   optional `requested` and raw `selectionContext.summonDirectives` carriers.
+2. ASP resolves all selection/default precedence and returns exactly one frozen
+   selected execution and `execution.hosting` declaration.
+3. HRC admits that singular execution without profile/driver reinterpretation.
+4. HRC persists opaque execution/start hashes and the complete response.
+5. HRC dispatches the frozen execution's exact `startRequest` unchanged.
 
 Durable leased tmux substrate does not belong on this seam. It is not harness construction; it is HRC process hosting.
 
@@ -552,13 +599,13 @@ Unix socket paths must remain below platform socket path length limits. Prefer s
 
 For new `harness-broker` runtimes:
 
-1. Compile/select ASP broker profile.
+1. Submit the v2 compile request and admit ASP's singular selected execution.
 2. Allocate leased tmux substrate.
 3. Start broker process inside broker window.
 4. Connect HRC to broker over `BrokerClient.connectUnix`.
 5. Send `broker.hello` with only `harness-broker/0.2`.
 6. Verify response protocol and capabilities.
-7. Send `invocation.start` with the selected profile’s exact compiled `startRequest`.
+7. Send `invocation.start` with the selected execution's exact frozen `startRequest`.
 8. Include `dispatchEnv` and `lifecyclePolicy` as HRC overlays where needed.
 9. Include `runtime.terminalSurface` only for interactive TUI drivers, pointing at the presentation pane.
 10. Persist runtime hosting state and negotiated broker protocol truthfully.
@@ -684,7 +731,7 @@ Examples:
 
 ```ts
 isReusableHeadlessRuntime(runtime)
-  -> transport/headless interaction semantics + compatible selected profile + live broker endpoint
+  -> transport/headless interaction semantics + compatible frozen execution + live broker endpoint
 
 isInteractiveRuntime(runtime)
   -> presentation.kind === 'tmux-tui' or the legacy tmux public route, depending on call site
@@ -870,7 +917,12 @@ brokerProtocol?: 'harness-broker/0.2' | undefined
 
 If `brokerProtocol` is emitted in ASPC capability/hello surfaces, it must be v0.2 only.
 
-### 11.4 Update `spaces-runtime-contracts`
+### 11.4 Retired pre-v2 profile contract (historical)
+
+This subsection records the retired pre-v2 migration surface only. It is not an
+active v2 ordinary-compile or external-participant contract: v2 ordinary compile
+returns one producer-selected execution with generic hosting, and participant
+attachment carries `ParticipantBrokerDescriptor`.
 
 Update:
 
@@ -882,14 +934,18 @@ packages/spaces-runtime-contracts/test/*
 Required behavior:
 
 ```ts
-BrokerExecutionProfile.brokerProtocol === 'harness-broker/0.2'
+Historical `BrokerExecutionProfile.brokerProtocol === 'harness-broker/0.2'`
 ```
 
 Validation must reject v0.1. Public API tests should assert v0.2 only.
 
-Do not add concrete HRC substrate details to `BrokerExecutionProfile`.
+Do not add concrete HRC substrate details to the v2 selected execution.
 
-### 11.5 Update `compileRuntimePlan`
+### 11.5 Retired pre-v2 `compileRuntimePlan` migration (historical)
+
+This is retained solely as migration history. No active v2 path emits or accepts
+the former profile carrier; it freezes ASP's singular selected execution and
+hosts only its generic `execution.hosting` declaration.
 
 Update:
 
@@ -902,10 +958,10 @@ packages/agent-spaces/src/testing/pre-hrc-interactive-tmux-runner.ts
 
 Required behavior:
 
-1. Emit `brokerProtocol: 'harness-broker/0.2'` for broker profiles.
+1. Historical migration: emit `brokerProtocol: 'harness-broker/0.2'` for broker profiles.
 2. Do not emit v0.1 anywhere.
 3. Keep `harnessInvocation.startRequest` stable and independent from HRC broker hosting transport.
-4. Keep concrete tmux/Unix endpoint allocation outside the compiled profile.
+4. Keep concrete tmux/Unix endpoint allocation outside the selected execution.
 5. Use existing v0.2 capability fields to express attach/replay expectations. Do not create a v0.1 compatibility contract.
 
 Where broker profiles currently emit:
@@ -918,7 +974,9 @@ expectedCapabilities: {
 }
 ```
 
-update the compile policy/profile selection so HRC-targeted durable broker profiles require attach/replay. The preferred end state is that durable HRC broker profiles expect v0.2 attach/replay capability, while local pre-HRC tests can still run as contract tests without simulating HRC persistence.
+update the historical compile policy so durable broker executions require
+attach/replay. The v2 end state is a selected execution that declares the
+capability without an HRC-owned profile selector.
 
 ### 11.6 Agent-Spaces Contract Tests
 
@@ -928,7 +986,7 @@ Add or update tests to prove:
 no source/test fixture emits harness-broker/0.1
 validators reject harness-broker/0.1
 ASPC hello/capability surfaces report harness-broker/0.2 only
-compileRuntimePlan emits BrokerExecutionProfile.brokerProtocol = harness-broker/0.2
+v2 compile emits selected-execution brokerProtocol = harness-broker/0.2
 selected startRequestHash does not change when HRC hosts broker over Unix instead of stdio
 runtime.terminalSurface is outside the compiled startRequest hash
 headless Codex app-server profiles do not require terminalSurface
@@ -1008,8 +1066,8 @@ Audit purposes:
 
 ```text
 remove v0.1 from protocol types and validators
-emit v0.2 broker profiles only
-keep HRC substrate details out of compiled profile
+emit v0.2 broker selected executions only
+keep HRC substrate details out of the selected execution
 assert terminalSurface remains dispatch overlay
 assert v0.2 attach/replay expectations where durable continuity is required
 ```
@@ -1166,7 +1224,7 @@ Implementation is complete when all of the following are true:
 15. HRC persists negotiated broker protocol as `harness-broker/0.2`.
 16. HRC clients advertise only `harness-broker/0.2`.
 17. Harness Broker accepts only `harness-broker/0.2`.
-18. ASP emits only `BrokerExecutionProfile.brokerProtocol='harness-broker/0.2'`.
+18. ASP emits only the singular selected execution with `brokerProtocol='harness-broker/0.2'`.
 19. Validators reject `harness-broker/0.1`.
 20. Active source/test paths contain no *live* `harness-broker/0.1` references. The literal string still appears (~21 files as of 2026-06-07) in decommission comments, red-test fixtures asserting rejection, and historical docs — these are intentional. The gate is "no active code path negotiates/accepts v0.1," not "zero literal matches." Scope the grep to exclude comments, `*.red.test.*` fixtures, and docs.
 21. Run completion after server restart is observable through persisted run status/events even if the original HTTP request disconnected.
@@ -1184,7 +1242,7 @@ Implementation is complete when all of the following are true:
 | Direct pane fallback corrupts headless broker | Allow pane fallback only for verified TUI presentation panes. |
 | Runtime rows persist false protocol state | Persist negotiated `broker.hello.protocolVersion`, not compile-time or legacy constants. |
 | Startup reconcile races with zombie timeout | Refresh activity timestamps on successful attach and replay. |
-| `terminalSurface` leaks into compiled profile hash | Keep it only in `InvocationDispatchRequest.runtime`; add hash stability tests. |
+| `terminalSurface` leaks into selected-execution hash | Keep it only in `InvocationDispatchRequest.runtime`; add hash stability tests. |
 | Unix socket path too long | Use short runtime-root-relative directories and test path-length constraints. |
 | Deployment kills active v0.1 work unexpectedly | Operationally drain/block active v0.1 broker runs before upgrade; do not implement protocol compatibility. |
 
@@ -1226,9 +1284,9 @@ The following operational facts were collapsed from `HEADLESS_TMUX.md`, `broker-
 ### A.1 Three-plane ownership boundary (from harness-broker-hrc-run-requirements.md)
 
 - **ASP** compiles immutable runtime plans (what to run). **HRC** owns sessions, routing, tmux/lease allocation, persistence, reconcile, sweep, reuse, and reaping (where/how to host). **Broker** owns harness execution and normalized event emission over `harness-broker/0.2`.
-- HRC **must not**: import harness packages, parse Codex JSONL directly, or synthesize an `InvocationStartRequest`. HRC consumes only the compiled profile and the broker's normalized events.
+- HRC **must not**: import harness packages, parse Codex JSONL directly, or synthesize an `InvocationStartRequest`. HRC consumes only the producer-selected execution and the broker's normalized events.
 - Broker process is resolved as `deps.brokerCommand ?? env HRC_HARNESS_BROKER_CMD ?? 'harness-broker'` (`broker/controller.ts`). *Known limitation:* the originally-speced four-source resolution (bun bin / node_modules binary / spaces snapshot / env) is not implemented; only env+default exist.
-- Compiled-profile selector **rejects** unsupported protocol versions rather than falling back. Default-deny permission posture.
+- V2 admission **rejects** unsupported selected-execution protocol versions rather than falling back. Default-deny permission posture.
 
 ### A.2 Runtime-hosting choke point & predicate selection (from T-01862-PH2-DELETION-MAP.md)
 

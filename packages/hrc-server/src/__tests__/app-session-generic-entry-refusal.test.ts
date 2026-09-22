@@ -544,7 +544,7 @@ describe('T-08576 generic entry refusal matrix', () => {
     expect(response.status).toBe(503)
     expect(response.body.error?.code).toBe('runtime_unavailable')
     expect(response.body.error?.message).toContain(
-      'explicit runtime attach cannot reprovision to a different runtime'
+      'runtime cannot be attached without replacing it'
     )
     expect({ staleMarks, starts }).toEqual({ staleMarks: 0, starts: 0 })
     expect(effectState()).toEqual(before)

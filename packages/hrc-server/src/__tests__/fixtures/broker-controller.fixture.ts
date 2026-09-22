@@ -46,13 +46,10 @@ import type {
   TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
 import { CONSERVATIVE_LIFECYCLE_CAPABILITIES } from 'spaces-harness-broker-protocol'
-import type {
-  BrokerExecutionProfile,
-  CapabilityRequirements,
-  CompiledRuntimePlan,
-} from 'spaces-runtime-contracts'
+import type { BrokerExecutionProfile, CapabilityRequirements } from 'spaces-runtime-contracts'
 
 import type { BrokerClientLike } from '../../broker/controller'
+import type { SelectedExecution, SelectedExecutionPlan } from '../../broker/selected-execution'
 
 import { makeBrokerProfile, makeCompileResponse, makeIdentity } from '../broker-compile-fixtures'
 
@@ -343,11 +340,11 @@ export async function makeFixture(): Promise<TestFixture> {
 }
 
 export function makeStartInput(): {
-  plan: CompiledRuntimePlan
+  execution: SelectedExecution
+  plan: SelectedExecutionPlan
+  /** Test-only legacy assertions; controller ignores this field. */
   profile: BrokerExecutionProfile
   startRequest: InvocationStartRequest
-  specHash: string
-  startRequestHash: string
   identity: ReturnType<typeof makeIdentity>
   dispatchEnv: Record<string, string>
 } {
@@ -358,11 +355,58 @@ export function makeStartInput(): {
     throw new Error('fixture compile response unexpectedly failed')
   }
   return {
-    plan: response.plan,
+    execution: {
+      recipeId: 'fixture-broker-process',
+      driver: profile.brokerDriver,
+      protocol: 'harness-broker/0.2',
+      hosting: {
+        executionTransport: 'jsonrpc-stdio',
+        terminalRequired: false,
+        processExecution: 'broker-process',
+      },
+      presentationFulfillment: 'attachable',
+      profile: {
+        profileId: profile.profileId,
+        profileHash: profile.profileHash,
+        compatibilityHash: profile.compatibilityHash,
+        startRequestHash: profile.harnessInvocation.startRequestHash,
+      },
+      dispatchRequest: { startRequest },
+    },
+    plan: {
+      schemaVersion: 'agent-runtime-plan/v2',
+      planHash: response.plan.planHash,
+      compileId: response.plan.compileId,
+      createdAt: response.plan.createdAt,
+      diagnostics: [],
+      selection: {
+        harness: 'codex',
+        modelProvider: 'openai-codex',
+        model: 'gpt-5.5',
+        reasoningEffort: 'high',
+        presentation: false,
+        provenance: {
+          harness: 'agent-profile',
+          modelProvider: 'agent-profile',
+          model: 'agent-profile',
+          reasoningEffort: 'project-target',
+          presentation: 'summon-directive',
+        },
+      },
+      resolvedBundle: { bundleIdentity: 'fixture-v2' },
+      model: { provider: 'openai-codex', modelId: 'gpt-5.5' },
+    },
+    hrcPolicy: {
+      permissionPolicy: { mode: 'deny', audit: true },
+      inputPolicy: {
+        readyInput: 'start-turn',
+        busy: { whenBusy: 'reject' },
+        supportedKinds: ['user'],
+        attachmentPolicy: { localImages: true, fileRefs: true },
+      },
+    },
     profile,
     startRequest,
-    specHash: profile.harnessInvocation.specHash,
-    startRequestHash: profile.harnessInvocation.startRequestHash,
     identity,
     dispatchEnv: { HRC_DISPATCH: 'yes' },
   }

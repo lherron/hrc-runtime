@@ -134,8 +134,7 @@ function parseSpecProjection(json: string | undefined): SpecProjection | undefin
 }
 
 function buildLaunchShape(
-  spec: SpecProjection,
-  sessionModel: string | undefined
+  spec: SpecProjection
 ): NonNullable<HrcFirstTurnMissingBundle['launchShape']> {
   const initialPrompt = asString(spec.launch?.initialPrompt)
   const lockedEnv = isRecord(spec.process?.lockedEnv) ? spec.process.lockedEnv : {}
@@ -159,11 +158,7 @@ function buildLaunchShape(
     ...(asString(spec.harness?.frontend) !== undefined
       ? { frontend: asString(spec.harness?.frontend) }
       : {}),
-    ...(asString(spec.sdk?.modelId) !== undefined
-      ? { model: asString(spec.sdk?.modelId) }
-      : sessionModel !== undefined
-        ? { model: sessionModel }
-        : {}),
+    ...(asString(spec.sdk?.modelId) !== undefined ? { model: asString(spec.sdk?.modelId) } : {}),
     ...(asString(spec.process?.cwd) !== undefined ? { cwd: asString(spec.process?.cwd) } : {}),
     continuation: continuationKey !== undefined ? ('expected' as const) : ('none' as const),
     ...(continuationKey !== undefined ? { continuationKey } : {}),
@@ -306,8 +301,7 @@ export async function assembleFirstTurnBundle(
   if (spec === undefined) {
     failures['launchShape'] = 'spec_projection_unavailable'
   } else {
-    const session = deps.db.sessions.getByHostSessionId(watch.hostSessionId)
-    bundle.launchShape = buildLaunchShape(spec, session?.lastAppliedIntentJson?.harness?.model)
+    bundle.launchShape = buildLaunchShape(spec)
   }
 
   // ── Versions at trip ────────────────────────────────────────────────────────

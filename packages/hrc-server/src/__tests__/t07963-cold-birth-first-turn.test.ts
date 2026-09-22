@@ -29,7 +29,11 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import { persistStartGraph } from '../broker/controller/persistence.js'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
-import { makeBrokerProfile, makeCompileResponse } from './broker-compile-fixtures.js'
+import {
+  makeHrcPolicy,
+  makeSelectedExecution,
+  makeSelectedExecutionPlan,
+} from './broker-compile-fixtures.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 const SCOPE = 'agent:t07963:project:hrc-runtime:task:T-07963'
@@ -138,23 +142,16 @@ describe('T-07963 criterion 4 — persistStartGraph binds the run to the start r
         ? { initialInputId: `input_${runIdSuffix}`, runId: `run-${runIdSuffix}` }
         : {}),
     } as unknown as RuntimeIdentityAllocation
-    const { profile, startRequest } = makeBrokerProfile(identity, {
+    const { execution, startRequest } = makeSelectedExecution(identity, {
       withInitialInput,
       initialInputText: 'priming + caller body',
     })
-    const compileResponse = makeCompileResponse(identity, [profile])
-    if (!compileResponse.ok) throw new Error('T-07963 binding fixture rejected')
     return {
       identity,
       input: {
-        plan: compileResponse.plan,
-        profile,
-        startRequest,
-        specHash: (profile as unknown as { harnessInvocation: { specHash: string } })
-          .harnessInvocation.specHash,
-        startRequestHash: (
-          profile as unknown as { harnessInvocation: { startRequestHash: string } }
-        ).harnessInvocation.startRequestHash,
+        execution,
+        plan: makeSelectedExecutionPlan(),
+        hrcPolicy: makeHrcPolicy(),
         identity,
       },
       startRequest,

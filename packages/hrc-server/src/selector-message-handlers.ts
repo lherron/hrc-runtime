@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { HrcBadRequestError, HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
+import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type {
   CreateMessageResponse,
   EnsureTargetResponse,
@@ -10,10 +10,6 @@ import type {
   RestartStyle,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import {
-  isMatchingInteractiveTmuxBrokerRuntime,
-  validateEnsureRuntimeIntent,
-} from './broker-decisions.js'
 import {
   persistSessionTaskClaimAuthority,
   withSummonAuthority,
@@ -25,7 +21,7 @@ import type { BirthTimeline } from './birth-timeline.js'
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { assertReservedAddressAllowsBirth } from './participant-address-provisioning.js'
 import { requireSession } from './require-helpers.js'
-import { findLatestRuntime } from './runtime-select.js'
+import { assertV2SelectionCompatibleForReuse } from './runtime-select.js'
 import { handleSdkDispatchTurn } from './selector-message-handlers/sdk-dispatch.js'
 import {
   handleBrokerLiteralInputBySelector,
@@ -41,6 +37,8 @@ import { createHostSessionId, isRuntimeUnavailableStatus, json, timestamp } from
 import { SESSION_HAS_RUNNING_RUNTIME_SQL, SESSION_RECENCY_SQL } from './session-recency.js'
 import { createSessionSuccessorFromContinuation } from './session-successor.js'
 import { findTargetSession, toTargetView } from './target-view.js'
+
+export { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
 
 export { handleSdkDispatchTurn } from './selector-message-handlers/sdk-dispatch.js'
 export {
@@ -197,43 +195,33 @@ export async function ensureRuntimeForSession(
 ): Promise<HrcRuntimeSnapshot> {
   assertLocalPersonaAllowed(this, session.scopeRef)
   assertAppIdentityOwner(session)
-  validateEnsureRuntimeIntent(intent)
-  const brokerOptions = this.selectInteractiveTmuxBrokerOptions(intent)
-  if (!brokerOptions) {
-    throw new HrcRuntimeUnavailableError('ensureRuntime supports only broker-admissible runtimes', {
-      hostSessionId: session.hostSessionId,
-      provider: intent.harness.provider,
-      harnessId: intent.harness.id,
-      route: 'interactive-broker',
-    })
-  }
-
-  const existingBrokerRuntime = findLatestRuntime(this.db, session.hostSessionId)
+  // This legacy-shaped ensure door has no harness or driver decision. A live
+  // execution is reusable by its frozen realization; a fresh execution goes
+  // through the ordinary ASP compile path, which returns hosting after it has
+  // selected the execution.
+  const existingRuntime = this.db.runtimes.listByHostSessionId(session.hostSessionId).at(-1)
   if (
     restartStyle === 'reuse_pty' &&
-    existingBrokerRuntime &&
-    !isRuntimeUnavailableStatus(existingBrokerRuntime.status) &&
-    isMatchingInteractiveTmuxBrokerRuntime(
-      existingBrokerRuntime,
-      intent,
-      brokerOptions.allowedBrokerDriver
-    )
+    existingRuntime &&
+    !isRuntimeUnavailableStatus(existingRuntime.status)
   ) {
+    assertV2SelectionCompatibleForReuse(existingRuntime, intent)
     this.db.sessions.updateIntent(session.hostSessionId, intent, timestamp())
-    return existingBrokerRuntime
+    return existingRuntime
   }
 
   const birthRunId = `run-${randomUUID()}`
   // T-08576 D5: reserve before any stale-mark, run, handle or launch effect.
   issueAppBirthRunGrantForCompile(this.db, session, intent, birthRunId)
-  if (existingBrokerRuntime && !isRuntimeUnavailableStatus(existingBrokerRuntime.status)) {
-    this.markRuntimeStaleForBrokerReprovision(session, existingBrokerRuntime, {
-      reason: 'ensure-runtime-broker-reprovision',
-      allowedBrokerDriver: brokerOptions.allowedBrokerDriver,
+  if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
+    this.markRuntimeStaleForBrokerReprovision(session, existingRuntime, {
+      reason: 'ensure-runtime-fresh-execution-requested',
     })
   }
 
-  return await this.startInteractiveTmuxBrokerRuntime(session, intent, birthRunId, brokerOptions)
+  return await this.startHeadlessBrokerRuntime(session, intent, '', birthRunId, {
+    allowCompilerInitialInputWithoutIdentity: true,
+  })
 }
 
 export async function ensureTargetSession(
@@ -274,7 +262,7 @@ export async function ensureTargetSession(
           intent: 'implicit',
           knownSession: true,
           origin,
-          capabilityHint: { placement: intent.placement, harness: intent.harness },
+          capabilityHint: { placement: intent.placement },
           // T-07398: a successor is a birth, so its directive block still
           // decides placement (gap-filling only) and provisioning.
           ...(intent.provision === undefined ? {} : { provision: intent.provision }),
@@ -334,7 +322,7 @@ export async function ensureTargetSession(
       path: 'ensure-target',
       intent: 'implicit',
       origin,
-      capabilityHint: { placement: intent.placement, harness: intent.harness },
+      capabilityHint: { placement: intent.placement },
       // T-07398: the dm/ensure door is the second provisioning door, and it
       // honors the same directive block on the same terms as the claim doors.
       ...(intent.provision === undefined ? {} : { provision: intent.provision }),

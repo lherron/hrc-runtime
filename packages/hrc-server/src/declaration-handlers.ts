@@ -21,7 +21,6 @@ import {
   type HrcDomainError,
   HrcErrorCode,
   type HrcExecutionMode,
-  type HrcHarness,
   type HrcRuntimeIntent,
   HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
@@ -46,19 +45,10 @@ import {
   projectBrokerRunPreview,
   resolvePreviewIntent,
 } from './broker-run-preview.js'
+import { observedRuntimeBundle } from './observed-runtime-bundle.js'
 import { resolvePlacementInProcess } from './placements-resolve.js'
 import { isRecord, parseJsonBody } from './server-parsers.js'
 import { json } from './server-util.js'
-
-const HRC_HARNESS_IDS: ReadonlySet<string> = new Set<HrcHarness>([
-  'agent-sdk',
-  'claude-code',
-  'codex-cli',
-  'pi',
-  'pi-cli',
-  'pi-sdk',
-  'muse-cli',
-])
 
 const RUN_MODES = new Set(['query', 'heartbeat', 'task', 'maintenance'])
 const EXECUTION_MODES = new Set(['headless', 'interactive', 'nonInteractive'])
@@ -406,15 +396,15 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
     }
 
     const provision = authorizedScalars(declaration.provisioning.scalars)
-    const frontend = declaration.provisioning.frontend
-    // E1 fail-open parity: when the profile is invalid, today's target-only
-    // fallback names a harness only if something still declares one. A degraded
-    // declaration with no surviving harness scalar births with no harness id,
-    // exactly as `resolveAgentHarness` returns `harness: undefined` today.
-    const harnessDeclared =
-      declaration.source.agentProfile.state !== 'invalid' ||
-      declaration.provisioning.scalars['harness'] !== undefined
     const placement = declaration.placement
+    const bundle = observedRuntimeBundle(placement.bundle)
+    if (bundle === undefined) {
+      throw new HrcUnprocessableEntityError(
+        HrcErrorCode.DECLARATION_INVALID,
+        'declaration returned an unsupported placement bundle',
+        { source: 'placement.bundle' }
+      )
+    }
     // M1: HRC owns dryRun and every other intent field the observation does not
     // define; it never copies the observation placement verbatim.
     const intent: HrcRuntimeIntent = {
@@ -423,13 +413,11 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
         ...(placement.projectRoot !== undefined ? { projectRoot: placement.projectRoot } : {}),
         cwd: placement.cwd,
         runMode: placement.runMode,
-        bundle: placement.bundle,
+        bundle,
         dryRun: false,
       },
       harness: {
-        provider: declaration.provisioning.provider,
         interactive: body.interactive,
-        ...(harnessDeclared && HRC_HARNESS_IDS.has(frontend) ? { id: frontend as HrcHarness } : {}),
       },
       execution: {
         preferredMode: body.preferredMode,
@@ -438,8 +426,7 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
           : {}),
       },
       ...(body.initialPrompt !== undefined ? { initialPrompt: body.initialPrompt } : {}),
-      ...(Object.keys(provision).length === 0 ? {} : { provision }),
-    } as HrcRuntimeIntent
+    }
 
     const warning = invalidProfileWarning(declaration, body.agentId, body.agentRoot, provision)
     const response: ResolveRuntimeIntentResponse = {
@@ -551,9 +538,6 @@ function projectPrompt(prompt: AspcRuntimePromptObservation): PromptProjection {
 export async function handleRunPreview(request: Request): Promise<Response> {
   const { intent, sessionRef } = parsePreviewBody(await parseJsonBody(request))
   const previewIntent = resolvePreviewIntent(intent)
-  if (previewIntent === undefined) {
-    return json(null)
-  }
   // One admitted connection serves both operations, so the plan and the prompt
   // facts always come from the same aspd release. PC-1 admits the preparation
   // correlation capability on the same connection: absent, the preview is
@@ -570,6 +554,9 @@ export async function handleRunPreview(request: Request): Promise<Response> {
       const compiled = await compileBrokerRuntimePlan(
         {
           intent: previewIntent,
+          scopeRef: sessionRef.includes('/lane:')
+            ? splitSessionRef(sessionRef).scopeRef
+            : sessionRef,
           hostSessionId: 'dry-run-host-session',
           generation: 0,
           continuation: undefined,
@@ -604,15 +591,20 @@ export async function handleRunPreview(request: Request): Promise<Response> {
               declaration: inspected.declaration,
             },
           }
+      const preview = projectBrokerRunPreview(compiled, prompt.zones)
       return json({
-        ...projectBrokerRunPreview(compiled, prompt.zones),
+        ...preview,
         ...(prompt.promptResolution !== undefined
           ? { promptResolution: prompt.promptResolution }
           : {}),
-        release: {
-          releaseId: service.release.releaseId,
-          sourceCommit: service.release.sourceCommit,
-        },
+        ...(preview.release === undefined
+          ? {
+              release: {
+                releaseId: service.release.releaseId,
+                sourceCommit: service.release.sourceCommit,
+              },
+            }
+          : {}),
       })
     }
   )

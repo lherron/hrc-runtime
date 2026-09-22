@@ -21,11 +21,10 @@ import { formatDmAddress } from './messages.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
 import { prepareActuatorSplitIntent } from './actuator-split.js'
-import { hasInitialUserTurn, toProfileSelector } from './agent-spaces-adapter/compile-adapter.js'
+import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
 import { bindAppHarnessBirthIntent, trackAppIdentityOperation } from './app-session-identity.js'
 import {
   aspdHeadlessBrokerEndpoint,
-  assertPreparedAspdAttemptRoute,
   findPreparedAspdAttemptForRetry,
   launchAspdPreparedAttempt,
   prepareAspdHeadlessAttempt,
@@ -35,6 +34,7 @@ import { createBirthTimeline } from './birth-timeline.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { isClosedDbError } from './broker/controller/internal.js'
+import type { BrokerControllerStartInput } from './broker/controller/types.js'
 import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import { recordStartBirth, startBirthOfIntent } from './presentation-operator.js'
@@ -47,6 +47,7 @@ import {
   isTransitionalBrokerInvocationState,
   requireSession,
 } from './require-helpers.js'
+import { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import {
@@ -426,7 +427,9 @@ export async function drainDurableHeadlessTurnInputs(
     const session = requireSession(this.db, hostSessionId)
     // T-07206: fresh starts commit this field only after controller.start succeeds,
     // so it is safe for an automatic drain to reuse as materialization authority.
-    const intent = session.lastAppliedIntentJson
+    const persistedIntent = session.lastAppliedIntentJson
+    const intent =
+      persistedIntent === undefined ? undefined : omitPersistedSelectionForReuse(persistedIntent)
     if (!intent) {
       throw new HrcRuntimeUnavailableError('queued turn has no runtime intent', {
         hostSessionId,
@@ -527,6 +530,8 @@ export async function startHeadlessBrokerRuntime(
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
+    /** The attached door pauses only after a producer-declared surface is leased. */
+    attachBeforeInvocationStart?: BrokerControllerStartInput['attachBeforeInvocationStart']
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
   // R-4.3.2: never born a substitute runtime at a reserved participant
@@ -544,9 +549,9 @@ export async function startHeadlessBrokerRuntime(
   )
   const requestedTurnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...boundIntent, initialPrompt: prompt } : boundIntent
-  const presentation =
-    requestedTurnIntent.presentation?.operator ??
-    (toProfileSelector(requestedTurnIntent)?.brokerDriver === 'muse-serve' ? 'observer' : 'default')
+  // Presentation is producer-resolved at compilation. Before that boundary we
+  // record only an opaque/default timeline marker; no intent-to-driver choice.
+  const presentation = requestedTurnIntent.presentation?.operator ?? 'default'
   const birthTimeline =
     options.birthTimeline ??
     createBirthTimeline({
@@ -610,6 +615,7 @@ async function startAspdHeadlessBrokerRuntime(
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
+    attachBeforeInvocationStart?: BrokerControllerStartInput['attachBeforeInvocationStart']
   },
   birthTimeline: ReturnType<typeof createBirthTimeline>
 ): Promise<HrcRuntimeSnapshot> {
@@ -623,14 +629,8 @@ async function startAspdHeadlessBrokerRuntime(
       : undefined
   let operationId: string
   if (resumable !== undefined && resumable.runId === runId) {
-    // T-08560 D2: launch only a preparation frozen on this route.
-    assertPreparedAspdAttemptRoute(
-      resumable,
-      toProfileSelector(requestedTurnIntent)?.brokerDriver === 'muse-serve'
-        ? { route: 'headless-muse-serve', driverKind: 'muse-serve' }
-        : { route: 'headless-codex-app-server', driverKind: 'codex-app-server' },
-      session.hostSessionId
-    )
+    // A keyed v2 retry launches only its persisted attempt. It does not
+    // re-resolve selection, driver, or presentation from the retry intent.
     operationId = resumable.operationId
     writeServerLog('INFO', 'aspd.preparation.resume', {
       operationId,
@@ -656,6 +656,9 @@ async function startAspdHeadlessBrokerRuntime(
   const { runtime, intent } = await launchAspdPreparedAttempt(server, operationId, {
     ...dispatchRunPersistence(options),
     ...(options.onAccepted ? { onAccepted: options.onAccepted } : {}),
+    ...(options.attachBeforeInvocationStart !== undefined
+      ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
+      : {}),
     birthTimeline,
     settleFailure: (error) => {
       const { record } = readAspdPreparation(server, operationId)
@@ -823,8 +826,8 @@ export async function executeHeadlessBrokerStartTurn(
     //
     // The flag stays ONLY for the promptless shape, which still takes the
     // compiler-owned priming input with no HRC run/input identity to bind it to.
-    // With a prompt, `identity.initialInputId` exists and the strict
-    // identity check in `selectBrokerExecutionProfile` is the one that must pass.
+    // With a prompt, `identity.initialInputId` exists and the v2 compile
+    // admission requires the execution dispatch request to echo it exactly.
     ...(prompt.length === 0 ? { allowCompilerInitialInputWithoutIdentity: true } : {}),
     responseFormat: options.responseFormat,
     ...dispatchRunPersistence(options),

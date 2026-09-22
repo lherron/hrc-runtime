@@ -8,6 +8,26 @@ Applies to: `hrc` and `hrcchat` (hrc-runtime, `apiVersion 0.1.0`)
 
 This reference covers the common command surface. For the full flag accounting of any command, run `hrc <group> <cmd> --help` (or `hrcchat <cmd> --help`).
 
+## ASP v2 selection contract (T-08690; pending Daedalus review)
+
+`hrc` flags and `hrcchat` summons express request intent; they do not select a
+profile, target, route, worker, driver, or HRC presentation default. For a new
+broker birth HRC preserves missing fields. Explicit request overrides use the
+optional camelCase `requested` fields; raw per-summon overrides remain
+source-distinct under `selectionContext.summonDirectives` with the snake_case
+keys `harness`, `model_provider`, `model`, `reasoning_effort`, and
+`presentation`. `presentation` is boolean and explicit `false` survives.
+ASP—not this CLI or HRC—merges strict
+v4 profile, schema-2 project target, summon directives, and request overrides,
+then validates and selects the execution.
+
+The legacy Codex-specific `--no-viewer` / `--app-server-viewer` route narrative
+below is superseded by this v2 contract. A future v2 CLI exposes only the
+producer-supported canonical request fields; removed v1 selector aliases are
+refused rather than mapped. An explicit presentation conflict never replaces a
+live runtime; omission does not request replacement. Exact current flags remain
+descriptive until the v2 spine lands.
+
 `hrc info` and root `hrc --help` are audience projections of the live command
 graph. Selection precedence is explicit `--agent` / `--human`, then an
 agent-identity environment, then stdout TTY (human only for a TTY with no agent

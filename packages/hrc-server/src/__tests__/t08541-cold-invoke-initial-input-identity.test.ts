@@ -9,11 +9,7 @@ import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { isLaunchCarriedInvokeCorrelationJson } from '../server-types.js'
-import {
-  makeCompileResponse,
-  makeIdentity,
-  makeInteractiveTmuxProfile,
-} from './broker-compile-fixtures.js'
+import { makeIdentity, makeInteractiveTmuxProfile } from './broker-compile-fixtures.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 // T-08541: a cold submission-door birth whose driver carries the caller body as
@@ -79,16 +75,53 @@ function persistInitialInputStart(
     brokerDriver: 'codex-app-server',
     withInitialInput: true,
   })
-  const compileResponse = makeCompileResponse(identity, [profile])
-  if (!compileResponse.ok) throw new Error('T-08541 fixture rejected')
+  // The controller persistence boundary receives only the frozen v2 selection
+  // and execution.  The legacy fixture remains useful for constructing an
+  // honest broker start request with initialInput, not as a compiler envelope.
+  const execution = {
+    recipeId: 'fixture-codex-app-server',
+    driver: 'codex-app-server',
+    protocol: 'harness-broker/0.2',
+    hosting: {
+      executionTransport: 'pty',
+      terminalRequired: true,
+      terminalHost: 'tmux',
+      processExecution: 'broker-process',
+    },
+    presentationFulfillment: 'intrinsic',
+    profile: {
+      profileId: profile.profileId,
+      profileHash: profile.profileHash,
+      compatibilityHash: profile.compatibilityHash,
+      startRequestHash: profile.harnessInvocation.startRequestHash,
+    },
+    dispatchRequest: { startRequest },
+  }
+  const plan = {
+    schemaVersion: 'agent-runtime-plan/v2',
+    compileId: `compile-t08541-${suffix}`,
+    planHash: `plan-t08541-${suffix}`,
+    createdAt: '2026-09-22T00:00:00.000Z',
+    diagnostics: [],
+    selection: {
+      harness: 'agent-harness',
+      modelProvider: 'openai-codex',
+      model: 'gpt-5.5',
+      presentation: true,
+      provenance: {
+        harness: 'catalog-default',
+        modelProvider: 'catalog-default',
+        model: 'catalog-default',
+        presentation: 'compile-request',
+      },
+    },
+  }
   const graph = persistStartGraph(
     { db, now: fixture.now, serverInstanceId: 'srv-t08541' },
     {
-      plan: compileResponse.plan,
-      profile,
-      startRequest,
-      specHash: profile.harnessInvocation.specHash,
-      startRequestHash: profile.harnessInvocation.startRequestHash,
+      plan,
+      execution,
+      hrcPolicy: {},
       identity,
       ...(submissionDoor !== undefined ? { submissionDoor } : {}),
     } as Parameters<typeof persistStartGraph>[1],

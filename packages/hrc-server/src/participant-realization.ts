@@ -3,10 +3,11 @@ import type {
   InvocationDispatchRequest,
   InvocationRuntimeContext,
 } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
+import type { ParticipantBrokerDescriptor } from 'spaces-runtime-contracts'
 
 import { filterBrokerDispatchEnvForLockedEnv } from './broker-decisions.js'
 import type { DurableTmuxManagerLike } from './broker-interactive-handlers/substrate-allocator.js'
+import { parseParticipantBrokerDescriptor } from './participant-broker-descriptor.js'
 import type { ParticipantHostingIntent } from './participant-hosting-intent.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { timestamp } from './server-util.js'
@@ -108,7 +109,7 @@ function presentationRuntime(
 }
 
 function freezeDispatch(
-  profile: BrokerExecutionProfile,
+  descriptor: ParticipantBrokerDescriptor,
   adapterDispatchEnvJson: string | undefined,
   intent: ParticipantHostingIntent,
   realized: ParticipantRealizedHosting
@@ -123,11 +124,11 @@ function freezeDispatch(
   }
   const dispatchEnv = filterBrokerDispatchEnvForLockedEnv(
     parsedEnv,
-    profile.harnessInvocation.startRequest
+    descriptor.harnessInvocation.startRequest
   )
   const runtime = presentationRuntime(realized)
   return {
-    startRequest: profile.harnessInvocation.startRequest,
+    startRequest: descriptor.harnessInvocation.startRequest,
     ...(dispatchEnv === undefined ? {} : { dispatchEnv }),
     ...(runtime === undefined ? {} : { runtime }),
     lifecyclePolicy: intent.lifecyclePolicy,
@@ -136,13 +137,13 @@ function freezeDispatch(
 
 function assertJoinOwnership(
   registration: ParticipantRegistration,
-  profile: BrokerExecutionProfile
+  descriptor: ParticipantBrokerDescriptor
 ): void {
   if (registration.join !== 'participant-served') {
     throw new Error(`unsupported participant join direction: ${registration.join}`)
   }
-  if (profile.brokerOwnership !== 'participant-owned-process') {
-    throw new Error(`participant profile ownership does not match ${registration.join}`)
+  if (descriptor.brokerOwnership !== 'participant-owned-process') {
+    throw new Error(`participant descriptor ownership does not match ${registration.join}`)
   }
 }
 
@@ -166,7 +167,7 @@ async function realizeParticipantServed(
   server: HrcServerInstanceForHandlers,
   attempt: ParticipantAttempt,
   intent: ParticipantHostingIntent,
-  profile: BrokerExecutionProfile
+  descriptor: ParticipantBrokerDescriptor
 ): Promise<ParticipantRealizedHosting> {
   if ('hrcHosted' in intent) {
     throw new Error('participant-served participant must not carry an HRC broker process intent')
@@ -184,7 +185,7 @@ async function realizeParticipantServed(
   // HRC-owned operator presentation resource required by the selected profile.
   const tmuxSocketPath = getBrokerTmuxSocketPath(
     server.options,
-    `presentation-${profile.brokerDriver}`,
+    `presentation-${descriptor.brokerDriver}`,
     attempt.runtimeId
   )
   const sessionName = `hrc-presentation-${attempt.runtimeId}`
@@ -291,8 +292,8 @@ export async function realizeAndFreezeParticipantDispatch(
   if (!['HOSTING_INTENT_PERSISTED', 'REALIZED'].includes(attempt.state)) {
     throw new Error(`participant attempt cannot realize from ${attempt.state}`)
   }
-  const profile = parseJson<BrokerExecutionProfile>(attempt.preparedProfileJson, 'prepared profile')
-  assertJoinOwnership(registration, profile)
+  const descriptor = parseParticipantBrokerDescriptor(attempt.preparedDescriptorJson)
+  assertJoinOwnership(registration, descriptor)
 
   let realized =
     attempt.realizedHostingJson === undefined
@@ -302,7 +303,7 @@ export async function realizeAndFreezeParticipantDispatch(
     if (registration.join !== 'participant-served') {
       throw new Error(`unsupported participant join direction: ${registration.join}`)
     }
-    realized = await realizeParticipantServed(server, attempt, intent, profile)
+    realized = await realizeParticipantServed(server, attempt, intent, descriptor)
     const now = timestamp()
     server.db.sqlite.transaction(() => {
       server.db.participantRegistrations.setSnapshotIfAbsent(
@@ -333,7 +334,7 @@ export async function realizeAndFreezeParticipantDispatch(
   )
   await validateRediscovery(server, persistedRealized, intent)
   const dispatch = freezeDispatch(
-    profile,
+    descriptor,
     attempt.adapterDispatchEnvJson,
     intent,
     persistedRealized

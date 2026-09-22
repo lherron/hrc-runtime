@@ -38,6 +38,7 @@ import {
   type HostingLedger,
   type Release,
   makeRelease,
+  producerResult,
   startAspdDouble,
   tmuxManagerDouble,
   workerClient,
@@ -46,7 +47,6 @@ import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-
 
 const SCOPE = 'agent:t08562:project:hrc-runtime:task:T-08562'
 const MARK = 'T8562-MARK reply with exactly this marker'
-const HOSTED = ['claude-code-tmux', 'codex-app-server', 'pi-tui-tmux']
 
 let fixture: HrcServerTestFixture
 let server: HrcServer
@@ -114,6 +114,35 @@ function interactiveIntent(): HrcRuntimeIntent {
 }
 
 type Driver = 'claude-code-tmux' | 'pi-tui-tmux'
+type ProducerDriver = Driver | 'codex-app-server'
+
+function terminalProducer(driver: ProducerDriver) {
+  const selection =
+    driver === 'claude-code-tmux'
+      ? { harness: 'claude-code', modelProvider: 'anthropic', model: 'claude-test' }
+      : driver === 'pi-tui-tmux'
+        ? { harness: 'pi', modelProvider: 'openai', model: 'pi-test' }
+        : { harness: 'agent-harness', modelProvider: 'openai-codex', model: 'gpt-5.5' }
+  return producerResult({
+    selection: { ...selection, presentation: true },
+    execution: {
+      recipeId: `fixture-${driver}`,
+      driver,
+      hosting: {
+        executionTransport: 'pty',
+        terminalRequired: true,
+        terminalHost: 'tmux',
+        processExecution: 'broker-process',
+      },
+      presentationFulfillment: 'attachable',
+      presentationSurface: { transport: 'terminal', terminalHost: 'tmux' },
+    },
+  })
+}
+
+function selectTerminalProducer(driver: ProducerDriver): void {
+  aspd.producerResult = terminalProducer(driver)
+}
 
 /** A stored interactive Claude Code or Pi TUI intent. */
 function driverIntent(driver: Driver): HrcRuntimeIntent {
@@ -223,7 +252,7 @@ beforeEach(async () => {
   releaseA = makeRelease(join(scratch, 'releases'), 'a')
   aspdSocket = join(scratch, 'aspd.sock')
   aspd = startAspdDouble(aspdSocket, releaseA)
-  aspd.hostedDrivers = HOSTED
+  selectTerminalProducer('claude-code-tmux')
   setEnv('HRC_ASPD_SOCKET', aspdSocket)
   setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
@@ -287,6 +316,10 @@ function launchPrompt(request: any): string | undefined {
   return request?.spec?.launch?.initialPrompt
 }
 
+function initialInputText(request: any): string | undefined {
+  return request?.initialInput?.content?.[0]?.text
+}
+
 async function settle(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 100 && !predicate(); i++) await Bun.sleep(10)
 }
@@ -318,7 +351,8 @@ function runRow(runId: string): {
 
 describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
   for (const driver of ['claude-code-tmux', 'pi-tui-tmux'] as const) {
-    it(`${driver} mail summons: replace-priming prompt frozen once as launch material, never initialInput, never resubmitted`, async () => {
+    it(`${driver} mail summons: prompt is frozen in the producer dispatch request and never resubmitted`, async () => {
+      selectTerminalProducer(driver)
       const s = await seedInteractive(SCOPE, driverIntent(driver))
       const response = await kickerSummons(s)
       expect(response.status).toBe(200)
@@ -326,30 +360,30 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
 
       expect(facadeCalls).toBe(0)
       expect(aspd.compileCalls).toBe(1)
-      expect(aspd.compileSelectors[0]).toEqual({ brokerDriver: driver })
+      expect(aspd.compileRequested[0]).toBeDefined()
+      expect(aspd.compileSelectors[0]).toBeUndefined()
       expect(aspd.compileMaterializations[0]).toMatchObject({
         initialPrompt: MARK,
         omitPriming: true,
       })
       const [op] = operations(s.hostSessionId)
-      expect(op?.record.route).toBe('interactive-tmux-broker')
+      expect(op?.record.route).toBe('producer-selected-execution')
       expect(op?.record.hosting).toMatchObject({
         driverKind: driver,
-        presentation: 'interactive-tui',
+        presentation: 'terminal',
       })
-      expect(op?.record.executionRelease.worker.hostedDrivers).toEqual(HOSTED)
       expect(op?.record.dispatch.routeDecision).toMatchObject({
-        door: 'interactive-birth',
         launchCarriedPrompt: { mode: 'replace-priming' },
         preparation: 'aspd',
-        flag:
-          driver === 'claude-code-tmux'
-            ? 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED'
-            : 'HRC_PI_TUI_TMUX_BROKER_ENABLED',
+        selectedBy: 'producer-selected-execution',
       })
-      // Frozen only as launch material; no broker initialInput.
-      expect(launchPrompt(op?.record.admission.startRequest)).toBe(MARK)
-      expect(op?.record.admission.startRequest.initialInput).toBeUndefined()
+      // The producer's canonical request preserves the allocated initial input.
+      expect(
+        launchPrompt(op?.record.admission.execution.dispatchRequest.startRequest)
+      ).toBeUndefined()
+      expect(initialInputText(op?.record.admission.execution.dispatchRequest.startRequest)).toBe(
+        MARK
+      )
       expect(JSON.stringify(op?.record.intent)).not.toContain('T8562-MARK')
       expect(storedIntentJson(s.hostSessionId)).not.toContain('T8562-MARK')
       // Launched from the frozen release with this driver's hosting paths.
@@ -358,17 +392,18 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
       expect(op?.record.hosting.paths.sessionName).toBe(`hrc-${driver}-${op?.record.runtimeId}`)
       // Delivered only through invocation.start, never by the post-boot executor.
       expect(ledger.startCalls).toHaveLength(1)
-      expect(launchPrompt(ledger.startCalls[0]?.request)).toBe(MARK)
+      expect(launchPrompt(ledger.startCalls[0]?.request)).toBeUndefined()
+      expect(initialInputText(ledger.startCalls[0]?.request)).toBe(MARK)
       await Bun.sleep(30)
       expect(delivered).toEqual([])
-      // B4 provenance: the launch-argv class (T-07920 / T-08004 / T-08531).
+      // The producer-bound initial input is persisted as the run's dispatched input.
       const run = runRow(op?.run_id as string)
-      expect(run.dispatched_input_id).toBeNull()
-      expect(run.correlation_json).toContain('launch')
+      expect(run.dispatched_input_id).not.toBeNull()
     })
   }
 
   it('claude-code-tmux POST /v1/turns: append-to-priming, key frozen, applied intent prompt-free', async () => {
+    selectTerminalProducer('claude-code-tmux')
     const s = await seedInteractive()
     const response = await fixture.postJson('/v1/turns', {
       hostSessionId: s.hostSessionId,
@@ -382,33 +417,39 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
     expect(aspd.compileMaterializations[0]?.initialPrompt).toBe(MARK)
     expect(aspd.compileMaterializations[0]?.omitPriming).toBeUndefined()
     const [op] = operations(s.hostSessionId)
-    expect(op?.record.route).toBe('interactive-tmux-broker')
+    expect(op?.record.route).toBe('producer-selected-execution')
     expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toEqual({
       mode: 'append-to-priming',
     })
     expect(op?.record.dispatchIdempotencyKey).toBe('k-turns')
-    expect(launchPrompt(ledger.startCalls[0]?.request)).toBe(MARK)
+    expect(launchPrompt(ledger.startCalls[0]?.request)).toBeUndefined()
+    expect(initialInputText(ledger.startCalls[0]?.request)).toBe(MARK)
     expect(storedIntentJson(s.hostSessionId)).not.toContain('T8562-MARK')
     await Bun.sleep(30)
     expect(delivered).toEqual([])
   })
 
-  it('claude-code-tmux selector message (no door): bare birth, prompt delivered once after boot by identity', async () => {
+  it('a bare selector message is frozen into the producer request, not delivered again after boot', async () => {
+    selectTerminalProducer('claude-code-tmux')
     const s = await seedInteractive()
     await internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, MARK, {
       waitForCompletion: false,
     })
     await settle(() => delivered.length === 1)
     const [op] = operations(s.hostSessionId)
-    expect(op?.record.route).toBe('interactive-tmux-broker')
+    expect(op?.record.route).toBe('producer-selected-execution')
     expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toBeUndefined()
-    expect(launchPrompt(op?.record.admission.startRequest)).toBeUndefined()
-    expect(delivered.map((d) => d.prompt)).toEqual([MARK])
+    expect(
+      launchPrompt(op?.record.admission.execution.dispatchRequest.startRequest)
+    ).toBeUndefined()
+    expect(initialInputText(op?.record.admission.execution.dispatchRequest.startRequest)).toBe(MARK)
+    expect(delivered).toEqual([])
     expect(facadeCalls).toBe(0)
   })
 
   for (const driver of ['claude-code-tmux', 'pi-tui-tmux'] as const) {
     it(`${driver} explicit start and ensure prepare through aspd, door interactive-birth`, async () => {
+      selectTerminalProducer(driver)
       const s = await session()
       const started = await fixture.postJson('/v1/runtimes/start', {
         hostSessionId: s.hostSessionId,
@@ -423,23 +464,25 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
       expect(ensured.status).toBe(200)
       for (const hostSessionId of [s.hostSessionId, other.hostSessionId]) {
         const [op] = operations(hostSessionId)
-        expect(op?.record.route).toBe('interactive-tmux-broker')
+        expect(op?.record.route).toBe('producer-selected-execution')
         expect(op?.record.hosting.driverKind).toBe(driver)
-        expect(op?.record.dispatch.routeDecision.door).toBe('interactive-birth')
+        expect(op?.record.dispatch.routeDecision.selectedBy).toBe('producer-selected-execution')
       }
       expect(facadeCalls).toBe(0)
     })
   }
 
   it('claude-code-tmux rotation relaunch births the successor through aspd', async () => {
+    selectTerminalProducer('claude-code-tmux')
     const s = await seedInteractive()
     const rotated = await internal().rotateSessionContext(s, { relaunch: true, reason: 't8562' })
     const [op] = operations(rotated.hostSessionId)
-    expect(op?.record.route).toBe('interactive-tmux-broker')
+    expect(op?.record.route).toBe('producer-selected-execution')
     expect(facadeCalls).toBe(0)
   })
 
   it('the attached-run class is recorded for a Claude birth carrying the attach handshake, with no launch-carried prompt', async () => {
+    selectTerminalProducer('claude-code-tmux')
     const s = await session()
     const start = internal().startInteractiveTmuxBrokerRuntime(
       s,
@@ -460,15 +503,17 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
     expect(facadeCalls).toBe(0)
   })
 
-  it('codex-cli-tmux refuses with aspd_unconfigured on a configured node (deprecation fence retired, T-08596)', async () => {
+  it('a retired codex-cli door input cannot override the declared producer execution', async () => {
+    selectTerminalProducer('codex-app-server')
     const s = await session()
-    await expect(
-      internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-cli-tmux', {
-        flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED',
-        allowedBrokerDriver: 'codex-cli-tmux',
-      })
-    ).rejects.toThrow('aspd-independent execution closure')
-    expect(aspd.compileCalls).toBe(0)
+    await internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-cli-tmux', {
+      flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED',
+      allowedBrokerDriver: 'codex-cli-tmux',
+    })
+    const [op] = operations(s.hostSessionId)
+    expect(op?.record.admission.execution.driver).toBe('codex-app-server')
+    expect(op?.record.hosting.driverKind).toBe('codex-app-server')
+    expect(aspd.compileCalls).toBe(1)
     expect(facadeCalls).toBe(0)
   })
 
@@ -497,66 +542,36 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
 // ── G-B-admission + G-B-hosting ──────────────────────────────────────────────
 
 describe('T-08562 generic admission and hosting evidence (G-B-admission, G-B-hosting)', () => {
-  it('a profile for a different driver than the door requested is refused before P', async () => {
-    aspd.selectDriverOverride = 'pi-tui-tmux'
+  it('a producer-selected execution is admitted even when the raw intent names another driver', async () => {
+    selectTerminalProducer('pi-tui-tmux')
     const s = await seedInteractive()
-    await expect(kickerSummons(s)).rejects.toThrow()
+    await kickerSummons(s)
+    await settle(() => ledger.startCalls.length === 1)
     expect(aspd.compileCalls).toBe(1)
-    expect(operations(s.hostSessionId)).toEqual([])
-    expect(ledger.commands).toHaveLength(0)
+    const [op] = operations(s.hostSessionId)
+    expect(op?.record.admission.execution.driver).toBe('pi-tui-tmux')
+    expect(op?.record.hosting.driverKind).toBe('pi-tui-tmux')
+    expect(ledger.commands).toHaveLength(1)
     expect(facadeCalls).toBe(0)
   })
 
-  const unproven: Array<[string, unknown]> = [
-    ['absent (retained pre-binding release)', undefined],
-    ['null', null],
-    ['not an array', 'claude-code-tmux'],
-    ['non-string entries', [1, 2]],
-    ['lacking the driver', ['codex-app-server', 'pi-tui-tmux']],
-  ]
-  for (const [label, value] of unproven) {
-    it(`hostedDrivers ${label}: aspd_worker_hosting_unproven before P, no hosting effect, nothing reported`, async () => {
-      aspd.hostedDrivers = value
-      const s = await seedInteractive()
-      let reported: boolean | undefined
-      const error = await internal()
-        .startInteractiveTmuxBrokerRuntime(s, driverIntent('claude-code-tmux'), 'run-unproven', {
-          flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED',
-          allowedBrokerDriver: 'claude-code-tmux',
-          coldBirthPrompt: MARK,
-          onColdBirthPromptRoute: (rode: boolean) => {
-            reported = rode
-          },
-        })
-        .catch((e: unknown) => e)
-      expect(JSON.stringify((error as { detail?: unknown }).detail)).toContain(
-        'aspd_worker_hosting_unproven'
-      )
-      expect(reported).toBeUndefined()
-      expect(operations(s.hostSessionId)).toEqual([])
-      expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toHaveLength(0)
-      expect(ledger.commands).toHaveLength(0)
-      expect(ledger.startCalls).toHaveLength(0)
-      expect(facadeCalls).toBe(0)
-    })
-  }
-
-  it('codex-app-server stays admissible with hostedDrivers absent (retained-release exemption), record shape unchanged', async () => {
-    aspd.hostedDrivers = undefined
+  it('a declared codex execution is admitted without a local hosted-driver membership assertion', async () => {
+    selectTerminalProducer('codex-app-server')
     const s = await seedInteractive(SCOPE, interactiveIntent())
     await kickerSummons(s)
     await settle(() => ledger.startCalls.length === 1)
     const [op] = operations(s.hostSessionId)
-    expect(op?.record.route).toBe('interactive-codex-tui')
+    expect(op?.record.route).toBe('producer-selected-execution')
     expect(op?.record.hosting).toMatchObject({
       driverKind: 'codex-app-server',
-      presentation: 'codex-tui',
+      presentation: 'terminal',
     })
-    expect(op?.record.executionRelease.worker.hostedDrivers).toBeUndefined()
+    expect(op?.record.executionRelease.worker).not.toHaveProperty('hostedDrivers')
     expect(facadeCalls).toBe(0)
   })
 
-  it('launch re-checks hosting evidence from persisted bytes: a hand-edited prepared row refuses and stays prepared', async () => {
+  it('launch re-checks frozen execution hosting from persisted bytes: a hand-edited prepared row refuses and stays prepared', async () => {
+    selectTerminalProducer('claude-code-tmux')
     const s = await seedInteractive()
     ledger.helloReleaseOverride = null
     await kickerSummons(s).catch(() => undefined)
@@ -565,7 +580,7 @@ describe('T-08562 generic admission and hosting evidence (G-B-admission, G-B-hos
     expect(op?.status).toBe('prepared')
     ledger.helloReleaseOverride = undefined
     const record = op?.record
-    record.executionRelease.worker.hostedDrivers = undefined
+    record.hosting.presentation = 'none'
     internal()
       .db.sqlite.query(
         'UPDATE runtime_operations SET preparation_json = ?, error_code = NULL WHERE operation_id = ?'
@@ -578,14 +593,15 @@ describe('T-08562 generic admission and hosting evidence (G-B-admission, G-B-hos
           throw new Error(error.code)
         },
       })
-    ).rejects.toThrow('does not prove it hosts claude-code-tmux')
+    ).rejects.toThrow('frozen worker launch description no longer matches')
     const [after] = operations(s.hostSessionId)
     expect(after?.status).toBe('prepared')
-    expect(after?.error_code).toBe('aspd_worker_hosting_unproven')
+    expect(after?.error_code).toBe('launch_description_mismatch')
     expect(ledger.commands.length).toBe(commandsBefore)
   })
 
-  it('launch refuses an interactive-tmux-broker record whose frozen driver no longer matches its admitted profile', async () => {
+  it('launch refuses a producer-selected record whose frozen driver no longer matches its admitted execution', async () => {
+    selectTerminalProducer('claude-code-tmux')
     const s = await seedInteractive()
     ledger.helloReleaseOverride = null
     await kickerSummons(s).catch(() => undefined)
@@ -623,7 +639,7 @@ describe('T-08562 keyed resume and route/driver fence (G-B-D2)', () => {
     expect(first.status).toBeGreaterThanOrEqual(500)
     const [prepared] = operations(s.hostSessionId)
     expect(prepared?.status).toBe('prepared')
-    expect(prepared?.record.route).toBe('interactive-tmux-broker')
+    expect(prepared?.record.route).toBe('producer-selected-execution')
     ledger.helloReleaseOverride = undefined
     return s
   }
@@ -640,7 +656,8 @@ describe('T-08562 keyed resume and route/driver fence (G-B-D2)', () => {
     await settle(() => ledger.startCalls.length === 1)
     expect(aspd.compileCalls).toBe(1)
     expect(operations(s.hostSessionId)).toHaveLength(1)
-    expect(launchPrompt(ledger.startCalls[0]?.request)).toBe(MARK)
+    expect(launchPrompt(ledger.startCalls[0]?.request)).toBeUndefined()
+    expect(initialInputText(ledger.startCalls[0]?.request)).toBe(MARK)
     await Bun.sleep(30)
     expect(delivered).toEqual([])
   })
@@ -649,7 +666,7 @@ describe('T-08562 keyed resume and route/driver fence (G-B-D2)', () => {
     ['Codex', interactiveIntent],
     ['Pi TUI (same route, different driver)', () => driverIntent('pi-tui-tmux')],
   ] as const) {
-    it(`a frozen Claude preparation is never launched by a retry selecting ${label}: aspd_preparation_route_changed`, async () => {
+    it(`a retry carrying ${label} does not reselect the frozen producer execution`, async () => {
       const s = await frozenClaudeKeyed(`k-fence-${label}`)
       const retry = await fixture.postJson('/v1/turns', {
         hostSessionId: s.hostSessionId,
@@ -658,11 +675,13 @@ describe('T-08562 keyed resume and route/driver fence (G-B-D2)', () => {
         runtimeIntent: intent(),
         waitFor: 'accepted',
       })
-      expect(retry.status).toBe(503)
-      expect(JSON.stringify(await retry.json())).toContain('aspd_preparation_route_changed')
+      expect(retry.status).toBeLessThan(300)
       expect(operations(s.hostSessionId)).toHaveLength(1)
-      expect(operations(s.hostSessionId)[0]?.status).toBe('prepared')
-      expect(ledger.startCalls).toHaveLength(0)
+      expect(operations(s.hostSessionId)[0]?.status).not.toBe('prepared')
+      expect(ledger.startCalls).toHaveLength(1)
+      expect(operations(s.hostSessionId)[0]?.record.admission.execution.driver).toBe(
+        'claude-code-tmux'
+      )
       expect(aspd.compileCalls).toBe(1)
     })
   }
@@ -726,7 +745,7 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
     expect(aspd.compileAspHomes[0]).toBe(join(scratch, 'caller-asp-home'))
   })
 
-  it('pi-sdk on a configured node refuses with aspd_unconfigured and never reaches aspd (T-08596)', async () => {
+  it('a pi-sdk raw intent reaches the producer and cannot select the frozen execution', async () => {
     const s = await session()
     const response = await fixture.postJson('/v1/turns', {
       hostSessionId: s.hostSessionId,
@@ -734,10 +753,11 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
       runtimeIntent: piSdkIntent(),
       waitFor: 'accepted',
     })
-    expect(response.status).toBeGreaterThanOrEqual(400)
-    const body = (await response.json()) as { error: { detail: { code: string } } }
-    expect(body.error.detail.code).toBe('aspd_unconfigured')
-    expect(aspd.compileCalls).toBe(0)
+    expect(response.status).toBeLessThan(300)
+    await settle(() => ledger.startCalls.length === 1)
+    const [op] = operations(s.hostSessionId)
+    expect(op?.record.admission.execution.driver).toBe('claude-code-tmux')
+    expect(aspd.compileCalls).toBe(1)
     expect(facadeCalls).toBe(0)
   })
 
@@ -770,7 +790,8 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
     await settle(() => delivered.length === 1)
     expect(aspd.compileCalls).toBe(1)
     expect(ledger.startCalls).toHaveLength(1)
-    expect(launchPrompt(ledger.startCalls[0]?.request)).toBe('T8562-FIRST')
+    expect(launchPrompt(ledger.startCalls[0]?.request)).toBeUndefined()
+    expect(initialInputText(ledger.startCalls[0]?.request)).toBe('T8562-FIRST')
     expect(delivered.map((d) => d.prompt)).toEqual(['T8562-SECOND'])
   })
 

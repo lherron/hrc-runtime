@@ -15,11 +15,12 @@ import type {
   InvocationId,
 } from 'spaces-harness-broker-protocol'
 import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
+import type { ParticipantBrokerDescriptor } from 'spaces-runtime-contracts'
 
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import { runtimeHarness } from './broker/runtime-state.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
+import { parseParticipantBrokerDescriptor } from './participant-broker-descriptor.js'
 import type { ParticipantHostingIntent } from './participant-hosting-intent.js'
 import {
   type ParticipantRealizedHosting,
@@ -53,7 +54,7 @@ function parseJson<T>(json: string | undefined, label: string): T {
 function expectedIdentity(
   registration: ParticipantRegistration,
   attempt: ParticipantAttempt,
-  profile: BrokerExecutionProfile,
+  descriptor: ParticipantBrokerDescriptor,
   attachToken: string
 ): BrokerRuntimeIdentity {
   return {
@@ -62,8 +63,8 @@ function expectedIdentity(
     generation: registration.generation,
     attachEpoch: attempt.attachEpoch,
     invocationId: attempt.invocationId as InvocationId,
-    startRequestHash: profile.harnessInvocation.startRequestHash,
-    selectedProfileHash: profile.profileHash,
+    startRequestHash: descriptor.harnessInvocation.startRequestHash,
+    selectedProfileHash: descriptor.descriptorHash,
     attachToken,
   }
 }
@@ -201,10 +202,10 @@ async function installAndHelloParticipantBrokerDetails(
     throw new Error(`participant attempt cannot install broker identity from ${attempt.state}`)
   }
   const intent = parseJson<ParticipantHostingIntent>(attempt.hostingIntentJson, 'hosting intent')
-  const profile = parseJson<BrokerExecutionProfile>(attempt.preparedProfileJson, 'prepared profile')
+  const descriptor = parseParticipantBrokerDescriptor(attempt.preparedDescriptorJson)
   const attachToken = (await readFile(intent.endpoint.attachTokenRef.path, 'utf8')).trim()
   if (attachToken.length === 0) throw new Error('participant attach token is empty')
-  const identity = expectedIdentity(registration, attempt, profile, attachToken)
+  const identity = expectedIdentity(registration, attempt, descriptor, attachToken)
   const client = await connectParticipantBroker(server, intent.endpoint.socketPath)
   let acknowledgement: BrokerInstallIdentityResponse
   let hello: BrokerHelloResponse
@@ -328,7 +329,7 @@ function assertExistingParticipantRuntime(
   runtime: HrcRuntimeSnapshot,
   registration: ParticipantRegistration,
   attempt: ParticipantAttempt,
-  profile: BrokerExecutionProfile
+  descriptor: ParticipantBrokerDescriptor
 ): 'same' | 'advance' {
   const stableIdentityConflicts =
     runtime.hostSessionId !== registration.hostSessionId ||
@@ -341,7 +342,7 @@ function assertExistingParticipantRuntime(
   if (
     runtime.activeOperationId === attempt.operationId &&
     runtime.activeInvocationId === attempt.invocationId &&
-    runtime.selectedProfileHash === profile.profileHash
+    runtime.selectedProfileHash === descriptor.descriptorHash
   ) {
     return 'same'
   }
@@ -394,21 +395,21 @@ function materializeParticipantBrokerBookkeeping(
   hello: BrokerHelloResponse
 ): void {
   if (
-    attempt.preparedProfileJson === undefined ||
+    attempt.preparedDescriptorJson === undefined ||
     attempt.hostingIntentJson === undefined ||
     attempt.realizedHostingJson === undefined ||
     attempt.dispatchJson === undefined
   ) {
     throw new Error('participant attempt is missing a committed establishment boundary')
   }
-  const profile = parseJson<BrokerExecutionProfile>(attempt.preparedProfileJson, 'prepared profile')
+  const descriptor = parseParticipantBrokerDescriptor(attempt.preparedDescriptorJson)
   const intent = parseJson<ParticipantHostingIntent>(attempt.hostingIntentJson, 'hosting intent')
   const realized = parseJson<ParticipantRealizedHosting>(
     attempt.realizedHostingJson,
     'realized hosting'
   )
   const dispatch = parseJson<{
-    startRequest: BrokerExecutionProfile['harnessInvocation']['startRequest']
+    startRequest: ParticipantBrokerDescriptor['harnessInvocation']['startRequest']
     lifecyclePolicy?: ParticipantHostingIntent['lifecyclePolicy']
   }>(attempt.dispatchJson, 'frozen dispatch')
   const protocol = hello.protocolVersion
@@ -434,13 +435,13 @@ function materializeParticipantBrokerBookkeeping(
         existingRuntime,
         registration,
         attempt,
-        profile
+        descriptor
       )
       if (runtimeDisposition === 'advance') {
         server.db.runtimes.update(existingRuntime.runtimeId, {
           activeOperationId: attempt.operationId,
           activeInvocationId: attempt.invocationId,
-          selectedProfileHash: profile.profileHash,
+          selectedProfileHash: descriptor.descriptorHash,
           status: 'starting',
           statusChangedAt: now,
           runtimeStateJson: {
@@ -455,7 +456,7 @@ function materializeParticipantBrokerBookkeeping(
             invocation: {
               invocationId: attempt.invocationId,
               state: 'ready',
-              driver: profile.brokerDriver,
+              driver: descriptor.brokerDriver,
             },
           },
           updatedAt: now,
@@ -480,7 +481,10 @@ function materializeParticipantBrokerBookkeeping(
         laneRef: registration.laneRef,
         generation: registration.generation,
         transport: participantTransport(realized),
-        harness: runtimeHarness(dispatch.startRequest.spec.harness.frontend, profile.brokerDriver),
+        harness: runtimeHarness(
+          dispatch.startRequest.spec.harness.frontend,
+          descriptor.brokerDriver
+        ),
         provider,
         status: 'starting',
         statusChangedAt: now,
@@ -489,7 +493,7 @@ function materializeParticipantBrokerBookkeeping(
         controllerKind: 'harness-broker',
         activeOperationId: attempt.operationId,
         activeInvocationId: attempt.invocationId,
-        selectedProfileHash: profile.profileHash,
+        selectedProfileHash: descriptor.descriptorHash,
         lifecyclePolicyHash: intent.lifecyclePolicy.policyHash,
         runtimeStateJson: {
           schemaVersion: 'runtime-state/v1',
@@ -514,7 +518,7 @@ function materializeParticipantBrokerBookkeeping(
           invocation: {
             invocationId: attempt.invocationId,
             state: 'ready',
-            driver: profile.brokerDriver,
+            driver: descriptor.brokerDriver,
           },
           control: { mode: 'broker-ipc', brokerAttached: false },
         },
@@ -531,8 +535,8 @@ function materializeParticipantBrokerBookkeeping(
         generation: registration.generation,
         operationKind: 'broker_invocation',
         controller: 'harness-broker',
-        selectedProfileId: profile.profileId,
-        selectedProfileHash: profile.profileHash,
+        selectedProfileId: descriptor.descriptorId,
+        selectedProfileHash: descriptor.descriptorHash,
         startupMethod: 'broker.ensureInvocation',
         turnDelivery: 'invocation.input',
         status: 'starting',
@@ -552,8 +556,8 @@ function materializeParticipantBrokerBookkeeping(
       if (
         existingInvocation.operationId !== attempt.operationId ||
         existingInvocation.runtimeId !== attempt.runtimeId ||
-        existingInvocation.startRequestHash !== profile.harnessInvocation.startRequestHash ||
-        existingInvocation.selectedProfileHash !== profile.profileHash
+        existingInvocation.startRequestHash !== descriptor.harnessInvocation.startRequestHash ||
+        existingInvocation.selectedProfileHash !== descriptor.descriptorHash
       ) {
         throw new Error(
           'participant broker invocation bookkeeping conflicts with the committed attempt'
@@ -572,12 +576,12 @@ function materializeParticipantBrokerBookkeeping(
         operationId: attempt.operationId,
         runtimeId: attempt.runtimeId,
         brokerProtocol: protocol,
-        brokerDriver: profile.brokerDriver,
+        brokerDriver: descriptor.brokerDriver,
         invocationState: 'ready',
         capabilitiesJson: JSON.stringify(hello.capabilities ?? {}),
-        specHash: profile.harnessInvocation.specHash,
-        startRequestHash: profile.harnessInvocation.startRequestHash,
-        selectedProfileHash: profile.profileHash,
+        specHash: descriptor.harnessInvocation.specHash,
+        startRequestHash: descriptor.harnessInvocation.startRequestHash,
+        selectedProfileHash: descriptor.descriptorHash,
         specProjectionJson: JSON.stringify(dispatch.startRequest.spec),
         startRequestProjectionJson: JSON.stringify(dispatch.startRequest),
         lifecyclePolicyHash: intent.lifecyclePolicy.policyHash,
@@ -1043,7 +1047,7 @@ export function participantNeedsReconnect(
   // clothes, and would reset a budget that is deliberately spent.
   if (attempt.state !== 'ACTIVE') return false
   if (attempt.establishmentWorkState !== 'completed') return false
-  if (attempt.preparedProfileJson === undefined) return false
+  if (attempt.preparedDescriptorJson === undefined) return false
   return controller.activeClientInvocationId(attempt.runtimeId) !== attempt.invocationId
 }
 

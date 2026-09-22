@@ -67,7 +67,6 @@ import type { HrcServerInstanceForHandlers } from '../server-instance-context'
 
 import {
   makeBrokerProfile,
-  makeCompileResponse,
   makeIdentity,
   makeInteractiveTmuxProfile,
 } from './broker-compile-fixtures'
@@ -394,18 +393,60 @@ async function interactiveStartInput() {
     runId: 'run_tmux',
   })
   const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
-  const response = makeCompileResponse(identity, [profile])
-  if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
   return {
     // NOTE: the durable interactive START must NOT pre-supply a brokerClient —
     // the controller allocates the durable btmux lease (which launches the frozen
     // worker in its own window over --transport unix) and dials the allocated socket.
     // T-08596: the launch is the frozen aspd execution; there is no resolver fallback.
-    plan: response.plan,
-    profile,
-    startRequest,
-    specHash: profile.harnessInvocation.specHash,
-    startRequestHash: profile.harnessInvocation.startRequestHash,
+    execution: {
+      recipeId: 'fixture-claude-code-tmux',
+      driver: 'claude-code-tmux',
+      protocol: 'harness-broker/0.2' as const,
+      hosting: {
+        executionTransport: 'pty' as const,
+        terminalRequired: true,
+        terminalHost: 'tmux' as const,
+        processExecution: 'broker-process' as const,
+      },
+      presentationFulfillment: 'intrinsic' as const,
+      profile: {
+        profileId: profile.profileId,
+        profileHash: profile.profileHash,
+        compatibilityHash: profile.compatibilityHash,
+        startRequestHash: profile.harnessInvocation.startRequestHash,
+      },
+      dispatchRequest: { startRequest },
+    },
+    plan: {
+      schemaVersion: 'agent-runtime-plan/v2' as const,
+      planHash: 'planhash-v2-durable-tmux',
+      compileId: 'compile-v2-durable-tmux',
+      createdAt: NOW,
+      diagnostics: [],
+      selection: {
+        harness: 'claude',
+        modelProvider: 'anthropic',
+        model: 'claude-test',
+        reasoningEffort: 'high',
+        presentation: true,
+        provenance: {
+          harness: 'agent-profile' as const,
+          modelProvider: 'agent-profile' as const,
+          model: 'agent-profile' as const,
+          reasoningEffort: 'project-target' as const,
+          presentation: 'summon-directive' as const,
+        },
+      },
+    },
+    hrcPolicy: {
+      permissionPolicy: { mode: 'deny' as const, audit: true },
+      inputPolicy: {
+        readyInput: 'start-turn' as const,
+        busy: { whenBusy: 'reject' as const },
+        supportedKinds: ['user'] as const,
+        attachmentPolicy: { localImages: true, fileRefs: true },
+      },
+    },
     identity,
     dispatchEnv: { HRC_DISPATCH: 'yes' },
     aspdExecution: await makeFrozenAspdExecution({
@@ -427,14 +468,55 @@ async function headlessStartInput() {
     runId: 'run_headless',
   })
   const { profile, startRequest } = makeBrokerProfile(identity)
-  const response = makeCompileResponse(identity, [profile])
-  if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
   return {
-    plan: response.plan,
-    profile,
-    startRequest,
-    specHash: profile.harnessInvocation.specHash,
-    startRequestHash: profile.harnessInvocation.startRequestHash,
+    execution: {
+      recipeId: 'fixture-codex-app-server',
+      driver: 'codex-app-server',
+      protocol: 'harness-broker/0.2' as const,
+      hosting: {
+        executionTransport: 'jsonrpc-stdio' as const,
+        terminalRequired: false,
+        processExecution: 'broker-process' as const,
+      },
+      presentationFulfillment: 'attachable' as const,
+      profile: {
+        profileId: profile.profileId,
+        profileHash: profile.profileHash,
+        compatibilityHash: profile.compatibilityHash,
+        startRequestHash: profile.harnessInvocation.startRequestHash,
+      },
+      dispatchRequest: { startRequest },
+    },
+    plan: {
+      schemaVersion: 'agent-runtime-plan/v2' as const,
+      planHash: 'planhash-v2-durable-headless',
+      compileId: 'compile-v2-durable-headless',
+      createdAt: NOW,
+      diagnostics: [],
+      selection: {
+        harness: 'codex',
+        modelProvider: 'openai-codex',
+        model: 'gpt-5.5',
+        reasoningEffort: 'high',
+        presentation: false,
+        provenance: {
+          harness: 'agent-profile' as const,
+          modelProvider: 'agent-profile' as const,
+          model: 'agent-profile' as const,
+          reasoningEffort: 'project-target' as const,
+          presentation: 'summon-directive' as const,
+        },
+      },
+    },
+    hrcPolicy: {
+      permissionPolicy: { mode: 'deny' as const, audit: true },
+      inputPolicy: {
+        readyInput: 'start-turn' as const,
+        busy: { whenBusy: 'reject' as const },
+        supportedKinds: ['user'] as const,
+        attachmentPolicy: { localImages: true, fileRefs: true },
+      },
+    },
     identity,
     dispatchEnv: { HRC_DISPATCH: 'yes' },
     aspdExecution: await makeFrozenAspdExecution({
@@ -460,7 +542,7 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
       generation: 1,
     })
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start((await interactiveStartInput()) as never)
+    const result = await controller.start(await interactiveStartInput())
 
     // DIAGNOSTIC RED LEAD: at HEAD getHarnessBrokerController() ignores the flag
     // and the brokerTmuxManagerFactory seam, so the durable allocator never runs
@@ -493,7 +575,7 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
       generation: 1,
     })
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start((await interactiveStartInput()) as never)
+    const result = await controller.start(await interactiveStartInput())
 
     // DIAGNOSTIC RED LEAD: the durable route must dial the unix client factory
     // with the allocated broker IPC socket. At HEAD the flag is inert, so the
@@ -517,7 +599,7 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
       generation: 1,
     })
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start((await interactiveStartInput()) as never)
+    const result = await controller.start(await interactiveStartInput())
 
     // DIAGNOSTIC RED LEAD: persisted endpoint must record the durable Unix
     // identity. At HEAD the legacy stdio allocator runs, so on success the
@@ -548,7 +630,7 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
       generation: 1,
     })
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start((await interactiveStartInput()) as never)
+    const result = await controller.start(await interactiveStartInput())
 
     // DIAGNOSTIC RED LEAD: the unix client (durable route) must be the one that
     // handshakes, and the hello must offer v0.2 — controller.start() currently
@@ -565,7 +647,7 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
   it('flag OFF + legacy seam ⇒ no stdio spawn: the closure refusal fails the start closed (T-08596)', async () => {
     const h = makeServerInstance(db, dir, false)
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start((await interactiveStartInput()) as never)
+    const result = await controller.start(await interactiveStartInput())
 
     // T-08596: the legacy stdio seam has no resolver to consult. The legacy
     // allocator still carves its lease session, but with no durable socket and
@@ -597,7 +679,7 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
       generation: 1,
     })
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
-    const result = await controller.start((await headlessStartInput()) as never)
+    const result = await controller.start(await headlessStartInput())
 
     // T-01866: the headless cutover is UNCONDITIONAL. A leased-tmux broker window
     // is allocated (exec-form over --transport unix) and dialed over the Unix v0.2

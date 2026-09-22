@@ -230,7 +230,7 @@ async function registerDirectParticipantLocked(
       identity: identityOf(existingByIncarnation, attempt),
       continuation: asDirectJoinContinuation(attempt),
       created: false,
-      attached: attempt.preparedProfileJson !== undefined,
+      attached: attempt.preparedDescriptorJson !== undefined,
     }
   }
 

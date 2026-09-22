@@ -29,12 +29,38 @@ function captureStdout(): { chunks: string[]; restore: () => void } {
 function claudePreview(): BrokerRunPreview {
   return {
     controllerKind: 'harness-broker',
-    brokerDriver: 'claude-code-tmux',
-    interactionMode: 'interactive',
-    profileId: 'profile_test',
-    profileHash: 'phash',
     specHash: 'shash',
     startRequestHash: 'rhash',
+    selection: {
+      harness: 'claude',
+      modelProvider: 'anthropic',
+      model: 'claude-test',
+      presentation: true,
+      provenance: {
+        harness: 'agent-profile',
+        modelProvider: 'agent-profile',
+        model: 'agent-profile',
+        presentation: 'agent-profile',
+      },
+    },
+    execution: {
+      recipeId: 'claude-interactive',
+      driver: 'claude-code-tmux',
+      protocol: 'harness-broker/0.2',
+      hosting: {
+        executionTransport: 'pty',
+        terminalRequired: true,
+        terminalHost: 'tmux',
+        processExecution: 'broker-process',
+      },
+      presentationFulfillment: 'intrinsic',
+      profile: {
+        profileId: 'profile_test',
+        profileHash: 'phash',
+        compatibilityHash: 'compatibility-hash',
+        startRequestHash: 'rhash',
+      },
+    },
     process: {
       command: 'harness-broker',
       args: ['run', '--append-system-prompt', 'ignored-render-placeholder'],
@@ -42,7 +68,6 @@ function claudePreview(): BrokerRunPreview {
     },
     initialInput: false,
     inputQueue: 'fifo',
-    interrupt: 'signal',
     warnings: [],
     systemPrompt: '# Rex\n\nRex is a test agent.\n',
     systemPromptMode: 'replace',
@@ -52,20 +77,68 @@ function claudePreview(): BrokerRunPreview {
     env: { ASP_AGENT_ROOT: '/tmp/t08596-agents/rex', OTHER: '1' },
     planHash: 'planhash',
     compileId: 'compile-test',
-    bundleIdentity: 'bundle:test',
-    model: { provider: 'anthropic', modelId: 'claude-test' },
   }
 }
 
 function codexPreview(): BrokerRunPreview {
   return {
     ...claudePreview(),
-    brokerDriver: 'codex-app-server',
-    interactionMode: 'headless',
+    selection: {
+      ...claudePreview().selection,
+      harness: 'codex',
+      modelProvider: 'openai-codex',
+      model: 'gpt-test',
+    },
+    execution: {
+      ...claudePreview().execution,
+      recipeId: 'codex-headless',
+      driver: 'codex-app-server',
+      hosting: {
+        executionTransport: 'jsonrpc-stdio',
+        terminalRequired: false,
+        processExecution: 'broker-process',
+      },
+      presentationFulfillment: 'attachable',
+    },
     process: { command: 'harness-broker', args: ['run', '--transport', 'unix'], cwd: '/tmp/p' },
     systemPromptMode: 'append',
-    model: { provider: 'openai', modelId: 'gpt-test' },
     env: {},
+  }
+}
+
+function v2Preview(): BrokerRunPreview {
+  return {
+    ...codexPreview(),
+    selection: {
+      harness: 'agent-harness',
+      modelProvider: 'openai-codex',
+      model: 'gpt-5.5',
+      presentation: false,
+      provenance: {
+        harness: 'catalog-default',
+        modelProvider: 'agent-profile',
+        model: 'project-target',
+        presentation: 'summon-directive',
+      },
+    },
+    execution: {
+      recipeId: 'agent-harness-headless',
+      driver: 'agent-harness',
+      protocol: 'harness-broker/0.2',
+      hosting: {
+        executionTransport: 'native-worker',
+        terminalRequired: false,
+        processExecution: 'native-worker',
+      },
+      presentationFulfillment: 'birth-variant',
+      profile: {
+        profileId: 'v2-profile',
+        profileHash: 'v2-profile-hash',
+        compatibilityHash: 'v2-compatibility-hash',
+        startRequestHash: 'v2-start-request-hash',
+      },
+    },
+    process: { execution: 'native-worker', cwd: '/tmp/v2-native-worker' },
   }
 }
 
@@ -112,6 +185,49 @@ describe('hrc dry-run daemon preview rendering (T-08596)', () => {
     expect(output).toContain('Priming Prompt')
     expect(output).toContain('probe the thing')
     expect(output).toContain('initialPrompt: 16 chars')
+  })
+
+  it('renders an execution-release native worker without inventing a command', async () => {
+    const preview: BrokerRunPreview = {
+      ...codexPreview(),
+      process: { execution: 'native-worker', cwd: '/tmp/native-worker' },
+    }
+    const { chunks, restore } = captureStdout()
+    try {
+      await renderBrokerPlanPreview(
+        (line: string) => void process.stdout.write(`${line}\n`),
+        preview,
+        undefined
+      )
+    } finally {
+      restore()
+    }
+    const output = chunks.join('')
+    expect(output).toContain('execution:    native-worker')
+    expect(output).not.toContain('── command ──')
+  })
+
+  it('renders producer selection provenance and the complete v2 execution instead of a profile bridge', async () => {
+    const { chunks, restore } = captureStdout()
+    try {
+      await renderBrokerPlanPreview(
+        (line: string) => void process.stdout.write(`${line}\n`),
+        v2Preview(),
+        undefined
+      )
+    } finally {
+      restore()
+    }
+    const output = chunks.join('')
+    expect(output).toContain('selection.harness: agent-harness (catalog-default)')
+    expect(output).toContain('selection.presentation: false (summon-directive)')
+    expect(output).toContain('recipe:       agent-harness-headless')
+    expect(output).toContain('driver:       agent-harness')
+    expect(output).toContain('hosting:      native-worker / native-worker / terminal=no')
+    expect(output).toContain('fulfillment:  birth-variant')
+    expect(output).toContain('profileId:    v2-profile')
+    expect(output).not.toContain('bundle:')
+    expect(output).not.toContain('model:        gpt-test')
   })
 
   it('renders the system prompt for a codex-route preview, which carries no prompt argv', async () => {

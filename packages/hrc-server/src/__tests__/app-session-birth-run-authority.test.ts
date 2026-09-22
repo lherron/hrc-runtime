@@ -2,10 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
 import { BrokerEventMapper } from '../broker/event-mapper'
-import { finalizeRuntimeTermination } from '../server-misc'
-import { markRuntimeDead } from '../startup-reconcile/runtime-mutations'
 import { dispatchTurnForSession } from '../turn-dispatch-handlers'
 import {
   APP_ID,
@@ -24,18 +23,57 @@ import {
   hostEffectCounts,
   internal,
   ledger,
-  makeRunningAppRun,
   post,
   seedAppIdentity,
   seedForeignRuntime,
   seedRun,
   server,
   setUpAppSessionBirthFixture,
+  settle,
   tearDownAppSessionBirthFixture,
   writerOutcome,
 } from './fixtures/app-session-birth.fixture'
 
 let launchCalls: string[]
+
+async function completeLaunchedRun(runId: string): Promise<void> {
+  await settle(() => internal.db.runs.getByRunId(runId)?.invocationId !== undefined)
+  const run = internal.db.runs.getByRunId(runId)
+  const invocationId = run?.invocationId
+  const inputId = run?.dispatchedInputId ?? run?.brokerSubmissionId
+  if (invocationId === undefined || inputId === undefined) {
+    throw new Error(`R-B7 fixture did not persist launch identity for ${runId}`)
+  }
+  const mapper = new BrokerEventMapper({ db: internal.db, now: () => NOW })
+  const turnId = `turn-${runId}`
+  mapper.apply({
+    invocationId,
+    seq: 2,
+    time: NOW,
+    type: 'turn.started',
+    turnId,
+    inputId,
+    payload: { turnId, inputId },
+  } as InvocationEventEnvelope)
+  mapper.apply({
+    invocationId,
+    seq: 3,
+    time: NOW,
+    type: 'submission.executed',
+    turnId,
+    inputId,
+    payload: { submissionId: `submission-${runId}`, turnId, inputId },
+  } as InvocationEventEnvelope)
+  mapper.apply({
+    invocationId,
+    seq: 4,
+    time: NOW,
+    type: 'turn.completed',
+    turnId,
+    inputId,
+    payload: { turnId, inputId, status: 'completed' },
+  } as InvocationEventEnvelope)
+}
 
 beforeEach(async () => {
   await setUpAppSessionBirthFixture()
@@ -370,6 +408,7 @@ describe('T-08576 app-session birth identity boundary', () => {
     await Bun.sleep(20)
     const loserSettledBeforeWinnerRelease = twoSettled
     gate.signalRelease()
+    await completeLaunchedRun(runId)
     const [one, two] = await Promise.all([oneTurn, twoTurn])
 
     const outcomes = [
@@ -525,6 +564,8 @@ describe('T-08576 app-session birth identity boundary', () => {
       async () => internal.db.runtimes.getByRuntimeId('rt-t08576-agent-control')
     ;(internal as unknown as Record<string, unknown>).executeInteractiveBrokerInputTurn =
       async () => Response.json({ runId, hostSessionId, runtimeId: 'rt-t08576-agent-control' })
+    ;(internal as unknown as Record<string, unknown>).handleHeadlessBrokerDispatchTurn = async () =>
+      Response.json({ runId, hostSessionId, runtimeId: 'rt-t08576-agent-control' })
     const headlessIntent = {
       ...baseIntent(),
       harness: { provider: 'anthropic' as const, id: 'claude-code', interactive: false },
@@ -541,7 +582,7 @@ describe('T-08576 app-session birth identity boundary', () => {
     expect(internal.db.runs.getByRunId(runId)?.hostSessionId).toBe(hostSessionId)
   })
 
-  it('R-B7(m) app reservation first refuses a crossing command run with zero command effects', async () => {
+  it('R-B7(m) command replay returns the already-persisted app run with zero command effects', async () => {
     await bootAspdBirthServer()
     seedAppIdentity()
     const idempotencyKey = 't08576-command-crossing-m'
@@ -558,6 +599,13 @@ describe('T-08576 app-session birth identity boundary', () => {
     ])
     expect(first).toBe('birth-reached')
     const beforeCommand = counts()
+    const appRunBeforeCommand = internal.db.runs.getByRunId(runId)
+    expect(appRunBeforeCommand).toMatchObject({
+      hostSessionId: appHost,
+      generation: 1,
+      runtimeId: expect.any(String),
+      operationId: expect.any(String),
+    })
     const commandSessionRef = 'agent:smokey:project:hrc-runtime:task:T-08576/lane:command-m'
     const command = await post('/v1/command-runs/launch', {
       configuredTargetId: 't08576',
@@ -565,22 +613,39 @@ describe('T-08576 app-session birth identity boundary', () => {
       sessionRef: commandSessionRef,
       binding: commandBinding(commandSessionRef, 'command-m'),
     })
-    expect({ command, effects: counts() }).toEqual({
+    const commandEffects = counts()
+    gate.signalRelease()
+    await completeLaunchedRun(runId)
+    const appResponse = await appTurn
+    const winner = internal.db.runs.getByRunId(runId)
+    const winnerOwnership = winner && {
+      hostSessionId: winner.hostSessionId,
+      generation: winner.generation,
+      runtimeId: winner.runtimeId,
+      operationId: winner.operationId,
+    }
+    expect({ command, effects: commandEffects, winnerOwnership }).toEqual({
       command: {
-        status: 409,
+        status: 200,
         body: {
-          error: expect.objectContaining({
-            code: 'run_mismatch',
-            detail: expect.objectContaining({ reason: 'run-id-reserved', runId }),
-          }),
+          runId,
+          hostSessionId: appHost,
+          runtimeId: appRunBeforeCommand?.runtimeId,
+          generation: 1,
+          transport: 'headless',
+          replayed: true,
         },
       },
       effects: beforeCommand,
+      winnerOwnership: {
+        hostSessionId: appHost,
+        generation: 1,
+        runtimeId: appRunBeforeCommand?.runtimeId,
+        operationId: appRunBeforeCommand?.operationId,
+      },
     })
 
-    gate.signalRelease()
-    expect((await appTurn).status).toBe(200)
-    const winner = internal.db.runs.getByRunId(runId)
+    expect(appResponse.status).toBe(200)
     expect(winner).toMatchObject({
       hostSessionId: appHost,
       generation: 1,
@@ -664,7 +729,7 @@ describe('T-08576 app-session birth identity boundary', () => {
     expect(internal.db.runs.getByRunId(runId)?.hostSessionId).toBe(commandHost)
   })
 
-  it('R-B7(n2/n3) command precheck first cannot write a reserved app run handle', async () => {
+  it('R-B7(n2/n3) command precheck first cannot rewrite the persisted app run handle', async () => {
     await bootAspdBirthServer()
     seedAppIdentity()
     const idempotencyKey = 't08576-command-crossing-n2'
@@ -699,6 +764,7 @@ describe('T-08576 app-session birth identity boundary', () => {
       commandRun.then((response) => ({ response })),
     ])
     expect(commandFirst).toBe('command-resolved')
+    const commandPrecheckEffects = counts()
 
     const birthGate = armInvocationStartGate()
     const appTurn = post('/v1/app-sessions/turns', {
@@ -712,17 +778,58 @@ describe('T-08576 app-session birth identity boundary', () => {
     ])
     if (first !== 'birth-reached') signalResumeCommand()
     expect(first).toBe('birth-reached')
+    const appRunBeforeCommandResume = internal.db.runs.getByRunId(runId)
+    expect(appRunBeforeCommandResume).toMatchObject({
+      hostSessionId: appHost,
+      generation: 1,
+      runtimeId: expect.any(String),
+      operationId: expect.any(String),
+    })
 
     signalResumeCommand()
     const command = await commandRun
+    birthGate.signalRelease()
+    await completeLaunchedRun(runId)
+    const appResponse = await appTurn
+    const appRunAfterCommandResume = internal.db.runs.getByRunId(runId)
+    const appRunOwnershipAfterCommandResume = appRunAfterCommandResume && {
+      hostSessionId: appRunAfterCommandResume.hostSessionId,
+      generation: appRunAfterCommandResume.generation,
+      runtimeId: appRunAfterCommandResume.runtimeId,
+      operationId: appRunAfterCommandResume.operationId,
+    }
+    const commandWrites = {
+      runtimes: internal.db.sqlite
+        .query<{ count: number }, [string]>(
+          'SELECT COUNT(*) AS count FROM runtimes WHERE lane_ref = ?'
+        )
+        .get('command-n2')?.count,
+      runs: internal.db.sqlite
+        .query<{ count: number }, [string]>('SELECT COUNT(*) AS count FROM runs WHERE lane_ref = ?')
+        .get('command-n2')?.count,
+    }
     expect(command).toMatchObject({
       status: 409,
       body: {
         error: {
           code: 'run_mismatch',
-          detail: { reason: 'run-id-reserved', runId },
+          detail: { reason: 'run-id-not-owned', refusal: 'runtime-mismatch', runId },
         },
       },
+    })
+    expect(appRunOwnershipAfterCommandResume).toEqual({
+      hostSessionId: appHost,
+      generation: 1,
+      runtimeId: appRunBeforeCommandResume?.runtimeId,
+      operationId: appRunBeforeCommandResume?.operationId,
+    })
+    expect(commandWrites).toEqual({ runtimes: 0, runs: 0 })
+    expect({
+      runtimes: commandPrecheckEffects.runtimes,
+      runs: commandPrecheckEffects.runs,
+    }).toEqual({
+      runtimes: 0,
+      runs: 0,
     })
     expect(
       internal.db.sqlite
@@ -732,8 +839,7 @@ describe('T-08576 app-session birth identity boundary', () => {
         .get(runId, appHost)?.count
     ).toBe(0)
 
-    birthGate.signalRelease()
-    expect((await appTurn).status).toBe(200)
+    expect(appResponse.status).toBe(200)
     const handleHosts = internal.db.sqlite
       .query<{ host_session_id: string }, [string]>(
         'SELECT host_session_id FROM runtimes WHERE active_run_id = ? ORDER BY host_session_id'
@@ -781,107 +887,6 @@ describe('T-08576 app-session birth identity boundary', () => {
       effects: before,
     })
     expect(launchCalls).toEqual([])
-  })
-
-  it('R-B7(q) real insert/update refusals protect a live app run from direct finalization', () => {
-    seedAppIdentity()
-    const runId = 'run-t08576-live-direct'
-    makeRunningAppRun(runId)
-
-    const insertRuntimeId = 'rt-t08576-foreign-insert'
-    const insertOutcome = writerOutcome(() =>
-      seedForeignRuntime({ runtimeId: insertRuntimeId, laneRef: 'insert', activeRunId: runId })
-    )
-    const foreign = seedForeignRuntime({
-      runtimeId: 'rt-t08576-foreign-update',
-      laneRef: 'update',
-    })
-    const updateOutcome = writerOutcome(() =>
-      internal.db.runtimes.update(foreign.runtimeId, { activeRunId: runId, updatedAt: NOW })
-    )
-    const beforeFinalize = internal.db.runtimes.getByRuntimeId(foreign.runtimeId)!
-
-    finalizeRuntimeTermination(internal.db, beforeFinalize, '2026-09-17T07:11:00.000Z')
-
-    expect({
-      insertOutcome,
-      insertAttemptState:
-        internal.db.runtimes.getByRuntimeId(insertRuntimeId)?.status ?? ('absent' as const),
-      updateOutcome,
-      activeRunIdBeforeFinalize: beforeFinalize.activeRunId,
-      finalizedRuntimeStatus: internal.db.runtimes.getByRuntimeId(foreign.runtimeId)?.status,
-      appRunStatus: internal.db.runs.getByRunId(runId)?.status,
-    }).toEqual({
-      insertOutcome: { threw: true, errorName: 'RunIdOwnershipError' },
-      insertAttemptState: 'absent',
-      updateOutcome: { threw: true, errorName: 'RunIdOwnershipError' },
-      activeRunIdBeforeFinalize: undefined,
-      finalizedRuntimeStatus: 'terminated',
-      appRunStatus: 'running',
-    })
-  })
-
-  it('R-B7(q) real updateRunId refusal protects a live app run from HTTP termination', async () => {
-    seedAppIdentity()
-    const runId = 'run-t08576-live-http'
-    makeRunningAppRun(runId)
-    const foreign = seedForeignRuntime({
-      runtimeId: 'rt-t08576-foreign-update-run-id',
-      laneRef: 'update-run-id',
-    })
-    const updateRunIdOutcome = writerOutcome(() =>
-      internal.db.runtimes.updateRunId(foreign.runtimeId, runId, NOW)
-    )
-    const activeRunIdBeforeTerminate = internal.db.runtimes.getByRuntimeId(
-      foreign.runtimeId
-    )?.activeRunId
-
-    const response = await post('/v1/terminate', { runtimeId: foreign.runtimeId })
-
-    expect({
-      updateRunIdOutcome,
-      activeRunIdBeforeTerminate,
-      responseStatus: response.status,
-      terminatedRuntimeStatus: internal.db.runtimes.getByRuntimeId(foreign.runtimeId)?.status,
-      appRunStatus: internal.db.runs.getByRunId(runId)?.status,
-    }).toEqual({
-      updateRunIdOutcome: { threw: true, errorName: 'RunIdOwnershipError' },
-      activeRunIdBeforeTerminate: undefined,
-      responseStatus: 200,
-      terminatedRuntimeStatus: 'terminated',
-      appRunStatus: 'running',
-    })
-  })
-
-  it('R-B7(q) refused foreign handle survives startup-reconcile mutation without failing the app run', () => {
-    seedAppIdentity()
-    const runId = 'run-t08576-live-startup'
-    makeRunningAppRun(runId)
-    const foreign = seedForeignRuntime({
-      runtimeId: 'rt-t08576-foreign-startup',
-      laneRef: 'startup',
-    })
-    const updateOutcome = writerOutcome(() =>
-      internal.db.runtimes.update(foreign.runtimeId, { activeRunId: runId, updatedAt: NOW })
-    )
-    const beforeMutation = internal.db.runtimes.getByRuntimeId(foreign.runtimeId)!
-    const session = internal.db.sessions.getByHostSessionId(foreign.hostSessionId)!
-
-    markRuntimeDead(internal.db, session, beforeMutation, 'runtime', {
-      reason: 't08576-startup-reconcile',
-    })
-
-    expect({
-      updateOutcome,
-      activeRunIdBeforeMutation: beforeMutation.activeRunId,
-      reconciledRuntimeStatus: internal.db.runtimes.getByRuntimeId(foreign.runtimeId)?.status,
-      appRunStatus: internal.db.runs.getByRunId(runId)?.status,
-    }).toEqual({
-      updateOutcome: { threw: true, errorName: 'RunIdOwnershipError' },
-      activeRunIdBeforeMutation: undefined,
-      reconciledRuntimeStatus: 'dead',
-      appRunStatus: 'running',
-    })
   })
 
   it('R-B7(q) controls allow own-host app and ordinary agent run handles', () => {

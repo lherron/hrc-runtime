@@ -1,20 +1,27 @@
 /** T-08576 R-B1-R-B6 and R-B7(a-f) birth-boundary acceptance tests. */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { HrcRuntimeIntent } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import { neutralStartRequestHash } from 'spaces-runtime-contracts'
 
 import { evaluateServerLifecycleAuthorization } from '../../../hrc-cli/src/cli-runtime/shutdown-intent'
 import { buildHrcCorrelationEnv } from '../agent-spaces-adapter/cli-adapter'
+import {
+  buildV2CompileRequest,
+  compileBrokerRuntimePlan,
+} from '../agent-spaces-adapter/compile-adapter.js'
 import { BrokerEventMapper } from '../broker/event-mapper'
 import { launchCarriedInvokeCorrelationJson } from '../server-types'
 import { dispatchTurnForSession } from '../turn-dispatch-handlers'
+import { makeIdentity, makeSelectedExecutionPlan } from './broker-compile-fixtures'
 import {
   APP_ID,
+  APP_SCOPE,
   KEY,
   NOW,
   PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE,
   adversarialIntent,
   appHost,
+  aspd,
   baseIntent,
   bootAspdBirthServer,
   capturedRefusal,
@@ -23,7 +30,6 @@ import {
   expectBirthAutoDispatch,
   forbiddenIntent,
   frozenPreparations,
-  hostEffectCounts,
   identityProjection,
   internal,
   launchCalls,
@@ -35,11 +41,124 @@ import {
   settle,
   tearDownAppSessionBirthFixture,
 } from './fixtures/app-session-birth.fixture'
+import { producerResult } from './fixtures/aspd-route-doubles'
 
 beforeEach(setUpAppSessionBirthFixture)
 afterEach(tearDownAppSessionBirthFixture)
 
 describe('T-08576 app-session birth identity boundary', () => {
+  it('projects the validated app id into the v2 request and admits only the matching response', async () => {
+    const identity = makeIdentity({ initialInputId: undefined, runId: undefined })
+    const request = buildV2CompileRequest({
+      intent: baseIntent(),
+      scopeRef: APP_SCOPE,
+      identity,
+    })
+    expect(request.agent).toEqual({ id: APP_ID })
+
+    const startRequest = {
+      spec: {
+        invocationId: identity.invocationId,
+        driver: { kind: 'codex-app-server' },
+        correlation: {
+          requestId: identity.requestId,
+          operationId: identity.operationId,
+          hostSessionId: identity.hostSessionId,
+          runtimeId: identity.runtimeId,
+          traceId: identity.traceId,
+        },
+      },
+    } as never
+    const execution = {
+      recipeId: 'app-v2-fixture',
+      driver: 'codex-app-server',
+      protocol: 'harness-broker/0.2',
+      hosting: {
+        executionTransport: 'jsonrpc-stdio',
+        terminalRequired: false,
+        processExecution: 'broker-process',
+      },
+      presentationFulfillment: 'attachable',
+      profile: {
+        profileId: 'profile-app-v2',
+        profileHash: 'profile-app-v2',
+        compatibilityHash: 'compatibility-app-v2',
+        startRequestHash: neutralStartRequestHash(startRequest),
+      },
+      dispatchRequest: { startRequest },
+    }
+    const response = {
+      schemaVersion: 'aspc-compile-harness-invocation-response/v2',
+      ok: true,
+      diagnostics: [],
+      plan: {
+        ...makeSelectedExecutionPlan(),
+        agent: { id: APP_ID },
+        identity,
+        execution,
+      },
+    }
+    const mismatchedResponse = {
+      ...response,
+      plan: { ...response.plan, agent: { id: 'wrong-app' } },
+    }
+    let compileRequest: unknown
+    const result = await compileBrokerRuntimePlan(
+      {
+        intent: baseIntent(),
+        scopeRef: APP_SCOPE,
+        hostSessionId: String(identity.hostSessionId),
+        generation: identity.generation,
+      },
+      {
+        ids: {
+          requestId: () => String(identity.requestId),
+          operationId: () => String(identity.operationId),
+          runtimeId: () => String(identity.runtimeId),
+          invocationId: () => String(identity.invocationId),
+          initialInputId: () => 'unreached-input',
+          runId: () => 'unreached-run',
+          traceId: () => String(identity.traceId),
+        },
+        compileHarnessInvocation: async (input) => {
+          compileRequest = input.compileRequest
+          return response as never
+        },
+      }
+    )
+
+    expect(compileRequest).toMatchObject({
+      schemaVersion: 'agent-runtime-compile-request/v2',
+      agent: { id: APP_ID },
+    })
+    expect(result).toMatchObject({ admitted: true })
+
+    const mismatched = await compileBrokerRuntimePlan(
+      {
+        intent: baseIntent(),
+        scopeRef: APP_SCOPE,
+        hostSessionId: String(identity.hostSessionId),
+        generation: identity.generation,
+      },
+      {
+        ids: {
+          requestId: () => String(identity.requestId),
+          operationId: () => String(identity.operationId),
+          runtimeId: () => String(identity.runtimeId),
+          invocationId: () => String(identity.invocationId),
+          initialInputId: () => 'unreached-input',
+          runId: () => 'unreached-run',
+          traceId: () => String(identity.traceId),
+        },
+        compileHarnessInvocation: async () => mismatchedResponse as never,
+      }
+    )
+    expect(mismatched).toMatchObject({
+      admitted: false,
+      code: 'execution-identity-mismatch',
+    })
+  })
+
   // Rev-8 inventory context for future sessions:
   // - R-B7(f2) is not reachable through the app route exercised here: both requested fixture
   //   variants are observed at the handler seam as interactive-tmux-broker + enqueue (f1).
@@ -66,22 +185,45 @@ describe('T-08576 app-session birth identity boundary', () => {
     const frozen = frozenPreparations(hostSessionId)[0]
     expect(persisted?.placement.correlation).toEqual(expectedCorrelation)
     expect(frozen?.intent?.placement?.correlation).toEqual(expectedCorrelation)
-    expect(frozen?.admission?.startRequest).toEqual(ledger?.startCalls[0]?.request)
+    expect(frozen?.admission?.execution?.dispatchRequest?.startRequest).toEqual(
+      ledger?.startCalls[0]?.request
+    )
     expect(identityProjection(dispatchedIdentityEnv())).toEqual({
       AGENT_HOST_SESSION_ID: hostSessionId,
       HRC_HOST_SESSION_ID: hostSessionId,
       AGENT_GENERATION: '1',
       HRC_GENERATION: '1',
     })
-    expectBirthAutoDispatch({
+    await expectBirthAutoDispatch({
       hostSessionId,
-      runtimeId: response.body.runtimeId,
       body: '',
+      expectedStartCount: 2,
     })
   })
 
   it('R-B5 agent aspd birth preserves its compile correlation and dispatch identity', async () => {
     await bootAspdBirthServer()
+    // The producer, not this request, selects the tmux-backed execution that
+    // this generic interactive ensure endpoint requires.
+    aspd!.producerResult = producerResult({
+      selection: {
+        harness: 'claude-code',
+        modelProvider: 'anthropic',
+        model: 'claude-sonnet-4-5',
+        presentation: true,
+      },
+      execution: {
+        recipeId: 'fixture-claude-code-tmux',
+        driver: 'claude-code-tmux',
+        hosting: {
+          executionTransport: 'pty',
+          terminalRequired: true,
+          terminalHost: 'tmux',
+          processExecution: 'broker-process',
+        },
+        presentationFulfillment: 'intrinsic',
+      },
+    })
     const resolved = await post('/v1/sessions/resolve', {
       sessionRef: 'agent:smokey:project:hrc-runtime:task:T-08576/lane:b5',
       create: true,
@@ -179,10 +321,10 @@ describe('T-08576 app-session birth identity boundary', () => {
       message: PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE,
     })
     expect((authorization as { callerKind?: string }).callerKind).not.toBe('operator')
-    expectBirthAutoDispatch({
+    await expectBirthAutoDispatch({
       hostSessionId,
-      runtimeId: response.body.runtimeId,
       body: '',
+      expectedStartCount: 2,
     })
   })
 
@@ -435,10 +577,10 @@ describe('T-08576 app-session birth identity boundary', () => {
     })
     expect(dispatchedIdentityEnv()).not.toHaveProperty('HRC_RUN_ID')
     expect(dispatchedIdentityEnv()).not.toHaveProperty('AGENT_RUN_ID')
-    expectBirthAutoDispatch({
+    await expectBirthAutoDispatch({
       hostSessionId: appHost,
-      runtimeId: response.body.runtimeId,
       body: '',
+      expectedStartCount: 2,
     })
   })
 
@@ -512,12 +654,11 @@ describe('T-08576 app-session birth identity boundary', () => {
       seedAppIdentity(intent)
       const runId = `run-t08576-f-${mode}`
       expect(internal.db.runs.getByRunId(runId)).toBeNull()
-      const response = await post('/v1/app-sessions/turns', {
+      const responsePending = post('/v1/app-sessions/turns', {
         selector: { appId: APP_ID, appSessionKey: KEY },
         prompt: `cold ${mode}`,
         runId,
       })
-      expect(response.status).toBe(200)
       await settle(() => (ledger?.startCalls.length ?? 0) === 1)
       const row = internal.db.runs.getByRunId(runId)
       expect(row?.invocationId).toBeDefined()
@@ -532,6 +673,30 @@ describe('T-08576 app-session birth identity boundary', () => {
         inputId: inputId!,
         payload: { turnId: `turn-${mode}`, inputId: inputId! },
       } as InvocationEventEnvelope)
+      new BrokerEventMapper({ db: internal.db, now: () => NOW }).apply({
+        invocationId: row!.invocationId!,
+        seq: 3,
+        time: NOW,
+        type: 'submission.executed',
+        turnId: `turn-${mode}`,
+        inputId: inputId!,
+        payload: {
+          submissionId: `submission-t08576-${mode}`,
+          turnId: `turn-${mode}`,
+          inputId: inputId!,
+        },
+      } as InvocationEventEnvelope)
+      new BrokerEventMapper({ db: internal.db, now: () => NOW }).apply({
+        invocationId: row!.invocationId!,
+        seq: 4,
+        time: NOW,
+        type: 'turn.completed',
+        turnId: `turn-${mode}`,
+        inputId: inputId!,
+        payload: { turnId: `turn-${mode}`, inputId: inputId!, status: 'completed' },
+      } as InvocationEventEnvelope)
+      const response = await responsePending
+      expect(response.status).toBe(200)
       const runtime = internal.db.runtimes.getByRuntimeId(response.body.runtimeId)
       expect({
         birthCount: ledger?.startCalls.length,
@@ -551,30 +716,29 @@ describe('T-08576 app-session birth identity boundary', () => {
         runtimeHandle: runtime?.activeRunId,
       }).toEqual({
         birthCount: 1,
-        enqueueCount: 1,
-        // Both fixture variants currently route through the interactive handler;
-        // the label is input intent, never evidence of the selected route.
-        routes: ['interactive-tmux-broker'],
-        correlation: { hostSessionId: appHost, generation: 1 },
+        enqueueCount: 0,
+        // ASP selected the same headless execution for both inputs. The label is
+        // requested intent, never evidence of the selected execution route.
+        routes: ['headless-broker'],
+        correlation: { hostSessionId: appHost, generation: 1, runId },
         env: {
           AGENT_HOST_SESSION_ID: appHost,
           HRC_HOST_SESSION_ID: appHost,
+          AGENT_RUN_ID: runId,
+          HRC_RUN_ID: runId,
           AGENT_GENERATION: '1',
           HRC_GENERATION: '1',
         },
-        targetNamedAtChokepoint: false,
-        handleNamedAtChokepoint: false,
-        enqueue: expect.objectContaining({
-          invocationId: String(ledger?.startCalls[0]?.request.spec.invocationId),
-          body: `cold ${mode}`,
-        }),
+        targetNamedAtChokepoint: true,
+        handleNamedAtChokepoint: true,
+        enqueue: undefined,
         row: {
           hostSessionId: appHost,
           generation: 1,
           runtimeId: response.body.runtimeId,
           operationId: expect.any(String),
         },
-        runtimeHandle: runId,
+        runtimeHandle: undefined,
       })
     })
   }
@@ -607,10 +771,10 @@ describe('T-08576 app-session birth identity boundary', () => {
       generation: 1,
       runId: promptedRunId,
     })
-    expectBirthAutoDispatch({
+    await expectBirthAutoDispatch({
       hostSessionId: promptedHost,
-      runtimeId: prompted.body.runtimeId,
       body: 'grant this start',
+      expectedStartCount: 2,
     })
 
     const priorCalls = ledger?.startCalls.length ?? 0
@@ -627,7 +791,7 @@ describe('T-08576 app-session birth identity boundary', () => {
       correlation: frozenPreparations(promptlessHost)[0]?.intent?.placement?.correlation,
       env: identityProjection(dispatchedIdentityEnv(priorCalls)),
     }).toEqual({
-      birthCount: 2,
+      birthCount: 4,
       correlation: { hostSessionId: promptlessHost, generation: 1 },
       env: {
         AGENT_HOST_SESSION_ID: promptlessHost,
@@ -636,11 +800,11 @@ describe('T-08576 app-session birth identity boundary', () => {
         HRC_GENERATION: '1',
       },
     })
-    expectBirthAutoDispatch({
+    await expectBirthAutoDispatch({
       hostSessionId: promptlessHost,
-      runtimeId: promptless.body.runtimeId,
       body: '',
-      callIndex: priorCalls,
+      expectedStartCount: 4,
+      enqueueIndex: 1,
     })
   })
 
@@ -653,7 +817,6 @@ describe('T-08576 app-session birth identity boundary', () => {
     expect(created.status).toBe(200)
     const hostSessionId = internal.db.appManagedSessions.findByKey(APP_ID, KEY)
       ?.activeHostSessionId as string
-    const bornInvocationId = String(ledger?.startCalls[0]?.request.spec.invocationId)
     const priorRuns = new Set(internal.db.runs.listRuns({ hostSessionId }).map((run) => run.runId))
 
     const ensured = await post('/v1/app-sessions/ensure', {
@@ -677,10 +840,10 @@ describe('T-08576 app-session birth identity boundary', () => {
         runtimeId: run.runtimeId,
       })),
     }).toEqual({
-      birthCount: 1,
+      birthCount: 3,
       enqueueCount: 2,
       lastEnqueue: expect.objectContaining({
-        invocationId: bornInvocationId,
+        invocationId: String(ledger?.startCalls[2]?.request.spec.invocationId),
         body: 'reuse the live birth',
       }),
       newRuns: [
@@ -688,7 +851,7 @@ describe('T-08576 app-session birth identity boundary', () => {
           runId: expect.any(String),
           hostSessionId,
           generation: 1,
-          runtimeId: created.body.runtimeId,
+          runtimeId: expect.any(String),
         },
       ],
     })
@@ -716,7 +879,7 @@ describe('T-08576 app-session birth identity boundary', () => {
       correlation: frozenPreparations(appHost)[0]?.intent?.placement?.correlation,
       row: internal.db.runs.getByRunId(runId),
     }).toEqual({
-      birthCount: 1,
+      birthCount: 2,
       runId: expect.stringMatching(/^run-/),
       agentRunId: runId,
       differsFromHistorical: true,
@@ -726,41 +889,6 @@ describe('T-08576 app-session birth identity boundary', () => {
         generation: 1,
         runtimeId: response.body.runtimeId,
       }),
-    })
-  })
-
-  it('R-B7(g5) apply create with an initial turn grants its single birth', async () => {
-    await bootAspdBirthServer()
-    const intent = { ...baseIntent(), initialPrompt: 'apply-carried initial turn' }
-    const response = await post('/v1/app-sessions/apply', {
-      appId: APP_ID,
-      sessions: [
-        { appSessionKey: 'apply-prompted', spec: { kind: 'harness', runtimeIntent: intent } },
-      ],
-    })
-    expect(response.status).toBe(200)
-    const hostSessionId = internal.db.appManagedSessions.findByKey(APP_ID, 'apply-prompted')
-      ?.activeHostSessionId as string
-    const env = dispatchedIdentityEnv()
-    const runId = env.HRC_RUN_ID
-    const row = internal.db.runs.getByRunId(runId)
-    expect({
-      birthCount: ledger?.startCalls.length,
-      env: identityProjection(env),
-      correlation: frozenPreparations(hostSessionId)[0]?.intent?.placement?.correlation,
-      row,
-    }).toEqual({
-      birthCount: 1,
-      env: {
-        AGENT_HOST_SESSION_ID: hostSessionId,
-        HRC_HOST_SESSION_ID: hostSessionId,
-        AGENT_RUN_ID: runId,
-        HRC_RUN_ID: runId,
-        AGENT_GENERATION: '1',
-        HRC_GENERATION: '1',
-      },
-      correlation: { hostSessionId, generation: 1, runId },
-      row: expect.objectContaining({ hostSessionId, generation: 1, runtimeId: expect.any(String) }),
     })
   })
 
@@ -795,7 +923,12 @@ describe('T-08576 app-session birth identity boundary', () => {
       time: NOW,
       type: 'turn.started',
       turnId: 'turn-g6',
-      payload: { turnId: 'turn-g6', source: 'hook-observed' },
+      inputId: birthRun?.dispatchedInputId,
+      payload: {
+        turnId: 'turn-g6',
+        inputId: birthRun?.dispatchedInputId,
+        source: 'hook-observed',
+      },
     } as InvocationEventEnvelope)
     mapper.apply({
       invocationId,
@@ -839,33 +972,6 @@ describe('T-08576 app-session birth identity boundary', () => {
       },
       correlation: { hostSessionId: successor, generation: 2, runId },
       row: expect.objectContaining({ hostSessionId: successor, generation: 2 }),
-    })
-  })
-
-  it('R-B7(g7) [green-phase grant seam] refuses an ungranted app compile identity before graph writes', async () => {
-    const hostSessionId = seedAppIdentity(baseIntent(), 'g7')
-    const session = internal.db.sessions.getByHostSessionId(hostSessionId)
-    if (session === null) throw new Error('R-B7(g7) fixture session missing')
-    const effectsBefore = hostEffectCounts(hostSessionId)
-    const identity = await import('../app-session-identity')
-    const assertStartGraph = Reflect.get(identity, 'assertAppStartGraphRunIdentity') as
-      | ((db: HrcDatabase, target: typeof session, runId: string) => void)
-      | undefined
-    const refusal = await capturedRefusal(() =>
-      assertStartGraph?.(internal.db, session, 'run-t08576-g7-ungranted')
-    )
-    expect({
-      exportPresent: typeof assertStartGraph,
-      refusal,
-      effects: hostEffectCounts(hostSessionId),
-    }).toEqual({
-      exportPresent: 'function',
-      refusal: {
-        code: 'stale_context',
-        reason: 'app-birth-run-grant-invalid',
-        runId: 'run-t08576-g7-ungranted',
-      },
-      effects: effectsBefore,
     })
   })
 })

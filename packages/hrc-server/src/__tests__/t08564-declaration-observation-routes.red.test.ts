@@ -116,17 +116,14 @@ function requestParams(double: AspdObservationDouble, method: string): Record<st
 }
 
 describe('POST /v1/declarations/resolve (T-08564 Phase A red)', () => {
-  test('assembles the intent from producer facts and forwards root context plus caller sources', async () => {
+  test('forwards declaration context but does not reissue producer selection as an HRC request', async () => {
     await boot()
     const { response, body } = await post('/v1/declarations/resolve', resolveRequest())
 
     expect(response.status).toBe(200)
-    expect(body.intent.harness).toEqual({
-      provider: 'anthropic',
-      interactive: false,
-      id: 'claude-code',
-    })
-    expect(body.intent.provision).toEqual({ harness: 'claude-code', model: 'x', remote: true })
+    expect(body.intent.harness).toEqual({ interactive: false })
+    expect(body.intent).not.toHaveProperty('selection')
+    expect(body.intent).not.toHaveProperty('provision')
     expect(body.declaration.agentSources).toEqual({
       agentsRoot,
       aspHome,
@@ -222,9 +219,8 @@ describe('invalid profile with no valid target (T-08564 E1, T-08578 etag 10; act
       )
 
       expect(response.status).toBe(200)
-      // Today's targetOnly() fallback: provider anthropic, harness undefined,
-      // provision {} — so the intent names no harness id and carries no block.
-      expect(body.intent.harness).toEqual({ provider: 'anthropic', interactive: false })
+      // A degraded observation cannot grant HRC a selection authority either.
+      expect(body.intent.harness).toEqual({ interactive: false })
       expect(body.intent).not.toHaveProperty('provision')
       expect(body.declaration.warnings).toHaveLength(1)
       expect(body.declaration.warnings[0]).toContain(

@@ -48,16 +48,21 @@ import type {
   InvocationStartRequest,
   InvocationStartResponse,
 } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import * as brokerDecisions from '../broker-decisions'
 import * as substrateAllocator from '../broker-interactive-handlers/substrate-allocator'
 import type { BrokerClientLike } from '../broker/controller'
 import { HarnessBrokerController } from '../broker/controller'
 import { canOperatorAttach, parseBrokerRuntimeHostingState } from '../broker/runtime-hosting'
+import type { SelectedExecution } from '../broker/selected-execution'
 import * as tmuxSocket from '../tmux-socket'
 
-import { makeBrokerProfile, makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
+import {
+  makeHrcPolicy,
+  makeIdentity,
+  makeSelectedExecution,
+  makeSelectedExecutionPlan,
+} from './broker-compile-fixtures'
 
 const NOW = '2026-06-18T10:00:00.000Z'
 
@@ -112,17 +117,16 @@ const _getBrokerObserverSocketPath = (
   }
 ).getBrokerObserverSocketPath
 
-// ── Shared tmux-tui profile fixture (headless codex-app-server) ─────────────────
-// HARD CONSTRAINT: hashed CodexAppServerDriverSpec / startRequest UNCHANGED.
-// The profile is identical to ordinary headless — only the route decision differs.
+// ── Producer-selected viewer fixture (headless codex-app-server) ───────────────
 
-function makeViewerProfile(identity: ReturnType<typeof makeIdentity>): {
-  profile: BrokerExecutionProfile
+function makeViewerExecution(identity: ReturnType<typeof makeIdentity>): {
+  execution: SelectedExecution
   startRequest: InvocationStartRequest
 } {
-  // Same as makeBrokerProfile — no new fields. The tmux-tui route is HRC-side routing
-  // via routeDecision / operatorPresentation, NOT a profile-level marker.
-  return makeBrokerProfile(identity, { brokerDriver: 'codex-app-server' })
+  return makeSelectedExecution(identity, {
+    brokerDriver: 'codex-app-server',
+    presentationSurface: { transport: 'terminal', terminalHost: 'tmux' },
+  })
 }
 
 // ── Minimal fake broker client ─────────────────────────────────────────────────
@@ -345,7 +349,7 @@ function viewerAllocationStub(runtimeRoot: string, runtimeId: string): Record<st
 }
 
 // These shared builders stay available for focused sibling execution.
-void makeViewerProfile
+void makeViewerExecution
 void viewerAllocationStub
 
 // ── Test 1: Pure route-decision (broker-decisions.ts) ─────────────────────────
@@ -387,11 +391,9 @@ describe('T-04921 Test 3 — negative: ordinary headless codex-app-server (RED)'
       runId: 'run_ordinary' as ReturnType<typeof makeIdentity>['runId'],
       hostSessionId: 'hostSession_viewer' as ReturnType<typeof makeIdentity>['hostSessionId'],
     })
-    const { profile, startRequest } = makeBrokerProfile(identity, {
+    const { execution } = makeSelectedExecution(identity, {
       brokerDriver: 'codex-app-server',
     })
-    const response = makeCompileResponse(identity, [profile])
-    if (!response.ok) throw new Error('fixture compile response failed')
 
     const unixClient = new FakeUnixBrokerClient()
 
@@ -437,14 +439,10 @@ describe('T-04921 Test 3 — negative: ordinary headless codex-app-server (RED)'
     } as unknown as ConstructorParameters<typeof HarnessBrokerController>[0])
 
     const result = await controller.start({
-      plan: response.plan,
-      profile,
-      startRequest,
-      specHash: profile.harnessInvocation.specHash,
-      startRequestHash: profile.harnessInvocation.startRequestHash,
+      plan: makeSelectedExecutionPlan(),
+      execution,
+      hrcPolicy: makeHrcPolicy(),
       identity,
-      // No routeDecision.operatorPresentation = 'tmux-tui' → ordinary headless.
-      routeDecision: { operatorPresentation: undefined },
     } as unknown as Parameters<typeof controller.start>[0])
 
     expect(result.ok).toBe(true)

@@ -33,7 +33,6 @@ import type {
   BrokerHealthResponse,
   BrokerHelloRequest,
   BrokerHelloResponse,
-  HarnessInvocationSpec,
   InvocationCapabilities,
   InvocationEventEnvelope,
   InvocationInputRequest,
@@ -50,8 +49,7 @@ import type {
   PermissionDecision,
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
-import { project } from 'spaces-runtime-contracts'
-import type { BrokerExecutionProfile, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
+import type { RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
 import {
   type BrokerClientLike,
@@ -59,7 +57,12 @@ import {
   HarnessBrokerController,
 } from '../broker/controller'
 
-import { makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
+import {
+  makeHrcPolicy,
+  makeIdentity,
+  makeSelectedExecutionPlan,
+  makeSelectedInteractiveTmuxExecution,
+} from './broker-compile-fixtures'
 
 const NOW = '2026-05-27T12:34:56.000Z'
 
@@ -100,73 +103,9 @@ function leaseFor(driver: TmuxDriver, runtimeId: string): TerminalSurfaceLease {
   }
 }
 
-/** Interactive broker-tmux profile for the given driver, honest hashes. */
-function interactiveTmuxProfile(
-  identity: RuntimeIdentityAllocation,
-  driver: TmuxDriver
-): { profile: BrokerExecutionProfile; startRequest: InvocationStartRequest } {
-  const frontend = driver === 'claude-code-tmux' ? 'claude' : 'codex'
-  const provider = driver === 'claude-code-tmux' ? 'anthropic' : 'openai'
-  const spec: HarnessInvocationSpec = {
-    specVersion: 'harness-broker.invocation/v1',
-    invocationId: identity.invocationId,
-    harness: { frontend, provider, driver },
-    process: {
-      command: frontend,
-      args: [],
-      cwd: '/tmp/work',
-      lockedEnv: {},
-      harnessTransport: { kind: 'pty' },
-    },
-    interaction: { mode: 'interactive', turnConcurrency: 'single', inputQueue: 'fifo' },
-    driver: { kind: driver },
-    correlation: {
-      requestId: String(identity.requestId),
-      operationId: String(identity.operationId),
-      runtimeId: String(identity.runtimeId),
-      invocationId: String(identity.invocationId),
-    },
-  } as unknown as HarnessInvocationSpec
-
-  const startRequest: InvocationStartRequest = {
-    spec,
-    ...(identity.initialInputId
-      ? {
-          initialInput: {
-            inputId: identity.initialInputId,
-            kind: 'user',
-            content: [{ type: 'text', text: 'hello interactive tmux' }],
-          },
-        }
-      : {}),
-  } as InvocationStartRequest
-
-  const specHash = (project(spec, 'spec') as { specHash: string }).specHash
-  const startRequestHash = (project(startRequest, 'start-request') as { startRequestHash: string })
-    .startRequestHash
-
-  const profile = {
-    schemaVersion: 'agent-runtime-profile/v1',
-    profileId: `profile_${driver}`,
-    profileHash: `profilehash_${driver}`,
-    compatibilityHash: `compat_${driver}`,
-    kind: 'harness-broker',
-    interactionMode: 'interactive',
-    brokerProtocol: 'harness-broker/0.2',
-    brokerDriver: driver,
-    brokerOwnership: 'hrc-owned-process',
-    brokerTerminal: { host: 'tmux' },
-    expectedCapabilities: {},
-    harnessInvocation: { startRequest, specHash, startRequestHash },
-    policy: {
-      permissionPolicy: { mode: 'deny', audit: true },
-      inputPolicy: {},
-      exposurePolicy: {},
-    },
-    observability: {},
-  } as unknown as BrokerExecutionProfile
-
-  return { profile, startRequest }
+/** Producer-selected interactive execution for the given driver, honest hashes. */
+function interactiveTmuxProfile(identity: RuntimeIdentityAllocation, driver: TmuxDriver) {
+  return makeSelectedInteractiveTmuxExecution(identity, { brokerDriver: driver })
 }
 
 // ---------------------------------------------------------------------------
@@ -348,9 +287,7 @@ async function startWithLease(driver: TmuxDriver): Promise<{
     invocationId: invocationId as RuntimeIdentityAllocation['invocationId'],
     runId: `run_${driver.replace(/-/g, '_')}` as RuntimeIdentityAllocation['runId'],
   })
-  const { profile, startRequest } = interactiveTmuxProfile(identity, driver)
-  const response = makeCompileResponse(identity, [profile])
-  if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
+  const { execution } = interactiveTmuxProfile(identity, driver)
 
   const lease = leaseFor(driver, runtimeId)
   const fake = new FakeBrokerClient(driver, invocationId)
@@ -383,11 +320,9 @@ async function startWithLease(driver: TmuxDriver): Promise<{
   // T-08596: the injected broker client is the supported seam for
   // lease-dispatch shapes; the legacy stdio seam refuses without it.
   const result = await controller.start({
-    plan: response.plan,
-    profile,
-    startRequest,
-    specHash: profile.harnessInvocation.specHash,
-    startRequestHash: profile.harnessInvocation.startRequestHash,
+    execution,
+    plan: makeSelectedExecutionPlan(),
+    hrcPolicy: makeHrcPolicy(),
     identity,
     dispatchEnv: { HRC_DISPATCH: 'yes' },
     brokerClient: fake,
@@ -441,7 +376,7 @@ describe('RED #2: structural hash boundary (lease only in runtime arg)', () => {
       const invocation = fixture.db.brokerInvocations.getByInvocationId(
         String(identity.invocationId)
       )!
-      const plan = fixture.db.compiledRuntimePlans.getByPlanHash('planhash_w2')!
+      const plan = fixture.db.compiledRuntimePlans.getByPlanHash('planhash_v2_fixture')!
       const persisted = JSON.stringify({ invocation, plan })
 
       for (const tmuxId of [lease.paneId, lease.sessionId, lease.windowId]) {

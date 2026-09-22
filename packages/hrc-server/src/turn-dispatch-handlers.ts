@@ -49,6 +49,7 @@ import { findPreparedAspdAttemptForRetry, readAspdPreparation } from './aspd-hea
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
+  isProducerSelectedOrdinaryBirth,
   normalizeClaudeInteractiveBrokerIntent,
   normalizeCodexInteractiveBrokerIntent,
   normalizeRuntimeProvisionIntent,
@@ -104,6 +105,7 @@ import {
 } from './require-helpers.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 import {
+  assertV2SelectionCompatibleForReuse,
   findDispatchInteractiveRuntime,
   getDurableHeadlessRuntimeForReattach,
   getReusableHeadlessRuntimeForSession,
@@ -1067,27 +1069,41 @@ export async function handleOpenBrokerSession(
     session
   )
 
-  if (!shouldUseHeadlessTransport(intent)) {
-    throw new HrcRuntimeUnavailableError('broker session open requires a headless runtime intent', {
-      hostSessionId: session.hostSessionId,
-      provider: intent.harness.provider,
-      harnessId: intent.harness.id,
-      route: 'broker-session-open',
-    })
-  }
+  if (isProducerSelectedOrdinaryBirth(intent)) {
+    // The public broker-session-open door is an ordinary v2 birth: ASP, not
+    // HRC's historical headless route classifier, selects execution/hosting.
+    assertActuatorSplitRouteAdmission(intent, 'broker')
+  } else {
+    // Explicit interactive/operator surfaces remain on their protected legacy
+    // admission path until their own producer-selected attachment migration.
+    if (!shouldUseHeadlessTransport(intent)) {
+      throw new HrcRuntimeUnavailableError(
+        'broker session open requires a headless runtime intent',
+        {
+          hostSessionId: session.hostSessionId,
+          provider: intent.harness.provider,
+          harnessId: intent.harness.id,
+          route: 'broker-session-open',
+        }
+      )
+    }
 
-  const route = decideHeadlessExecutionRoute(intent, {
-    brokerFlagEnabled: this.headlessCodexBrokerEnabled,
-    museBrokerFlagEnabled: this.headlessMuseBrokerEnabled,
-  })
-  assertActuatorSplitRouteAdmission(intent, route)
-  if (route !== 'broker') {
-    throw new HrcRuntimeUnavailableError('broker session open requires the headless broker route', {
-      hostSessionId: session.hostSessionId,
-      provider: intent.harness.provider,
-      harnessId: intent.harness.id,
-      route,
+    const route = decideHeadlessExecutionRoute(intent, {
+      brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+      museBrokerFlagEnabled: this.headlessMuseBrokerEnabled,
     })
+    assertActuatorSplitRouteAdmission(intent, route)
+    if (route !== 'broker') {
+      throw new HrcRuntimeUnavailableError(
+        'broker session open requires the headless broker route',
+        {
+          hostSessionId: session.hostSessionId,
+          provider: intent.harness.provider,
+          harnessId: intent.harness.id,
+          route,
+        }
+      )
+    }
   }
 
   const runtime = await this.openHeadlessBrokerSessionForSession(session, intent)
@@ -1245,24 +1261,16 @@ export async function openHeadlessBrokerSessionForSession(
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent
 ): Promise<HrcRuntimeSnapshot> {
-  const reusableRuntime = getReusableHeadlessRuntimeForSession(
-    this.db,
-    session.hostSessionId,
-    intent.harness.provider,
-    intent.harness.id
-  )
+  const reusableRuntime = getReusableHeadlessRuntimeForSession(this.db, session.hostSessionId)
   if (reusableRuntime) {
+    assertV2SelectionCompatibleForReuse(reusableRuntime, intent)
     assertActuatorSplitRuntimeReuse(intent, reusableRuntime)
     return await finalizeHeadlessBrokerSessionOpen(this, reusableRuntime)
   }
 
-  const durableHeadless = getDurableHeadlessRuntimeForReattach(
-    this.db,
-    session.hostSessionId,
-    intent.harness.provider,
-    intent.harness.id
-  )
+  const durableHeadless = getDurableHeadlessRuntimeForReattach(this.db, session.hostSessionId)
   if (durableHeadless) {
+    assertV2SelectionCompatibleForReuse(durableHeadless, intent)
     const durableInvocation =
       durableHeadless.activeInvocationId !== undefined
         ? this.db.brokerInvocations.getByInvocationId(durableHeadless.activeInvocationId)
@@ -1929,6 +1937,34 @@ async function dispatchAdmittedTurnForSession(
   }
   const normalizedInputIntent = normalizeDispatchIntent(inputIntent, session, runId)
 
+  // Fresh ordinary v2 turns compile through ASP before HRC knows anything
+  // about a harness, provider, driver or hosting. Existing runtimes continue
+  // through their lifecycle/reuse gates below; a cold scope goes directly to
+  // the broker admission that persists ASP's frozen execution.
+  const hasLiveBrokerRuntime = this.db.runtimes
+    .listByHostSessionId(session.hostSessionId)
+    .some(
+      (runtime) =>
+        runtime.controllerKind === 'harness-broker' &&
+        runtime.status !== 'failed' &&
+        !isRuntimeUnavailableStatus(runtime.status)
+    )
+  if (
+    isProducerSelectedOrdinaryBirth(normalizedInputIntent) &&
+    (!hasLiveBrokerRuntime || this.runtimeStartOperations.has(session.hostSessionId))
+  ) {
+    assertActuatorSplitRouteAdmission(normalizedInputIntent, 'broker')
+    return await withObservation(
+      await this.handleHeadlessBrokerDispatchTurn(session, normalizedInputIntent, prompt, runId, {
+        waitForCompletion: options.waitForCompletion,
+        repairCorrelation: options.repairCorrelation,
+        responseFormat: options.responseFormat,
+        coalescedMembers: options.coalescedMembers,
+        ...dispatchRunPersistence(options),
+      })
+    )
+  }
+
   // T-01770 Phase B: admit ariadne-class (explicit id:claude-code dispatched
   // headless) and SDK-shaped Claude intents into the claude-code-tmux broker
   // path BEFORE the headless/SDK branches. Without this they fall onto legacy
@@ -1973,7 +2009,7 @@ async function dispatchAdmittedTurnForSession(
       options.responseFormat === undefined &&
       !requestsOperatorPresentation(normalizedInputIntent) &&
       shouldRedirectCodexToInteractiveBroker(normalizedInputIntent) &&
-      !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId, normalizedInputIntent)
+      !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId)
     : redirectOffRoute === 'interactive'
   const intent = claudeRedirect
     ? normalizeClaudeInteractiveBrokerIntent(normalizedInputIntent)

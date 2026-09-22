@@ -8,7 +8,6 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import { isInteractiveTmuxBrokerProfile } from './agent-spaces-adapter/compile-profile-selector.js'
 import {
   aspdInteractiveBrokerEndpoint,
   aspdInteractiveRouteFor,
@@ -27,6 +26,7 @@ import { connectObservedBrokerUnixClient } from './broker/client-observability.j
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
 import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
+import { compilerPrimingSubmissionId } from './compiler-priming.js'
 import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
@@ -69,6 +69,7 @@ import {
   isTransitionalBrokerInvocationState,
 } from './require-helpers.js'
 import {
+  assertV2SelectionCompatibleForReuse,
   getDurableHeadlessRuntimeForReattach,
   getReusableHeadlessRuntimeForSession,
 } from './runtime-select.js'
@@ -199,13 +200,19 @@ export async function handleHeadlessDispatchTurn(
     waitForCompletion?: boolean | undefined
   } = {}
 ): Promise<Response> {
+  const established = this.db.runtimes
+    .listByHostSessionId(session.hostSessionId)
+    .filter(
+      (runtime) =>
+        runtime.controllerKind === 'harness-broker' && !isRuntimeUnavailableStatus(runtime.status)
+    )
+    .at(-1)
+  if (established !== undefined) {
+    assertV2SelectionCompatibleForReuse(established, intent)
+  }
   const runtime =
-    getReusableHeadlessRuntimeForSession(
-      this.db,
-      session.hostSessionId,
-      intent.harness.provider,
-      intent.harness.id
-    ) ?? this.createHeadlessRuntimeForSession(session, intent)
+    getReusableHeadlessRuntimeForSession(this.db, session.hostSessionId) ??
+    this.createHeadlessRuntimeForSession(session, intent)
   assertRuntimeNotBusy(this.db, runtime)
 
   const continuation = automaticContinuationForRuntime(this.db, session, runtime)
@@ -354,6 +361,7 @@ export async function handleHeadlessBrokerDispatchTurn(
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
+    coldBirthPromptMode?: 'replace-priming' | 'append-to-priming' | undefined
     /** T-08555: a redirect-off crossing re-checks every in-flight start it joins. */
     redirectOffBirthJoin?: RedirectOffBirthJoin | undefined
   } = {}
@@ -388,7 +396,18 @@ export async function handleHeadlessBrokerDispatchTurn(
     const bootedRuntime = await bootOperation
     assertActuatorSplitRuntimeReuse(dispatchIntent, bootedRuntime)
     assertNoOperatorPresentationConflict(dispatchIntent, [bootedRuntime])
-    await waitForCompilerPrimingTerminal(this, bootedRuntime, this.runtimeStartPresentationSignal)
+    const initialInputId = compilerPrimingSubmissionId(this.db, bootedRuntime)
+    const bootRun =
+      bootedRuntime.activeRunId !== undefined
+        ? this.db.runs.getByRunId(bootedRuntime.activeRunId)
+        : null
+    // A compiler initial input bound to the boot's accepted run is that run's
+    // launch-carried user turn, not autonomous priming. Waiting for its
+    // terminal state would strand a crossing ordinary v2 submission behind an
+    // arbitrarily long provider turn.
+    if (initialInputId === undefined || bootRun?.brokerSubmissionId !== initialInputId) {
+      await waitForCompilerPrimingTerminal(this, bootedRuntime, this.runtimeStartPresentationSignal)
+    }
     if (!admitBeforeBoot) {
       this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
         source: 'boot',
@@ -418,12 +437,17 @@ export async function handleHeadlessBrokerDispatchTurn(
     return await joinRuntimeStart(bootOperation)
   }
 
-  const reusableRuntime = getReusableHeadlessRuntimeForSession(
-    this.db,
-    session.hostSessionId,
-    dispatchIntent.harness.provider,
-    dispatchIntent.harness.id
-  )
+  const establishedRuntime = this.db.runtimes
+    .listByHostSessionId(session.hostSessionId)
+    .filter(
+      (runtime) =>
+        runtime.controllerKind === 'harness-broker' && !isRuntimeUnavailableStatus(runtime.status)
+    )
+    .at(-1)
+  if (establishedRuntime !== undefined) {
+    assertV2SelectionCompatibleForReuse(establishedRuntime, dispatchIntent)
+  }
+  const reusableRuntime = getReusableHeadlessRuntimeForSession(this.db, session.hostSessionId)
   const missingDescriptorRuntime = findBrokerRuntimeMissingDescriptor({
     runtimes: this.db.runtimes.listByHostSessionId(session.hostSessionId),
     provider: dispatchIntent.harness.provider,
@@ -484,12 +508,7 @@ export async function handleHeadlessBrokerDispatchTurn(
   // onto the REQUEST-SERVING controller (ownership) and REUSE the same runtime id.
   // On reattach failure (dead/unreachable broker) reap it before reprovisioning so
   // no second broker tmux session remains (no-silent-duplicate).
-  const durableHeadless = getDurableHeadlessRuntimeForReattach(
-    this.db,
-    session.hostSessionId,
-    dispatchIntent.harness.provider,
-    dispatchIntent.harness.id
-  )
+  const durableHeadless = getDurableHeadlessRuntimeForReattach(this.db, session.hostSessionId)
   if (durableHeadless) {
     // T-07196: the initial map check above is only a check, not ownership.
     // Claim the host session synchronously before the first durable await and
@@ -820,6 +839,14 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       })
       .catch(() => undefined)
     const runtime = await accepted
+    // A launch-carried broker input is part of the durable start graph written
+    // before `onAccepted`. Preserve that admission identity in the early birth
+    // receipt when the driver has one (codex-app-server initialInput). Drivers
+    // whose launch prompt rides argv legitimately return only runtime
+    // correlation here and learn their submission identity later.
+    const launchSubmissionId = submissionDoorCarriesColdLaunch(flagOptions.submissionDoor)
+      ? this.db.runs.getByRunId(runId)?.brokerSubmissionId
+      : undefined
     return json({
       runId,
       hostSessionId: session.hostSessionId,
@@ -828,6 +855,9 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       transport: 'tmux',
       status: 'started',
       supportsInFlightInput: true,
+      ...(launchSubmissionId === undefined
+        ? {}
+        : { submissionId: launchSubmissionId, admission: 'admitted' as const }),
     } satisfies DispatchTurnResponseBase)
   }
   const runtime = await bootOperation
@@ -1621,7 +1651,7 @@ async function startAspdInteractiveBrokerRuntime(
     const { record } = readAspdPreparation(server, operationId)
     options.onColdBirthPromptRoute(
       record.dispatch.routeDecision['launchCarriedPrompt'] !== undefined &&
-        isInteractiveTmuxBrokerProfile(record.admission.profile)
+        record.admission.execution.hosting.terminalRequired
     )
   }
   const { runtime, intent: launchedIntent } = await launchAspdPreparedAttempt(server, operationId, {

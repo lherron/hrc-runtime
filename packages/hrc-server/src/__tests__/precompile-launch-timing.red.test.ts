@@ -5,11 +5,13 @@ import { join } from 'node:path'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
 import type { AspcCompileHarnessInvocationResponse } from 'spaces-aspc-protocol'
-import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
+import {
+  type RuntimeCompileRequest,
+  type RuntimeIdentityAllocation,
+  neutralStartRequestHash,
+} from 'spaces-runtime-contracts'
 
 import { compileBrokerRuntimePlan } from '../agent-spaces-adapter/compile-adapter'
-
-import { makeBrokerProfile, makeCompileResponse } from './broker-compile-fixtures'
 
 // Launch spans are persisted to <state root>/metrics as of T-07706. Without an
 // isolated state root these fixture runs write `runtime-spawn`-shaped records
@@ -79,21 +81,67 @@ function makeSuccessfulCompileResponse(
   request: RuntimeCompileRequest
 ): AspcCompileHarnessInvocationResponse {
   const identity = request.identity as RuntimeIdentityAllocation
-  const { profile } = makeBrokerProfile(identity)
-  const compileResponse = makeCompileResponse(identity, [profile])
-  if (!compileResponse.ok) {
-    throw new Error('timing fixture compile unexpectedly failed')
-  }
+  const startRequest = {
+    spec: {
+      invocationId: identity.invocationId,
+      driver: { kind: 'codex-app-server' },
+      correlation: {
+        requestId: identity.requestId,
+        operationId: identity.operationId,
+        hostSessionId: identity.hostSessionId,
+        runtimeId: identity.runtimeId,
+        runId: identity.runId,
+        traceId: identity.traceId,
+      },
+    },
+    ...(identity.initialInputId === undefined
+      ? {}
+      : { initialInput: { inputId: identity.initialInputId } }),
+  } as never
   return {
-    schemaVersion: 'aspc-compile-harness-invocation-response/v1',
+    schemaVersion: 'aspc-compile-harness-invocation-response/v2',
     ok: true,
-    compileResponse,
-    plan: compileResponse.plan,
-    selectedProfile: profile,
-    startRequest: profile.harnessInvocation.startRequest,
-    dispatchRequest: { startRequest: profile.harnessInvocation.startRequest },
-    diagnostics: compileResponse.diagnostics,
-  }
+    diagnostics: [],
+    plan: {
+      schemaVersion: 'agent-runtime-plan/v2',
+      agent: { id: 'timing' },
+      identity,
+      planHash: 'plan-timing',
+      compileId: 'compile-timing',
+      createdAt: '2026-09-22T00:00:00.000Z',
+      diagnostics: [],
+      selection: {
+        harness: 'codex',
+        modelProvider: 'openai-codex',
+        model: 'gpt-5.5',
+        presentation: false,
+        provenance: {
+          harness: 'catalog-default',
+          modelProvider: 'catalog-default',
+          model: 'catalog-default',
+          presentation: 'catalog-default',
+        },
+      },
+      execution: {
+        recipeId: 'codex-app-server',
+        driver: 'codex-app-server',
+        protocol: 'harness-broker/0.2',
+        hosting: {
+          executionTransport: 'jsonrpc-stdio',
+          terminalRequired: false,
+          processExecution: 'broker-process',
+        },
+        presentationFulfillment: 'attachable',
+        profile: {
+          profileId: 'profile-timing',
+          profileHash: 'profile-hash-timing',
+          compatibilityHash: 'compatibility-timing',
+          startRequestHash: neutralStartRequestHash(startRequest),
+        },
+        dispatchRequest: { startRequest },
+      },
+    },
+  } as unknown as AspcCompileHarnessInvocationResponse
 }
 
 async function waitForWarning(
@@ -130,7 +178,12 @@ describe('dark pre-compile launch timing (T-06402; T-08596 closure)', () => {
     }
 
     const result = await compileBrokerRuntimePlan(
-      { intent: makeIntent(), hostSessionId: 'host_timing', generation: 1 },
+      {
+        intent: makeIntent(),
+        scopeRef: 'agent:timing:project:hrc-runtime',
+        hostSessionId: 'host_timing',
+        generation: 1,
+      },
       deps
     )
 
@@ -165,7 +218,12 @@ describe('dark pre-compile launch timing (T-06402; T-08596 closure)', () => {
     }
 
     const operation = compileBrokerRuntimePlan(
-      { intent: makeIntent(), hostSessionId: 'host_slow_compile', generation: 1 },
+      {
+        intent: makeIntent(),
+        scopeRef: 'agent:timing:project:hrc-runtime',
+        hostSessionId: 'host_slow_compile',
+        generation: 1,
+      },
       deps
     ).finally(() => {
       settled = true

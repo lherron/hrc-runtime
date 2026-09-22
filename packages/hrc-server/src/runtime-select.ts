@@ -1,5 +1,5 @@
 import { HrcConflictError, HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
-import type { HrcHarness, HrcProvider, HrcRunRecord, HrcRuntimeSnapshot } from 'hrc-core'
+import type { HrcRunRecord, HrcRuntimeIntent, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { hasDurableBrokerEndpoint, hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
@@ -43,41 +43,141 @@ export function findDispatchInteractiveRuntime(
   return selectDispatchInteractiveRuntime(db.runtimes.listByHostSessionId(hostSessionId))
 }
 
+type RealizedV2Selection = {
+  harness: string
+  modelProvider: string
+  model: string
+  reasoningEffort?: string | undefined
+  presentation: boolean
+  provenance: Record<string, string>
+}
+
+function realizedV2Selection(
+  runtime: Pick<HrcRuntimeSnapshot, 'runtimeStateJson'>
+): RealizedV2Selection | undefined {
+  const selection = runtime.runtimeStateJson?.['selection']
+  if (typeof selection !== 'object' || selection === null || Array.isArray(selection)) {
+    return undefined
+  }
+  const record = selection as Record<string, unknown>
+  if (
+    typeof record['harness'] !== 'string' ||
+    typeof record['modelProvider'] !== 'string' ||
+    typeof record['model'] !== 'string' ||
+    typeof record['presentation'] !== 'boolean'
+  ) {
+    return undefined
+  }
+  const provenance = record['provenance']
+  if (typeof provenance !== 'object' || provenance === null || Array.isArray(provenance)) {
+    return undefined
+  }
+  const provenanceRecord = provenance as Record<string, unknown>
+  if (
+    ['harness', 'modelProvider', 'model', 'presentation'].some(
+      (field) => typeof provenanceRecord[field] !== 'string'
+    )
+  ) {
+    return undefined
+  }
+  return {
+    harness: record['harness'],
+    modelProvider: record['modelProvider'],
+    model: record['model'],
+    ...(typeof record['reasoningEffort'] === 'string'
+      ? { reasoningEffort: record['reasoningEffort'] }
+      : {}),
+    presentation: record['presentation'],
+    provenance: Object.fromEntries(
+      Object.entries(provenanceRecord).filter(([, source]) => typeof source === 'string')
+    ) as Record<string, string>,
+  }
+}
+
+/**
+ * Existing executions are selected by their frozen realization, never by a
+ * second local profile/driver lookup. Omission means reuse; an explicit v2
+ * request must match every supplied field or the caller must request a
+ * lifecycle-authorized replacement explicitly.
+ */
+export function assertV2SelectionCompatibleForReuse(
+  runtime: Pick<HrcRuntimeSnapshot, 'runtimeId' | 'runtimeStateJson'>,
+  intent: Pick<HrcRuntimeIntent, 'selection' | 'summonDirectives'>
+): void {
+  const requested = intent.selection ?? {}
+  const summonDirectives = intent.summonDirectives ?? {}
+  if (Object.keys(requested).length === 0 && Object.keys(summonDirectives).length === 0) return
+  const realized = realizedV2Selection(runtime)
+  if (realized === undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      'explicit v2 selection cannot reuse this runtime because HRC cannot compare it to a legacy runtime',
+      { runtimeId: runtime.runtimeId, replacementRequired: true }
+    )
+  }
+  // Summon directives deliberately stay raw at the HRC boundary. Their aliases
+  // and precedence are ASP-owned, so comparing them textually with a resolved
+  // field would manufacture a second normalizer in HRC. A non-empty raw
+  // directive request therefore cannot silently attach to an existing runtime:
+  // it needs a new producer realization (and the normal lifecycle replacement
+  // decision) instead. The persisted resolved selection/provenance is retained
+  // in the refusal so callers can explain exactly what it would displace.
+  if (Object.keys(summonDirectives).length > 0) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      'raw summon directives require producer realization before this runtime can be reused',
+      {
+        runtimeId: runtime.runtimeId,
+        summonDirectives,
+        realizedSelection: realized,
+        replacementRequired: true,
+      }
+    )
+  }
+  const fields = ['harness', 'modelProvider', 'model', 'reasoningEffort', 'presentation'] as const
+  const mismatch = fields.find(
+    (field) => requested[field] !== undefined && requested[field] !== realized[field]
+  )
+  if (mismatch !== undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      'explicit v2 selection does not match the established runtime; replacement is required',
+      {
+        runtimeId: runtime.runtimeId,
+        field: mismatch,
+        requested: requested[mismatch],
+        realized: realized[mismatch],
+        replacementRequired: true,
+      }
+    )
+  }
+}
+
 export function getReusableHeadlessRuntimeForSession(
   db: HrcDatabase,
-  hostSessionId: string,
-  provider: HrcProvider,
-  harnessId?: HrcHarness | undefined
+  hostSessionId: string
 ): HrcRuntimeSnapshot | null {
   const runtime = db.runtimes
     .listByHostSessionId(hostSessionId)
     .filter((candidate) => {
-      if (candidate.transport !== 'headless' || candidate.provider !== provider) {
+      if (candidate.transport !== 'headless' || candidate.controllerKind !== 'harness-broker') {
         return false
       }
-      // When the intent specifies a harness id, only reuse runtimes labeled
-      // with the same id — provider-only reuse is unsafe across SDK/CLI lines
-      // (e.g. a Codex CLI runtime cannot serve a pi-sdk turn).
-      if (harnessId !== undefined && candidate.harness !== harnessId) {
+      if (candidate.activeInvocationId === undefined) {
         return false
       }
-      if (candidate.controllerKind === 'harness-broker') {
-        if (candidate.activeInvocationId === undefined) {
-          return false
-        }
-        const invocation = db.brokerInvocations.getByInvocationId(candidate.activeInvocationId)
-        // T-05358: exclude terminal (gone) AND control-transition (starting/
-        // stopping) invocations. A transitioning broker cannot accept a dispatch,
-        // and the row status can still read `ready` mid-race, so invocation-state
-        // filtering (not status alone) is required. `turn_active` is intentionally
-        // kept admissible here — busy detection runs downstream.
-        if (
-          !invocation ||
-          isTerminalBrokerInvocationState(invocation.invocationState) ||
-          isTransitionalBrokerInvocationState(invocation.invocationState)
-        ) {
-          return false
-        }
+      const invocation = db.brokerInvocations.getByInvocationId(candidate.activeInvocationId)
+      // T-05358: exclude terminal (gone) AND control-transition (starting/
+      // stopping) invocations. A transitioning broker cannot accept a dispatch,
+      // and the row status can still read `ready` mid-race, so invocation-state
+      // filtering (not status alone) is required. `turn_active` is intentionally
+      // kept admissible here — busy detection runs downstream.
+      if (
+        !invocation ||
+        isTerminalBrokerInvocationState(invocation.invocationState) ||
+        isTransitionalBrokerInvocationState(invocation.invocationState)
+      ) {
+        return false
       }
       return true
     })
@@ -104,22 +204,13 @@ export function getReusableHeadlessRuntimeForSession(
  */
 export function getDurableHeadlessRuntimeForReattach(
   db: HrcDatabase,
-  hostSessionId: string,
-  provider: HrcProvider,
-  harnessId?: HrcHarness | undefined
+  hostSessionId: string
 ): HrcRuntimeSnapshot | null {
   return (
     db.runtimes
       .listByHostSessionId(hostSessionId)
       .filter((candidate) => {
-        if (
-          candidate.transport !== 'headless' ||
-          candidate.provider !== provider ||
-          candidate.controllerKind !== 'harness-broker'
-        ) {
-          return false
-        }
-        if (harnessId !== undefined && candidate.harness !== harnessId) {
+        if (candidate.transport !== 'headless' || candidate.controllerKind !== 'harness-broker') {
           return false
         }
         // Truly terminal runtimes are gone — only recover non-terminal-but-cold

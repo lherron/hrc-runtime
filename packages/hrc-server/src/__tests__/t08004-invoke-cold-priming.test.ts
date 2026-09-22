@@ -12,9 +12,10 @@ import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import {
-  makeCompileResponse,
+  makeHrcPolicy,
   makeIdentity,
-  makeInteractiveTmuxProfile,
+  makeSelectedExecutionPlan,
+  makeSelectedInteractiveTmuxExecution,
 } from './broker-compile-fixtures.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
@@ -91,40 +92,6 @@ afterEach(async () => {
 })
 
 describe('T-08004 cold invoke carries nonempty priming and caller in one native turn', () => {
-  it('selects priming-plus-caller launch carriage only for the cold invoke route', async () => {
-    const resolved = await fixture.resolveSession(SCOPE)
-    const internal = server as unknown as HrcServerInstanceForHandlers
-    let coldBirthPromptMode: unknown
-
-    internal.handleInteractiveTmuxBrokerDispatchTurn = async (
-      session,
-      _intent,
-      _prompt,
-      runId,
-      options
-    ) => {
-      coldBirthPromptMode = options.coldBirthPromptMode
-      return Response.json({
-        runId,
-        hostSessionId: session.hostSessionId,
-        generation: session.generation,
-        runtimeId: 'rt-t08004-route',
-        transport: 'tmux',
-        status: 'started',
-        supportsInFlightInput: true,
-      })
-    }
-
-    const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
-    if (session === null) throw new Error('T-08004 fixture session missing')
-    await internal.dispatchTurnForSession(session, claudeIntent(), CALLER, {
-      waitForCompletion: false,
-      submissionDoor: 'invoke',
-    })
-
-    expect(coldBirthPromptMode).toBe('append-to-priming')
-  })
-
   it('refuses the cold-birth compiler path with aspd_unconfigured on a node without an aspd endpoint (T-08596)', async () => {
     // T-08596: the local facade compile behind a cold-birth prompt is deleted.
     // Prompt shaping into a compile request no longer happens in HRC; the
@@ -348,13 +315,10 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
       runId: 'run-t08004-ledger' as RuntimeIdentityAllocation['runId'],
       initialInputId: undefined,
     })
-    const { profile, startRequest } = makeInteractiveTmuxProfile(identity, {
+    const { execution } = makeSelectedInteractiveTmuxExecution(identity, {
       launchInitialPrompt: `${PRIMING}\n\n${CALLER}`,
       withInitialInput: false,
     })
-    const compileResponse = makeCompileResponse(identity, [profile])
-    if (!compileResponse.ok) throw new Error('T-08004 ledger fixture rejected')
-
     persistStartGraph(
       {
         db: internal.db,
@@ -362,11 +326,9 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
         serverInstanceId: 'srv-t08004',
       },
       {
-        plan: compileResponse.plan,
-        profile,
-        startRequest,
-        specHash: profile.harnessInvocation.specHash,
-        startRequestHash: profile.harnessInvocation.startRequestHash,
+        execution,
+        plan: makeSelectedExecutionPlan(),
+        hrcPolicy: makeHrcPolicy(),
         identity,
         submissionDoor: 'invoke',
       } as Parameters<typeof persistStartGraph>[1],

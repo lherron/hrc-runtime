@@ -471,7 +471,7 @@ describe('runtime lifecycle start/attach', () => {
     expect(ensureRes.status).toBe(503)
     const body = (await ensureRes.json()) as { error?: { code?: string; message?: string } }
     expect(body.error?.code).toBe('runtime_unavailable')
-    expect(body.error?.message).toContain('ensureRuntime supports only broker-admissible runtimes')
+    expect(body.error?.message).toContain('aspd-independent execution closure')
   })
 
   it('interactive ensure does not mint legacy tmux runtimes with runtime continuation present', async () => {
@@ -485,7 +485,7 @@ describe('runtime lifecycle start/attach', () => {
     expect(ensureRes.status).toBe(503)
     const body = (await ensureRes.json()) as { error?: { code?: string; message?: string } }
     expect(body.error?.code).toBe('runtime_unavailable')
-    expect(body.error?.message).toContain('ensureRuntime supports only broker-admissible runtimes')
+    expect(body.error?.message).toContain('aspd-independent execution closure')
   })
 
   it('headless codex dispatch fails closed instead of using legacy exec', async () => {
@@ -513,7 +513,7 @@ describe('runtime lifecycle start/attach', () => {
     expect(turnRes.status).toBe(503)
     const body = (await turnRes.json()) as { error?: { code?: string; message?: string } }
     expect(body.error?.code).toBe('runtime_unavailable')
-    expect(body.error?.message).toContain('headless legacy execution is unavailable')
+    expect(body.error?.message).toContain('aspd-independent execution closure')
 
     const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
     expect(execLog).not.toContain('app-server:')

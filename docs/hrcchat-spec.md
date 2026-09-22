@@ -16,6 +16,18 @@
 
 It is the agent-to-agent and human-to-agent counterpart to `hrc` (which manages runtimes/runs). `hrcchat` speaks only to the hrc-server HTTP surface via the typed `hrc-sdk` client; it never touches tmux, the broker, or the store directly.
 
+## ASP v2 summon boundary (T-08690; pending Daedalus review)
+
+When a dormant target is summoned, hrcchat preserves absent selection intent and
+passes source-distinct raw per-summon overrides to HRC's ASP compile request as
+`selectionContext.summonDirectives`: `harness`, `model_provider`, `model`,
+`reasoning_effort`, and boolean `presentation`. hrcchat and HRC neither resolve
+profile/target defaults nor select a driver. ASP owns the v4 profile / schema-2
+target precedence and returns the one execution HRC freezes before hosting.
+Legacy selector aliases are rejected, not adapted. Reusing a live runtime with
+an omitted field preserves its established birth variant; an explicit
+presentation conflict refuses without replacing it.
+
 ---
 
 ## 2. Binaries / Packages

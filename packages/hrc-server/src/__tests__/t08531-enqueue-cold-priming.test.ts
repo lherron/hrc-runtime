@@ -12,9 +12,10 @@ import type { HrcServer } from '../index.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { isLaunchCarriedInvokeCorrelationJson } from '../server-types.js'
 import {
-  makeCompileResponse,
+  makeHrcPolicy,
   makeIdentity,
-  makeInteractiveTmuxProfile,
+  makeSelectedExecutionPlan,
+  makeSelectedInteractiveTmuxExecution,
 } from './broker-compile-fixtures.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
@@ -97,42 +98,6 @@ function coldRuntime(session: HrcSessionRecord, suffix: string): HrcRuntimeSnaps
 }
 
 describe('T-08531 cold enqueue on claude-code-tmux carries priming and caller in one launch turn', () => {
-  for (const door of ['enqueue', 'preempt', 'steer'] as const) {
-    it(`selects priming-plus-caller launch carriage for the cold ${door} door`, async () => {
-      const resolved = await fixture.resolveSession(SCOPE)
-      const internal = server as unknown as HrcServerInstanceForHandlers
-      let coldBirthPromptMode: unknown = 'not-routed'
-
-      internal.handleInteractiveTmuxBrokerDispatchTurn = async (
-        session,
-        _intent,
-        _prompt,
-        runId,
-        options
-      ) => {
-        coldBirthPromptMode = options.coldBirthPromptMode
-        return Response.json({
-          runId,
-          hostSessionId: session.hostSessionId,
-          generation: session.generation,
-          runtimeId: 'rt-t08531-route',
-          transport: 'tmux',
-          status: 'started',
-          supportsInFlightInput: true,
-        })
-      }
-
-      const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
-      if (session === null) throw new Error('T-08531 fixture session missing')
-      await internal.dispatchTurnForSession(session, claudeIntent(), CALLER, {
-        waitForCompletion: true,
-        submissionDoor: door,
-      })
-
-      expect(coldBirthPromptMode).toBe('append-to-priming')
-    })
-  }
-
   for (const door of ['enqueue', 'steer'] as const) {
     it(`answers the ${door} door with the launch turn submission and never submits the body again`, async () => {
       const resolved = await fixture.resolveSession(SCOPE)
@@ -226,12 +191,10 @@ describe('T-08531 cold enqueue on claude-code-tmux carries priming and caller in
         runId: `run-t08531-ledger-${door}` as RuntimeIdentityAllocation['runId'],
         initialInputId: undefined,
       })
-      const { profile, startRequest } = makeInteractiveTmuxProfile(identity, {
+      const { execution } = makeSelectedInteractiveTmuxExecution(identity, {
         launchInitialPrompt: `${PRIMING}\n\n${CALLER}`,
         withInitialInput: false,
       })
-      const compileResponse = makeCompileResponse(identity, [profile])
-      if (!compileResponse.ok) throw new Error('T-08531 ledger fixture rejected')
 
       persistStartGraph(
         {
@@ -240,11 +203,9 @@ describe('T-08531 cold enqueue on claude-code-tmux carries priming and caller in
           serverInstanceId: 'srv-t08531',
         },
         {
-          plan: compileResponse.plan,
-          profile,
-          startRequest,
-          specHash: profile.harnessInvocation.specHash,
-          startRequestHash: profile.harnessInvocation.startRequestHash,
+          execution,
+          plan: makeSelectedExecutionPlan(),
+          hrcPolicy: makeHrcPolicy(),
           identity,
           submissionDoor: door,
         } as Parameters<typeof persistStartGraph>[1],

@@ -23,7 +23,6 @@ import {
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { configuredAspdEndpoint } from './agent-spaces-adapter/aspd-preparation-client.js'
-import { toProfileSelector } from './agent-spaces-adapter/compile-adapter.js'
 import {
   decideInteractiveBrokerAdmission,
   toLatestRuntimeAdmissionView,
@@ -91,14 +90,8 @@ export function assertOperatorPresentationRoutable(
   if (resolution.headlessRoute !== undefined && resolution.headlessRoute !== 'broker') {
     unsupported(`headless-route-${resolution.headlessRoute}`, detail)
   }
-  // The presentation decision is driver-gated; a viewer request on any other
-  // driver would otherwise silently resolve to none.
-  if (requested === 'tmux-tui' && toProfileSelector(intent)?.brokerDriver !== 'codex-app-server') {
-    unsupported('driver-has-no-viewer', detail)
-  }
-  if (requested === 'observer' && toProfileSelector(intent)?.brokerDriver !== 'muse-serve') {
-    unsupported('driver-has-no-viewer', detail)
-  }
+  // ASP validates whether the requested presentation can be fulfilled by its
+  // selected execution. HRC has no pre-compile driver map to consult here.
 }
 
 /**
@@ -121,17 +114,8 @@ export function withFrozenOperatorPresentation(
  * node's interactive redirect, which would open a competing writer on that
  * runtime's thread instead of delivering into it.
  */
-export function scopeHasLiveHeadlessBrokerRuntime(
-  db: HrcDatabase,
-  hostSessionId: string,
-  intent: HrcRuntimeIntent
-): boolean {
-  const runtime = getReusableHeadlessRuntimeForSession(
-    db,
-    hostSessionId,
-    intent.harness.provider,
-    intent.harness.id
-  )
+export function scopeHasLiveHeadlessBrokerRuntime(db: HrcDatabase, hostSessionId: string): boolean {
+  const runtime = getReusableHeadlessRuntimeForSession(db, hostSessionId)
   return runtime?.controllerKind === 'harness-broker'
 }
 
@@ -289,21 +273,24 @@ export function createStartBirthDecision(): StartBirthDecision {
   return { decided, decide: (birth) => settle(birth) }
 }
 
-function defaultHarnessFor(provider: string): string | undefined {
-  return provider === 'openai' ? 'codex-cli' : provider === 'anthropic' ? 'claude-code' : undefined
-}
-
 /** The birth an intent starts on a transport. */
 export function startBirthOfIntent(
   transport: StartBirth['transport'],
   intent: HrcRuntimeIntent
-): StartBirth {
+): StartBirth | undefined {
   const provider = intent.harness.provider
-  return { transport, provider, harness: intent.harness.id ?? defaultHarnessFor(provider) }
+  if (provider === undefined) return undefined
+  return { transport, provider, harness: intent.harness.id }
 }
 
 /** The birth a reattach of an existing runtime resumes. */
 export function startBirthOfRuntime(runtime: HrcRuntimeSnapshot): StartBirth {
+  if (runtime.provider === undefined) {
+    throw new HrcRuntimeUnavailableError(
+      'producer-selected runtime has no legacy provider identity for interactive reuse',
+      { reason: 'producer_selected_runtime_not_legacy_interactive' }
+    )
+  }
   return {
     transport: runtime.transport === 'tmux' ? 'tmux' : 'headless',
     provider: runtime.provider,
@@ -314,7 +301,7 @@ export function startBirthOfRuntime(runtime: HrcRuntimeSnapshot): StartBirth {
 /** Bind a start operation to its birth (known now, or a pending decision). */
 export function recordStartBirth(
   operation: Promise<HrcRuntimeSnapshot>,
-  birth: StartBirth | Promise<StartBirth | undefined>
+  birth: StartBirth | undefined | Promise<StartBirth | undefined>
 ): void {
   startBirthDecisions.set(operation, Promise.resolve(birth))
 }
@@ -431,25 +418,24 @@ export function assertBirthJoinAdmitted(
 
 /**
  * T-08556 (§1.4) — the attached-run door (`hrc run`, `hrc resume`) selects its
- * Codex runtime inside the start singleflight on a node that declares an aspd
- * endpoint. True for the intents that rule applies to.
+ * producer-selected runtime inside the start singleflight on a node that
+ * declares an aspd endpoint.  The retained export name is a wire-door shim;
+ * it deliberately does not inspect the request's provider or harness.
  */
 export function isAttachedRunAspdCodexIntent(
-  intent: HrcRuntimeIntent,
+  _intent: HrcRuntimeIntent,
   env: Record<string, string | undefined> = process.env
 ): boolean {
-  return (
-    configuredAspdEndpoint(env) !== undefined &&
-    intent.harness.provider === 'openai' &&
-    (intent.harness.id === undefined || intent.harness.id === 'codex-cli')
-  )
+  return configuredAspdEndpoint(env) !== undefined
 }
 
 /**
  * §1.4 rule 3 — the attached-run door against a headless subject (the joined
  * start's runtime, or the established runtime). It never stale-marks, replaces
  * or starts beside it: a settled, operator-attachable Codex runtime is reused;
- * every other headless runtime refuses before any effect and stays untouched.
+ * every unattachable headless runtime refuses before any effect and stays
+ * untouched.  Attachability is an admitted hosting fact, never an input
+ * harness/driver predicate.
  */
 export function assertAttachedRunReusesHeadless(
   runtime: HrcRuntimeSnapshot,
@@ -462,27 +448,22 @@ export function assertAttachedRunReusesHeadless(
     establishedHarness: runtime.harness,
     establishedTransport: runtime.transport,
   }
-  if (runtime.provider !== 'openai' || runtime.harness !== 'codex-cli') {
-    throw new HrcRuntimeUnavailableError(
-      'scope has an established broker runtime of another harness; terminate it before running codex here',
-      { reason: 'established_runtime_harness_mismatch', requestedHarness: 'codex-cli', ...detail }
-    )
-  }
   if (options.transitional) {
     throw new HrcRuntimeUnavailableError(
       'scope has a headless codex runtime that is starting or stopping; retry once it settles',
       { reason: 'attached_run_runtime_transitional', ...detail }
     )
   }
-  if (parseBrokerRuntimeHostingState(runtime)?.presentation.kind !== 'tmux-tui') {
+  const surface = parseBrokerRuntimeHostingState(runtime)?.presentation.kind
+  if (surface !== 'tmux-tui' && surface !== 'observer') {
     throw new HrcConflictError(
       HrcErrorCode.PRESENTATION_CONFLICT,
-      "scope has a live runtime presenting 'none'; hrc run needs an operator terminal (terminate it or use --force-restart)",
+      'scope has a live runtime without an admitted presentation surface; hrc run cannot attach without replacement',
       {
         field: 'presentation.operator',
         runtimeId: runtime.runtimeId,
         hostSessionId: runtime.hostSessionId,
-        livePresentation: 'none',
+        livePresentation: surface ?? 'none',
       }
     )
   }

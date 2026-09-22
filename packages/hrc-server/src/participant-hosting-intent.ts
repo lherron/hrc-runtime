@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import type { BrokerLifecyclePolicyOverlay } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
+import type { ParticipantBrokerDescriptor } from 'spaces-runtime-contracts'
 
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import type { BrokerAttachTokenRef } from './broker/runtime-state.js'
@@ -13,7 +13,7 @@ import { getBrokerIpcSocketPath } from './tmux-socket.js'
 
 /**
  * Boundary two of the generic participant path. It records HRC's hosting
- * choices before any broker or tmux effect. The adapter profile is only an
+ * choices before any broker or tmux effect. The adapter descriptor is only an
  * input: this code never authors or mutates its invocation request.
  */
 export type ParticipantHostingIntent = {
@@ -79,7 +79,7 @@ export async function createParticipantHostingIntent(
   server: HrcServerInstanceForHandlers,
   registration: ParticipantRegistration,
   attempt: ParticipantAttempt,
-  profile: BrokerExecutionProfile
+  descriptor: ParticipantBrokerDescriptor
 ): Promise<ParticipantHostingIntent> {
   // A classless direct join has no class to name, and interpolating an absent
   // one produced the literal route `participant:undefined` -- a fabricated
@@ -96,7 +96,7 @@ export async function createParticipantHostingIntent(
 
   const brokerIpcSocketPath = getBrokerIpcSocketPath(
     server.options,
-    profile.brokerDriver,
+    descriptor.brokerDriver,
     attempt.runtimeId
   )
   const attachTokenPath = join(dirname(brokerIpcSocketPath), 'attach.token')
@@ -107,12 +107,14 @@ export async function createParticipantHostingIntent(
     redacted: true,
   }
   const presentation =
-    profile.brokerTerminal === undefined
+    descriptor.brokerTerminal === undefined
       ? ({ kind: 'none' } as const)
-      : profile.brokerTerminal.host === 'tmux'
+      : descriptor.brokerTerminal.host === 'tmux'
         ? ({ kind: 'tmux-tui' } as const)
         : (() => {
-            throw new Error('participant profile requests an unsupported HRC presentation resource')
+            throw new Error(
+              'participant descriptor requests an unsupported HRC presentation resource'
+            )
           })()
 
   if (registration.join !== 'participant-served') {

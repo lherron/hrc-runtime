@@ -381,7 +381,6 @@ describe('headless broker dispatch start single-flight', () => {
     expect(session).toBeDefined()
 
     const planHash = 'plan-t07880-joining-priming'
-    const profileHash = 'profile-t07880-joining-priming'
     const invocationId = 'inv-t07880-joining-priming'
     const submissionId = 'input-t07880-compiler-priming'
     const turnId = 'turn-t07880-compiler-priming'
@@ -401,23 +400,21 @@ describe('headless broker dispatch start single-flight', () => {
       activeOperationId: 'op-t07880-joining-priming',
       activeInvocationId: invocationId,
       planHash,
-      selectedProfileHash: profileHash,
+      selectedProfileHash: 'profile-t07880-joining-priming',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
     ;(server as any).db.compiledRuntimePlans.insert({
       planHash,
       compileId: 'compile-t07880-joining-priming',
-      schemaVersion: 'agent-runtime-plan/v1',
+      schemaVersion: 'agent-runtime-plan/v2',
       compilerName: 'agent-spaces',
       compilerVersion: 'test',
       planProjectionJson: JSON.stringify({
-        executionProfiles: [
-          {
-            profileHash,
-            harnessInvocation: { startRequest: { initialInput: { inputId: submissionId } } },
-          },
-        ],
+        schemaVersion: 'agent-runtime-plan/v2',
+        execution: {
+          dispatchRequest: { startRequest: { initialInput: { inputId: submissionId } } },
+        },
       }),
       createdAt: new Date().toISOString(),
     })

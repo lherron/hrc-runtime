@@ -14,15 +14,16 @@ predicate: >
   local registration returns a durable address before driver attachment. A wrong
   node returns the canonical home for caller retry, with no local allocation or
   new forwarding protocol. HRC reserves runtime identity before attachment but
-  materializes the runtime row only after real profile and broker facts exist.
+  materializes the runtime row only after real participant descriptor and broker facts exist.
   An unprepared IDENTITY_MINTED attempt is non-runnable, consumes no establishment
-  retries and survives daemon loss. Attachment atomically freezes validated profile
+  retries and survives daemon loss. Attachment atomically freezes validated
+  `ParticipantBrokerDescriptor`
   and environment, transitions to PREPARED and arms existing durable work;
   duplicate attachment does not reset a running or exhausted retry budget.
   Replacement-intent work remains independently discoverable. ASP preparation
   is optional post-join driver configuration, not authority to register. It
-  returns only the existing execution profile and optional dispatch environment,
-  never HRC runtime handles or lifecycle policy. Existing profile structure,
+  returns only the participant descriptor and optional dispatch environment,
+  never HRC runtime handles or lifecycle policy. Existing descriptor structure,
   identity and hash checks apply at attachment without new security requirements.
   Broker ownership must agree with the resolved join direction; external process
   ownership is the direct default, and managed ownership requires HRC's committed
@@ -111,7 +112,7 @@ predicate: >
   barriers and disabled reuse using HRC's own records, not an adapter verdict.
   The selected continuation and selection reason are durable and returned to the
   participant. Attachment must express that selection in the existing continuation
-  field before profile freeze; mismatch cannot silently become a fresh start.
+  field before descriptor freeze; mismatch cannot silently become a fresh start.
   A newer clearing barrier is rechecked before freeze. Resume request states
   not_requested, requested, unsupported and indeterminate are persisted separately
   from carried history; joining or broker hello never proves native resume success.
@@ -133,6 +134,11 @@ predicate: >
   behavior remains unchanged. Revision 7 is operator-authorized implementation work, not
   implementation acceptance and does not accept final-tail loss; Phase 5 completeness requires its separately verified
   retention and catch-up contract without dependence on a future user resume.
+  External attachment accepts only `ParticipantBrokerDescriptor`; HRC neither
+  accepts nor translates an `agent-runtime-profile/v1` `BrokerExecutionProfile`.
+  Legacy `prepared_profile_json` reconnect is drained or retired before v2
+  cutover. HRC B precedes ASP B, and main aspd remains on ASP A until that
+  coordinated cutover.
 authority: Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15
 source:
   - wrkq:T-08344

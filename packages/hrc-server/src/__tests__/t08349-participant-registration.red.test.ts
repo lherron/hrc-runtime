@@ -14,8 +14,8 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
-import { createControlledParticipantAdapter } from 'agent-spaces/testing'
 import { openHrcDatabase } from 'hrc-store-sqlite'
+import type { ParticipantAdapter, WriterEvidence } from 'spaces-runtime-contracts'
 
 import { createHrcServer } from '../index.js'
 import type { HrcServer, HrcServerOptions, RegistrationClassConfig } from '../index.js'
@@ -23,6 +23,7 @@ import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
 import { isClaimScopeFree } from '../scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { makeParticipantBrokerDescriptor } from './fixtures/participant-broker-descriptor.fixture.js'
 
 type GenericParticipantClass = {
   classId: string
@@ -60,6 +61,40 @@ const eprClass: RegistrationClassConfig = {
   maxInstances: 2,
   defaultTtl: 60,
   turnsAllowed: false,
+}
+
+function controlledParticipantAdapter(
+  workspaceCwd: string,
+  writerEvidence?: Omit<WriterEvidence, 'schemaVersion' | 'writerRef'>
+): ParticipantAdapter {
+  const writer = (request: { writerRef: WriterEvidence['writerRef'] }): WriterEvidence => ({
+    schemaVersion: 'writer-evidence/v1',
+    writerRef: request.writerRef,
+    ...(writerEvidence ?? {
+      observedAt: '2026-09-15T15:00:00.000Z',
+      writePath: { state: 'unknown', reason: 'not configured' },
+      liveness: { state: 'unknown', reason: 'not configured' },
+      priorRecovery: { state: 'unknown', reason: 'not configured' },
+    }),
+  })
+  return {
+    adapterId: participantServedClass.adapterId,
+    admit: () => ({ status: 'pending', reason: 'not used by direct registration' }),
+    prepare: (request) => ({
+      status: 'prepared',
+      descriptor: makeParticipantBrokerDescriptor({
+        requestId: request.identity.requestId,
+        operationId: request.identity.operationId,
+        hostSessionId: request.identity.hostSessionId,
+        generation: request.identity.generation,
+        runtimeId: request.identity.runtimeId,
+        invocationId: request.identity.invocationId,
+        cwd: workspaceCwd,
+      }),
+    }),
+    retireWriter: writer,
+    inspectWriter: writer,
+  }
 }
 
 async function observe(response: Response): Promise<ResponseObservation> {
@@ -143,10 +178,7 @@ describe('T-08349 generic participant registration callback surface', () => {
           participantServedClass,
         ] as unknown as readonly RegistrationClassConfig[],
         participantAdapterRegistry: new ParticipantAdapterRegistry([
-          createControlledParticipantAdapter({
-            adapterId: participantServedClass.adapterId,
-            workspaceCwd: fixture.tmpDir,
-          }),
+          controlledParticipantAdapter(fixture.tmpDir),
         ]),
       })
     ).then(
@@ -266,7 +298,7 @@ describe('T-08349 generic participant registration callback surface', () => {
         state: 'IDENTITY_MINTED',
         establishmentWorkState: 'pending',
       })
-      expect(attempt?.preparedProfileJson).toBeUndefined()
+      expect(attempt?.preparedDescriptorJson).toBeUndefined()
     } finally {
       db.close()
     }
@@ -290,15 +322,11 @@ describe('T-08349 generic participant registration callback surface', () => {
         participantServedClass,
       ] as unknown as readonly RegistrationClassConfig[],
       participantAdapterRegistry: new ParticipantAdapterRegistry([
-        createControlledParticipantAdapter({
-          adapterId: participantServedClass.adapterId,
-          workspaceCwd: fixture.tmpDir,
-          writerEvidence: {
-            observedAt: '2026-09-15T15:00:00.000Z',
-            writePath: { state: 'retired', reason: 'controlled bridge writer retired' },
-            liveness: { state: 'dead', reason: 'controlled bridge process exited' },
-            priorRecovery: { state: 'recovered', reason: 'controlled replay drained' },
-          },
+        controlledParticipantAdapter(fixture.tmpDir, {
+          observedAt: '2026-09-15T15:00:00.000Z',
+          writePath: { state: 'retired', reason: 'controlled bridge writer retired' },
+          liveness: { state: 'dead', reason: 'controlled bridge process exited' },
+          priorRecovery: { state: 'recovered', reason: 'controlled replay drained' },
         }),
       ]),
     })

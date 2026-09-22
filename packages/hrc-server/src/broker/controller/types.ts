@@ -61,16 +61,13 @@ import type {
   TurnManifestRequest,
   TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
-import type {
-  BrokerExecutionProfile,
-  CompiledRuntimePlan,
-  RuntimeIdentityAllocation,
-} from 'spaces-runtime-contracts'
+import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 import type { AspToolchainBinarySelection } from '../../asp-toolchain.js'
 import type { BirthTimeline } from '../../birth-timeline.js'
 
 import type { BrokerEventMapper } from '../event-mapper'
 import type { BrokerAttachTokenRef } from '../runtime-state'
+import type { SelectedExecution, SelectedExecutionPlan } from '../selected-execution'
 import type { BrokerControllerError } from './errors'
 
 export type BrokerControllerLogger = {
@@ -472,11 +469,12 @@ export type ProductionHarnessBrokerControllerDeps = Omit<
 }
 
 export type BrokerControllerStartInput = {
-  plan: CompiledRuntimePlan
-  profile: BrokerExecutionProfile
-  startRequest: InvocationStartRequest
-  specHash: string
-  startRequestHash: string
+  /** Immutable producer realization. HRC does not reconstruct a profile from it. */
+  execution: SelectedExecution
+  /** Immutable v2 plan/audit metadata, including resolved selection/provenance. */
+  plan: SelectedExecutionPlan
+  /** HRC-owned policy, carried separately from producer-selected execution. */
+  hrcPolicy: RuntimeCompileRequest['hrcPolicy']
   identity: RuntimeIdentityAllocation
   /** Ephemeral correlated birth timing; never part of compile or start bytes. */
   birthTimeline?: BirthTimeline | undefined
@@ -567,18 +565,6 @@ export type BrokerControllerStartInput = {
 
 export type BrokerAspdExecution = {
   operationId: string
-  /**
-   * The frozen route (T-08556): the headless substrate for
-   * `headless-codex-app-server` and for headless muse-serve
-   * (`headless-muse-serve`), the durable interactive tmux substrate for
-   * `interactive-codex-tui` and (T-08562) for the non-Codex
-   * `interactive-tmux-broker`.
-   */
-  route:
-    | 'headless-codex-app-server'
-    | 'headless-muse-serve'
-    | 'interactive-codex-tui'
-    | 'interactive-tmux-broker'
   release: AspcExecutionRelease
   executable: string
   argv: string[]

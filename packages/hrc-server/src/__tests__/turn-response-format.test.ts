@@ -82,9 +82,7 @@ describe('turn response format support helpers', () => {
     const result = preflightDriverSupportsResponseFormat({
       route: 'broker',
       responseFormat: { kind: 'json_schema', schema: { type: 'object' } },
-      profile: { brokerDriver: 'codex-app-server' } as Parameters<
-        typeof preflightDriverSupportsResponseFormat
-      >[0]['profile'],
+      driver: 'codex-app-server',
       hello: {
         drivers: [
           {

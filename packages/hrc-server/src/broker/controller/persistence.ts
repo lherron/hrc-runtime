@@ -11,7 +11,6 @@
 import { HrcErrorCode } from 'hrc-core'
 import type {
   HrcBrokerInvocationRecord,
-  HrcProvider,
   HrcRunRecord,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -19,6 +18,7 @@ import type {
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { BrokerHelloResponse, InvocationStartResponse } from 'spaces-harness-broker-protocol'
 import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
+import { neutralSpecHash } from 'spaces-runtime-contracts'
 
 import { assertAppStartGraphRunIdentity } from '../../app-session-identity.js'
 import { armFirstTurnWatch } from '../../first-turn-watch'
@@ -30,9 +30,8 @@ import {
 } from '../../server-types'
 import { BROKER_TRANSPORT } from '../constants'
 import {
+  executionUsesTerminalSurface,
   extractRuntimeStateTmux,
-  isBrokerTmuxProfile,
-  runtimeHarness,
   runtimeStatusFromInvocationState,
   toBrokerTmuxJson,
   toRuntimeStateTmux,
@@ -80,8 +79,8 @@ export function persistStartGraph(
     planHash: String(input.plan.planHash),
     compileId: String(input.plan.compileId),
     schemaVersion: input.plan.schemaVersion,
-    compilerName: input.plan.compiler.name,
-    compilerVersion: input.plan.compiler.version,
+    compilerName: 'aspc',
+    compilerVersion: 'v2',
     planProjectionJson: JSON.stringify(input.plan),
     diagnosticsJson: JSON.stringify(input.plan.diagnostics ?? []),
     createdAt: input.plan.createdAt,
@@ -97,8 +96,8 @@ export function persistStartGraph(
     controller: 'harness-broker',
     compileId: String(input.plan.compileId),
     planHash: String(input.plan.planHash),
-    selectedProfileId: String(input.profile.profileId),
-    selectedProfileHash: String(input.profile.profileHash),
+    selectedProfileId: String(input.execution.profile.profileId),
+    selectedProfileHash: String(input.execution.profile.profileHash),
     startupMethod: 'broker.startInvocationFromRequest',
     turnDelivery: 'invocation.input',
     status: 'starting',
@@ -138,11 +137,13 @@ export function persistStartGraph(
     ctx.db.runtimeOperations.insert(operation)
   }
 
-  // T-01874 Ph3 — public/API transport tracks the PROFILE, not the substrate.
+  // Public/API transport follows the producer-declared terminal requirement,
+  // not the HRC substrate implementation.
   // A headless durable runtime now carries a leased-tmux substrate
   // (`tmuxAllocation` set) but its identity stays transport='headless'
   // (presentation='none'); only the interactive tmux-tui profile is 'tmux'.
-  const transport = tmuxAllocation && isBrokerTmuxProfile(input.profile) ? 'tmux' : 'headless'
+  const transport =
+    tmuxAllocation && executionUsesTerminalSurface(input.execution) ? 'tmux' : 'headless'
   const runtime = ctx.db.runtimes.insert({
     runtimeId: String(identity.runtimeId),
     runtimeKind: 'harness',
@@ -151,17 +152,19 @@ export function persistStartGraph(
     laneRef: session.laneRef,
     generation: identity.generation,
     transport,
-    harness: runtimeHarness(input.plan.harness.runtime, input.profile.brokerDriver),
-    provider: input.plan.harness.provider as HrcProvider,
+    // v2 selection is producer evidence in runtimeStateJson. Legacy identity
+    // columns stay null: mapping model-provider or harness vocabulary into the
+    // historical enums would create false compatibility authority.
     status: 'starting',
     statusChangedAt: now,
     supportsInflightInput: true,
     adopted: false,
     // Observer-pane runtimes persist tmuxJson too: the viewer attaches to the
     // observer pane (transport stays 'headless' per T-01874).
-    ...(tmuxAllocation && (isBrokerTmuxProfile(input.profile) || isObserverPaneRoute(input))
+    ...(tmuxAllocation &&
+    (executionUsesTerminalSurface(input.execution) || isObserverPaneRoute(input))
       ? {
-          tmuxJson: toBrokerTmuxJson(input.profile.brokerDriver, tmuxAllocation),
+          tmuxJson: toBrokerTmuxJson(input.execution.driver, tmuxAllocation),
         }
       : {}),
     ...(identity.runId !== undefined ? { activeRunId: String(identity.runId) } : {}),
@@ -170,7 +173,7 @@ export function persistStartGraph(
     activeInvocationId: String(identity.invocationId),
     compileId: String(input.plan.compileId),
     planHash: String(input.plan.planHash),
-    selectedProfileHash: String(input.profile.profileHash),
+    selectedProfileHash: String(input.execution.profile.profileHash),
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',
       kind: 'harness-broker',
@@ -182,11 +185,13 @@ export function persistStartGraph(
       // close handler and to every sweep the moment it exists (T-08294).
       ...(input.lifecycleOwner !== undefined ? { lifecycleOwner: input.lifecycleOwner } : {}),
       ...(input.runtimeAuthority !== undefined ? { authority: input.runtimeAuthority } : {}),
+      selection: input.plan.selection,
+      hrcPolicy: input.hrcPolicy,
       ...(input.aspdExecution !== undefined
         ? { executionRelease: executionReleaseState(input, hello) }
         : {}),
-      ...(tmuxAllocation && isBrokerTmuxProfile(input.profile)
-        ? { tmux: toRuntimeStateTmux(input.profile.brokerDriver, tmuxAllocation) }
+      ...(tmuxAllocation && executionUsesTerminalSurface(input.execution)
+        ? { tmux: toRuntimeStateTmux(input.execution.driver, tmuxAllocation) }
         : {}),
     },
     createdAt: now,
@@ -207,7 +212,7 @@ export function persistStartGraph(
   // structural fact: interactive tmux profiles deliver launch text through argv
   // and carry no `initialInput` at all, so they keep `dispatchedInputId ===
   // undefined` and the separate T-07920 launch-primed attribution it selects.
-  const initialInputId = input.startRequest.initialInput?.inputId
+  const initialInputId = input.execution.dispatchRequest.startRequest.initialInput?.inputId
   const run =
     identity.runId !== undefined
       ? ctx.db.runs.insert({
@@ -249,7 +254,7 @@ export function persistStartGraph(
     run !== undefined &&
     initialInputId === undefined &&
     submissionDoorCarriesColdLaunch(input.submissionDoor) &&
-    input.startRequest.spec.launch?.initialPrompt !== undefined
+    input.execution.dispatchRequest.startRequest.spec.launch?.initialPrompt !== undefined
   ) {
     ctx.db.runs.setCorrelationJson(run.runId, launchCarriedInvokeCorrelationJson())
   }
@@ -303,14 +308,14 @@ export function persistStartGraph(
     // rows record whatever the stdio broker advertised. Stamping the constant
     // lied about the wire protocol for every durable runtime.
     brokerProtocol: hello.protocolVersion,
-    brokerDriver: input.profile.brokerDriver,
+    brokerDriver: input.execution.driver,
     invocationState: 'starting',
     capabilitiesJson: JSON.stringify({}),
-    specHash: input.specHash,
-    startRequestHash: input.startRequestHash,
-    selectedProfileHash: String(input.profile.profileHash),
-    specProjectionJson: JSON.stringify(input.startRequest.spec),
-    startRequestProjectionJson: JSON.stringify(input.startRequest),
+    specHash: neutralSpecHash(input.execution.dispatchRequest.startRequest.spec),
+    startRequestHash: input.execution.profile.startRequestHash,
+    selectedProfileHash: String(input.execution.profile.profileHash),
+    specProjectionJson: JSON.stringify(input.execution.dispatchRequest.startRequest.spec),
+    startRequestProjectionJson: JSON.stringify(input.execution.dispatchRequest.startRequest),
     ownerServerInstanceId: ctx.serverInstanceId,
     ...(input.lifecyclePolicy ? { lifecyclePolicyHash: input.lifecyclePolicy.policyHash } : {}),
     createdAt: now,
@@ -330,7 +335,7 @@ export function buildRuntimeStateJson(
 ): Record<string, unknown> {
   const identity = input.identity
   const evidenceAuthority = hello.drivers.find(
-    (driver) => driver.kind === input.profile.brokerDriver
+    (driver) => driver.kind === input.execution.driver
   )?.evidenceAuthority
   // T-01812 Phase 3 — durable broker identity persisted BEYOND pane ids: the
   // Unix endpoint + redacted attach-token ref, generation, broker command/pid,
@@ -379,15 +384,18 @@ export function buildRuntimeStateJson(
     ...(input.aspdExecution !== undefined
       ? { executionRelease: executionReleaseState(input, hello) }
       : {}),
+    selection: input.plan.selection,
+    hrcPolicy: input.hrcPolicy,
     createdAt: now,
     updatedAt: now,
     compile: {
       compileId: String(input.plan.compileId),
       planHash: String(input.plan.planHash),
-      selectedProfileId: String(input.profile.profileId),
-      selectedProfileHash: String(input.profile.profileHash),
-      specHash: input.specHash,
-      startRequestHash: input.startRequestHash,
+      selectedProfileId: String(input.execution.profile.profileId),
+      selectedProfileHash: String(input.execution.profile.profileHash),
+      specHash: neutralSpecHash(input.execution.dispatchRequest.startRequest.spec),
+      startRequestHash: input.execution.profile.startRequestHash,
+      selection: input.plan.selection,
     },
     broker: {
       protocolVersion: hello.protocolVersion,
@@ -404,7 +412,7 @@ export function buildRuntimeStateJson(
     ...(tmuxAllocation?.brokerIpcSocketPath
       ? { control: { mode: 'broker-ipc', brokerAttached: true } }
       : {}),
-    ...(isBrokerTmuxProfile(input.profile)
+    ...(executionUsesTerminalSurface(input.execution)
       ? {
           tmux: extractRuntimeStateTmux(
             ctx.db.runtimes.getByRuntimeId(String(identity.runtimeId))?.tmuxJson
@@ -414,17 +422,19 @@ export function buildRuntimeStateJson(
     invocation: {
       invocationId: response.invocationId,
       state: response.state,
-      driver: input.profile.brokerDriver,
-      harnessRuntime: input.plan.harness.runtime,
+      driver: input.execution.driver,
+      harnessRuntime: input.plan.selection.harness,
       capabilities: response.capabilities,
     },
     permission: {
-      policy: input.profile.policy.permissionPolicy,
+      ...(input.hrcPolicy.permissionPolicy !== undefined
+        ? { policy: input.hrcPolicy.permissionPolicy }
+        : {}),
       negotiated: hello.capabilities.brokerToClientRequests,
       pending: [],
     },
     input: {
-      policy: input.profile.policy.inputPolicy,
+      ...(input.hrcPolicy.inputPolicy !== undefined ? { policy: input.hrcPolicy.inputPolicy } : {}),
       pendingDepth: 0,
     },
   }

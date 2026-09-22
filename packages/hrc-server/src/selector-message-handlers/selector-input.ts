@@ -38,6 +38,7 @@ import {
   timestamp,
 } from '../server-util.js'
 import { findTargetSession } from '../target-view.js'
+import { omitPersistedSelectionForReuse } from './selection-request.js'
 
 // Broker/SDK buffers are token-stream chunks rather than terminal lines. A
 // generous fixed ratio preserves the requested line tail for normal streamed
@@ -445,7 +446,9 @@ export async function handleDispatchTurnBySelector(
 
   const intent = isRecord(body['runtimeIntent'])
     ? (body['runtimeIntent'] as HrcRuntimeIntent)
-    : session.lastAppliedIntentJson
+    : session.lastAppliedIntentJson === undefined
+      ? undefined
+      : omitPersistedSelectionForReuse(session.lastAppliedIntentJson)
 
   if (!intent) {
     throw new HrcBadRequestError(
