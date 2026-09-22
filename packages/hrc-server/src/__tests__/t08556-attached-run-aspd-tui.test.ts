@@ -94,8 +94,9 @@ function baseIntent(): HrcRuntimeIntent {
 
 /** What `hrc run` sends: `buildManagedRunIntent`. */
 function runIntent(): HrcRuntimeIntent {
-  // The attached door preserves an omitted selection. ASP's declared result,
-  // not this HRC input, decides whether a presentation lease is allocated.
+  // The CLI sends no selection; the attached-door parser adds
+  // `selection.presentation: true`. ASP's declared result still decides which
+  // presentation lease is allocated.
   return baseIntent()
 }
 
@@ -364,6 +365,22 @@ describe('T-08556 route key', () => {
 // ── Cold birth ────────────────────────────────────────────────────────────────
 
 describe('T-08556 attached-run cold birth', () => {
+  it('the attached door always compiles with presentation=true, overriding profile/catalog defaults', async () => {
+    const s = await session()
+    await attachedRun(s.hostSessionId)
+    expect(aspd.compileRequested.at(-1)).toMatchObject({ presentation: true })
+  })
+
+  it('the attached door overrides an explicit selection.presentation=false', async () => {
+    const s = await session()
+    const response = await fixture.postJson('/v1/runs/prepare-attached', {
+      hostSessionId: s.hostSessionId,
+      intent: { ...runIntent(), selection: { presentation: false } },
+    })
+    expect(response.status).toBe(200)
+    expect(aspd.compileRequested.at(-1)).toMatchObject({ presentation: true })
+  })
+
   it('prepares the producer-selected terminal execution and launches its frozen worker after attach', async () => {
     const s = await session()
     const { prepared, runtimeId } = await attachedRun(s.hostSessionId)
@@ -500,7 +517,17 @@ describe('T-08556 attached run against an established runtime', () => {
 
     const refused = await refusedAttachedRun(s.hostSessionId, { prompt: 'nope' })
     expect(refused.status).toBe(409)
-    expect(JSON.stringify(refused.body)).toContain('presentation_conflict')
+    expect(refused.body).toMatchObject({
+      error: {
+        code: 'stale_context',
+        detail: {
+          field: 'presentation',
+          requested: true,
+          realized: false,
+          replacementRequired: true,
+        },
+      },
+    })
     expect(runtimes(s.hostSessionId).map((runtime) => runtime.runtimeId)).toEqual(before)
     expect(aspd.compileCalls).toBe(compiles)
     expect(delivered).toHaveLength(0)
@@ -599,7 +626,17 @@ describe('T-08556 attached run crossing a registered start', () => {
     await heldStart
     const refused = await run
     expect(refused.status).toBe(409)
-    expect(JSON.stringify(refused.body)).toContain('presentation_conflict')
+    expect(refused.body).toMatchObject({
+      error: {
+        code: 'stale_context',
+        detail: {
+          field: 'presentation',
+          requested: true,
+          realized: false,
+          replacementRequired: true,
+        },
+      },
+    })
     expect(runtimes(s.hostSessionId).filter((r) => r.transport === 'tmux')).toHaveLength(0)
     expect(delivered).toHaveLength(0)
   })

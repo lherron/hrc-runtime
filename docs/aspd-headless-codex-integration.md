@@ -2666,8 +2666,9 @@ keystrokes.
      configured node; a re-run uses a pre-change facade runtime];
    - `hrc run -p` on a live default app-server viewer scope attaches its
      renderer and delivers once, runtime unchanged;
-   - `hrc run` on a live `--no-viewer` scope refuses `presentation_conflict`
-     with nothing mutated.
+   - `hrc run` on a live `--no-viewer` scope refuses with nothing mutated
+     [`stale_context`, field `presentation`, since the attached door always
+     requests `selection.presentation: true`; formerly `presentation_conflict`].
 5. Cold `hrc attach <fresh>` still births the facade backend (no aspd
    compile). [Inverted by T-08560: §10.5 leg 5.]
 6. Stop aspd: `hrc run <fresh>` refuses `aspd_unavailable` with no op, runtime

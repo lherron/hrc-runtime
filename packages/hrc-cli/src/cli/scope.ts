@@ -406,10 +406,13 @@ export async function buildManagedRunIntent(
     client?: ManagedIntentClient | undefined
   } = {}
 ): Promise<HrcRuntimeIntent> {
-  return buildManagedRuntimeIntent(scope, {
+  const intent = await buildManagedRuntimeIntent(scope, {
     ...options,
     preferredMode: 'interactive',
   })
+  // The attached door always requests presentation (the server enforces the
+  // same override); set it here too so `--dry-run` previews what `run` births.
+  return { ...intent, selection: { ...intent.selection, presentation: true } }
 }
 
 export async function buildManagedStartIntent(

@@ -660,6 +660,14 @@ export function parsePrepareAttachedRunRequest(input: unknown): PrepareAttachedR
   }
   return {
     ...parsed,
+    // The attached door (`hrc run` / `hrc resume`) always puts an operator
+    // terminal on the seat, so it requests presentation at the compile-request
+    // layer: that outranks summon directives, project target, agent profile
+    // and the catalog default, and overrides an explicit false.
+    intent: {
+      ...parsed.intent,
+      selection: { ...parsed.intent.selection, presentation: true },
+    },
     ...(typeof prompt === 'string' && prompt.trim().length > 0 ? { prompt } : {}),
   }
 }

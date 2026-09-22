@@ -118,6 +118,8 @@ hrc attach rt-1c9cb9ec-9538-411a-b3d3-5feb7628bc54
 
 Shared notable flags (`run`/`start`): `--force-restart` (replace the runtime with a fresh PTY while preserving the conversation), `--new-session` (rotate to a fresh host session and conversation), `--dry-run` (local plan preview, no server calls), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`. `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for non-interactive provisioning. `attach` takes `--dry-run` and `--json`.
 
+`run` (and `resume`, the same attached door) always asks ASP for presentation: the server sets `selection.presentation: true` in the compile request, which overrides summon directives, the project target, the agent profile and the catalog default. A scope whose live runtime was born without presentation (for example a headless seat woken by mail) is refused `stale_context` (`field: presentation`, `replacementRequired: true`) with the runtime untouched; terminate it first to run fresh.
+
 #### Viewer placement and the collision roster (`start` only)
 
 ```bash
