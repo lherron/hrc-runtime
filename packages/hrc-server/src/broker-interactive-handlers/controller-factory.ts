@@ -16,6 +16,7 @@ import { resolveBrokerDurableIpcEnabled } from '../option-resolvers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from '../server-util.js'
+import { dropUnconfirmedResumeContinuation } from '../session-continuation-reuse.js'
 import { getBrokerTmuxSocketPath } from '../tmux-socket.js'
 import { createTmuxManager } from '../tmux.js'
 
@@ -153,6 +154,15 @@ export function getHarnessBrokerController(
       for (const subscriber of this.rawBrokerSubscribers) {
         subscriber(event)
       }
+    },
+    onUnexpectedBrokerClose: ({ invocationId, error }) => {
+      if (invocationId === null) return
+      const resumeFailure = dropUnconfirmedResumeContinuation(this.db, {
+        invocationId,
+        stage: 'crash',
+        failure: error,
+      })
+      if (resumeFailure?.event !== undefined) this.notifyEvent(resumeFailure.event)
     },
     ...(this.options.testOnlyAfterBrokerProjectionCommitBeforeAck
       ? {

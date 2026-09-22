@@ -309,6 +309,7 @@ import {
   timestamp,
   unlinkIfExists,
 } from './server-util.js'
+import { dropSessionContinuation } from './session-continuation-reuse.js'
 import {
   type SessionIndexHandlersMethods,
   sessionIndexHandlersMethods,
@@ -2683,41 +2684,14 @@ class HrcServerInstance implements HrcServer {
     const body = parseDropContinuationRequest(await parseJsonBody(request))
     const session = requireSession(this.db, body.hostSessionId)
     refuseAppScopedSession(session, 'drop-continuation')
-    const previousContinuationKey = session.continuation?.key ?? null
-
-    if (
-      session.continuation === undefined ||
-      this.db.sessions.isContinuationReuseDisabled(session.hostSessionId)
-    ) {
-      return json({
-        ok: true,
-        hostSessionId: session.hostSessionId,
-        dropped: false,
-        previousContinuationKey,
-      } satisfies DropContinuationResponse)
-    }
-
-    const now = timestamp()
-    this.db.sessions.setContinuationReuseDisabled(session.hostSessionId, true, now)
-    const event = appendHrcEvent(this.db, 'session.continuation_dropped', {
-      ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      payload: {
-        hostSessionId: session.hostSessionId,
-        previousContinuationKey,
-        ...(body.reason ? { reason: body.reason } : {}),
-      },
-    })
-    this.notifyEvent(event)
+    const drop = dropSessionContinuation(this.db, session, body.reason)
+    if (drop.event !== undefined) this.notifyEvent(drop.event)
 
     return json({
       ok: true,
       hostSessionId: session.hostSessionId,
-      dropped: true,
-      previousContinuationKey,
+      dropped: drop.dropped,
+      previousContinuationKey: drop.previousContinuationKey,
     } satisfies DropContinuationResponse)
   }
 

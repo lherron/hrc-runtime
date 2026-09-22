@@ -79,7 +79,10 @@ import {
   dispatchRunPersistence,
 } from './server-types.js'
 import { timestamp } from './server-util.js'
-import { automaticContinuationForSession } from './session-continuation-reuse.js'
+import {
+  automaticContinuationForSession,
+  dropUnconfirmedResumeContinuation,
+} from './session-continuation-reuse.js'
 import { getBrokerObserverSocketPath } from './tmux-socket.js'
 import { toBrokerResponseFormat } from './turn-response-format.js'
 
@@ -909,7 +912,28 @@ export async function launchAspdPreparedAttempt(
   if (!result.ok) {
     recordPrelaunchRefusal(server, operationId, result.error.code, result.error.message)
     writeServerLog('WARN', 'aspd.launch.failed', { code: result.error.code, ...detail })
-    options.settleFailure(result.error)
+    const resumeFailure = dropUnconfirmedResumeContinuation(server.db, {
+      invocationId: String(record.admission.identity.invocationId),
+      stage: 'start',
+      failure: result.error.message,
+    })
+    if (resumeFailure?.event !== undefined) server.notifyEvent(resumeFailure.event)
+    options.settleFailure(
+      resumeFailure === undefined
+        ? result.error
+        : {
+            ...result.error,
+            message: `${resumeFailure.message} (${result.error.message})`,
+            detail: {
+              ...result.error.detail,
+              resumeFailedAtLaunch: {
+                provider: resumeFailure.provider,
+                continuationKey: resumeFailure.key,
+                dropped: resumeFailure.dropped,
+              },
+            },
+          }
+    )
   }
   writeServerLog('INFO', 'aspd.launch.started', {
     ...detail,

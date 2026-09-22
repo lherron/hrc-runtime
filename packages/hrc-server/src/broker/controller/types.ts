@@ -434,6 +434,13 @@ export type HarnessBrokerControllerDeps = {
    * can reap the lease.
    */
   reconcileBrokerTmuxLivenessOnClose?: ((runtimeId: string) => Promise<void>) | undefined
+  /**
+   * Observes an unexpected broker close (crash) after its diagnostic is persisted
+   * and before the runtime is marked crashed. Must not throw.
+   */
+  onUnexpectedBrokerClose?:
+    | ((input: { runtimeId: string; invocationId: string | null; error: string }) => void)
+    | undefined
   brokerCommand?: string | undefined
   /** Resolve immediately before each legacy stdio broker spawn. */
   resolveBrokerCommand?: (() => string) | undefined

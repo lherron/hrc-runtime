@@ -410,6 +410,7 @@ export class HarnessBrokerController {
   private readonly reconcileBrokerTmuxLivenessOnClose:
     | ((runtimeId: string) => Promise<void>)
     | undefined
+  private readonly onUnexpectedBrokerClose: HarnessBrokerControllerDeps['onUnexpectedBrokerClose']
   private readonly resolveBrokerCommand: () => string
   private readonly brokerArgs: string[]
   private readonly env: Record<string, string | undefined> | undefined
@@ -566,6 +567,7 @@ export class HarnessBrokerController {
       DEFAULT_BROKER_DB_BUSY_RETRY_BASE_DELAY_MS
     )
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
+    this.onUnexpectedBrokerClose = deps.onUnexpectedBrokerClose
     this.metricsStateRoot = deps.metricsStateRoot
     // Preserve brokerCommand as a constant test seam.
     // T-08596 (T-08569A closure): the bundled ASP execution closure is removed.
@@ -2590,6 +2592,25 @@ export class HarnessBrokerController {
       })
     } catch (diagnosticError) {
       this.logDispatchObservabilityFailure(runtimeId, 'unexpected-close', diagnosticError)
+    }
+    if (!this.shuttingDown) {
+      try {
+        this.onUnexpectedBrokerClose?.({
+          runtimeId,
+          invocationId:
+            this.db.runtimes.getByRuntimeId(runtimeId)?.activeInvocationId ??
+            this.db.brokerInvocations.listByRuntimeId(runtimeId).at(-1)?.invocationId ??
+            null,
+          error: error.message.split('\n')[0] ?? error.message,
+        })
+      } catch (observerError) {
+        if (!isClosedDbError(observerError)) {
+          this.logger.warn?.('broker unexpected-close observer failed', {
+            runtimeId,
+            error: observerError instanceof Error ? observerError.message : String(observerError),
+          })
+        }
+      }
     }
     this.clearSeatMonitor(runtimeId)
     this.markBrokerCrashTerminal(runtimeId, controllerError)
