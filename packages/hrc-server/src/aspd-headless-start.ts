@@ -333,14 +333,32 @@ export async function prepareAspdHeadlessAttempt(
   )
 
   if (!compiled.admitted) {
-    throw aspdStartError('compile-not-ok', 'aspd preparation compile/admission rejected', {
+    // T-08713: an ASP compile failure carries ASP's diagnostics; HRC refusing a
+    // successful compile carries HRC's own, naming the field that failed. Both
+    // keep `code: compile-not-ok`: the mail injector reads that code as a
+    // definite pre-launch rejection, and `rejectedBy` says which side refused.
+    const hrcRefused = compiled.rejectedBy === 'hrc-admission'
+    const detail = {
+      rejectedBy: compiled.rejectedBy,
       hostSessionId: session.hostSessionId,
       runId,
+      scopeRef: session.scopeRef,
       admissionCode: compiled.code,
-      diagnostics: compiled.diagnostics,
+      diagnostics:
+        hrcRefused && compiled.admissionDiagnostic !== undefined
+          ? [compiled.admissionDiagnostic, ...(compiled.diagnostics ?? [])]
+          : compiled.diagnostics,
       endpoint,
       ...(prepared ? { aspdRelease: prepared.service.release } : {}),
-    })
+    }
+    writeServerLog('WARN', 'aspd.preparation.admission_rejected', detail)
+    throw aspdStartError(
+      'compile-not-ok',
+      hrcRefused
+        ? 'aspd preparation refused by HRC admission (ASP compile succeeded)'
+        : 'aspd preparation compile rejected by ASP',
+      detail
+    )
   }
   if (prepared === undefined || !prepared.response.ok) {
     throw aspdStartError('compile-not-ok', 'aspd preparation returned no successful response', {

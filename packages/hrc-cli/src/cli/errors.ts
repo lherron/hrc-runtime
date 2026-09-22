@@ -155,6 +155,7 @@ export function explainScopeCommandError(
         route?: string
         flag?: string
         runId?: string
+        admissionCode?: string
         diagnostics?: Array<{
           level?: string
           code?: string
@@ -165,6 +166,10 @@ export function explainScopeCommandError(
       const lines = [`cannot ${command} "${scopeInput}": ${err.message}`]
       if (detail.code) {
         lines.push(`  reason: ${detail.code}`)
+      }
+      // T-08713: the specific admission check that refused the compile.
+      if (detail.admissionCode && detail.admissionCode !== detail.code) {
+        lines.push(`  admission: ${detail.admissionCode}`)
       }
       // The broker-start path (e.g. `broker_start_failed`) carries its actual
       // root cause in `detail.message` (e.g. "Failed to connect to broker unix

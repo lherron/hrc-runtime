@@ -120,10 +120,14 @@ function validResponse(responseIdentity = identity) {
   }
 }
 
-async function compile(response: Record<string, unknown>, policy?: Record<string, unknown>) {
+async function compile(
+  response: Record<string, unknown>,
+  policy?: Record<string, unknown>,
+  intentOverrides: Partial<HrcRuntimeIntent> = {}
+) {
   return await compileBrokerRuntimePlan(
     {
-      intent: intent(),
+      intent: intent(intentOverrides),
       scopeRef: 'agent:astra:project:hrc-runtime',
       hostSessionId: 'host-1',
       generation: 1,
@@ -449,6 +453,143 @@ describe('v2 compile request carrier', () => {
       admitted: false,
       code: 'execution-identity-mismatch',
     })
+  })
+
+  // T-08712: a prompted Claude start. ASP selects the terminal-hosted
+  // claude-code-tmux execution and carries the first turn on the launch
+  // (argv + spec.launch.initialPrompt); there is no broker initialInput to echo
+  // HRC's allocated initialInputId, exactly as pre-v2 interactive tmux profiles.
+  const promptedIdentity = { ...identity, initialInputId: 'input-1', runId: 'run-1' }
+
+  function promptedTerminalResponse() {
+    const response = validResponse(promptedIdentity)
+    const startRequest = response.plan.execution.dispatchRequest.startRequest as {
+      spec: Record<string, unknown>
+      initialInput?: unknown
+    }
+    Reflect.deleteProperty(startRequest, 'initialInput')
+    startRequest.spec['driver'] = { kind: 'claude-code-tmux' }
+    startRequest.spec['launch'] = { initialPrompt: 'Reply with the single word: ok.' }
+    response.plan.execution.driver = 'claude-code-tmux'
+    response.plan.execution.recipeId = 'claude-code-tmux'
+    response.plan.execution.hosting = {
+      executionTransport: 'pty',
+      terminalRequired: true,
+      terminalHost: 'tmux',
+      processExecution: 'broker-process',
+    }
+    response.plan.execution.presentationFulfillment = 'intrinsic'
+    response.plan.execution.profile.startRequestHash = neutralStartRequestHash(
+      startRequest as never
+    )
+    return response
+  }
+
+  it('admits a prompted terminal-hosted execution whose first turn is launch-carried', async () => {
+    const result = await compile(promptedTerminalResponse(), undefined, {
+      initialPrompt: 'Reply with the single word: ok.',
+    })
+
+    expect(result).toMatchObject({ admitted: true, identity: promptedIdentity })
+  })
+
+  it('still refuses a prompted broker-input execution that drops the allocated initial input', async () => {
+    const response = validResponse(promptedIdentity)
+    const startRequest = response.plan.execution.dispatchRequest.startRequest as {
+      initialInput?: unknown
+    }
+    Reflect.deleteProperty(startRequest, 'initialInput')
+    response.plan.execution.profile.startRequestHash = neutralStartRequestHash(
+      startRequest as never
+    )
+
+    expect(
+      await compile(response, undefined, { initialPrompt: 'Reply with the single word: ok.' })
+    ).toMatchObject({
+      admitted: false,
+      rejectedBy: 'hrc-admission',
+      code: 'execution-identity-mismatch',
+      admissionDiagnostic: {
+        plane: 'hrc-admission',
+        code: 'execution-identity-mismatch',
+        field: 'startRequest.initialInput.inputId',
+        expected: 'input-1',
+        actual: null,
+      },
+    })
+  })
+
+  it('names the differing field, expected and actual on every identity refusal', async () => {
+    const planMismatch = validResponse()
+    planMismatch.plan.identity.traceId = 'other-trace'
+    expect(await compile(planMismatch)).toMatchObject({
+      rejectedBy: 'hrc-admission',
+      admissionDiagnostic: {
+        field: 'plan.identity.traceId',
+        expected: 'trace-1',
+        actual: 'other-trace',
+      },
+    })
+
+    const agentMismatch = validResponse()
+    agentMismatch.plan.agent.id = 'someone-else'
+    expect(await compile(agentMismatch)).toMatchObject({
+      admissionDiagnostic: { field: 'plan.agent.id', expected: 'astra', actual: 'someone-else' },
+    })
+
+    const correlationMismatch = validResponse()
+    ;(
+      correlationMismatch.plan.execution.dispatchRequest.startRequest as {
+        spec: { correlation: { operationId: string } }
+      }
+    ).spec.correlation.operationId = 'other-operation'
+    expect(await compile(correlationMismatch)).toMatchObject({
+      admissionDiagnostic: {
+        field: 'startRequest.spec.correlation.operationId',
+        expected: 'op-1',
+        actual: 'other-operation',
+      },
+    })
+  })
+
+  it('carries an HRC admission diagnostic on every admission refusal, and none on a producer refusal', async () => {
+    const hashMismatch = validResponse()
+    hashMismatch.plan.execution.profile.startRequestHash = 'not-a-neutral-start-request-hash'
+    const hash = await compile(hashMismatch)
+    expect(hash).toMatchObject({
+      admitted: false,
+      rejectedBy: 'hrc-admission',
+      admissionDiagnostic: {
+        level: 'error',
+        plane: 'hrc-admission',
+        code: 'execution-hash-mismatch',
+        field: 'plan.execution.profile.startRequestHash',
+        actual: 'not-a-neutral-start-request-hash',
+      },
+    })
+    expect(
+      (hash as { admissionDiagnostic?: { message?: string } }).admissionDiagnostic?.message
+    ).toContain('plan.execution.profile.startRequestHash')
+
+    const hosting = validResponse()
+    hosting.plan.execution.hosting = {
+      executionTransport: 'jsonrpc-stdio',
+      terminalRequired: false,
+      terminalHost: 'tmux',
+      processExecution: 'broker-process',
+    }
+    expect(await compile(hosting)).toMatchObject({
+      rejectedBy: 'hrc-admission',
+      admissionDiagnostic: { code: 'execution-hosting-invalid', field: 'plan.execution.hosting' },
+    })
+
+    const producer = await compile({
+      schemaVersion: 'aspc-compile-harness-invocation-response/v2',
+      ok: false,
+      diagnostics: [{ code: 'producer-refusal' }],
+    })
+    expect(producer).toMatchObject({ rejectedBy: 'producer', code: 'compile-not-ok' })
+    expect(producer).not.toHaveProperty('admissionDiagnostic')
   })
 
   it('refuses a v2 plan without durable plan identity metadata', async () => {

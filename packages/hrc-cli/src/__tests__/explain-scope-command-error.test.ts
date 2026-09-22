@@ -80,4 +80,35 @@ describe('explainScopeCommandError — RUNTIME_UNAVAILABLE rendering', () => {
 
     expect(out).toContain('/spec/process/cwd')
   })
+
+  // T-08712/T-08713: an HRC admission refusal of a successful ASP compile must
+  // name the admission check and the differing field without --json.
+  it('renders admissionCode and the HRC admission field diff', () => {
+    const err = domainError('aspd preparation refused by HRC admission (ASP compile succeeded)', {
+      code: 'compile-not-ok',
+      rejectedBy: 'hrc-admission',
+      route: 'aspd',
+      runId: 'run-t8712',
+      admissionCode: 'execution-identity-mismatch',
+      diagnostics: [
+        {
+          level: 'error',
+          plane: 'hrc-admission',
+          code: 'execution-identity-mismatch',
+          field: 'startRequest.initialInput.inputId',
+          expected: 'input-1',
+          actual: null,
+          message: 'startRequest.initialInput.inputId: expected "input-1", got (absent)',
+        },
+      ],
+    })
+
+    const out = explainScopeCommandError('start', err, 'clod@hrc-runtime:T-1').message
+
+    expect(out).toContain('reason: compile-not-ok')
+    expect(out).toContain('admission: execution-identity-mismatch')
+    expect(out).toContain(
+      '• error execution-identity-mismatch: startRequest.initialInput.inputId: expected "input-1", got (absent)'
+    )
+  })
 })

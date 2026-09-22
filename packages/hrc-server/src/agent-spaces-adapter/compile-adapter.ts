@@ -126,9 +126,31 @@ export type BrokerCompileAdapterResult =
   | {
       admitted: false
       code: V2ExecutionRejectionCode
+      /**
+       * `producer`: ASP did not return a successful v2 compile, and
+       * `diagnostics` are ASP's own. `hrc-admission`: ASP compiled, and HRC's
+       * own admission refused the returned execution; `admissionDiagnostic`
+       * names the check and the field that failed it.
+       */
+      rejectedBy: 'producer' | 'hrc-admission'
       identity: RuntimeIdentityAllocation
       diagnostics?: CompileDiagnostic[] | undefined
+      admissionDiagnostic?: HrcAdmissionDiagnostic | undefined
     }
+
+/**
+ * T-08712/T-08713: why HRC refused a successful ASP compile. Ids and hashes are
+ * echoed as-is; `null` means the producer response had no value at that path.
+ */
+export type HrcAdmissionDiagnostic = {
+  level: 'error'
+  plane: 'hrc-admission'
+  code: V2ExecutionRejectionCode
+  field: string
+  expected?: unknown
+  actual: unknown
+  message: string
+}
 
 /** True when the intent carries an initial user turn (prompt and/or attachments). */
 export function hasInitialUserTurn(intent: HrcRuntimeIntent): boolean {
@@ -390,24 +412,34 @@ const allocatedPlanIdentityFields: readonly (keyof RuntimeIdentityAllocation)[] 
   'traceId',
 ]
 
-function hasMatchingAllocatedIdentity(
+type IdentityMismatch = { field: string; expected: unknown; actual: unknown }
+
+function firstAllocatedIdentityMismatch(
   planIdentity: Record<string, unknown>,
   identity: RuntimeIdentityAllocation
-): boolean {
-  return allocatedPlanIdentityFields.every((field) => planIdentity[field] === identity[field])
+): IdentityMismatch | undefined {
+  const field = allocatedPlanIdentityFields.find((key) => planIdentity[key] !== identity[key])
+  return field === undefined
+    ? undefined
+    : { field: `plan.identity.${field}`, expected: identity[field], actual: planIdentity[field] }
 }
 
-function hasMatchingCanonicalStartIdentity(
+function firstCanonicalStartIdentityMismatch(
   startRequest: Record<string, unknown>,
-  identity: RuntimeIdentityAllocation
-): boolean {
-  const spec = startRequest['spec']
-  if (!isRecord(spec) || spec['invocationId'] !== identity.invocationId) {
-    return false
+  identity: RuntimeIdentityAllocation,
+  hosting: Record<string, unknown>
+): IdentityMismatch | undefined {
+  const spec = isRecord(startRequest['spec']) ? startRequest['spec'] : {}
+  if (spec['invocationId'] !== identity.invocationId) {
+    return {
+      field: 'startRequest.spec.invocationId',
+      expected: identity.invocationId,
+      actual: spec['invocationId'],
+    }
   }
   const correlation = spec['correlation']
   if (!isRecord(correlation)) {
-    return false
+    return { field: 'startRequest.spec.correlation', expected: 'object', actual: correlation }
   }
   const correlationFields: readonly (keyof RuntimeIdentityAllocation)[] = [
     'requestId',
@@ -417,14 +449,62 @@ function hasMatchingCanonicalStartIdentity(
     'runId',
     'traceId',
   ]
-  if (!correlationFields.every((field) => correlation[field] === identity[field])) {
-    return false
+  const field = correlationFields.find((key) => correlation[key] !== identity[key])
+  if (field !== undefined) {
+    return {
+      field: `startRequest.spec.correlation.${field}`,
+      expected: identity[field],
+      actual: correlation[field],
+    }
   }
   if (identity.initialInputId === undefined) {
-    return true
+    return undefined
   }
   const initialInput = startRequest['initialInput']
-  return isRecord(initialInput) && initialInput['inputId'] === identity.initialInputId
+  // T-08712: a terminal-hosted execution delivers its first turn through the
+  // launch substrate (argv/priming), never as broker initialInput, so there is
+  // no input id to echo. HRC still binds the turn by the echoed runId above.
+  // Any execution that does carry initialInput must echo the allocation.
+  if (initialInput === undefined && hosting['terminalHost'] === 'tmux') {
+    return undefined
+  }
+  const inputId = isRecord(initialInput) ? initialInput['inputId'] : undefined
+  return inputId === identity.initialInputId
+    ? undefined
+    : {
+        field: 'startRequest.initialInput.inputId',
+        expected: identity.initialInputId,
+        actual: inputId,
+      }
+}
+
+function describeValue(value: unknown): string {
+  return value === undefined || value === null ? '(absent)' : JSON.stringify(value)
+}
+
+function admissionRefusal(
+  code: V2ExecutionRejectionCode,
+  field: string,
+  actual: unknown,
+  expected?: unknown
+): { admitted: false; code: V2ExecutionRejectionCode; diagnostic: HrcAdmissionDiagnostic } {
+  const normalizedActual = actual === undefined ? null : actual
+  return {
+    admitted: false,
+    code,
+    diagnostic: {
+      level: 'error',
+      plane: 'hrc-admission',
+      code,
+      field,
+      ...(expected !== undefined ? { expected } : {}),
+      actual: normalizedActual,
+      message:
+        expected !== undefined
+          ? `${field}: expected ${describeValue(expected)}, got ${describeValue(actual)}`
+          : `${field}: invalid value ${describeValue(actual)}`,
+    },
+  }
 }
 
 function hasValidSelection(selection: unknown): boolean {
@@ -484,77 +564,158 @@ function admitV2Execution(
   agentId: string
 ):
   | { admitted: true; plan: V2CompiledPlan; execution: V2SelectedExecution }
-  | { admitted: false; code: V2ExecutionRejectionCode } {
+  | { admitted: false; code: V2ExecutionRejectionCode; diagnostic: HrcAdmissionDiagnostic } {
   if (!hasV2CompileEnvelope(response) || !isRecord(response)) {
-    return { admitted: false, code: 'v2-envelope-required' }
+    return admissionRefusal(
+      'v2-envelope-required',
+      'schemaVersion',
+      isRecord(response) ? response['schemaVersion'] : undefined,
+      'aspc-compile-harness-invocation-response/v2'
+    )
   }
   if (response['ok'] !== true || !isRecord(response['plan'])) {
-    return { admitted: false, code: 'v2-plan-required' }
+    return admissionRefusal(
+      'v2-plan-required',
+      'plan',
+      response['plan'] === undefined ? undefined : typeof response['plan']
+    )
   }
   const plan = response['plan'] as V2CompiledPlan
-  if (plan.schemaVersion !== 'agent-runtime-plan/v2' || !hasDurablePlanMetadata(plan)) {
-    return { admitted: false, code: 'v2-plan-required' }
+  if (plan.schemaVersion !== 'agent-runtime-plan/v2') {
+    return admissionRefusal(
+      'v2-plan-required',
+      'plan.schemaVersion',
+      plan.schemaVersion,
+      'agent-runtime-plan/v2'
+    )
+  }
+  if (!hasDurablePlanMetadata(plan)) {
+    const record = plan as unknown as Record<string, unknown>
+    const field = ['planHash', 'compileId', 'createdAt'].find(
+      (key) => !isNonEmptyString(record[key])
+    )
+    return field !== undefined
+      ? admissionRefusal('v2-plan-required', `plan.${field}`, record[field])
+      : admissionRefusal('v2-plan-required', 'plan.diagnostics', record['diagnostics'])
   }
   if (!hasValidSelection(plan.selection)) {
-    return { admitted: false, code: 'execution-selection-invalid' }
+    return admissionRefusal('execution-selection-invalid', 'plan.selection', plan.selection)
   }
-  if (
-    !isRecord(plan.agent) ||
-    plan.agent.id !== agentId ||
-    !isRecord(plan.identity) ||
-    !hasMatchingAllocatedIdentity(plan.identity, identity)
-  ) {
-    return { admitted: false, code: 'execution-identity-mismatch' }
+  if (!isRecord(plan.agent) || plan.agent.id !== agentId) {
+    return admissionRefusal(
+      'execution-identity-mismatch',
+      'plan.agent.id',
+      isRecord(plan.agent) ? plan.agent.id : undefined,
+      agentId
+    )
+  }
+  const planIdentityMismatch = isRecord(plan.identity)
+    ? firstAllocatedIdentityMismatch(plan.identity, identity)
+    : { field: 'plan.identity', expected: 'object', actual: plan.identity }
+  if (planIdentityMismatch !== undefined) {
+    return admissionRefusal(
+      'execution-identity-mismatch',
+      planIdentityMismatch.field,
+      planIdentityMismatch.actual,
+      planIdentityMismatch.expected
+    )
   }
   const execution = plan.execution
-  if (
-    !isRecord(execution) ||
-    !isNonEmptyString(execution.recipeId) ||
-    !isNonEmptyString(execution.driver) ||
-    !isRecord(execution.hosting) ||
-    !isRecord(execution.profile) ||
-    !isRecord(execution.dispatchRequest) ||
-    !isRecord(execution.dispatchRequest.startRequest)
-  ) {
-    return { admitted: false, code: 'execution-invalid' }
+  if (!isRecord(execution)) {
+    return admissionRefusal('execution-invalid', 'plan.execution', execution)
+  }
+  const missingExecutionField = (
+    [
+      ['recipeId', isNonEmptyString(execution.recipeId)],
+      ['driver', isNonEmptyString(execution.driver)],
+      ['hosting', isRecord(execution.hosting)],
+      ['profile', isRecord(execution.profile)],
+      ['dispatchRequest', isRecord(execution.dispatchRequest)],
+      [
+        'dispatchRequest.startRequest',
+        isRecord(execution.dispatchRequest) && isRecord(execution.dispatchRequest.startRequest),
+      ],
+    ] as const
+  ).find(([, present]) => !present)?.[0]
+  if (missingExecutionField !== undefined) {
+    return admissionRefusal(
+      'execution-invalid',
+      `plan.execution.${missingExecutionField}`,
+      missingExecutionField === 'dispatchRequest.startRequest'
+        ? undefined
+        : (execution as unknown as Record<string, unknown>)[missingExecutionField]
+    )
   }
   if (execution.protocol !== 'harness-broker/0.2') {
-    return { admitted: false, code: 'execution-protocol-invalid' }
+    return admissionRefusal(
+      'execution-protocol-invalid',
+      'plan.execution.protocol',
+      execution.protocol,
+      'harness-broker/0.2'
+    )
   }
   if (!hasValidHosting(execution.hosting)) {
-    return { admitted: false, code: 'execution-hosting-invalid' }
+    return admissionRefusal(
+      'execution-hosting-invalid',
+      'plan.execution.hosting',
+      execution.hosting
+    )
   }
   if (!hasCoherentPresentation(execution, execution.hosting)) {
-    return { admitted: false, code: 'execution-presentation-invalid' }
+    return admissionRefusal('execution-presentation-invalid', 'plan.execution.presentation', {
+      presentationFulfillment: execution['presentationFulfillment'],
+      presentationSurface: execution['presentationSurface'],
+      terminalRequired: execution.hosting['terminalRequired'],
+    })
   }
-  if (
-    !isNonEmptyString(execution.profile.profileId) ||
-    !isNonEmptyString(execution.profile.profileHash) ||
-    !isNonEmptyString(execution.profile.compatibilityHash) ||
-    !isNonEmptyString(execution.profile.startRequestHash)
-  ) {
-    return { admitted: false, code: 'execution-profile-invalid' }
+  const profileField = (
+    ['profileId', 'profileHash', 'compatibilityHash', 'startRequestHash'] as const
+  ).find((key) => !isNonEmptyString(execution.profile[key]))
+  if (profileField !== undefined) {
+    return admissionRefusal(
+      'execution-profile-invalid',
+      `plan.execution.profile.${profileField}`,
+      execution.profile[profileField]
+    )
   }
   const typed = execution as V2SelectedExecution
   const startRequest = typed.dispatchRequest.startRequest
   const startRequestRecord = startRequest as unknown as Record<string, unknown>
   const startSpec = startRequestRecord['spec']
-  if (
-    !isRecord(startSpec) ||
-    !isRecord(startSpec['driver']) ||
-    !isNonEmptyString(startSpec['driver']['kind']) ||
-    startSpec['driver']['kind'] !== typed.driver
-  ) {
-    return { admitted: false, code: 'execution-driver-mismatch' }
+  const startDriver =
+    isRecord(startSpec) && isRecord(startSpec['driver']) ? startSpec['driver']['kind'] : undefined
+  if (!isNonEmptyString(startDriver) || startDriver !== typed.driver) {
+    return admissionRefusal(
+      'execution-driver-mismatch',
+      'startRequest.spec.driver.kind',
+      startDriver,
+      typed.driver
+    )
   }
-  if (!hasMatchingCanonicalStartIdentity(startRequestRecord, identity)) {
-    return { admitted: false, code: 'execution-identity-mismatch' }
+  const startIdentityMismatch = firstCanonicalStartIdentityMismatch(
+    startRequestRecord,
+    identity,
+    typed.hosting as unknown as Record<string, unknown>
+  )
+  if (startIdentityMismatch !== undefined) {
+    return admissionRefusal(
+      'execution-identity-mismatch',
+      startIdentityMismatch.field,
+      startIdentityMismatch.actual,
+      startIdentityMismatch.expected
+    )
   }
   // v2 declares the canonical start-request hash. compatibilityHash is a
   // broader producer cache/reuse key, not a spec hash, so HRC must not invent
   // an equality between the two domains.
-  if (neutralStartRequestHash(startRequest) !== typed.profile.startRequestHash) {
-    return { admitted: false, code: 'execution-hash-mismatch' }
+  const startRequestHash = neutralStartRequestHash(startRequest)
+  if (startRequestHash !== typed.profile.startRequestHash) {
+    return admissionRefusal(
+      'execution-hash-mismatch',
+      'plan.execution.profile.startRequestHash',
+      typed.profile.startRequestHash,
+      startRequestHash
+    )
   }
   // Freeze the complete producer graph at admission. The plan carries selection
   // provenance and the singular execution carries the dispatch bytes; later
@@ -622,6 +783,7 @@ export async function compileBrokerRuntimePlan(
     return {
       admitted: false,
       code: 'v2-envelope-required',
+      rejectedBy: 'producer',
       identity,
       diagnostics: response.diagnostics,
     }
@@ -630,6 +792,7 @@ export async function compileBrokerRuntimePlan(
     return {
       admitted: false,
       code: 'compile-not-ok',
+      rejectedBy: 'producer',
       identity,
       diagnostics: response.diagnostics,
     }
@@ -641,18 +804,27 @@ export async function compileBrokerRuntimePlan(
     return {
       admitted: false,
       code: selection.code,
+      rejectedBy: 'hrc-admission',
       identity,
       diagnostics: response.diagnostics,
+      admissionDiagnostic: selection.diagnostic,
     }
   }
 
   const responseRelease = (response as unknown as V2CompileResponse).executionRelease
   if (responseRelease !== undefined && !hasValidExecutionRelease(responseRelease)) {
+    const refusal = admissionRefusal(
+      'execution-release-invalid',
+      'executionRelease',
+      responseRelease
+    )
     return {
       admitted: false,
-      code: 'execution-release-invalid',
+      code: refusal.code,
+      rejectedBy: 'hrc-admission',
       identity,
       diagnostics: response.diagnostics,
+      admissionDiagnostic: refusal.diagnostic,
     }
   }
 

@@ -774,8 +774,81 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
     expect(JSON.stringify((error as { detail?: unknown }).detail)).toContain(
       'release_worker_driver_unavailable'
     )
+    expect((error as { detail?: Record<string, unknown> }).detail?.['rejectedBy']).toBe('producer')
     expect(operations(s.hostSessionId)).toEqual([])
     expect(ledger.commands).toHaveLength(0)
+  })
+
+  // T-08712: the installed ASP selects claude-code-tmux for a prompted Claude
+  // start and carries the prompt on the launch, with no broker initialInput.
+  it('a prompted Claude birth whose producer launch-carries the prompt is admitted and launched with it', async () => {
+    aspd.launchCarriedInitialPrompt = true
+    const s = await seedInteractive()
+    await kickerSummons(s, 'T8712-FIRST')
+    await settle(() => ledger.startCalls.length === 1)
+    expect(ledger.startCalls).toHaveLength(1)
+    expect(launchPrompt(ledger.startCalls[0]?.request)).toContain('T8712-FIRST')
+    expect(initialInputText(ledger.startCalls[0]?.request)).toBeUndefined()
+    const [op] = operations(s.hostSessionId)
+    expect(op?.record.admission.execution.driver).toBe('claude-code-tmux')
+    expect(op?.error_code).toBeNull()
+  })
+
+  it('a prompted Claude preparation (hrc start -p) with a launch-carried prompt freezes an operation', async () => {
+    aspd.launchCarriedInitialPrompt = true
+    const s = await session()
+    const operationId = await prepareAspdHeadlessAttempt(server as never, {
+      session: s,
+      intent: { ...driverIntent('claude-code-tmux'), initialPrompt: 'T8712-START' },
+      runId: 'run-t8712-start',
+      endpoint: aspdSocket,
+    })
+    expect(typeof operationId).toBe('string')
+    expect(operations(s.hostSessionId)).toHaveLength(1)
+  })
+
+  it('an HRC admission refusal of a successful compile names the field and logs one WARN', async () => {
+    aspd.planIdentityOverride = { traceId: 'trace-forged' }
+    const s = await session()
+    const lines: string[] = []
+    const stderrSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      lines.push(String(chunk))
+      return true
+    }) as never)
+    let error: unknown
+    try {
+      error = await prepareAspdHeadlessAttempt(server as never, {
+        session: s,
+        intent: { ...driverIntent('claude-code-tmux'), initialPrompt: 'T8712-FORCED' },
+        runId: 'run-t8712-forced',
+        endpoint: aspdSocket,
+      }).catch((e: unknown) => e)
+    } finally {
+      stderrSpy.mockRestore()
+    }
+    const detail = (error as { detail?: Record<string, any> }).detail ?? {}
+    // The injector reads compile-not-ok as a definite pre-launch rejection.
+    expect(detail['code']).toBe('compile-not-ok')
+    expect(detail['rejectedBy']).toBe('hrc-admission')
+    expect((error as Error).message).toContain('refused by HRC admission')
+    expect(detail['admissionCode']).toBe('execution-identity-mismatch')
+    expect(detail['diagnostics']).toEqual([
+      expect.objectContaining({
+        plane: 'hrc-admission',
+        field: 'plan.identity.traceId',
+        actual: 'trace-forged',
+      }),
+    ])
+    expect(String(detail['diagnostics'][0].expected)).toStartWith('trace-')
+    const warn = lines.filter(
+      (line) =>
+        line.includes('WARN aspd.preparation.admission_rejected') &&
+        line.includes('run-t8712-forced')
+    )
+    expect(warn).toHaveLength(1)
+    expect(warn[0]).toContain('plan.identity.traceId')
+    expect(warn[0]).toContain(aspd.serving.releaseId)
+    expect(operations(s.hostSessionId)).toEqual([])
   })
 
   it('a DM crossing a Claude summons birth joins it: one aspd birth, each prompt delivered once', async () => {

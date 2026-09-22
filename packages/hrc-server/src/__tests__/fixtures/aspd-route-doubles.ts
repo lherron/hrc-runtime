@@ -161,6 +161,14 @@ export type AspdDouble = {
    * diagnostic code (e.g. the producer's `release_worker_driver_unavailable`).
    */
   compileFailureCode?: string | undefined
+  /**
+   * T-08712: emit the real claude-code-tmux shape, where a terminal execution
+   * carries the first turn on the launch (spec.launch.initialPrompt) and has no
+   * broker initialInput to echo HRC's allocated initialInputId.
+   */
+  launchCarriedInitialPrompt?: boolean | undefined
+  /** T-08712: overwrite fields of the echoed plan identity (a forced admission refusal). */
+  planIdentityOverride?: Record<string, unknown> | undefined
   stop(): void
 }
 
@@ -282,7 +290,7 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
             // The v2 producer declares one execution; a fixture must not infer
             // a second dispatch shape from the selected driver's legacy name.
             // A canonical initial input remains identity-bound when allocated.
-            const launchArgvDriver = false
+            const launchArgvDriver = state.launchCarriedInitialPrompt === true
             const { profile, startRequest } = terminalRequired
               ? makeInteractiveTmuxProfile(identity, {
                   brokerDriver: selectedDriver as never,
@@ -330,7 +338,7 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
               plan: {
                 schemaVersion: 'agent-runtime-plan/v2',
                 agent: message.params.compileRequest.agent,
-                identity,
+                identity: { ...identity, ...state.planIdentityOverride },
                 planHash: `plan-${String(identity.operationId)}`,
                 compileId: `compile-${String(identity.operationId)}`,
                 createdAt: '2026-09-22T00:00:00.000Z',
