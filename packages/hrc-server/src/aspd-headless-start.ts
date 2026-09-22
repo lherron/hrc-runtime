@@ -214,6 +214,40 @@ function aspdStartError(
   return new HrcRuntimeUnavailableError(message, { code, route: 'aspd', ...detail })
 }
 
+function recordField(value: unknown, key: string): unknown {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)[key]
+    : undefined
+}
+
+/**
+ * T-08713: the identity-bearing slice of a compile HRC refused, retained in the
+ * refusal log for a post-hoc diff against HRC's allocation. Bounded: ids,
+ * hashes, driver and hosting only; never argv, env, prompt or priming bytes.
+ */
+function summarizeRejectedCompile(response: unknown): Record<string, unknown> {
+  const plan = recordField(response, 'plan')
+  const execution = recordField(plan, 'execution')
+  const startRequest = recordField(recordField(execution, 'dispatchRequest'), 'startRequest')
+  const spec = recordField(startRequest, 'spec')
+  const initialInput = recordField(startRequest, 'initialInput')
+  return {
+    planHash: recordField(plan, 'planHash'),
+    compileId: recordField(plan, 'compileId'),
+    agentId: recordField(recordField(plan, 'agent'), 'id'),
+    planIdentity: recordField(plan, 'identity'),
+    driver: recordField(execution, 'driver'),
+    hosting: recordField(execution, 'hosting'),
+    startRequestHash: recordField(recordField(execution, 'profile'), 'startRequestHash'),
+    startRequest: {
+      driver: recordField(recordField(spec, 'driver'), 'kind'),
+      invocationId: recordField(spec, 'invocationId'),
+      correlation: recordField(spec, 'correlation'),
+      initialInputId: recordField(initialInput, 'inputId') ?? null,
+    },
+  }
+}
+
 /**
  * T-08560 (§1.5.1): the recorded door class of an interactive preparation. Only
  * the attached-run door carries an attach handshake.
@@ -343,10 +377,10 @@ export async function prepareAspdHeadlessAttempt(
   )
 
   if (!compiled.admitted) {
-    // T-08713: an ASP compile failure carries ASP's diagnostics; HRC refusing a
-    // successful compile carries HRC's own, naming the field that failed. Both
-    // keep `code: compile-not-ok`: the mail injector reads that code as a
-    // definite pre-launch rejection, and `rejectedBy` says which side refused.
+    // T-08713: an ASP compile failure (`compile-not-ok`) carries ASP's
+    // diagnostics; HRC refusing a successful compile (`admission-rejected`)
+    // carries HRC's own, naming the field that failed. The mail injector
+    // classes both as definite pre-launch rejections.
     const hrcRefused = compiled.rejectedBy === 'hrc-admission'
     const detail = {
       rejectedBy: compiled.rejectedBy,
@@ -361,14 +395,19 @@ export async function prepareAspdHeadlessAttempt(
       endpoint,
       ...(prepared ? { aspdRelease: prepared.service.release } : {}),
     }
-    writeServerLog('WARN', 'aspd.preparation.admission_rejected', detail)
-    throw aspdStartError(
-      'compile-not-ok',
-      hrcRefused
-        ? 'aspd preparation refused by HRC admission (ASP compile succeeded)'
-        : 'aspd preparation compile rejected by ASP',
-      detail
-    )
+    writeServerLog('WARN', 'aspd.preparation.admission_rejected', {
+      ...detail,
+      ...(hrcRefused && prepared
+        ? { rejectedCompile: summarizeRejectedCompile(prepared.response) }
+        : {}),
+    })
+    throw hrcRefused
+      ? aspdStartError(
+          'admission-rejected',
+          'aspd preparation refused by HRC admission (ASP compile succeeded)',
+          detail
+        )
+      : aspdStartError('compile-not-ok', 'aspd preparation compile rejected by ASP', detail)
   }
   if (prepared === undefined || !prepared.response.ok) {
     throw aspdStartError('compile-not-ok', 'aspd preparation returned no successful response', {

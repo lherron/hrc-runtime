@@ -827,8 +827,9 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
       stderrSpy.mockRestore()
     }
     const detail = (error as { detail?: Record<string, any> }).detail ?? {}
-    // The injector reads compile-not-ok as a definite pre-launch rejection.
-    expect(detail['code']).toBe('compile-not-ok')
+    // T-08713: distinct from ASP's compile-not-ok; the injector classes both
+    // as definite pre-launch rejections.
+    expect(detail['code']).toBe('admission-rejected')
     expect(detail['rejectedBy']).toBe('hrc-admission')
     expect((error as Error).message).toContain('refused by HRC admission')
     expect(detail['admissionCode']).toBe('execution-identity-mismatch')
@@ -848,6 +849,16 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
     expect(warn).toHaveLength(1)
     expect(warn[0]).toContain('plan.identity.traceId')
     expect(warn[0]).toContain(aspd.serving.releaseId)
+    // The rejected compile's identity is retained (bounded) for a post-hoc diff.
+    const logged = JSON.parse(warn[0]!.slice(warn[0]!.indexOf('{')))
+    expect(logged.rejectedCompile).toMatchObject({
+      agentId: 't08562',
+      planIdentity: { traceId: 'trace-forged' },
+      startRequest: { driver: 'claude-code-tmux' },
+    })
+    expect(typeof logged.rejectedCompile.startRequest.invocationId).toBe('string')
+    expect(logged.rejectedCompile.startRequest.correlation).toBeDefined()
+    expect(JSON.stringify(logged.rejectedCompile)).not.toContain('T8712-FORCED')
     expect(operations(s.hostSessionId)).toEqual([])
   })
 

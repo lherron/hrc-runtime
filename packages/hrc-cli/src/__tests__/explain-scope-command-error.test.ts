@@ -85,7 +85,7 @@ describe('explainScopeCommandError — RUNTIME_UNAVAILABLE rendering', () => {
   // name the admission check and the differing field without --json.
   it('renders admissionCode and the HRC admission field diff', () => {
     const err = domainError('aspd preparation refused by HRC admission (ASP compile succeeded)', {
-      code: 'compile-not-ok',
+      code: 'admission-rejected',
       rejectedBy: 'hrc-admission',
       route: 'aspd',
       runId: 'run-t8712',
@@ -109,7 +109,7 @@ describe('explainScopeCommandError — RUNTIME_UNAVAILABLE rendering', () => {
 
     const out = explainScopeCommandError('start', err, 'clod@hrc-runtime:T-1').message
 
-    expect(out).toContain('reason: compile-not-ok')
+    expect(out).toContain('reason: admission-rejected')
     expect(out).toContain('admission: execution-identity-mismatch')
     expect(out).toContain('why: execution-identity-mismatch')
     expect(out).toContain('where: admission (after 1.21s)')
