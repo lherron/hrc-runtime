@@ -178,6 +178,49 @@ describe('v2 compile request carrier', () => {
     expect(request.selectionContext).toBeUndefined()
   })
 
+  it('does not allocate user-turn identity for an interactive birth without materialized input', async () => {
+    const result = await compileBrokerRuntimePlan(
+      {
+        intent: intent({
+          placement: {
+            agentRoot: '/tmp/astra',
+            cwd: '/tmp/project',
+            runMode: 'task',
+            bundle: { kind: 'agent-project', agentId: 'astra', projectId: 'hrc-runtime' },
+            dryRun: false,
+          } as HrcRuntimeIntent['placement'],
+          harness: { provider: 'anthropic', interactive: true, id: 'claude' },
+        }),
+        scopeRef: 'agent:astra:project:hrc-runtime',
+        hostSessionId: 'host-1',
+        generation: 1,
+      },
+      {
+        ids,
+        compileHarnessInvocation: async ({ compileRequest }) => {
+          const requestIdentity = compileRequest.identity as typeof identity & {
+            initialInputId?: string
+            runId?: string
+          }
+          const response = validResponse(requestIdentity)
+          // ASP materializes the agent priming prompt as launch input, not as a
+          // user turn. Its canonical start request therefore has no initialInput.
+          const { initialInput: _initialInput, ...promptlessStartRequest } = response.plan.execution
+            .dispatchRequest.startRequest as unknown as Record<string, unknown>
+          response.plan.execution.dispatchRequest.startRequest = promptlessStartRequest as never
+          response.plan.execution.profile.startRequestHash = neutralStartRequestHash(
+            response.plan.execution.dispatchRequest.startRequest
+          )
+          return response as never
+        },
+      }
+    )
+
+    expect(result).toMatchObject({ admitted: true })
+    expect(result.identity).not.toHaveProperty('initialInputId')
+    expect(result.identity).not.toHaveProperty('runId')
+  })
+
   it('carries HRC materialization, continuation, and dispatch environment without creating selection', () => {
     const continuation = { provider: 'openai', kind: 'thread', key: 'thread-v2' } as const
     const request = buildV2CompileRequest({

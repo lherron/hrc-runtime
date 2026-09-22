@@ -134,21 +134,7 @@ export type BrokerCompileAdapterResult =
 export function hasInitialUserTurn(intent: HrcRuntimeIntent): boolean {
   return (
     (typeof intent.initialPrompt === 'string' && intent.initialPrompt.length > 0) ||
-    (intent.attachments?.length ?? 0) > 0 ||
-    hasManagedInteractiveStartupPrompt(intent)
-  )
-}
-
-function hasManagedInteractiveStartupPrompt(intent: HrcRuntimeIntent): boolean {
-  if (intent.harness.interactive !== true) {
-    return false
-  }
-  const bundle = intent.placement.bundle
-  return (
-    bundle !== null &&
-    typeof bundle === 'object' &&
-    'kind' in bundle &&
-    bundle.kind === 'agent-project'
+    (intent.attachments?.length ?? 0) > 0
   )
 }
 
