@@ -25,6 +25,7 @@ import type {
   HrcTurnResponseFormat,
   InvokeSubmissionRequest,
   OpenBrokerSessionResponse,
+  PhaseRecord,
   PreemptAdmission,
   PreemptAdmissionResponse,
   PreemptSubmissionRequest,
@@ -1589,7 +1590,21 @@ export async function handlePrepareAttachedRun(
   })
   const pendingStartId = `attached-${randomUUID()}`
   const controller = this.getHarnessBrokerController()
+  const phases: PhaseRecord[] = []
+  const startedAt = performance.now()
+  const elapsed = (since: number): number =>
+    Math.max(0, Number((performance.now() - since).toFixed(1)))
+  const diagnostics = (runtimeId?: string) => ({
+    releases: {},
+    ids: {
+      pendingStartId,
+      hostSessionId: session.hostSessionId,
+      ...(runtimeId === undefined ? {} : { runtimeId }),
+    },
+    phases: structuredClone(phases),
+  })
 
+  const brokerStartAt = performance.now()
   const operation = (async (): Promise<AttachedRunResult> => {
     // T-08556 (§1.4): on a node that declares an aspd endpoint, a Codex attached
     // run selects its runtime only through the start singleflight (join first,
@@ -1641,10 +1656,13 @@ export async function handlePrepareAttachedRun(
   })()
 
   const pendingOperation: PendingAttachedRunOperation = { result: operation }
+  const savePreparationAt = performance.now()
   this.attachedRunOperations.set(pendingStartId, pendingOperation)
+  phases.push({ id: 'save-preparation', status: 'ok', ms: elapsed(savePreparationAt) })
   void operation.catch(() => undefined)
 
   try {
+    const brokerReadyAt = performance.now()
     const winner = await Promise.race([
       controller
         .waitForAttachedStartReady(pendingStartId, DEFAULT_ATTACHED_START_READY_TIMEOUT_MS)
@@ -1659,6 +1677,13 @@ export async function handlePrepareAttachedRun(
     ])
 
     if (winner.kind === 'ready_timeout') {
+      phases.push({
+        id: 'broker-ready',
+        status: 'error',
+        ms: elapsed(brokerReadyAt),
+        limitMs: DEFAULT_ATTACHED_START_READY_TIMEOUT_MS,
+        reason: winner.error instanceof Error ? winner.error.message : String(winner.error),
+      })
       throw new HrcRuntimeUnavailableError(
         `attached broker start did not become ready within ${DEFAULT_ATTACHED_START_READY_TIMEOUT_MS}ms`,
         { pendingStartId, timeoutMs: DEFAULT_ATTACHED_START_READY_TIMEOUT_MS }
@@ -1666,6 +1691,13 @@ export async function handlePrepareAttachedRun(
     }
 
     if (winner.kind === 'prepared') {
+      phases.push({ id: 'broker-start', status: 'ok', ms: elapsed(brokerStartAt) })
+      phases.push({
+        id: 'broker-ready',
+        status: 'ok',
+        ms: elapsed(brokerReadyAt),
+        limitMs: DEFAULT_ATTACHED_START_READY_TIMEOUT_MS,
+      })
       pendingOperation.resumeDeadlineTimer = setTimeout(() => {
         if (this.attachedRunOperations.get(pendingStartId) !== pendingOperation) return
         this.attachedRunOperations.delete(pendingStartId)
@@ -1681,9 +1713,16 @@ export async function handlePrepareAttachedRun(
         hostSessionId: winner.ready.runtime.hostSessionId,
         runtimeId: winner.ready.runtime.runtimeId,
         attach: await attachDescriptorBody(this, winner.ready.runtime),
+        diagnostics: diagnostics(winner.ready.runtime.runtimeId),
       } satisfies PrepareAttachedRunResponse)
     }
 
+    phases.push({ id: 'broker-start', status: 'ok', ms: elapsed(brokerStartAt) })
+    phases.push({
+      id: 'broker-ready',
+      status: 'skipped',
+      reason: 'start completed without an attach gate',
+    })
     this.attachedRunOperations.delete(pendingStartId)
     controller.cancelAttachedStart(pendingStartId, 'attached run completed without a pending start')
     const runtime = requireKnownRuntime(this.db, runtimeIdFromAttachedRunResult(winner.result))
@@ -1691,8 +1730,20 @@ export async function handlePrepareAttachedRun(
       status: 'started',
       result: winner.result,
       attach: await attachDescriptorBody(this, runtime),
+      diagnostics: diagnostics(runtime.runtimeId),
     } satisfies PrepareAttachedRunResponse)
   } catch (error) {
+    if (!phases.some((phase) => phase.id === 'broker-start')) {
+      phases.push({
+        id: 'broker-start',
+        status: 'error',
+        ms: elapsed(brokerStartAt),
+        reason: error instanceof Error ? error.message : String(error),
+      })
+    }
+    if (!phases.some((phase) => phase.id === 'broker-ready')) {
+      phases.push({ id: 'broker-ready', status: 'not-reached', reason: 'broker start failed' })
+    }
     this.attachedRunOperations.delete(pendingStartId)
     if (pendingOperation.resumeDeadlineTimer) {
       clearTimeout(pendingOperation.resumeDeadlineTimer)
@@ -1701,6 +1752,12 @@ export async function handlePrepareAttachedRun(
       pendingStartId,
       error instanceof Error ? error.message : String(error)
     )
+    if (error instanceof HrcRuntimeUnavailableError) {
+      error.detail['phases'] = structuredClone(phases)
+      error.detail['ids'] = diagnostics().ids
+      error.detail['failingPhase'] ??= phases.find((phase) => phase.status === 'error')?.id
+      error.detail['elapsedMs'] = elapsed(startedAt)
+    }
     throw error
   }
 }

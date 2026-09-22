@@ -630,11 +630,13 @@ export type PrepareAttachedRunResponse =
       hostSessionId: string
       runtimeId: string
       attach: OperatorAttachDescriptor
+      diagnostics: import('./declaration-contracts.js').RunDiagnostics
     }
   | {
       status: 'started'
       result: StartRuntimeResponse | DispatchTurnResponse
       attach: OperatorAttachDescriptor
+      diagnostics: import('./declaration-contracts.js').RunDiagnostics
     }
 
 /**

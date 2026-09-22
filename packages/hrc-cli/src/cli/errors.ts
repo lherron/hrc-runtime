@@ -1,4 +1,4 @@
-import { HrcDomainError, HrcErrorCode } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode, formatDiagnosticDuration } from 'hrc-core'
 
 import { printJson } from '../print.js'
 import { CliStatusExit } from './shared.js'
@@ -174,6 +174,11 @@ export function explainScopeCommandError(
         flag?: string
         runId?: string
         admissionCode?: string
+        failingPhase?: string
+        elapsedMs?: number
+        phases?: Array<{ id?: string; status?: string; ms?: number }>
+        aspdRelease?: { releaseId?: string; sourceCommit?: string }
+        ids?: Record<string, string>
         diagnostics?: Array<{
           level?: string
           code?: string
@@ -188,6 +193,7 @@ export function explainScopeCommandError(
       // T-08713: the specific admission check that refused the compile.
       if (detail.admissionCode && detail.admissionCode !== detail.code) {
         lines.push(`  admission: ${detail.admissionCode}`)
+        lines.push(`  why: ${detail.admissionCode}`)
       }
       // The broker-start path (e.g. `broker_start_failed`) carries its actual
       // root cause in `detail.message` (e.g. "Failed to connect to broker unix
@@ -199,6 +205,26 @@ export function explainScopeCommandError(
       }
       if (detail.route) {
         lines.push(`  route: ${detail.route}${detail.flag ? ` (flag ${detail.flag})` : ''}`)
+      }
+      const failing =
+        detail.failingPhase ?? detail.phases?.find((phase) => phase.status === 'error')?.id
+      const failingMs = detail.phases?.find((phase) => phase.id === failing)?.ms ?? detail.elapsedMs
+      if (failing) {
+        lines.push(
+          `  where: ${failing}${failingMs === undefined ? '' : ` (after ${formatDiagnosticDuration(failingMs)})`}`
+        )
+      }
+      if (detail.aspdRelease) {
+        lines.push(
+          `  aspd: ${detail.aspdRelease.releaseId ?? '(unknown)'} @ ${detail.aspdRelease.sourceCommit ?? '(unknown)'}`
+        )
+      }
+      if (detail.ids && Object.keys(detail.ids).length > 0) {
+        lines.push(
+          `  ids: ${Object.entries(detail.ids)
+            .map(([key, value]) => `${key} ${value}`)
+            .join('  ')}`
+        )
       }
       for (const diag of detail.diagnostics ?? []) {
         const where = diag.profileId ? ` [${diag.profileId}]` : ''

@@ -90,6 +90,10 @@ describe('explainScopeCommandError — RUNTIME_UNAVAILABLE rendering', () => {
       route: 'aspd',
       runId: 'run-t8712',
       admissionCode: 'execution-identity-mismatch',
+      failingPhase: 'admission',
+      phases: [{ id: 'admission', status: 'error', ms: 1210 }],
+      aspdRelease: { releaseId: 'rel-t8712', sourceCommit: '9aff8211' },
+      ids: { runId: 'run-t8712', compileId: 'cmp-t8712' },
       diagnostics: [
         {
           level: 'error',
@@ -107,6 +111,10 @@ describe('explainScopeCommandError — RUNTIME_UNAVAILABLE rendering', () => {
 
     expect(out).toContain('reason: compile-not-ok')
     expect(out).toContain('admission: execution-identity-mismatch')
+    expect(out).toContain('why: execution-identity-mismatch')
+    expect(out).toContain('where: admission (after 1.21s)')
+    expect(out).toContain('aspd: rel-t8712 @ 9aff8211')
+    expect(out).toContain('ids: runId run-t8712  compileId cmp-t8712')
     expect(out).toContain(
       '• error execution-identity-mismatch: startRequest.initialInput.inputId: expected "input-1", got (absent)'
     )

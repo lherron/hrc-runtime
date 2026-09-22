@@ -61,6 +61,7 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.stdout).not.toContain('--no-attach')
     expect(result.stdout).toContain('--attach-only')
     expect(result.stdout).toContain('--dry-run')
+    expect(result.stdout).toContain('-v, --verbose')
   })
 
   it('hrc run from a non-TTY fails before resolving or starting a runtime', async () => {

@@ -105,8 +105,15 @@ describe('attached-run operation lifecycle', () => {
     const prepared = (await preparedResponse.json()) as {
       status: string
       pendingStartId: string
+      diagnostics: { phases: Array<{ id: string; status: string; ms?: number }> }
     }
     expect(prepared.status).toBe('prepared')
+    expect(prepared.diagnostics.phases.map((phase) => phase.id)).toEqual([
+      'save-preparation',
+      'broker-start',
+      'broker-ready',
+    ])
+    expect(prepared.diagnostics.phases.every((phase) => phase.status === 'ok')).toBe(true)
     const acceptedOperation = attachedRunOperations.get(prepared.pendingStartId)?.result
     expect(acceptedOperation).toBeDefined()
 
@@ -183,6 +190,14 @@ describe('attached-run operation lifecycle', () => {
 
     expect(thrown).toBeInstanceOf(Error)
     expect((thrown as { code?: string }).code).toBe('runtime_unavailable')
+    expect(
+      (thrown as { detail?: { phases?: Array<{ id: string; status: string }> } }).detail?.phases
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'broker-ready', status: 'error' }),
+        expect.objectContaining({ id: 'broker-start', status: 'error' }),
+      ])
+    )
     expect(attachedRunOperations.size).toBe(0)
     expect(cancels).toHaveLength(1)
     expect(cancels[0]).toContain('did not become ready')

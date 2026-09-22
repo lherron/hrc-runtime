@@ -137,6 +137,7 @@ export function registerTopLevelCommands(program: Command): void {
       'reattach to the existing runtime without starting one (like `hrc attach`)'
     )
     .option('--dry-run', 'daemon plan preview — no side effects')
+    .option('-v, --verbose', 'show the full run phase timeline on stderr')
     .option('--debug', 'keep tmux shell alive after harness exits')
     .option('--no-register', 'do not prompt to register cwd as a project marker')
     .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
@@ -172,6 +173,8 @@ export function registerTopLevelCommands(program: Command): void {
           '--new-session',
           '--attach-only',
           '--dry-run',
+          '-v',
+          '--verbose',
           '--debug',
           '--no-register',
           '--json',
@@ -180,7 +183,15 @@ export function registerTopLevelCommands(program: Command): void {
       })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
-        booleans: ['force-restart', 'new-session', 'attach-only', 'dry-run', 'debug', 'json'],
+        booleans: [
+          'force-restart',
+          'new-session',
+          'attach-only',
+          'dry-run',
+          'verbose',
+          'debug',
+          'json',
+        ],
         negatedBooleans: ['register'],
       })
       await cmdRun(args)

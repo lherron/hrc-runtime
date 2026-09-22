@@ -8,6 +8,8 @@ import type {
   CliLaunchPhase,
   DispatchTurnRequest,
   HrcRuntimeIntent,
+  PhaseRecord,
+  RunDiagnostics,
 } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 
@@ -15,7 +17,12 @@ import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from './d
 
 import { printJson } from '../print.js'
 import { hasFlag, parseFlag, requireArg } from './argv.js'
-import { emitScopeCommandErrorJson, explainScopeCommandError } from './errors.js'
+import {
+  emitScopeCommandErrorJson,
+  explainScopeCommandError,
+  isHrcDomainErrorLike,
+} from './errors.js'
+import { compactRunTimingFooter, renderRunDiagnostics } from './run-diagnostics-render.js'
 import {
   attachWithRetry,
   bindGhosttySurfaceIfPresent,
@@ -192,6 +199,9 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
     command === 'start'
       ? '  --cwd <path>        Set execution cwd without changing the resolved project root\n'
       : ''
+  const verboseOption = isRunLike
+    ? '  -v, --verbose       Show the full run phase timeline on stderr\n'
+    : ''
 
   process.stdout.write(`Usage: hrc ${command} <scope> [options]
 
@@ -204,7 +214,7 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
 Options:
   --force-restart      Replace the runtime with a fresh PTY; preserve the conversation
 ${noAttachOption}${newSessionOption}${startOnlyOptions}  --dry-run            Daemon plan preview — no side effects
-  --debug              Keep tmux shell alive after harness exits
+${verboseOption}  --debug              Keep tmux shell alive after harness exits
   --project-id <id>    Override the inferred project id (cwd is treated as its root)
   --project-root <dir> Override project root (defaults to cwd when --project-id is set)
 ${cwdOption}  --no-register        Don't prompt to register cwd as a project marker
@@ -249,6 +259,7 @@ export async function cmdRun(
   const debug = hasFlag(args, '--debug')
   const noRegister = hasFlag(args, '--no-register')
   const jsonOutput = hasFlag(args, '--json')
+  const verbose = hasFlag(args, '--verbose') || hasFlag(args, '-v')
   const projectIdOverride = parseFlag(args, '--project-id')
   const projectRootOverride = parseFlag(args, '--project-root')
   const prompt = await parseScopePrompt(args, {
@@ -260,18 +271,24 @@ export async function cmdRun(
       '--debug',
       '--no-register',
       '--json',
+      '--verbose',
+      '-v',
       '--project-id',
       '--project-root',
     ],
   })
 
   let sessionRef: string | undefined
+  let attachHandoffReached = false
+  const livePhases: PhaseRecord[] = []
+  const localResolveStartedAt = performance.now()
   try {
     const scope = await resolveManagedScopeContext(scopeInput, {
       projectIdOverride,
       projectRootOverride,
       registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
     })
+    const resolveScopeMs = Number((performance.now() - localResolveStartedAt).toFixed(1))
     sessionRef = scope.sessionRef
     const intent = await buildManagedRunIntent(scope, { prompt, debug })
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
@@ -285,7 +302,9 @@ export async function cmdRun(
         restartStyle,
         prompt,
         scope.placement?.resolution.reason,
-        jsonOutput
+        jsonOutput,
+        verbose,
+        resolveScopeMs
       )
       return
     }
@@ -321,6 +340,11 @@ export async function cmdRun(
       summonIntent: 'explicit_local',
     })
     markLaunch('resolveSession', tResolve)
+    livePhases.push({
+      id: 'create-session',
+      status: 'ok',
+      ms: Number((performance.now() - tResolve).toFixed(1)),
+    })
     if (!resolved.found) {
       throw new Error(`failed to create session for "${scopeInput}"`)
     }
@@ -342,10 +366,32 @@ export async function cmdRun(
       ...(hasPrompt ? { prompt } : {}),
     })
     markLaunch('prepareAttachedRun', tPrepare)
+    livePhases.push({
+      id: 'prepare-run',
+      status: 'ok',
+      ms: Number((performance.now() - tPrepare).toFixed(1)),
+      children: prepared.diagnostics.phases,
+    })
 
     const tAttach = performance.now()
     const attached = await spawnAttachDescriptor(client, prepared.attach)
+    attachHandoffReached = true
     markLaunch('spawnAttach', tAttach)
+    livePhases.push({
+      id: 'attach',
+      status: 'ok',
+      ms: Number((performance.now() - tAttach).toFixed(1)),
+    })
+    if (verbose) {
+      renderRunDiagnostics(
+        {
+          releases: prepared.diagnostics.releases,
+          ids: prepared.diagnostics.ids,
+          phases: [{ id: 'resolve-scope', status: 'ok', ms: resolveScopeMs }, ...livePhases],
+        },
+        { totalLabel: 'ready' }
+      )
+    }
 
     if (prepared.status === 'prepared') {
       const tResume = performance.now()
@@ -369,7 +415,33 @@ export async function cmdRun(
     // the broker-pushed session summary recorded at graceful /quit, if any.
     await renderSessionSummary(client, prepared.attach.bindingFence.runtimeId, scopeInput)
   } catch (err) {
-    if (jsonOutput) {
+    if (verbose && isHrcDomainErrorLike(err)) {
+      const detail = (err.detail ?? {}) as Record<string, unknown>
+      const serverPhases = Array.isArray(detail['phases'])
+        ? (detail['phases'] as PhaseRecord[])
+        : []
+      renderRunDiagnostics({
+        releases: {
+          ...(detail['aspdRelease'] !== undefined
+            ? { aspd: detail['aspdRelease'] as RunDiagnostics['releases']['aspd'] }
+            : {}),
+        },
+        ids:
+          typeof detail['ids'] === 'object' && detail['ids'] !== null
+            ? (detail['ids'] as Record<string, string>)
+            : {},
+        phases: [
+          {
+            id: 'resolve-scope',
+            status: 'ok',
+            ms: Number((performance.now() - localResolveStartedAt).toFixed(1)),
+          },
+          ...livePhases,
+          ...serverPhases,
+        ],
+      })
+    }
+    if (jsonOutput && !attachHandoffReached) {
       emitScopeCommandErrorJson('run', err, scopeInput, sessionRef)
     }
     throw explainScopeCommandError('run', err, scopeInput, sessionRef)
@@ -962,7 +1034,9 @@ export async function printLocalRunPreview(
   restartStyle: 'reuse_pty' | 'fresh_pty',
   prompt: string | undefined,
   placementReason: string | undefined,
-  jsonOutput = false
+  jsonOutput = false,
+  verbose = false,
+  resolveScopeMs = 0
 ): Promise<void> {
   const w: RunPreviewWriter = (s: string) => {
     process.stdout.write(`${s}\n`)
@@ -993,17 +1067,67 @@ export async function printLocalRunPreview(
     return
   }
   const client = createClient()
-  const brokerPreview = await client.fetchRunPreview({
-    intent,
-    sessionRef,
-    restartStyle,
-    promptLength: prompt?.length,
-  })
+  const daemonPreviewAt = performance.now()
+  let brokerPreview: Awaited<ReturnType<typeof client.fetchRunPreview>>
+  try {
+    brokerPreview = await client.fetchRunPreview({
+      intent,
+      sessionRef,
+      restartStyle,
+      promptLength: prompt?.length,
+    })
+  } catch (error) {
+    if (isHrcDomainErrorLike(error)) {
+      const detail = (error.detail ?? {}) as Record<string, unknown>
+      const children = Array.isArray(detail['phases']) ? (detail['phases'] as PhaseRecord[]) : []
+      detail['phases'] = [
+        { id: 'resolve-scope', status: 'ok', ms: resolveScopeMs },
+        {
+          id: 'daemon-preview',
+          status: 'error',
+          ms: Number((performance.now() - daemonPreviewAt).toFixed(1)),
+          ...(children.length === 0 ? {} : { children }),
+        },
+        { id: 'build-preview', status: 'not-reached', reason: 'daemon preview failed' },
+      ] satisfies PhaseRecord[]
+    }
+    throw error
+  }
+  const daemonPreviewMs = Number((performance.now() - daemonPreviewAt).toFixed(1))
+  const buildStartedAt = performance.now()
+  const maskedPreview = {
+    ...brokerPreview,
+    env: maskDiagnosticEnvironment(brokerPreview.env),
+    process:
+      brokerPreview.process.execution === 'native-worker'
+        ? brokerPreview.process
+        : { ...brokerPreview.process, args: maskDiagnosticArgv(brokerPreview.process.args) },
+  }
+  const phases: PhaseRecord[] = [
+    { id: 'resolve-scope', status: 'ok', ms: resolveScopeMs },
+    {
+      id: 'daemon-preview',
+      status: 'ok',
+      ms: daemonPreviewMs,
+      children: brokerPreview.diagnostics.phases,
+    },
+    {
+      id: 'build-preview',
+      status: 'ok',
+      ms: Number((performance.now() - buildStartedAt).toFixed(1)),
+    },
+    { id: 'create-session', status: 'skipped', reason: 'skipped (dry run)' },
+    { id: 'broker-start', status: 'skipped', reason: 'skipped (dry run)' },
+    { id: 'broker-ready', status: 'skipped', reason: 'skipped (dry run)' },
+    { id: 'attach', status: 'skipped', reason: 'skipped (dry run)' },
+  ]
+  const diagnostics: RunDiagnostics = { ...brokerPreview.diagnostics, phases }
   if (jsonOutput) {
     printJson({
-      preview: brokerPreview,
-      diagnostics: brokerPreview.diagnostics,
+      preview: maskedPreview,
+      diagnostics,
     })
+    if (verbose) renderRunDiagnostics(diagnostics)
     return
   }
   w(`hrc ${command} ${scope} --dry-run  (daemon plan preview — no side effects)`)
@@ -1017,6 +1141,12 @@ export async function printLocalRunPreview(
   w(`  provider:     ${intent.harness.provider}`)
   w(`  cwd:          ${intent.placement.cwd}`)
   await renderBrokerPlanPreview(w, brokerPreview, prompt)
+  if (verbose) {
+    process.stderr.write(`hrc run ${scope}  ·  dry run (nothing will start)\n`)
+    renderRunDiagnostics(diagnostics)
+  } else {
+    w(compactRunTimingFooter(diagnostics))
+  }
 }
 
 function readOptionalUtf8(path: string | undefined): string | undefined {
