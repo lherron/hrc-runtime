@@ -47,12 +47,15 @@ import {
 } from './app-session-identity.js'
 import { findPreparedAspdAttemptForRetry, readAspdPreparation } from './aspd-headless-start.js'
 import {
+  CALLER_SURFACE_REUSE_REFUSAL,
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
+  getBrokerRuntimeDriver,
   isProducerSelectedOrdinaryBirth,
   normalizeClaudeInteractiveBrokerIntent,
   normalizeCodexInteractiveBrokerIntent,
   normalizeRuntimeProvisionIntent,
+  refusesSurfaceReuse,
   runInteractiveTmuxRoute,
   shouldDeferHeadlessToInteractiveBrokerReuse,
   shouldRedirectClaudeToInteractiveBroker,
@@ -1781,6 +1784,95 @@ export async function dispatchTurnForSession(
 }
 
 /**
+ * T-08716: the scope's latest live broker runtime, when that runtime was born
+ * under v2. Producer-selected rows carry no HRC provider projection; that
+ * absence, not the request's intent, is what marks them. A tmux seat is
+ * reconciled first, and one that reconciled dead is not returned, so the
+ * dispatch falls through to an ordinary v2 birth. A birth in flight is joined
+ * by the cold route instead.
+ */
+async function findReusableProducerSelectedRuntime(
+  this: HrcServerInstanceForHandlers,
+  hostSessionId: string
+): Promise<HrcRuntimeSnapshot | undefined> {
+  if (this.runtimeStartOperations.has(hostSessionId)) return undefined
+  const live = this.db.runtimes
+    .listByHostSessionId(hostSessionId)
+    .filter(
+      (runtime) =>
+        runtime.controllerKind === 'harness-broker' &&
+        runtime.status !== 'failed' &&
+        !isRuntimeUnavailableStatus(runtime.status)
+    )
+    .at(-1)
+  if (live === undefined || live.provider !== undefined) return undefined
+  if (live.transport !== 'tmux' || !hasLeasedBrokerSubstrate(live)) return live
+  const reconciled = await this.reconcileTmuxRuntimeLiveness(live)
+  return isRuntimeUnavailableStatus(reconciled.status) ? undefined : reconciled
+}
+
+// Drivers whose interactive input turn is delivered without waiting for the
+// provider turn, exactly as the legacy broker-reuse branch treats them.
+const NON_BLOCKING_TMUX_BROKER_DRIVERS = new Set(['codex-cli-tmux', 'pi-tui-tmux', 'muse-cli-tmux'])
+
+/**
+ * T-08716: deliver an ordinary dispatch into a live v2 tmux seat. HRC owns
+ * reuse (aspd-prepared-execution-release): the frozen selection is the only
+ * reuse identity, and the guards of legacy broker-reuse still apply. A refusal
+ * here mutates nothing: the live seat is never stale-marked or replaced.
+ */
+async function dispatchIntoProducerSelectedTmuxRuntime(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot,
+  intent: HrcRuntimeIntent,
+  prompt: string,
+  runId: string,
+  options: DispatchTurnForSessionOptions
+): Promise<Response> {
+  assertV2SelectionCompatibleForReuse(runtime, intent)
+  assertActuatorSplitRuntimeReuse(intent, runtime)
+  assertNoOperatorPresentationConflict(intent, [runtime])
+  // T-07397/T-08540: a refusal to reuse, or a claimed ownership proof, admits
+  // only the caller's own active invocation, by exact identity.
+  if (refusesSurfaceReuse(intent) || options.establishedBrokerInvocationId !== undefined) {
+    const carried = options.establishedBrokerInvocationId
+    if (carried === undefined || carried !== runtime.activeInvocationId) {
+      throw new HrcRuntimeUnavailableError(CALLER_SURFACE_REUSE_REFUSAL, {
+        hostSessionId: session.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        route: 'producer-selected-reuse',
+        reason: CALLER_SURFACE_REUSE_REFUSAL,
+      })
+    }
+  }
+  // T-05358: a starting/stopping invocation cannot take input. Unlike the
+  // legacy branch this does not reprovision: the seat is still the scope's
+  // writer, and the caller retries once it settles.
+  if (!isBrokerRuntimeInputDispatchable(this.db, runtime)) {
+    throw new HrcRuntimeUnavailableError('broker runtime is transitioning and cannot take input', {
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      route: 'producer-selected-reuse',
+      reason: 'broker_runtime_transitioning',
+    })
+  }
+  await this.publishPresentation(runtime, {
+    operatorAttachPending: options.attachBeforeInvocationStart !== undefined,
+  })
+  const driver = getBrokerRuntimeDriver(runtime)
+  return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
+    waitForCompletion:
+      driver !== undefined && NON_BLOCKING_TMUX_BROKER_DRIVERS.has(driver)
+        ? false
+        : options.waitForCompletion,
+    repairCorrelation: options.repairCorrelation,
+    responseFormat: options.responseFormat,
+    ...dispatchRunPersistence(options),
+  })
+}
+
+/**
  * Submit into the participant's own existing runtime through the existing
  * broker input-turn path.
  *
@@ -1948,6 +2040,29 @@ async function dispatchAdmittedTurnForSession(
   // about a harness, provider, driver or hosting. Existing runtimes continue
   // through their lifecycle/reuse gates below; a cold scope goes directly to
   // the broker admission that persists ASP's frozen execution.
+  //
+  // T-08716: an ordinary dispatch into a scope whose live broker runtime was
+  // itself born under v2 reuses that runtime. It has no HRC provider/driver
+  // projection, and the session's stored intent carries no selectors (or stale
+  // v1 ones HRC must not interpret), so the legacy interactive admission below
+  // could only refuse it or start a second writer beside it.
+  const ordinaryV2 = isProducerSelectedOrdinaryBirth(normalizedInputIntent)
+  const producerSelected = ordinaryV2
+    ? await findReusableProducerSelectedRuntime.call(this, session.hostSessionId)
+    : undefined
+  if (producerSelected?.transport === 'tmux') {
+    return await withObservation(
+      await dispatchIntoProducerSelectedTmuxRuntime.call(
+        this,
+        session,
+        producerSelected,
+        normalizedInputIntent,
+        prompt,
+        runId,
+        options
+      )
+    )
+  }
   const hasLiveBrokerRuntime = this.db.runtimes
     .listByHostSessionId(session.hostSessionId)
     .some(
@@ -1957,8 +2072,12 @@ async function dispatchAdmittedTurnForSession(
         !isRuntimeUnavailableStatus(runtime.status)
     )
   if (
-    isProducerSelectedOrdinaryBirth(normalizedInputIntent) &&
-    (!hasLiveBrokerRuntime || this.runtimeStartOperations.has(session.hostSessionId))
+    ordinaryV2 &&
+    (!hasLiveBrokerRuntime ||
+      this.runtimeStartOperations.has(session.hostSessionId) ||
+      // The headless broker door already reuses, reattaches or reprovisions a
+      // v2 headless runtime under the v2 selection-compatibility gate.
+      producerSelected !== undefined)
   ) {
     assertActuatorSplitRouteAdmission(normalizedInputIntent, 'broker')
     return await withObservation(
