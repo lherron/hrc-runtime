@@ -114,6 +114,16 @@ both sides test against it. Shared render semantics (tool emoji, action lines,
 admission labels) live in `agent-action-render`, consumed by `hrcchat-cli` and
 gateway-discord through the RenderFrame contract.
 
+The mail kicker is no longer in this repo. It is now `hrc-mail-injector` in
+agent-control-plane (`packages/hrc-mail-injector`, `src/policy/`), running as its
+own launchd job (`com.praesidium.hrc-mail-injector`). Read its log in
+`var/logs/hrc-mail-injector.log` (`wrkq.kicker.*` events) and its private state,
+including `hrcmail_birth_refusals`, `hrcmail_delivery_intents`, `hrcmail_presentations`
+and `hrcmail_failure_notices`, in
+`var/state/acp/hrc-mail-injector.sqlite` (`HRC_MAIL_INJECTOR_STATE_PATH`). The
+`hrcmail_*` tables in HRC's `var/state/hrc/state.sqlite` are pre-split leftovers
+with no writes since 2026-09-18. Reading them for current kicker state finds nothing.
+
 ## HRC Server Lifecycle
 
 - Plist: `launchd/com.praesidium.hrc-server.plist` (canonical source) → `~/Library/LaunchAgents/`.
