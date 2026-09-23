@@ -247,6 +247,25 @@ export const EFFECTIVE_TURN_ID_SQL = `COALESCE(
     CASE WHEN json_type(broker_event_json, '$.turnId') = 'text'
       THEN json_extract(broker_event_json, '$.turnId') END END)`
 
+/**
+ * Submission-id lookup keys (T-08782). The mail injector's reconcile asks
+ * "what became of submission X on runtime R" for every open intent on every
+ * sweep. These expressions back two partial indexes (migration 0075) and MUST
+ * appear byte-identically in the queries, or SQLite cannot match the index.
+ * The json_valid guard keeps a malformed payload from failing the INSERT that
+ * maintains the index: CASE is evaluated lazily, so json_extract never sees a
+ * document json_valid rejected.
+ */
+export const EVENT_SUBMISSION_ID_SQL = `CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json, '$.submissionId') END`
+export const EVENT_INPUT_ID_SQL = `CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json, '$.inputId') END`
+/** The broker's terminal verdicts on a submission; the disposition index's partial WHERE. */
+export const SUBMISSION_DISPOSITION_TYPES_SQL = `type IN (
+  'submission.absorbed', 'submission.executed', 'submission.rejected',
+  'submission.expired', 'submission.withdrawn', 'submission.cancelled',
+  'submission.lost'
+)`
+export const INPUT_REJECTED_TYPE_SQL = `type = 'input.rejected'`
+
 export const RUNTIME_ARTIFACT_COLUMNS = `
   artifact_id,
   operation_id,

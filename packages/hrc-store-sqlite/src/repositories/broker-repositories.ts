@@ -20,6 +20,9 @@ import {
   COMPILED_RUNTIME_PLAN_COLUMNS,
   type CompiledRuntimePlanRow,
   EFFECTIVE_TURN_ID_SQL,
+  EVENT_INPUT_ID_SQL,
+  EVENT_SUBMISSION_ID_SQL,
+  INPUT_REJECTED_TYPE_SQL,
   LIFECYCLE_POLICY_COLUMNS,
   type LifecyclePolicyRow,
   PERMISSION_DECISION_COLUMNS,
@@ -28,6 +31,7 @@ import {
   RUNTIME_OPERATION_COLUMNS,
   type RuntimeArtifactRow,
   type RuntimeOperationRow,
+  SUBMISSION_DISPOSITION_TYPES_SQL,
   mapBrokerInvocationEventRow,
   mapBrokerInvocationRow,
   mapCompiledRuntimePlanRow,
@@ -1212,18 +1216,15 @@ export class BrokerInvocationEventRepository {
                 json_extract(broker_event_json, '$.turnId') AS turnId,
                 json_extract(broker_event_json, '$.reason') AS reason
            FROM broker_invocation_events
-          WHERE runtime_id = ?
-            AND type IN (
-              'submission.absorbed', 'submission.executed', 'submission.rejected',
-              'submission.expired', 'submission.withdrawn', 'submission.cancelled',
-              'submission.lost'
-            )
-            AND json_extract(broker_event_json, '$.submissionId') = ?
+                INDEXED BY idx_broker_invocation_events_submission_disposition
+          WHERE ${EVENT_SUBMISSION_ID_SQL} = ?
+            AND runtime_id = ?
+            AND ${SUBMISSION_DISPOSITION_TYPES_SQL}
             ${retainedFencePredicate(options.includeRetained)}
           ORDER BY time ASC, seq ASC
           LIMIT 1`
       )
-      .get(runtimeId, submissionId)
+      .get(submissionId, runtimeId)
     if (row === null) return undefined
     return {
       type: row.type,
@@ -1232,27 +1233,31 @@ export class BrokerInvocationEventRepository {
     }
   }
 
-  /** Explicit producer proof that an input did not reach a native write. */
+  /**
+   * Explicit producer proof that an input did not reach a native write.
+   *
+   * `input.rejected` carries the submission as `inputId` (the protocol's
+   * InputDispositionPayload has no `submissionId`), so the lookup is on
+   * `inputId` alone.
+   */
   findInputRejectionDeliveryEvidence(
     runtimeId: string,
     submissionId: string,
     options: { includeRetained?: boolean | undefined } = {}
   ): 'not_written' | 'possibly_written' | undefined {
     const row = this.db
-      .query<{ deliveryEvidence: string | null }, [string, string, string]>(
+      .query<{ deliveryEvidence: string | null }, [string, string]>(
         `SELECT json_extract(broker_event_json, '$.deliveryEvidence') AS deliveryEvidence
            FROM broker_invocation_events
-          WHERE runtime_id = ?
-            AND type = 'input.rejected'
-            AND (
-              json_extract(broker_event_json, '$.inputId') = ? OR
-              json_extract(broker_event_json, '$.submissionId') = ?
-            )
+                INDEXED BY idx_broker_invocation_events_input_rejected
+          WHERE ${EVENT_INPUT_ID_SQL} = ?
+            AND runtime_id = ?
+            AND ${INPUT_REJECTED_TYPE_SQL}
             ${retainedFencePredicate(options.includeRetained)}
           ORDER BY time ASC, seq ASC
           LIMIT 1`
       )
-      .get(runtimeId, submissionId, submissionId)
+      .get(submissionId, runtimeId)
     return row?.deliveryEvidence === 'not_written' || row?.deliveryEvidence === 'possibly_written'
       ? row.deliveryEvidence
       : undefined

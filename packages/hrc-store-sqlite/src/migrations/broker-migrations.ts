@@ -1,3 +1,9 @@
+import {
+  EVENT_INPUT_ID_SQL,
+  EVENT_SUBMISSION_ID_SQL,
+  INPUT_REJECTED_TYPE_SQL,
+  SUBMISSION_DISPOSITION_TYPES_SQL,
+} from '../repositories/broker.js'
 import { computeMigrationPermissionIdentityKey } from './legacy-hrc-event-backfill.js'
 import type { HrcMigration } from './types.js'
 
@@ -951,6 +957,28 @@ const askBracketScanIndexMigration: HrcMigration = {
   },
 }
 
+/**
+ * Point lookups for a submission's broker verdict (T-08782). The injector's
+ * periodic reconcile reads the disposition and the input-rejection evidence of
+ * every open intent; without these, each read walked every event of the
+ * runtime (or every `input.rejected` on the node). Partial, so each index
+ * holds only its event types, and keyed by the guarded expressions the queries
+ * repeat verbatim.
+ */
+const submissionLookupIndexesMigration: HrcMigration = {
+  id: '0075_submission_lookup_indexes',
+  apply(db) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_submission_disposition
+        ON broker_invocation_events(${EVENT_SUBMISSION_ID_SQL}, runtime_id)
+        WHERE ${SUBMISSION_DISPOSITION_TYPES_SQL};
+      CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_input_rejected
+        ON broker_invocation_events(${EVENT_INPUT_ID_SQL}, runtime_id)
+        WHERE ${INPUT_REJECTED_TYPE_SQL};
+    `)
+  },
+}
+
 /** Backfill external ownership only for runtimes proven to be generic participant rows. */
 const participantRuntimeOwnershipRepairMigration: HrcMigration = {
   id: '0056_participant_runtime_ownership_repair',
@@ -1100,4 +1128,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   runtimeOperationAspPreparationMigration,
   retainedEvidenceMigration,
   submissionAdmissionsMigration,
+  submissionLookupIndexesMigration,
 ]

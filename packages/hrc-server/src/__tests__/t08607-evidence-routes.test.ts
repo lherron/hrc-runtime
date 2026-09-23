@@ -32,7 +32,6 @@ const SUB3 = 'submission-t08607-c'
 const SUB_RETAINED = 'submission-t08607-retained'
 const ENV = 'en-t08607-a'
 const INPUT = 'input-t08607-a'
-const INPUT2 = 'input-t08607-b'
 const TURN = 'turn-t08607-a'
 
 let fixture: HrcServerTestFixture
@@ -118,11 +117,8 @@ function seedEvidence(): void {
   })
   appendBrokerEvent(3, 'submission.absorbed', { submissionId: SUB, turnId: TURN })
   appendBrokerEvent(4, 'input.accepted', { inputId: INPUT })
-  appendBrokerEvent(5, 'input.rejected', {
-    inputId: INPUT2,
-    submissionId: SUB2,
-    deliveryEvidence: 'not_written',
-  })
+  // The protocol's InputDispositionPayload carries the submission as inputId.
+  appendBrokerEvent(5, 'input.rejected', { inputId: SUB2, deliveryEvidence: 'not_written' })
   appendBrokerEvent(6, 'submission.executed', { submissionId: SUB, turnId: TURN })
   appendBrokerEvent(7, 'admission.requested', { submissionId: SUB3, origin: { envelopeId: ENV } })
   appendBrokerEvent(
