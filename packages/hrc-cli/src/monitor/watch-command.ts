@@ -221,16 +221,17 @@ async function runWatch(
   // A live follow must never rebuild the daemon's complete session/message/event
   // collections on every 100 ms poll. The targeted source holds an incremental
   // database cursor and a compact projection for exactly the selected members.
-  // Explicit replay windows retain the legacy materializer because their
-  // operator-requested history must be present before the live boundary.
-  const useTargetedFollowSource =
-    liveMode && follow && args.fromSeq === undefined && args.last === undefined
+  // An explicit replay window (--from-seq / --last) opens that cursor below the
+  // live boundary so the requested history is in the initial state (T-08785:
+  // the legacy materializer here pulled the full status listing every poll).
+  const useTargetedFollowSource = liveMode && follow
   const conditionIo = useTargetedFollowSource
     ? withTargetedConditionSource(
         io,
         selectorSpecs,
         (untilPlan?.conditions[0] ?? 'turn-finished') as HrcMonitorCondition,
-        undefined
+        args.fromSeq === undefined ? undefined : String(args.fromSeq),
+        args.last === undefined ? undefined : Math.max(DEFAULT_LIVE_EVENT_WINDOW, args.last)
       )
     : io
   const filteredIo = wrapWithMonitorFilters(conditionIo, args, selectorSpecs)
@@ -317,7 +318,8 @@ function withTargetedConditionSource(
   io: MonitorWatchDeps,
   selectorSpecs: readonly MonitorSelectorSpec[],
   condition: HrcMonitorCondition,
-  since: string | undefined
+  since: string | undefined,
+  replayWindow?: number | undefined
 ): MonitorWatchDeps {
   let sourcePromise: Promise<LiveMonitorStateSource> | undefined
   let initialStateDelivered = false
@@ -325,7 +327,12 @@ function withTargetedConditionSource(
     ...io,
     async buildMonitorState(signal) {
       sourcePromise ??= createLiveMonitorStateSource(
-        { selectorSpecs, condition, ...(since !== undefined ? { since } : {}) },
+        {
+          selectorSpecs,
+          condition,
+          ...(since !== undefined ? { since } : {}),
+          ...(replayWindow !== undefined ? { replayWindow } : {}),
+        },
         signal
       )
       const source = await sourcePromise
@@ -408,7 +415,7 @@ async function buildLiveMonitorState(
   const socketPath = discoverSocket()
   const client = new HrcClient(socketPath)
 
-  const status = await client.getStatus()
+  const status = await client.getStatus({ includeSessions: true })
   signal?.throwIfAborted()
 
   // Build sessions from status

@@ -1406,8 +1406,10 @@ export type HrcStatusSessionView = {
   activeRuntime?: HrcStatusActiveRuntimeView | undefined
 }
 
-export type HrcStatusResponse = HrcCapabilityStatus & {
-  sessions: HrcStatusSessionView[]
+/**
+ * The default `GET /v1/status` body (T-08785): scalar counts, no session list.
+ */
+export type HrcStatusSummaryResponse = HrcCapabilityStatus & {
   /**
    * Mail-delivery ownership posture. The bridge can retain the package while
    * constructing no owner (`disabled`); the deletion release has no package
@@ -1416,4 +1418,7 @@ export type HrcStatusResponse = HrcCapabilityStatus & {
   mailKicker: 'in-process' | 'disabled' | 'absent'
 }
 
-export type HrcStatusSummaryResponse = HrcCapabilityStatus
+/** `GET /v1/status?includeSessions=true`: the summary plus every session view. */
+export type HrcStatusResponse = HrcStatusSummaryResponse & {
+  sessions: HrcStatusSessionView[]
+}

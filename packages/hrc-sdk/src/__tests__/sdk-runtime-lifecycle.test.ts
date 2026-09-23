@@ -379,7 +379,7 @@ describe('runtime lifecycle client methods', () => {
     expect(await client.getRun('missing-run')).toBeNull()
   })
 
-  it('getStatus preserves includeArchived as a true-or-absent query flag', async () => {
+  it('getStatus sends includeArchived as true-or-absent and includeSessions explicitly', async () => {
     const capturedQueries: string[] = []
 
     stubServer = Bun.serve({
@@ -396,8 +396,16 @@ describe('runtime lifecycle client methods', () => {
     await client.getStatus()
     await client.getStatus({ includeArchived: false })
     await client.getStatus({ includeArchived: true })
+    await client.getStatus({ includeSessions: true })
 
-    expect(capturedQueries).toEqual(['', '', 'includeArchived=true'])
+    // T-08785: includeSessions is always explicit, so a daemon from before the
+    // summary default still answers the summary.
+    expect(capturedQueries).toEqual([
+      'includeSessions=false',
+      'includeSessions=false',
+      'includeArchived=true&includeSessions=false',
+      'includeSessions=true',
+    ])
   })
 
   it('listTargets preserves discover/includeDormant as true-or-absent query flags', async () => {

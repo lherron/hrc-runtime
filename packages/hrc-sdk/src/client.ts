@@ -1014,17 +1014,22 @@ export class HrcClient {
     return this.getHealth()
   }
 
-  async getStatus(options: {
-    includeArchived?: boolean
-    includePeerHealth?: boolean
-    includeSessions: false
-  }): Promise<StatusSummaryResponse>
+  /**
+   * `GET /v1/status`. Returns the summary unless `includeSessions: true` asks
+   * for every session view (T-08785). The flag is always sent explicitly so a
+   * daemon from before the default flipped still returns the summary.
+   */
   async getStatus(options?: {
     includeArchived?: boolean
     includePeerHealth?: boolean
-    includeSessions?: true | undefined
-  }): Promise<StatusResponse>
+    includeSessions?: false | undefined
+  }): Promise<StatusSummaryResponse>
   async getStatus(options: {
+    includeArchived?: boolean
+    includePeerHealth?: boolean
+    includeSessions: true
+  }): Promise<StatusResponse>
+  async getStatus(options?: {
     includeArchived?: boolean
     includePeerHealth?: boolean
     includeSessions?: boolean | undefined
@@ -1037,7 +1042,7 @@ export class HrcClient {
     const path = buildPath('/v1/status', {
       includeArchived: boolField(options?.includeArchived),
       includePeerHealth: boolField(options?.includePeerHealth),
-      includeSessions: options?.includeSessions === false ? false : undefined,
+      includeSessions: options?.includeSessions === true,
     })
     return this.getJson<StatusResponse | StatusSummaryResponse>(path)
   }

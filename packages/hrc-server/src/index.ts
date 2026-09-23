@@ -105,7 +105,7 @@ import {
 import { type EvidenceHandlersMethods, evidenceHandlersMethods } from './evidence-handlers.js'
 export { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import { handleResolveRuntimeIntent, handleRunPreview } from './declaration-handlers.js'
-import { EventLoopLagMonitor, markLoopActivity } from './event-loop-lag.js'
+import { EventLoopLagMonitor, markLoopActivity, timeLoopActivity } from './event-loop-lag.js'
 import {
   type ExactClaimHandlersMethods,
   exactClaimHandlersMethods,
@@ -2935,6 +2935,16 @@ class HrcServerInstance implements HrcServer {
   }
 
   async handleStatus(url?: URL): Promise<Response> {
+    // T-08785: the summary is the default. The full session listing (~38 MB on
+    // the live ledger) is built only for an explicit includeSessions=true.
+    const includeSessions = url?.searchParams.get('includeSessions') ?? null
+    if (includeSessions !== null && includeSessions !== 'true' && includeSessions !== 'false') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'includeSessions must be "true" or "false"',
+        { includeSessions }
+      )
+    }
     const peerHealth =
       url?.searchParams.get('includePeerHealth') === 'true'
         ? (await this.collectFederationPeerHealth()).map((probe) => probe.health)
@@ -2942,66 +2952,9 @@ class HrcServerInstance implements HrcServer {
     const release = projectServerRelease(this.capturedRelease)
     const aspToolchain = projectAspToolchainStatus()
     const aspd = await projectAspdServiceStatus()
-    if (url?.searchParams.get('includeSessions') === 'false') {
-      const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
-      const tmuxStatus = await detectTmuxBackend()
-      return json({
-        ok: true,
-        uptime: Math.floor(uptimeMs / 1000),
-        startedAt: this.startedAt,
-        runtimeRoot: this.options.runtimeRoot,
-        stateRoot: this.options.stateRoot,
-        socketPath: this.options.socketPath,
-        dbPath: this.options.dbPath,
-        cwd: process.cwd(),
-        binaryPath: HRC_SERVER_BINARY_PATH,
-        packagePath: HRC_SERVER_PACKAGE_PATH,
-        release,
-        aspToolchain,
-        aspd,
-        sessionCount: this.db.sessions.count(),
-        runtimeCount: this.db.runtimes.count(),
-        apiVersion: HRC_API_VERSION,
-        ...(this.eventLoopLag ? { eventLoop: this.eventLoopLag.snapshot() } : {}),
-        node: this.nodeStatus(),
-        ...(peerHealth === undefined ? {} : { peerHealth }),
-        capabilities: {
-          semanticCore: {
-            sessions: true,
-            ensureRuntime: true,
-            dispatchTurn: true,
-            inFlightInput: true,
-            capture: true,
-            attach: true,
-            clearContext: true,
-          },
-          platform: {
-            // T-08576 D7: a persona allowlist refuses every app entry.
-            appOwnedSessions: this.options.localPersonaAllowlist === undefined,
-            appHarnessSessions: this.options.localPersonaAllowlist === undefined,
-            commandSessions: this.options.localPersonaAllowlist === undefined,
-            literalInput: this.options.localPersonaAllowlist === undefined,
-            surfaceBindings: true,
-            legacyLocalBridges: ['legacy-agentchat'],
-          },
-          bridgeDelivery: {
-            actualPtyInjection: true,
-            enter: true,
-            oobSuffix: true,
-            freshnessFence: true,
-          },
-          backend: {
-            tmux: tmuxStatus,
-          },
-        },
-      } satisfies HrcStatusSummaryResponse)
-    }
-
-    const sessions = this.listAllSessions()
-    const runtimes = this.db.runtimes.listAll()
     const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
     const tmuxStatus = await detectTmuxBackend()
-    return json({
+    const summary = {
       ok: true,
       uptime: Math.floor(uptimeMs / 1000),
       startedAt: this.startedAt,
@@ -3015,12 +2968,12 @@ class HrcServerInstance implements HrcServer {
       release,
       aspToolchain,
       aspd,
-      sessionCount: sessions.length,
-      runtimeCount: runtimes.length,
+      sessionCount: this.db.sessions.count(),
+      runtimeCount: this.db.runtimes.count(),
       apiVersion: HRC_API_VERSION,
       ...(this.eventLoopLag ? { eventLoop: this.eventLoopLag.snapshot() } : {}),
       node: this.nodeStatus(),
-      mailKicker: 'absent',
+      mailKicker: 'absent' as const,
       ...(peerHealth === undefined ? {} : { peerHealth }),
       capabilities: {
         semanticCore: {
@@ -3033,6 +2986,7 @@ class HrcServerInstance implements HrcServer {
           clearContext: true,
         },
         platform: {
+          // T-08576 D7: a persona allowlist refuses every app entry.
           appOwnedSessions: this.options.localPersonaAllowlist === undefined,
           appHarnessSessions: this.options.localPersonaAllowlist === undefined,
           commandSessions: this.options.localPersonaAllowlist === undefined,
@@ -3050,8 +3004,17 @@ class HrcServerInstance implements HrcServer {
           tmux: tmuxStatus,
         },
       },
-      sessions: sessions.map((session) => toStatusSessionView(this.db, session)),
-    } satisfies HrcStatusResponse)
+    } satisfies HrcStatusSummaryResponse
+    if (includeSessions !== 'true') return json(summary)
+
+    return timeLoopActivity('status:full_listing', () => {
+      const sessions = this.listAllSessions()
+      return json({
+        ...summary,
+        sessionCount: sessions.length,
+        sessions: sessions.map((session) => toStatusSessionView(this.db, session)),
+      } satisfies HrcStatusResponse)
+    })
   }
 }
 

@@ -261,6 +261,11 @@ export type LiveMonitorSourceRequest = {
   selectorSpecs: readonly MonitorSelectorSpec[]
   condition: HrcMonitorCondition
   since?: string | undefined
+  /**
+   * `hrc monitor watch --last` (T-08785): open the initial event read this many
+   * sequences below the high-water so the replay tail is present.
+   */
+  replayWindow?: number | undefined
 }
 
 export type LiveMonitorStateSource = {
@@ -392,12 +397,15 @@ export async function createLiveMonitorStateSource(
     const selected = await readSelectorSetState(request.selectorSpecs, client, db)
     signal?.throwIfAborted()
     filters = selectorEventFilters(request.selectorSpecs, selected)
-    eventFromSeq = initialEventFromSeq(
-      request.condition,
-      request.since,
-      eventGlobalHighWaterSeq,
-      status.dbPath
-    )
+    eventFromSeq =
+      request.replayWindow !== undefined && request.since === undefined
+        ? Math.max(1, eventGlobalHighWaterSeq - Math.max(0, request.replayWindow - 1))
+        : initialEventFromSeq(
+            request.condition,
+            request.since,
+            eventGlobalHighWaterSeq,
+            status.dbPath
+          )
     const rawEvents = readFilteredEvents(db, eventFromSeq, eventGlobalHighWaterSeq, filters)
     applyLifecycleProjection(selected, rawEvents)
     targetMessages = [...(selected.messages ?? [])]

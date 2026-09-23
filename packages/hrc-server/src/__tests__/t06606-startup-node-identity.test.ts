@@ -82,7 +82,7 @@ describe('daemon startup with a declared federation config', () => {
     expect(node.peers).toEqual([{ nodeId: 'svc', endpoint: 'https://svc.example.ts.net:8443/' }])
 
     // The whole status payload, not just the node block, is token-free.
-    const full = await (await fixture.fetchSocket('/v1/status')).text()
+    const full = await (await fixture.fetchSocket('/v1/status?includeSessions=true')).text()
     expect(full).not.toContain(secret)
   })
 
