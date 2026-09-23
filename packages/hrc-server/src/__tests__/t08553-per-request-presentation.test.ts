@@ -131,7 +131,6 @@ beforeEach(async () => {
   aspdSocket = join(scratch, 'aspd.sock')
   aspd = startAspdDouble(aspdSocket, releaseA)
   setEnv('HRC_ASPD_SOCKET', aspdSocket)
-  setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', undefined)
   // A resolver-governed selection that would be wrong if this route consulted it.
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
 
@@ -169,10 +168,9 @@ function operationsFor(hostSessionId: string) {
 describe('T-08553 per-request operator presentation', () => {
   type RecordedInteractive = { intent: HrcRuntimeIntent }
 
-  /** Max3 shape: Codex interactive redirect on, headless viewer default tmux-tui. */
+  /** Max3 shape: Codex interactive redirect on. */
   async function bootMax3Node(): Promise<RecordedInteractive[]> {
     await server.stop()
-    setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
     await bootServer({ codexCliTmuxBrokerEnabled: true })
     const recorded: RecordedInteractive[] = []
     // The interactive tmux route is observed, not run: it records the intent it

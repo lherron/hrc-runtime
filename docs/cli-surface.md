@@ -100,9 +100,10 @@ Node-default Codex route (T-08555, `docs/aspd-headless-codex-integration.md`
 §1.3). On a node that turns the Codex redirect off
 (`HRC_CODEX_CLI_TMUX_BROKER_ENABLED=0`, max3), a plain `hrc start <codex scope>`
 or a cold dispatch or mail birth with nothing established in the scope runs the
-headless codex-app-server with the node presentation default. With
-`HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION=tmux-tui` and `HRC_ASPD_SOCKET` that
-means the aspd-prepared attached viewer, so `--app-server-viewer` is not needed.
+headless codex-app-server with the presentation ASP selects. ASP defaults
+`presentation` to `true` when the agent profile omits it, so with
+`HRC_ASPD_SOCKET` that means the aspd-prepared attached viewer, and
+`--app-server-viewer` is not needed.
 `--no-viewer` stays the headless opt-out. A scope whose established runtime is a
 TUI or headless worker keeps it: input goes to that transport's own admission. A
 foreign-harness headless runtime refuses `established_runtime_harness_mismatch`.

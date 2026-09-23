@@ -41,18 +41,6 @@ export const HRC_BROKER_DURABLE_IPC_ENABLED_ENV = 'HRC_BROKER_DURABLE_IPC_ENABLE
 export const HRC_TRANSCRIPT_INDEX_ENABLED_ENV = 'HRC_TRANSCRIPT_INDEX_ENABLED'
 export const HRC_TRANSCRIPT_INDEX_TICK_MS_ENV = 'HRC_TRANSCRIPT_INDEX_TICK_MS'
 export const HRC_TMUX_AGING_ENABLED_ENV = 'HRC_TMUX_AGING_ENABLED'
-// T-04921 (T-04905 Phase A) — HRC-owned operator-presentation policy DEFAULT for
-// the codex-app-server tmux-tui route. Set to 'tmux-tui' to request the
-// dual-tmux operator presentation for codex-app-server headless runtimes; unset / any other
-// value keeps ordinary headless (presentation='none'). The DEFAULT lives here as
-// an env policy source; the route decision still gates on driver applicability.
-export const HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV =
-  'HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION'
-// Node policy source for the muse-serve observer route. Set to 'observer' to request the
-// observer-pane operator presentation for muse-serve headless runtimes; unset / any other
-// value keeps ordinary headless (presentation='none'). The DEFAULT lives here as
-// an env policy source; the route decision still gates on driver applicability.
-export const HRC_MUSE_SERVE_OPERATOR_PRESENTATION_ENV = 'HRC_MUSE_SERVE_OPERATOR_PRESENTATION'
 export const DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS = 120_000
 // Must cover the whole attached launch pipeline: the ASP compile alone has been
 // observed to stall past 50s, and the CLI applies no timeout of its own.

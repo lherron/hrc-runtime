@@ -138,7 +138,6 @@ beforeEach(async () => {
   aspdSocket = join(scratch, 'aspd.sock')
   aspd = startAspdDouble(aspdSocket, releaseA)
   setEnv('HRC_ASPD_SOCKET', aspdSocket)
-  setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', undefined)
   // A resolver-governed selection that would be wrong if this route consulted it.
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
 
@@ -167,10 +166,9 @@ afterEach(async () => {
 describe('T-08554 explicit app-server viewer', () => {
   type RecordedInteractive = { intent: HrcRuntimeIntent }
 
-  /** Max3 shape: Codex interactive redirect on, headless viewer default tmux-tui. */
+  /** Max3 shape: Codex interactive redirect on. */
   async function bootMax3Node(): Promise<RecordedInteractive[]> {
     await server.stop()
-    setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
     await bootServer({ codexCliTmuxBrokerEnabled: true })
     const recorded: RecordedInteractive[] = []
     ;(server as unknown as Record<string, unknown>)['handleInteractiveTmuxBrokerDispatchTurn'] =
@@ -246,8 +244,7 @@ describe('T-08554 explicit app-server viewer', () => {
   // T-08555: with HRC_ASPD_SOCKET configured a node-default viewer prepares
   // through aspd (t08555-default-app-server-viewer.test.ts). T-08596: unset
   // refuses with aspd_unconfigured; the facade viewer route is deleted.
-  it('a node-default tmux-tui with no request choice refuses with aspd_unconfigured when HRC_ASPD_SOCKET is unset (T-08596)', async () => {
-    setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
+  it('no request choice refuses with aspd_unconfigured when HRC_ASPD_SOCKET is unset (T-08596)', async () => {
     setEnv('HRC_ASPD_SOCKET', undefined)
     await server.stop()
     await bootServer()

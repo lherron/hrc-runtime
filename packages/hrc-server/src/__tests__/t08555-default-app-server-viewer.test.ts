@@ -154,7 +154,6 @@ beforeEach(async () => {
   const socket = join(scratch, 'aspd.sock')
   aspd = startAspdDouble(socket, releaseA)
   setEnv('HRC_ASPD_SOCKET', socket)
-  setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
   callerAspHome = join(scratch, 'caller-asp-home')
   setEnv('ASP_HOME', callerAspHome)

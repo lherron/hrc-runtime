@@ -203,7 +203,7 @@ function presentationForExecution(execution: SelectedExecution): AspdHostingPres
 /**
  * The route this module owns: the node declares an aspd endpoint and the intent
  * is ordinary headless codex-app-server, with operator presentation `none` or
- * the `tmux-tui` viewer, chosen by request or node default (T-08555), or
+ * the `tmux-tui` viewer, chosen by request or by ASP's selected execution, or
  * headless muse-serve with operator presentation `none`. Returns the endpoint,
  * or undefined for every other route.
  */

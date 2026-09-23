@@ -145,7 +145,6 @@ beforeEach(async () => {
   aspdSocket = join(scratch, 'aspd.sock')
   aspd = startAspdDouble(aspdSocket, releaseA)
   setEnv('HRC_ASPD_SOCKET', aspdSocket)
-  setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', undefined)
   // A resolver-governed selection that would be wrong if this route consulted it.
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
 

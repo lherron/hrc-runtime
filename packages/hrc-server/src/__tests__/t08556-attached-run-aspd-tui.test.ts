@@ -248,7 +248,6 @@ beforeEach(async () => {
   aspd = startAspdDouble(aspdSocket, releaseA)
   aspd.producerResult = terminalProducerResult()
   setEnv('HRC_ASPD_SOCKET', aspdSocket)
-  setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
   setEnv('ASP_HOME', join(scratch, 'caller-asp-home'))
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
