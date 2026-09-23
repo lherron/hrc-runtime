@@ -224,6 +224,19 @@ function aspdStartError(
   return new HrcRuntimeUnavailableError(message, { code, route: 'aspd', ...detail })
 }
 
+/**
+ * A caller that keeps only the error message (the mail injector's birth-refusal
+ * row, `hrc start`) should still learn WHY: the first error diagnostic names the
+ * file and field, where the summary alone names only which side refused.
+ */
+function withFirstErrorDiagnostic(
+  message: string,
+  diagnostics: readonly { level: string; code: string; message: string }[] | undefined
+): string {
+  const first = diagnostics?.find((diagnostic) => diagnostic.level === 'error')
+  return first === undefined ? message : `${message}: ${first.code}: ${first.message}`
+}
+
 function recordField(value: unknown, key: string): unknown {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)[key]
@@ -433,10 +446,17 @@ export async function prepareAspdHeadlessAttempt(
     throw hrcRefused
       ? aspdStartError(
           'admission-rejected',
-          'aspd preparation refused by HRC admission (ASP compile succeeded)',
+          withFirstErrorDiagnostic(
+            'aspd preparation refused by HRC admission (ASP compile succeeded)',
+            detail.diagnostics
+          ),
           detail
         )
-      : aspdStartError('compile-not-ok', 'aspd preparation compile rejected by ASP', detail)
+      : aspdStartError(
+          'compile-not-ok',
+          withFirstErrorDiagnostic('aspd preparation compile rejected by ASP', detail.diagnostics),
+          detail
+        )
   }
   if (prepared === undefined || !prepared.response.ok) {
     throw aspdStartError('compile-not-ok', 'aspd preparation returned no successful response', {
