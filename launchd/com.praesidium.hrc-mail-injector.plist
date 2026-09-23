@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>HRC_MAIL_INJECTOR_STATE_PATH</key>
+		<string>__HOME__/praesidium/var/state/acp/hrc-mail-injector.sqlite</string>
+		<key>HRC_NODE_ID</key>
+		<string>__NODE_ID__</string>
+		<key>HRC_SOCKET_PATH</key>
+		<string>__SOCKET_PATH__</string>
+		<key>HRC_WRKQD_TOKEN_FILE</key>
+		<string>__WRKQD_TOKEN_FILE__</string>
+		<key>HRC_WRKQ_DB</key>
+		<string>__WRKQ_DB__</string>
+		<key>LANG</key>
+		<string>en_US.UTF-8</string>
+		<key>PATH</key>
+		<string>__HOME__/.local/bin:__HOME__/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.praesidium.hrc-mail-injector</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__BUNX__</string>
+		<string>--bun</string>
+		<string>hrc-mail-injector@__VERSION__</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/praesidium/var/logs/hrc-mail-injector.err.log</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/praesidium/var/logs/hrc-mail-injector.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>__HOME__/praesidium</string>
+</dict>
+</plist>

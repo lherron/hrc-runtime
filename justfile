@@ -248,77 +248,101 @@ install-hrc-viewer-launchd:
     launchctl print "$service_target" >/dev/null
     echo "[install] activated $service_target"
 
-# Deploy to the co-hosted lab logical node (defaults to the latest pushed main)
-deploy-lab ref="origin/main":
-    @just _deploy-node "lab@mini" "lab" "{{ ref }}"
+# A node runs three processes this lane deploys, in dependency order:
+#   aspd          ASP preparation service (agent-spaces checkout -> immutable
+#                 release under ~/praesidium/var/aspd, launchd com.praesidium.aspd)
+#   hrc-server    this repo (atomic release, launchd com.praesidium.hrc-server)
+#   mail injector hrc-mail-injector, bunx-pinned from Verdaccio (launchd
+#                 com.praesidium.hrc-mail-injector)
+# Each takes its own target. `@max3` means what max3 is RUNNING right now;
+# `origin/main` / `latest` mean the newest pushed or published build.
 
-# Deploy to the max3 logical node (defaults to the latest pushed main)
-deploy-max3 ref="origin/main":
-    @just _deploy-node "max3" "max3" "{{ ref }}"
-
-# The `@max3` default means the hrc source commit max3's daemon is RUNNING right
-# now, not origin/main HEAD. Pass an explicit ref (a SHA, tag, or origin/main) to
-# target something else.
+# Deploy to the max3 logical node (defaults to the latest pushed main and latest injector)
+deploy-max3 ref="origin/main" aspd="origin/main" injector="latest" restart="wait":
+    @just _deploy-node "max3" "max3" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}"
 
 # Deploy to the svc logical node (user lherron on mini)
-deploy-svc ref="@max3":
-    @just _deploy-node "mini" "svc" "{{ ref }}"
+deploy-svc ref="@max3" aspd="@max3" injector="@max3" restart="wait":
+    @just _deploy-node "mini" "svc" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}"
 
 # `hrcdev` here is the Tart macOS guest VM hosted on max3 (`ssh hrcdev`), NOT the
 # ~/praesidium/var/install/hrc-dev lane, which is a git-archive export with its
 # own LaunchAgent and no release manifest. See AGENTS.md.
 
 # Deploy to the hrcdev logical node (the Tart guest VM on max3)
-deploy-hrcdev ref="@max3":
-    @just _deploy-node "hrcdev" "hrcdev" "{{ ref }}"
+deploy-hrcdev ref="@max3" aspd="@max3" injector="@max3" restart="wait":
+    @just _deploy-node "hrcdev" "hrcdev" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}"
 
-# The commit is resolved ONCE and passed to both nodes as a literal SHA. Letting
+# The targets are resolved ONCE and passed to every node as literals. Letting
 # each node resolve `@max3` for itself would race a concurrent max3 install and
-# could leave the two nodes on different commits while reporting success.
+# could leave nodes on different builds while reporting success.
 
-# Bring svc and hrcdev to the hrc source commit max3 is running
-deploy-fleet-from-max3:
+# Bring svc and hrcdev to the hrc, aspd and mail-injector builds max3 is running
+deploy-fleet restart="wait":
     #!/usr/bin/env bash
     set -euo pipefail
-    target="$(just _max3-source-commit)"
-    echo "[fleet] target hrc sourceCommit ${target} (running on max3)"
-    just _deploy-node "mini" "svc" "$target"
-    just _deploy-node "hrcdev" "hrcdev" "$target"
+    hrc_sha="$(just _max3-source-commit)"
+    aspd_sha="$(just _max3-aspd-commit)"
+    injector="$(just _max3-injector-version)"
+    echo "[fleet] targets from max3: hrc ${hrc_sha} aspd ${aspd_sha} injector ${injector}"
+    just _deploy-node "mini" "svc" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}"
+    just _deploy-node "hrcdev" "hrcdev" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}"
+    just fleet-status
 
 # Run this before and after a deploy; an unreachable node prints as unreachable
 # instead of aborting the table.
 
-# Read-only hrc/asp parity table plus bun/codex/claude tool versions across max3, svc, lab, and hrcdev
+# Read-only hrc/aspd/injector parity table plus bun/codex/claude tool versions across max3, svc, and hrcdev
 fleet-status:
     #!/usr/bin/env bash
     set -uo pipefail
 
-    probe() {
-      local label="$1" target="$2" status hrc asp health coherent
-      if [[ -z "$target" ]]; then
-        status="$(hrc server status --json 2>/dev/null)"
+    # One login-free probe per node: HRC status (which carries HRC's own live
+    # aspd probe) plus the injector job as launchd sees it. An injector that is
+    # running but not owned by its launchd job is exactly the state that dies
+    # silently on the next reboot, so it prints as UNSUPERVISED, not as a version.
+    node_probe='export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+      status="$(hrc server status --json 2>/dev/null | jq -c .)"
+      [[ -n "$status" ]] || status="{}"
+      printf "%s\n" "$status"
+      socket="$(jq -r ".socketPath // empty" <<<"$status" 2>/dev/null)"
+      job="$(launchctl print "gui/$(id -u)/com.praesidium.hrc-mail-injector" 2>/dev/null)"
+      pid="$(awk '\''$1 == "pid" && $2 == "=" { print $3; exit }'\'' <<<"$job")"
+      if [[ -n "$pid" ]]; then
+        ps -o command= -p "$pid" | grep -oE "hrc-mail-injector@[^ /]+" | head -1 | sed "s/^hrc-mail-injector@//"
       else
-        status="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" \
-          'export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; hrc server status --json' \
-          2>/dev/null)"
+        loose=""
+        for p in $(pgrep -u "$(id -u)" -f hrc-mail-injector); do
+          ps eww -p "$p" -o command= | tr " " "\n" | grep -qx "HRC_SOCKET_PATH=$socket" && loose=1
+        done
+        [[ -n "$loose" ]] && echo UNSUPERVISED || echo down
+      fi'
+
+    probe() {
+      local label="$1" target="$2" out status health hrc aspd injector coherent
+      if [[ -z "$target" ]]; then
+        out="$(bash -c "$node_probe" 2>/dev/null)"
+      else
+        out="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" "bash -c $(printf '%q' "$node_probe")" 2>/dev/null)"
       fi
-      if [[ -z "$status" ]]; then
+      status="$(sed -n '1p' <<<"$out")"
+      if [[ -z "$status" || "$status" == '{}' ]]; then
         printf '%-8s %-12s %s\n' "$label" 'unreachable' '-'
         return
       fi
+      injector="$(sed -n '2p' <<<"$out")"
       health="$(jq -r '.status // "down"' <<<"$status")"
       hrc="$(jq -r '.release.hrcBuild.sourceCommit // "unknown"' <<<"$status")"
-      asp="$(jq -r '([.release.aspContracts[]? | "\(.name)@\(.version)"] | select(length > 0) | join(",")) // "unknown"' <<<"$status")"
+      aspd="$(jq -r 'if .api.aspd.reachable == true then (.api.aspd.release.sourceCommit // "unidentified")[0:8] else "DOWN" end' <<<"$status")"
       coherent="$(jq -r '.release.runningEqualsInstalled // false' <<<"$status")"
-      printf '%-8s %-12s %-10s %-28s %s\n' \
-        "$label" "$health" "${hrc:0:8}" "$asp" \
+      printf '%-8s %-12s %-10s %-10s %-26s %s\n' \
+        "$label" "$health" "${hrc:0:8}" "$aspd" "${injector:-unknown}" \
         "$([[ "$coherent" == true ]] && echo 'running==installed' || echo 'STALE PROCESS')"
     }
 
-    printf '%-8s %-12s %-10s %-28s %s\n' NODE STATUS HRC ASP COHERENCE
+    printf '%-8s %-12s %-10s %-10s %-26s %s\n' NODE STATUS HRC ASPD INJECTOR COHERENCE
     probe max3 ''
     probe svc 'mini'
-    probe lab 'lab@mini'
     probe hrcdev 'hrcdev'
 
     # Harness tool versions. Read through a LOGIN shell so PATH matches what the
@@ -356,7 +380,6 @@ fleet-status:
     printf '\n%-8s %-10s %-10s %s\n' NODE BUN CODEX CLAUDE
     tools max3 ''
     tools svc 'mini'
-    tools lab 'lab@mini'
     tools hrcdev 'hrcdev'
 
 # Print the hrc source commit max3's daemon is currently running.
@@ -382,8 +405,175 @@ _max3-source-commit:
     jq -er '.release.hrcBuild.sourceCommit' <<<"$status" ||
       fail 'max3 status did not report a release sourceCommit'
 
+# Print the agent-spaces source commit max3's aspd is serving, as HRC's own
+# live probe reports it. An unreachable or unidentified aspd has no answer.
 [private]
-_deploy-node ssh-target expected-node target-ref="origin/main":
+_max3-aspd-commit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail() { printf '@max3 aspd: %s\n' "$*" >&2; exit 1; }
+
+    status="$(hrc server status --json 2>/dev/null)" || fail 'local HRC daemon is not reachable'
+    [[ "$(jq -r '.node.nodeId // ""' <<<"$status")" == max3 ]] ||
+      fail 'the @max3 aspd target must be resolved on max3'
+    [[ "$(jq -r '.api.aspd.reachable // false' <<<"$status")" == true ]] ||
+      fail "max3 aspd is not reachable: $(jq -c '.api.aspd.error // {}' <<<"$status")"
+    jq -er '.api.aspd.release.sourceCommit' <<<"$status" ||
+      fail 'max3 aspd did not report a release sourceCommit'
+
+# Print the hrc-mail-injector version max3's supervised injector is running. The
+# running argv is the authority, not the plist: a plist rewritten without a
+# reload names a version nobody runs.
+[private]
+_max3-injector-version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail() { printf '@max3 injector: %s\n' "$*" >&2; exit 1; }
+
+    [[ "$(hrc server status --json 2>/dev/null | jq -r '.node.nodeId // ""')" == max3 ]] ||
+      fail 'the @max3 injector target must be resolved on max3'
+    job="$(launchctl print "gui/$(id -u)/com.praesidium.hrc-mail-injector" 2>/dev/null)" ||
+      fail 'launchd job com.praesidium.hrc-mail-injector is not loaded on max3; run just install-mail-injector-launchd <version> first'
+    pid="$(awk '$1 == "pid" && $2 == "=" { print $3; exit }' <<<"$job")"
+    [[ -n "$pid" ]] || fail 'max3 injector job is loaded but not running'
+    version="$(ps -o command= -p "$pid" | grep -oE 'hrc-mail-injector@[^ /]+' | head -1 | sed 's/^hrc-mail-injector@//')"
+    [[ -n "$version" ]] || fail "could not read a pinned version from injector pid ${pid}"
+    printf '%s\n' "$version"
+
+# Install and (re)load the supervised hrc-mail-injector on THIS node, pinned to an
+# exact version (or `latest`, resolved to one here and pinned). Replaces any
+# earlier injector serving this node's HRC socket, supervised or not: two
+# injectors against one HRC are two mail writers. Requires the injector state
+# store to already carry its one-time kicker-store import marker; a fresh node
+# needs that import before it can be supervised this way.
+#
+# Install/reload this node's launchd-supervised hrc-mail-injector at a pinned version
+install-mail-injector-launchd version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail() { printf 'install-mail-injector: %s\n' "$*" >&2; exit 1; }
+    export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+    version='{{ version }}'
+    if [[ "$version" == latest ]]; then
+      version="$(npm view hrc-mail-injector@latest version 2>/dev/null)" ||
+        fail 'could not resolve hrc-mail-injector@latest from the configured registry'
+    fi
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
+      fail "pin an exact version, got '${version}'"
+
+    label=com.praesidium.hrc-mail-injector
+    uid="$(id -u)"
+    service_target="gui/${uid}/${label}"
+    source_plist="$(git rev-parse --show-toplevel)/launchd/${label}.plist"
+    installed_plist="$HOME/Library/LaunchAgents/${label}.plist"
+    hrc_plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
+    state_path="$HOME/praesidium/var/state/acp/hrc-mail-injector.sqlite"
+    log_path="$HOME/praesidium/var/logs/hrc-mail-injector.log"
+
+    status="$(hrc server status --json 2>/dev/null)" || fail 'HRC daemon is not reachable'
+    node_id="$(jq -er '.node.nodeId' <<<"$status")" || fail 'HRC status did not report a node ID'
+    socket_path="$(jq -er '.socketPath' <<<"$status")" || fail 'HRC status did not report its socket path'
+    bunx_path="$(command -v bunx)" || fail 'bunx is not on PATH'
+    # The injector talks to the same canonical wrkq the node's HRC does; take it
+    # from HRC's supervisor env rather than restating it per node.
+    hrc_env="$(plutil -extract EnvironmentVariables json -o - "$hrc_plist")" ||
+      fail "cannot read EnvironmentVariables from ${hrc_plist}"
+    wrkq_db="$(jq -er '.HRC_WRKQ_DB' <<<"$hrc_env")" || fail "${hrc_plist} declares no HRC_WRKQ_DB"
+    token_file="$(jq -er '.HRC_WRKQD_TOKEN_FILE' <<<"$hrc_env")" ||
+      fail "${hrc_plist} declares no HRC_WRKQD_TOKEN_FILE"
+    [[ -f "$state_path" ]] || fail "injector state store ${state_path} does not exist"
+    imports="$(sqlite3 -readonly "$state_path" 'SELECT count(*) FROM injector_store_imports' 2>/dev/null)" ||
+      fail "${state_path} has no injector_store_imports table"
+    (( imports > 0 )) || fail "${state_path} carries no kicker-store import marker"
+
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs"
+    esc() { printf '%s' "$1" | sed 's/[\/&|]/\\&/g'; }
+    sed -e "s|__HOME__|$(esc "$HOME")|g" \
+        -e "s|__NODE_ID__|$(esc "$node_id")|g" \
+        -e "s|__SOCKET_PATH__|$(esc "$socket_path")|g" \
+        -e "s|__WRKQ_DB__|$(esc "$wrkq_db")|g" \
+        -e "s|__WRKQD_TOKEN_FILE__|$(esc "$token_file")|g" \
+        -e "s|__BUNX__|$(esc "$bunx_path")|g" \
+        -e "s|__VERSION__|$(esc "$version")|g" \
+        "$source_plist" > "$installed_plist.next"
+    plutil -lint "$installed_plist.next" >/dev/null
+    ! grep -q '__[A-Z_]*__' "$installed_plist.next" || fail 'unrendered placeholder in plist'
+
+    # Current already: the loaded job runs exactly this rendered plist and pinned
+    # version, and nothing else serves this socket. Reloading anyway would drop
+    # in-flight mail work for no change.
+    running_pid="$(launchctl print "$service_target" 2>/dev/null | awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
+    if [[ -n "$running_pid" ]] && cmp -s "$installed_plist.next" "$installed_plist" &&
+       ps -o command= -p "$running_pid" | grep -q "hrc-mail-injector@${version}"; then
+      others=0
+      for pid in $(pgrep -u "$uid" -f 'hrc-mail-injector' || true); do
+        [[ "$pid" == "$running_pid" ]] && continue
+        ps eww -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | grep -qx "HRC_SOCKET_PATH=${socket_path}" && others=1
+      done
+      if (( others == 0 )); then
+        rm "$installed_plist.next"
+        echo "[injector] already current: ${service_target} pid ${running_pid} running hrc-mail-injector@${version}"
+        exit 0
+      fi
+    fi
+
+    # Retire every earlier injector for this node before the new one loads:
+    # our own job, ad-hoc `launchctl submit` jobs (com.praesidium.hrc-mail-injector.<suffix>),
+    # then any loose process whose environment names this node's HRC socket.
+    # Injectors pointed at other sockets (isolated test namespaces) are left alone.
+    while read -r old; do
+      [[ -n "$old" ]] || continue
+      echo "[injector] bootout gui/${uid}/${old}"
+      launchctl bootout "gui/${uid}/${old}" 2>/dev/null || true
+    done < <(launchctl list | awk '{ print $3 }' | grep -E "^${label//./\\.}(\..+)?$" || true)
+    for _ in $(seq 1 50); do
+      launchctl print "$service_target" >/dev/null 2>&1 || break
+      sleep 0.2
+    done
+    for pid in $(pgrep -u "$uid" -f 'hrc-mail-injector' || true); do
+      if ps eww -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | grep -qx "HRC_SOCKET_PATH=${socket_path}"; then
+        echo "[injector] stopping unsupervised injector pid ${pid}"
+        kill -TERM "$pid" 2>/dev/null || true
+      fi
+    done
+    for _ in $(seq 1 50); do
+      stray=0
+      for pid in $(pgrep -u "$uid" -f 'hrc-mail-injector' || true); do
+        ps eww -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | grep -qx "HRC_SOCKET_PATH=${socket_path}" && stray=1
+      done
+      (( stray == 0 )) && break
+      sleep 0.2
+    done
+    (( stray == 0 )) || fail 'an earlier injector for this node would not exit'
+
+    install -m 0644 "$installed_plist.next" "$installed_plist"
+    rm "$installed_plist.next"
+    log_offset="$(stat -f %z "$log_path" 2>/dev/null || echo 0)"
+    launchctl bootstrap "gui/${uid}" "$installed_plist" || fail "could not bootstrap ${service_target}"
+
+    # Prove the outcome: the job's pid runs the pinned version, the injector
+    # reported itself running, and the same pid is still alive 10s later (a
+    # KeepAlive crash loop changes the pid and fails here).
+    pid=""
+    for _ in $(seq 1 60); do
+      pid="$(launchctl print "$service_target" 2>/dev/null | awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
+      if [[ -n "$pid" ]] && tail -c +"$((log_offset + 1))" "$log_path" 2>/dev/null | grep -q '"status":"running"'; then
+        break
+      fi
+      pid=""
+      sleep 1
+    done
+    [[ -n "$pid" ]] || fail "injector did not report running; see ${log_path} and ${log_path%.log}.err.log"
+    ps -o command= -p "$pid" | grep -q "hrc-mail-injector@${version}" ||
+      fail "injector pid ${pid} is not running hrc-mail-injector@${version}"
+    sleep 10
+    [[ "$(launchctl print "$service_target" 2>/dev/null | awk '$1 == "pid" && $2 == "=" { print $3; exit }')" == "$pid" ]] ||
+      fail "injector pid ${pid} did not survive 10s; it is crash-looping"
+    echo "[injector] ${service_target} pid ${pid} running hrc-mail-injector@${version} for node ${node_id}"
+
+[private]
+_deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/main" injector="latest" restart="wait":
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -391,18 +581,34 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
     if [[ "$target_ref" == '@max3' ]]; then
       target_ref="$(just _max3-source-commit)"
     fi
+    aspd_ref='{{ aspd-ref }}'
+    if [[ "$aspd_ref" == '@max3' ]]; then
+      aspd_ref="$(just _max3-aspd-commit)"
+    fi
+    injector='{{ injector }}'
+    if [[ "$injector" == '@max3' ]]; then
+      injector="$(just _max3-injector-version)"
+    elif [[ "$injector" == latest ]]; then
+      injector="$(npm view hrc-mail-injector@latest version)"
+    fi
 
     ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-      bash -s -- "{{ expected-node }}" "$target_ref" <<'REMOTE'
+      bash -s -- "{{ expected-node }}" "$target_ref" "$aspd_ref" "$injector" "{{ restart }}" <<'REMOTE'
     set -euo pipefail
 
     expected_node="$1"
     target_ref="$2"
+    aspd_ref="$3"
+    injector_version="$4"
+    restart_mode="$5"
     repo="$HOME/praesidium/hrc-runtime"
+    asp_repo="$HOME/praesidium/agent-spaces"
+    aspd_ns="$HOME/praesidium/var/aspd"
+    aspd_label=com.praesidium.aspd
 
     # `ssh host cmd` gets a non-interactive, non-login shell, which reads only
     # ~/.zshenv. svc's does not add ~/.bun/bin or Homebrew, so `hrc` and `just`
-    # are both MISSING over ssh there while they resolve fine on lab and hrcdev.
+    # are both MISSING over ssh there while they resolve fine on hrcdev.
     # Prepend the canonical locations rather than requiring every node's dotfiles
     # to agree.
     export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
@@ -416,7 +622,11 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
     command -v hrc >/dev/null 2>&1 || fail 'hrc is not available'
     command -v jq >/dev/null 2>&1 || fail 'jq is not available'
     command -v just >/dev/null 2>&1 || fail 'just is not available'
+    command -v bun >/dev/null 2>&1 || fail 'bun is not available'
     [[ -d "$repo/.git" ]] || fail "checkout not found at $repo"
+    [[ -d "$asp_repo/.git" ]] || fail "agent-spaces checkout not found at $asp_repo"
+    [[ -f "$aspd_ns/service/config.json" ]] ||
+      fail "aspd namespace not initialised at $aspd_ns (agent-spaces: just aspd-init $aspd_ns)"
 
     status_before="$(hrc server status --json)" || fail 'HRC daemon is not healthy'
     actual_node="$(jq -er '.node.nodeId' <<<"$status_before")" ||
@@ -424,101 +634,143 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
     [[ "$actual_node" == "$expected_node" ]] ||
       fail "expected logical node $expected_node, found $actual_node"
 
-    cd "$repo"
-    branch="$(git branch --show-current)"
-    [[ "$branch" == 'main' ]] || fail "checkout must be on main, found ${branch:-detached HEAD}"
-    if [[ -n "$(git status --porcelain)" ]]; then
-      git status --short >&2
-      fail 'checkout is dirty; refusing to overwrite remote work'
-    fi
+    # Resolve and gate BOTH checkouts before anything moves: a refusal on the
+    # second must not leave the first half-deployed.
+    #   containment — the target is contained by freshly fetched origin/main
+    #     (`just install` enforces this itself, but only after the checkout moved)
+    #   direction   — the checkout is at or behind the target; --ff-only cannot
+    #     move backwards, so a node ahead of it would no-op and report green
+    checkout_to() {
+      local dir="$1" ref="$2" what="$3" branch sha head
+      cd "$dir"
+      branch="$(git branch --show-current)"
+      [[ "$branch" == 'main' ]] || fail "$what checkout must be on main, found ${branch:-detached HEAD}"
+      if [[ -n "$(git status --porcelain)" ]]; then
+        git status --short >&2
+        fail "$what checkout is dirty; refusing to overwrite remote work"
+      fi
+      git fetch --quiet --prune origin main
+      sha="$(git rev-parse --verify --quiet "${ref}^{commit}")" ||
+        fail "cannot resolve $what target ref ${ref} in this checkout"
+      git merge-base --is-ancestor "$sha" origin/main ||
+        fail "$what target ${sha} is not contained by freshly fetched origin/main"
+      head="$(git rev-parse HEAD)"
+      git merge-base --is-ancestor "$head" "$sha" || {
+        git log --oneline --decorate --left-right "$head...$sha" >&2
+        fail "$what checkout ${head} is ahead of or diverged from target ${sha}"
+      }
+      printf '%s\n' "$sha"
+    }
+    target_sha="$(checkout_to "$repo" "$target_ref" hrc)"
+    aspd_sha="$(checkout_to "$asp_repo" "$aspd_ref" agent-spaces)"
+    echo "[deploy-${expected_node}] targets: hrc ${target_sha} aspd ${aspd_sha} injector ${injector_version}"
 
-    git fetch --prune origin main
-    target_sha="$(git rev-parse --verify --quiet "${target_ref}^{commit}")" ||
-      fail "cannot resolve target ref ${target_ref} in this checkout"
-
-    # Containment. `just install` enforces this itself (publish-local-verdaccio's
-    # canonical gate refuses a source commit origin/main does not contain), but
-    # only AFTER the checkout has already moved. Checking it here keeps a refused
-    # deploy from leaving the node parked on an unpublished commit.
-    git merge-base --is-ancestor "$target_sha" origin/main ||
-      fail "target ${target_sha} is not contained by freshly fetched origin/main"
-
-    head_sha="$(git rev-parse HEAD)"
     running_sha="$(jq -r '.release.hrcBuild.sourceCommit // ""' <<<"$status_before")"
     running_installed="$(jq -r '.release.runningEqualsInstalled // false' <<<"$status_before")"
-    if [[ "$head_sha" == "$target_sha" && "$running_sha" == "$target_sha" &&
+    hrc_current=0
+    if [[ "$(git -C "$repo" rev-parse HEAD)" == "$target_sha" && "$running_sha" == "$target_sha" &&
           "$running_installed" == 'true' ]]; then
-      printf '%s already at %s: checkout, installed release, and running daemon agree\n' \
-        "$expected_node" "$target_sha"
-      exit 0
+      hrc_current=1
     fi
 
-    # Direction. --ff-only cannot move backwards, so a node at or ahead of the
-    # target would take a silent no-op merge and then report a green deploy after
-    # install+restart without ever having moved. Refuse instead; going backwards
-    # is an operator decision, not something a deploy should do quietly.
-    git merge-base --is-ancestor "$head_sha" "$target_sha" || {
-      git log --oneline --decorate --left-right "$head_sha...$target_sha" >&2
-      fail "checkout ${head_sha} is ahead of or diverged from target ${target_sha}"
-    }
+    # Busy runtimes do not block a deploy: brokers reattach across an HRC
+    # restart. `wait` drains in-flight runs first (bounded); `force` restarts
+    # through them, which is the only mode that works from a live agent turn on
+    # the node being deployed (its own turn never drains).
+    case "$restart_mode" in
+      wait) restart_flags=(--wait --wait-timeout-ms 300000) ;;
+      force) restart_flags=(--force) ;;
+      *) fail "restart mode must be wait or force, got ${restart_mode}" ;;
+    esac
 
-    git merge --ff-only "$target_sha"
-    [[ "$(git rev-parse HEAD)" == "$target_sha" ]] ||
-      fail 'checkout did not reach the target revision'
-
-    busy_json="$(hrc runtime list --status busy --json)" ||
-      fail 'could not inspect busy runtimes'
-    busy_count="$(jq -er 'length' <<<"$busy_json")" ||
-      fail 'busy runtime inventory was not a JSON array'
-    if (( busy_count > 0 )); then
-      jq . <<<"$busy_json" >&2
-      fail "$busy_count runtime(s) are busy; drain them before deployment"
+    # ---- 1. aspd ------------------------------------------------------------
+    # HRC refuses every birth without a reachable aspd, so it goes first and is
+    # proven through HRC's own live probe, not through aspd's pid file (a stale
+    # pid file and socket are exactly what a dead unsupervised aspd leaves).
+    aspd_probe() { hrc server status --json 2>/dev/null | jq -c '.api.aspd // {}'; }
+    aspd_supervisor="$(jq -r '.supervisor.label // ""' "$aspd_ns/service/config.json")"
+    aspd_now="$(aspd_probe)"
+    if [[ "$(jq -r '.reachable // false' <<<"$aspd_now")" == true &&
+          "$(jq -r '.release.sourceCommit // ""' <<<"$aspd_now")" == "$aspd_sha" &&
+          "$aspd_supervisor" == "$aspd_label" ]]; then
+      echo "[aspd] already serving ${aspd_sha} under ${aspd_label}"
+    else
+      cd "$asp_repo"
+      git merge --ff-only --quiet "$aspd_sha"
+      [[ "$(git rev-parse HEAD)" == "$aspd_sha" ]] || fail 'agent-spaces checkout did not reach the aspd target'
+      bun install --frozen-lockfile >/dev/null
+      # The build prints progress before its final JSON inspection; keep only the
+      # last top-level object.
+      build_out="$(just build-asp-release)" || fail 'build-asp-release failed'
+      build_json="$(awk '/^\{$/ { buf = "" } { buf = buf $0 "\n" } END { printf "%s", buf }' <<<"$build_out")"
+      release_id="$(jq -er '.releaseId' <<<"$build_json")" || fail 'build-asp-release reported no releaseId'
+      artifact="$(jq -er '.releasePath' <<<"$build_json")" || fail 'build-asp-release reported no releasePath'
+      [[ "$(jq -r '.sourceCommit' <<<"$build_json")" == "$aspd_sha" ]] ||
+        fail "built release ${release_id} is not from ${aspd_sha}"
+      if [[ ! -d "$aspd_ns/releases/$release_id" ]]; then
+        just install-asp-release "$artifact" "$aspd_ns/releases" >/dev/null
+      fi
+      if [[ -z "$aspd_supervisor" ]]; then
+        # Hand the service lifetime to launchd before activation; an unsupervised
+        # aspd that dies stays dead and the node silently stops birthing.
+        bun scripts/aspd-service.ts supervise "$aspd_ns" "$aspd_label" >/dev/null
+      elif [[ "$aspd_supervisor" != "$aspd_label" ]]; then
+        fail "aspd namespace is supervised by ${aspd_supervisor}, expected ${aspd_label}"
+      fi
+      just aspd-activate "$aspd_ns" "$release_id" >/dev/null
     fi
+    aspd_now=""
+    for _ in $(seq 1 20); do
+      aspd_now="$(aspd_probe)"
+      [[ "$(jq -r '.reachable // false' <<<"$aspd_now")" == true &&
+         "$(jq -r '.release.sourceCommit // ""' <<<"$aspd_now")" == "$aspd_sha" ]] && break
+      aspd_now=""
+      sleep 3
+    done
+    [[ -n "$aspd_now" ]] || fail "HRC does not see aspd serving ${aspd_sha}: $(aspd_probe)"
+    aspd_job_pid="$(launchctl print "gui/$(id -u)/${aspd_label}" 2>/dev/null |
+      awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
+    [[ -n "$aspd_job_pid" ]] || fail "aspd is serving but launchd job ${aspd_label} owns no running pid"
+    aspd_release="$(jq -r '.release.releaseId' <<<"$aspd_now")"
+    echo "[aspd] ${aspd_label} pid ${aspd_job_pid} serving ${aspd_release} (${aspd_sha})"
 
-    # Publish containment (T-07959). hrcdev is a disposable Tart guest that
-    # reaches BOTH its own Verdaccio and the shared fleet registry, so its
-    # publishes must stay on loopback; the publish boundary refuses a non-loopback
-    # target from that node and there is no override flag. The guest plist declares
-    # this same value, but plist env stops at the broker and never reaches an agent
-    # shell — which is why the lane names it here instead of inheriting it.
-    install_env=(env)
-    if [[ "$expected_node" == hrcdev ]]; then
-      install_env=(env VERDACCIO_REGISTRY=http://127.0.0.1:4873/)
-    fi
-    "${install_env[@]}" just install no-sync=1
-    # Lifecycle mutations refuse a partial HRC/ASP session envelope (T-06007
-    # gate). A node's login profile may export convenience vars from that
-    # envelope (svc exports ASP_DEFAULT_TASK=minisvc, lab exports minilab), which
-    # would make this operator deploy shell look like a half-formed agent
-    # session. Strip exactly the envelope keys for the lifecycle calls — the
-    # gate's own prescribed remediation ("run from a clean operator shell").
+    # ---- 2. hrc-server ------------------------------------------------------
+    cd "$repo"
     lifecycle_env=(env -u HRC_SESSION_REF -u HRC_RUN_ID -u HRC_BIRTH_CREDENTIAL
       -u ASP_SCOPE_REF -u ASP_TASK_ID -u ASP_DEFAULT_TASK -u ASP_HANDLE)
-    # Restart onto the freshly-selected release. The correct mechanism differs by
-    # supervisor: max3, svc AND hrcdev all run gui LaunchAgents that
-    # `hrc server restart` detects and kickstarts cleanly. hrcdev has been
-    # launchd-managed since 2026-08-18; the comment that used to sit here claimed
-    # it ran unsupervised with no plist at all and called the self-daemonize path
-    # correct for it, and that fiction is what let T-07957 pass as a green deploy:
-    # with the job bootted out, the restart found no launchd owner, self-daemonized
-    # a detached daemon carrying none of the plist's environment, and the node
-    # served turns normally while its mail kicker was off and it had no canonical
-    # wrkq endpoint. The CLI now refuses that path; the assertion after the restart
-    # proves the outcome on the node instead of trusting the mechanism.
-    # lab runs a system LaunchDaemon (no gui session for uid 502), which
-    # `hrc server restart` does NOT detect — it would self-daemonize a second
-    # process and race the KeepAlive respawn. For lab, stop and let launchd bring it
-    # back on the new release (root-free: lab may signal its own-uid process).
-    if [[ "$expected_node" == lab ]]; then
-      "${lifecycle_env[@]}" hrc server stop || fail 'hrc server stop failed on lab'
-      healthy=""
-      for _ in $(seq 1 40); do
-        sleep 3
-        [[ "$(hrc server status --json 2>/dev/null | jq -r '.status // "down"')" == healthy ]] && { healthy=1; break; }
-      done
-      [[ -n "$healthy" ]] || fail 'lab daemon did not become healthy after stop+respawn'
+    if (( hrc_current == 1 )); then
+      echo "[hrc] already at ${target_sha}: checkout, installed release, and running daemon agree"
     else
-      "${lifecycle_env[@]}" hrc server restart --wait --wait-timeout-ms 300000
+      git merge --ff-only --quiet "$target_sha"
+      [[ "$(git rev-parse HEAD)" == "$target_sha" ]] ||
+        fail 'checkout did not reach the target revision'
+
+      # Publish containment (T-07959). hrcdev is a disposable Tart guest that
+      # reaches BOTH its own Verdaccio and the shared fleet registry, so its
+      # publishes must stay on loopback; the publish boundary refuses a non-loopback
+      # target from that node and there is no override flag. The guest plist declares
+      # this same value, but plist env stops at the broker and never reaches an agent
+      # shell — which is why the lane names it here instead of inheriting it.
+      install_env=(env)
+      if [[ "$expected_node" == hrcdev ]]; then
+        install_env=(env VERDACCIO_REGISTRY=http://127.0.0.1:4873/)
+      fi
+      "${install_env[@]}" just install no-sync=1
+      # Lifecycle mutations refuse a partial HRC/ASP session envelope (T-06007
+      # gate). A node's login profile may export convenience vars from that
+      # envelope (svc exports ASP_DEFAULT_TASK=minisvc), which would make this
+      # operator deploy shell look like a half-formed agent session. Strip exactly
+      # the envelope keys for the lifecycle calls — the gate's own prescribed
+      # remediation ("run from a clean operator shell").
+      #
+      # Every node runs a gui LaunchAgent that `hrc server restart` detects and
+      # kickstarts. hrcdev has been launchd-managed since 2026-08-18; a comment
+      # that once claimed it ran unsupervised is what let T-07957 pass as a green
+      # deploy over a self-daemonized daemon carrying none of the plist's
+      # environment. The CLI now refuses that path; the assertion below proves the
+      # outcome on the node instead of trusting the mechanism.
+      "${lifecycle_env[@]}" hrc server restart "${restart_flags[@]}" \
+        --reason "deploy ${expected_node} to ${target_sha}"
     fi
 
     # The daemon can lag its supervisor respawn by a few seconds; a single
@@ -570,69 +822,49 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
       fail "daemon is running ${deployed_sha}, expected ${target_sha}"
     [[ "$(jq -r '.release.runningEqualsInstalled // false' <<<"$status_after")" == 'true' ]] ||
       fail 'running daemon is not the installed release'
+    [[ "$(jq -r '.api.aspd.release.sourceCommit // ""' <<<"$status_after")" == "$aspd_sha" ]] ||
+      fail "restarted daemon does not see aspd ${aspd_sha}: $(jq -c '.api.aspd' <<<"$status_after")"
+
     # Supervisor identity, not just health. Everything above proves a healthy
     # daemon running the requested release — and a detached daemon that
     # self-daemonized past an unloaded LaunchAgent proves exactly that too, while
-    # carrying none of the environment the plist declares. That daemon has no mail
-    # kicker and no canonical wrkq endpoint, so cold summonses to the node are
+    # carrying none of the environment the plist declares. That daemon has no
+    # canonical wrkq endpoint and no aspd socket, so cold summonses to the node are
     # never seated and nothing local says why (T-07957). Assert the process, not
     # the mechanism.
-    #
-    # Either domain counts. lab runs a system LaunchDaemon, and hrcdev was once
-    # found declaring BOTH a gui LaunchAgent and a system one for the same label
-    # (T-07958 retired the system job; hrcdev is gui-only now). The invariant is
-    # that SOME loaded launchd job owns the serving pid and that the pid carries
-    # that job's declared environment, not that the gui job in particular does.
-    declare -a supervisor_plists=(
-      "gui/$(id -u)/com.praesidium.hrc-server::$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
-      "system/com.praesidium.hrc-server::/Library/LaunchDaemons/com.praesidium.hrc-server.plist"
-    )
-    declared_supervisors=()
-    for entry in "${supervisor_plists[@]}"; do
-      [[ -f "${entry#*::}" ]] && declared_supervisors+=("$entry")
-    done
-    if (( ${#declared_supervisors[@]} > 0 )); then
-      server_pid="$(jq -er '.pid' <<<"$status_after")" ||
-        fail 'post-restart status did not report a daemon pid'
-      owner_target=""
-      owner_plist=""
-      for entry in "${declared_supervisors[@]}"; do
-        target="${entry%%::*}"
-        job="$(launchctl print "$target" 2>/dev/null)" || continue
-        job_pid="$(awk '$1 == "pid" && $2 == "=" { print $3; exit }' <<<"$job")"
-        [[ "$job_pid" == "$server_pid" ]] || continue
-        owner_target="$target"
-        owner_plist="${entry#*::}"
-        break
-      done
-      if [[ -z "$owner_target" ]]; then
-        for entry in "${declared_supervisors[@]}"; do
-          printf 'declared supervisor: %s (plist %s)\n' "${entry%%::*}" "${entry#*::}" >&2
-          launchctl print "${entry%%::*}" 2>/dev/null |
-            awk '$1 == "state" || $1 == "pid" || $1 == "runs" { print "  " $0 }' >&2
-        done
-        fail "no loaded launchd job owns the daemon serving this node (pid ${server_pid}); it is unsupervised, or a second supervisor holds the socket. Repair: hrc server stop, then bootstrap the node's own job"
-      fi
-
-      # Ownership is not the environment. `ps eww` prints the process environment
-      # as inherited, which is the only place the plist's keys are observable on
-      # the running daemon.
-      daemon_env="$(ps eww -p "$server_pid" -o command= | tr ' ' '\n')" ||
-        fail "could not read the environment of daemon pid ${server_pid}"
-      while read -r key; do
-        [[ -n "$key" ]] || continue
-        grep -q "^${key}=" <<<"$daemon_env" ||
-          fail "daemon pid ${server_pid} is missing ${key}, which ${owner_plist} declares; it is not running with its supervisor's environment"
-      done < <(plutil -extract EnvironmentVariables json -o - "$owner_plist" 2>/dev/null |
-        jq -r 'keys[] | select(startswith("HRC_"))')
-      printf 'supervisor ok on %s: %s owns pid %s and it carries the plist environment\n' \
-        "$expected_node" "$owner_target" "$server_pid"
+    supervisor_target="gui/$(id -u)/com.praesidium.hrc-server"
+    supervisor_plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
+    [[ -f "$supervisor_plist" ]] || fail "no hrc-server LaunchAgent declared at ${supervisor_plist}"
+    server_pid="$(jq -er '.pid' <<<"$status_after")" ||
+      fail 'post-restart status did not report a daemon pid'
+    job_pid="$(launchctl print "$supervisor_target" 2>/dev/null |
+      awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
+    if [[ "$job_pid" != "$server_pid" ]]; then
+      launchctl print "$supervisor_target" 2>/dev/null |
+        awk '$1 == "state" || $1 == "pid" || $1 == "runs" { print "  " $0 }' >&2
+      fail "${supervisor_target} does not own the daemon serving this node (pid ${server_pid}); it is unsupervised, or a second supervisor holds the socket. Repair: hrc server stop, then bootstrap the node's own job"
     fi
+    # Ownership is not the environment. `ps eww` prints the process environment
+    # as inherited, which is the only place the plist's keys are observable on
+    # the running daemon.
+    daemon_env="$(ps eww -p "$server_pid" -o command= | tr ' ' '\n')" ||
+      fail "could not read the environment of daemon pid ${server_pid}"
+    while read -r key; do
+      [[ -n "$key" ]] || continue
+      grep -q "^${key}=" <<<"$daemon_env" ||
+        fail "daemon pid ${server_pid} is missing ${key}, which ${supervisor_plist} declares; it is not running with its supervisor's environment"
+    done < <(plutil -extract EnvironmentVariables json -o - "$supervisor_plist" 2>/dev/null |
+      jq -r 'keys[] | select(startswith("HRC_"))')
+    echo "[hrc] ${supervisor_target} owns pid ${server_pid} running ${deployed_sha} with the plist environment"
 
-    asp_contracts="$(jq -r '([.release.aspContracts[]? | "\(.name)@\(.version)"] | select(length > 0) | join(",")) // "unknown"' <<<"$status_after")"
+    # ---- 3. mail injector ---------------------------------------------------
+    # After HRC: the injector subscribes to the daemon's streams and must come up
+    # against the restarted one. The recipe comes from the checkout just moved to
+    # the target, so the node runs the injector lane its own release ships.
+    just install-mail-injector-launchd "$injector_version"
 
-    printf 'deployed %s to %s: %s (asp-contracts %s)\n' \
-      "$target_sha" "$expected_node" "$release_root" "$asp_contracts"
+    printf 'deployed %s: hrc %s (%s), aspd %s (%s), injector %s\n' \
+      "$expected_node" "$target_sha" "$release_root" "$aspd_sha" "$aspd_release" "$injector_version"
     REMOTE
 
 pull-deps:

@@ -165,86 +165,104 @@ prepares through the node's persistent aspd (launchd `com.praesidium.aspd`, ns
 
 ## Fleet Deployment
 
-Four logical nodes, each with its own checkout, release, and daemon: **svc** and
-**lab** co-hosted on `mini`, **max3** a separate workstation, and **hrcdev** a
-Tart guest VM hosted on max3. One recipe per node — `just deploy-svc`,
-`deploy-lab`, `deploy-max3`, `deploy-hrcdev` — plus `just fleet-status` for a
-read-only hrc/asp parity table and `just deploy-fleet-from-max3` to bring svc and
-hrcdev to max3 in a single pass. Each ssh's over, refuses a dirty checkout (watch
-for a stray `default.profraw`), requires 0 busy runtimes (drain first), ff-only
-merges to the target ref, installs, restarts, and verifies node identity.
+Three logical nodes, each with its own checkouts, releases, and daemons: **svc**
+on `mini` (user `lherron`), **max3** a separate workstation, and **hrcdev** a Tart
+guest VM hosted on max3. (lab was retired 2026-09-22 and is no longer a deploy
+target.) One recipe per node — `just deploy-svc`, `deploy-max3`, `deploy-hrcdev`
+— plus `just fleet-status` for a read-only parity table and `just deploy-fleet`
+to bring svc and hrcdev to max3 in a single pass.
 
-**The target ref is a parameter, and `@max3` is the interesting default.**
-`deploy-svc` / `deploy-hrcdev` default to `@max3`: the hrc source commit max3's
-daemon is *running right now*, read from `.release.hrcBuild.sourceCommit` on the
-driver and handed to the node as a literal SHA. `deploy-lab` / `deploy-max3` still
-default to `origin/main`. Any ref works — `just deploy-svc origin/main`,
-`just deploy-svc <sha>`. `deploy-fleet-from-max3` resolves `@max3` **once** for
-both nodes; letting each resolve it races a concurrent max3 install and can leave
-the two on different commits while reporting success.
+**A node is three processes, deployed in dependency order**, each under its own
+gui LaunchAgent and each with its own target:
+
+| order | process | source | launchd label | proven by |
+|---|---|---|---|---|
+| 1 | aspd | `~/praesidium/agent-spaces` → immutable release in `~/praesidium/var/aspd/releases` | `com.praesidium.aspd` | HRC's live probe `.api.aspd.release.sourceCommit` + a launchd-owned pid |
+| 2 | hrc-server | this repo → atomic release | `com.praesidium.hrc-server` | `.release.hrcBuild.sourceCommit`, `runningEqualsInstalled`, launchd owns the pid with the plist env |
+| 3 | hrc-mail-injector | `bunx hrc-mail-injector@<pinned>` from Verdaccio | `com.praesidium.hrc-mail-injector` | job pid argv names the pinned version, logged `"status":"running"`, same pid 10s later |
+
+aspd goes first because HRC refuses every birth without a reachable aspd. The
+injector goes last because it subscribes to the restarted daemon. aspd's
+lifecycle is agent-spaces' own (`scripts/aspd-service.ts`: `supervise`,
+`activate`; `just build-asp-release`, `install-asp-release`, `aspd-activate`);
+the deploy lane only sequences it. The injector plist is rendered from
+`launchd/com.praesidium.hrc-mail-injector.plist` by `just
+install-mail-injector-launchd <version>`, which takes node ID and socket from HRC
+status and the wrkq endpoint from the node's hrc-server plist, and retires any
+earlier injector on this node's socket (ad-hoc `launchctl submit` jobs and loose
+processes alike — two injectors are two mail writers). It needs the injector
+state store to already carry its one-time kicker-store import marker.
+
+**Unsupervised is the failure mode to watch.** On 2026-09-22 svc's aspd had died
+days earlier as a detached `aspd-start` process: a stale socket and pid file
+remained, HRC reported `aspd_unavailable`, the node could not birth, and the old
+`fleet-status` still read healthy. `fleet-status` now prints `ASPD` from HRC's
+live probe (`DOWN` when unreachable) and `INJECTOR` as the running pinned version,
+`UNSUPERVISED` (a process serves this node's socket but not under its label), or
+`down`.
+
+**Targets are parameters, and `@max3` is the interesting default.**
+`deploy-svc` / `deploy-hrcdev` default every target to `@max3`: what max3 is
+*running right now* — hrc `.release.hrcBuild.sourceCommit`, aspd
+`.api.aspd.release.sourceCommit`, and the injector version in its launchd job's
+argv — read on the driver and handed to the node as literals. `deploy-max3`
+defaults to `origin/main` (both repos) and `latest` (injector, resolved to a
+version and pinned). Any ref works: `just deploy-svc origin/main origin/main
+0.1.0-dev.…`. `deploy-fleet` resolves `@max3` **once** for both nodes; letting
+each resolve it races a concurrent max3 install. Bring max3 to latest first, then
+`deploy-fleet`.
+
+**Restart mode.** Busy runtimes do not block a deploy — brokers reattach across
+an HRC restart. `restart=wait` (default) drains in-flight runs first;
+`restart=force` restarts through them and is the only mode that completes from a
+live agent turn on the node being deployed.
 
 Parity is measured in **sourceCommit, never setVersion** — every node's `just
-install` mints its own timestamped package version from the same commit, and
-coherence keys on the commit. ASP package parity follows for free: bun.lock at the
-target commit pins the tuple.
+install` / `build-asp-release` mints its own timestamped version or release ID
+from the same commit. ASP *package* parity inside HRC follows from bun.lock at the
+hrc target commit; the aspd *service* is a separate target.
 
-Three guards, each closing a way a deploy can report green having done nothing:
+Three guards per checkout (hrc-runtime and agent-spaces), all checked before
+anything moves:
 
 - **Containment** — the target must be contained by freshly fetched `origin/main`.
-  `just install` enforces this itself, but only after the checkout has moved.
-- **Direction** — the node must be strictly behind the target. `--ff-only` cannot
-  move backwards, so a node at or ahead of it would take a silent no-op merge and
-  still report a green deploy. Going backwards is an operator decision.
-- **Identity** — post-restart, `.release.hrcBuild.sourceCommit` must equal the
-  target and `runningEqualsInstalled` must be true. A restart onto a **stale**
-  release looks exactly as healthy as a correct one; only the commit tells them
-  apart. Verifying release *shape* (`packagePath` looks like a release) does not.
+- **Direction** — the checkout must be at or behind the target. `--ff-only`
+  cannot move backwards, so a checkout ahead of it would no-op and still report
+  green. Going backwards is an operator decision.
+- **Identity** — after the step, the running process must report the target
+  commit/version. A restart onto a **stale** release looks exactly as healthy as a
+  correct one; only the identity tells them apart.
+
+Each step skips when its process already runs the target under its label, but its
+identity assertion still runs.
 
 `ssh <host> <cmd>` gets a non-interactive, non-login shell that reads only
 `~/.zshenv`, and svc's does not add `~/.bun/bin` or Homebrew — `hrc` and `just`
-are both missing there while they resolve fine on lab and hrcdev. The recipes
-prepend the canonical locations rather than requiring the dotfiles to agree.
+are missing there. The recipes prepend the canonical locations rather than
+requiring the dotfiles to agree.
 
-**Supervisor differs by node — this governs restarts and flags:**
+**Supervisors.** Every node runs its three processes as console user `lherron`
+under **gui LaunchAgents** in `gui/<uid>`. `hrc server restart` detects and
+kickstarts the hrc-server job. Changing plist env = edit `EnvironmentVariables`
+**and reload the job** (`launchctl bootout gui/<uid>/<label>`, then `bootstrap
+gui/<uid> <plist>`) — `restart`/`kickstart` do NOT re-read the plist.
 
-- **svc, max3** run as console user `lherron` → **gui LaunchAgents**
-  (`~/Library/LaunchAgents/com.praesidium[.<node>].hrc-server.plist` in
-  `gui/<uid>`). `hrc server restart` handles them. Changing an env-gated flag =
-  edit plist `EnvironmentVariables` **and reload the job** (`launchctl bootout
-  gui/<uid>/<label>`, then `bootstrap gui/<uid> <plist>`) — `restart`/`kickstart`
-  do NOT re-read the plist. Reload needs that uid's gui session (local on svc,
-  over ssh for max3).
+hrcdev's hrc-server job is **not** unsupervised: the claim that it ran with no
+plist, orphaned to PID 1, was wrong and is what let T-07957 pass as a green deploy
+over a detached daemon carrying none of the plist's environment. Until T-07958 it
+also declared a second, root `/Library/LaunchDaemons` job for the same label; that
+is retired (`.retired-T07958`). Its gui LaunchAgent carries
+`VERDACCIO_REGISTRY=http://127.0.0.1:4873/`, the guest's only live
+publish-containment guard, which daemon-spawned seats inherit. If a node ever
+declares two jobs for one label again, pick one — `hrc server restart` refuses
+to self-daemonize past an unloaded LaunchAgent (T-07957), so the deploy lane
+stays red until it is resolved.
 
-- **lab** runs as headless user uid 502 with no aqua session, so it is a **system
-  LaunchDaemon** (`/Library/LaunchDaemons/com.praesidium.lab.hrc-server.plist`,
-  `UserName=lab`, `KeepAlive`, `RunAtLoad`). `hrc server restart` does not detect
-  it and would self-daemonize a second process racing the KeepAlive respawn.
-  **Restart lab with `hrc server stop`** — KeepAlive respawns it on the current
-  release with plist env, root-free; `just deploy-lab` encodes this. Only the
-  one-time install needs root (`sudo install` + `sudo launchctl bootstrap system`).
-
-- **hrcdev** runs a **gui LaunchAgent** exactly like svc and max3
-  (`~/Library/LaunchAgents/com.praesidium.hrc-server.plist` in `gui/502`), and
-  `hrc server restart` detects and kickstarts it. It is **not** unsupervised: the
-  claim that it ran with no plist, orphaned to PID 1, was wrong and is what let
-  T-07957 pass as a green deploy over a detached daemon carrying none of the
-  plist's environment. Until T-07958 it also declared a **second** supervisor for
-  the same label — a root `/Library/LaunchDaemons/com.praesidium.hrc-server.plist`
-  — and the two fought over `hrc.sock`, the loser respawning on KeepAlive and
-  exiting 2 on `daemon already running`. The root job is retired
-  (`.retired-T07958`); the gui LaunchAgent is the single supervisor, and it
-  carries `VERDACCIO_REGISTRY=http://127.0.0.1:4873/`, the guest's only live
-  publish-containment guard, which daemon-spawned seats inherit. If a node ever
-  declares two jobs for one label again, pick one — `hrc server restart` refuses
-  to self-daemonize past an unloaded LaunchAgent (T-07957), so the deploy lane
-  stays red until it is resolved.
-
-**Env-gated flags** (e.g. `HRC_MAIL_KICKER_ENABLED`) are read from `process.env`
-only: they live in the node's plist `EnvironmentVariables` and apply on the next
-supervisor (re)load. Never infer launchd management from a plist's presence — a
-self-daemonized `hrc server start` orphans to PID 1 identically. Check `launchctl
-print gui/<uid>/<label>` (or `system/<label>`) and whether the running argv
-matches the plist's `ProgramArguments`.
+Env is read from `process.env` only: it lives in the node's plist
+`EnvironmentVariables` and applies on the next supervisor (re)load. Never infer
+launchd management from a plist's presence — a self-daemonized process orphans to
+PID 1 identically. Check `launchctl print gui/<uid>/<label>` and whether the
+running argv matches the plist's `ProgramArguments`.
 
 ### hrcdev — the Tart VM (max3)
 
@@ -320,7 +338,7 @@ needs an HRC install plus restart.
 Gotchas worth not re-deriving:
 
 - **Coherence guard.** `sync:asp` rejects a half-published snapshot — all ASP packages must share the same `latest`. No publishing/syncing one package in isolation.
-- **Mini is the only registry authority** (`http://mini:4873/` must be reachable); svc, lab, and max3 all use that store.
+- **Mini is the only registry authority** (`http://mini:4873/` must be reachable); svc and max3 use that store.
 - **Pull != installed != live.** `just pull-deps` advances the lock; `just install` selects the release; `hrc server restart` activates it.
 - **Compile dep vs runtime dep.** HRC code referencing new ASP *types/exports* needs the sync to typecheck — that serializes ASP→sync→HRC. A pure ASP *behavior* change flows through existing contracts, so HRC logic can be written in parallel and needs the sync only for runtime/e2e. Decide by whether the HRC diff names a new ASP symbol.
 - **The sync spec is a hand-maintained list, and a new ASP dependency does not join it automatically.** `scripts/sync-asp-from-verdaccio.ts` enumerates the packages `pull-deps` advances. A direct dependency missing from that list is left behind while the rest of the set moves — and `pull-deps` still prints `ASP_SYNC ASP@<new>`, so the report is green while HRC's own ASP set is internally split. `agent-harness` and `spaces-harness-broker-pi-sdk` sat a release behind that way (T-07677). **When you add an ASP package to `package.json`, add it to that list in the same change**, and verify with: every ASP-family dep in `node_modules` reporting one identical version.
