@@ -60,8 +60,18 @@ export type ServerCounterMetricRecord = {
   value: number
 }
 
+/** One event-loop stall (T-08786); the log line is the breadcrumb, this is the population. */
+export type EventLoopStallMetricRecord = {
+  v: 1
+  kind: 'event_loop_stall'
+  ts: string
+  lagMs: number
+  activities: { tag: string; count: number; ms: number }[]
+}
+
 export type ServerMetricRecord =
   | ServerRequestMetricRecord
+  | EventLoopStallMetricRecord
   | SqliteSlowStatementMetricRecord
   | ServerCounterMetricRecord
   | LaunchSpanMetricRecord

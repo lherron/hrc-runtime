@@ -18,6 +18,7 @@ import type {
   SweepRuntimesSummary,
 } from 'hrc-core'
 import { recordOperatorDisposition, retainedEvidenceHold } from './broker/offline-evidence'
+import { timeLoopActivity } from './event-loop-lag.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { runFirstTurnEvaluationOnce } from './first-turn-eval.js'
 import { resolveFirstTurnEvalIntervalSeconds } from './first-turn-watch.js'
@@ -315,7 +316,7 @@ export function startTmuxAging(this: HrcServerInstanceForHandlers): void {
 
   void this.runRecurringTmuxAging()
   this.tmuxAgingTimer = setInterval(() => {
-    void this.runRecurringTmuxAging()
+    timeLoopActivity('timer:tmux_aging', () => void this.runRecurringTmuxAging())
   }, HRC_TMUX_AGING_INTERVAL_SECONDS * 1000)
 }
 
@@ -708,7 +709,7 @@ export function startZombieRunSweeper(this: HrcServerInstanceForHandlers): void 
 
   void this.runRecurringZombieSweep()
   this.zombieSweepTimer = setInterval(() => {
-    void this.runRecurringZombieSweep()
+    timeLoopActivity('timer:zombie_sweep', () => void this.runRecurringZombieSweep())
   }, HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS * 1000)
 }
 
@@ -753,7 +754,7 @@ export function startActiveRunReconciler(this: HrcServerInstanceForHandlers): vo
 
   void this.runRecurringActiveRunReconcile()
   this.activeRunReconcileTimer = setInterval(() => {
-    void this.runRecurringActiveRunReconcile()
+    timeLoopActivity('timer:active_run_reconcile', () => void this.runRecurringActiveRunReconcile())
   }, HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS * 1000)
 }
 
@@ -787,7 +788,7 @@ export function startBrokerLeaseGc(this: HrcServerInstanceForHandlers): void {
   // recurring pass one cadence later so embedded CLI startup does not emit an
   // empty asynchronous summary after its command has begun.
   this.brokerLeaseGcTimer = setInterval(() => {
-    void this.runRecurringBrokerLeaseGc()
+    timeLoopActivity('timer:broker_lease_gc', () => void this.runRecurringBrokerLeaseGc())
   }, HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS * 1000)
 }
 
@@ -854,7 +855,7 @@ export function startFirstTurnWatchdog(this: HrcServerInstanceForHandlers): void
   const intervalSeconds = resolveFirstTurnEvalIntervalSeconds()
   void this.runRecurringFirstTurnEval()
   this.firstTurnEvalTimer = setInterval(() => {
-    void this.runRecurringFirstTurnEval()
+    timeLoopActivity('timer:first_turn_eval', () => void this.runRecurringFirstTurnEval())
   }, intervalSeconds * 1000)
 }
 
@@ -941,7 +942,7 @@ export function startSessionRetentionSweep(this: HrcServerInstanceForHandlers): 
   if (process.env[HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV] === '0') return
   void this.runRecurringSessionRetention()
   this.sessionRetentionTimer = setInterval(() => {
-    void this.runRecurringSessionRetention()
+    timeLoopActivity('timer:session_retention', () => void this.runRecurringSessionRetention())
   }, HRC_SESSION_RETENTION_SWEEP_INTERVAL_MS)
 }
 

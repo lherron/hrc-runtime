@@ -31,6 +31,7 @@
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 
+import { timeLoopActivity } from './event-loop-lag.js'
 import { isSingleNodeMode } from './federation/federation-config.js'
 import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -74,10 +75,12 @@ export function startForeignHomeShadowTeardown(this: HrcServerInstanceForHandler
   // yet — and a shadow is a standing condition, so waiting one interval costs
   // nothing.
   this.shadowTeardownTimer = setInterval(() => {
-    void this.runForeignHomeShadowTeardown().catch((error) => {
-      writeServerLog('WARN', 'federation.shadow_teardown.pass_failed', {
-        localNodeId: this.federationNodeId,
-        error: errorText(error),
+    timeLoopActivity('timer:shadow_teardown', () => {
+      void this.runForeignHomeShadowTeardown().catch((error) => {
+        writeServerLog('WARN', 'federation.shadow_teardown.pass_failed', {
+          localNodeId: this.federationNodeId,
+          error: errorText(error),
+        })
       })
     })
   }, SHADOW_TEARDOWN_INTERVAL_MS)

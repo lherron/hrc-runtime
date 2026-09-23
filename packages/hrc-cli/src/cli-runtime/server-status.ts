@@ -76,6 +76,8 @@ export type ServerRuntimeStatus = {
       > & {
         /** T-08542: the active aspd preparation release this daemon reads back. */
         aspd?: HrcStatusResponse['aspd'] | undefined
+        /** T-08786: event-loop lag; absent from daemons that predate the monitor. */
+        eventLoop?: HrcStatusResponse['eventLoop'] | undefined
       })
     | undefined
   /**
@@ -369,6 +371,7 @@ export async function collectServerRuntimeStatus(
           packagePath: status.packagePath,
           release: status.release,
           ...(status.aspd !== undefined ? { aspd: status.aspd } : {}),
+          ...(status.eventLoop !== undefined ? { eventLoop: status.eventLoop } : {}),
         }
         node = status.node
         peerHealth = status.peerHealth
@@ -584,6 +587,23 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
     lines.push(`  uptime:       ${status.api.uptime}s`)
     lines.push(`  started:      ${status.api.startedAt}`)
     lines.push(`  apiVersion:   ${status.api.apiVersion}`)
+    const loop = status.api.eventLoop
+    if (loop !== undefined) {
+      const windowMin = Math.round(loop.windowMs / 60_000)
+      lines.push(
+        `  event loop:   max lag ${loop.maxLagMs}ms (last ${windowMin}m), ${loop.stallCount} stall(s) >=${loop.stallThresholdMs}ms since start`
+      )
+      if (loop.lastStall !== undefined) {
+        const heaviest = loop.lastStall.activities[0]
+        lines.push(
+          `  last stall:   ${loop.lastStall.lagMs}ms at ${loop.lastStall.at}${
+            heaviest === undefined
+              ? ''
+              : ` (heaviest: ${heaviest.tag} ${heaviest.ms}ms x${heaviest.count})`
+          }`
+        )
+      }
+    }
   } else if (status.serverStatus) {
     lines.push(`  started:      ${status.serverStatus.startedAt}`)
     lines.push(`  apiVersion:   ${status.serverStatus.apiVersion}`)

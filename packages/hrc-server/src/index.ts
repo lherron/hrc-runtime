@@ -105,6 +105,7 @@ import {
 import { type EvidenceHandlersMethods, evidenceHandlersMethods } from './evidence-handlers.js'
 export { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import { handleResolveRuntimeIntent, handleRunPreview } from './declaration-handlers.js'
+import { EventLoopLagMonitor, markLoopActivity } from './event-loop-lag.js'
 import {
   type ExactClaimHandlersMethods,
   exactClaimHandlersMethods,
@@ -944,6 +945,8 @@ class HrcServerInstance implements HrcServer {
   readonly sessionProjectEvents: SessionProjectEventPublisher
   readonly ctx: ServerContext
   readonly requestMetricsEnabled = process.env['HRC_METRICS'] !== '0'
+  eventLoopLag: EventLoopLagMonitor | undefined
+  private exactRouteKeys: Set<string> | undefined
   eventIngestListener: EventIngestListener | undefined
   eventForwarder: EventForwarder | undefined
   readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
@@ -1438,6 +1441,13 @@ class HrcServerInstance implements HrcServer {
     })) {
       this.exactRouteHandlers[exactRouteKey(route.method, route.pathname)] = route.handler
     }
+    // First, so every recurring job below runs under observation.
+    this.eventLoopLag = new EventLoopLagMonitor({
+      intervalMs: this.options.eventLoopLag?.intervalMs,
+      stallThresholdMs: this.options.eventLoopLag?.stallThresholdMs,
+      stateRoot: this.options.stateRoot,
+    })
+    this.eventLoopLag.start()
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
     this.startBrokerLeaseGc()
@@ -1678,6 +1688,7 @@ class HrcServerInstance implements HrcServer {
         writeServerLog('WARN', 'server.stop.binding_registry_listener_failed', { error })
       }
     }
+    this.eventLoopLag?.stop()
     if (this.zombieSweepTimer) {
       clearInterval(this.zombieSweepTimer)
       this.zombieSweepTimer = undefined
@@ -1839,13 +1850,17 @@ class HrcServerInstance implements HrcServer {
   }
 
   async handleRequest(request: Request): Promise<Response> {
+    const method = request.method
+    const pathname = new URL(request.url).pathname
+    // Routes are all registered in the constructor, before the first request.
+    this.exactRouteKeys ??= new Set(Object.keys(this.exactRouteHandlers))
+    const route = normalizeRoute(method, pathname, this.exactRouteKeys)
+    markLoopActivity(`request:${method} ${route}`)
     if (!this.requestMetricsEnabled) {
       return this.dispatchRequest(request)
     }
 
     const started = process.hrtime.bigint()
-    const method = request.method
-    const pathname = new URL(request.url).pathname
     const response = await this.dispatchRequest(request)
     const handlerMs = Number(process.hrtime.bigint() - started) / 1_000_000
     try {
@@ -1857,7 +1872,7 @@ class HrcServerInstance implements HrcServer {
           v: 1,
           kind: 'server',
           ts: now.toISOString(),
-          route: normalizeRoute(method, pathname, new Set(Object.keys(this.exactRouteHandlers))),
+          route,
           method,
           ms: handlerMs,
           status: response.status,
@@ -2941,6 +2956,7 @@ class HrcServerInstance implements HrcServer {
         sessionCount: this.db.sessions.count(),
         runtimeCount: this.db.runtimes.count(),
         apiVersion: HRC_API_VERSION,
+        ...(this.eventLoopLag ? { eventLoop: this.eventLoopLag.snapshot() } : {}),
         node: this.nodeStatus(),
         ...(peerHealth === undefined ? {} : { peerHealth }),
         capabilities: {
@@ -2996,6 +3012,7 @@ class HrcServerInstance implements HrcServer {
       sessionCount: sessions.length,
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,
+      ...(this.eventLoopLag ? { eventLoop: this.eventLoopLag.snapshot() } : {}),
       node: this.nodeStatus(),
       mailKicker: 'absent',
       ...(peerHealth === undefined ? {} : { peerHealth }),

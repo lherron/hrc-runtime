@@ -1983,6 +1983,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcEventLoopStallView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcEventLoopStallView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcEventLoopStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcEventLoopStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcEventSource",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",

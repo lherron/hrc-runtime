@@ -357,6 +357,13 @@ export type HrcServerOptions = {
    * child environment.
    */
   localPersonaAllowlist?: readonly string[] | undefined
+  /**
+   * Event-loop lag monitor cadence and stall threshold. Production defaults to
+   * a 250ms tick and a 1000ms stall; tests shrink both.
+   */
+  eventLoopLag?:
+    | { intervalMs?: number | undefined; stallThresholdMs?: number | undefined }
+    | undefined
   /** Resident transcript index is default-on; override only for isolated tests. */
   hrcTranscriptIndexEnabled?: boolean | undefined
   /** Test/embedded periodic tail cadence; production defaults to 2000ms. */

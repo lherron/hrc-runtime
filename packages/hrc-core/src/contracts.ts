@@ -1290,6 +1290,27 @@ export type HrcAspdServiceStatus = {
   probedAt?: string | undefined
 }
 
+/** One event-loop stall: the tick that landed late and what ran before it. */
+export type HrcEventLoopStallView = {
+  at: string
+  lagMs: number
+  /** Tagged activities since the previous tick, heaviest synchronous span first. */
+  activities: { tag: string; count: number; ms: number }[]
+}
+
+/** Event-loop lag observed by the daemon's self-timing monitor (T-08786). */
+export type HrcEventLoopStatus = {
+  intervalMs: number
+  stallThresholdMs: number
+  /** Window over which `maxLagMs` is the maximum observed tick lateness. */
+  windowMs: number
+  maxLagMs: number
+  maxLagAt?: string | undefined
+  /** Stalls since daemon start. */
+  stallCount: number
+  lastStall?: HrcEventLoopStallView | undefined
+}
+
 export type HrcCapabilityStatus = {
   ok: true
   uptime: number
@@ -1307,6 +1328,8 @@ export type HrcCapabilityStatus = {
   sessionCount: number
   runtimeCount: number
   apiVersion: string
+  /** Absent from daemons that predate the lag monitor. */
+  eventLoop?: HrcEventLoopStatus | undefined
   /**
    * Node identity and static peer table (federation spec §3/§6).
    *

@@ -82,6 +82,7 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
+import { timeLoopActivity } from '../event-loop-lag'
 import {
   disarmFirstTurnWatch,
   disarmFirstTurnWatchOnContinuationCleared,
@@ -239,7 +240,7 @@ export class BrokerEventMapper {
       return this.project(envelope)
     })
     try {
-      const result = run()
+      const result = timeLoopActivity(`broker.apply:${envelope.type}`, run)
       this.ignoredDeltaCursors.delete(String(envelope.invocationId))
       if (!result.idempotent) this.logBlockedUnknownCaptureWarning(envelope)
       return result
@@ -399,7 +400,9 @@ export class BrokerEventMapper {
       // other connections read and write the same store, and a deferred
       // read-then-write transaction fails its upgrade with SQLITE_BUSY instead of
       // waiting out busy_timeout. Same reasoning as the lifecycle append.
-      const result = run.immediate()
+      const result = timeLoopActivity(`broker.apply_retained:${envelope.type}`, () =>
+        run.immediate()
+      )
       this.retainedIgnoredDeltaCursors.delete(String(envelope.invocationId))
       return result
     } catch (error) {
