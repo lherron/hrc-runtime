@@ -187,7 +187,7 @@ gui LaunchAgent and each with its own target:
 
 | order | process | source | launchd label | proven by |
 |---|---|---|---|---|
-| 1 | aspd | `~/praesidium/agent-spaces` → immutable release in `~/praesidium/var/aspd/releases` | `com.praesidium.aspd` | HRC's live probe `.api.aspd.release.sourceCommit` + a launchd-owned pid |
+| 1 | aspd | throwaway detached worktree of `~/praesidium/agent-spaces` at the target → immutable release in `~/praesidium/var/aspd/releases` | `com.praesidium.aspd` | HRC's live probe `.api.aspd.release.sourceCommit` + a launchd-owned pid |
 | 2 | hrc-server | this repo → atomic release | `com.praesidium.hrc-server` | `.release.hrcBuild.sourceCommit`, `runningEqualsInstalled`, launchd owns the pid with the plist env |
 | 3 | hrc-mail-injector | `bunx hrc-mail-injector@<pinned>` from Verdaccio | `com.praesidium.hrc-mail-injector` | job pid argv names the pinned version, logged `"status":"running"`, same pid 10s later |
 
@@ -232,8 +232,10 @@ install` / `build-asp-release` mints its own timestamped version or release ID
 from the same commit. ASP *package* parity inside HRC follows from bun.lock at the
 hrc target commit; the aspd *service* is a separate target.
 
-Three guards per checkout (hrc-runtime and agent-spaces), all checked before
-anything moves:
+Guards, all checked before anything moves (the agent-spaces checkout never moves —
+aspd builds in a throwaway worktree at the exact target, so another agent's branch
+there neither blocks nor is disturbed by a deploy; its target is still
+containment-checked):
 
 - **Containment** — the target must be contained by freshly fetched `origin/main`.
 - **Direction** — the checkout must be at or behind the target. `--ff-only`

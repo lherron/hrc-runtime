@@ -249,8 +249,9 @@ install-hrc-viewer-launchd:
     echo "[install] activated $service_target"
 
 # A node runs three processes this lane deploys, in dependency order:
-#   aspd          ASP preparation service (agent-spaces checkout -> immutable
-#                 release under ~/praesidium/var/aspd, launchd com.praesidium.aspd)
+#   aspd          ASP preparation service (built in a throwaway agent-spaces
+#                 worktree at the target -> immutable release under
+#                 ~/praesidium/var/aspd, launchd com.praesidium.aspd)
 #   hrc-server    this repo (atomic release, launchd com.praesidium.hrc-server)
 #   mail injector hrc-mail-injector, bunx-pinned from Verdaccio (launchd
 #                 com.praesidium.hrc-mail-injector)
@@ -645,12 +646,12 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
         fail "$what target ${sha} is not contained by freshly fetched origin/main"
       printf '%s\n' "$sha"
     }
-    # A checkout that has to MOVE must be main, clean, and at or behind its
-    # target (direction: --ff-only cannot move backwards, so a checkout ahead of
-    # the target would no-op and report green). A step whose process already runs
-    # the target never touches its checkout, so a checkout another agent has on a
-    # branch does not block it. Both gates run before anything mutates: a refusal
-    # on the second must not leave the first half-deployed.
+    # The hrc checkout, when it has to MOVE, must be main, clean, and at or
+    # behind its target (direction: --ff-only cannot move backwards, so a
+    # checkout ahead of the target would no-op and report green). This runs
+    # before anything mutates. The agent-spaces checkout never moves: aspd is
+    # built in a throwaway worktree at the exact target commit, so a checkout
+    # another agent has on a branch neither blocks nor is disturbed by a deploy.
     gate_checkout() {
       local dir="$1" sha="$2" what="$3" branch head
       branch="$(git -C "$dir" branch --show-current)"
@@ -686,7 +687,6 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       aspd_current=1
     fi
     (( hrc_current == 1 )) || gate_checkout "$repo" "$target_sha" hrc
-    (( aspd_current == 1 )) || gate_checkout "$asp_repo" "$aspd_sha" agent-spaces
 
     # Busy runtimes do not block a deploy: brokers reattach across an HRC
     # restart. `wait` drains in-flight runs first (bounded); `force` restarts
@@ -705,9 +705,12 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     if (( aspd_current == 1 )); then
       echo "[aspd] already serving ${aspd_sha} under ${aspd_label}"
     else
-      cd "$asp_repo"
-      git merge --ff-only --quiet "$aspd_sha"
-      [[ "$(git rev-parse HEAD)" == "$aspd_sha" ]] || fail 'agent-spaces checkout did not reach the aspd target'
+      build_wt="$(mktemp -d "${TMPDIR:-/tmp}/aspd-build.XXXXXX")"
+      rmdir "$build_wt"
+      drop_build_wt() { git -C "$asp_repo" worktree remove --force "$build_wt" >/dev/null 2>&1 || true; }
+      trap drop_build_wt EXIT
+      git -C "$asp_repo" worktree add --quiet --detach "$build_wt" "$aspd_sha"
+      cd "$build_wt"
       bun install --frozen-lockfile >/dev/null
       # The build prints progress before its final JSON inspection; keep only the
       # last top-level object.
@@ -728,6 +731,9 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
         fail "aspd namespace is supervised by ${aspd_supervisor}, expected ${aspd_label}"
       fi
       just aspd-activate "$aspd_ns" "$release_id" >/dev/null
+      cd "$repo"
+      drop_build_wt
+      trap - EXIT
     fi
     aspd_now=""
     for _ in $(seq 1 20); do
