@@ -634,35 +634,39 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     [[ "$actual_node" == "$expected_node" ]] ||
       fail "expected logical node $expected_node, found $actual_node"
 
-    # Resolve and gate BOTH checkouts before anything moves: a refusal on the
-    # second must not leave the first half-deployed.
-    #   containment — the target is contained by freshly fetched origin/main
-    #     (`just install` enforces this itself, but only after the checkout moved)
-    #   direction   — the checkout is at or behind the target; --ff-only cannot
-    #     move backwards, so a node ahead of it would no-op and report green
-    checkout_to() {
-      local dir="$1" ref="$2" what="$3" branch sha head
-      cd "$dir"
-      branch="$(git branch --show-current)"
-      [[ "$branch" == 'main' ]] || fail "$what checkout must be on main, found ${branch:-detached HEAD}"
-      if [[ -n "$(git status --porcelain)" ]]; then
-        git status --short >&2
-        fail "$what checkout is dirty; refusing to overwrite remote work"
-      fi
-      git fetch --quiet --prune origin main
-      sha="$(git rev-parse --verify --quiet "${ref}^{commit}")" ||
+    # containment — every target is contained by freshly fetched origin/main
+    #   (`just install` enforces this itself, but only after the checkout moved)
+    resolve_target() {
+      local dir="$1" ref="$2" what="$3" sha
+      git -C "$dir" fetch --quiet --prune origin main
+      sha="$(git -C "$dir" rev-parse --verify --quiet "${ref}^{commit}")" ||
         fail "cannot resolve $what target ref ${ref} in this checkout"
-      git merge-base --is-ancestor "$sha" origin/main ||
+      git -C "$dir" merge-base --is-ancestor "$sha" origin/main ||
         fail "$what target ${sha} is not contained by freshly fetched origin/main"
-      head="$(git rev-parse HEAD)"
-      git merge-base --is-ancestor "$head" "$sha" || {
-        git log --oneline --decorate --left-right "$head...$sha" >&2
-        fail "$what checkout ${head} is ahead of or diverged from target ${sha}"
-      }
       printf '%s\n' "$sha"
     }
-    target_sha="$(checkout_to "$repo" "$target_ref" hrc)"
-    aspd_sha="$(checkout_to "$asp_repo" "$aspd_ref" agent-spaces)"
+    # A checkout that has to MOVE must be main, clean, and at or behind its
+    # target (direction: --ff-only cannot move backwards, so a checkout ahead of
+    # the target would no-op and report green). A step whose process already runs
+    # the target never touches its checkout, so a checkout another agent has on a
+    # branch does not block it. Both gates run before anything mutates: a refusal
+    # on the second must not leave the first half-deployed.
+    gate_checkout() {
+      local dir="$1" sha="$2" what="$3" branch head
+      branch="$(git -C "$dir" branch --show-current)"
+      [[ "$branch" == 'main' ]] || fail "$what checkout must be on main, found ${branch:-detached HEAD}"
+      if [[ -n "$(git -C "$dir" status --porcelain)" ]]; then
+        git -C "$dir" status --short >&2
+        fail "$what checkout is dirty; refusing to overwrite remote work"
+      fi
+      head="$(git -C "$dir" rev-parse HEAD)"
+      git -C "$dir" merge-base --is-ancestor "$head" "$sha" || {
+        git -C "$dir" log --oneline --decorate --left-right "$head...$sha" >&2
+        fail "$what checkout ${head} is ahead of or diverged from target ${sha}"
+      }
+    }
+    target_sha="$(resolve_target "$repo" "$target_ref" hrc)"
+    aspd_sha="$(resolve_target "$asp_repo" "$aspd_ref" agent-spaces)"
     echo "[deploy-${expected_node}] targets: hrc ${target_sha} aspd ${aspd_sha} injector ${injector_version}"
 
     running_sha="$(jq -r '.release.hrcBuild.sourceCommit // ""' <<<"$status_before")"
@@ -672,6 +676,17 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
           "$running_installed" == 'true' ]]; then
       hrc_current=1
     fi
+    aspd_probe() { hrc server status --json 2>/dev/null | jq -c '.api.aspd // {}'; }
+    aspd_supervisor="$(jq -r '.supervisor.label // ""' "$aspd_ns/service/config.json")"
+    aspd_now="$(aspd_probe)"
+    aspd_current=0
+    if [[ "$(jq -r '.reachable // false' <<<"$aspd_now")" == true &&
+          "$(jq -r '.release.sourceCommit // ""' <<<"$aspd_now")" == "$aspd_sha" &&
+          "$aspd_supervisor" == "$aspd_label" ]]; then
+      aspd_current=1
+    fi
+    (( hrc_current == 1 )) || gate_checkout "$repo" "$target_sha" hrc
+    (( aspd_current == 1 )) || gate_checkout "$asp_repo" "$aspd_sha" agent-spaces
 
     # Busy runtimes do not block a deploy: brokers reattach across an HRC
     # restart. `wait` drains in-flight runs first (bounded); `force` restarts
@@ -687,12 +702,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     # HRC refuses every birth without a reachable aspd, so it goes first and is
     # proven through HRC's own live probe, not through aspd's pid file (a stale
     # pid file and socket are exactly what a dead unsupervised aspd leaves).
-    aspd_probe() { hrc server status --json 2>/dev/null | jq -c '.api.aspd // {}'; }
-    aspd_supervisor="$(jq -r '.supervisor.label // ""' "$aspd_ns/service/config.json")"
-    aspd_now="$(aspd_probe)"
-    if [[ "$(jq -r '.reachable // false' <<<"$aspd_now")" == true &&
-          "$(jq -r '.release.sourceCommit // ""' <<<"$aspd_now")" == "$aspd_sha" &&
-          "$aspd_supervisor" == "$aspd_label" ]]; then
+    if (( aspd_current == 1 )); then
       echo "[aspd] already serving ${aspd_sha} under ${aspd_label}"
     else
       cd "$asp_repo"
