@@ -233,6 +233,20 @@ export const BROKER_INVOCATION_EVENT_COLUMNS = `
   evidence_origin,
   created_at`
 
+/**
+ * A broker event row's effective turnId, mirroring how turn ownership reads a
+ * stored event: the envelope's string `turnId`, else the payload's string
+ * `turnId`. Malformed JSON and non-string values yield NULL. CASE is evaluated
+ * lazily, so json_type never sees a document json_valid rejected.
+ */
+export const EFFECTIVE_TURN_ID_SQL = `COALESCE(
+  CASE WHEN json_valid(broker_envelope_json) THEN
+    CASE WHEN json_type(broker_envelope_json, '$.turnId') = 'text'
+      THEN json_extract(broker_envelope_json, '$.turnId') END END,
+  CASE WHEN json_valid(broker_event_json) THEN
+    CASE WHEN json_type(broker_event_json, '$.turnId') = 'text'
+      THEN json_extract(broker_event_json, '$.turnId') END END)`
+
 export const RUNTIME_ARTIFACT_COLUMNS = `
   artifact_id,
   operation_id,

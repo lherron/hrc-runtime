@@ -137,6 +137,9 @@ function validCandidate(db: HrcDatabase, invocationId: string, runId: string): s
   return run.runId
 }
 
+const TURN_EVIDENCE_TYPES = ['turn.started', 'turn.attributed', 'submission.executed'] as const
+const TURN_TERMINAL_TYPES = ['turn.completed', 'turn.failed', 'turn.interrupted'] as const
+
 /** Resolve one native turn from immutable initiating evidence in its historical epoch. */
 export function resolveExactTurnOwner(
   db: HrcDatabase,
@@ -148,19 +151,26 @@ export function resolveExactTurnOwner(
   const epoch = historicalEpoch(db, invocationId)
   if (epoch === undefined) return undefined
 
-  const priorEvents = db.brokerInvocationEvents
-    .listByInvocationId(invocationId)
-    .map(parseStoredEvent)
-    .filter(
-      (event): event is ParsedEvent =>
-        event !== undefined &&
-        event.seq <= envelope.seq &&
-        event.runtimeId === epoch.invocation.runtimeId &&
-        event.runtimeId === epoch.operation.runtimeId
-    )
-  const evidence = priorEvents.filter((event): event is ParsedEvent =>
-    coordinatesMatch(target, event)
-  )
+  // Read only the initiating evidence for this turn and the invocation's first
+  // start, never the whole invocation: this runs for every turn-scoped event, and
+  // a full reload made its cost grow with invocation length (T-08781).
+  // historicalEpoch guarantees the invocation and operation runtimes agree.
+  const priorRows = (options: { types: readonly string[]; turnId?: string; first?: boolean }) =>
+    db.brokerInvocationEvents
+      .listByInvocationIdAndTypes({
+        invocationId,
+        types: options.types,
+        throughSeq: envelope.seq,
+        runtimeId: epoch.invocation.runtimeId,
+        ...(options.turnId !== undefined ? { turnId: options.turnId } : {}),
+        ...(options.first === true ? { hasTurnId: true, limit: 1 } : {}),
+      })
+      .map(parseStoredEvent)
+      .filter((event): event is ParsedEvent => event !== undefined)
+  const evidence = priorRows({
+    types: TURN_EVIDENCE_TYPES,
+    turnId: target.turnId,
+  }).filter((event) => coordinatesMatch(target, event))
   const candidates = new Set<string>()
   let foreign = false
 
@@ -198,21 +208,21 @@ export function resolveExactTurnOwner(
   }
 
   // The launch marker applies only to the invocation's first input-less start.
-  const starts = priorEvents
-    .filter((event) => event.type === 'turn.started')
-    .sort((a, b) => a.seq - b.seq)
+  const [storedFirstStart] = priorRows({ types: ['turn.started'], first: true })
   const currentIsFirstStart =
     envelope.type === 'turn.started' &&
     inputIdForEnvelope(envelope) === undefined &&
-    starts.length === 0
-  const storedFirstStart = starts[0]
+    storedFirstStart === undefined
   const targetIsStoredFirstStart =
     storedFirstStart !== undefined &&
     storedFirstStart.inputId === undefined &&
     coordinatesMatch(target, storedFirstStart)
   if (currentIsFirstStart || targetIsStoredFirstStart) {
-    for (const run of db.runs.listByRuntimeId(epoch.invocation.runtimeId)) {
+    // isLaunchCarriedInvokeCorrelationJson(null) is false, so only annotated runs
+    // of this invocation can qualify.
+    for (const run of db.runs.listCorrelatedByInvocationId(invocationId)) {
       if (
+        run.runtimeId === epoch.invocation.runtimeId &&
         run.invocationId === invocationId &&
         run.operationId === epoch.invocation.operationId &&
         run.generation === epoch.operation.generation &&
@@ -237,10 +247,14 @@ export function hasOtherOpenTurn(db: HrcDatabase, envelope: InvocationEventEnvel
   const target = coordinatesForEnvelope(envelope)
   if (target === undefined) return false
   const events = db.brokerInvocationEvents
-    .listByInvocationId(String(envelope.invocationId))
+    .listByInvocationIdAndTypes({
+      invocationId: String(envelope.invocationId),
+      types: ['turn.started', ...TURN_TERMINAL_TYPES],
+      throughSeq: envelope.seq,
+    })
     .map(parseStoredEvent)
-    .filter((event): event is ParsedEvent => event !== undefined && event.seq <= envelope.seq)
-  const terminalTypes = new Set(['turn.completed', 'turn.failed', 'turn.interrupted'])
+    .filter((event): event is ParsedEvent => event !== undefined)
+  const terminalTypes = new Set<string>(TURN_TERMINAL_TYPES)
   const targetKey = coordinateKey(target)
   return events.some((started) => {
     if (started.type !== 'turn.started' || coordinateKey(started) === targetKey) return false
@@ -262,11 +276,12 @@ function payloadForRow(row: HrcBrokerInvocationEventRecord): Record<string, unkn
 }
 
 function isSteerSubmission(db: HrcDatabase, invocationId: string, submissionId: string): boolean {
-  return db.brokerInvocationEvents.listByInvocationId(invocationId).some((row) => {
-    if (row.type !== 'admission.admitted') return false
-    const payload = payloadForRow(row)
-    return stringField(payload, 'submissionId') === submissionId && payload?.['class'] === 'steer'
-  })
+  return db.brokerInvocationEvents
+    .listByInvocationIdAndTypes({ invocationId, types: ['admission.admitted'] })
+    .some((row) => {
+      const payload = payloadForRow(row)
+      return stringField(payload, 'submissionId') === submissionId && payload?.['class'] === 'steer'
+    })
 }
 
 function absorbedRows(db: HrcDatabase, runtimeId: string, invocationId?: string) {
@@ -354,8 +369,12 @@ export function settlePriorAbsorbedAuxiliaries(
 ): void {
   const target = coordinatesForEnvelope(envelope)
   if (target === undefined) return
-  for (const row of db.brokerInvocationEvents.listByInvocationId(String(envelope.invocationId))) {
-    if (row.type !== 'submission.absorbed') continue
+  const absorbed = db.brokerInvocationEvents.listByInvocationIdAndTypes({
+    invocationId: String(envelope.invocationId),
+    types: ['submission.absorbed'],
+    turnId: target.turnId,
+  })
+  for (const row of absorbed) {
     const event = parseStoredEvent(row)
     if (
       event === undefined ||

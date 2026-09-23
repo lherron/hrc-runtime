@@ -1252,6 +1252,22 @@ export class RunRepository {
   }
 
   /**
+   * The invocation's runs that carry a correlation annotation, in the same order
+   * as `listByRuntimeId`. Few runs are annotated, while one long invocation can
+   * own thousands of runs, so annotation checks start here (T-08781).
+   */
+  listCorrelatedByInvocationId(invocationId: string): HrcRunRecord[] {
+    return this.db
+      .query<RunRow, [string]>(
+        `SELECT ${RUN_COLUMNS} FROM runs
+          WHERE invocation_id = ? AND correlation_json IS NOT NULL
+          ORDER BY accepted_at ASC, run_id ASC`
+      )
+      .all(invocationId)
+      .map(mapRunRow)
+  }
+
+  /**
    * FIFO turn inputs accepted by HRC but not yet handed to a runtime.
    *
    * A queued row is deliberately separate from runtime.activeRunId: the

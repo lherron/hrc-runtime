@@ -19,6 +19,7 @@ import {
   type BrokerInvocationRow,
   COMPILED_RUNTIME_PLAN_COLUMNS,
   type CompiledRuntimePlanRow,
+  EFFECTIVE_TURN_ID_SQL,
   LIFECYCLE_POLICY_COLUMNS,
   type LifecyclePolicyRow,
   PERMISSION_DECISION_COLUMNS,
@@ -1093,6 +1094,56 @@ export class BrokerInvocationEventRepository {
       .all(invocationId)
 
     return rows.map((row) => this.mapRow(row))
+  }
+
+  /**
+   * The invocation's rows of the given types, in seq order, for decisions that
+   * read identity fields only (T-08781). Rows are NOT hydrated: a spilled tool
+   * result stays a descriptor.
+   *
+   * `turnId` / `hasTurnId` filter on the row's effective turnId — the envelope's
+   * string `turnId`, else the payload's string `turnId` — so a caller parsing the
+   * returned rows sees exactly the rows it would have kept from the whole list.
+   */
+  listByInvocationIdAndTypes(input: {
+    invocationId: string
+    types: readonly string[]
+    throughSeq?: number | undefined
+    runtimeId?: string | undefined
+    turnId?: string | undefined
+    hasTurnId?: boolean | undefined
+    limit?: number | undefined
+  }): HrcBrokerInvocationEventRecord[] {
+    if (input.types.length === 0) return []
+    const where = ['invocation_id = ?', `type IN (${input.types.map(() => '?').join(', ')})`]
+    const params: SQLQueryBindings[] = [input.invocationId, ...input.types]
+    if (input.throughSeq !== undefined) {
+      where.push('seq <= ?')
+      params.push(input.throughSeq)
+    }
+    if (input.runtimeId !== undefined) {
+      where.push('runtime_id = ?')
+      params.push(input.runtimeId)
+    }
+    if (input.turnId !== undefined) {
+      where.push(`${EFFECTIVE_TURN_ID_SQL} = ?`)
+      params.push(input.turnId)
+    } else if (input.hasTurnId === true) {
+      where.push(`${EFFECTIVE_TURN_ID_SQL} IS NOT NULL`)
+    }
+    const limit = input.limit !== undefined ? ` LIMIT ${Math.max(0, Math.floor(input.limit))}` : ''
+    return this.db
+      .query<BrokerInvocationEventRow, SQLQueryBindings[]>(
+        // Pinned: to satisfy ORDER BY seq the planner otherwise picks the
+        // (invocation_id, seq) index and walks every earlier row of the
+        // invocation — the very growth this query exists to avoid.
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+          INDEXED BY idx_broker_invocation_events_invocation_type_seq
+          WHERE ${where.join(' AND ')}
+          ORDER BY seq ASC${limit}`
+      )
+      .all(...params)
+      .map((row) => this.mapRow(row, { hydrate: false }))
   }
 
   listByRuntimeId(runtimeId: string): HrcBrokerInvocationEventRecord[] {
