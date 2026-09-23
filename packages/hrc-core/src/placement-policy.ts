@@ -12,18 +12,14 @@
  * are applied by the caller, never derived here.
  */
 
-import { spawnSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
 import { environmentWithoutGitOverrides } from './git-environment.js'
 import { findProjectMarker } from './placement-conventions.js'
-import {
-  type WrkqProjectRegistryEntry,
-  findWrkqProjectEntry,
-  readWrkqProjectRegistry,
-} from './project-registry.js'
+import { type WrkqProjectRegistryEntry, findWrkqProjectEntry } from './project-registry.js'
 
 export type GitWorktree = {
   path: string
@@ -162,31 +158,107 @@ export function parseWorktreePorcelain(output: string): GitWorktree[] {
   return worktrees
 }
 
-function listGitWorktrees(
-  canonicalRoot: string,
-  explicitEnv: Record<string, string | undefined>
-): GitWorktree[] {
-  const ambientEnv = environmentWithoutGitOverrides()
-  const result = spawnSync('git', ['-C', canonicalRoot, 'worktree', 'list', '--porcelain'], {
-    encoding: 'utf8',
-    env: { ...ambientEnv, ...explicitEnv },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (result.status !== 0) {
-    const diagnostic = result.stderr.trim() || `git exited ${result.status ?? 'without status'}`
-    throw new Error(`cannot inspect worktrees for ${canonicalRoot}: ${diagnostic}`)
+/**
+ * `git worktree list` for a checkout, never blocking the caller's thread
+ * (T-08783: the daemon reached this on every task-scoped placement and the
+ * spawnSync alone was ~5s of main-thread time in a 23-minute profile).
+ *
+ * A canonical checkout's answer is memoized against a stat fingerprint of the
+ * files `git worktree add|remove|move|prune` and a branch switch rewrite, so a
+ * new task worktree is seen on the very next call — no TTL window in which a
+ * placement could miss it. Concurrent callers for the same key share one child.
+ */
+const worktreeListCache = new Map<string, { fingerprint: string; worktrees: GitWorktree[] }>()
+const worktreeListInFlight = new Map<string, Promise<GitWorktree[]>>()
+
+const GIT_LOCATION_OVERRIDES = ['GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE'] as const
+
+function mtimeOf(path: string): string {
+  try {
+    return String(statSync(path).mtimeMs)
+  } catch {
+    return '-'
   }
-  return parseWorktreePorcelain(result.stdout)
 }
 
-export function refineTaskWorktree(
+/** undefined = not fingerprintable (linked checkout, or the env relocates git). */
+function worktreeFingerprint(
+  canonicalRoot: string,
+  env: Record<string, string | undefined>
+): string | undefined {
+  if (GIT_LOCATION_OVERRIDES.some((key) => env[key] !== undefined)) return undefined
+  const gitDir = join(canonicalRoot, '.git')
+  if (!isDirectory(gitDir)) return undefined
+  const worktreesDir = join(gitDir, 'worktrees')
+  const parts = [mtimeOf(join(gitDir, 'HEAD')), mtimeOf(worktreesDir)]
+  let names: string[] = []
+  try {
+    names = readdirSync(worktreesDir).sort()
+  } catch {
+    // No linked worktrees yet: the directory mtime above ('-') covers creation.
+  }
+  for (const name of names) {
+    const admin = join(worktreesDir, name)
+    parts.push(name, mtimeOf(join(admin, 'HEAD')), mtimeOf(join(admin, 'gitdir')))
+  }
+  return parts.join('|')
+}
+
+function spawnGitWorktreeList(
+  canonicalRoot: string,
+  env: Record<string, string | undefined>
+): Promise<GitWorktree[]> {
+  return new Promise((resolvePromise, reject) => {
+    execFile(
+      'git',
+      ['-C', canonicalRoot, 'worktree', 'list', '--porcelain'],
+      { encoding: 'utf8', env: env as NodeJS.ProcessEnv, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) {
+          const status = typeof error.code === 'number' ? error.code : undefined
+          const diagnostic =
+            String(stderr ?? '').trim() || `git exited ${status ?? 'without status'}`
+          reject(new Error(`cannot inspect worktrees for ${canonicalRoot}: ${diagnostic}`))
+          return
+        }
+        resolvePromise(parseWorktreePorcelain(stdout))
+      }
+    )
+  })
+}
+
+async function listGitWorktrees(
+  canonicalRoot: string,
+  explicitEnv: Record<string, string | undefined>
+): Promise<GitWorktree[]> {
+  const env = { ...environmentWithoutGitOverrides(), ...explicitEnv }
+  const fingerprint = worktreeFingerprint(canonicalRoot, env)
+  if (fingerprint === undefined) return spawnGitWorktreeList(canonicalRoot, env)
+
+  const cached = worktreeListCache.get(canonicalRoot)
+  if (cached !== undefined && cached.fingerprint === fingerprint) return cached.worktrees
+
+  const flightKey = `${canonicalRoot}\0${fingerprint}`
+  const inFlight = worktreeListInFlight.get(flightKey)
+  if (inFlight !== undefined) return inFlight
+  const listing = spawnGitWorktreeList(canonicalRoot, env)
+    .then((worktrees) => {
+      worktreeListCache.set(canonicalRoot, { fingerprint, worktrees })
+      return worktrees
+    })
+    .finally(() => worktreeListInFlight.delete(flightKey))
+  worktreeListInFlight.set(flightKey, listing)
+  return listing
+}
+
+export async function refineTaskWorktree(
   canonicalRoot: string,
   taskId: string | undefined,
   explicitEnv: Record<string, string | undefined>
-): { path: string; branch?: string | undefined } | undefined {
+): Promise<{ path: string; branch?: string | undefined } | undefined> {
   if (!taskId || !/^T-\d+$/.test(taskId)) return undefined
 
-  const worktrees = listGitWorktrees(canonicalRoot, explicitEnv)
+  const worktrees = await listGitWorktrees(canonicalRoot, explicitEnv)
   const matches = worktrees.filter(
     (worktree) => worktree.branch && taskTokens(worktree.branch).includes(taskId)
   )
@@ -212,7 +284,7 @@ export function refineTaskWorktree(
 }
 
 export function didYouMeanExplicitTaskProject(
-  projects: WrkqProjectRegistryEntry[],
+  projects: readonly WrkqProjectRegistryEntry[],
   projectId: string
 ): string | undefined {
   const taskId = taskTokens(projectId)[0]
@@ -243,7 +315,12 @@ export function resolveCanonicalProjectRoot(
     cwd: string
     agentRoot?: string | undefined
     projectRootOverride?: string | undefined
-    registryProjects?: WrkqProjectRegistryEntry[] | undefined
+    /**
+     * The wrkq project registry, already loaded. REQUIRED: this resolver never
+     * reads wrkq itself, so no caller (the daemon least of all) can reach a
+     * blocking subprocess through it (T-08783).
+     */
+    registryProjects: readonly WrkqProjectRegistryEntry[]
     projectSearchRoots?: string[] | undefined
   }
 ): CanonicalProjectRoot {
@@ -257,7 +334,7 @@ export function resolveCanonicalProjectRoot(
     return { root: projectRoot, source: 'explicit-override' }
   }
 
-  const projects = options.registryProjects ?? readWrkqProjectRegistry(env)
+  const projects = options.registryProjects
   const registryEntry = findWrkqProjectEntry(projects, projectId)
   if (registryEntry?.root) {
     const canonicalRoot = resolve(expandHome(registryEntry.root, env))

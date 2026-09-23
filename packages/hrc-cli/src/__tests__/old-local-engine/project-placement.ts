@@ -9,10 +9,30 @@ import {
   findProjectMarker,
   findWrkqProjectEntry,
   getAgentsRoot,
-  readWrkqProjectRegistry,
 } from 'hrc-core'
 
 import { parseFixtureTargetsToml } from './fixture-targets.js'
+
+/**
+ * The old engine's own registry read, frozen here with it: hrc-core no longer
+ * ships a subprocess reader (T-08783), and this oracle is test-only.
+ */
+function readWrkqProjectRegistry(
+  env: Record<string, string | undefined>
+): WrkqProjectRegistryEntry[] {
+  const result = spawnSync('wrkq', ['projects', '--json'], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  if (result.status !== 0 || !result.stdout) return []
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown
+    return Array.isArray(parsed) ? (parsed as WrkqProjectRegistryEntry[]) : []
+  } catch {
+    return []
+  }
+}
 
 export type ProjectOrigin = 'explicit' | 'inferred'
 

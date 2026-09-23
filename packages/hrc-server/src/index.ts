@@ -137,6 +137,7 @@ import {
   PeerRuntimeProjectionCache,
   peerRuntimeProjectionCacheKey,
 } from './federation/peer-runtime-projection-cache.js'
+import { installProjectRegistrySource } from './federation/project-registry-roots.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import {
   type BindingRegistryEndpointControl,
@@ -934,6 +935,7 @@ class HrcServerInstance implements HrcServer {
    * rooms and envelopes; this is the ONLY door HRC reads or writes them through.
    */
   readonly wrkqLedger: WrkqLedgerClient
+  private readonly uninstallProjectRegistrySource: () => void
   /** Node identity from CONFIGURATION, recorded on every presentation receipt. */
   readonly federationNodeId: string
   harnessBrokerController: HarnessBrokerController | undefined
@@ -1410,6 +1412,9 @@ class HrcServerInstance implements HrcServer {
     // defaulted real client lets any embedded instance write to fleet state.
     // `hrc server serve` passes the real one; nothing else should.
     this.wrkqLedger = options.wrkqLedger ?? new UnreachableWrkqLedger()
+    this.uninstallProjectRegistrySource = installProjectRegistrySource(() =>
+      this.wrkqLedger.projectList()
+    )
     this.transcriptIndexer = createServerTranscriptIndexer(this)
     this.ctx = {
       db: this.db,
@@ -1774,6 +1779,7 @@ class HrcServerInstance implements HrcServer {
       }
     }
     await this.transcriptIndexer.stop()
+    this.uninstallProjectRegistrySource()
     // The ledger transport is a child process; leaving it behind would strand a
     // `wrkq rpc --stdio` per daemon restart.
     await this.wrkqLedger.close().catch((error: unknown) => {

@@ -1,3 +1,4 @@
+import type { WrkqProjectRegistryEntry } from 'hrc-core'
 import type {
   WrkqEnvelope,
   WrkqEnvelopeBirth,
@@ -18,6 +19,7 @@ import type {
   WrkqRoomShowParams,
   WrkqRoomView,
 } from '../../wrkq/ledger-client.js'
+
 import type {
   WrkqLedgerClient,
   WrkqProjectEventPostParams,
@@ -573,6 +575,14 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
         })),
       highWater: page.length === 0 ? params.cursor : (page[page.length - 1]?.id ?? params.cursor),
     }
+  }
+
+  /** T-08783 — the registry placement reads; tests seed it directly. */
+  readonly registryProjects: WrkqProjectRegistryEntry[] = []
+
+  async projectList(): Promise<WrkqProjectRegistryEntry[]> {
+    this.guard('wrkq.project.listView')
+    return [...this.registryProjects]
   }
 
   /**

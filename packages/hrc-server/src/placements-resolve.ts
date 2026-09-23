@@ -40,7 +40,10 @@ import type {
 } from 'spaces-aspc-protocol'
 
 import { withAspdObservationSession } from './agent-spaces-adapter/aspd-observation-client.js'
-import { resolveRegisteredProjectRoot } from './federation/project-registry-roots.js'
+import {
+  loadProjectRegistry,
+  resolveRegisteredProjectRoot,
+} from './federation/project-registry-roots.js'
 import { isRecord, parseJsonBody } from './server-parsers.js'
 import { json } from './server-util.js'
 
@@ -359,11 +362,14 @@ export async function resolvePlacementInProcess(
   let worktreeBranch: string | undefined
   let worktreeWarning: string | undefined
   if (projectExplicit && projectId !== undefined) {
+    // One registry read per resolution, shared by both candidates below: the
+    // daemon's cached wrkq.project.listView (T-08783), or the wire test seam.
+    const registryProjects = body.registryProjects ?? (await loadProjectRegistry())
     try {
       const canonical = resolveCanonicalProjectRoot(projectId, {
         env,
         cwd: body.cwd,
-        ...(body.registryProjects !== undefined ? { registryProjects: body.registryProjects } : {}),
+        registryProjects,
         ...(body.projectSearchRoots !== undefined
           ? { projectSearchRoots: body.projectSearchRoots }
           : {}),
@@ -389,12 +395,7 @@ export async function resolvePlacementInProcess(
       const explicitOverride = body.projectRootOverride ?? env['ASP_PROJECT_ROOT_OVERRIDE']
       const registered =
         explicitOverride === undefined
-          ? resolveRegisteredProjectRoot(projectId, {
-              env,
-              ...(body.registryProjects !== undefined
-                ? { registryProjects: body.registryProjects }
-                : {}),
-            })
+          ? resolveRegisteredProjectRoot(projectId, { env, registryProjects })
           : undefined
       if (registered !== undefined) {
         canonicalRoot = registered
@@ -408,7 +409,7 @@ export async function resolvePlacementInProcess(
     }
     if (canonicalRoot !== undefined) {
       try {
-        const worktree = refineTaskWorktree(canonicalRoot, body.taskId, { ...env })
+        const worktree = await refineTaskWorktree(canonicalRoot, body.taskId, { ...env })
         if (worktree !== undefined) {
           canonicalRoot = worktree.path
           worktreeBranch = worktree.branch

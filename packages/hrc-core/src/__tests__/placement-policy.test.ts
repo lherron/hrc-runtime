@@ -199,20 +199,20 @@ describe('resolveCanonicalProjectRoot', () => {
 })
 
 describe('refineTaskWorktree', () => {
-  it('refines an explicit canonical root to the worktree whose branch carries the task token', () => {
+  it('refines an explicit canonical root to the worktree whose branch carries the task token', async () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')
     const worktree = join(root, 'taskboard-T-06369')
     const repo = committedRepo(projectRoot)
     git(repo, 'worktree', 'add', '-b', 'drain/T-06369-placement', worktree)
 
-    const refined = refineTaskWorktree(projectRoot, 'T-06369', repo.env)
+    const refined = await refineTaskWorktree(projectRoot, 'T-06369', repo.env)
 
     expect(refined?.path).toBe(realpathSync(worktree))
     expect(refined?.branch).toBe('drain/T-06369-placement')
   })
 
-  it('ignores hostile ambient Git context while preserving deliberate Git env overrides', () => {
+  it('ignores hostile ambient Git context while preserving deliberate Git env overrides', async () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')
     const worktree = join(root, 'taskboard-T-07138')
@@ -225,10 +225,10 @@ describe('refineTaskWorktree', () => {
     process.env['GIT_DIR'] = poison.gitDir
     Reflect.deleteProperty(process.env, 'GIT_WORK_TREE')
     try {
-      const ambient = refineTaskWorktree(projectRoot, 'T-07138', {})
+      const ambient = await refineTaskWorktree(projectRoot, 'T-07138', {})
       expect(ambient?.path).toBe(realpathSync(worktree))
 
-      const deliberate = refineTaskWorktree(projectRoot, 'T-07138', {
+      const deliberate = await refineTaskWorktree(projectRoot, 'T-07138', {
         GIT_DIR: poison.gitDir,
         GIT_WORK_TREE: poison.workTree,
       })
@@ -241,26 +241,41 @@ describe('refineTaskWorktree', () => {
     }
   })
 
-  it('fails closed when more than one worktree branch carries the exact task token', () => {
+  it('sees a worktree added after a cached listing on the very next call (T-08783)', async () => {
+    const root = temporaryRoot()
+    const projectRoot = join(root, 'taskboard')
+    const worktree = join(root, 'taskboard-T-08783')
+    const repo = committedRepo(projectRoot)
+    // The daemon's env never relocates git; only that shape is memoized.
+    const { GIT_DIR: _gitDir, GIT_WORK_TREE: _workTree, ...daemonEnv } = repo.env
+
+    expect(await refineTaskWorktree(projectRoot, 'T-08783', daemonEnv)).toBeUndefined()
+    git(repo, 'worktree', 'add', '-b', 'drain/T-08783-cache', worktree)
+
+    const refined = await refineTaskWorktree(projectRoot, 'T-08783', daemonEnv)
+    expect(refined?.path).toBe(realpathSync(worktree))
+  })
+
+  it('fails closed when more than one worktree branch carries the exact task token', async () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')
     const repo = committedRepo(projectRoot)
     git(repo, 'worktree', 'add', '-b', 'drain/T-06369-one', join(root, 'one'))
     git(repo, 'worktree', 'add', '-b', 'wf/T-06369-two', join(root, 'two'))
 
-    expect(() => refineTaskWorktree(projectRoot, 'T-06369', repo.env)).toThrow(
+    await expect(refineTaskWorktree(projectRoot, 'T-06369', repo.env)).rejects.toThrow(
       /multiple worktrees match T-06369.*one.*two/
     )
   })
 
-  it('trips on a task-named detached worktree instead of silently selecting canonical', () => {
+  it('trips on a task-named detached worktree instead of silently selecting canonical', async () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')
     const detached = join(root, 'taskboard-T-06369-detached')
     const repo = committedRepo(projectRoot)
     git(repo, 'worktree', 'add', '--detach', detached)
 
-    expect(() => refineTaskWorktree(projectRoot, 'T-06369', repo.env)).toThrow(
+    await expect(refineTaskWorktree(projectRoot, 'T-06369', repo.env)).rejects.toThrow(
       `worktree at ${realpathSync(detached)} appears associated with T-06369 but is detached HEAD (no branch)`
     )
   })

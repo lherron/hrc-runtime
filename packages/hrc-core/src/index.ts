@@ -6,11 +6,7 @@ export { HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV } from './federation.js'
 
 export { environmentWithoutGitOverrides } from './git-environment.js'
 
-export {
-  expandRegistryHome,
-  findWrkqProjectEntry,
-  readWrkqProjectRegistry,
-} from './project-registry.js'
+export { expandRegistryHome, findWrkqProjectEntry } from './project-registry.js'
 export type { WrkqProjectRegistryEntry } from './project-registry.js'
 
 export {

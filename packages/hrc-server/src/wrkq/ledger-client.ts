@@ -39,6 +39,8 @@ export class WrkqLedgerRequestError extends Error {
     this.name = 'WrkqLedgerRequestError'
   }
 }
+import type { WrkqProjectRegistryEntry } from 'hrc-core'
+
 import { wrkqAuthorityEnvironment } from '../federation/wrkq-authority.js'
 import { writeServerLog } from '../server-log.js'
 
@@ -107,6 +109,12 @@ export type WrkqLedgerClient = {
    * design — a refusal here is a missing timeline row, never a failed birth.
    */
   projectEventPost(params: WrkqProjectEventPostParams): Promise<WrkqProjectEventPostResult>
+  /**
+   * T-08783: the project registry (`slug`/`path`/`title`/`root`) through the
+   * existing `wrkq.project.listView` — the same read `wrkq projects --json`
+   * makes — so placement never shells wrkq on a daemon request path.
+   */
+  projectList(): Promise<WrkqProjectRegistryEntry[]>
   close(): Promise<void>
 }
 
@@ -189,6 +197,9 @@ export class UnreachableWrkqLedger implements WrkqLedgerClient {
   }
   projectEventPost(): Promise<never> {
     return this.refuse('wrkq.projectEvent.post')
+  }
+  projectList(): Promise<never> {
+    return this.refuse('wrkq.project.listView')
   }
   async close(): Promise<void> {}
 }
@@ -292,6 +303,32 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
       uuid: typeof posted.uuid === 'string' ? posted.uuid : '',
       created: posted.created === true,
     }
+  }
+
+  async projectList(): Promise<WrkqProjectRegistryEntry[]> {
+    const projects: WrkqProjectRegistryEntry[] = []
+    let cursor: string | undefined
+    // Bounded: a registry is tens of projects; a cursor that never ends is a
+    // server fault, not a reason to spin.
+    for (let page = 0; page < 100; page += 1) {
+      const view = await this.call<{ items?: unknown; next_cursor?: unknown }>(
+        'wrkq.project.listView',
+        cursor === undefined ? {} : { cursor }
+      )
+      if (Array.isArray(view.items)) {
+        for (const item of view.items) {
+          if (typeof item === 'object' && item !== null) {
+            projects.push(item as WrkqProjectRegistryEntry)
+          }
+        }
+      }
+      if (typeof view.next_cursor !== 'string' || view.next_cursor.length === 0) return projects
+      cursor = view.next_cursor
+    }
+    throw new WrkqLedgerUnavailableError(
+      'wrkq.project.listView did not finish paging',
+      'wrkq.project.listView'
+    )
   }
 
   async close(): Promise<void> {
@@ -522,7 +559,11 @@ function mapMonitorEvent(raw: unknown): WrkqMonitorEvent {
  * exists to avoid.
  */
 /** wrkqd params structs that do not declare principalRef (T-07647 audit). */
-const PRINCIPAL_FREE_METHODS = new Set(['wrkq.monitor.eventsView', 'wrkq.envelope.birthEnvelope'])
+const PRINCIPAL_FREE_METHODS = new Set([
+  'wrkq.monitor.eventsView',
+  'wrkq.envelope.birthEnvelope',
+  'wrkq.project.listView',
+])
 
 function isStaleSessionError(message: string): boolean {
   return /rpc\.initialize/i.test(message) || /transport failure/i.test(message)
