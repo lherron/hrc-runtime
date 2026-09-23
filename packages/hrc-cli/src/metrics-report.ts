@@ -62,9 +62,12 @@ export type CommandMetricGroup = {
 
 export type RouteMetricGroup = {
   route: string
+  /** Requests represented: sampled records count at their `sampleWeight`. */
   count: number
   ms: NumberStats
   bytes: ByteStats
+  /** Records written at a sampleWeight > 1; present only when > 0, marking `count` as an estimate. */
+  sampled?: number
 }
 
 export type CounterMetricGroup = { name: string; count: number }
@@ -257,7 +260,9 @@ function parseServerMetric(value: unknown): ServerRequestMetricRecord | undefine
     !isFiniteNonNegative(value['status']) ||
     (value['bytes'] !== undefined && !isFiniteNonNegative(value['bytes'])) ||
     (value['stream'] !== undefined && value['stream'] !== true) ||
-    (value['reqId'] !== undefined && typeof value['reqId'] !== 'string')
+    (value['reqId'] !== undefined && typeof value['reqId'] !== 'string') ||
+    (value['sampleWeight'] !== undefined &&
+      !(Number.isSafeInteger(value['sampleWeight']) && (value['sampleWeight'] as number) >= 1))
   ) {
     return undefined
   }
@@ -272,6 +277,9 @@ function parseServerMetric(value: unknown): ServerRequestMetricRecord | undefine
     ...(value['bytes'] === undefined ? {} : { bytes: value['bytes'] }),
     ...(value['stream'] === true ? { stream: true as const } : {}),
     ...(value['reqId'] === undefined ? {} : { reqId: value['reqId'] }),
+    ...(value['sampleWeight'] === undefined
+      ? {}
+      : { sampleWeight: value['sampleWeight'] as number }),
   }
 }
 
@@ -279,7 +287,7 @@ function parseCounterMetric(value: unknown): ServerCounterMetricRecord | undefin
   if (!isRecord(value) || value['v'] !== 1 || value['kind'] !== 'counter') return undefined
   if (
     typeof value['ts'] !== 'string' ||
-    value['name'] !== 'ledger.blob_miss' ||
+    (value['name'] !== 'ledger.blob_miss' && value['name'] !== 'metrics.dropped') ||
     !isFiniteNonNegative(value['value'])
   ) {
     return undefined
@@ -291,6 +299,23 @@ function parseCounterMetric(value: unknown): ServerCounterMetricRecord | undefin
     name: value['name'],
     value: value['value'],
   }
+}
+
+/** Nearest-rank percentiles where each sample stands for `weight` observations. */
+function weightedPercentileStats(samples: { value: number; weight: number }[]): NumberStats {
+  const sorted = [...samples].sort((a, b) => a.value - b.value)
+  if (sorted.length === 0) return { p50: 0, p95: 0, max: 0 }
+  const total = sorted.reduce((sum, sample) => sum + sample.weight, 0)
+  const nearestRank = (percent: number): number => {
+    const rank = Math.max(1, Math.ceil((percent / 100) * total))
+    let seen = 0
+    for (const sample of sorted) {
+      seen += sample.weight
+      if (seen >= rank) return sample.value
+    }
+    return sorted.at(-1)?.value ?? 0
+  }
+  return { p50: nearestRank(50), p95: nearestRank(95), max: sorted.at(-1)?.value ?? 0 }
 }
 
 function percentileStats(samples: number[]): NumberStats {
@@ -381,6 +406,10 @@ function groupCommands(records: CliMetricRecord[]): CommandMetricGroup[] {
     .sort((a, b) => a.command.localeCompare(b.command))
 }
 
+function recordWeight(record: ServerRequestMetricRecord): number {
+  return record.sampleWeight ?? 1
+}
+
 function groupRoutes(records: ServerRequestMetricRecord[]): RouteMetricGroup[] {
   const groups = new Map<string, ServerRequestMetricRecord[]>()
   for (const record of records) {
@@ -390,16 +419,25 @@ function groupRoutes(records: ServerRequestMetricRecord[]): RouteMetricGroup[] {
     else groups.set(key, [record])
   }
   return [...groups.entries()]
-    .map(([route, group]) => ({
-      route,
-      count: group.length,
-      ms: percentileStats(group.map((record) => record.ms)),
-      bytes: byteStats(
-        group.flatMap((record) =>
-          record.stream === true || record.bytes === undefined ? [] : [record.bytes]
-        )
-      ),
-    }))
+    .map(([route, group]) => {
+      const sized = group.filter(
+        (record): record is ServerRequestMetricRecord & { bytes: number } =>
+          record.stream !== true && record.bytes !== undefined
+      )
+      const sampled = group.filter((record) => recordWeight(record) > 1).length
+      return {
+        route,
+        count: group.reduce((total, record) => total + recordWeight(record), 0),
+        ms: weightedPercentileStats(
+          group.map((record) => ({ value: record.ms, weight: recordWeight(record) }))
+        ),
+        bytes: {
+          total: sized.reduce((total, record) => total + record.bytes * recordWeight(record), 0),
+          max: sized.reduce((maximum, record) => Math.max(maximum, record.bytes), 0),
+        },
+        ...(sampled > 0 ? { sampled } : {}),
+      }
+    })
     .sort((a, b) => a.route.localeCompare(b.route))
 }
 
@@ -529,8 +567,8 @@ export async function readMetricsReport(
     launch: groupLaunches(sink.launches, sink.launchSpans),
     slowest,
     largest: { cli: largestCli, server: largestServer },
-    uncorrelatedServerCount: server.filter(
-      (record) => !record.reqId || !cliRpcIds.has(record.reqId)
-    ).length,
+    uncorrelatedServerCount: server
+      .filter((record) => !record.reqId || !cliRpcIds.has(record.reqId))
+      .reduce((total, record) => total + recordWeight(record), 0),
   }
 }

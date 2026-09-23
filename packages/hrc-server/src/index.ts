@@ -213,7 +213,13 @@ import {
 } from './registration-handlers.js'
 import { captureServerRelease, projectServerRelease } from './release-provenance.js'
 import { replaySpool } from './replay-spool.js'
-import { measureResponseBytes, normalizeRoute, writeServerMetric } from './request-metrics.js'
+import {
+  ServerRequestMetricSampler,
+  flushServerMetrics,
+  measureResponseBytes,
+  normalizeRoute,
+  writeServerMetric,
+} from './request-metrics.js'
 import {
   findManagedAppSessionForSession,
   isRunActive,
@@ -947,6 +953,7 @@ class HrcServerInstance implements HrcServer {
   readonly sessionProjectEvents: SessionProjectEventPublisher
   readonly ctx: ServerContext
   readonly requestMetricsEnabled = process.env['HRC_METRICS'] !== '0'
+  private readonly requestMetricSampler = new ServerRequestMetricSampler()
   eventLoopLag: EventLoopLagMonitor | undefined
   private exactRouteKeys: Set<string> | undefined
   eventIngestListener: EventIngestListener | undefined
@@ -1838,6 +1845,9 @@ class HrcServerInstance implements HrcServer {
       cleanupError ??= error
     }
 
+    // Clean stop loses no buffered metrics (T-08784).
+    await flushServerMetrics(this.options.stateRoot)
+
     if (cleanupError) {
       writeServerLog('ERROR', 'server.stop.cleanup_failed', {
         socketPath: this.options.socketPath,
@@ -1870,9 +1880,14 @@ class HrcServerInstance implements HrcServer {
     const response = await this.dispatchRequest(request)
     const handlerMs = Number(process.hrtime.bigint() - started) / 1_000_000
     try {
-      const measurement = await measureResponseBytes(response)
       const reqId = request.headers.get('x-hrc-request-id')
       const now = new Date()
+      const sampleWeight = this.requestMetricSampler.weight(
+        { method, route, ms: handlerMs, status: response.status, reqId },
+        now.getTime()
+      )
+      if (sampleWeight === 0) return response
+      const measurement = await measureResponseBytes(response)
       writeServerMetric(
         {
           v: 1,
@@ -1884,6 +1899,7 @@ class HrcServerInstance implements HrcServer {
           status: response.status,
           ...measurement,
           ...(reqId && reqId.trim().length > 0 ? { reqId } : {}),
+          ...(sampleWeight > 1 ? { sampleWeight } : {}),
         },
         now,
         this.options.stateRoot

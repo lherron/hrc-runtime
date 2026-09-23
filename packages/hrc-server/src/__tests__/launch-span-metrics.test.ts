@@ -16,13 +16,14 @@ import {
   observePrecompileLaunchSpan,
 } from '../precompile-launch-timing'
 import type { PrecompileLaunchTimingContext } from '../precompile-launch-timing'
-import { recordLaunchSpan } from '../request-metrics'
+import { flushServerMetrics, recordLaunchSpan } from '../request-metrics'
 
 let stateRoot: string
 let originalStateDir: string | undefined
 let originalMetrics: string | undefined
 
 async function readServerRecords(): Promise<Record<string, unknown>[]> {
+  await flushServerMetrics(stateRoot)
   const metricsDir = join(stateRoot, 'metrics')
   const names = await readdir(metricsDir).catch(() => [] as string[])
   const records: Record<string, unknown>[] = []

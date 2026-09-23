@@ -65,7 +65,7 @@ function printHuman(report: MetricsReport): void {
   process.stdout.write('\nRoutes\n')
   for (const row of report.routes) {
     process.stdout.write(
-      `${row.route} count=${row.count} ms[p50=${row.ms.p50} p95=${row.ms.p95} max=${row.ms.max}] bytes[total=${row.bytes.total} max=${row.bytes.max}]\n`
+      `${row.route} count=${row.count}${row.sampled ? ` sampled=${row.sampled}` : ''} ms[p50=${row.ms.p50} p95=${row.ms.p95} max=${row.ms.max}] bytes[total=${row.bytes.total} max=${row.bytes.max}]\n`
     )
   }
   process.stdout.write('\nCounters\n')

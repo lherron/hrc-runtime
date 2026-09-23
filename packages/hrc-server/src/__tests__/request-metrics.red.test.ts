@@ -23,6 +23,7 @@ import type { HrcServer } from '../index'
 import { resolveSqliteBusyTimeoutMs, resolveSqliteSlowStatementThresholdMs } from '../index'
 import {
   SERVER_METRICS_MAX_FILE_BYTES,
+  flushServerMetrics,
   measureResponseBytes,
   normalizeRoute,
   pruneServerMetricFiles,
@@ -67,6 +68,7 @@ async function startServer(metrics = '1'): Promise<InspectableServer> {
 
 async function readServerMetrics(): Promise<ServerMetric[]> {
   if (!fixture) throw new Error('fixture is not initialized')
+  await flushServerMetrics(fixture.stateRoot)
   const metricsDir = join(fixture.stateRoot, 'metrics')
   const files = (await readdir(metricsDir)).filter((name) => /^server-.*\.ndjson$/.test(name))
   const records: ServerMetric[] = []
@@ -313,7 +315,7 @@ describe('server request metrics', () => {
     await utimes(files.oldCli, oldTime, oldTime)
     await utimes(files.recentServer, recentTime, recentTime)
 
-    expect(() => pruneServerMetricFiles(metricsDir, now.getTime())).not.toThrow()
+    await expect(pruneServerMetricFiles(metricsDir, now.getTime())).resolves.toBeUndefined()
     expect(await stat(files.oldServer).catch(() => undefined)).toBeUndefined()
     for (const path of [files.recentServer, files.todayServer, files.oldCli, files.control]) {
       expect((await stat(path)).isFile()).toBeTrue()
@@ -321,7 +323,7 @@ describe('server request metrics', () => {
 
     await chmod(metricsDir, 0o000)
     try {
-      expect(() => pruneServerMetricFiles(metricsDir, now.getTime())).not.toThrow()
+      await expect(pruneServerMetricFiles(metricsDir, now.getTime())).resolves.toBeUndefined()
     } finally {
       await chmod(metricsDir, 0o700)
     }
@@ -350,6 +352,7 @@ describe('server request metrics', () => {
       now,
       fixture.stateRoot
     )
+    await flushServerMetrics(fixture.stateRoot)
 
     expect((await stat(file)).size).toBe(SERVER_METRICS_MAX_FILE_BYTES)
   })
