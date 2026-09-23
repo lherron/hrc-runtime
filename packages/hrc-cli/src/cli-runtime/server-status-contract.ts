@@ -133,6 +133,37 @@ export const SERVER_STATUS_CONTRACT: readonly ServerStatusContractEntry[] = [
     optional: ['api.apiVersion', 'serverStatus.apiVersion'],
   },
   {
+    label: 'event loop',
+    paths: ['api.eventLoop.maxLagMs', 'api.eventLoop.stallCount', 'api.eventLoop.stallThresholdMs'],
+    // Daemons that predate the lag monitor (T-08786) report no eventLoop.
+    optional: [
+      'api.eventLoop.maxLagMs',
+      'api.eventLoop.stallCount',
+      'api.eventLoop.stallThresholdMs',
+    ],
+  },
+  {
+    label: 'last stall',
+    paths: [
+      'api.eventLoop.lastStall.lagMs',
+      'api.eventLoop.lastStall.at',
+      'api.eventLoop.lastStall.activities.0',
+      'api.eventLoop.lastStall.activities.0.tag',
+      'api.eventLoop.lastStall.activities.0.ms',
+      'api.eventLoop.lastStall.activities.0.count',
+    ],
+    // Rendered only once a stall has happened; the heaviest activity is optional within it.
+    summarized: ['api.eventLoop.lastStall.activities.0'],
+    optional: [
+      'api.eventLoop.lastStall.lagMs',
+      'api.eventLoop.lastStall.at',
+      'api.eventLoop.lastStall.activities.0',
+      'api.eventLoop.lastStall.activities.0.tag',
+      'api.eventLoop.lastStall.activities.0.ms',
+      'api.eventLoop.lastStall.activities.0.count',
+    ],
+  },
+  {
     label: 'store schema',
     paths: [
       'schema.storeVersion',
