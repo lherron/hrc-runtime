@@ -10,7 +10,7 @@
  * the allocator actually launched — so a worker's identity follows its launch,
  * not a value the test hands the assertion.
  */
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { renameSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -19,7 +19,6 @@ import { join } from 'node:path'
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
 import {
   validateFrozenExecutionRelease,
   workerHelloRefusal,
@@ -59,7 +58,6 @@ let aspd: AspdDouble
 let releaseA: Release
 let releaseB: Release
 let ledger: HostingLedger
-let facadeSpy: ReturnType<typeof spyOn>
 const savedEnv: Record<string, string | undefined> = {}
 
 type Internal = {
@@ -150,13 +148,9 @@ beforeEach(async () => {
 
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
   await bootServer()
-  facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-    throw new Error('bundled facade must not be reached on the aspd route')
-  })
 })
 
 afterEach(async () => {
-  facadeSpy.mockRestore()
   aspd.stop()
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[name]
@@ -310,7 +304,6 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     )
 
     expect(statusAtFirstEffect).toBe('prepared')
-    expect(facadeSpy).not.toHaveBeenCalled()
     expect(aspd.compileCalls).toBe(1)
     expect(ledger.commands).toHaveLength(1)
     expect(ledger.commands[0]).toContain(join(releaseA.releaseRoot, 'harness-broker'))
@@ -391,7 +384,6 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
       internal().startHeadlessBrokerRuntime(s, headlessIntent(), 'x', 'run-t08542-norelease')
     ).rejects.toMatchObject({ detail: { code: 'execution_release_missing' } })
 
-    expect(facadeSpy).not.toHaveBeenCalled()
     expect(ledger.commands).toHaveLength(0)
     expect(operationsFor(s.hostSessionId)).toHaveLength(0)
   })
@@ -518,11 +510,11 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     expect(ledger.attachCalls).toBe(0)
   })
 
-  it('refuses with aspd_unconfigured (no facade) when no endpoint is configured (T-08596)', async () => {
+  it('refuses with aspd_unconfigured when no endpoint is configured (T-08596)', async () => {
     setEnv('HRC_ASPD_SOCKET', undefined)
     const s = await session()
     const error = await internal()
-      .startHeadlessBrokerRuntime(s, headlessIntent(), 'x', 'run-t08542-facade')
+      .startHeadlessBrokerRuntime(s, headlessIntent(), 'x', 'run-t08542-unconfigured')
       .then(
         () => {
           throw new Error('birth without an endpoint must refuse')
@@ -531,7 +523,6 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
       )
     expect(String(error.message)).toContain('aspd-independent execution closure')
     expect(error.detail).toMatchObject({ code: 'aspd_unconfigured', site: 'headless-broker-birth' })
-    expect(facadeSpy).not.toHaveBeenCalled()
     expect(aspd.compileCalls).toBe(0)
   })
 })
@@ -573,7 +564,6 @@ describe('T-08542 pre-acceptance refusal through the public turn door', () => {
     expect(response.status).toBe(503)
     const body = (await response.json()) as { error: { detail: { code: string } } }
     expect(body.error.detail.code).toBe('aspd_unconfigured')
-    expect(facadeSpy).not.toHaveBeenCalled()
     await Bun.sleep(20)
   })
 })

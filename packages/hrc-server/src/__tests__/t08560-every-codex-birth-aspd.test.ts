@@ -6,9 +6,8 @@
  * Real pieces: the dispatch, submission, start, ensure, attach and rotation doors,
  * the interactive dispatch handler and birth chokepoint, the real
  * `HarnessBrokerController` and durable allocators, and the Unix-socket aspd
- * double speaking the ASPC wire (T-08542/T-08556 doubles). The bundled facade is
- * a spy that throws if reached. Post-boot input turns are OBSERVED, never
- * delivered, so exactly-once is a count: a launch-carried prompt must appear once
+ * double speaking the ASPC wire (T-08542/T-08556 doubles). Post-boot input turns
+ * are OBSERVED, never delivered, so exactly-once is a count: a launch-carried prompt must appear once
  * in the frozen start request that reached `invocation.start`, and never at the
  * post-boot executor.
  */
@@ -20,7 +19,6 @@ import { join } from 'node:path'
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
@@ -50,8 +48,6 @@ let aspdSocket: string
 let aspd: AspdDouble
 let releaseA: Release
 let ledger: HostingLedger
-let facadeCalls: number
-let facadeSpy: ReturnType<typeof spyOn>
 let delivered: Array<{ transport: string; runtimeId: string; prompt: string }>
 let releases: string[]
 const savedEnv: Record<string, string | undefined> = {}
@@ -201,15 +197,9 @@ beforeEach(async () => {
   setEnv('ASP_HOME', join(scratch, 'caller-asp-home'))
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
   await bootServer()
-  facadeCalls = 0
-  facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-    facadeCalls += 1
-    throw new Error('bundled facade reached')
-  })
 })
 
 afterEach(async () => {
-  facadeSpy.mockRestore()
   aspd.stop()
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[name]
@@ -283,7 +273,6 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
     expect(response.status).toBe(200)
     await settle(() => ledger.startCalls.length === 1)
 
-    expect(facadeCalls).toBe(0)
     expect(aspd.compileCalls).toBe(1)
     expect(aspd.compileMaterializations[0]).toMatchObject({
       initialPrompt: MARK,
@@ -392,7 +381,6 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
     })
     expect(response.status).toBeLessThan(300)
     await settle(() => ledger.startCalls.length === 1)
-    expect(facadeCalls).toBe(0)
     expect(aspd.compileMaterializations[0]?.initialPrompt).toBe(MARK)
     expect(aspd.compileMaterializations[0]?.omitPriming).toBeUndefined()
     const [op] = operations(s.hostSessionId)
@@ -425,7 +413,6 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
     )
     expect(ledger.startCalls).toHaveLength(1)
     expect(delivered).toEqual([])
-    expect(facadeCalls).toBe(0)
   })
 
   it('DM options (enqueue, joinInFlightRuntimeStart): append-to-priming on the aspd route', async () => {
@@ -457,7 +444,6 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
     expect(initialInputText(op?.record.admission.execution.dispatchRequest.startRequest)).toBe(MARK)
     expect(aspd.compileMaterializations[0]?.initialPrompt).toBe(MARK)
     expect(delivered).toEqual([])
-    expect(facadeCalls).toBe(0)
   })
 
   it('a refusal before boundary P reports nothing launch-carried and delivers nothing', async () => {
@@ -478,7 +464,6 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
     expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toHaveLength(0)
     expect(ledger.commands).toHaveLength(0)
     expect(delivered).toEqual([])
-    expect(facadeCalls).toBe(0)
     aspd = startAspdDouble(join(scratch, 'aspd-unused.sock'), releaseA)
   })
 })
@@ -498,7 +483,6 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
     expect(op?.record.dispatch.routeDecision.selectedBy).toBe('producer-selected-execution')
     expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toBeUndefined()
     expect(ledger.commands[0]).toContain(join(releaseA.releaseRoot, 'harness-broker'))
-    expect(facadeCalls).toBe(0)
   })
 
   it('POST /v1/runtimes/ensure does not register a local start singleflight or select a driver', async () => {
@@ -520,7 +504,6 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
     const [op] = operations(s.hostSessionId)
     expect(op?.record.route).toBe('producer-selected-execution')
     expect(aspd.compileCalls).toBe(1)
-    expect(facadeCalls).toBe(0)
   })
 
   it('rotation relaunch births the successor session through aspd', async () => {
@@ -529,7 +512,6 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
     const [op] = operations(rotated.hostSessionId)
     expect(op?.record.route).toBe('producer-selected-execution')
     expect(op?.record.dispatch.routeDecision.selectedBy).toBe('producer-selected-execution')
-    expect(facadeCalls).toBe(0)
   })
 
   it('attach does not silently reprovision an unavailable runtime through a second local selection', async () => {
@@ -549,10 +531,9 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
     expect(attached.status).toBeGreaterThanOrEqual(400)
     expect(ops).toHaveLength(1)
     expect(aspd.compileCalls).toBe(1)
-    expect(facadeCalls).toBe(0)
   })
 
-  it('configured ASP selects execution for legacy interactive callers; an unset socket still refuses without a facade fallback', async () => {
+  it('configured ASP selects execution for legacy interactive callers; an unset socket still refuses', async () => {
     const s = await session()
     await internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-claude', {
       flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED',
@@ -560,7 +541,6 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
       coldBirthPrompt: MARK,
     })
     expect(aspd.compileCalls).toBe(1)
-    expect(facadeCalls).toBe(0)
     await internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-cli-tmux', {
       flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED',
       allowedBrokerDriver: 'codex-cli-tmux',
@@ -575,7 +555,6 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
         coldBirthPrompt: MARK,
       })
     ).rejects.toThrow('aspd-independent execution closure')
-    expect(facadeCalls).toBe(0)
     expect(aspd.compileCalls).toBe(2)
   })
 })
@@ -721,7 +700,6 @@ describe('T-08560 keyless doors and reprovision ordering (D3, D4)', () => {
     expect(operations(s.hostSessionId)).toHaveLength(1)
     expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toHaveLength(1)
     expect(ledger.commands.length).toBe(commandsBefore)
-    expect(facadeCalls).toBe(0)
     aspd = startAspdDouble(join(scratch, 'aspd-unused.sock'), releaseA)
   })
 })
@@ -772,7 +750,6 @@ describe('T-08560 joins, backstop and durable IPC on the aspd route', () => {
       spy.mockRestore()
     }
     expect(aspd.compileCalls).toBe(0)
-    expect(facadeCalls).toBe(0)
   })
 
   it('ordinary v2 births do not take the retired durable-interactive IPC gate', async () => {
@@ -788,6 +765,5 @@ describe('T-08560 joins, backstop and durable IPC on the aspd route', () => {
     })
     expect(started.status).toBeLessThan(300)
     expect(aspd.compileCalls).toBe(2)
-    expect(facadeCalls).toBe(0)
   })
 })

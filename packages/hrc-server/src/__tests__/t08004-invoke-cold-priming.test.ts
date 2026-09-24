@@ -1,11 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import type { RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client.js'
 import { persistStartGraph } from '../broker/controller/persistence.js'
 import { BrokerEventMapper } from '../broker/event-mapper.js'
 import { createHrcServer } from '../index.js'
@@ -25,7 +24,6 @@ const CALLER = 'Slug this title.\n\n<title>Change chief color scheme</title>'
 
 let fixture: HrcServerTestFixture
 let server: HrcServer
-let facadeSpy: ReturnType<typeof spyOn> | undefined
 
 function claudeIntent(): HrcRuntimeIntent {
   return {
@@ -71,10 +69,6 @@ function brokerEnvelope(
 
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-t08004-invoke-cold-priming-')
-  // T-08596: fail loud if anything still reaches the deleted facade spawn.
-  facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-    throw new Error('T-08596: facade spawn deleted; must not be consulted')
-  })
   server = await createHrcServer(
     fixture.serverOpts({
       claudeCodeTmuxBrokerEnabled: true,
@@ -85,15 +79,12 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  facadeSpy?.mockRestore()
-  facadeSpy = undefined
   await server.stop()
   await fixture.cleanup()
 })
 
 describe('T-08004 cold invoke carries nonempty priming and caller in one native turn', () => {
   it('refuses the cold-birth compiler path with aspd_unconfigured on a node without an aspd endpoint (T-08596)', async () => {
-    // T-08596: the local facade compile behind a cold-birth prompt is deleted.
     // Prompt shaping into a compile request no longer happens in HRC; the
     // launch-carried prompt is a preparation input on the aspd path.
     const resolved = await fixture.resolveSession(SCOPE)
@@ -110,7 +101,6 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
         submissionDoor: 'invoke',
       })
     ).rejects.toThrow('aspd-independent execution closure')
-    expect(facadeSpy).not.toHaveBeenCalled()
   })
 
   it('returns from cold launch without admitting an independent caller submission', async () => {

@@ -8,9 +8,8 @@
  * Real pieces: the dispatch, submission, start, ensure, attach and rotation doors,
  * the interactive dispatch handler and birth chokepoint, the real
  * `HarnessBrokerController` and durable allocators, and the Unix-socket aspd
- * double speaking the ASPC wire (T-08542/T-08556 doubles). The bundled facade is
- * a spy that throws if reached. Post-boot input turns are OBSERVED, never
- * delivered, so exactly-once is a count: a launch-carried prompt must appear once
+ * double speaking the ASPC wire (T-08542/T-08556 doubles). Post-boot input turns
+ * are OBSERVED, never delivered, so exactly-once is a count: a launch-carried prompt must appear once
  * in the frozen start request that reached `invocation.start`, and never at the
  * post-boot executor.
  */
@@ -24,7 +23,6 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { launchAspdPreparedAttempt, prepareAspdHeadlessAttempt } from '../aspd-headless-start'
 
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
@@ -55,8 +53,6 @@ let aspdSocket: string
 let aspd: AspdDouble
 let releaseA: Release
 let ledger: HostingLedger
-let facadeCalls: number
-let facadeSpy: ReturnType<typeof spyOn>
 let delivered: Array<{ transport: string; runtimeId: string; prompt: string }>
 let releases: string[]
 const savedEnv: Record<string, string | undefined> = {}
@@ -258,15 +254,9 @@ beforeEach(async () => {
   setEnv('ASP_HOME', join(scratch, 'caller-asp-home'))
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
   await bootServer()
-  facadeCalls = 0
-  facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-    facadeCalls += 1
-    throw new Error('bundled facade reached')
-  })
 })
 
 afterEach(async () => {
-  facadeSpy.mockRestore()
   aspd.stop()
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[name]
@@ -357,7 +347,6 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
       expect(response.status).toBe(200)
       await settle(() => ledger.startCalls.length === 1)
 
-      expect(facadeCalls).toBe(0)
       expect(aspd.compileCalls).toBe(1)
       expect(aspd.compileRequested[0]).toBeDefined()
       expect(aspd.compileSelectors[0]).toBeUndefined()
@@ -412,7 +401,6 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
     })
     expect(response.status).toBeLessThan(300)
     await settle(() => ledger.startCalls.length === 1)
-    expect(facadeCalls).toBe(0)
     expect(aspd.compileMaterializations[0]?.initialPrompt).toBe(MARK)
     expect(aspd.compileMaterializations[0]?.omitPriming).toBeUndefined()
     const [op] = operations(s.hostSessionId)
@@ -443,7 +431,6 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
     ).toBeUndefined()
     expect(initialInputText(op?.record.admission.execution.dispatchRequest.startRequest)).toBe(MARK)
     expect(delivered).toEqual([])
-    expect(facadeCalls).toBe(0)
   })
 
   for (const driver of ['claude-code-tmux', 'pi-tui-tmux'] as const) {
@@ -467,7 +454,6 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
         expect(op?.record.hosting.driverKind).toBe(driver)
         expect(op?.record.dispatch.routeDecision.selectedBy).toBe('producer-selected-execution')
       }
-      expect(facadeCalls).toBe(0)
     })
   }
 
@@ -477,7 +463,6 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
     const rotated = await internal().rotateSessionContext(s, { relaunch: true, reason: 't8562' })
     const [op] = operations(rotated.hostSessionId)
     expect(op?.record.route).toBe('producer-selected-execution')
-    expect(facadeCalls).toBe(0)
   })
 
   it('the attached-run class is recorded for a Claude birth carrying the attach handshake, with no launch-carried prompt', async () => {
@@ -499,7 +484,6 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
     expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toBeUndefined()
     internal().harnessBrokerController?.cancelAttachedStart?.('attached-t8562')
     await start.catch(() => undefined)
-    expect(facadeCalls).toBe(0)
   })
 
   it('a retired codex-cli door input cannot override the declared producer execution', async () => {
@@ -513,7 +497,6 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
     expect(op?.record.admission.execution.driver).toBe('codex-app-server')
     expect(op?.record.hosting.driverKind).toBe('codex-app-server')
     expect(aspd.compileCalls).toBe(1)
-    expect(facadeCalls).toBe(0)
   })
 
   it('an unset socket refuses claude-code-tmux and pi-tui-tmux with aspd_unconfigured (T-08596)', async () => {
@@ -534,7 +517,6 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
       ).rejects.toThrow('aspd-independent execution closure')
     }
     expect(aspd.compileCalls).toBe(0)
-    expect(facadeCalls).toBe(0)
   })
 })
 
@@ -551,7 +533,6 @@ describe('T-08562 generic admission and hosting evidence (G-B-admission, G-B-hos
     expect(op?.record.admission.execution.driver).toBe('pi-tui-tmux')
     expect(op?.record.hosting.driverKind).toBe('pi-tui-tmux')
     expect(ledger.commands).toHaveLength(1)
-    expect(facadeCalls).toBe(0)
   })
 
   it('a declared codex execution is admitted without a local hosted-driver membership assertion', async () => {
@@ -566,7 +547,6 @@ describe('T-08562 generic admission and hosting evidence (G-B-admission, G-B-hos
       presentation: 'terminal',
     })
     expect(op?.record.executionRelease.worker).not.toHaveProperty('hostedDrivers')
-    expect(facadeCalls).toBe(0)
   })
 
   it('launch re-checks frozen execution hosting from persisted bytes: a hand-edited prepared row refuses and stays prepared', async () => {
@@ -696,7 +676,6 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
     expect(operations(s.hostSessionId)).toEqual([])
     expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toHaveLength(0)
     expect(ledger.commands).toHaveLength(0)
-    expect(facadeCalls).toBe(0)
     aspd = startAspdDouble(join(scratch, 'aspd-unused.sock'), releaseA)
   })
 
@@ -757,7 +736,6 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
     const [op] = operations(s.hostSessionId)
     expect(op?.record.admission.execution.driver).toBe('claude-code-tmux')
     expect(aspd.compileCalls).toBe(1)
-    expect(facadeCalls).toBe(0)
   })
 
   it('a forced pi-sdk preparation refused by the producer (release_worker_driver_unavailable) leaves no operation', async () => {
