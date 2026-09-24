@@ -59,14 +59,6 @@ export interface HrcRuntimePlacement {
   dryRun?: boolean | undefined
 }
 
-export interface HrcResolvedAgentPlacementPaths {
-  agentRoot?: string | undefined
-  projectRoot?: string | undefined
-  cwd?: string | undefined
-  searchedAgentRoots?: string[] | undefined
-  warnings?: string[] | undefined
-}
-
 export interface HrcAttachmentRef {
   kind: 'url' | 'file'
   filename?: string | undefined
