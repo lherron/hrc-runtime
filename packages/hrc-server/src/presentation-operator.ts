@@ -49,10 +49,6 @@ export function requestsOperatorPresentation(intent: HrcRuntimeIntent): boolean 
   return intent.presentation?.operator !== undefined
 }
 
-export function operatorPresentationSource(intent: HrcRuntimeIntent): OperatorPresentationSource {
-  return requestsOperatorPresentation(intent) ? 'request' : 'node-default'
-}
-
 function unsupported(reason: string, detail: Record<string, unknown>): never {
   throw new HrcUnprocessableEntityError(
     HrcErrorCode.PRESENTATION_OPERATOR_UNSUPPORTED,
