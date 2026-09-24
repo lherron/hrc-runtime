@@ -47,12 +47,15 @@ function append(seq: number, type: string, payload: Record<string, unknown>) {
 }
 
 function wait(submissionId: string) {
-  return waitForSubmissionTerminal({ db: fixture.db, rawBrokerSubscribers: new Set() } as never, {
-    invocationId: Q_INVOCATION_ID,
-    runId: Q_RUN_B_ID,
-    submissionId,
-    signal: new AbortController().signal,
-  })
+  return waitForSubmissionTerminal(
+    { db: fixture.db, rawBrokerSubscribers: new Set(), followSubscribers: new Set() } as never,
+    {
+      invocationId: Q_INVOCATION_ID,
+      runId: Q_RUN_B_ID,
+      submissionId,
+      signal: new AbortController().signal,
+    }
+  )
 }
 
 describe('broker submission wait follows the disposition ledger', () => {
@@ -81,7 +84,7 @@ describe('broker submission wait follows the disposition ledger', () => {
     })
 
     const response = await waitForPublicDispatchStage(
-      { db: fixture.db, rawBrokerSubscribers: new Set() } as never,
+      { db: fixture.db, rawBrokerSubscribers: new Set(), followSubscribers: new Set() } as never,
       terminalBase({ submissionId, invocationId: Q_INVOCATION_ID }),
       'terminal',
       false
@@ -96,7 +99,7 @@ describe('broker submission wait follows the disposition ledger', () => {
 
   it('keeps a legacy already-terminal response without broker identity projection-less', async () => {
     const response = await waitForPublicDispatchStage(
-      { db: fixture.db, rawBrokerSubscribers: new Set() } as never,
+      { db: fixture.db, rawBrokerSubscribers: new Set(), followSubscribers: new Set() } as never,
       terminalBase({}),
       'terminal',
       false
@@ -130,7 +133,7 @@ describe('broker submission wait follows the disposition ledger', () => {
 
     const subscribers = new Set<(notification: { record: { invocationId: string } }) => void>()
     const waitPromise = waitForCompilerPrimingTerminal(
-      { db: fixture.db, rawBrokerSubscribers: subscribers } as never,
+      { db: fixture.db, rawBrokerSubscribers: subscribers, followSubscribers: new Set() } as never,
       {
         runtimeId: Q_RUNTIME_ID,
         activeInvocationId: Q_INVOCATION_ID,
@@ -184,7 +187,11 @@ describe('broker submission wait follows the disposition ledger', () => {
     append(20, 'submission.absorbed', { submissionId, turnId })
 
     const subscribers = new Set<(notification: { record: { invocationId: string } }) => void>()
-    const server = { db: fixture.db, rawBrokerSubscribers: subscribers } as never
+    const server = {
+      db: fixture.db,
+      rawBrokerSubscribers: subscribers,
+      followSubscribers: new Set(),
+    } as never
     const waiting = waitForSubmissionTerminal(server, {
       invocationId: Q_INVOCATION_ID,
       runId: 'run-steer-auxiliary',
@@ -239,7 +246,7 @@ describe('broker submission wait follows the disposition ledger', () => {
     })
 
     const response = await waitForPublicDispatchStage(
-      { db: fixture.db, rawBrokerSubscribers: new Set() } as never,
+      { db: fixture.db, rawBrokerSubscribers: new Set(), followSubscribers: new Set() } as never,
       terminalBase({ submissionId, invocationId: Q_INVOCATION_ID }),
       'terminal',
       false
@@ -256,7 +263,7 @@ describe('broker submission wait follows the disposition ledger', () => {
     append(20, 'submission.absorbed', { submissionId: 'sub-absorbed', turnId: 'turn-running' })
     expect(
       await waitForSubmissionTerminal(
-        { db: fixture.db, rawBrokerSubscribers: new Set() } as never,
+        { db: fixture.db, rawBrokerSubscribers: new Set(), followSubscribers: new Set() } as never,
         {
           invocationId: Q_INVOCATION_ID,
           runId: Q_RUN_B_ID,
@@ -311,7 +318,7 @@ describe('broker submission wait follows the disposition ledger', () => {
 
     await expect(
       waitForCompilerPrimingTerminal(
-        { db: fixture.db, rawBrokerSubscribers: new Set() } as never,
+        { db: fixture.db, rawBrokerSubscribers: new Set(), followSubscribers: new Set() } as never,
         {
           runtimeId: Q_RUNTIME_ID,
           activeInvocationId: Q_INVOCATION_ID,

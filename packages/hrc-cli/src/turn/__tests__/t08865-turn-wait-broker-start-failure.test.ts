@@ -86,6 +86,8 @@ type DaemonScript = {
   events: HrcLifecycleEvent[]
   /** The steer door never answers: a server-side wait that does not end. */
   steerHangs?: boolean
+  /** The steer door's waited response body. */
+  steerResponse?: Record<string, unknown>
 }
 
 const daemons: Array<{ stop: () => void }> = []
@@ -125,6 +127,7 @@ function startDaemon(script: DaemonScript): string {
       if (url.pathname === '/v1/submissions/steer') {
         // Never resolves; the client's own deadline must end the wait.
         if (script.steerHangs) return await new Promise<Response>(() => {})
+        if (script.steerResponse) return Response.json(script.steerResponse)
       }
       if (url.pathname === '/v1/events') {
         const encoder = new TextEncoder()
@@ -243,5 +246,36 @@ describe('T-08865 hrc turn --wait on a failed turn', () => {
       result: 'wait_timeout',
       timeoutMs: 1_000,
     })
+  }, 15_000)
+
+  it('exits non-zero when the waited steer door settles the turn failed', async () => {
+    // The body HRC returns once the waited run fails before any broker disposition.
+    const socket = startDaemon({
+      sessionFound: true,
+      events: [],
+      steerResponse: {
+        runId: RUN,
+        hostSessionId: HSID,
+        runtimeId: RUNTIME,
+        generation: 1,
+        transport: 'headless',
+        submissionId: 'input-start-failed',
+        admission: 'admitted',
+        stage: 'terminal',
+        status: 'failed',
+        outcome: 'failed',
+        replayed: false,
+        error: {
+          code: 'runtime_unavailable',
+          message: 'OAuth mode requires dispatchEnv.HARNESS_PI_AUTH_STORE',
+        },
+      },
+    })
+    const result = await timedTurn(socket, '8m')
+
+    expect(result.exitCode).not.toBe(0)
+    expect(result.elapsedMs).toBeLessThan(5_000)
+    expect(jsonLines(result.stdout)[0]).toMatchObject({ status: 'failed', runId: RUN })
+    expect(result.stderr).toContain('HARNESS_PI_AUTH_STORE')
   }, 15_000)
 })

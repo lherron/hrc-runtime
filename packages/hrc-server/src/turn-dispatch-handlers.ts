@@ -16,6 +16,8 @@ import type {
   DispatchTurnTerminalOutcome,
   EnqueueSubmissionRequest,
   HrcBrokerInvocationEventRecord,
+  HrcEventEnvelope,
+  HrcLifecycleEvent,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -344,36 +346,61 @@ export async function waitForSubmissionTerminal(
     }
   }
 
+  // A run HRC failed before the broker recorded any disposition (a broker whose
+  // start failed, a first_turn_missing trip) writes no submission.* rows, so
+  // the broker ledger alone never settles it (T-08865). Its own failure does.
+  const runFailedUndisposed = ():
+    | Pick<HrcSubmissionResponse, 'disposition' | 'terminal'>
+    | undefined => {
+    const run = server.db.runs.getByRunId(input.runId)
+    return run !== null && terminalOutcome(run.status) !== undefined ? {} : undefined
+  }
+
   return await new Promise((resolve, reject) => {
     let settled = false
+    const detach = () => {
+      server.rawBrokerSubscribers.delete(subscriber)
+      server.followSubscribers.delete(runSubscriber)
+      input.signal.removeEventListener('abort', onAbort)
+    }
     const finish = (value: Pick<HrcSubmissionResponse, 'disposition' | 'terminal'>) => {
       if (settled) return
       settled = true
-      server.rawBrokerSubscribers.delete(subscriber)
-      input.signal.removeEventListener('abort', onAbort)
+      detach()
       resolve(value)
     }
     const onAbort = () => {
       if (settled) return
       settled = true
-      server.rawBrokerSubscribers.delete(subscriber)
+      detach()
       reject(new HrcRuntimeUnavailableError('submission wait aborted', { input }))
+    }
+    const settleFromLedger = (): boolean => {
+      const value = evaluate(
+        server.db.brokerInvocationEvents.listByInvocationId(input.invocationId)
+      )
+      if (value !== undefined) finish(value)
+      return value !== undefined
     }
     const subscriber = (notification: {
       record: { invocationId: string; type: string; brokerEventJson: string }
     }) => {
       if (notification.record.invocationId !== input.invocationId) return
-      const value = evaluate(
-        server.db.brokerInvocationEvents.listByInvocationId(input.invocationId)
-      )
-      if (value !== undefined) finish(value)
+      settleFromLedger()
+    }
+    const runSubscriber = (event: HrcEventEnvelope | HrcLifecycleEvent) => {
+      if (!('hrcSeq' in event) || event.runId !== input.runId) return
+      if (event.eventKind !== 'turn.failed' && event.eventKind !== 'first_turn_missing') return
+      if (settleFromLedger()) return
+      const failed = runFailedUndisposed()
+      if (failed !== undefined) finish(failed)
     }
     server.rawBrokerSubscribers.add(subscriber)
+    server.followSubscribers.add(runSubscriber)
     input.signal.addEventListener('abort', onAbort, { once: true })
-    const existing = evaluate(
-      server.db.brokerInvocationEvents.listByInvocationId(input.invocationId)
-    )
-    if (existing !== undefined) finish(existing)
+    if (settleFromLedger()) return
+    const failed = runFailedUndisposed()
+    if (failed !== undefined) finish(failed)
   })
 }
 

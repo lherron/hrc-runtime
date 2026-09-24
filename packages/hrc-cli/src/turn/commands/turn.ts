@@ -497,6 +497,20 @@ function bindWaitDeadline(deadline: AbortSignal | undefined, onDeadline: () => v
   return () => deadline.removeEventListener('abort', onDeadline)
 }
 
+/**
+ * A waited door whose turn ended failed (e.g. its broker never started) exits
+ * like a watched failed turn, after its response line is printed (T-08865).
+ */
+function exitIfWaitedTurnFailed(response: HrcSubmissionResponse): void {
+  const body = response as Record<string, unknown>
+  const terminal = isRecord(body['terminal']) ? body['terminal'] : {}
+  if (body['status'] !== 'failed' && terminal['status'] !== 'failed') return
+  const error = isRecord(body['error']) ? body['error'] : {}
+  const code = typeof error['code'] === 'string' ? error['code'] : 'failed'
+  const message = typeof error['message'] === 'string' ? `: ${error['message']}` : ''
+  throw new TurnExitError(TERMINALS.error.exitCode, `turn failed: ${code}${message}`)
+}
+
 /** Run a server-side waiting door; the client deadline ends it if the server does not. */
 async function withWaitDeadline<T>(
   output: TurnOutputOptions,
@@ -630,18 +644,18 @@ async function prepareDispatchedTurn(
   }
   const queue = opts.queue === true
   if (opts.preempt === true) {
-    printJsonLine(
-      await withWaitDeadline(output, 'preempt', (signal) =>
-        client.preempt(
-          {
-            ...submissionRequest,
-            ...(ttlMs !== undefined ? { ttlMs } : {}),
-            ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
-          },
-          { signal: waitMode === 'final' ? signal : undefined }
-        )
+    const preempted = await withWaitDeadline(output, 'preempt', (signal) =>
+      client.preempt(
+        {
+          ...submissionRequest,
+          ...(ttlMs !== undefined ? { ttlMs } : {}),
+          ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
+        },
+        { signal: waitMode === 'final' ? signal : undefined }
       )
     )
+    printJsonLine(preempted)
+    exitIfWaitedTurnFailed(preempted)
     return undefined
   }
   if (!queue) {
@@ -656,6 +670,7 @@ async function prepareDispatchedTurn(
         )
         writeDoorDowngrade(waited)
         printJsonLine(waited)
+        exitIfWaitedTurnFailed(waited)
         return undefined
       }
       const steered = await client.steer(submissionRequest)
@@ -683,18 +698,18 @@ async function prepareDispatchedTurn(
     }
   }
   if (queue && (waitMode === 'final' || ttlMs !== undefined)) {
-    printJsonLine(
-      await withWaitDeadline(output, 'enqueue', (signal) =>
-        client.enqueue(
-          {
-            ...submissionRequest,
-            ...(ttlMs !== undefined ? { ttlMs } : {}),
-            ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
-          },
-          { signal: waitMode === 'final' ? signal : undefined }
-        )
+    const enqueued = await withWaitDeadline(output, 'enqueue', (signal) =>
+      client.enqueue(
+        {
+          ...submissionRequest,
+          ...(ttlMs !== undefined ? { ttlMs } : {}),
+          ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
+        },
+        { signal: waitMode === 'final' ? signal : undefined }
       )
     )
+    printJsonLine(enqueued)
+    exitIfWaitedTurnFailed(enqueued)
     return undefined
   }
   const dispatch = await client.semanticTurnHandoff({
