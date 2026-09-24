@@ -471,8 +471,7 @@ describe('T-05078/17 capability truth — broker headless supportsInFlightInput'
   // Fail-fast contract: broker-headless-handlers.ts must have ZERO instances of
   // supportsInFlightInput: true. Currently 4 instances → RED.
   //
-  // This is a static contract test (analogous to runtime-status-contract.ts)
-  // that catches the lying capability at the source before runtime.
+  // This static source contract test catches the lying capability before runtime.
   it('broker-headless-handlers.ts has no supportsInFlightInput: true literals', () => {
     const source = readFileSync(BROKER_HEADLESS_HANDLERS_PATH, 'utf8')
 
