@@ -60,8 +60,8 @@ export const SESSION_RECENCY_SQL = `MAX(
  * `status IN ('ready','busy')`, which reads as "is it live" but actually
  * answers "is it one of the two states I happened to think of". HRC produces
  * `starting`, `stopping`, `awaiting_input`, `stopped`, `failed`, `disposed` and
- * `adopted` as well (`runtime-status-contract.ts`), and the running-turn
- * authority counts `busy`, `awaiting_input`, `starting` and `stopping` all as
+ * `adopted` as well, and the running-turn authority counts `busy`,
+ * `awaiting_input`, `starting` and `stopping` all as
  * running in the external injector. Under the allow-list, a continuation-
  * bearing turn parked on an operator prompt for a week had no activity, was not
  * `ready` or `busy`, and so became an archive candidate — the sweep would have

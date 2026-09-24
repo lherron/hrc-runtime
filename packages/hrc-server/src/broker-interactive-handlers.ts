@@ -29,7 +29,6 @@ import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-d
 import { compilerPrimingSubmissionId } from './compiler-priming.js'
 import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
-import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import {
   type RedirectOffBirthJoin,
@@ -109,8 +108,6 @@ type DispatchTurnResponseBase = Omit<
   DispatchTurnResponse,
   'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
 > & { status: 'started' | 'completed' }
-
-export const buildInteractiveBrokerDispatchEnv = buildManagedBrokerDispatchEnv
 
 type JsonRepairRunCorrelation = {
   kind: 'json_repair'

@@ -13,7 +13,7 @@
  * the allocator actually launched — so a worker's identity follows its launch,
  * not a value the test hands the assertion.
  */
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { renameSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -22,7 +22,6 @@ import { join } from 'node:path'
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
 import { decideCodexAppServerPresentation, decideMuseServePresentation } from '../broker-decisions'
 import { createBrokerDurableHeadlessAllocator } from '../broker-interactive-handlers/substrate-allocator'
 import { HarnessBrokerController } from '../broker/controller'
@@ -52,7 +51,6 @@ let aspd: AspdDouble
 let releaseA: Release
 let releaseB: Release
 let ledger: HostingLedger
-let facadeSpy: ReturnType<typeof spyOn>
 const savedEnv: Record<string, string | undefined> = {}
 
 type Internal = {
@@ -136,13 +134,9 @@ beforeEach(async () => {
 
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
   await bootServer()
-  facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-    throw new Error('bundled facade must not be reached on the aspd route')
-  })
 })
 
 afterEach(async () => {
-  facadeSpy.mockRestore()
   aspd.stop()
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[name]

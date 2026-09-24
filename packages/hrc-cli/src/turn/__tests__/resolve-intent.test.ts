@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { installOldEngineDaemon } from '../../__tests__/old-engine-daemon.js'
-import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
+import { resolveLaunchTarget } from '../resolve-intent.js'
 
 const oldEngineDaemon = installOldEngineDaemon()
 afterAll(() => oldEngineDaemon.stop())
 
-describe('resolveRuntimeIntentForTarget', () => {
+describe('resolveLaunchTarget', () => {
   let tmp: string
   let canonicalAgentsRoot: string
   let projectRoot: string
@@ -54,24 +54,23 @@ describe('resolveRuntimeIntentForTarget', () => {
     )
     await writeFile(join(localAgentRoot, 'agent-profile.toml'), 'version = 3\n', 'utf8')
 
-    const intent = await resolveRuntimeIntentForTarget('localbot@project')
+    const { runtimeIntent } = await resolveLaunchTarget('localbot@project')
 
-    expect(intent.placement.agentRoot).toBe(localAgentRoot)
-    expect(intent.placement.cwd).toBe(projectRoot)
+    expect(runtimeIntent.placement.agentRoot).toBe(localAgentRoot)
+    expect(runtimeIntent.placement.cwd).toBe(projectRoot)
   })
 
   /**
-   * T-07398 DEFECT CYCLE 1, D2 — the hrcchat sender must CARRY the handle's
-   * directive block onto the intent it builds.
+   * T-07398 DEFECT CYCLE 1, D2 — the turn launch resolver must CARRY the
+   * handle's directive block onto the runtime intent it builds.
    *
    * `agent-scope` already parses `+node=...` off the handle and hands it back as
-   * `directives`; this module drops it on the floor, so on the installed surface
-   * the daemon receives an intent with no `provision` and has nothing to
-   * validate or apply. That is why `+node=notanode` births silently instead of
-   * returning UNKNOWN_NODE, and why a pin-conflicting directive delivers: the
-   * gate's checks are all live and correct, they are simply never reached.
+   * `directives`; the turn runtime intent must preserve them as `provision` so
+   * the daemon can validate and apply the requested pin/node directives. Without
+   * this regression check, `+node=notanode` could birth silently instead of
+   * returning UNKNOWN_NODE, and pin-conflicting directives could deliver.
    */
-  it('carries the handle directive block onto the intent as provision (T-07398 D2)', async () => {
+  it('carries the handle directive block onto the runtime intent (T-07398 D2)', async () => {
     const localAgentsRoot = join(projectRoot, 'agents')
     const localAgentRoot = join(localAgentsRoot, 'localbot')
     await mkdir(localAgentRoot, { recursive: true })
@@ -82,11 +81,11 @@ describe('resolveRuntimeIntentForTarget', () => {
     )
     await writeFile(join(localAgentRoot, 'agent-profile.toml'), 'version = 3\n', 'utf8')
 
-    const intent = await resolveRuntimeIntentForTarget(
+    const { runtimeIntent } = await resolveLaunchTarget(
       'localbot@project:t07402smoke3+node=lab+model=sonnet'
     )
 
-    expect(intent.provision).toMatchObject({ node: 'lab', model: 'sonnet' })
+    expect(runtimeIntent.provision).toMatchObject({ node: 'lab', model: 'sonnet' })
   })
 
   it('reports every searched project-local and canonical agent root when an agent is missing', async () => {
@@ -98,7 +97,7 @@ describe('resolveRuntimeIntentForTarget', () => {
       'utf8'
     )
 
-    await expect(resolveRuntimeIntentForTarget('missing@project')).rejects.toThrow(
+    await expect(resolveLaunchTarget('missing@project')).rejects.toThrow(
       `agent "missing" not found; searched: ${join(localAgentsRoot, 'missing')}, ${join(canonicalAgentsRoot, 'missing')}`
     )
   })

@@ -7,9 +7,8 @@
  *
  * Harness shared with T-08562: real dispatch/birth chokepoint, real
  * HarnessBrokerController and durable allocators, Unix-socket aspd double.
- * The bundled facade is a spy that throws if reached.
  */
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +18,6 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { aspdHeadlessBrokerEndpoint, prepareAspdHeadlessAttempt } from '../aspd-headless-start'
 
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
@@ -51,8 +49,6 @@ let aspdSocket: string
 let aspd: AspdDouble
 let releaseA: Release
 let ledger: HostingLedger
-let facadeCalls: number
-let facadeSpy: ReturnType<typeof spyOn>
 const savedEnv: Record<string, string | undefined> = {}
 
 type Internal = {
@@ -182,15 +178,9 @@ beforeEach(async () => {
   setEnv('ASP_HOME', join(scratch, 'caller-asp-home'))
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
   await bootServer()
-  facadeCalls = 0
-  facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-    facadeCalls += 1
-    throw new Error('bundled facade reached')
-  })
 })
 
 afterEach(async () => {
-  facadeSpy.mockRestore()
   aspd.stop()
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[name]
@@ -321,7 +311,6 @@ describe('headless muse-serve birth through aspd', () => {
     expect(response.status).toBe(200)
     await settle(() => ledger.startCalls.length === 1)
 
-    expect(facadeCalls).toBe(0)
     expect(aspd.compileCalls).toBe(1)
     expect(aspd.compileSelectors[0]).toBeUndefined()
     expect(aspd.compileRequested[0]).toEqual({})
@@ -353,6 +342,5 @@ describe('headless muse-serve birth through aspd', () => {
       endpoint: aspdSocket,
     })
     expect(error).toEqual(expect.any(String))
-    expect(facadeCalls).toBe(0)
   })
 })

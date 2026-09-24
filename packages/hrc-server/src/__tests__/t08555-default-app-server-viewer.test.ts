@@ -1,5 +1,5 @@
 /** T-08555 — producer-selected execution at start and dispatch doors. */
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +7,6 @@ import { join } from 'node:path'
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
@@ -35,7 +34,6 @@ let scratch: string
 let aspd: AspdDouble
 let releaseA: Release
 let ledger: HostingLedger
-let facadeSpy: ReturnType<typeof spyOn>
 let observedReuse: string[]
 let callerAspHome: string
 const savedEnv: Record<string, string | undefined> = {}
@@ -159,12 +157,8 @@ beforeEach(async () => {
   setEnv('ASP_HOME', callerAspHome)
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
   await bootServer(false)
-  facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-    throw new Error('bundled facade reached')
-  })
 })
 afterEach(async () => {
-  facadeSpy.mockRestore()
   aspd.stop()
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[name]
@@ -260,7 +254,6 @@ describe('T-08555 producer-selected start and dispatch', () => {
       aspHome: callerAspHome,
     })
     expect(record.dispatch.routeDecision).not.toHaveProperty('operatorPresentationSource')
-    expect(facadeSpy).not.toHaveBeenCalled()
   })
   it('accepts producer-declared terminal execution despite an interactive raw request', async () => {
     aspd.producerResult = terminalProducer()

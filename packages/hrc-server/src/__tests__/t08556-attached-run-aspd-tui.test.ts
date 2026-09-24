@@ -12,7 +12,7 @@
  * the executable actually launched. Input turns are OBSERVED, never delivered, so
  * the exactly-once property is a count of what reached the executors.
  */
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,7 +20,6 @@ import { join } from 'node:path'
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
 import { aspdInteractiveBrokerEndpoint } from '../aspd-headless-start'
 import {
   createBrokerDurableHeadlessAllocator,
@@ -52,8 +51,6 @@ let scratch: string
 let aspd: AspdDouble
 let releaseA: Release
 let ledger: HostingLedger
-let facadeCalls: number
-let facadeSpy: ReturnType<typeof spyOn>
 let delivered: Array<{ transport: string; runtimeId: string; prompt: string }>
 /** Lease releases per allocator, and a switch that makes the worker connect fail. */
 let releases: string[]
@@ -252,15 +249,9 @@ beforeEach(async () => {
   setEnv('ASP_HOME', join(scratch, 'caller-asp-home'))
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
   await bootServer()
-  facadeCalls = 0
-  facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-    facadeCalls += 1
-    throw new Error('bundled facade reached')
-  })
 })
 
 afterEach(async () => {
-  facadeSpy.mockRestore()
   aspd.stop()
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[name]
@@ -385,7 +376,6 @@ describe('T-08556 attached-run cold birth', () => {
     const { prepared, runtimeId } = await attachedRun(s.hostSessionId)
 
     expect(prepared.status).toBe('prepared')
-    expect(facadeCalls).toBe(0)
     expect(aspd.compileCalls).toBe(1)
     const [record] = preparations(s.hostSessionId)
     expect(record.route).toBe('producer-selected-execution')
@@ -523,13 +513,12 @@ describe('T-08556 attached-run cold birth', () => {
     ).toBeUndefined()
   })
 
-  it('aspd unavailable refuses before any hosting effect, with no facade fallback', async () => {
+  it('aspd unavailable refuses before any hosting effect', async () => {
     aspd.stop()
     const s = await session()
     const refused = await refusedAttachedRun(s.hostSessionId)
     expect(refused.status).toBe(503)
     expect(JSON.stringify(refused.body)).toContain('aspd')
-    expect(facadeCalls).toBe(0)
     expect(ledger.commands).toHaveLength(0)
     expect(runtimes(s.hostSessionId)).toHaveLength(0)
     aspd = startAspdDouble(join(scratch, 'aspd-unused.sock'), releaseA)
@@ -542,10 +531,9 @@ describe('T-08556 attached-run cold birth', () => {
     const started = await attachedRun(s.hostSessionId)
     expect(started.prepared.status).toBe('prepared')
     expect(aspd.compileCalls).toBe(1)
-    expect(facadeCalls).toBe(0)
   })
 
-  it('a non-attached door hosts the same producer-selected execution (facade not reached)', async () => {
+  it('a non-attached door hosts the same producer-selected execution', async () => {
     const s = await session()
     const runtime = await internal().startInteractiveTmuxBrokerRuntime(
       s,
@@ -556,7 +544,6 @@ describe('T-08556 attached-run cold birth', () => {
         allowedBrokerDriver: 'codex-app-server',
       }
     )
-    expect(facadeCalls).toBe(0)
     expect(aspd.compileCalls).toBe(1)
     const [record] = preparations(s.hostSessionId)
     expect(record.route).toBe('producer-selected-execution')
@@ -569,9 +556,7 @@ describe('T-08556 attached-run cold birth', () => {
     const s = await session()
     const refused = await refusedAttachedRun(s.hostSessionId)
     expect(refused.status).toBeGreaterThanOrEqual(500)
-    // T-08596: the pre-change facade path is deleted; nothing is spawned and
-    // aspd is never consulted.
-    expect(facadeCalls).toBe(0)
+    // Refusal occurs before preparation, so aspd is never consulted.
     expect(aspd.compileCalls).toBe(0)
     expect(JSON.stringify(refused.body)).toContain('aspd_unconfigured')
   })
@@ -768,7 +753,6 @@ describe('T-08556 attached run crossing a registered start', () => {
 
     expect(aspd.compileCalls).toBe(1)
     expect(ledger.commands).toHaveLength(1)
-    expect(facadeCalls).toBe(0)
     expect(delivered).toEqual([
       {
         transport: 'headless',

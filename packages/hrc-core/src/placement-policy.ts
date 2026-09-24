@@ -366,10 +366,3 @@ export function resolveCanonicalProjectRoot(
     }`
   )
 }
-
-export function findMarkerProjectRoot(
-  cwd: string,
-  agentsRoot: string | undefined
-): { dir: string; id: string } | undefined {
-  return findProjectMarker(cwd, { ...(agentsRoot ? { agentsRoot } : {}) })
-}

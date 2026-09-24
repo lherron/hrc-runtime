@@ -16,7 +16,6 @@ import {
 } from './compiler-priming.js'
 import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
-import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { formatDmAddress } from './messages.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
@@ -72,8 +71,6 @@ type DispatchTurnResponseBase = Omit<
   DispatchTurnResponse,
   'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
 > & { status: 'started' | 'completed' }
-
-export const buildHeadlessBrokerDispatchEnv = buildManagedBrokerDispatchEnv
 
 /**
  * A promptless cold Codex boot still runs the compiler-owned agent priming
@@ -202,19 +199,6 @@ export function parseDurableColdBootTurnInput(
         ? (dispatch as DispatchRunPersistenceOptions)
         : { dispatchIdempotencyKey: undefined },
   }
-}
-
-export function serializeDurableColdBootTurnInput(
-  prompt: string,
-  options: DispatchRunPersistenceOptions & { responseFormat?: HrcTurnResponseFormat | undefined }
-): string {
-  return JSON.stringify({
-    kind: DURABLE_COLD_BOOT_INPUT_KIND,
-    prompt,
-    source: 'cold_boot',
-    ...(options.responseFormat !== undefined ? { responseFormat: options.responseFormat } : {}),
-    dispatch: dispatchRunPersistence(options),
-  } satisfies DurableColdBootTurnInput)
 }
 
 function isDefaultPlainResponseFormat(responseFormat: HrcTurnResponseFormat | undefined): boolean {

@@ -34,7 +34,6 @@ export const EPR_HELLO_ERROR_CODE = {
 
 export const EPR_REPLAY_UNAVAILABLE_CODE = -32013
 export const EPR_CONTROLLER_FENCED_CODE = -32015
-export const EPR_ATTACH_TOKEN_INVALID_CODE = -32055
 
 export type EprHelloErrorName = keyof typeof EPR_HELLO_ERROR_CODE
 

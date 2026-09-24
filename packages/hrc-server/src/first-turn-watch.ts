@@ -25,8 +25,6 @@ import { writeServerLog } from './server-log.js'
 
 export const HRC_FIRST_TURN_TIMEOUT_MS_ENV = 'HRC_FIRST_TURN_TIMEOUT_MS'
 export const HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS_ENV = 'HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS'
-export const HRC_FIRST_TURN_BUNDLE_KEEP_ENV = 'HRC_FIRST_TURN_BUNDLE_KEEP'
-export const HRC_FIRST_TURN_BUNDLE_TTL_DAYS_ENV = 'HRC_FIRST_TURN_BUNDLE_TTL_DAYS'
 
 export const DEFAULT_FIRST_TURN_TIMEOUT_MS = 120_000
 /**
@@ -38,21 +36,12 @@ export const DEFAULT_FIRST_TURN_TIMEOUT_MS = 120_000
 export const DEFAULT_FIRST_TURN_EVAL_INTERVAL_SECONDS = 30
 /** Hard wall-clock budget for the whole best-effort diagnostic bundle. */
 export const FIRST_TURN_BUNDLE_BUDGET_MS = 5_000
-export const DEFAULT_FIRST_TURN_BUNDLE_KEEP = 3
-export const DEFAULT_FIRST_TURN_BUNDLE_TTL_DAYS = 14
 
 function readPositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name]
   if (raw === undefined || raw.trim() === '') return fallback
   const parsed = Number.parseInt(raw.trim(), 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function readNonNegativeIntEnv(name: string, fallback: number): number {
-  const raw = process.env[name]
-  if (raw === undefined || raw.trim() === '') return fallback
-  const parsed = Number.parseInt(raw.trim(), 10)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
 /**
@@ -71,17 +60,6 @@ export function resolveFirstTurnEvalIntervalSeconds(): number {
   return readPositiveIntEnv(
     HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS_ENV,
     DEFAULT_FIRST_TURN_EVAL_INTERVAL_SECONDS
-  )
-}
-
-export function resolveFirstTurnBundleKeep(): number {
-  return readNonNegativeIntEnv(HRC_FIRST_TURN_BUNDLE_KEEP_ENV, DEFAULT_FIRST_TURN_BUNDLE_KEEP)
-}
-
-export function resolveFirstTurnBundleTtlDays(): number {
-  return readNonNegativeIntEnv(
-    HRC_FIRST_TURN_BUNDLE_TTL_DAYS_ENV,
-    DEFAULT_FIRST_TURN_BUNDLE_TTL_DAYS
   )
 }
 

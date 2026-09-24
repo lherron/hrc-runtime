@@ -13,7 +13,7 @@
  * the allocator actually launched — so a worker's identity follows its launch,
  * not a value the test hands the assertion.
  */
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { renameSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -22,7 +22,6 @@ import { join } from 'node:path'
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerTmuxTuiAllocator,
@@ -55,7 +54,6 @@ let aspd: AspdDouble
 let releaseA: Release
 let releaseB: Release
 let ledger: HostingLedger
-let facadeSpy: ReturnType<typeof spyOn>
 const savedEnv: Record<string, string | undefined> = {}
 
 type Internal = {
@@ -143,13 +141,9 @@ beforeEach(async () => {
 
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
   await bootServer()
-  facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
-    throw new Error('bundled facade must not be reached on the aspd route')
-  })
 })
 
 afterEach(async () => {
-  facadeSpy.mockRestore()
   aspd.stop()
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[name]
@@ -242,8 +236,8 @@ describe('T-08554 explicit app-server viewer', () => {
   })
 
   // T-08555: with HRC_ASPD_SOCKET configured a node-default viewer prepares
-  // through aspd (t08555-default-app-server-viewer.test.ts). T-08596: unset
-  // refuses with aspd_unconfigured; the facade viewer route is deleted.
+  // through aspd (t08555-default-app-server-viewer.test.ts). An unset socket
+  // refuses with aspd_unconfigured.
   it('no request choice refuses with aspd_unconfigured when HRC_ASPD_SOCKET is unset (T-08596)', async () => {
     setEnv('HRC_ASPD_SOCKET', undefined)
     await server.stop()
@@ -255,7 +249,6 @@ describe('T-08554 explicit app-server viewer', () => {
     expect(body.error.detail.code).toBe('aspd_unconfigured')
     await Bun.sleep(50)
     expect(aspd.compileCalls).toBe(0)
-    expect(facadeSpy).not.toHaveBeenCalled()
   })
 
   it('refuses a viewer request for a driver that has no viewer before any effect', async () => {
