@@ -383,6 +383,44 @@ fleet-status:
     tools svc 'mini'
     tools hrcdev 'hrcdev'
 
+    # Bun install layout (T-08855). The fleet runs one bun: ~/.bun/bin/{bun,bunx},
+    # first on the login PATH (what `zsh -lc` seats resolve), with no other copy
+    # anywhere on it, and every praesidium LaunchAgent that execs bun/bunx directly
+    # naming that path. A version match above says nothing about this: max3's
+    # injector plist pinned an npm-global bunx that was later uninstalled, and would
+    # have died on its next restart while every column here read clean.
+    layout_probe='canon="$HOME/.bun/bin"
+      bad=""
+      for n in bun bunx; do
+        paths="$(zsh -lc "whence -ap $n" 2>/dev/null)"
+        [[ "$(head -1 <<<"$paths")" == "$canon/$n" ]] || bad+=" $n=$(head -1 <<<"$paths" | grep . || echo missing)"
+        for p in $(tail -n +2 <<<"$paths" | grep -vx "$canon/$n"); do bad+=" shadow:$p"; done
+      done
+      for f in "$HOME"/Library/LaunchAgents/com.praesidium.*.plist; do
+        [[ -f "$f" ]] || continue
+        prog="$(plutil -extract ProgramArguments.0 raw -o - "$f" 2>/dev/null)"
+        case "${prog##*/}" in
+          bun|bunx) [[ "$prog" == "$canon/${prog##*/}" && -x "$prog" ]] ||
+            bad+=" $(basename "$f" .plist | sed "s/^com\.praesidium\.//")=$prog" ;;
+        esac
+      done
+      echo "${bad# }"'
+    layout() {
+      local label="$1" target="$2" out
+      if [[ -z "$target" ]]; then
+        out="$(bash -c "$layout_probe" 2>/dev/null)"
+      else
+        out="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" "bash -c $(printf '%q' "$layout_probe")" 2>/dev/null)" ||
+          out='unreachable'
+      fi
+      printf '%-8s %s\n' "$label" "${out:-canonical}"
+    }
+
+    printf '\n%-8s %s\n' NODE BUN-LAYOUT
+    layout max3 ''
+    layout svc 'mini'
+    layout hrcdev 'hrcdev'
+
 # Print the hrc source commit max3's daemon is currently running.
 #
 # This is the authority behind the `@max3` target ref, and it fails closed rather
@@ -475,7 +513,12 @@ install-mail-injector-launchd version:
     status="$(hrc server status --json 2>/dev/null)" || fail 'HRC daemon is not reachable'
     node_id="$(jq -er '.node.nodeId' <<<"$status")" || fail 'HRC status did not report a node ID'
     socket_path="$(jq -er '.socketPath' <<<"$status")" || fail 'HRC status did not report its socket path'
-    bunx_path="$(command -v bunx)" || fail 'bunx is not on PATH'
+    # The plist pins bunx by absolute path, so it must be the canonical fleet copy
+    # (T-08855), never whatever `command -v` finds in this deploy shell: a Homebrew or
+    # npm-global bunx that is later removed silently breaks the injector's next start.
+    bunx_path="$HOME/.bun/bin/bunx"
+    [[ -x "$bunx_path" ]] ||
+      fail "canonical ${bunx_path} is missing; install bun into ~/.bun and link bunx -> bun (T-08855)"
     # The injector talks to the same canonical wrkq the node's HRC does; take it
     # from HRC's supervisor env rather than restating it per node.
     hrc_env="$(plutil -extract EnvironmentVariables json -o - "$hrc_plist")" ||
