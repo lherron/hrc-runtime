@@ -16,7 +16,6 @@ import {
 } from './compiler-priming.js'
 import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
-import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { formatDmAddress } from './messages.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
@@ -72,8 +71,6 @@ type DispatchTurnResponseBase = Omit<
   DispatchTurnResponse,
   'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
 > & { status: 'started' | 'completed' }
-
-export const buildHeadlessBrokerDispatchEnv = buildManagedBrokerDispatchEnv
 
 /**
  * A promptless cold Codex boot still runs the compiler-owned agent priming
