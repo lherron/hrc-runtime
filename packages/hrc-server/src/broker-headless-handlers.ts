@@ -201,19 +201,6 @@ export function parseDurableColdBootTurnInput(
   }
 }
 
-export function serializeDurableColdBootTurnInput(
-  prompt: string,
-  options: DispatchRunPersistenceOptions & { responseFormat?: HrcTurnResponseFormat | undefined }
-): string {
-  return JSON.stringify({
-    kind: DURABLE_COLD_BOOT_INPUT_KIND,
-    prompt,
-    source: 'cold_boot',
-    ...(options.responseFormat !== undefined ? { responseFormat: options.responseFormat } : {}),
-    dispatch: dispatchRunPersistence(options),
-  } satisfies DurableColdBootTurnInput)
-}
-
 function isDefaultPlainResponseFormat(responseFormat: HrcTurnResponseFormat | undefined): boolean {
   return responseFormat === undefined || responseFormat.kind === 'text'
 }

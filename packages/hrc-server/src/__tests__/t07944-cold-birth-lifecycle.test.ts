@@ -15,10 +15,7 @@ import type { HrcRuntimeSnapshot, SweepZombieRunsResponse } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
-import {
-  disposeColdBootInputContinuationFailure,
-  serializeDurableColdBootTurnInput,
-} from '../broker-headless-handlers'
+import { disposeColdBootInputContinuationFailure } from '../broker-headless-handlers'
 import { HarnessBrokerController } from '../broker/controller'
 import { recoverColdBootInputContinuations } from '../cold-boot-input-recovery'
 import { createHrcServer } from '../index'
@@ -340,10 +337,15 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
     }
 
     it('re-arms the persisted prompt and submits it through the invoke door', async () => {
-      const durable = serializeDurableColdBootTurnInput('the caller prompt', {
-        dispatchIdempotencyKey: 'idem-t07944',
-        submissionDoor: 'invoke',
-        origin: { actor: 'agent:mable', kind: 'agent_dm', causationRef: 'EN-03552' },
+      const durable = JSON.stringify({
+        kind: 'durable_cold_boot_turn_input',
+        prompt: 'the caller prompt',
+        source: 'cold_boot',
+        dispatch: {
+          dispatchIdempotencyKey: 'idem-t07944',
+          submissionDoor: 'invoke',
+          origin: { actor: 'agent:mable', kind: 'agent_dm', causationRef: 'EN-03552' },
+        },
       })
       seedColdBirth({
         runId: 'run-rearm',
@@ -409,8 +411,11 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
         acceptedAt: isoMinutesAgo(1),
         runtimeActivityAt: isoMinutesAgo(1),
         primingTerminal: false,
-        correlationJson: serializeDurableColdBootTurnInput('the caller prompt', {
-          dispatchIdempotencyKey: undefined,
+        correlationJson: JSON.stringify({
+          kind: 'durable_cold_boot_turn_input',
+          prompt: 'the caller prompt',
+          source: 'cold_boot',
+          dispatch: {},
         }),
       })
 
@@ -451,8 +456,11 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
         acceptedAt: isoMinutesAgo(1),
         runtimeActivityAt: isoMinutesAgo(1),
         primingTerminal: false,
-        correlationJson: serializeDurableColdBootTurnInput('the caller prompt', {
-          dispatchIdempotencyKey: undefined,
+        correlationJson: JSON.stringify({
+          kind: 'durable_cold_boot_turn_input',
+          prompt: 'the caller prompt',
+          source: 'cold_boot',
+          dispatch: {},
         }),
       })
 
@@ -494,8 +502,11 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
         // The re-armed priming turn is STILL RUNNING when the daemon stops,
         // which is what makes the wait abort rather than resolve.
         primingTerminal: false,
-        correlationJson: serializeDurableColdBootTurnInput('the caller prompt', {
-          dispatchIdempotencyKey: undefined,
+        correlationJson: JSON.stringify({
+          kind: 'durable_cold_boot_turn_input',
+          prompt: 'the caller prompt',
+          source: 'cold_boot',
+          dispatch: {},
         }),
       })
 
@@ -540,8 +551,11 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
         acceptedAt: isoMinutesAgo(5),
         runtimeActivityAt: isoMinutesAgo(4),
         primingTerminal: false,
-        correlationJson: serializeDurableColdBootTurnInput('the caller prompt', {
-          dispatchIdempotencyKey: undefined,
+        correlationJson: JSON.stringify({
+          kind: 'durable_cold_boot_turn_input',
+          prompt: 'the caller prompt',
+          source: 'cold_boot',
+          dispatch: {},
         }),
         // The runtime did not survive the restart.
         runtimeStatus: 'dead',
