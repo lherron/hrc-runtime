@@ -443,7 +443,7 @@ describe('T-06575 suite 4 — temporal truth', () => {
 
 describe('T-06575 suite 5 — exit codes and grammar legality', () => {
   test('exports the frozen monitor code table, including observed terminal failure', async () => {
-    const modulePath = '../monitor/exit-codes'
+    const modulePath = 'hrc-core'
     const monitorExits = (await import(modulePath)) as {
       MONITOR_EXIT_CODES: Record<string, number>
     }
