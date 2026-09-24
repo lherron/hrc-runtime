@@ -94,6 +94,8 @@ type TurnBodyInput = {
 type TurnOutputOptions = {
   waitMode: string | undefined
   waitTimeoutMs: number | undefined
+  /** Fires at --timeout, measured from command start; bounds every --wait door. */
+  waitDeadline: AbortSignal | undefined
   stackedWindowMs: number | undefined
 }
 
@@ -463,7 +465,52 @@ function resolveTurnOutputOptions(opts: TurnOptions): TurnOutputOptions {
     }
   }
 
-  return { waitMode, waitTimeoutMs, stackedWindowMs }
+  const waitDeadline = waitTimeoutMs !== undefined ? AbortSignal.timeout(waitTimeoutMs) : undefined
+  return { waitMode, waitTimeoutMs, waitDeadline, stackedWindowMs }
+}
+
+/**
+ * `--timeout` is a hard bound on `--wait` whatever the server does (T-08865):
+ * print the timeout as the command's JSON result and exit non-zero.
+ */
+function waitTimeoutExit(
+  timeoutMs: number,
+  fields: { runId?: string | undefined; door?: string | undefined } = {}
+): TurnExitError {
+  printJsonLine({
+    result: 'wait_timeout',
+    timeoutMs,
+    ...(fields.runId !== undefined ? { runId: fields.runId } : {}),
+    ...(fields.door !== undefined ? { door: fields.door } : {}),
+  })
+  return new TurnExitError(TURN_EXIT_STALL, `--wait timeout reached after ${timeoutMs}ms`)
+}
+
+/** Call `onDeadline` when (or if already) the wait deadline fires; returns the unbind. */
+function bindWaitDeadline(deadline: AbortSignal | undefined, onDeadline: () => void): () => void {
+  if (deadline === undefined) return () => {}
+  if (deadline.aborted) {
+    onDeadline()
+    return () => {}
+  }
+  deadline.addEventListener('abort', onDeadline, { once: true })
+  return () => deadline.removeEventListener('abort', onDeadline)
+}
+
+/** Run a server-side waiting door; the client deadline ends it if the server does not. */
+async function withWaitDeadline<T>(
+  output: TurnOutputOptions,
+  door: string,
+  call: (signal: AbortSignal | undefined) => Promise<T>
+): Promise<T> {
+  try {
+    return await call(output.waitDeadline)
+  } catch (error) {
+    if (output.waitDeadline?.aborted === true && output.waitTimeoutMs !== undefined) {
+      throw waitTimeoutExit(output.waitTimeoutMs, { door })
+    }
+    throw error
+  }
 }
 
 function assertProjectResolved(targetInput: string, resolved: ScopeInput): void {
@@ -584,11 +631,16 @@ async function prepareDispatchedTurn(
   const queue = opts.queue === true
   if (opts.preempt === true) {
     printJsonLine(
-      await client.preempt({
-        ...submissionRequest,
-        ...(ttlMs !== undefined ? { ttlMs } : {}),
-        ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
-      })
+      await withWaitDeadline(output, 'preempt', (signal) =>
+        client.preempt(
+          {
+            ...submissionRequest,
+            ...(ttlMs !== undefined ? { ttlMs } : {}),
+            ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
+          },
+          { signal: waitMode === 'final' ? signal : undefined }
+        )
+      )
     )
     return undefined
   }
@@ -599,7 +651,9 @@ async function prepareDispatchedTurn(
     const existing = await client.resolveSession({ sessionRef, create: false })
     if (existing.found) {
       if (waitMode === 'final') {
-        const waited = await client.steer({ ...submissionRequest, wait: true })
+        const waited = await withWaitDeadline(output, 'steer', (signal) =>
+          client.steer({ ...submissionRequest, wait: true }, { signal })
+        )
         writeDoorDowngrade(waited)
         printJsonLine(waited)
         return undefined
@@ -630,11 +684,16 @@ async function prepareDispatchedTurn(
   }
   if (queue && (waitMode === 'final' || ttlMs !== undefined)) {
     printJsonLine(
-      await client.enqueue({
-        ...submissionRequest,
-        ...(ttlMs !== undefined ? { ttlMs } : {}),
-        ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
-      })
+      await withWaitDeadline(output, 'enqueue', (signal) =>
+        client.enqueue(
+          {
+            ...submissionRequest,
+            ...(ttlMs !== undefined ? { ttlMs } : {}),
+            ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
+          },
+          { signal: waitMode === 'final' ? signal : undefined }
+        )
+      )
     )
     return undefined
   }
@@ -673,7 +732,7 @@ export async function cmdTurn(
 
   const stallAfterMs = parseDuration(opts.stallAfter ?? '1h')
   const output = resolveTurnOutputOptions(opts)
-  const { stackedWindowMs } = output
+  const { stackedWindowMs, waitDeadline, waitTimeoutMs } = output
 
   let prepared: PreparedTurnObservation | undefined
   if (opts.attach === true) {
@@ -752,6 +811,12 @@ export async function cmdTurn(
   if (opts.attach !== true) {
     armNonStackedStall()
   }
+
+  let waitTimedOut = false
+  const unbindWaitDeadline = bindWaitDeadline(waitDeadline, () => {
+    waitTimedOut = true
+    abortController.abort()
+  })
 
   // For --pretty in headless mode we still want in-place redraw rather than
   // stamped scrollback. opts.pretty implies inPlace=true; otherwise honor TTY.
@@ -865,6 +930,17 @@ export async function cmdTurn(
           armNonStackedStall()
         }
 
+        // A failed turn is terminal: HRC will open no turn for this run (T-08865).
+        const failure = turnFailureOf(event)
+        if (failure !== undefined) {
+          abortController.abort()
+          await failTurn(
+            failure,
+            stackedAggregator,
+            sinkFormat !== 'terminal' || output.waitMode !== undefined
+          )
+        }
+
         // Check for terminal events
         if (isWatchLoopTurnTerminal(event)) {
           turnCompleted = true
@@ -890,6 +966,9 @@ export async function cmdTurn(
               TURN_EXIT_INFRA,
               `turn: attach did not complete catch-up (received through seq ${lastAttachSeq} of ${catchUpThroughSeq})`
             )
+          }
+          if (waitTimedOut && waitTimeoutMs !== undefined) {
+            throw waitTimeoutExit(waitTimeoutMs, { runId: handoff.runId })
           }
           // AbortError from stall timer or SIGINT
           if (stallFired) {
@@ -929,6 +1008,7 @@ export async function cmdTurn(
       clearTimeout(attachCatchUpDeadlineTimer)
     }
     process.removeListener('SIGINT', sigintHandler)
+    unbindWaitDeadline()
     try {
       await stackedAggregator?.close()
     } finally {
@@ -949,6 +1029,67 @@ export async function cmdTurn(
  */
 function isWatchLoopTurnTerminal(event: HrcLifecycleEvent): boolean {
   return event.eventKind === 'turn_end' || event.eventKind === 'turn.completed'
+}
+
+type TurnFailure = {
+  result: 'turn_failed'
+  runId: string | undefined
+  eventKind: string
+  hrcSeq: number
+  errorCode: string | undefined
+  code: string
+  message: string | undefined
+  diagnosticsSeq?: number | undefined
+  retrieval?: string | undefined
+}
+
+/**
+ * Events after which the watched run can never complete: `turn.failed` (e.g.
+ * broker_start_failed) and a `first_turn_missing` trip, which makes the run
+ * terminal server-side (a late turn.started never resurrects it).
+ */
+function turnFailureOf(event: HrcLifecycleEvent): TurnFailure | undefined {
+  if (event.eventKind !== 'turn.failed' && event.eventKind !== 'first_turn_missing') {
+    return undefined
+  }
+  const payload = isRecord(event.payload) ? event.payload : {}
+  const payloadCode = typeof payload['code'] === 'string' ? payload['code'] : undefined
+  const message = typeof payload['message'] === 'string' ? payload['message'] : undefined
+  const firstTurnMissing = event.eventKind === 'first_turn_missing'
+  return {
+    result: 'turn_failed',
+    runId: event.runId,
+    eventKind: event.eventKind,
+    hrcSeq: event.hrcSeq,
+    errorCode: event.errorCode,
+    code: payloadCode ?? event.errorCode ?? event.eventKind,
+    message,
+    ...(firstTurnMissing
+      ? { diagnosticsSeq: event.hrcSeq, retrieval: `hrc runtime diagnostics ${event.hrcSeq}` }
+      : {}),
+  }
+}
+
+/** Report a failed turn on the active sink and exit with the error terminal's code. */
+async function failTurn(
+  failure: TurnFailure,
+  aggregator: StackedAggregator | undefined,
+  printFailureLine: boolean
+): Promise<never> {
+  const detail = `${failure.code}${failure.message !== undefined ? `: ${failure.message}` : ''}`
+  const outcome = TERMINALS.error
+  if (aggregator) {
+    await aggregator.finish({
+      phase: outcome.phase,
+      flush: outcome.flush,
+      exitCode: outcome.exitCode,
+      result: outcome.result,
+      error: { message: detail },
+    })
+  } else if (printFailureLine) {
+    printJsonLine(failure)
+  }
+  throw new TurnExitError(outcome.exitCode, `turn failed: ${detail}`)
 }
 
 function isRuntimeDead(event: HrcLifecycleEvent): boolean {

@@ -662,12 +662,19 @@ export class HrcClient {
     })
   }
 
-  async steer(request: SteerSubmissionRequest): Promise<HrcSubmissionResponse> {
-    return this.postJson<HrcSubmissionResponse>('/v1/submissions/steer', request)
+  /** `signal` lets a waiting caller (`wait: true`) bound the server-side wait. */
+  async steer(
+    request: SteerSubmissionRequest,
+    options?: { signal?: AbortSignal | undefined }
+  ): Promise<HrcSubmissionResponse> {
+    return this.postJson<HrcSubmissionResponse>('/v1/submissions/steer', request, options?.signal)
   }
 
-  async enqueue(request: EnqueueSubmissionRequest): Promise<HrcSubmissionResponse> {
-    return this.postJson<HrcSubmissionResponse>('/v1/submissions/enqueue', request)
+  async enqueue(
+    request: EnqueueSubmissionRequest,
+    options?: { signal?: AbortSignal | undefined }
+  ): Promise<HrcSubmissionResponse> {
+    return this.postJson<HrcSubmissionResponse>('/v1/submissions/enqueue', request, options?.signal)
   }
 
   async invoke(request: InvokeSubmissionRequest & { wait: true }): Promise<HrcSubmissionResponse>
@@ -683,8 +690,11 @@ export class HrcClient {
     )
   }
 
-  async preempt(request: PreemptSubmissionRequest): Promise<HrcSubmissionResponse> {
-    return this.postJson<HrcSubmissionResponse>('/v1/submissions/preempt', request)
+  async preempt(
+    request: PreemptSubmissionRequest,
+    options?: { signal?: AbortSignal | undefined }
+  ): Promise<HrcSubmissionResponse> {
+    return this.postJson<HrcSubmissionResponse>('/v1/submissions/preempt', request, options?.signal)
   }
 
   /**
