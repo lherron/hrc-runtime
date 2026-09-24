@@ -1,8 +1,6 @@
 /**
  * Turn address normalization; overlaps with cli/scope.ts intentionally until a later refactor.
  */
-import { formatSessionHandle } from 'agent-scope'
-import { splitSessionRef } from 'hrc-core'
 import type { HrcMessageAddress } from 'hrc-core'
 import { inferProjectIdFromCwd } from 'hrc-core'
 import { resolveProfileAwareScopeInput, writePlacementWarnings } from 'hrc-sdk'
@@ -58,20 +56,6 @@ export async function resolveMessagingScope(
   const resolved = await resolveScope(input, { ...options, worktreeAssociation: 'advisory' })
   writePlacementWarnings('hrc', resolved.placement.warnings)
   return resolved
-}
-
-/**
- * Resolve a CLI target string to a canonical sessionRef.
- * Accepts: SessionHandle (e.g. cody@demo~lane), ScopeHandle, or raw scopeRef.
- *
- * When the input omits a project qualifier (e.g. bare "clod"), the project is
- * inferred from ASP_PROJECT env or cwd. When the input omits a task qualifier
- * the canonical default `primary` is applied so the sessionRef is always
- * agent+project+task qualified.
- */
-export async function resolveTargetToSessionRef(input: string): Promise<string> {
-  const resolved = await resolveScope(input, { withCallerTaskId: true })
-  return `${resolved.scopeRef}/lane:${resolved.laneId}`
 }
 
 /** Resolve an existing messaging/read target without launch-placement enforcement. */
@@ -148,28 +132,4 @@ export async function resolveSenderAddress(asInput?: string | undefined): Promis
     return { address: fromEnvelope, source: 'envelope' }
   }
   return { address: fromEnvelope, source: 'human-fallback' }
-}
-
-/**
- * Resolve project ID from explicit value, ASP_PROJECT env, or cwd.
- */
-export function resolveProjectId(explicit?: string): string | undefined {
-  if (explicit) return explicit
-  return process.env['ASP_PROJECT'] ?? undefined
-}
-
-/**
- * Format an HrcMessageAddress for human display.
- */
-export function formatAddress(addr: HrcMessageAddress): string {
-  if (addr.kind === 'entity') return addr.entity
-  try {
-    const { scopeRef, laneRef } = splitSessionRef(addr.sessionRef)
-    return formatSessionHandle({
-      scopeRef,
-      laneRef: laneRef === 'main' ? 'main' : `lane:${laneRef}`,
-    })
-  } catch {
-    return addr.sessionRef
-  }
 }
