@@ -463,18 +463,6 @@ export async function buildManagedStartIntent(
   }
 }
 
-export async function buildManagedAttachIntent(
-  scope: ManagedScopeContext,
-  options: {
-    client?: ManagedIntentClient | undefined
-  } = {}
-): Promise<HrcRuntimeIntent> {
-  return buildManagedRuntimeIntent(scope, {
-    ...options,
-    preferredMode: 'interactive',
-  })
-}
-
 /**
  * Passthrough flags that consume the NEXT argv token as their value.
  *
