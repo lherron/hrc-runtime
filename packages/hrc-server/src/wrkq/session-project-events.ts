@@ -23,7 +23,25 @@ import type { WrkqProjectEventPostParams } from './ledger-client.js'
  */
 
 /** The declared `session.*` vocabulary. First segment names the SUBJECT. */
-export type SessionProjectEventType = 'session.born' | 'session.rotated'
+export type SessionProjectEventType =
+  | 'session.born'
+  | 'session.rotated'
+  | 'session.started'
+  | 'session.ended'
+
+/**
+ * T-08928 — how a runtime of the session stopped being live. Each value is an
+ * HRC ledger kind that already exists (`runtime.<end>`); nothing new is
+ * classified here. A reap is `terminated` with its reason (`operator_reap`).
+ */
+export type SessionEndKind = 'terminated' | 'crashed' | 'dead' | 'stale'
+
+const END_KINDS: Record<string, SessionEndKind> = {
+  'runtime.terminated': 'terminated',
+  'runtime.crashed': 'crashed',
+  'runtime.dead': 'dead',
+  'runtime.stale': 'stale',
+}
 
 /**
  * The declared `cause` vocabulary: the DOOR a session came through, which is
@@ -42,6 +60,7 @@ export type SessionProjectEventFact = {
   /** Insertion order is the render order. Never sort this. */
   attributes: Record<string, string>
   idempotencyKey: string
+  /** The session's FULL ref, `<scopeRef>/lane:<lane>` (T-08928). */
   scopeRef: string
   occurredAt: string
 }
@@ -64,6 +83,15 @@ function clampValue(value: string): string {
 function clampSummary(value: string): string {
   const single = value.replace(/[\r\n]+/g, ' ').trim()
   return single.length > MAX_SUMMARY ? single.slice(0, MAX_SUMMARY) : single
+}
+
+/**
+ * `<scopeRef>/lane:<lane>`, the same full ref every other wrkp producer writes.
+ * Legacy rows store `laneRef` with its `lane:` prefix; never double it.
+ */
+export function fullSessionRef(scopeRef: string, laneRef: string): string {
+  const lane = laneRef.startsWith('lane:') ? laneRef.slice('lane:'.length) : laneRef
+  return `${scopeRef}/lane:${lane}`
 }
 
 export type ParsedSeat = {
@@ -143,6 +171,7 @@ export function deriveSessionProjectEvent(input: {
     node: clampValue(node),
     seat: clampValue(session.scopeRef),
     ...(seat.agent === undefined ? {} : { agent: clampValue(seat.agent) }),
+    ...taskAttribute(seat),
     cause,
     ...(harness?.id === undefined ? {} : { harness: harness.id }),
     ...(harness?.provider === undefined ? {} : { provider: harness.provider }),
@@ -173,8 +202,106 @@ export function deriveSessionProjectEvent(input: {
     // Unique per birth: retries of the same birth collapse, and a rotation —
     // which is a different host session id — never collapses onto its prior.
     idempotencyKey: session.hostSessionId,
-    scopeRef: session.scopeRef,
+    scopeRef: fullSessionRef(session.scopeRef, session.laneRef),
     occurredAt,
+  }
+}
+
+/** The assignment: the canonical task a seat serves, when it names one. */
+function taskAttribute(seat: ParsedSeat): Record<string, string> {
+  const task = taskSelectorFrom(seat.selector)
+  return task === undefined ? {} : { task }
+}
+
+type RuntimeLifecycleEvent = Pick<
+  HrcLifecycleEvent,
+  | 'eventKind'
+  | 'hostSessionId'
+  | 'scopeRef'
+  | 'laneRef'
+  | 'generation'
+  | 'runtimeId'
+  | 'ts'
+  | 'payload'
+>
+
+/**
+ * T-08928 — the broker seat's FIRST transition (`previousState: null`, cause
+ * `binding-established`) is the moment a runtime of this session became live.
+ * It is the only runtime-birth fact HRC already records for every broker
+ * runtime; `runtime.created` is registered but never appended.
+ */
+function isRuntimeStart(event: RuntimeLifecycleEvent, payload: Record<string, unknown>): boolean {
+  return (
+    event.eventKind === 'broker.seat.transition' &&
+    payload['previousState'] === null &&
+    payload['cause'] === 'binding-established'
+  )
+}
+
+/**
+ * Build the `session.started` / `session.ended` fact a runtime lifecycle event
+ * carries, or `undefined` when the event is neither or has no project.
+ *
+ * A session outlives its runtimes: 91 of 472 sessions in a week had more than
+ * one. So `ended` is "the live runtime stopped", `started` is "a runtime came
+ * live", and a consumer's current state for a session is the latest of the
+ * two. Both key on `session` (the host session id) for upsert, and the wrkq
+ * idempotency key adds the runtime id so the FIRST terminal fact of a runtime
+ * wins and a later `stale` → `dead` for the same runtime collapses onto it.
+ */
+export function deriveSessionRuntimeEvent(input: {
+  event: RuntimeLifecycleEvent
+  node: string
+}): SessionProjectEventFact | undefined {
+  const { event, node } = input
+  const payload = isRecord(event.payload) ? event.payload : {}
+  const end = END_KINDS[event.eventKind]
+  const started = end === undefined && isRuntimeStart(event, payload)
+  if (end === undefined && !started) return undefined
+
+  const seat = parseSeat(event.scopeRef)
+  if (seat.project === undefined || seat.project.length === 0) return undefined
+
+  const runtimeId =
+    event.runtimeId ?? (typeof payload['runtimeId'] === 'string' ? payload['runtimeId'] : undefined)
+  const reason = typeof payload['reason'] === 'string' ? payload['reason'] : undefined
+  const state = typeof payload['nextState'] === 'string' ? payload['nextState'] : undefined
+
+  // Same leading order as a birth: provenance, then the seat, then the fact.
+  const attributes: Record<string, string> = {
+    source: 'hrc-server',
+    node: clampValue(node),
+    seat: clampValue(event.scopeRef),
+    ...(seat.agent === undefined ? {} : { agent: clampValue(seat.agent) }),
+    ...taskAttribute(seat),
+    ...(end === undefined ? {} : { end }),
+    ...(end === undefined || reason === undefined ? {} : { reason: clampValue(reason) }),
+    ...(started && state !== undefined ? { state } : {}),
+    session: clampValue(event.hostSessionId),
+    generation: String(event.generation),
+    ...(runtimeId === undefined ? {} : { runtime_id: clampValue(runtimeId) }),
+  }
+
+  const who = seat.agent ?? event.scopeRef
+  const where = seat.selector === undefined ? seat.project : `${seat.project}:${seat.selector}`
+  const summary =
+    end === undefined
+      ? `${who} started at ${where} on ${node}`
+      : `${who} ended (${end}${reason === undefined ? '' : `: ${reason}`}) at ${where} on ${node}`
+  const type: SessionProjectEventType = end === undefined ? 'session.started' : 'session.ended'
+
+  return {
+    type,
+    project: seat.project,
+    task: taskSelectorFrom(seat.selector),
+    summary: clampSummary(summary),
+    attributes,
+    idempotencyKey: `${event.hostSessionId}:${end === undefined ? 'started' : 'ended'}:${
+      runtimeId ?? event.ts
+    }`,
+    scopeRef: fullSessionRef(event.scopeRef, event.laneRef),
+    occurredAt: event.ts,
   }
 }
 
@@ -203,45 +330,149 @@ export type SessionProjectEventPublisherDeps = {
   db: HrcDatabase
   post: (params: WrkqProjectEventPostParams) => Promise<unknown>
   node: string
+  /** Tail cadence. `0` disables the timer (tests pump through `drain`). */
+  pollIntervalMs?: number | undefined
 }
 
 /**
- * Observes the lifecycle stream and publishes one project event per birth.
+ * T-08928 — the durable `wrkq_ledger_cursors` stream this tail advances. It
+ * names a stream HRC publishes TO wrkq, beside `envelope`, which HRC reads.
+ */
+export const SESSION_PROJECT_EVENTS_STREAM = 'session-project-events'
+
+/** Every HRC ledger kind this producer turns into a `session.*` fact. */
+export const SESSION_PROJECT_EVENT_SOURCE_KINDS = [
+  'session.created',
+  'broker.seat.transition',
+  ...Object.keys(END_KINDS),
+]
+
+const TAIL_BATCH = 200
+const DEFAULT_POLL_INTERVAL_MS = 1000
+
+/**
+ * Tails the HRC ledger and publishes one project event per birth, runtime
+ * start and runtime end.
  *
- * Wired into `notifyEvent` alongside the ACP bridge, on the same observer
- * discipline: synchronous entry, detached emission, every failure swallowed
- * into a log line.
+ * T-08928 — a TAIL, not a `notifyEvent` observer. Most runtime ends
+ * (`runtime.crashed` and `runtime.terminated` from the broker lifecycle,
+ * `runtime.dead`/`runtime.stale` from startup reconcile) and every seat
+ * transition are appended without ever reaching the notify fan-out, so an
+ * observer would publish births and silently miss most ends. The ledger is the
+ * one place every one of them lands, in `hrc_seq` order.
+ *
+ * The cursor is durable and advances only after a batch's posts settle, so a
+ * daemon restart resumes at the gap. A fresh cursor starts at the ledger's
+ * current high water: history before the producer existed is not backfilled.
+ *
+ * Posts for one session are chained, so wrkp's insertion order is HRC's order.
+ * Every failure is swallowed into a log line: publication is an observation of
+ * a fact that is already durable, and never reaches it.
  */
 export class SessionProjectEventPublisher {
-  private readonly inFlight = new Set<Promise<void>>()
+  private readonly tails = new Map<string, Promise<void>>()
+  private pumping: Promise<void> | undefined
+  private rerun = false
+  private timer: ReturnType<typeof setInterval> | undefined
 
-  constructor(private readonly deps: SessionProjectEventPublisherDeps) {}
+  constructor(private readonly deps: SessionProjectEventPublisherDeps) {
+    const cursors = deps.db.wrkqLedgerCursors
+    if (cursors.get(SESSION_PROJECT_EVENTS_STREAM) === undefined) {
+      cursors.advance(deps.db.hrcEvents.maxHrcSeq(), SESSION_PROJECT_EVENTS_STREAM)
+    }
+    const interval = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
+    if (interval > 0) {
+      this.timer = setInterval(() => this.kick(), interval)
+      this.timer.unref?.()
+    }
+  }
 
-  observe(event: Pick<HrcLifecycleEvent, 'eventKind' | 'hostSessionId' | 'ts' | 'payload'>): void {
-    if (event.eventKind !== 'session.created') return
+  /** A notify-path hint that the ledger moved. The timer covers every miss. */
+  observe(event: Pick<HrcLifecycleEvent, 'eventKind'>): void {
+    if (SESSION_PROJECT_EVENT_SOURCE_KINDS.includes(event.eventKind)) this.kick()
+  }
+
+  /** Test seam: pump to the ledger head and await every post. */
+  async drain(): Promise<void> {
+    this.kick()
+    while (this.pumping !== undefined) await this.pumping
+  }
+
+  stop(): void {
+    if (this.timer !== undefined) clearInterval(this.timer)
+    this.timer = undefined
+  }
+
+  private kick(): void {
+    if (this.pumping !== undefined) {
+      this.rerun = true
+      return
+    }
+    this.pumping = this.pump()
+      .catch((error) => {
+        writeServerLog('WARN', 'session_project_event.tail_failed', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
+      .finally(() => {
+        this.pumping = undefined
+        if (this.rerun) {
+          this.rerun = false
+          this.kick()
+        }
+      })
+  }
+
+  private async pump(): Promise<void> {
+    const cursors = this.deps.db.wrkqLedgerCursors
+    for (;;) {
+      const after = cursors.get(SESSION_PROJECT_EVENTS_STREAM) ?? 0
+      const events = this.deps.db.hrcEvents.listFromHrcSeqFiltered(after + 1, {
+        // Imported rows are another node's facts; that node publishes them.
+        sourceRef: null,
+        eventKinds: SESSION_PROJECT_EVENT_SOURCE_KINDS,
+        limit: TAIL_BATCH,
+      })
+      const last = events.at(-1)
+      if (last === undefined) return
+      const posts: Promise<void>[] = []
+      for (const event of events) {
+        // T-08566: a retained-origin row is observable history, never current.
+        if (event.evidenceOrigin != null) continue
+        const fact =
+          event.eventKind === 'session.created'
+            ? this.birthFact(event)
+            : deriveSessionRuntimeEvent({ event, node: this.deps.node })
+        if (fact !== undefined) posts.push(this.enqueue(event.hostSessionId, fact))
+      }
+      await Promise.all(posts)
+      cursors.advance(last.hrcSeq, SESSION_PROJECT_EVENTS_STREAM)
+      if (events.length < TAIL_BATCH) return
+    }
+  }
+
+  private enqueue(hostSessionId: string, fact: SessionProjectEventFact): Promise<void> {
+    const previous = this.tails.get(hostSessionId) ?? Promise.resolve()
+    const task: Promise<void> = previous
+      .then(() => this.publish(fact))
+      .finally(() => {
+        if (this.tails.get(hostSessionId) === task) this.tails.delete(hostSessionId)
+      })
+    this.tails.set(hostSessionId, task)
+    return task
+  }
+
+  private birthFact(event: RuntimeLifecycleEvent): SessionProjectEventFact | undefined {
     const session = this.deps.db.sessions.getByHostSessionId(event.hostSessionId)
-    if (session === null) return
+    if (session === null) return undefined
     const claim = this.deps.db.sessionTaskClaimAuthorities.getByHostSessionId(event.hostSessionId)
-    const fact = deriveSessionProjectEvent({
+    return deriveSessionProjectEvent({
       session,
       payload: event.payload,
       node: this.deps.node,
       occurredAt: event.ts,
       ...(claim === null ? {} : { requestedBy: claim.claimedBy }),
     })
-    if (fact === undefined) return
-
-    const task = this.publish(fact).finally(() => {
-      this.inFlight.delete(task)
-    })
-    this.inFlight.add(task)
-  }
-
-  /** Test seam: await every detached post this publisher has started. */
-  async drain(): Promise<void> {
-    while (this.inFlight.size > 0) {
-      await Promise.all([...this.inFlight])
-    }
   }
 
   private async publish(fact: SessionProjectEventFact): Promise<void> {
@@ -262,7 +493,8 @@ export class SessionProjectEventPublisher {
         writeServerLog(last ? 'WARN' : 'INFO', 'session_project_event.post_failed', {
           type: fact.type,
           seat: fact.scopeRef,
-          hostSessionId: fact.idempotencyKey,
+          hostSessionId: fact.attributes['session'],
+          idempotencyKey: fact.idempotencyKey,
           affiliation: params.task === undefined ? 'project' : 'task',
           fallingBack: !last,
           error: error instanceof Error ? error.message : String(error),

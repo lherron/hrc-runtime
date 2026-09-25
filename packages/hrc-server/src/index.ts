@@ -1701,6 +1701,7 @@ class HrcServerInstance implements HrcServer {
       }
     }
     this.eventLoopLag?.stop()
+    this.sessionProjectEvents.stop()
     if (this.zombieSweepTimer) {
       clearInterval(this.zombieSweepTimer)
       this.zombieSweepTimer = undefined

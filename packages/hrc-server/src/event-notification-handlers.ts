@@ -91,8 +91,8 @@ export function notifyEvent(
   // this event. Disabled unless explicitly configured.
   this.acpEventBridge.observe(event)
   if ('hrcSeq' in event) {
-    // T-08389 — `session.*` project events. Same observer discipline: a refusal
-    // from wrkq is a missing timeline row, never a failed birth.
+    // T-08389/T-08928 — `session.*` project events. The publisher tails the
+    // ledger; this is only a low-latency hint that the ledger moved.
     this.sessionProjectEvents.observe(event)
   }
   if (

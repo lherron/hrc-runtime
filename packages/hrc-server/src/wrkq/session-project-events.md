@@ -2,7 +2,7 @@
 
 **Owner:** hrc-runtime. **Producer:** `session-project-events.ts` (hrc-server daemon).
 **Envelope:** wrkq `wrkq.projectEvent.post` (wrkq T-08388, migration 000061).
-**Introduced:** T-08389.
+**Introduced:** T-08389. **Lifecycle (`started`/`ended`), tail, full ref:** T-08928.
 
 HRC knows every session it births and, until this, shared none of it. One
 foreign project fact per birth puts *who was spawned, where, and why* onto a
@@ -24,6 +24,20 @@ and code review are the only guards. The first segment of a type names the
 | --- | --- |
 | `session.born` | A fresh session: generation 1, no prior session. |
 | `session.rotated` | A new generation of an existing seat (a successor, including the stale-generation auto-rotate). |
+| `session.started` | A runtime of the session came live: the broker seat's first transition (`previousState: null`, cause `binding-established`). |
+| `session.ended` | A runtime of the session stopped being live: `runtime.terminated`, `runtime.crashed`, `runtime.dead` or `runtime.stale`. |
+
+A session outlives its runtimes (91 of 472 sessions in one week had more than
+one), so `started`/`ended` can repeat for one session. A consumer's current
+state for a session is the latest of the four, upserted on the `session`
+attribute. No new runtime state is invented: each type is one HRC ledger kind
+that already exists. Busy/idle is **not** published — it is ~1400 seat
+transitions a day, and assignment does not depend on it.
+
+**Assignment** is the seat. A session's scope ref (and so its task) is fixed at
+birth and never changes; every fact carries it as `seat` and, when canonical,
+`task`. There is no separate assignment fact because there is no transition to
+report.
 
 A rotation is a distinct fact, and a cheap one — 331 over the lifetime of the
 ledger against ~89 births/day. A standing seat at generation 18 is exactly what
@@ -47,7 +61,8 @@ the contract. **Do not sort it.**
 | `node` | yes | the daemon's federation node id |
 | `seat` | yes | the **full** scope ref, suffixes and all |
 | `agent` | when the scope names one | agent id |
-| `cause` | yes | see below |
+| `task` | when the selector is a canonical `T-\d{5}` | the assignment (T-08928) |
+| `cause` | born/rotated | see below |
 | `harness` | when the birth intent is known | `claude-code` \| `codex-cli` \| `pi-cli` \| `pi-sdk` \| `pi` \| `agent-sdk` \| `agent-harness` |
 | `provider` | when the birth intent is known | `anthropic` \| `openai` |
 | `mode` | when the birth intent is known | `headless` \| `interactive` \| `nonInteractive` |
@@ -56,6 +71,19 @@ the contract. **Do not sort it.**
 | `generation` | yes | stringified integer |
 | `runtime` | yes | `harness` \| `command` |
 | `requested_by` | when a task claim authority exists | the claiming principal |
+| `end` | ended | `terminated` \| `crashed` \| `dead` \| `stale` |
+| `reason` | ended, when the ledger row has one | e.g. `operator_reap`, `user_initiated_session_end`, `broker_process_closed` |
+| `state` | started | the seat's first state (`idle`, `starting`, `turn-active`, …) |
+| `runtime_id` | started/ended | the runtime that came live or stopped |
+
+`harness`, `provider`, `mode`, `prior_session` and `runtime` are born/rotated
+only; `session` and `generation` are on every type.
+
+### `scopeRef`
+
+Every fact's envelope `scopeRef` is the session's **full** ref,
+`<scopeRef>/lane:<lane>` — the same shape `wrkp git` and `wrkp just` write. The
+`seat` attribute keeps the bare scope ref it always carried.
 
 Values are strings; numbers stringify. A value is clamped to 1024 bytes and a
 summary to a single line of 512 — wrkq refuses beyond either, and a clamped row
@@ -124,7 +152,16 @@ is dropped before the post, not sent and refused.
 
 ## Idempotency
 
-The key is the **host session id**, which is unique per birth. Retries of the
+`session` (the host session id) is the natural key a consumer upserts on. The
+wrkq idempotency key is per fact:
+
+| type | key |
+| --- | --- |
+| born / rotated | `<hostSessionId>` (unchanged from T-08389) |
+| started | `<hostSessionId>:started:<runtimeId>` |
+| ended | `<hostSessionId>:ended:<runtimeId>` — the first terminal fact of a runtime wins; a later `stale` → `dead` for the same runtime collapses onto it |
+
+For births: the key is the **host session id**, which is unique per birth. Retries of the
 same birth collapse onto one row; a rotation is a different host session id and
 never collapses onto its prior. Replay returns the same uuid with
 `created: false` and does **not** overwrite the stored attributes.
@@ -140,6 +177,33 @@ never collapses onto its prior. Replay returns the same uuid with
   treat an unrecognised `cause` as "some other door", not as an error.
 - Key order may change only to improve what a human reads first. Consumers must
   key off names, never position.
+
+## Source and ordering
+
+The producer **tails the HRC ledger** (`hrc_events`, `hrc_seq` order) rather
+than observing `notifyEvent`: most runtime ends and every seat transition are
+appended without reaching the notify fan-out. The tail's high water is durable
+(`wrkq_ledger_cursors`, stream `session-project-events`) and advances only after
+a batch's posts settle, so a restart resumes at the gap. A fresh cursor starts
+at the ledger's current head — no backfill. Imported (`source_ref`) and
+retained-origin rows are skipped; their node publishes its own. Posts for one
+session are chained, so wrkp's insertion order for a session is HRC's order.
+`notifyEvent` only kicks the tail early; a 1s timer covers the rest.
+
+## Bootstrap (consistent cut)
+
+A consumer that starts cold captures the wrkp cursor **first**, then lists:
+
+```bash
+C0=$(wrkp cursor <project>)
+hrc session list --json      # sessions; `status` active|archived
+hrc runtime list --json      # runtimes per session; live = not terminated|crashed|dead|stale
+wrkp log <project> --after "$C0" --type 'session.*' --ndjson --porcelain
+```
+
+Anything that changes after `C0` is replayed; anything before it is in the
+listing. A fact can appear in both (listed, then replayed) — the upsert on
+`session` makes that harmless.
 
 ## Failure posture
 

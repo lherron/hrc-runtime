@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { HrcSessionRecord } from 'hrc-core'
 
+import { appendHrcEvent } from '../hrc-event-helper.js'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
 import {
@@ -69,6 +70,7 @@ describe('T-08389 — the derived fact', () => {
       'node',
       'seat',
       'agent',
+      'task',
       'cause',
       'harness',
       'provider',
@@ -83,6 +85,7 @@ describe('T-08389 — the derived fact', () => {
       node: 'max3',
       seat: 'agent:clod:project:hrc-runtime:task:T-08389',
       agent: 'clod',
+      task: 'T-08389',
       cause: 'summon',
       harness: 'claude-code',
       provider: 'anthropic',
@@ -296,5 +299,86 @@ describe('T-08389 — the daemon posts a real birth', () => {
     expect(instance.db.sessions.getByHostSessionId(resolved.hostSessionId)?.scopeRef).toBe(
       'agent:clod:project:hrc-runtime:task:T-08389'
     )
+  })
+})
+
+describe('T-08928 — the daemon posts the lifecycle, in order, from the ledger', () => {
+  let fixture: HrcServerTestFixture
+  let server: HrcServer | undefined
+  let ledger: FakeWrkqLedger
+
+  beforeEach(async () => {
+    fixture = await createHrcTestFixture('hrc-t08928-')
+    ledger = new FakeWrkqLedger()
+  })
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.stop()
+      server = undefined
+    }
+    await fixture.cleanup()
+  })
+
+  it('posts born -> started -> ended keyed by session, with the full session ref on each', async () => {
+    server = await createHrcServer(
+      fixture.serverOpts({ otelListenerEnabled: false, wrkqLedger: ledger })
+    )
+    const resolved = await fixture.resolveSession('agent:clod:project:hrc-runtime:task:T-08928')
+    const session = server.db.sessions.getByHostSessionId(resolved.hostSessionId)
+    if (session === null) throw new Error('session missing')
+    const at = {
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: 'rt-t08928',
+    }
+    // Appended straight to the ledger, never notified: the broker lifecycle and
+    // the seat probe write these kinds exactly this way.
+    appendHrcEvent(server.db, 'broker.seat.transition', {
+      ...at,
+      ts: '2026-09-25T18:00:01.000Z',
+      payload: { previousState: null, nextState: 'idle', cause: 'binding-established' },
+    })
+    appendHrcEvent(server.db, 'broker.seat.transition', {
+      ...at,
+      ts: '2026-09-25T18:00:02.000Z',
+      payload: { previousState: 'idle', nextState: 'turn-active', cause: 'periodic-monitor' },
+    })
+    appendHrcEvent(server.db, 'runtime.terminated', {
+      ...at,
+      ts: '2026-09-25T18:00:03.000Z',
+      payload: { reason: 'operator_reap' },
+    })
+    // A second terminal fact for the same runtime collapses onto the first.
+    appendHrcEvent(server.db, 'runtime.stale', {
+      ...at,
+      ts: '2026-09-25T18:00:04.000Z',
+      payload: { reason: 'broker_tmux_session_missing' },
+    })
+    await server.sessionProjectEvents.drain()
+
+    const posts = ledger.projectEventPosts
+    expect(posts.map((post) => post.type)).toEqual([
+      'session.born',
+      'session.started',
+      'session.ended',
+      'session.ended',
+    ])
+    const full = 'agent:clod:project:hrc-runtime:task:T-08928/lane:default'
+    for (const post of posts) {
+      expect(post.scopeRef).toBe(full)
+      expect(post.task).toBe('T-08928')
+      expect(post.attributes['session']).toBe(session.hostSessionId)
+      expect(post.attributes['task']).toBe('T-08928')
+    }
+    expect(posts[1]?.attributes).toMatchObject({ state: 'idle', runtime_id: 'rt-t08928' })
+    expect(posts[2]?.attributes).toMatchObject({ end: 'terminated', reason: 'operator_reap' })
+    expect(posts[3]?.idempotencyKey).toBe(posts[2]?.idempotencyKey)
+
+    // The cursor is durable: a second drain re-posts nothing.
+    await server.sessionProjectEvents.drain()
+    expect(ledger.projectEventPosts).toHaveLength(4)
   })
 })
