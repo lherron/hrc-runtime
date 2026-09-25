@@ -227,6 +227,23 @@ an HRC restart. `restart=wait` (default) drains in-flight runs first;
 `restart=force` restarts through them and is the only mode that completes from a
 live agent turn on the node being deployed.
 
+**Cold-start check after a deploy.** "Cold start a :minisvc / :hrcdev clod" means
+prove a fresh birth on that node answers mail. First make the seat cold: `hrc
+target locate clod@hrc-runtime:<seat> --json` and read
+`.peerResolution.location.observed.runtimes`. A `ready` runtime would be reused,
+so if it has no active run, terminate it on its own node (ssh there, export PATH
+first). Then send the probe through `wrkc say`, the only path that cold-births
+a federated scope:
+
+```bash
+wrkc say --to clod@hrc-runtime:minisvc - <<'BODY'
+Cold-start probe after fleet deploy <sha>. Reply to this envelope with: the node you are running on (`hrc server status --json | jq -r .node.nodeId`), that daemon's sourceCommit, and your cwd. Nothing else to do.
+BODY
+```
+
+It passes only when the reply arrives and names the expected node and the
+deployed sourceCommit. A queued envelope proves nothing.
+
 Parity is measured in **sourceCommit, never setVersion** — every node's `just
 install` / `build-asp-release` mints its own timestamped version or release ID
 from the same commit. ASP *package* parity inside HRC follows from bun.lock at the
