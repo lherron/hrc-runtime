@@ -47,6 +47,7 @@ type ReplacementIntent = {
     workspaceCwd?: string | undefined
     socketPath?: string | undefined
   }
+  preAttachSupersession?: boolean | undefined
   receipt?: WriterEvidence | undefined
   /** First satisfying evidence; retained so freshness is evaluated per axis. */
   retirementBasis?: WriterEvidence | undefined
@@ -68,10 +69,49 @@ function parseIntent(value: string | undefined): ReplacementIntent | null {
 function sameRequest(intent: ReplacementIntent, request: DirectJoinRequest): boolean {
   return (
     intent.candidate.hostIncarnationId === request.hostIncarnationId &&
-    intent.predecessor.hostIncarnationId === request.expectedPredecessor?.hostIncarnationId &&
-    intent.predecessor.runtimeId === request.expectedPredecessor?.runtimeId &&
-    intent.predecessor.generation === request.expectedPredecessor?.generation
+    (request.expectedPredecessor === undefined
+      ? intent.preAttachSupersession === true
+      : intent.predecessor.hostIncarnationId === request.expectedPredecessor.hostIncarnationId &&
+        intent.predecessor.runtimeId === request.expectedPredecessor.runtimeId &&
+        intent.predecessor.generation === request.expectedPredecessor.generation)
   )
+}
+
+export function isNeverAttachedDirectAttempt(
+  server: HrcServerInstanceForHandlers,
+  attempt: ParticipantAttempt
+): boolean {
+  return (
+    attempt.state === 'IDENTITY_MINTED' &&
+    attempt.attachSocketPath === undefined &&
+    attempt.preparedDescriptorJson === undefined &&
+    attempt.brokerIdentityJson === undefined &&
+    server.db.runtimes.getByRuntimeId(attempt.runtimeId) === null
+  )
+}
+
+function preAttachRetirementReceipt(
+  registration: ParticipantRegistration,
+  attempt: ParticipantAttempt,
+  hostIncarnationId: string
+): WriterEvidence {
+  const detail = { basis: 'pre_attach_superseded', attemptId: attempt.attemptId }
+  return {
+    schemaVersion: 'writer-evidence/v1',
+    writerRef: {
+      subject: 'host',
+      classId: registration.classId ?? 'hrc-direct-registration',
+      participantKey: registration.participantKey ?? registration.registrationId,
+      attemptId: attempt.attemptId,
+      invocationId: attempt.invocationId as WriterEvidence['writerRef']['invocationId'],
+      attachEpoch: attempt.attachEpoch,
+      hostIncarnationId,
+    },
+    observedAt: timestamp(),
+    writePath: { state: 'retired', reason: 'pre_attach_superseded', detail },
+    liveness: { state: 'unknown', reason: 'host_liveness_not_observed', detail },
+    priorRecovery: { state: 'unknown', reason: 'no_broker_ever_attached', detail },
+  }
 }
 
 function continuationForSuccessor(
@@ -162,8 +202,9 @@ function dispositionReason(
   kind: ReplacementKind,
   evidence: WriterEvidence,
   attempt: ParticipantAttempt,
-  evidenceSource: 'producer' | 'transport'
+  evidenceSource: 'producer' | 'transport' | 'pre-attach'
 ): string {
+  if (evidenceSource === 'pre-attach') return `pre_attach_superseded:${attempt.attemptId}`
   if (evidenceSource === 'transport' && evidence.liveness.state === 'dead') {
     return `transport_dead:${evidence.observedAt}:${JSON.stringify(evidence.liveness.detail)}`
   }
@@ -260,7 +301,13 @@ export async function driveParticipantReplacement(
     initialAttempt.hostBindingId === undefined
       ? null
       : server.db.participantHostBindings.getBindingById(initialAttempt.hostBindingId)
-  if (expected === undefined || binding === null) {
+  const currentIntent = parseIntent(initialAttempt.replacementIntentJson)
+  const preAttachSupersession =
+    registration.registrationMode === 'direct' &&
+    request.hostIncarnationId !== binding?.hostIncarnationId &&
+    (isNeverAttachedDirectAttempt(server, initialAttempt) ||
+      currentIntent?.preAttachSupersession === true)
+  if ((expected === undefined && !preAttachSupersession) || binding === null) {
     return refusal(
       'rejected',
       'host_binding_precondition_failed',
@@ -268,9 +315,10 @@ export async function driveParticipantReplacement(
     )
   }
   if (
-    binding.hostIncarnationId !== expected.hostIncarnationId ||
-    binding.runtimeId !== expected.runtimeId ||
-    binding.generation !== expected.generation
+    expected !== undefined &&
+    (binding.hostIncarnationId !== expected.hostIncarnationId ||
+      binding.runtimeId !== expected.runtimeId ||
+      binding.generation !== expected.generation)
   ) {
     const suppliedBinding = server.db.participantHostBindings
       .listBindingsByReservationId(binding.reservationId)
@@ -293,7 +341,6 @@ export async function driveParticipantReplacement(
 
   const kind: ReplacementKind =
     request.hostIncarnationId === binding.hostIncarnationId ? 'bridge' : 'host'
-  const currentIntent = parseIntent(initialAttempt.replacementIntentJson)
   if (currentIntent !== null && !sameRequest(currentIntent, request)) {
     return refusal(
       'rejected',
@@ -317,6 +364,7 @@ export async function driveParticipantReplacement(
   const freshIntent: ReplacementIntent = {
     schemaVersion: 'participant-replacement-intent/v1',
     kind,
+    ...(preAttachSupersession ? { preAttachSupersession: true } : {}),
     operationId: `participant-replacement-${randomUUID()}`,
     predecessor: {
       bindingId: binding.bindingId,
@@ -367,13 +415,18 @@ export async function driveParticipantReplacement(
     return refusal('pending', 'participant_successor_gate_changed', 'replacement intent changed')
   }
 
-  const observedEvidence = producerEvidenceAvailable
-    ? await observeParticipantWriterEvidence(server, adapter, registration, attempt, kind)
-    : {
+  const observedEvidence = preAttachSupersession
+    ? {
         outcome: 'evidence' as const,
-        evidence: (await observeParticipantTransportEvidence(server, registration, attempt, kind))
-          .evidence,
+        evidence: preAttachRetirementReceipt(registration, attempt, binding.hostIncarnationId),
       }
+    : producerEvidenceAvailable
+      ? await observeParticipantWriterEvidence(server, adapter, registration, attempt, kind)
+      : {
+          outcome: 'evidence' as const,
+          evidence: (await observeParticipantTransportEvidence(server, registration, attempt, kind))
+            .evidence,
+        }
   if (observedEvidence.outcome === 'invalid') {
     if (attempt.replacementIntentJson !== undefined) {
       pauseOrCancelReplacement(
@@ -407,7 +460,11 @@ export async function driveParticipantReplacement(
     )
   }
   const evidence = observedEvidence.evidence
-  const evidenceSource = producerEvidenceAvailable ? 'producer' : 'transport'
+  const evidenceSource = preAttachSupersession
+    ? 'pre-attach'
+    : producerEvidenceAvailable
+      ? 'producer'
+      : 'transport'
   const persistedAttempt = attempt
   const priorIntentJson = persistedAttempt.replacementIntentJson
   if (priorIntentJson === undefined) {
@@ -415,6 +472,24 @@ export async function driveParticipantReplacement(
       'pending',
       'participant_successor_gate_changed',
       'replacement intent disappeared'
+    )
+  }
+  if (
+    evidenceSource === 'pre-attach' &&
+    !isAbsorbingParticipantAttempt(persistedAttempt) &&
+    !isNeverAttachedDirectAttempt(server, persistedAttempt)
+  ) {
+    pauseOrCancelReplacement(
+      server,
+      persistedAttempt,
+      intent,
+      priorIntentJson,
+      'pre-attach predecessor changed'
+    )
+    return refusal(
+      'pending',
+      'participant_successor_gate_changed',
+      'pre-attach predecessor changed'
     )
   }
   const priorBasis =
@@ -432,6 +507,14 @@ export async function driveParticipantReplacement(
   const intentWithReceiptJson = JSON.stringify(intent)
   if (
     !server.db.sqlite.transaction(() => {
+      const current = server.db.participantRegistrations.getAttempt(persistedAttempt.attemptId)
+      if (
+        evidenceSource === 'pre-attach' &&
+        (current === null ||
+          (!isAbsorbingParticipantAttempt(current) &&
+            !isNeverAttachedDirectAttempt(server, current)))
+      )
+        return false
       const intentUpdated = server.db.participantRegistrations.replaceReplacementIntent({
         attemptId: persistedAttempt.attemptId,
         attachEpoch: persistedAttempt.attachEpoch,
@@ -448,6 +531,18 @@ export async function driveParticipantReplacement(
       )
     })()
   ) {
+    if (evidenceSource === 'pre-attach') {
+      const changed = server.db.participantRegistrations.getAttempt(persistedAttempt.attemptId)
+      if (changed !== null && changed.replacementIntentJson === priorIntentJson) {
+        pauseOrCancelReplacement(
+          server,
+          changed,
+          intent,
+          priorIntentJson,
+          'pre-attach predecessor changed'
+        )
+      }
+    }
     return refusal(
       'pending',
       'participant_successor_gate_changed',
@@ -473,7 +568,9 @@ export async function driveParticipantReplacement(
       currentDecision === 'refused'
         ? 'the exact predecessor remains writable and live'
         : evidenceSource === 'transport'
-          ? 'transport_indeterminate: predecessor broker hello did not complete within the bounded probe'
+          ? persistedAttempt.attachSocketPath === undefined
+            ? 'transport_indeterminate: predecessor has no durable attach socket path'
+            : 'transport_indeterminate: predecessor broker hello did not complete within the bounded probe'
           : priorBasis === undefined
             ? 'predecessor retirement is unknown'
             : 'later evidence voided the uncommitted succession on its satisfying axis'
@@ -483,9 +580,16 @@ export async function driveParticipantReplacement(
 
   // TX-D: disposition is committed separately and therefore independently recoverable.
   const disposingAttemptId = attempt.attemptId
-  server.db.sqlite.transaction(() => {
+  const disposed = server.db.sqlite.transaction(() => {
     const current = server.db.participantRegistrations.getAttempt(disposingAttemptId)
     if (current === null) throw new Error('predecessor disappeared before disposition')
+    if (
+      evidenceSource === 'pre-attach' &&
+      !isAbsorbingParticipantAttempt(current) &&
+      (!isNeverAttachedDirectAttempt(server, current) ||
+        server.db.participantHostBindings.getBindingById(binding.bindingId)?.state !== 'BINDING')
+    )
+      return false
     if (!isAbsorbingParticipantAttempt(current)) {
       if (
         !server.db.participantRegistrations.transitionAttempt(
@@ -500,15 +604,15 @@ export async function driveParticipantReplacement(
       }
     }
     if (
-      evidenceSource === 'transport' &&
-      authorizingEvidence.liveness.state === 'dead' &&
+      ((evidenceSource === 'transport' && authorizingEvidence.liveness.state === 'dead') ||
+        evidenceSource === 'pre-attach') &&
       current.recoveryDisposition === 'unresolved'
     ) {
       if (
         !server.db.participantRegistrations.recordRecoveryDisposition(
           current.attemptId,
           'abandoned',
-          'transport_dead',
+          evidenceSource === 'pre-attach' ? 'pre_attach_superseded' : 'transport_dead',
           timestamp()
         )
       ) {
@@ -533,7 +637,25 @@ export async function driveParticipantReplacement(
         throw new Error('predecessor binding retirement raced')
       }
     }
+    return true
   })()
+  if (!disposed) {
+    const changed = server.db.participantRegistrations.getAttempt(disposingAttemptId)
+    if (changed !== null && changed.replacementIntentJson === intentWithReceiptJson) {
+      pauseOrCancelReplacement(
+        server,
+        changed,
+        intent,
+        intentWithReceiptJson,
+        'pre-attach predecessor changed'
+      )
+    }
+    return refusal(
+      'pending',
+      'participant_successor_gate_changed',
+      'pre-attach predecessor changed'
+    )
+  }
 
   attempt = server.db.participantRegistrations.getAttempt(attempt.attemptId)
   if (
@@ -643,9 +765,11 @@ export async function driveParticipantReplacement(
           to: 'RETIRED',
           now: timestamp(),
           dispositionReason:
-            evidenceSource === 'transport' && authorizingEvidence.liveness.state === 'dead'
-              ? 'transport_dead'
-              : 'host_replaced',
+            evidenceSource === 'pre-attach'
+              ? 'pre_attach_superseded'
+              : evidenceSource === 'transport' && authorizingEvidence.liveness.state === 'dead'
+                ? 'transport_dead'
+                : 'host_replaced',
         })
       ) {
         throw new Error('predecessor binding final retirement raced')

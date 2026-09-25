@@ -209,9 +209,26 @@ endpoint and `observedAt`.
   `pending / host_retirement_unproven` hold with detail
   `transport_indeterminate`. Nothing is armed or spent.
 
-The bare-claim door without `expectedPredecessor` still conflicts, and a
-registration with a producer-evidence path retains the evidence-gated truth
-table unchanged. This provisional ruling knowingly permits a live application
+For a **direct** predecessor attempt that is still `IDENTITY_MINTED` and has
+never attached (no attach socket, prepared descriptor, broker identity or
+runtime row), a new host incarnation may supersede it without a transport
+probe. A supplied `expectedPredecessor` is an exact compare-and-set; mismatch
+refuses. A bare direct register may also supersede this never-attached attempt.
+HRC rechecks the never-attached predicate and `BINDING` state in TX-D so a
+concurrent attach cannot be discarded. HRC owns this unused allocation: its
+`pre_attach_superseded` receipt records that the allocation's write path is
+retired, while host liveness and prior recovery remain `unknown`. TX-D moves
+`IDENTITY_MINTED → ABANDONED` and records recovery disposition `abandoned` with
+reason `pre_attach_superseded`; no broker existed to replay or reconcile. The
+binding remains `BINDING` until TX-6 retires it and allocates the successor in
+one transaction. Neither transaction requires a predecessor runtime row. The
+receipt does not claim that HRC observed the old host die. A duplicate request
+from the same host incarnation remains idempotent. Attached or uncertain
+attempts continue under the transport/producer evidence rules above, and a
+bare claim against them still conflicts. No owner-transfer token or operator
+authorization is added for this rule (Lance ruling 2026-09-25).
+
+This provisional ruling knowingly permits a live application
 host whose participant-owned broker transport is dead to be retired. Revisit
 the rule if such live-but-disconnected hosts prove common; every authorized
 case remains measurable through the persisted `transport_dead` reason.
@@ -1089,6 +1106,12 @@ may state a different rule.
 
 #### 3.6.5 The successor-admission gate
 
+For the R7.7 never-attached direct case, HRC's allocation-retirement receipt
+supplies `writePath: retired`; it is a statement about the unused HRC allocation,
+not evidence of host death. TX-D records `recoveryDisposition: abandoned` with
+reason `pre_attach_superseded`, satisfying the separate recovery condition. The
+ordinary writer-evidence rules continue to govern every attached attempt.
+
 This gate runs at **phase B** of the ordered disposition path (§5.3.1). It never
 performs a disposition itself; it reads three **independent** conditions and
 admits only when all three hold.
@@ -1450,6 +1473,10 @@ application logic:
 
 #### 5.2.3 Binding transitions
 
+R7.7's never-attached direct binding remains `BINDING` through TX-D. TX-6 may
+move that exact binding `BINDING → RETIRED` while allocating its successor;
+the transition carries disposition reason `pre_attach_superseded`.
+
 | From | To | Cause | Guard |
 | --- | --- | --- | --- |
 | — | `BINDING` | incarnation admitted | held reservation; inside TX-1 |
@@ -1471,6 +1498,11 @@ each individually and jointly insufficient — this restates the active invarian
 retirement clause and is not a new rule.
 
 ### 5.3 Retirement receipt
+
+The R7.7 pre-attach receipt is issued by HRC for its own unused allocation:
+`writePath: retired`, `liveness: unknown`, `priorRecovery: unknown`, reason
+`pre_attach_superseded`. It asserts neither writer death nor recovery from a
+broker. It is valid only while the strict never-attached predicate holds.
 
 A binding may leave `BOUND`/`DETACHED` for `RETIRING` only with a **retirement
 receipt**: a `WriterEvidence` (§3.6.3) obtained from the predecessor's owner
@@ -1501,6 +1533,14 @@ continuity. Conversely a host that keeps its PID across an application-internal
 runtime replacement keeps its incarnation id and stays the same binding.
 
 #### 5.3.1 The ordered disposition path — executable for H1 and H2
+
+R7.7 adds an H2 pre-attach A0/A1 path: HRC checks that `IDENTITY_MINTED` has no
+attach socket, prepared descriptor, broker identity, or runtime row, records its
+allocation-retirement receipt, then rechecks those facts and `BINDING` in TX-D.
+TX-D abandons the attempt and explicitly abandons recovery with the same reason;
+the binding stays `BINDING`. Phase B reads all three conditions as usual. TX-6
+retires that binding and allocates the successor atomically, with no predecessor
+runtime row to terminalize. If the recheck fails, no disposition is committed.
 
 This is the ordered path a replacement actually walks. It is the same path for
 **H2** (host succession) and **H1** (same-host bridge replacement); only the
@@ -1605,6 +1645,12 @@ replacement is admitted, so §3.6.5's `priorAbsorbing` condition is satisfiable
 rather than vacuous.
 
 ### 5.4 Transaction and work-chain boundaries
+
+For R7.7, TX-D contains the pre-attach predicate recheck, allocation-retirement
+receipt, attempt abandonment and explicit recovery abandonment. It leaves the
+binding `BINDING` and allocates nothing. TX-6 accepts that binding, retires it
+with `pre_attach_superseded`, and allocates the successor in one transaction;
+predecessor runtime terminalization is skipped because no row exists.
 
 Named atomic units. TX-2 … TX-5 exist today and are unchanged.
 
@@ -2202,6 +2248,11 @@ is explicitly scoped to `continuity: 'key-scoped'`.
    H1 uses TX-6′ without changing host/session/generation. Gate and predecessor
    fences are re-read inside allocation. Neither allocation transaction rewrites
    an absorbing attempt. The address stays reserved across both transactions.
+   R7.7 permits a bare direct register to supersede only a never-attached
+   `IDENTITY_MINTED` attempt. If `expectedPredecessor` is supplied, it is an exact
+   compare-and-set. HRC records its unused-allocation retirement receipt and
+   explicit recovery abandonment, keeps `BINDING` through TX-D, and retires it
+   in TX-6 while allocating the successor. This does not assert host death.
 9. Automatic continuation reuse at succession respects explicit clear barriers,
    the reuse-disabled flag and an explicit adapter eligibility verdict. Absence of
    a verdict is not eligibility, and the explicit historical-resume selector is

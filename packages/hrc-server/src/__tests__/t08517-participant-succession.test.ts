@@ -296,7 +296,7 @@ describe('T-08517 host participant succession', () => {
       server!.db.participantRegistrations.getAttempt(identity['attemptId'] as string)
     ).toMatchObject({
       state: 'ABANDONED',
-      dispositionReason: expect.stringContaining('establishment_abandoned_before_activation'),
+      dispositionReason: expect.stringContaining('pre_attach_superseded'),
     })
   })
 
@@ -738,7 +738,11 @@ describe('T-08517 host participant succession', () => {
           },
         })
       )
-    ).toMatchObject({ status: 'pending', reason: 'host_retirement_unproven' })
+    ).toMatchObject({
+      status: 'pending',
+      reason: 'host_retirement_unproven',
+      detail: 'transport_indeterminate: predecessor has no durable attach socket path',
+    })
     const repeatedAttempt = server!.db.participantRegistrations.getAttempt(attempt.attemptId)!
     expect(repeatedAttempt).toMatchObject({
       establishmentWorkState: 'completed',
@@ -755,29 +759,40 @@ describe('T-08517 host participant succession', () => {
       })
     )
     const mintedIdentity = minted['identity'] as Record<string, unknown>
-    expect(
-      await json(
-        await fixture.postJson('/v1/participants/register', {
-          registrationMode: 'direct',
-          requestedSessionRef: mintedScope,
-          hostIncarnationId: 'arris-minted-b',
-          expectedPredecessor: {
-            hostIncarnationId: 'arris-minted-a',
-            runtimeId: mintedIdentity['runtimeId'],
-            generation: 1,
-          },
-        })
-      )
-    ).toMatchObject({ status: 'pending', reason: 'host_retirement_unproven' })
+    const mintedSuccessor = await json(
+      await fixture.postJson('/v1/participants/register', {
+        registrationMode: 'direct',
+        requestedSessionRef: mintedScope,
+        hostIncarnationId: 'arris-minted-b',
+        expectedPredecessor: {
+          hostIncarnationId: 'arris-minted-a',
+          runtimeId: mintedIdentity['runtimeId'],
+          generation: 1,
+        },
+      })
+    )
+    expect(mintedSuccessor).toMatchObject({
+      status: 'registered',
+      created: true,
+      generation: 2,
+    })
     const mintedAttempt = server!.db.participantRegistrations.getAttempt(
       mintedIdentity['attemptId'] as string
     )!
     expect(mintedAttempt).toMatchObject({
-      state: 'IDENTITY_MINTED',
-      establishmentWorkState: 'pending',
+      state: 'ABANDONED',
+      dispositionReason: expect.stringContaining('pre_attach_superseded'),
+      recoveryDisposition: 'abandoned',
+      recoveryReason: 'pre_attach_superseded',
+      establishmentWorkState: 'completed',
       establishmentAttemptCount: 0,
     })
-    expect(mintedAttempt.replacementIntentJson).toBeUndefined()
+    expect(
+      server!.db.participantHostBindings.getBindingById(mintedAttempt.hostBindingId!)
+    ).toMatchObject({
+      state: 'RETIRED',
+      dispositionReason: 'pre_attach_superseded',
+    })
 
     await server!.stop()
     server = undefined
@@ -788,8 +803,8 @@ describe('T-08517 host participant succession', () => {
       establishmentAttemptCount: 0,
     })
     expect(server!.db.participantRegistrations.getAttempt(mintedAttempt.attemptId)).toMatchObject({
-      state: 'IDENTITY_MINTED',
-      establishmentWorkState: 'pending',
+      state: 'ABANDONED',
+      establishmentWorkState: 'completed',
       establishmentAttemptCount: 0,
     })
   })

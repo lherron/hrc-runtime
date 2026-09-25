@@ -209,6 +209,60 @@ describe('T-08526 evidence-less participant transport succession', () => {
     ).toMatchObject({ state: 'BINDING', generation: 2 })
   })
 
+  test('bare register supersedes only a never-attached direct attempt', async () => {
+    const scope = 'agent:arris:project:hrc-runtime:task:T-08526-pre-attach'
+    const first = await registerDirectParticipant(
+      server as unknown as HrcServerInstanceForHandlers,
+      request(scope, 'minted-a', `${fixture.tmpDir}/minted-a.sock`)
+    )
+    if (first.outcome !== 'registered') throw new Error('predecessor registration refused')
+    const second = await registerDirectParticipant(
+      server as unknown as HrcServerInstanceForHandlers,
+      request(scope, 'minted-b', `${fixture.tmpDir}/minted-b.sock`)
+    )
+    expect(second).toMatchObject({
+      outcome: 'registered',
+      created: true,
+      identity: { generation: 2 },
+    })
+    expect(probeCalls).toEqual([])
+    const old = server!.db.participantRegistrations.getAttempt(first.identity.attemptId)!
+    expect(old).toMatchObject({
+      state: 'ABANDONED',
+      recoveryDisposition: 'abandoned',
+      recoveryReason: 'pre_attach_superseded',
+      dispositionReason: expect.stringContaining('pre_attach_superseded'),
+    })
+    expect(server!.db.participantHostBindings.getBindingById(old.hostBindingId!)).toMatchObject({
+      state: 'RETIRED',
+      dispositionReason: 'pre_attach_superseded',
+    })
+    expect(
+      await registerDirectParticipant(
+        server as unknown as HrcServerInstanceForHandlers,
+        request(scope, 'minted-b', `${fixture.tmpDir}/minted-b.sock`)
+      )
+    ).toMatchObject({
+      outcome: 'registered',
+      created: false,
+      identity: { attemptId: second.outcome === 'registered' ? second.identity.attemptId : '' },
+    })
+    expect(
+      await registerDirectParticipant(
+        server as unknown as HrcServerInstanceForHandlers,
+        request(scope, 'minted-c', `${fixture.tmpDir}/minted-c.sock`, {
+          hostIncarnationId: 'minted-a',
+          runtimeId: first.identity.runtimeId,
+          generation: 1,
+        })
+      )
+    ).toMatchObject({
+      outcome: 'refused',
+      status: 'rejected',
+      reason: 'host_binding_precondition_failed',
+    })
+  })
+
   test('dead transport authorizes H1 without changing session runtime or generation', async () => {
     const scope = 'agent:arris:project:hrc-runtime:task:T-08526-h1'
     const prior = await activePredecessor(scope)
@@ -351,7 +405,8 @@ describe('T-08526 evidence-less participant transport succession', () => {
       outcome: 'refused',
       status: 'pending',
       reason: 'host_retirement_unproven',
-      detail: expect.stringContaining('transport_indeterminate'),
+      detail:
+        'transport_indeterminate: predecessor broker hello did not complete within the bounded probe',
     })
     expect(probeCalls).toEqual([prior.endpoint])
     expect(closedClients).toBe(1)

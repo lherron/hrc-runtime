@@ -10,7 +10,10 @@ import type {
 } from 'hrc-store-sqlite'
 
 import { claimParticipantAddress } from './participant-address-provisioning.js'
-import { driveParticipantReplacement } from './participant-succession.js'
+import {
+  driveParticipantReplacement,
+  isNeverAttachedDirectAttempt,
+} from './participant-succession.js'
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
 import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -299,7 +302,10 @@ async function registerDirectParticipantLocked(
         detail: 'the occupied participant address has no durable predecessor attempt',
       }
     }
-    if (request.expectedPredecessor === undefined) {
+    if (
+      request.expectedPredecessor === undefined &&
+      !isNeverAttachedDirectAttempt(server, predecessorAttempt)
+    ) {
       const attemptDetail =
         predecessorAttempt.state === 'DETACHED'
           ? `attempt DETACHED, reconnect ${predecessorAttempt.establishmentWorkState}; not evidence of host death or life`

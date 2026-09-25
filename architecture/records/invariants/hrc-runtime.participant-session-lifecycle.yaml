@@ -90,7 +90,15 @@ predicate: >
   generation, and runtime, advances attempt, invocation, bridge instance, and attach
   epoch, and emits no resume; late validated evidence remains attributed to its old
   invocation and cannot close or mutate the current run, obligation, or continuation.
-  Host succession compares against the observed predecessor. A first transaction
+  For a direct IDENTITY_MINTED attempt with no attach socket, descriptor, broker
+  identity or runtime row, a new registration may supersede the unused allocation;
+  supplied expectedPredecessor is an exact compare-and-set, while a bare register
+  is allowed. HRC records pre_attach_superseded as allocation write-path retirement,
+  with host liveness unknown, and explicitly abandons recovery because no broker
+  attached. TX-D abandons the attempt while its binding remains BINDING; TX-6
+  retires that binding and allocates the successor without a predecessor runtime
+  row. Attached or uncertain attempts retain the writer-evidence gate.
+  Attached host succession compares against the observed predecessor. A first transaction
   commits the evidence-backed prior disposition and moves an old host binding to
   retiring while preserving pending replacement work and the reservation; the
   resulting no-successor state is valid and recoverable. After the independent
