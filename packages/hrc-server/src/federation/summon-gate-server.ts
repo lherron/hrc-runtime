@@ -1044,9 +1044,10 @@ async function commitAuthorizedEstablishment(input: {
  * Advisory mode returns normally after logging the would-be refusal — the
  * caller proceeds exactly as it did before this task existed.
  */
-export async function assertSummonAuthority(
+async function assertAuthority(
   server: SummonGateServerContext,
-  request: SummonAuthorityRequest
+  request: SummonAuthorityRequest,
+  participantClaim: boolean
 ): Promise<SummonAuthorityResult | undefined> {
   assertLocalPersonaAllowed(server, request.scopeRef)
   const deps = gateDepsFor(server)
@@ -1060,7 +1061,10 @@ export async function assertSummonAuthority(
     intent: request.intent ?? 'implicit',
     ...(request.origin === undefined ? {} : { origin: request.origin }),
     ...(request.knownSession === undefined ? {} : { knownSession: request.knownSession }),
-    deps,
+    // A direct participant supplies its own process. Its address claim still
+    // needs the registry-first placement decision, but HRC's ability to launch
+    // the profile's harness is irrelevant to that already hosted process.
+    deps: participantClaim ? { ...deps, capabilityFor: undefined } : deps,
     ...(request.capabilityHint === undefined ? {} : { capabilityHint: request.capabilityHint }),
     ...(request.provision === undefined ? {} : { provision: request.provision }),
   })
@@ -1137,15 +1141,23 @@ export async function assertSummonAuthority(
   return result
 }
 
+export async function assertSummonAuthority(
+  server: SummonGateServerContext,
+  request: SummonAuthorityRequest
+): Promise<SummonAuthorityResult | undefined> {
+  return await assertAuthority(server, request, false)
+}
+
 /** Session-mint boundary: unwind fresh claim authority if provisioning fails. */
-export async function withSummonAuthority<T>(
+async function withAuthority<T>(
   server: SummonGateServerContext,
   request: SummonAuthorityRequest,
-  mint: (claimAuthority: TaskClaimAuthority | undefined) => T | Promise<T>
+  mint: (claimAuthority: TaskClaimAuthority | undefined) => T | Promise<T>,
+  participantClaim: boolean
 ): Promise<T> {
   return await withScopeSummonLock(server as object, request.scopeRef, async () => {
     const authorizeAndMint = async () => {
-      const authority = await assertSummonAuthority(server, request)
+      const authority = await assertAuthority(server, request, participantClaim)
       try {
         return await mint(authority?.claimAuthority)
       } catch (error) {
@@ -1164,6 +1176,28 @@ export async function withSummonAuthority<T>(
           authorizeAndMint
         )
   })
+}
+
+export async function withSummonAuthority<T>(
+  server: SummonGateServerContext,
+  request: SummonAuthorityRequest,
+  mint: (claimAuthority: TaskClaimAuthority | undefined) => T | Promise<T>
+): Promise<T> {
+  return await withAuthority(server, request, mint, false)
+}
+
+/** Registry-first authority for an address served by an external participant. */
+export async function withParticipantAddressAuthority<T>(
+  server: SummonGateServerContext,
+  address: { scopeRef: string; laneRef: string },
+  mint: (claimAuthority: TaskClaimAuthority | undefined) => T | Promise<T>
+): Promise<T> {
+  return await withAuthority(
+    server,
+    { ...address, path: 'resolve-session', intent: 'explicit_local' },
+    mint,
+    true
+  )
 }
 
 export type LivePlacementRepairSummary = {

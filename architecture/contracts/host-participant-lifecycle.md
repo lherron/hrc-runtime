@@ -277,9 +277,13 @@ A driver that needs a workspace reports an attachment error if it is absent.
 ## R6.3 Address allocation is part of registration
 
 A direct registration at a virgin selected address performs the existing
-registry-first `withSummonAuthority` / `establishLocalPlacement` operation before
-local allocation. Separate pre-provisioning remains usable, but is not required
-for joining. The home validates mutation authority, then atomically writes the
+registry-first summon authority / `establishLocalPlacement` operation before
+local allocation. This address claim omits only the future-launch harness and
+credential capability observation: the participant already serves its own
+process, and HRC must never launch it. Placement policy, registry authority,
+locks, and conflict refusals remain required. Ordinary HRC summon paths retain
+the capability observation. Separate pre-provisioning remains usable, but is not
+required for joining. The home validates mutation authority, then atomically writes the
 reservation, session and current binding/attempt identities. It allocates the
 future runtimeId as an identifier on the binding/attempt, but does not insert a
 `runtimes` row before attachment supplies the required transport, harness and
@@ -571,7 +575,7 @@ open and that its prior writer is terminated.
 | Continuation reuse suppression column | `hrc-store-sqlite/src/repositories/session-repositories.ts:435-465` (`setContinuationReuseDisabled`, `isContinuationReuseDisabled`) | consumed by §9 |
 | Status-neutral explicit resume selector | `session-resume-continuation.ts:300-334` (`selectResumeContinuationCandidate`) | **explicitly not** the automatic selector (§9.3) |
 | Successor session minting | `session-successor.ts:6-44` (`createSessionSuccessorFromContinuation`) | called from inside §5's transaction, never on its own |
-| Registry-first establishment under summon authority | `federation/establishment.ts:38-74` (`establishLocalPlacement`), `federation/summon-gate-server.ts:1141-1167` (`withSummonAuthority`), used at `scope-claim-core.ts:320` | reused verbatim by §4.2.1. `resolveImplicitScopeHome` (`:246-281`) resolves **without establishing or mutating anything** and is not sufficient on its own |
+| Registry-first establishment under summon authority | `federation/establishment.ts` (`establishLocalPlacement`), `federation/summon-gate-server.ts` (`withSummonAuthority`), used at `scope-claim-core.ts` | §4.2.1 reuses registry authority and locking but omits future-launch capability observation for participant-served claims. `resolveImplicitScopeHome` resolves **without establishing or mutating anything** and is not sufficient on its own |
 | Shared claim FREE predicate | `scope-claim-core.ts:152-173` (`isClaimScopeFree`) | extended by §4.3 |
 | Durable establishment work chain with boot rediscovery | landed at `5f1a302d`: `establishment_work_*` columns on the attempt row, `idx_participant_attempts_establishment_work`, `recoverParticipantEstablishmentWork` at startup | successor work is enqueued on this chain (§5.4); no second scheduler |
 | Durable recovery disposition | landed at `5f1a302d`: `recovery_disposition` / `recovery_reason` with DB-enforced non-empty reason | read by §3.6.5 and §10.1; no second record |

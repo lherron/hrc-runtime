@@ -9,14 +9,19 @@
  * record an address.
  */
 
+import { writeFile } from 'node:fs/promises'
+import { join as joinPath } from 'node:path'
+
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { ParticipantAdapter } from 'spaces-runtime-contracts'
 
+import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { createHrcServer } from '../index.js'
 import type { HrcServer, HrcServerOptions, RegistrationClassConfig } from '../index.js'
 import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
+import { assertReservedAddressAllowsBirth } from '../participant-address-provisioning.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 const SCOPE = 'agent:arris:project:hrc-runtime:task:T-08516'
@@ -145,6 +150,58 @@ describe('T-08516 direct protocol join', () => {
     }
     expect(registered.body['hostSessionId']).toBeString()
     expect(identity['attachEpoch']).toBe(1)
+  })
+
+  test('a direct host claims its address without HRC launch capability', async () => {
+    await writeFile(
+      joinPath(fixture.stateRoot, FEDERATION_CONFIG_BASENAME),
+      JSON.stringify({ nodeId: 'max3-test', gate: { mode: 'enforce' } }),
+      { mode: 0o600 }
+    )
+    await start()
+    let capabilityCalls = 0
+    Object.assign(server!, {
+      policyFor: async () => undefined,
+      registryClient: {
+        consult: async () => ({ outcome: 'unbound' as const }),
+        establish: async (request: { scopeRef: string; homeNodeId: string; now: string }) => ({
+          outcome: 'created' as const,
+          binding: { ...request, updatedAt: request.now },
+        }),
+      },
+      capabilityFor: async () => {
+        capabilityCalls += 1
+        return {
+          outcome: 'incapable' as const,
+          capability: 'harness' as const,
+          diagnostic: 'agent-harness has no HRC launch driver',
+          capabilitySource: 'presence-heuristic' as const,
+        }
+      },
+    })
+
+    const registered = await observe(await join({}))
+    expect(registered.status).toBe(200)
+    expect(registered.body).toMatchObject({ status: 'registered', scopeRef: SCOPE })
+    expect(capabilityCalls).toBe(0)
+    expect(readStore().reservations).toHaveLength(1)
+
+    // The durable reservation refuses a substitute birth while the host is
+    // registered but unattached (including when its process is down).
+    expect(() => assertReservedAddressAllowsBirth(server!, SCOPE, 'main')).toThrow(
+      'bound to host incarnation incarnation-alpha'
+    )
+    expect(readStore().runtimes).toHaveLength(0)
+
+    const ordinaryBirth = await observe(
+      await fixture.postJson('/v1/sessions/resolve', {
+        sessionRef: `${OTHER_SCOPE}/lane:main`,
+        create: true,
+        summonIntent: 'explicit_local',
+      })
+    )
+    expect(ordinaryBirth.status).toBe(409)
+    expect(capabilityCalls).toBe(1)
   })
 
   test('stores the join truthfully: null optional fields and no runtime row', async () => {

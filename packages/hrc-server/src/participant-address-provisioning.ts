@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { HrcConflictError, HrcErrorCode } from 'hrc-core'
 import type { ParticipantAddressReservation } from 'hrc-store-sqlite'
 
-import { withSummonAuthority } from './federation/summon-gate-server.js'
+import { withParticipantAddressAuthority } from './federation/summon-gate-server.js'
 import { isClaimScopeFree } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { timestamp } from './server-util.js'
@@ -21,8 +21,8 @@ import { timestamp } from './server-util.js'
  * "without establishing or mutating anything", so a path that only resolves can
  * durably reserve an address the collective has never bound, and another node
  * under policy skew would then resolve the same scope as virgin and establish
- * it. So this reuses `withSummonAuthority` verbatim, exactly as
- * `mintClaimedSession` does: the gate takes the scope summon lock, wins
+ * it. This claim reuses the summon authority lock and registry-first
+ * establishment used by `mintClaimedSession`: the gate takes the scope lock, wins
  * authority through `establishLocalPlacement` (registry-first by construction),
  * and the reservation insert runs inside the mint callback -- after authority is
  * won and under the same locks the claim path takes.
@@ -143,9 +143,9 @@ export async function claimParticipantAddress(
   }
 
   try {
-    return await withSummonAuthority(
+    return await withParticipantAddressAuthority(
       server,
-      { scopeRef, laneRef, path: 'resolve-session', intent: 'explicit_local' },
+      { scopeRef, laneRef },
       (): ParticipantAddressClaim => {
         // Refuse rather than evict. A local claim can only have won this scope
         // inside a process crash within this very call, because outside that
