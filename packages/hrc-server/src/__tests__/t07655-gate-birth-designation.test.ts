@@ -59,6 +59,55 @@ function deps(overrides: Partial<SummonGateDeps> = {}): SummonGateDeps {
 }
 
 describe('T-07655 tier-5 birth designation in the summon gate', () => {
+  test.each(['implicit', 'explicit_local'] as const)(
+    'participant-only %s summon refuses before birth designation',
+    async (intent) => {
+      let designationCalls = 0
+      const result = await evaluateSummonGate({
+        scopeRef: 'agent:foundry:project:foundry:task:t09082-proof',
+        path: 'ensure-target',
+        intent,
+        deps: deps({
+          policyFor: async () => ({
+            placement: { launch: 'participant-only', pins: {}, homes: {} },
+            claimsTask: false,
+          }),
+          registry: registryStub(async () => {
+            designationCalls += 1
+            return { kind: 'none' }
+          }),
+        }),
+      })
+
+      expect(result.enforced).toBe(true)
+      expect(result.evaluation).toMatchObject({
+        decision: 'refuse',
+        reason: 'participant-only',
+        retryable: false,
+      })
+      expect(result.evaluation.diagnostic).toContain('participant-only, no seat registered')
+      expect(result.placement).toMatchObject({ outcome: 'refuse', reason: 'participant-only' })
+      expect(designationCalls).toBe(0)
+    }
+  )
+
+  test('a direct participant can register its address under the same policy', async () => {
+    const result = await evaluateSummonGate({
+      scopeRef: 'agent:foundry:project:foundry:task:t09082-proof',
+      path: 'resolve-session',
+      intent: 'explicit_local',
+      participantClaim: true,
+      deps: deps({
+        policyFor: async () => ({
+          placement: { launch: 'participant-only', pins: {}, homes: {} },
+          claimsTask: false,
+        }),
+      }),
+    })
+
+    expect(result.evaluation).toMatchObject({ decision: 'allow', reason: 'virgin-establishment' })
+  })
+
   test('a designation naming another node refuses this node without claiming anything', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,

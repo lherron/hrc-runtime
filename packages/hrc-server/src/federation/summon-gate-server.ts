@@ -1059,6 +1059,7 @@ async function assertAuthority(
     // Absent ⇒ implicit (spec §5). The default lives here, at the one seam
     // every path funnels through, so no call site can pick a different one.
     intent: request.intent ?? 'implicit',
+    ...(participantClaim ? { participantClaim: true } : {}),
     ...(request.origin === undefined ? {} : { origin: request.origin }),
     ...(request.knownSession === undefined ? {} : { knownSession: request.knownSession }),
     // A direct participant supplies its own process. Its address claim still

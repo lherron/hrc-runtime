@@ -217,6 +217,9 @@ function assemblePlacementResponse(
         })
       : undefined
   const placement = observed.placement
+  // aspd may serve the new optional declaration field before HRC's pinned
+  // protocol package advances. The wire object remains backward compatible.
+  const placementLaunch = (observed.policy.placement as { launch?: 'participant-only' }).launch
   const observedProjectRoot = placement.projectRoot
   const cwd = observedProjectRoot ?? placement.cwd ?? placement.agentRoot
 
@@ -277,6 +280,7 @@ function assemblePlacementResponse(
         ? { provisioningNode: observed.policy.provisioningNode }
         : {}),
       placement: {
+        ...(placementLaunch !== undefined ? { launch: placementLaunch } : {}),
         pins: observed.policy.placement.pins,
         homes: observed.policy.placement.homes,
       },

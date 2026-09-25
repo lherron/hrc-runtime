@@ -165,6 +165,7 @@ export async function resolvePlacementPolicy(
         ? {}
         : { provisioning: { node: policy.provisioningNode } }),
       placement: {
+        ...(policy.placement.launch !== undefined ? { launch: policy.placement.launch } : {}),
         pins: { ...policy.placement.pins },
         homes: { ...policy.placement.homes },
       },

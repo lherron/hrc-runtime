@@ -268,7 +268,11 @@ export type ResolvePlacementResponse = {
   policy: {
     claimsTask: boolean
     provisioningNode?: string | undefined
-    placement: { pins: Record<string, string>; homes: Record<string, string> }
+    placement: {
+      launch?: 'participant-only' | undefined
+      pins: Record<string, string>
+      homes: Record<string, string>
+    }
   }
   identity: {
     role?: string | undefined

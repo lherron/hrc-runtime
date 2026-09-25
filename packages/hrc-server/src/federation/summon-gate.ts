@@ -92,6 +92,7 @@ export type SummonGateAllowReason =
 
 export type SummonGateRefuseReason =
   | 'scope-retired'
+  | 'participant-only'
   | 'bound-elsewhere'
   | 'pin-mismatch'
   | 'invalid-pin'
@@ -244,6 +245,7 @@ export type SummonGatePolicy = {
     | undefined
   placement?:
     | {
+        launch?: 'participant-only' | undefined
         pins: Record<string, string>
         homes: Record<string, string>
       }
@@ -286,6 +288,8 @@ export type SummonGateRequest = {
   scopeRef: string
   path: SummonPath
   intent: SummonIntent
+  /** Direct participant registration claims its own hosted address; HRC does not launch it. */
+  participantClaim?: boolean | undefined
   /** Remote bare addressing can route to an existing scope, never create claim authority. */
   origin?: 'local' | 'federated-ingress' | 'federated-establish' | 'startup-repair' | undefined
   /** Daemon-owned proof that the summon is a successor of a known local session. */
@@ -1037,6 +1041,13 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
       'policy-unavailable',
       `Cannot resolve placement policy for ${scopeRef}: ${error instanceof Error ? error.message : String(error)}`,
       { retryable: true }
+    )
+  }
+
+  if (!request.participantClaim && policy?.placement?.launch === 'participant-only') {
+    return refuse(
+      'participant-only',
+      `${scopeRef} is participant-only, no seat registered. Register its direct participant before sending mail to this scope.`
     )
   }
 
