@@ -261,7 +261,7 @@ describe('runtime lifecycle commands', () => {
     expect(body.argv).toContain('attach-session')
   })
 
-  it('attach auto-binds Ghostty when GHOSTTY_SURFACE_UUID is present', async () => {
+  it('attach descriptor lookup does not bind Ghostty when GHOSTTY_SURFACE_UUID is present', async () => {
     const runtimeId = await seedRuntime(testProjectScope('attach-ghostty-cli'))
     const result = await runCli(
       ['attach', runtimeId],
@@ -275,7 +275,7 @@ describe('runtime lifecycle commands', () => {
     const listed = JSON.parse(listResult.stdout.trim())
     expect(
       listed.some((surface: { surfaceId?: string }) => surface.surfaceId === 'ghostty-cli-attach-1')
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('runtime interrupt prints JSON for a runtimeId', async () => {
