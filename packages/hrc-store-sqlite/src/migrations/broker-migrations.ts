@@ -1,7 +1,7 @@
 import {
+  EFFECTIVE_TURN_ID_SQL,
   EVENT_INPUT_ID_SQL,
   EVENT_SUBMISSION_ID_SQL,
-  EFFECTIVE_TURN_ID_SQL,
   INPUT_REJECTED_TYPE_SQL,
   SUBMISSION_DISPOSITION_TYPES_SQL,
 } from '../repositories/broker.js'
@@ -1178,7 +1178,9 @@ const format2InputsAndObservedRunsMigration: HrcMigration = {
     }
     const invocationColumns = columns('broker_invocations')
     if (!invocationColumns.has('execution_format')) {
-      db.exec("ALTER TABLE broker_invocations ADD COLUMN execution_format TEXT NOT NULL DEFAULT 'format1'")
+      db.exec(
+        "ALTER TABLE broker_invocations ADD COLUMN execution_format TEXT NOT NULL DEFAULT 'format1'"
+      )
     }
     db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_turn_key
@@ -1190,7 +1192,7 @@ const format2InputsAndObservedRunsMigration: HrcMigration = {
       CREATE INDEX IF NOT EXISTS idx_broker_invocations_execution_format
         ON broker_invocations(execution_format);
       CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_input_id
-        ON broker_invocation_events(invocation_id, json_extract(broker_event_json, '$.inputId'));
+        ON broker_invocation_events(invocation_id, ${EVENT_INPUT_ID_SQL});
       CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_turn_id
         ON broker_invocation_events(invocation_id, ${EFFECTIVE_TURN_ID_SQL});
       CREATE INDEX IF NOT EXISTS idx_hrc_events_input_id_seq
@@ -1205,6 +1207,24 @@ const format2InputsAndObservedRunsMigration: HrcMigration = {
           hrc_seq
         )
         WHERE event_kind IN ('turn.started', 'turn.completed', 'turn.failed', 'turn.interrupted');
+    `)
+  },
+}
+
+/**
+ * Repair the first format-2 release's input-id expression index. Its raw
+ * json_extract aborted writes of malformed historical event rows; the guarded
+ * expression preserves lookup coverage while treating malformed payloads as
+ * unindexed. This must be a separate migration because 0076 is already
+ * recorded on live stores.
+ */
+const format2InputEventIndexJsonGuardMigration: HrcMigration = {
+  id: '0077_format2_input_event_index_json_guard',
+  apply(db) {
+    db.exec(`
+      DROP INDEX IF EXISTS idx_broker_invocation_events_input_id;
+      CREATE INDEX idx_broker_invocation_events_input_id
+        ON broker_invocation_events(invocation_id, ${EVENT_INPUT_ID_SQL});
     `)
   },
 }
@@ -1237,4 +1257,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   submissionAdmissionsMigration,
   submissionLookupIndexesMigration,
   format2InputsAndObservedRunsMigration,
+  format2InputEventIndexJsonGuardMigration,
 ]

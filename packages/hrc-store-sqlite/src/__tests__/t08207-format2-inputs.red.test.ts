@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test'
+import { rmSync } from 'node:fs'
 
 import { openHrcDatabase } from '../index.js'
+import { EVENT_INPUT_ID_SQL } from '../repositories/broker.js'
 
 const AT = '2026-09-26T06:30:00.000Z'
 
@@ -105,9 +107,11 @@ test('format-2 admission persists a protected input before any execution run exi
   expect(db.inputs.getByBrokerSubmissionId('submission-t08207-a')).toMatchObject({
     inputId: 'input-t08207-a',
   })
-  expect(db.inputs.listProtectedByRuntimeId('rt-t08207').map((input: { inputId: string }) => input.inputId)).toEqual([
-    'input-t08207-a',
-  ])
+  expect(
+    db.inputs
+      .listProtectedByRuntimeId('rt-t08207')
+      .map((input: { inputId: string }) => input.inputId)
+  ).toEqual(['input-t08207-a'])
   expect(db.runs.listRuns({ hostSessionId: 'hsid-t08207' })).toEqual([])
 
   expect(() => db.inputs.insert(admittedInput('input-t08207-b', 'submission-t08207-a'))).toThrow()
@@ -161,9 +165,9 @@ test('one exact landing transfers protection to a carrier without permitting a c
     turnId: 'turn-t08207-a',
   })
   expect(db.inputs.recordLanding(landing)).toMatchObject({ carrierRunId: 'run-t08207-a' })
-  expect(() =>
-    db.inputs.recordLanding({ ...landing, carrierRunId: 'run-t08207-b' })
-  ).toThrow(/input.*landing|landing.*input/i)
+  expect(() => db.inputs.recordLanding({ ...landing, carrierRunId: 'run-t08207-b' })).toThrow(
+    /input.*landing|landing.*input/i
+  )
 })
 
 test('format-2 landing refuses every live carrier whose durable coordinate or start sequence differs', () => {
@@ -219,4 +223,75 @@ test('only a proved pre-landing rejection releases an input without minting a ru
     errorCode: 'broker_rejected',
   })
   expect(db.runs.listRuns({ hostSessionId: 'hsid-t08207' })).toEqual([])
+})
+
+test('repairs the format-2 input-id index so malformed historical broker events remain readable', () => {
+  const migrationId = '0077_format2_input_event_index_json_guard'
+  const indexName = 'idx_broker_invocation_events_input_id'
+  const dbPath = `/tmp/hrc-t08207-json-index-${process.pid}-${Date.now()}.sqlite`
+  let db = openHrcDatabase(dbPath) as any
+  try {
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'inv-t08207-json-index',
+      seq: 1,
+      time: AT,
+      type: 'turn.started',
+      runtimeId: 'rt-t08207-json-index',
+      payload: { inputId: 'input-t08207-indexed' },
+    })
+
+    // Model a database that opened under the original 0076 migration before
+    // the repair release: it has the unsafe expression index and no repair
+    // migration record yet.
+    db.sqlite.exec(`
+      DROP INDEX ${indexName};
+      CREATE INDEX ${indexName}
+        ON broker_invocation_events(invocation_id, json_extract(broker_event_json, '$.inputId'));
+      DELETE FROM hrc_migrations WHERE id = '${migrationId}';
+    `)
+  } finally {
+    db.close()
+  }
+
+  db = openHrcDatabase(dbPath) as any
+  try {
+    expect(db.migrations.applied).toContain(migrationId)
+    const index = db.sqlite
+      .query<{ sql: string }, [string]>(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?"
+      )
+      .get(indexName)
+    expect(index?.sql).toContain('json_valid(broker_event_json)')
+
+    const lookupSql = `SELECT seq FROM broker_invocation_events
+      WHERE invocation_id = ? AND ${EVENT_INPUT_ID_SQL} = ?`
+    const plan = db.sqlite
+      .query<{ detail: string }, [string, string]>(`EXPLAIN QUERY PLAN ${lookupSql}`)
+      .all('inv-t08207-json-index', 'input-t08207-indexed')
+      .map((row: { detail: string }) => row.detail)
+      .join('\n')
+    expect(plan).toContain(indexName)
+    expect(
+      db.sqlite
+        .query<{ seq: number }, [string, string]>(lookupSql)
+        .all('inv-t08207-json-index', 'input-t08207-indexed')
+        .map((row: { seq: number }) => row.seq)
+    ).toEqual([1])
+
+    expect(() =>
+      db.sqlite
+        .query(
+          'UPDATE broker_invocation_events SET broker_event_json = ? WHERE invocation_id = ? AND seq = ?'
+        )
+        .run('{not valid json', 'inv-t08207-json-index', 1)
+    ).not.toThrow()
+    expect(
+      db.sqlite
+        .query<{ seq: number }, [string, string]>(lookupSql)
+        .all('inv-t08207-json-index', 'input-t08207-indexed')
+    ).toEqual([])
+  } finally {
+    db.close()
+    rmSync(dbPath, { force: true })
+  }
 })
