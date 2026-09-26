@@ -662,6 +662,45 @@ export class HrcLifecycleEventRepository {
   }
 
   /**
+   * Return the immutable exclusive broker cursor recorded with a format-2
+   * admission.  The input and native broker submission identities are kept
+   * separate, so this lookup uses the HRC input id only to locate its own
+   * lifecycle fact and fences it by the durable runtime/invocation placement.
+   *
+   * A missing, malformed, or duplicated fact is intentionally unresolved:
+   * callers must fail closed rather than substitute the mutable broker head.
+   */
+  findInputAdmissionAfterSeq(input: {
+    inputId: string
+    runtimeId: string
+    invocationId: string
+  }): number | null {
+    const rows = this.db
+      .query<{ payload_json: string }, [string, string, string]>(
+        `SELECT payload_json FROM hrc_events
+          WHERE event_kind = 'input.admitted'
+            AND runtime_id = ?
+            AND json_extract(payload_json, '$.inputId') = ?
+            AND json_extract(payload_json, '$.invocationId') = ?
+          ORDER BY hrc_seq ASC
+          LIMIT 2`
+      )
+      .all(input.runtimeId, input.inputId, input.invocationId)
+    if (rows.length !== 1) return null
+    const [row] = rows
+    if (row === undefined) return null
+    try {
+      const payload = JSON.parse(row.payload_json)
+      const afterSeq = isRecord(payload) ? payload['afterSeq'] : undefined
+      return typeof afterSeq === 'number' && Number.isSafeInteger(afterSeq) && afterSeq >= 0
+        ? afterSeq
+        : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Server-side filtered monitor query (T-04232).
    *
    * Narrows `hrc_events` at the SQLite query layer by identity/scope plus the

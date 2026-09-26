@@ -613,26 +613,55 @@ type Format2HeadlessDispatchOptions = DispatchRunPersistenceOptions & {
 type Format2AcceptedStart = {
   runtime: HrcRuntimeSnapshot
   input: HrcInputRecord
-  afterSeq: number
 }
 
-function format2Receipt(
+function format2AdmissionAfterSeq(
+  server: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
-  accepted: Format2AcceptedStart
-): Response {
-  const { runtime, input, afterSeq } = accepted
+  input: HrcInputRecord
+): number {
   if (input.invocationId === undefined || input.runtimeId === undefined) {
     throw new HrcRuntimeUnavailableError('format2 input has no durable invocation placement', {
       inputId: input.inputId,
       hostSessionId: session.hostSessionId,
     })
   }
+  const afterSeq = server.db.hrcEvents.findInputAdmissionAfterSeq({
+    inputId: input.inputId,
+    runtimeId: input.runtimeId,
+    invocationId: input.invocationId,
+  })
+  if (afterSeq === null) {
+    throw new HrcRuntimeUnavailableError('format2 input is missing its durable admission fence', {
+      inputId: input.inputId,
+      runtimeId: input.runtimeId,
+      invocationId: input.invocationId,
+      hostSessionId: session.hostSessionId,
+    })
+  }
+  return afterSeq
+}
+
+function format2Receipt(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  accepted: Format2AcceptedStart
+): Response {
+  const { runtime, input } = accepted
+  if (input.invocationId === undefined || input.runtimeId === undefined) {
+    throw new HrcRuntimeUnavailableError('format2 input has no durable invocation placement', {
+      inputId: input.inputId,
+      hostSessionId: session.hostSessionId,
+    })
+  }
+  const afterSeq = format2AdmissionAfterSeq(server, session, input)
   return json({
     inputId: input.inputId,
     hostSessionId: session.hostSessionId,
     generation: runtime.generation,
     runtimeId: input.runtimeId,
     transport: 'headless',
+    executionFormat: 'format2',
     status: 'accepted',
     supportsInFlightInput: false,
     startIdentity: { kind: 'broker', invocationId: input.invocationId },
@@ -687,6 +716,7 @@ function reserveWarmFormat2Input(
   }
   const now = timestamp()
   return server.db.sqlite.transaction(() => {
+    const afterSeq = server.db.brokerInvocationEvents.maxBrokerSeq(invocationId)
     const admitted = server.db.inputs.insert({
       inputId: input.inputId,
       admissionHostSessionId: session.hostSessionId,
@@ -717,6 +747,8 @@ function reserveWarmFormat2Input(
         inputId: admitted.inputId,
         idempotencyKey: admitted.idempotencyKey,
         requestHash: admitted.requestHash,
+        invocationId: admitted.invocationId,
+        afterSeq,
         door: admitted.door,
       },
     })
@@ -759,10 +791,9 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
         hostSessionId: session.hostSessionId,
       })
     }
-    return format2Receipt(session, {
+    return format2Receipt(this, session, {
       runtime,
       input: existing,
-      afterSeq: this.db.brokerInvocationEvents.maxBrokerSeq(existing.invocationId),
     })
   }
 
@@ -795,7 +826,6 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
       { inputId: `input-${randomUUID()}`, ...identity },
       options
     )
-    const afterSeq = this.db.brokerInvocationEvents.maxBrokerSeq(existingRuntime.activeInvocationId!)
     try {
       await this.brokerWarmupComplete
       const result = await submitThroughBrokerDoor(
@@ -825,7 +855,7 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
         error: error instanceof Error ? error.message : String(error),
       })
     }
-    return format2Receipt(session, { runtime: existingRuntime, input, afterSeq })
+    return format2Receipt(this, session, { runtime: existingRuntime, input })
   }
 
   let resolveAccepted!: (value: Format2AcceptedStart) => void
@@ -853,7 +883,6 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
       resolveAccepted({
         runtime,
         input,
-        afterSeq: this.db.brokerInvocationEvents.maxBrokerSeq(input.invocationId),
       })
     },
   })
@@ -870,7 +899,7 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
       }
     })
 
-  return format2Receipt(session, await accepted)
+  return format2Receipt(this, session, await accepted)
 }
 
 /**

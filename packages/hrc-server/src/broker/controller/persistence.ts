@@ -418,6 +418,10 @@ function persistStartGraphInTransaction(
       : undefined
 
   if (admittedInput !== undefined) {
+    // Snapshot the native ledger before the invocation can be started. This is
+    // the exclusive observation fence returned to every same-key replay; never
+    // replace it with a later mutable broker head.
+    const afterSeq = ctx.db.brokerInvocationEvents.maxBrokerSeq(String(identity.invocationId))
     appendHrcEventWithinExistingTransaction(ctx.db, 'input.admitted', {
       ts: now,
       hostSessionId: session.hostSessionId,
@@ -431,6 +435,8 @@ function persistStartGraphInTransaction(
         idempotencyKey: admittedInput.idempotencyKey,
         requestHash: admittedInput.requestHash,
         brokerSubmissionId: admittedInput.brokerSubmissionId,
+        invocationId: admittedInput.invocationId,
+        afterSeq,
         door: admittedInput.door,
       },
     })

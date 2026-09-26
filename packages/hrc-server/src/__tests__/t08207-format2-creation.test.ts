@@ -55,6 +55,8 @@ test('format 2 start graph persists an observed-execution invocation without an 
         payload: {
           inputId: String(identity.initialInputId),
           brokerSubmissionId: String(start.execution.dispatchRequest.startRequest.initialInput?.inputId),
+          invocationId: String(identity.invocationId),
+          afterSeq: 0,
         },
       },
     ])

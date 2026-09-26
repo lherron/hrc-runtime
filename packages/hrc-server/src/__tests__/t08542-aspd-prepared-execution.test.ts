@@ -391,10 +391,16 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
         waitForCompletion: false,
       }
     )
-    expect(await first.json()).toMatchObject({
+    const firstBody = (await first.json()) as {
+      inputId: string
+      runtimeId: string
+      observation: { broker: { selector: { invocationId: string }; afterSeq: number } }
+    }
+    expect(firstBody).toMatchObject({
       inputId: observedInputId,
       hostSessionId: s.hostSessionId,
       transport: 'headless',
+      executionFormat: 'format2',
       status: 'accepted',
       supportsInFlightInput: false,
       startIdentity: { kind: 'broker' },
@@ -433,6 +439,39 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     ])
     expect(ledger.startCalls).toHaveLength(1)
 
+    // A lost response can replay after native carrier/terminal evidence has
+    // reached the raw ledger. The receipt must retain its exclusive admission
+    // fence, so a consumer can still watch those rows rather than starting
+    // after them.
+    // Reload after the matcher above: Bun's asymmetric matcher mutates its
+    // received object, while these are the real durable placement coordinates.
+    const admittedPlacement = internal().db.inputs.getByInputId(observedInputId!)!
+    const invocationId = admittedPlacement.invocationId!
+    const runtimeId = admittedPlacement.runtimeId!
+    const admissionAfterSeq = firstBody.observation.broker.afterSeq
+    expect(firstBody.observation.broker.selector.invocationId).toBe(invocationId)
+    expect(firstBody.runtimeId).toBe(runtimeId)
+    const postAdmissionStart = {
+      invocationId,
+      seq: admissionAfterSeq + 1,
+      time: '2026-09-26T09:41:00.000Z',
+      type: 'turn.started',
+      runtimeId,
+      payload: { turnId: 'turn-t08207-replay-fence' },
+    }
+    internal().db.brokerInvocationEvents.appendEvent(postAdmissionStart)
+    internal().db.brokerInvocationEvents.appendEvent({
+      invocationId,
+      seq: admissionAfterSeq + 2,
+      time: '2026-09-26T09:41:01.000Z',
+      type: 'turn.completed',
+      runtimeId,
+      payload: { turnId: 'turn-t08207-replay-fence', success: true },
+    })
+    expect(
+      internal().db.brokerInvocationEvents.maxBrokerSeq(invocationId)
+    ).toBe(admissionAfterSeq + 2)
+
     const replay = await internal().handleHeadlessBrokerDispatchTurn(
       s,
       headlessIntent(),
@@ -446,7 +485,12 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
         waitForCompletion: false,
       }
     )
-    expect(await replay.json()).toMatchObject({ inputId: observedInputId, status: 'accepted' })
+    expect(await replay.json()).toMatchObject({
+      inputId: observedInputId,
+      executionFormat: 'format2',
+      status: 'accepted',
+      observation: { broker: { afterSeq: admissionAfterSeq } },
+    })
     expect(ledger.startCalls).toHaveLength(1)
   })
 
