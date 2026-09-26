@@ -99,6 +99,7 @@ import {
 } from './controller/internal'
 import {
   type LifecycleContext,
+  closeOutTerminalLiveSeat,
   markBrokerCrashTerminal,
   markBrokerInvocationTerminal,
   markExternalParticipantInvocationTerminal,
@@ -955,6 +956,15 @@ export class HarnessBrokerController {
     return this.probeSeat(runtimeId, 'explicit-probe')
   }
 
+  /**
+   * T-09237: close out a runtime whose retained live-seat observation is
+   * `terminal` while its projection is still live. Dispatch admission calls this
+   * before trusting a `ready` projection; returns true when it closed one out.
+   */
+  closeOutTerminalLiveSeat(runtimeId: string, cause: string): boolean {
+    return closeOutTerminalLiveSeat(this.lifecycleContext(), runtimeId, cause)
+  }
+
   private recordAcceptedSubmission(
     input:
       | BrokerControllerSteerInput
@@ -1012,6 +1022,14 @@ export class HarnessBrokerController {
           cause,
           stallThresholdMs: this.brokerDispatchStallThresholdMs,
         })
+        // T-09237: a terminal seat is dead for good; close the projection out
+        // now so queued submissions fail and the scope stops looking healthy.
+        if (
+          observation.state === 'terminal' &&
+          closeOutTerminalLiveSeat(this.lifecycleContext(), runtimeId, cause)
+        ) {
+          return result
+        }
         const invocation = this.db.brokerInvocations.getByInvocationId(active.invocationId)
         warnStalledSubmissions({
           db: this.db,

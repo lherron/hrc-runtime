@@ -19,7 +19,10 @@ import type {
 
 import { isExternalLifecycleOwner } from '../../external-participant-lifecycle'
 import { appendHrcEvent } from '../../hrc-event-helper'
+import { isTerminalBrokerInvocationState } from '../../require-helpers'
 import { runtimeActivityPatch } from '../../runtime-activity'
+import { isRuntimeUnavailableStatus } from '../../server-util'
+import { getBrokerDispatchDiagnostics } from '../dispatch-observability'
 import type { BrokerProjectionResult } from '../event-mapper'
 import { failUnresolvedAbsorbedAuxiliaries } from '../turn-ownership.js'
 import type { BrokerControllerError } from './errors'
@@ -87,7 +90,7 @@ export function markBrokerInvocationTerminal(
   ctx: LifecycleContext,
   runtimeId: string,
   envelope: InvocationEventEnvelope,
-  result: BrokerProjectionResult,
+  result: Pick<BrokerProjectionResult, 'idempotent'>,
   options: { preserveActiveClient?: boolean } = {}
 ): void {
   const runtime = ctx.db.runtimes.getByRuntimeId(runtimeId)
@@ -259,6 +262,135 @@ export function markBrokerInvocationTerminal(
   if (userExitReason !== undefined) {
     ctx.fireBrokerTmuxLeaseReap(runtimeId, 'invocation_exited')
   }
+}
+
+/** T-09237: the reason a terminal live seat closed out a still-live projection. */
+export const LIVE_SEAT_TERMINAL_REASON = 'live-seat-terminal'
+
+/**
+ * The last provider failure message the broker reported for an invocation, so a
+ * close-out carries the real cause (e.g. codex's "Reconnecting... 5/5") rather
+ * than a generic one. Retryable failures are exactly where it lives: they are
+ * recorded as attempt evidence and never projected as terminal.
+ */
+function lastBrokerFailureMessage(db: HrcDatabase, invocationId: string): string | undefined {
+  const failures = db.brokerInvocationEvents.listByInvocationIdAndTypes({
+    invocationId,
+    types: ['invocation.failed', 'turn.failed'],
+  })
+  for (const failure of [...failures].reverse()) {
+    try {
+      const payload = JSON.parse(failure.brokerEventJson) as { message?: unknown }
+      if (typeof payload.message === 'string' && payload.message.trim().length > 0) {
+        return payload.message
+      }
+    } catch {
+      // A malformed row carries no message; keep looking.
+    }
+  }
+  return undefined
+}
+
+/**
+ * T-09237: a live-seat `terminal` observation for the runtime's active
+ * invocation closes out a projection HRC still holds live. A terminal seat never
+ * becomes dispatchable again, so there is nothing to wait for — whatever the
+ * broker's reason for ending it (e.g. a driver that ended the invocation on a
+ * RETRYABLE failure, which HRC otherwise treats as attempt evidence and waits
+ * past forever).
+ *
+ * Reads only the retained observation, so it serves both the seat monitor
+ * (right after it records one) and dispatch admission (which must not trust a
+ * `ready` projection over a dead seat). A `stale` terminal observation still
+ * counts: terminal is absorbing, and staleness only means the broker could not
+ * be asked again. An observation naming another invocation never counts.
+ *
+ * Every open run on the invocation — the active one and any queued behind it —
+ * fails with the carried provider message; then the ordinary terminal path
+ * fails the runtime and releases the broker client.
+ */
+export function closeOutTerminalLiveSeat(
+  ctx: LifecycleContext,
+  runtimeId: string,
+  cause: string
+): boolean {
+  const runtime = ctx.db.runtimes.getByRuntimeId(runtimeId)
+  if (
+    !runtime ||
+    runtime.controllerKind !== 'harness-broker' ||
+    isExternalLifecycleOwner(runtime) ||
+    runtime.status === 'failed' ||
+    isRuntimeUnavailableStatus(runtime.status)
+  ) {
+    return false
+  }
+  const invocationId = runtime.activeInvocationId
+  if (invocationId === undefined) return false
+  const invocation = ctx.db.brokerInvocations.getByInvocationId(invocationId)
+  if (!invocation || isTerminalBrokerInvocationState(invocation.invocationState)) return false
+  const seat = getBrokerDispatchDiagnostics(ctx.db, runtimeId)?.liveSeatProbe
+  if (
+    seat === undefined ||
+    seat.state !== 'terminal' ||
+    seat.invocationId !== invocationId ||
+    (seat.availability !== 'current' && seat.availability !== 'stale')
+  ) {
+    return false
+  }
+
+  const now = ctx.now()
+  const carriedMessage = lastBrokerFailureMessage(ctx.db, invocationId)
+  const runErrorMessage = `broker invocation ${invocationId} failed: ${LIVE_SEAT_TERMINAL_REASON}${
+    carriedMessage !== undefined ? `: ${carriedMessage}` : ''
+  }`
+  const failedRunIds: string[] = []
+  for (const run of ctx.db.runs.listByRuntimeId(runtimeId)) {
+    if (run.invocationId !== invocationId || run.completedAt !== undefined) continue
+    if (!isActiveBrokerRun(run) && run.status !== 'queued') continue
+    ctx.db.runs.markCompleted(run.runId, {
+      status: 'failed',
+      completedAt: now,
+      updatedAt: now,
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      errorMessage: runErrorMessage,
+    })
+    failedRunIds.push(run.runId)
+  }
+  ctx.db.brokerInvocations.update(invocationId, {
+    invocationState: 'failed',
+    lifecycleTerminalReason: LIVE_SEAT_TERMINAL_REASON,
+    updatedAt: now,
+  })
+
+  const fields = {
+    runtimeId,
+    invocationId,
+    runtimeProjection: runtime.status,
+    invocationProjection: invocation.invocationState,
+    liveSeatState: seat.state,
+    liveSeatAvailability: seat.availability,
+    liveSeatObservedAt: seat.observedAt,
+    cause,
+    reason: LIVE_SEAT_TERMINAL_REASON,
+    failedRunIds,
+    ...(carriedMessage !== undefined ? { carriedMessage } : {}),
+  }
+  ctx.logger.warn?.('broker.live_seat_terminal.closed_out', fields)
+
+  const synthetic = {
+    invocationId: invocationId as InvocationEventEnvelope['invocationId'],
+    seq: invocation.lastEventSeq ?? 0,
+    time: now,
+    type: 'invocation.failed',
+    payload: {
+      message: carriedMessage ?? 'broker seat is terminal',
+      code: LIVE_SEAT_TERMINAL_REASON,
+      reason: LIVE_SEAT_TERMINAL_REASON,
+      retryable: false,
+    },
+  } as InvocationEventEnvelope
+  markBrokerInvocationTerminal(ctx, runtimeId, synthetic, { idempotent: false })
+  return true
 }
 
 /** EPR clean exit: participant process fate is known only because it said so. */

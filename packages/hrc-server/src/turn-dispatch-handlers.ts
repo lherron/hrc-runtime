@@ -1919,9 +1919,35 @@ async function findReusableProducerSelectedRuntime(
     )
     .at(-1)
   if (live === undefined || live.provider !== undefined) return undefined
+  // T-09237: the projection is not the health check. A seat the broker already
+  // reported terminal is closed out here, so the dispatch births fresh instead
+  // of being refused (T-07397) or queued into a dead seat.
+  if (
+    this.harnessBrokerController?.closeOutTerminalLiveSeat(live.runtimeId, 'dispatch-admission')
+  ) {
+    return undefined
+  }
   if (live.transport !== 'tmux' || !hasLeasedBrokerSubstrate(live)) return live
   const reconciled = await this.reconcileTmuxRuntimeLiveness(live)
   return isRuntimeUnavailableStatus(reconciled.status) ? undefined : reconciled
+}
+
+/**
+ * T-09237: admission must not read a `ready` projection over a seat the broker
+ * already reported terminal. Closes such a runtime out (failing its open runs)
+ * and returns the re-read row, which admission then treats as unavailable.
+ */
+function closeOutDeadSeatBeforeAdmission<T extends HrcRuntimeSnapshot | null>(
+  this: HrcServerInstanceForHandlers,
+  runtime: T
+): T {
+  if (
+    runtime === null ||
+    !this.harnessBrokerController?.closeOutTerminalLiveSeat(runtime.runtimeId, 'dispatch-admission')
+  ) {
+    return runtime
+  }
+  return (this.db.runtimes.getByRuntimeId(runtime.runtimeId) ?? runtime) as T
 }
 
 // Drivers whose interactive input turn is delivered without waiting for the
@@ -2487,6 +2513,9 @@ async function dispatchAdmittedTurnForSession(
       }
     }
   }
+
+  // T-09237: a dead seat re-births rather than counting as a healthy surface.
+  latestRuntime = closeOutDeadSeatBeforeAdmission.call(this, latestRuntime)
 
   const admission = decideInteractiveBrokerAdmission(
     intent,
