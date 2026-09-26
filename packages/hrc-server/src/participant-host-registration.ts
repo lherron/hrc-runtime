@@ -227,6 +227,24 @@ async function registerDirectParticipantLocked(
         detail: 'the registered participant has no durable attempt',
       }
     }
+    // A host can retry registration after its own pre-freeze attach was
+    // rejected. Its exact predecessor token then names this same unused
+    // allocation; no bridge writer exists to retire or replace.
+    if (
+      request.expectedPredecessor !== undefined &&
+      request.expectedPredecessor.hostIncarnationId === hostIncarnationId &&
+      request.expectedPredecessor.runtimeId === attempt.runtimeId &&
+      request.expectedPredecessor.generation === existingByIncarnation.generation &&
+      isNeverAttachedDirectAttempt(server, attempt)
+    ) {
+      return {
+        outcome: 'registered',
+        identity: identityOf(existingByIncarnation, attempt),
+        continuation: asDirectJoinContinuation(attempt),
+        created: false,
+        attached: false,
+      }
+    }
     if (request.expectedPredecessor !== undefined) {
       return driveParticipantReplacement(server, existingByIncarnation, attempt, request)
     }

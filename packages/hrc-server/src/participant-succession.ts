@@ -120,6 +120,16 @@ function continuationForSuccessor(
 ): ParticipantContinuationSelection {
   const prior = server.db.sessions.getByHostSessionId(registration.hostSessionId)
   if (prior?.continuation === undefined) return { carried: false, reason: 'no_continuation' }
+  // The old Arris broker stored its host-incarnation marker as a continuation.
+  // It names the process that is being retired, not native state the successor
+  // driver can resume. Migrate that legacy selection at the HRC decision point.
+  if (
+    prior.continuation.provider === 'arris' &&
+    'kind' in prior.continuation &&
+    prior.continuation.kind === 'host-incarnation'
+  ) {
+    return { carried: false, reason: 'continuation_invalidated' }
+  }
   if (detectResumeInvalidationBarrier(server.db, prior) !== undefined) {
     return { carried: false, reason: 'continuation_invalidated' }
   }
