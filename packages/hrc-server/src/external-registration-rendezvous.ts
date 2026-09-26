@@ -319,10 +319,10 @@ async function mintExternalRegistration(
   const projectionHash = stableHash(startProjection)
 
   try {
-    const minted = server.db.sqlite
-      .transaction((): boolean => {
+    const birthEvent = server.db.sqlite
+      .transaction(() => {
         if (!server.db.externalRegistrationGrants.consumeIfAvailable(grant.registrationId, now)) {
-          return false
+          return undefined
         }
         const parsedScopeJson = parseScopeRef(grant.derivedScope) as unknown as Record<
           string,
@@ -468,14 +468,24 @@ async function mintExternalRegistration(
           capabilities,
           participantInfo,
         })
-        return true
+        return appendHrcEvent(server.db, 'session.created', {
+          ts: now,
+          hostSessionId,
+          scopeRef: grant.derivedScope,
+          laneRef: 'main',
+          generation: 1,
+          payload: { created: true },
+        })
       })
       .immediate()
 
-    if (!minted) {
+    if (birthEvent === undefined) {
       await rm(token.tokenDir, { recursive: true, force: true })
       return null
     }
+    // EPR establishment can lose a reply and re-deliver, but its mint cannot
+    // repeat: consume, session graph, and birth fact committed together.
+    server.notifyEvent(birthEvent)
     const linked = server.db.externalRegistrationGrants.getByRegistrationId(grant.registrationId)
     if (linked === null) throw new Error(`minted registration ${grant.registrationId} disappeared`)
     assertMintLinkage(linked)

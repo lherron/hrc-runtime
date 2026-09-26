@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 
 import { buildScopeRef, parseScopeRef, validateScopeRef } from 'agent-scope'
-import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
+import {
+  HrcBadRequestError,
+  HrcErrorCode,
+  HrcNotFoundError,
+  type HrcLifecycleEvent,
+} from 'hrc-core'
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import {
   type JsonValue,
@@ -24,6 +29,7 @@ import {
   isAbsorbingParticipantAttempt,
   obtainParticipantWriterEvidence,
 } from './participant-writer-evidence.js'
+import { appendHrcEvent } from './hrc-event-helper.js'
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
 import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -701,6 +707,7 @@ export async function handleRegisterParticipant(
   // retain it. A new keyless request is a CREATION, not an idempotent retry --
   // a caller that loses this reply has not converged, it has no key.
   const participantKey = body.participantKey ?? `participant-key-${randomUUID()}`
+  let birthEvent: HrcLifecycleEvent | undefined
 
   const result = await withScopeClaimMutex(
     this,
@@ -779,7 +786,7 @@ export async function handleRegisterParticipant(
           createdAt: now,
           updatedAt: now,
         }
-        this.db.sqlite.transaction(() => {
+        birthEvent = this.db.sqlite.transaction(() => {
           this.db.sessions.insert({
             hostSessionId,
             scopeRef,
@@ -799,6 +806,14 @@ export async function handleRegisterParticipant(
           })
           this.db.participantRegistrations.insertRegistration(newRegistration)
           this.db.participantRegistrations.insertAttempt(newAttempt)
+          return appendHrcEvent(this.db, 'session.created', {
+            ts: now,
+            hostSessionId,
+            scopeRef,
+            laneRef: newRegistration.laneRef,
+            generation: newRegistration.generation,
+            payload: { created: true },
+          })
         })()
         registration = newRegistration
         attempt = newAttempt
@@ -957,6 +972,10 @@ export async function handleRegisterParticipant(
       return registeredResponse(resolvedRegistration, created, withHostingIntent)
     }
   )
+  // Publish only an event that survived the session/continuity/registration
+  // transaction. A keyed retry never assigns birthEvent, so it remains one
+  // durable fact for one actual participant identity mint.
+  if (birthEvent !== undefined) this.notifyEvent(birthEvent)
   if (result.status === 'registered') {
     const registration = this.db.participantRegistrations.getRegistrationByScopeRef(result.scopeRef)
     const attempt =

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { ExternalRegistrationGrant, HrcDatabase } from 'hrc-store-sqlite'
+import type { HrcLifecycleEvent } from 'hrc-core'
 
 import { projectBrokerHostingState } from '../broker/runtime-hosting.js'
 import { externalRegistrationRetryDelayMs } from '../external-registration-rendezvous.js'
@@ -111,15 +112,18 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
   let root: string
   let db: HrcDatabase
   let server: HrcServerInstanceForHandlers
+  let notifiedEvents: HrcLifecycleEvent[]
 
   beforeEach(async () => {
     root = join(tmpdir(), `hrc-epr-t07135-${crypto.randomUUID()}`)
     await mkdir(root, { recursive: true })
     db = openHrcDatabase(join(root, 'state.sqlite'))
+    notifiedEvents = []
     server = {
       db,
       options: { runtimeRoot: join(root, 'run') } as HrcServerOptions,
       generateBrokerAttachToken: () => 'attach-token-t07135',
+      notifyEvent: (event: HrcLifecycleEvent) => notifiedEvents.push(event),
       externalParticipantClients: new Map(),
       externalRegistrationOperations: new Map(),
       stopping: false,
@@ -275,6 +279,37 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
     ).toBe('ESTABLISHED')
   })
 
+  test('records one session birth with the EPR mint and preserves it across delivery retry', async () => {
+    issue()
+    const lost = new ScriptedClient({ established: () => Promise.reject(new Error('response lost')) })
+
+    await expect(performExternalRegistrationHello(server, REGISTRATION_ID, lost)).rejects.toThrow(
+      'response lost'
+    )
+
+    const pending = db.externalRegistrationGrants.getByRegistrationId(REGISTRATION_ID)
+    const birthsAfterMint = db.hrcEvents
+      .listFromHrcSeq(1)
+      .filter((event) => event.eventKind === 'session.created')
+    expect(birthsAfterMint).toHaveLength(1)
+    expect(birthsAfterMint[0]).toMatchObject({
+      hostSessionId: pending?.hostSessionId,
+      scopeRef: DERIVED_SCOPE,
+      laneRef: 'main',
+      generation: 1,
+      payload: { created: true },
+    })
+    expect(notifiedEvents).toEqual(birthsAfterMint)
+
+    await expect(
+      performExternalRegistrationHello(server, REGISTRATION_ID, new ScriptedClient())
+    ).resolves.toMatchObject({ branch: 'redelivered' })
+    expect(
+      db.hrcEvents.listFromHrcSeq(1).filter((event) => event.eventKind === 'session.created')
+    ).toHaveLength(1)
+    expect(notifiedEvents).toHaveLength(1)
+  })
+
   test('retries a malformed established ACK without misclassifying it as a hello refusal', async () => {
     issue()
     const malformedAck = new ScriptedClient({ established: () => ({ ready: false }) })
@@ -348,6 +383,9 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
     expect(rolledBack?.establishmentState).toBeUndefined()
     expect(db.sessions.count()).toBe(0)
     expect(db.runtimes.count()).toBe(0)
+    expect(
+      db.hrcEvents.listFromHrcSeq(1).filter((event) => event.eventKind === 'session.created')
+    ).toHaveLength(0)
     expect(db.runtimeOperations.listByRuntimeId('missing')).toEqual([])
   })
 

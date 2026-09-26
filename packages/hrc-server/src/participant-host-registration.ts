@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { parseScopeRef } from 'agent-scope'
+import type { HrcLifecycleEvent } from 'hrc-core'
 import type {
   ParticipantAttempt,
   ParticipantContinuationSelection,
@@ -14,6 +15,7 @@ import {
   driveParticipantReplacement,
   isNeverAttachedDirectAttempt,
 } from './participant-succession.js'
+import { appendHrcEvent } from './hrc-event-helper.js'
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
 import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -408,7 +410,7 @@ async function registerDirectParticipantLocked(
     updatedAt: now,
   }
 
-  server.db.sqlite.transaction(() => {
+  const birthEvent: HrcLifecycleEvent = server.db.sqlite.transaction(() => {
     server.db.sessions.insert({
       hostSessionId,
       scopeRef,
@@ -429,7 +431,19 @@ async function registerDirectParticipantLocked(
     server.db.participantRegistrations.insertRegistration(registration)
     server.db.participantHostBindings.insertBinding(binding)
     server.db.participantRegistrations.insertAttempt(attempt)
+    return appendHrcEvent(server.db, 'session.created', {
+      ts: now,
+      hostSessionId,
+      scopeRef,
+      laneRef,
+      generation: 1,
+      payload: { created: true },
+    })
   })()
+  // The event is durable before listeners can observe it. Rejoining this
+  // address returns through the existing-binding branch above and never emits
+  // another birth.
+  server.notifyEvent(birthEvent)
 
   return {
     outcome: 'registered',
