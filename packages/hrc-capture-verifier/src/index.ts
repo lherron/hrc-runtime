@@ -1,6 +1,5 @@
 export { hashPayload } from './json.js'
 export { parseProviderTranscript } from './provider-transcript.js'
-export { resolveProviderTranscript } from './transcript-resolution.js'
 export { lifecycleKey, listVerificationCandidates, verifyInvocation } from './verifier.js'
 export type {
   BrokerCaptureEvent,
