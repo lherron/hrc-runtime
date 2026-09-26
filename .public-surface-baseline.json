@@ -6484,6 +6484,22 @@
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|WatchInputOptions|type",
       "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ExecutionFormatSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ExecutionFormatSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ExecutionFormatSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|ExecutionFormatSelector|type",
+      "count": 1
     }
   ]
 }

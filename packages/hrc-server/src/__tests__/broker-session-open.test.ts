@@ -61,6 +61,7 @@ function seedReusableBrokerRuntime(
     capabilitiesJson?: { admission?: { classes?: string[] } } | undefined
     durable?: boolean | undefined
     status?: string | undefined
+    executionFormat?: 'format1' | 'format2' | undefined
   } = {}
 ) {
   const db = openHrcDatabase(fixture.dbPath)
@@ -142,6 +143,9 @@ function seedReusableBrokerRuntime(
       runId: activeRunId,
       brokerProtocol: 'harness-broker/0.2',
       brokerDriver: 'codex-app-server',
+      ...(options.executionFormat !== undefined
+        ? { executionFormat: options.executionFormat }
+        : {}),
       invocationState: activeRunId !== undefined ? 'turn_active' : 'ready',
       capabilitiesJson: JSON.stringify(
         options.capabilitiesJson ?? {
@@ -386,7 +390,7 @@ describe('POST /v1/broker-sessions/open', () => {
     expect(presentationRuntimeIds).toEqual([RUNTIME_ID])
   })
 
-  it('starts a new broker invocation with profile priming allowed and no HRC run', async () => {
+  it('keeps an omitted selector on format1, with profile priming allowed and an admission run id', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     const presentationRuntimeIds = installPresentationPublishSpy()
     const captured: {
@@ -395,14 +399,16 @@ describe('POST /v1/broker-sessions/open', () => {
       prompt?: string
       runId?: string
       allowCompilerInitialInputWithoutIdentity?: boolean
+      executionFormat?: 'format1' | 'format2'
     } = {}
     ;(server as any).startHeadlessBrokerRuntime = async (
       _session: unknown,
       intent: { initialPrompt?: unknown; placement: { correlation?: unknown } },
       prompt: string,
-      runId: string,
+      runId: string | undefined,
       options?: {
         allowCompilerInitialInputWithoutIdentity?: boolean
+        executionFormat?: 'format1' | 'format2'
       }
     ) => {
       captured.intentInitialPrompt = intent.initialPrompt
@@ -411,6 +417,7 @@ describe('POST /v1/broker-sessions/open', () => {
       captured.runId = runId
       captured.allowCompilerInitialInputWithoutIdentity =
         options?.allowCompilerInitialInputWithoutIdentity
+      captured.executionFormat = options?.executionFormat
       return seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation)
     }
     installSeatProbe('idle')
@@ -436,6 +443,7 @@ describe('POST /v1/broker-sessions/open', () => {
     expect(captured.prompt).toBe('')
     expect(captured.runId?.startsWith('broker-session-open-')).toBe(true)
     expect(captured.allowCompilerInitialInputWithoutIdentity).toBe(true)
+    expect(captured.executionFormat).toBe('format1')
     expect(presentationRuntimeIds).toEqual([RUNTIME_ID])
 
     const db = openHrcDatabase(fixture.dbPath)
@@ -447,6 +455,64 @@ describe('POST /v1/broker-sessions/open', () => {
     } finally {
       db.close()
     }
+  })
+
+  it('selects format2 before promptless preparation and never assigns an admission-time run id', async () => {
+    const resolved = await fixture.resolveSession(SCOPE_REF)
+    const captured: {
+      prompt?: string
+      runId?: string
+      executionFormat?: 'format1' | 'format2'
+    } = {}
+    ;(server as any).startHeadlessBrokerRuntime = async (
+      _session: unknown,
+      _intent: unknown,
+      prompt: string,
+      runId: string | undefined,
+      options?: { executionFormat?: 'format1' | 'format2' }
+    ) => {
+      captured.prompt = prompt
+      captured.runId = runId
+      captured.executionFormat = options?.executionFormat
+      return seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation, {
+        executionFormat: 'format2',
+      })
+    }
+    installSeatProbe('idle')
+
+    const res = await fixture.postJson('/v1/broker-sessions/open', {
+      hostSessionId: resolved.hostSessionId,
+      runtimeIntent: headlessBrokerIntent(),
+      executionFormat: 'format2',
+    })
+
+    expect(res.status).toBe(200)
+    expect(captured).toEqual({ prompt: '', runId: undefined, executionFormat: 'format2' })
+  })
+
+  it('refuses a format2 open against a reusable format1 invocation before attaching it', async () => {
+    const resolved = await fixture.resolveSession(SCOPE_REF)
+    seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation, {
+      executionFormat: 'format1',
+    })
+
+    const res = await fixture.postJson('/v1/broker-sessions/open', {
+      hostSessionId: resolved.hostSessionId,
+      runtimeIntent: headlessBrokerIntent(),
+      executionFormat: 'format2',
+    })
+
+    expect(res.status).toBe(503)
+    await expect(res.json()).resolves.toMatchObject({
+      error: {
+        code: 'runtime_unavailable',
+        detail: {
+          code: 'execution_format_mismatch',
+          frozenExecutionFormat: 'format1',
+          selectedExecutionFormat: 'format2',
+        },
+      },
+    })
   })
 
   it('uses seat.probe idle as session-open readiness without polling local run state', async () => {

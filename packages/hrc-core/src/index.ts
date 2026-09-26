@@ -302,6 +302,7 @@ export type {
   DeliverBridgeResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
+  ExecutionFormatSelector,
   DispatchTurnTerminalOutcome,
   GetInputResponse,
   DropContinuationRequest,

@@ -97,6 +97,7 @@ export type {
   DeliverBridgeResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
+  ExecutionFormatSelector,
   EnqueueSubmissionRequest,
   GetInputResponse,
   GetFirstTurnDiagnosticsResponse,

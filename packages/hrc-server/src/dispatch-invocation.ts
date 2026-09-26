@@ -20,7 +20,7 @@ export function joinShellCommand(argv: string[]): string {
 export function normalizeDispatchIntent(
   intent: HrcRuntimeIntent | undefined,
   session: HrcSessionRecord,
-  runId: string
+  runId?: string
 ): HrcRuntimeIntent {
   if (!intent) {
     throw new HrcUnprocessableEntityError(
@@ -81,7 +81,7 @@ export function normalizeDispatchIntent(
           laneRef: session.laneRef,
         },
         hostSessionId: session.hostSessionId,
-        runId,
+        ...(runId !== undefined ? { runId } : {}),
         generation: session.generation,
       },
     },

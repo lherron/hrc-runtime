@@ -12,6 +12,7 @@ import type {
   HrcCommandLaunchSpec,
   HrcContinuationRef,
   HrcDispatchOrigin,
+  HrcExecutionFormat,
   HrcHarness,
   HrcInputCorrelationFact,
   HrcInputRecord,
@@ -302,7 +303,12 @@ export type LaunchCommandScopedRunResponse = {
   replayed: boolean
 }
 
-export type OpenBrokerSessionRequest = {
+export type ExecutionFormatSelector = {
+  /** Admission identity format. Omission retains the format1 public contract. */
+  executionFormat?: HrcExecutionFormat | undefined
+}
+
+export type OpenBrokerSessionRequest = ExecutionFormatSelector & {
   hostSessionId: string
   runtimeIntent?: HrcRuntimeIntent | undefined
   fences?: HrcFence | undefined
@@ -316,6 +322,11 @@ export type OpenBrokerSessionResponse = {
   runtimeId: string
   transport: 'headless'
   status: string
+  /**
+   * Frozen invocation format read from HRC's persisted broker invocation, never
+   * echoed from the request. Older HRC servers omit this compatibility field.
+   */
+  executionFormat?: HrcExecutionFormat | undefined
   startIdentity: { kind: 'broker'; invocationId: string }
   observation: {
     broker: {
@@ -343,7 +354,7 @@ export type EnsureWindowResponse = EnsureRuntimeResponse & {
 
 // -- Execution / dispatch -----------------------------------------------------
 
-export type DispatchTurnRequest = {
+export type DispatchTurnRequest = ExecutionFormatSelector & {
   hostSessionId: string
   /**
    * Caller-stable identity for retrying a dispatch after an ambiguous/lost
@@ -423,6 +434,11 @@ export type DispatchTurnResponse = {
   transport: 'sdk' | 'tmux' | 'headless'
   stage: 'accepted' | 'turn_started' | 'terminal'
   status: 'accepted' | 'started' | DispatchTurnTerminalOutcome
+  /**
+   * Frozen format of the identified broker invocation. Absent on legacy
+   * non-broker responses and older HRC servers.
+   */
+  executionFormat?: HrcExecutionFormat | undefined
   outcome?: DispatchTurnTerminalOutcome | undefined
   replayed: boolean
   error?: { code?: string | undefined; message: string } | undefined
@@ -503,7 +519,7 @@ export type HrcSubmissionOrigin = {
   envelopeId?: string | undefined
 }
 
-type HrcSubmissionRequestBase = {
+type HrcSubmissionRequestBase = ExecutionFormatSelector & {
   target: HrcSubmissionTarget
   body: string
   origin: HrcSubmissionOrigin
@@ -526,6 +542,8 @@ type HrcSessionBoundSubmissionRequest = HrcSubmissionRequestBase & {
  * running. `wait` blocks until the turn it joined or started is terminal.
  */
 export type SteerSubmissionRequest = HrcSubmissionRequestBase & {
+  /** Optional for format1; required by the runless format2 admission path. */
+  idempotencyKey?: string | undefined
   wait?: boolean | undefined
 }
 

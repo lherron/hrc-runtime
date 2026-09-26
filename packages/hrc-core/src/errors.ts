@@ -1,6 +1,8 @@
 export const HrcErrorCode = {
   MALFORMED_REQUEST: 'malformed_request',
   UNKNOWN_FIELD: 'unknown_field',
+  /** T-08207: a selector arrived at a door whose format is permanently format1. */
+  EXECUTION_FORMAT_UNSUPPORTED_DOOR: 'execution_format_unsupported_door',
   /** External-participant registration request failed its wire-contract validation. */
   MALFORMED_REGISTRATION: 'malformed',
   INVALID_SELECTOR: 'invalid_selector',
@@ -161,6 +163,7 @@ export type HrcHttpError = {
 const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.MALFORMED_REQUEST]: 400,
   [HrcErrorCode.UNKNOWN_FIELD]: 422,
+  [HrcErrorCode.EXECUTION_FORMAT_UNSUPPORTED_DOOR]: 422,
   [HrcErrorCode.MALFORMED_REGISTRATION]: 400,
   [HrcErrorCode.INVALID_SELECTOR]: 400,
   [HrcErrorCode.INVALID_FENCE]: 400,
@@ -333,6 +336,7 @@ export class HrcUnprocessableEntityError extends HrcDomainError {
     code: Extract<
       HrcErrorCode,
       | 'unknown_field'
+      | 'execution_format_unsupported_door'
       | 'missing_runtime_intent'
       | 'provider_mismatch'
       | 'inflight_unsupported'

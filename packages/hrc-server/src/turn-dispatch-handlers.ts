@@ -17,6 +17,7 @@ import type {
   EnqueueSubmissionRequest,
   HrcBrokerInvocationEventRecord,
   HrcEventEnvelope,
+  HrcExecutionFormat,
   HrcLifecycleEvent,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
@@ -49,7 +50,11 @@ import {
   issueAppBirthRunGrant,
   refuseAppScopedSession,
 } from './app-session-identity.js'
-import { findPreparedAspdAttemptForRetry, readAspdPreparation } from './aspd-headless-start.js'
+import {
+  assertPreparedAspdAttemptFormat,
+  findPreparedAspdAttemptForFormatRetry,
+  readAspdPreparation,
+} from './aspd-headless-start.js'
 import {
   CALLER_SURFACE_REUSE_REFUSAL,
   decideHeadlessExecutionRoute,
@@ -118,6 +123,7 @@ import {
   getDurableHeadlessRuntimeForReattach,
   getReusableHeadlessRuntimeForSession,
 } from './runtime-select.js'
+import { canonicalRequestHash } from './scope-claim-core.js'
 import {
   DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS,
   DEFAULT_ATTACHED_START_READY_TIMEOUT_MS,
@@ -405,6 +411,28 @@ export async function waitForSubmissionTerminal(
   })
 }
 
+function assertIdempotencyExecutionFormat(
+  frozenExecutionFormat: HrcExecutionFormat,
+  selectedExecutionFormat: HrcExecutionFormat,
+  detail: { hostSessionId: string; idempotencyKey: string; source: 'run' | 'preparation' }
+): void {
+  if (frozenExecutionFormat === selectedExecutionFormat) return
+  throw new HrcRuntimeUnavailableError(
+    `idempotency key is frozen to ${frozenExecutionFormat}; this request selected ${selectedExecutionFormat}`,
+    {
+      code: 'execution_format_mismatch',
+      ...detail,
+      frozenExecutionFormat,
+      selectedExecutionFormat,
+    }
+  )
+}
+
+/** Stable format-2 identity excludes wait controls but includes every admission input. */
+function format2RequestHash(value: Record<string, unknown>): string {
+  return canonicalRequestHash({ executionFormat: 'format2', ...value })
+}
+
 function resolvePublicWaitStage(input: {
   waitFor?: PublicDispatchWaitStage | undefined
   waitForCompletion?: boolean | undefined
@@ -669,7 +697,8 @@ export async function handleSubmission(
   // lands on. Those steer-only choices stay on the REQUESTED door on purpose.
   const doorReport = submissionDoorReport(this, session, door)
   const effectiveDoor = doorReport.effectiveDoor
-  const idempotencyKey = sessionBoundBody?.idempotencyKey
+  const idempotencyKey = body.idempotencyKey
+  const executionFormat = body.executionFormat ?? 'format1'
   const wait = 'wait' in body && body.wait === true
   const invokeColdBirthPromptMode =
     door === 'invoke' ? (body as InvokeSubmissionRequest).coldBirth?.promptMode : undefined
@@ -680,6 +709,11 @@ export async function handleSubmission(
   if (idempotencyKey !== undefined) {
     const existing = this.db.runs.getByDispatchIdempotencyKey(session.hostSessionId, idempotencyKey)
     if (existing !== null) {
+      assertIdempotencyExecutionFormat(existing.executionFormat ?? 'format1', executionFormat, {
+        hostSessionId: session.hostSessionId,
+        idempotencyKey,
+        source: 'run',
+      })
       return await waitForPublicDispatchStage(
         this,
         replayDispatchBody(this, existing),
@@ -691,7 +725,23 @@ export async function handleSubmission(
       )
     }
   }
-  const runId = `run-${randomUUID()}`
+  if (idempotencyKey !== undefined) {
+    const resumable = findPreparedAspdAttemptForFormatRetry(
+      this,
+      session.hostSessionId,
+      idempotencyKey
+    )
+    if (resumable !== undefined) {
+      assertPreparedAspdAttemptFormat(resumable, executionFormat, session.hostSessionId)
+      assertIdempotencyExecutionFormat(resumable.executionFormat, executionFormat, {
+        hostSessionId: session.hostSessionId,
+        idempotencyKey,
+        source: 'preparation',
+      })
+    }
+  }
+  const runId: string | undefined =
+    executionFormat === 'format2' ? undefined : `run-${randomUUID()}`
   // R7.6: resolution precedes runtime-intent validation, and this is where that
   // validation actually lives. A participant is routed by its durable linkage,
   // so it has no intent to validate and must not be asked for one -- that
@@ -729,7 +779,17 @@ export async function handleSubmission(
     )
   }
   const dispatchPromise = dispatchPublicSubmission(this, session, intent, body.body, {
-    runId,
+    ...(runId !== undefined ? { runId } : {}),
+    executionFormat,
+    ...(executionFormat === 'format2'
+      ? {
+          format2RequestHash: format2RequestHash({
+            hostSessionId: session.hostSessionId,
+            door,
+            request: body,
+          }),
+        }
+      : {}),
     // An ordinary submission response is not complete until the broker has
     // minted its identity. A non-waiting cold invoke instead ends at the
     // durable start graph so provider execution cannot hold the launch RPC.
@@ -845,8 +905,11 @@ async function dispatchPublicSubmission(
   const { requireSubmissionIdentity = false, ...dispatchOptions } = options
   const response = await server.dispatchTurnForSession(session, intent, prompt, dispatchOptions)
   const dispatched = (await response.json()) as DispatchTurnResponse
+  const isFormat2InputReceipt =
+    dispatchOptions.executionFormat === 'format2' && dispatched.inputId !== undefined
   if (
     requireSubmissionIdentity &&
+    !isFormat2InputReceipt &&
     (dispatched.submissionId === undefined || dispatched.admission === undefined)
   ) {
     throw new HrcRuntimeUnavailableError('broker submission returned no admission identity', {
@@ -930,6 +993,43 @@ function replayDispatchBody(
   })
 }
 
+/**
+ * A broker-backed public receipt must report the format HRC froze durably for
+ * that exact invocation. Request data cannot prove the selected format: it may
+ * be a stale retry or a client talking to an older server. Legacy non-broker
+ * responses have no invocation to prove and retain their existing shape.
+ */
+function echoPersistedBrokerExecutionFormat(
+  server: Pick<HrcServerInstanceForHandlers, 'db'>,
+  dispatch: DispatchTurnResponse
+): DispatchTurnResponse {
+  const startInvocationId =
+    dispatch.startIdentity?.kind === 'broker' ? dispatch.startIdentity.invocationId : undefined
+  const observedInvocationId = dispatch.observation?.broker?.selector.invocationId
+  if (
+    startInvocationId !== undefined &&
+    observedInvocationId !== undefined &&
+    startInvocationId !== observedInvocationId
+  ) {
+    throw new HrcRuntimeUnavailableError('broker response has conflicting invocation identities', {
+      code: 'execution_format_unproved',
+      startInvocationId,
+      observedInvocationId,
+    })
+  }
+  const invocationId = startInvocationId ?? observedInvocationId
+  if (invocationId === undefined) return dispatch
+
+  const invocation = server.db.brokerInvocations.getByInvocationId(invocationId)
+  if (invocation === null) {
+    throw new HrcRuntimeUnavailableError('broker response has no persisted invocation format', {
+      code: 'execution_format_unproved',
+      invocationId,
+    })
+  }
+  return { ...dispatch, executionFormat: invocation.executionFormat ?? 'format1' }
+}
+
 export async function waitForPublicDispatchStage(
   server: HrcServerInstanceForHandlers,
   base: DispatchTurnResponse,
@@ -940,39 +1040,41 @@ export async function waitForPublicDispatchStage(
   /** Submission doors only: which door the body actually went through (T-08536). */
   doorReport: HrcSubmissionDoorReport | undefined = undefined
 ): Promise<Response> {
-  const invocationId = base.observation?.broker?.selector.invocationId
+  const provenBase = echoPersistedBrokerExecutionFormat(server, base)
+  const invocationId = provenBase.observation?.broker?.selector.invocationId
   // Legacy drivers can report terminal without broker identity. Preserve their
   // projection-less success; identified submissions can be projected from the
   // durable ledger even when completion won the race with waiter attachment.
   if (
     requested === 'accepted' ||
-    (base.stage === 'terminal' && (base.submissionId === undefined || invocationId === undefined))
+    (provenBase.stage === 'terminal' &&
+      (provenBase.submissionId === undefined || invocationId === undefined))
   ) {
-    const dispatch = { ...base, replayed }
+    const dispatch = { ...provenBase, replayed }
     return json(
       { ...projectSubmissionResponse(dispatch, {}, requireSubmissionIdentity), ...doorReport },
-      base.stage === 'accepted' && base.admission !== 'rejected' ? 202 : 200
+      provenBase.stage === 'accepted' && provenBase.admission !== 'rejected' ? 202 : 200
     )
   }
 
-  if (base.submissionId === undefined || invocationId === undefined) {
+  if (provenBase.submissionId === undefined || invocationId === undefined) {
     throw new HrcRuntimeUnavailableError('dispatch wait requires broker submission identity', {
-      runId: base.runId,
+      runId: provenBase.runId,
       requested,
     })
   }
-  assertDispatchRunId(base)
+  assertDispatchRunId(provenBase)
   const projection = await waitForSubmissionTerminal(server, {
     invocationId,
-    runId: base.runId,
-    submissionId: base.submissionId,
+    runId: provenBase.runId,
+    submissionId: provenBase.submissionId,
     signal,
     waitForTurnTerminal: requested === 'terminal',
   })
-  const run = server.db.runs.getByRunId(base.runId)
+  const run = server.db.runs.getByRunId(provenBase.runId)
   const outcome =
     run === null ? undefined : (terminalOutcome(run.status) ?? joinedOutcome(projection))
-  const dispatch = publicDispatchBody(base, requested, {
+  const dispatch = publicDispatchBody(provenBase, requested, {
     replayed,
     ...(outcome !== undefined ? { outcome } : {}),
     ...(run?.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
@@ -993,7 +1095,9 @@ export function projectSubmissionResponse(
   requireSubmissionIdentity = false
 ): DispatchTurnResponse | HrcSubmissionResponse {
   if (dispatch.submissionId === undefined || dispatch.admission === undefined) {
-    if (requireSubmissionIdentity) {
+    // Format2's durable admission is its inputId; it has no broker submission
+    // or execution run until native observation later establishes one.
+    if (requireSubmissionIdentity && dispatch.inputId === undefined) {
       throw new HrcRuntimeUnavailableError('broker submission returned no admission identity', {
         runId: dispatch.runId,
       })
@@ -1149,13 +1253,24 @@ export async function handleOpenBrokerSession(
     }
   }
 
-  const runtime = await this.openHeadlessBrokerSessionForSession(session, intent)
+  const runtime = await this.openHeadlessBrokerSessionForSession(session, intent, {
+    executionFormat: body.executionFormat ?? 'format1',
+  })
   const invocationId = runtime.activeInvocationId
   if (invocationId === undefined) {
     throw new HrcRuntimeUnavailableError('broker session open produced no active invocation', {
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,
       route: 'broker-session-open',
+    })
+  }
+  const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
+  if (invocation === null) {
+    throw new HrcRuntimeUnavailableError('broker session open has no persisted invocation format', {
+      code: 'execution_format_unproved',
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      invocationId,
     })
   }
 
@@ -1165,6 +1280,7 @@ export async function handleOpenBrokerSession(
     runtimeId: runtime.runtimeId,
     transport: 'headless',
     status: runtime.status,
+    executionFormat: invocation.executionFormat ?? 'format1',
     startIdentity: { kind: 'broker', invocationId },
     observation: {
       broker: {
@@ -1207,7 +1323,8 @@ export async function handleDispatchTurn(
     trigger: 'dispatch-turn',
   })
   const waitFor = resolvePublicWaitStage(body)
-  let runId = `run-${randomUUID()}`
+  const executionFormat = body.executionFormat ?? 'format1'
+  let runId: string | undefined = executionFormat === 'format2' ? undefined : `run-${randomUUID()}`
   const parsedIntent = normalizeDispatchIntent(
     body.runtimeIntent ?? session.lastAppliedIntentJson,
     session,
@@ -1222,6 +1339,11 @@ export async function handleDispatchTurn(
   if (idempotencyKey !== undefined) {
     const existing = this.db.runs.getByDispatchIdempotencyKey(session.hostSessionId, idempotencyKey)
     if (existing !== null) {
+      assertIdempotencyExecutionFormat(existing.executionFormat ?? 'format1', executionFormat, {
+        hostSessionId: session.hostSessionId,
+        idempotencyKey,
+        source: 'run',
+      })
       return await waitForPublicDispatchStage(
         this,
         replayDispatchBody(this, existing),
@@ -1231,20 +1353,37 @@ export async function handleDispatchTurn(
     }
   }
 
-  // T-08542: a same-key retry of a never-submitted aspd preparation carries its
-  // frozen run identity, so the launch resumes that attempt instead of preparing
-  // a new one. No run row exists yet for a prepared attempt.
+  // A same-key retry must preserve the format frozen before P. Format2 rows
+  // intentionally have no run; format1 resumes its recorded admission run.
   if (idempotencyKey !== undefined) {
-    const resumable = findPreparedAspdAttemptForRetry(this, session.hostSessionId, idempotencyKey)
+    const resumable = findPreparedAspdAttemptForFormatRetry(
+      this,
+      session.hostSessionId,
+      idempotencyKey
+    )
     if (resumable !== undefined) {
-      runId = resumable.runId
-      // T-08553: the frozen preparation already fixed its presentation. Carry
-      // its recorded choice so node defaults (Codex redirect, viewer policy) are
-      // not re-evaluated on the way back to it.
-      intent = withFrozenOperatorPresentation(
-        intent,
-        readAspdPreparation(this, resumable.operationId).record.intent
-      )
+      assertPreparedAspdAttemptFormat(resumable, executionFormat, session.hostSessionId)
+      assertIdempotencyExecutionFormat(resumable.executionFormat, executionFormat, {
+        hostSessionId: session.hostSessionId,
+        idempotencyKey,
+        source: 'preparation',
+      })
+      if (executionFormat === 'format1') {
+        if (resumable.runId === undefined) {
+          throw new HrcRuntimeUnavailableError('format1 preparation has no admission-time run id', {
+            code: 'execution_format_mismatch',
+            hostSessionId: session.hostSessionId,
+            operationId: resumable.operationId,
+          })
+        }
+        runId = resumable.runId
+        // T-08553: the frozen preparation already fixed its presentation. Carry
+        // its recorded choice so node defaults are not re-evaluated on retry.
+        intent = withFrozenOperatorPresentation(
+          intent,
+          readAspdPreparation(this, resumable.operationId).record.intent
+        )
+      }
     }
   }
 
@@ -1261,7 +1400,16 @@ export async function handleDispatchTurn(
 
   const dispatch = async (): Promise<DispatchTurnResponse> => {
     return await dispatchPublicSubmission(this, session, intent, body.prompt, {
-      runId,
+      ...(runId !== undefined ? { runId } : {}),
+      executionFormat,
+      ...(executionFormat === 'format2'
+        ? {
+            format2RequestHash: format2RequestHash({
+              hostSessionId: session.hostSessionId,
+              request: body,
+            }),
+          }
+        : {}),
       // Accepted requests detach at the durable acceptance boundary. Later
       // stages first obtain broker submission identity, then wait on its ledger.
       waitForCompletion: waitFor !== 'accepted',
@@ -1280,7 +1428,7 @@ export async function handleDispatchTurn(
             dispatchIdempotencyKey: idempotencyKey,
           }
         : {}),
-      ...(body.repair !== undefined
+      ...(body.repair !== undefined && runId !== undefined
         ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
         : {}),
     })
@@ -1302,12 +1450,15 @@ export async function handleDispatchTurn(
 export async function openHeadlessBrokerSessionForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
-  intent: HrcRuntimeIntent
+  intent: HrcRuntimeIntent,
+  options: { executionFormat?: HrcExecutionFormat | undefined } = {}
 ): Promise<HrcRuntimeSnapshot> {
+  const executionFormat = options.executionFormat ?? 'format1'
   const reusableRuntime = getReusableHeadlessRuntimeForSession(this.db, session.hostSessionId)
   if (reusableRuntime) {
     assertV2SelectionCompatibleForReuse(reusableRuntime, intent)
     assertActuatorSplitRuntimeReuse(intent, reusableRuntime)
+    assertBrokerRuntimeExecutionFormat(this, reusableRuntime, executionFormat, 'open')
     return await finalizeHeadlessBrokerSessionOpen(this, reusableRuntime)
   }
 
@@ -1330,6 +1481,7 @@ export async function openHeadlessBrokerSessionForSession(
           : null
       if (recovered && recovered.activeInvocationId !== undefined) {
         assertActuatorSplitRuntimeReuse(intent, recovered)
+        assertBrokerRuntimeExecutionFormat(this, recovered, executionFormat, 'open')
         return await finalizeHeadlessBrokerSessionOpen(this, recovered)
       }
       shouldCleanUp = reattachResult.state !== 'rejected-outside-runtime-root'
@@ -1361,9 +1513,10 @@ export async function openHeadlessBrokerSessionForSession(
     session,
     intent,
     '',
-    `broker-session-open-${randomUUID()}`,
+    executionFormat === 'format2' ? undefined : `broker-session-open-${randomUUID()}`,
     {
       allowCompilerInitialInputWithoutIdentity: true,
+      executionFormat,
     }
   )
   const invocationId = runtime.activeInvocationId
@@ -1376,6 +1529,31 @@ export async function openHeadlessBrokerSessionForSession(
   }
   const readyRuntime = await this.waitForBrokerSessionOpenReady(runtime.runtimeId, invocationId)
   return await finalizeHeadlessBrokerSessionOpen(this, readyRuntime)
+}
+
+/** A request cannot silently join an invocation frozen to another format. */
+function assertBrokerRuntimeExecutionFormat(
+  server: Pick<HrcServerInstanceForHandlers, 'db'>,
+  runtime: HrcRuntimeSnapshot,
+  selectedExecutionFormat: HrcExecutionFormat,
+  operation: 'dispatch' | 'open' = 'dispatch'
+): void {
+  const invocationId = runtime.activeInvocationId
+  const frozenExecutionFormat =
+    invocationId === undefined
+      ? 'format1'
+      : (server.db.brokerInvocations.getByInvocationId(invocationId)?.executionFormat ?? 'format1')
+  if (frozenExecutionFormat === selectedExecutionFormat) return
+  throw new HrcRuntimeUnavailableError(
+    `broker invocation is frozen to ${frozenExecutionFormat}; this ${operation} selected ${selectedExecutionFormat}`,
+    {
+      code: 'execution_format_mismatch',
+      runtimeId: runtime.runtimeId,
+      invocationId,
+      frozenExecutionFormat,
+      selectedExecutionFormat,
+    }
+  )
 }
 
 async function finalizeHeadlessBrokerSessionOpen(
@@ -1576,8 +1754,10 @@ async function enrichDispatchTurnResponse(
     'startIdentity' | 'observation'
   > &
     Partial<Pick<DispatchTurnResponse, 'startIdentity' | 'observation'>>
+  // Format2 returns an input receipt whose broker observation was persisted at
+  // admission. It intentionally has no lifecycle/run selector to enrich.
   if (body.runId === undefined) {
-    throw new Error('cannot enrich a format-2 admission before it lands')
+    return json(body, response.status)
   }
   const runId = body.runId
   const run = server.db.runs.getByRunId(runId)
@@ -1871,6 +2051,10 @@ type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
   repairCorrelation?: JsonRepairRunCorrelation | undefined
   responseFormat?: HrcTurnResponseFormat | undefined
   coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
+  /** Selected at public ingress before compile. */
+  executionFormat?: HrcExecutionFormat | undefined
+  /** Canonical format2 idempotency body, stable across retries. */
+  format2RequestHash?: string | undefined
   /** T-07397 surface-ownership proof; see DispatchTurnRequest. */
   establishedBrokerInvocationId?: string | undefined
   /**
@@ -1896,6 +2080,11 @@ export async function dispatchTurnForSession(
   prompt: string,
   options: DispatchTurnForSessionOptions = {}
 ): Promise<Response> {
+  const executionFormat = options.executionFormat ?? 'format1'
+  const liveBrokerRuntime = activeBrokerRuntimeForSession(this, session)
+  if (liveBrokerRuntime !== undefined) {
+    assertBrokerRuntimeExecutionFormat(this, liveBrokerRuntime, executionFormat)
+  }
   const existingRun = options.runId ? this.db.runs.getByRunId(options.runId) : null
   const releaseAdmission = this.turnAdmissionGate.admit({
     existingAcceptedRun: existingRun?.status === 'accepted',
@@ -2126,6 +2315,59 @@ async function dispatchAdmittedTurnForSession(
   options: DispatchTurnForSessionOptions
 ): Promise<Response> {
   assertLocalPersonaAllowed(this, session.scopeRef)
+  const executionFormat = options.executionFormat ?? 'format1'
+  if (executionFormat === 'format2') {
+    // App and participant surfaces are F1-sealed: an F2 request must never
+    // inherit their run/participant identity or fall through to a second birth.
+    if (isAppScopedSession(session) || resolveParticipantDelivery(this, session) !== null) {
+      throw new HrcRuntimeUnavailableError('format2 is unsupported for this dispatch target', {
+        code: 'execution_format_unsupported_door',
+        hostSessionId: session.hostSessionId,
+        targetKind: isAppScopedSession(session) ? 'app-session' : 'participant',
+      })
+    }
+    if (
+      options.runId !== undefined ||
+      options.dispatchIdempotencyKey === undefined ||
+      options.format2RequestHash === undefined
+    ) {
+      throw new HrcRuntimeUnavailableError('format2 dispatch requires a runless idempotent input', {
+        code: 'execution_format_mismatch',
+        hostSessionId: session.hostSessionId,
+        ...(options.runId !== undefined ? { runId: options.runId } : {}),
+        ...(options.dispatchIdempotencyKey === undefined
+          ? { missing: 'dispatchIdempotencyKey' }
+          : {}),
+        ...(options.format2RequestHash === undefined ? { missing: 'format2RequestHash' } : {}),
+      })
+    }
+    const format2Intent = normalizeDispatchIntent(inputIntent, session, undefined)
+    if (!shouldUseHeadlessTransport(format2Intent)) {
+      throw new HrcRuntimeUnavailableError('format2 requires a headless broker input route', {
+        code: 'format2_initial_input_undeliverable',
+        hostSessionId: session.hostSessionId,
+      })
+    }
+    const route = decideHeadlessExecutionRoute(format2Intent, {
+      brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+      museBrokerFlagEnabled: this.headlessMuseBrokerEnabled,
+    })
+    assertActuatorSplitRouteAdmission(format2Intent, route)
+    if (route !== 'broker') {
+      throw new HrcRuntimeUnavailableError('format2 requires the broker input route', {
+        code: 'format2_initial_input_undeliverable',
+        hostSessionId: session.hostSessionId,
+        route,
+      })
+    }
+    return await this.handleHeadlessBrokerDispatchTurn(session, format2Intent, prompt, undefined, {
+      ...options,
+      executionFormat,
+      waitForCompletion: options.submissionDoor === undefined ? options.waitForCompletion : false,
+    })
+  }
+
+  // Format1 keeps its admission-time run identity and all existing routes.
   if (isAppScopedSession(session)) {
     // T-08576 D5 backstop: an app run id that is already named cannot identify a
     // new turn. Then the app dispatch must hold the selector owner, and its run

@@ -24,6 +24,7 @@ import {
   HrcErrorCode,
   HrcInternalError,
   HrcNotFoundError,
+  HrcUnprocessableEntityError,
   isExactStartRuntimeRequest,
   isSuffixStartRuntimeRequest,
 } from 'hrc-core'
@@ -719,6 +720,38 @@ export type { BrokerRunPreview } from './broker-run-preview.js'
 export { resolvePreviewIntent } from './broker-run-preview.js'
 
 const SESSION_TITLE_MAX_LENGTH = 200
+
+/** The selector is admitted only by the six rev11 execution-creating doors. */
+const FORMAT2_CAPABLE_INGRESS_PATHS = new Set([
+  '/v1/broker-sessions/open',
+  '/v1/turns',
+  '/v1/submissions/steer',
+  '/v1/submissions/enqueue',
+  '/v1/submissions/invoke',
+  '/v1/submissions/preempt',
+])
+
+/**
+ * A selector at any other POST route is a request-contract refusal before its
+ * route parser can resolve a target, allocate identity, or create a runtime.
+ * Use a clone so the selected handler retains its ordinary body stream.
+ */
+async function refuseExecutionFormatAtSealedDoor(
+  request: Request,
+  pathname: string
+): Promise<void> {
+  if (request.method !== 'POST' || FORMAT2_CAPABLE_INGRESS_PATHS.has(pathname)) return
+  const body = await request
+    .clone()
+    .json()
+    .catch(() => undefined)
+  if (!isRecord(body) || !Object.hasOwn(body, 'executionFormat')) return
+  throw new HrcUnprocessableEntityError(
+    HrcErrorCode.EXECUTION_FORMAT_UNSUPPORTED_DOOR,
+    `executionFormat is unsupported at ${pathname}`,
+    { field: 'executionFormat', path: pathname }
+  )
+}
 
 /**
  * C0 controls and DEL. A newline breaks the roster row structure and a raw CSI
@@ -2091,6 +2124,7 @@ class HrcServerInstance implements HrcServer {
     try {
       const url = new URL(request.url)
       const pathname = url.pathname
+      await refuseExecutionFormatAtSealedDoor(request, pathname)
       const exactRouteHandler = this.exactRouteHandlers[exactRouteKey(request.method, pathname)]
       if (exactRouteHandler) {
         return await exactRouteHandler(request, url)

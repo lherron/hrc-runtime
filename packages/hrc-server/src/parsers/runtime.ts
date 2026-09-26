@@ -9,6 +9,7 @@ import type {
   EnsureRuntimeRequest,
   ExactStartRuntimeRequest,
   HrcDispatchOrigin,
+  HrcExecutionFormat,
   HrcHarness,
   HrcProvider,
   HrcRuntimeIntent,
@@ -619,6 +620,17 @@ function parseExactStartRuntimeRequest(input: Record<string, unknown>): ExactSta
   }
 }
 
+function parseExecutionFormatSelector(
+  input: Record<string, unknown>
+): HrcExecutionFormat | undefined {
+  return requireOptionalOneOf(
+    input['executionFormat'],
+    ['format1', 'format2'],
+    'executionFormat must be "format1" or "format2"',
+    { field: 'executionFormat' }
+  )
+}
+
 export function parseOpenBrokerSessionRequest(input: unknown): OpenBrokerSessionRequest {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
@@ -635,6 +647,7 @@ export function parseOpenBrokerSessionRequest(input: unknown): OpenBrokerSession
   const fences = input['fences']
   const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
   const waitForReady = readOptionalBooleanField(input, 'waitForReady')
+  const executionFormat = parseExecutionFormatSelector(input)
 
   return {
     hostSessionId: hostSessionId.trim(),
@@ -644,6 +657,7 @@ export function parseOpenBrokerSessionRequest(input: unknown): OpenBrokerSession
     ...(fences !== undefined ? { fences: parseFenceInput(fences) } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(waitForReady !== undefined ? { waitForReady } : {}),
+    ...(executionFormat !== undefined ? { executionFormat } : {}),
   }
 }
 
@@ -705,6 +719,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     'allowStaleGeneration',
     'firstTurnTimeoutMs',
     'origin',
+    'executionFormat',
   ])
 
   const hostSessionId = input['hostSessionId']
@@ -742,6 +757,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   const repair = parseOptionalDispatchTurnRepair(input['repair'])
   const firstTurnTimeoutMs = parseOptionalFirstTurnTimeoutMs(input['firstTurnTimeoutMs'])
   const origin = parseOptionalDispatchOrigin(input['origin'])
+  const executionFormat = parseExecutionFormatSelector(input)
 
   return {
     hostSessionId: hostSessionId.trim(),
@@ -760,6 +776,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     ...(repair !== undefined ? { repair } : {}),
     ...(firstTurnTimeoutMs !== undefined ? { firstTurnTimeoutMs } : {}),
     ...(origin !== undefined ? { origin } : {}),
+    ...(executionFormat !== undefined ? { executionFormat } : {}),
   }
 }
 
@@ -786,12 +803,12 @@ export function parseSubmissionRequest(
     'origin',
     'responseFormat',
     'freshContext',
+    'executionFormat',
     ...(door === 'enqueue' || door === 'preempt' || door === 'invoke' ? ['ttlMs'] : []),
     // A steer joins the running turn or starts one, so it has a turn to wait on.
     'wait',
-    ...(door === 'steer'
-      ? []
-      : ['idempotencyKey', 'turnPolicy', 'runtimeIntent', 'establishedBrokerInvocationId']),
+    'idempotencyKey',
+    ...(door === 'steer' ? [] : ['turnPolicy', 'runtimeIntent', 'establishedBrokerInvocationId']),
     ...(door === 'invoke' ? ['coldBirth'] : []),
   ]
   rejectUnknownFields(input, allowed)
@@ -810,6 +827,7 @@ export function parseSubmissionRequest(
   const envelopeId = readOptionalNonEmptyStringField(originInput, 'envelopeId')
   const responseFormat = parseOptionalTurnResponseFormat(input['responseFormat'])
   const freshContext = readOptionalBooleanField(input, 'freshContext')
+  const executionFormat = parseExecutionFormatSelector(input)
   const wait = readOptionalBooleanField(input, 'wait')
   const common = {
     target,
@@ -821,10 +839,17 @@ export function parseSubmissionRequest(
     },
     ...(responseFormat !== undefined ? { responseFormat } : {}),
     ...(freshContext !== undefined ? { freshContext } : {}),
+    ...(executionFormat !== undefined ? { executionFormat } : {}),
   }
-  if (door === 'steer') return { ...common, ...(wait !== undefined ? { wait } : {}) }
-
   const idempotencyKey = readOptionalNonEmptyStringField(input, 'idempotencyKey')
+  if (door === 'steer') {
+    return {
+      ...common,
+      ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+      ...(wait !== undefined ? { wait } : {}),
+    }
+  }
+
   const turnPolicy = requireOptionalOneOf(
     input['turnPolicy'],
     ['open', 'guarded'],

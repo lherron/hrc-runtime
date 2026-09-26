@@ -178,6 +178,15 @@ describe('T-07428 directive-only runtime intent contract', () => {
     expect(body.error?.detail).toEqual({ reason: 'directive_only_runtime_intent' })
   })
 
+  it('keeps the F1 admission run in correlation but omits it for the format2 input route', async () => {
+    const session = await seedStoredIntent()
+    const f1 = normalizeDispatchIntent(STORED_INTENT, session, 'run-t08207-f1')
+    const f2 = normalizeDispatchIntent(STORED_INTENT, session, undefined)
+
+    expect(f1.placement?.correlation).toMatchObject({ runId: 'run-t08207-f1' })
+    expect(f2.placement?.correlation).not.toHaveProperty('runId')
+  })
+
   it('refuses a deployment-skew fragment at the whole-intent dispatch seam', async () => {
     const { hostSessionId } = await fixture.resolveSession(SCOPE_REF)
     const db = openHrcDatabase(fixture.dbPath)
