@@ -154,6 +154,19 @@ async function retireCandidate(
       ledger: createPlacementLedgerRepository(server.db.sqlite),
       registry,
       liveRuntimeIds: () => [],
+      fenceContinuities: (scopeRef: string) => {
+        server.db.sqlite.transaction(() => {
+          const continuities = server.db.continuities.disassociateScope(scopeRef)
+          const fencedAt = timestamp()
+          for (const continuity of continuities) {
+            server.db.sessions.setContinuationReuseDisabled(
+              continuity.activeHostSessionId,
+              true,
+              fencedAt
+            )
+          }
+        })()
+      },
       log: writeServerLog,
       now: () => retiredAt,
     },

@@ -70,6 +70,7 @@ describe('T-07139 operator-invoked registration retirement', () => {
       db,
       options,
       generateBrokerAttachToken: () => 'attach-token-t07139',
+      notifyEvent: () => undefined,
       externalParticipantClients: new Map(),
       externalRegistrationOperations: new Map(),
       externalRegistrationEstablishmentOperations: new Map(),
@@ -160,6 +161,12 @@ describe('T-07139 operator-invoked registration retirement', () => {
     })
   }
 
+  function mintedHostSessionId(): string {
+    const runtime = db.runtimes.getByRuntimeId(runtimeId)
+    if (runtime === null) throw new Error('minted runtime missing')
+    return runtime.hostSessionId
+  }
+
   test('candidate listing is a read-only terminal + linger + no-continuation projection', () => {
     expect(projectRegistrationGcCandidates(server, NOW).candidates).toEqual([
       expect.objectContaining({
@@ -202,6 +209,10 @@ describe('T-07139 operator-invoked registration retirement', () => {
           state: 'retired',
           retirementReason: 'external_registration_gc',
         })
+        // T-08384: the local retirement fence must remove the old execution
+        // selection before collective authority is released.
+        expect(db.continuities.getByKey(SCOPE, 'main')).toBeNull()
+        expect(db.sessions.isContinuationReuseDisabled(mintedHostSessionId())).toBe(true)
         expect(registry.get(SCOPE)).toBeDefined()
       })
     )
@@ -243,6 +254,8 @@ describe('T-07139 operator-invoked registration retirement', () => {
       state: 'retired',
       retirementReason: 'external_registration_gc',
     })
+    expect(db.continuities.getByKey(SCOPE, 'main')).toBeNull()
+    expect(db.sessions.isContinuationReuseDisabled(mintedHostSessionId())).toBe(true)
     expect(registry.get(SCOPE)).toBeDefined()
 
     fail = false
