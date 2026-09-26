@@ -116,14 +116,20 @@ function requestParams(double: AspdObservationDouble, method: string): Record<st
 }
 
 describe('POST /v1/declarations/resolve (T-08564 Phase A red)', () => {
-  test('forwards declaration context but does not reissue producer selection as an HRC request', async () => {
+  test('returns authorized observed provisioning without reissuing producer selection as an HRC request (T-08914)', async () => {
     await boot()
     const { response, body } = await post('/v1/declarations/resolve', resolveRequest())
 
     expect(response.status).toBe(200)
     expect(body.intent.harness).toEqual({ interactive: false })
     expect(body.intent).not.toHaveProperty('selection')
-    expect(body.intent).not.toHaveProperty('provision')
+    expect(body.intent.provision).toMatchObject({
+      harness: 'claude-code',
+      model: 'x',
+    })
+    // The producer advertises yolo, but HRC's existing deny law keeps it out
+    // of the intent that callers can carry to a birth.
+    expect(body.intent.provision).not.toHaveProperty('yolo')
     expect(body.declaration.agentSources).toEqual({
       agentsRoot,
       aspHome,

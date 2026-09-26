@@ -439,6 +439,7 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
             }
           : {}),
       },
+      ...(Object.keys(provision).length > 0 ? { provision } : {}),
       ...(body.initialPrompt !== undefined ? { initialPrompt: body.initialPrompt } : {}),
     }
 
