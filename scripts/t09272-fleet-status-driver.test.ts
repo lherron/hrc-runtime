@@ -26,7 +26,10 @@ function writeExecutable(path: string, content: string): void {
   chmodSync(path, 0o755)
 }
 
-function runFleetStatus(driverNode: 'max3' | 'hrcdev', overrides: ProbeOverrides = {}): FleetStatusRun {
+function runFleetStatus(
+  driverNode: 'max3' | 'hrcdev',
+  overrides: ProbeOverrides = {}
+): FleetStatusRun {
   const root = mkdtempSync(join(tmpdir(), 't09272-fleet-status-'))
   temporaryRoots.push(root)
   const bin = join(root, '.bun', 'bin')
@@ -45,7 +48,7 @@ function runFleetStatus(driverNode: 'max3' | 'hrcdev', overrides: ProbeOverrides
       '  hrcdev) hrc_commit=6ee4ea67; aspd_commit=da52b1ac ;;',
       '  *) exit 64 ;;',
       'esac',
-      'printf \'{\"node\":{\"nodeId\":\"%s\"},\"status\":\"healthy\",\"release\":{\"hrcBuild\":{\"sourceCommit\":\"%s\"},\"runningEqualsInstalled\":true},\"api\":{\"aspd\":{\"reachable\":true,\"release\":{\"sourceCommit\":\"%s\"}}},\"socketPath\":\"/tmp/t09272.sock\"}\\n\' "$node" "$hrc_commit" "$aspd_commit"',
+      'printf \'{"node":{"nodeId":"%s"},"status":"healthy","release":{"hrcBuild":{"sourceCommit":"%s"},"runningEqualsInstalled":true},"api":{"aspd":{"reachable":true,"release":{"sourceCommit":"%s"}}},"socketPath":"/tmp/t09272.sock"}\\n\' "$node" "$hrc_commit" "$aspd_commit"',
       '',
     ].join('\n')
   )
@@ -80,7 +83,7 @@ function runFleetStatus(driverNode: 'max3' | 'hrcdev', overrides: ProbeOverrides
       '#!/usr/bin/env bash',
       'command="$*"',
       'if [[ "$command" == *\'bun --version\'* ]]; then',
-      '  printf \'1.3.14\\n0.154.0\\n2.1.283\\n\'',
+      "  printf '1.3.14\\n0.154.0\\n2.1.283\\n'",
       'elif [[ "$command" == *\'whence -ap bunx\'* ]]; then',
       '  printf "%s\\n" "$HOME/.bun/bin/bunx"',
       'else',
