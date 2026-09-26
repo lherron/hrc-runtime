@@ -14,6 +14,7 @@ import { appendHrcEvent } from './hrc-event-helper.js'
 import { claimParticipantAddress } from './participant-address-provisioning.js'
 import {
   driveParticipantReplacement,
+  hasLegacyArrisHostIncarnationSelection,
   isNeverAttachedDirectAttempt,
 } from './participant-succession.js'
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
@@ -237,6 +238,9 @@ async function registerDirectParticipantLocked(
       request.expectedPredecessor.generation === existingByIncarnation.generation &&
       isNeverAttachedDirectAttempt(server, attempt)
     ) {
+      if (hasLegacyArrisHostIncarnationSelection(attempt.continuation)) {
+        return driveParticipantReplacement(server, existingByIncarnation, attempt, request)
+      }
       return {
         outcome: 'registered',
         identity: identityOf(existingByIncarnation, attempt),

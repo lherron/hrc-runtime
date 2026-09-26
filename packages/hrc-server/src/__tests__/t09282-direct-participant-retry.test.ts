@@ -147,4 +147,83 @@ describe('T-09282 direct participant retry and legacy continuation', () => {
       server!.db.sessions.getByHostSessionId(successor['hostSessionId'] as string)?.continuation
     ).toBeUndefined()
   })
+
+  test('an already allocated legacy selection is replaced on the same host after rejected attach', async () => {
+    const scope = 'agent:arris:project:arris:task:primary'
+    const first = await register('host-a', undefined, scope)
+    const identity = first['identity'] as Record<string, unknown>
+    const legacy = { provider: 'arris', kind: 'host-incarnation', key: 'host-incarnation:legacy' }
+    server!.db.sessions.updateContinuation(
+      first['hostSessionId'] as string,
+      legacy,
+      '2026-09-26T15:00:00.000Z'
+    )
+    server!.db.sqlite
+      .query(`UPDATE participant_registration_attempts
+      SET continuation_carried = 1, continuation_reason = 'carried', continuation_selected_json = ?
+      WHERE attempt_id = ?`)
+      .run(JSON.stringify(legacy), identity['attemptId'])
+
+    expect(
+      await json(
+        await fixture.postJson('/v1/participants/attach', {
+          registrationId: identity['registrationId'],
+          attemptId: identity['attemptId'],
+          attachEpoch: identity['attachEpoch'],
+          descriptor: successorDescriptor(first),
+        })
+      )
+    ).toMatchObject({ status: 'rejected', reason: 'participant_continuation_mismatch' })
+
+    const retried = await register(
+      'host-a',
+      {
+        hostIncarnationId: 'host-a',
+        runtimeId: identity['runtimeId'] as string,
+        generation: 1,
+      },
+      scope
+    )
+    expect(retried).toMatchObject({
+      status: 'registered',
+      continuation: { carried: false, selected: null },
+      identity: { attachEpoch: 2 },
+    })
+    expect((retried['identity'] as Record<string, unknown>)['attemptId']).not.toBe(
+      identity['attemptId']
+    )
+    expect(
+      await register(
+        'host-a',
+        {
+          hostIncarnationId: 'host-a',
+          runtimeId: identity['runtimeId'] as string,
+          generation: 1,
+        },
+        scope
+      )
+    ).toMatchObject({
+      status: 'registered',
+      identity: { attemptId: (retried['identity'] as Record<string, unknown>)['attemptId'] },
+      continuation: { carried: false, selected: null },
+    })
+    const freshIdentity = retried['identity'] as Record<string, unknown>
+    expect(
+      await json(
+        await fixture.postJson('/v1/participants/attach', {
+          registrationId: freshIdentity['registrationId'],
+          attemptId: freshIdentity['attemptId'],
+          attachEpoch: freshIdentity['attachEpoch'],
+          socketPath: `${fixture.tmpDir}/host-a.sock`,
+          descriptor: successorDescriptor(retried),
+        })
+      )
+    ).toMatchObject({ status: 'attached', prepared: true })
+    expect(
+      server!.db.participantRegistrations.getAttempt(identity['attemptId'] as string)
+    ).toMatchObject({
+      state: 'ABANDONED',
+      dispositionReason: expect.stringContaining('pre_attach_superseded'),
+    })
+  })
 })

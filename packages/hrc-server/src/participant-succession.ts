@@ -90,6 +90,28 @@ export function isNeverAttachedDirectAttempt(
   )
 }
 
+function isLegacyArrisHostIncarnationContinuation(value: unknown): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'provider' in value &&
+    value.provider === 'arris' &&
+    'kind' in value &&
+    value.kind === 'host-incarnation'
+  )
+}
+
+export function hasLegacyArrisHostIncarnationSelection(
+  selection: ParticipantContinuationSelection | undefined
+): boolean {
+  if (selection?.carried !== true || selection.selectedJson === undefined) return false
+  try {
+    return isLegacyArrisHostIncarnationContinuation(JSON.parse(selection.selectedJson))
+  } catch {
+    return false
+  }
+}
+
 function preAttachRetirementReceipt(
   registration: ParticipantRegistration,
   attempt: ParticipantAttempt,
@@ -123,11 +145,7 @@ function continuationForSuccessor(
   // The old Arris broker stored its host-incarnation marker as a continuation.
   // It names the process that is being retired, not native state the successor
   // driver can resume. Migrate that legacy selection at the HRC decision point.
-  if (
-    prior.continuation.provider === 'arris' &&
-    'kind' in prior.continuation &&
-    prior.continuation.kind === 'host-incarnation'
-  ) {
+  if (isLegacyArrisHostIncarnationContinuation(prior.continuation)) {
     return { carried: false, reason: 'continuation_invalidated' }
   }
   if (detectResumeInvalidationBarrier(server.db, prior) !== undefined) {
@@ -314,7 +332,8 @@ export async function driveParticipantReplacement(
   const currentIntent = parseIntent(initialAttempt.replacementIntentJson)
   const preAttachSupersession =
     registration.registrationMode === 'direct' &&
-    request.hostIncarnationId !== binding?.hostIncarnationId &&
+    (request.hostIncarnationId !== binding?.hostIncarnationId ||
+      hasLegacyArrisHostIncarnationSelection(initialAttempt.continuation)) &&
     (isNeverAttachedDirectAttempt(server, initialAttempt) ||
       currentIntent?.preAttachSupersession === true)
   if ((expected === undefined && !preAttachSupersession) || binding === null) {
@@ -717,7 +736,9 @@ export async function driveParticipantReplacement(
     kind === 'bridge' ? binding.bindingId : `participant-binding-${randomUUID()}`
   const selection =
     kind === 'bridge'
-      ? (attempt.continuation ?? { carried: false, reason: 'no_continuation' as const })
+      ? preAttachSupersession && hasLegacyArrisHostIncarnationSelection(attempt.continuation)
+        ? continuationForSuccessor(server, registration)
+        : (attempt.continuation ?? { carried: false, reason: 'no_continuation' as const })
       : continuationForSuccessor(server, registration)
   const successor: ParticipantAttempt = {
     attemptId: successorAttemptId,
