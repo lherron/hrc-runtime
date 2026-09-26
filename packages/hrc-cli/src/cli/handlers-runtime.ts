@@ -320,25 +320,6 @@ type RenderedBrokerInvocation = {
   terminalSurface?: { kind?: string; sessionName?: string } | undefined
 }
 
-export async function cmdBrokerInspect(args: string[]): Promise<void> {
-  const runtimeArg = requireArg(args, 0, '<runtimeId>')
-  const jsonOutput = hasFlag(args, '--json')
-  const probe = hasFlag(args, '--probe')
-  const client = createClient()
-  const runtimeId = await resolveRuntimeArg(runtimeArg, client)
-  const result = await client.brokerInspect({
-    runtimeId,
-    ...(probe ? { probeLiveness: true } : {}),
-  })
-
-  if (jsonOutput) {
-    printJson(result)
-    return
-  }
-
-  printBrokerInspect(result)
-}
-
 export function printBrokerInspect(result: BrokerInspectResponse): void {
   const lines: string[] = [
     `broker inspect ${result.runtimeId}`,
