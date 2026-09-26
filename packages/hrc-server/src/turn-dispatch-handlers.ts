@@ -142,6 +142,7 @@ import type {
 } from './server-types.js'
 import { dispatchRunPersistence, submissionDoorCarriesColdLaunch } from './server-types.js'
 import {
+  assertDispatchRunId,
   isRuntimeUnavailableStatus,
   json,
   requireDispatchRuntimeId,
@@ -960,6 +961,7 @@ export async function waitForPublicDispatchStage(
       requested,
     })
   }
+  assertDispatchRunId(base)
   const projection = await waitForSubmissionTerminal(server, {
     invocationId,
     runId: base.runId,
@@ -1506,7 +1508,12 @@ async function dispatchTurnResponseJson(response: Response) {
 
 function runtimeIdFromAttachedRunResult(result: AttachedRunResult): string {
   if ('runId' in result) {
-    return requireDispatchRuntimeId(result)
+    const dispatched = result as DispatchTurnResponse
+    assertDispatchRunId(dispatched)
+    return requireDispatchRuntimeId(dispatched)
+  }
+  if (result.runtimeId === undefined) {
+    throw new Error('attached start completed without runtime identity')
   }
   return result.runtimeId
 }
@@ -1569,7 +1576,11 @@ async function enrichDispatchTurnResponse(
     'startIdentity' | 'observation'
   > &
     Partial<Pick<DispatchTurnResponse, 'startIdentity' | 'observation'>>
-  const run = server.db.runs.getByRunId(body.runId)
+  if (body.runId === undefined) {
+    throw new Error('cannot enrich a format-2 admission before it lands')
+  }
+  const runId = body.runId
+  const run = server.db.runs.getByRunId(runId)
   const invocationId = run?.invocationId
   const runtimeId = requireDispatchRuntimeId(body)
 
@@ -1582,7 +1593,7 @@ async function enrichDispatchTurnResponse(
     observation: {
       lifecycle: {
         selector: {
-          runId: body.runId,
+          runId,
           runtimeId,
           generation: body.generation,
         },
@@ -1593,7 +1604,7 @@ async function enrichDispatchTurnResponse(
             broker: {
               selector: {
                 invocationId,
-                runId: body.runId,
+                runId,
                 runtimeId,
                 generation: body.generation,
               },

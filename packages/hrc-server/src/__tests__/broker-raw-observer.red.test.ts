@@ -351,6 +351,48 @@ describe('T-05083/2 GET /v1/broker-events — live fanout (follow=true)', () => 
 describe('T-05083/4 GET /v1/broker-events — run fence', () => {
   const RUN_B_ID = 'run_raw_obs_b'
 
+  it('returns the exact turn from the selected persisted carrier row even when its wire envelope has no runId', async () => {
+    await seedBrokerInvocationInFixture()
+    const carrierTurnId = 'turn:format2-carrier'
+    const carrierTerminal = {
+      invocationId: INVOCATION_ID,
+      seq: 1,
+      time: ts(1),
+      type: 'turn.completed',
+      turnId: carrierTurnId,
+      payload: { status: 'completed' },
+    } as InvocationEventEnvelope
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      // `runId` is direct durable-row identity. HRC reconstructs only the
+      // broker envelope for the wire response, which intentionally has none.
+      db.brokerInvocationEvents.appendEvent({
+        invocationId: INVOCATION_ID,
+        seq: 1,
+        time: ts(1),
+        type: 'turn.completed',
+        runtimeId: RUNTIME_ID,
+        runId: RUN_ID,
+        payload: carrierTerminal.payload,
+        envelopeJson: JSON.stringify(carrierTerminal),
+      })
+    } finally {
+      db.close()
+    }
+
+    server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+    const res = await fixture.fetchSocket(
+      `/v1/broker-events?${rawObserverQS({ runId: RUN_ID, afterSeq: 0, follow: false })}`
+    )
+
+    expect(res.status).toBe(200)
+    const events = parseNdjson(await res.text()) as Array<Record<string, unknown>>
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'turn.completed', turnId: carrierTurnId }),
+    ])
+    expect(events[0]).not.toHaveProperty('runId')
+  })
+
   it('run B observer does not yield run A events (runId fence enforced)', async () => {
     await seedBrokerInvocationInFixture()
 

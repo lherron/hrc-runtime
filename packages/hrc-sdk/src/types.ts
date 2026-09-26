@@ -98,6 +98,7 @@ export type {
   DispatchTurnRequest,
   DispatchTurnResponse,
   EnqueueSubmissionRequest,
+  GetInputResponse,
   GetFirstTurnDiagnosticsResponse,
   HrcFirstTurnDiagnosticsTrip,
   HrcFirstTurnMissingBundle,
@@ -127,6 +128,7 @@ export type {
   RuntimeSeatResponse,
   WithdrawSubmissionRequest,
   WithdrawSubmissionResponse,
+  WatchInputEvent,
   LiveSeatRef,
   ListLiveSeatRefsResponse,
   PlacementBindingView,
@@ -375,6 +377,15 @@ export type InvocationEventEnvelope = {
   driver?: unknown
   harnessGeneration?: number | undefined
   turnAttempt?: number | undefined
+}
+
+/** Exact durable input stream. Input ids never stand in for broker submission ids. */
+export type WatchInputOptions = {
+  inputId: string
+  /** Inclusive lifecycle HRC sequence; this is never a broker cursor. */
+  fromSeq?: number | undefined
+  follow?: boolean | undefined
+  signal?: AbortSignal | undefined
 }
 
 export type WatchBrokerEventsOptions = {

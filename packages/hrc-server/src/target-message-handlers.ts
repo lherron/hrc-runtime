@@ -80,6 +80,7 @@ import { isLiveProcess } from './server-lock.js'
 import { writeServerLog } from './server-log.js'
 import { normalizeOptionalQuery, parseJsonBody, parseSessionRef } from './server-parsers.js'
 import {
+  assertDispatchRunId,
   isRuntimeUnavailableStatus,
   json,
   requireDispatchRuntimeId,
@@ -1194,6 +1195,7 @@ export async function deliverPersistedSemanticTurnHandoff(
       ...originDispatchOption(body.from),
     })
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+    assertDispatchRunId(turnBody)
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
     // T-01770 Phase B/C: a harness-broker tmux turn here means
     // dispatchTurnForSession admitted an ariadne-class/SDK-shaped Claude intent
@@ -1285,6 +1287,7 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
       { waitForCompletion: false, submissionDoor: 'enqueue', responseFormat }
     )
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+    assertDispatchRunId(turnBody)
     const brokerTransport = turnBody.transport as 'tmux'
 
     const finalizer = this.turnResponseFinalizers.get(runId)
@@ -1779,6 +1782,7 @@ export async function executeSemanticTurn(
       joinInFlightRuntimeStart: true,
     })
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+    assertDispatchRunId(turnBody)
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
 
     // T-07203: a steer outcome means this message's text joined (or was

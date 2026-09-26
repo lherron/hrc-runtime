@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type {
+  GetInputResponse,
   HrcBoundedEventStreamRecord,
   HrcEventTail,
   HrcHttpError,
@@ -27,6 +28,7 @@ import type {
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
   TraceMessageRequest,
   TraceMessageResponse,
+  WatchInputEvent,
 } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
@@ -186,6 +188,7 @@ import type {
   WaitMessageResponse,
   WatchBoundedEventsOptions,
   WatchBrokerEventsOptions,
+  WatchInputOptions,
   WatchMessagesOptions,
   WatchOptions,
 } from './types.js'
@@ -1229,6 +1232,27 @@ export class HrcClient {
    */
   async listPresentationRuntimes(): Promise<ListPresentationRuntimesResponse> {
     return this.getJson<ListPresentationRuntimesResponse>('/v1/presentation/runtimes')
+  }
+
+  /** Exact format-2 admission read. The result has no execution authority until landing. */
+  async getInput(inputId: string): Promise<GetInputResponse> {
+    return this.getJson<GetInputResponse>(`/v1/inputs/${encodeURIComponent(inputId)}`)
+  }
+
+  /** Canonical HRC input facts; correlation items are intentionally nonterminal. */
+  async *watchInput(options: WatchInputOptions): AsyncIterable<WatchInputEvent> {
+    const path = buildPath(`/v1/inputs/${encodeURIComponent(options.inputId)}/watch`, {
+      fromSeq: options.fromSeq,
+      follow: boolField(options.follow),
+    })
+    yield* this.streamNdjson<WatchInputEvent>(
+      path,
+      {
+        method: 'GET',
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
+      options.signal
+    )
   }
 
   async listRuns(filter?: RunListFilter): Promise<RunRecord[]> {

@@ -84,6 +84,30 @@ function isPendingSemanticTurnHandoff(
   return 'status' in response && response.status === 'pending'
 }
 
+/** A steer can acknowledge format-2 admission before its execution exists. */
+function isAdmittedRunSubmission(
+  response: HrcSubmissionResponse
+): response is HrcSubmissionResponse & {
+  admission: 'admitted'
+  runId: string
+  runtimeId?: string | undefined
+  hostSessionId: string
+  generation: number
+  observation: { lifecycle: { fromSeq: number } }
+} {
+  return (
+    response.admission === 'admitted' &&
+    'runId' in response &&
+    typeof response.runId === 'string' &&
+    'hostSessionId' in response &&
+    typeof response.hostSessionId === 'string' &&
+    'generation' in response &&
+    typeof response.generation === 'number' &&
+    'observation' in response &&
+    response.observation.lifecycle !== undefined
+  )
+}
+
 type TurnBodyInput = {
   targetInput: string
   body: string
@@ -675,7 +699,9 @@ async function prepareDispatchedTurn(
       }
       const steered = await client.steer(submissionRequest)
       writeDoorDowngrade(steered)
-      if (steered.admission !== 'admitted' || !('runId' in steered)) {
+      // Format-2 admission has no execution run or lifecycle cursor yet; its
+      // receipt is input-based and cannot be followed as a legacy run.
+      if (!isAdmittedRunSubmission(steered)) {
         printJsonLine(steered)
         return undefined
       }

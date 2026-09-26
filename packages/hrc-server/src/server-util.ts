@@ -69,6 +69,21 @@ export function requireDispatchRuntimeId(
   return result.runtimeId
 }
 
+/**
+ * Narrow a legacy execution consumer to an observed run. Format-2 admission
+ * responses have no run yet and must take their own input-based path.
+ */
+export function assertDispatchRunId(
+  result: DispatchTurnResponse
+): asserts result is DispatchTurnResponse & { runId: string } {
+  if (result.runId === undefined) {
+    throw new HrcInternalError('execution-only response was requested before input landing', {
+      inputId: result.inputId,
+      stage: result.stage,
+    })
+  }
+}
+
 export function errorResponse(error: unknown, request?: Request): Response {
   if (error instanceof HrcDomainError) {
     return Response.json(error.toResponse(), { status: error.status })

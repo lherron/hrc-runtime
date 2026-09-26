@@ -32,6 +32,7 @@ import {
   parseSessionRef,
 } from '../server-parsers.js'
 import {
+  assertDispatchRunId,
   isRuntimeUnavailableStatus,
   json,
   requireDispatchRuntimeId,
@@ -377,6 +378,7 @@ export async function handleBrokerLiteralInputBySelector(
     }
   )
   const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+  assertDispatchRunId(turnBody)
   // `ts` is deliberately RECOMPUTED here (not the `now` captured at entry): the
   // dispatch arm awaits the turn, so the event timestamp reflects post-dispatch
   // wall-clock. Preserved from the pre-refactor inline block.
@@ -469,6 +471,7 @@ export async function handleDispatchTurnBySelector(
     { runId, responseFormat }
   )
   const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+  assertDispatchRunId(turnBody)
   const transport = turnBody.transport
 
   // T-07969: one body authority — the projection selects the turn's final

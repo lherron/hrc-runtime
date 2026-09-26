@@ -165,6 +165,7 @@ import {
 import { handleFirstTurnDiagnostics } from './first-turn-diagnostics-handlers.js'
 import type { FirstTurnEvalSummary } from './first-turn-eval.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
+import { handleGetInput, handleWatchInput, matchInputRoute } from './input-handlers.js'
 import {
   assertLocalPersonaAllowed,
   normalizeLocalPersonaAllowlist,
@@ -2095,6 +2096,13 @@ class HrcServerInstance implements HrcServer {
         return await exactRouteHandler(request, url)
       }
 
+      const inputRoute = matchInputRoute(request.method, pathname)
+      if (inputRoute) {
+        return inputRoute.watch
+          ? handleWatchInput.call(this, inputRoute.inputId, url, request)
+          : handleGetInput.call(this, inputRoute.inputId)
+      }
+
       if (request.method === 'GET' && pathname.startsWith('/v1/sessions/by-host/')) {
         const hostSessionId = pathname.slice('/v1/sessions/by-host/'.length)
         return this.handleGetSessionByHost(hostSessionId)
@@ -2689,14 +2697,22 @@ class HrcServerInstance implements HrcServer {
         .listByRuntimeId(runtime.runtimeId)
         .filter((run) => run.runId !== body.ownerRunId && isRunActive(run))
         .map((run) => run.runId)
-      const protectedRunIds = [...new Set([...crossingRunIds, ...durableRunIds])]
-      if (protectedRunIds.length > 0) {
+      // The in-memory rendezvous is absent after a daemon restart. Preserve a
+      // runtime for every other still-protected format-2 admission recorded in
+      // the durable input ledger; no control acknowledgement proves removal.
+      const protectedInputIds = this.db.inputs
+        .listProtectedByRuntimeId(runtime.runtimeId)
+        .map((input) => input.inputId)
+      const protectedOwners = [
+        ...new Set([...crossingRunIds, ...durableRunIds, ...protectedInputIds]),
+      ]
+      if (protectedOwners.length > 0) {
         return json({
           ok: true,
           hostSessionId: runtime.hostSessionId,
           runtimeId: runtime.runtimeId,
           droppedContinuation: false,
-          warning: `runtime preserved for other run(s): ${protectedRunIds.join(', ')}`,
+          warning: `runtime preserved for other protected work: ${protectedOwners.join(', ')}`,
         })
       }
 
