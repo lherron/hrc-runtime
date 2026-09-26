@@ -46,7 +46,12 @@ predicate: >
   execution dispatch carries that input through broker-deliverable initialInput;
   a launch-argv-only first prompt refuses before P. Retry and launch reread the
   stored selector, and a live/prepared-selector mismatch refuses before an
-  effect. Under T-08207 format 1, the inventory also rejects an accepted
+  effect. A successful broker-session-open or accepted turn/class-door response
+  echoes the exact broker invocation's persisted executionFormat, never the
+  unverified request; same-key replay rereads the same value, and an unproved
+  invocation refuses instead of inventing one. An older response without an
+  echo does not authorize a consumer to claim format 2. Under T-08207 format 1,
+  the inventory also rejects an accepted
   headless run without a dispatched input. Under format 2, admission is
   represented by a cleanup-protected input and an
   execution exists only after observed turn.started; preflight reports an
@@ -74,7 +79,7 @@ predicate: >
   seat using its old continuation. Reattachment uses persisted connection
   identity without aspd and verifies frozen release/protocol identity before
   attach.
-authority: wrkq:T-08690 producer-owned v2 consumer and cutover amendment, pending Daedalus review; wrkq:T-08207 revision 10 input/execution inventory amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 11 request-scoped execution-format selector amendment, Daedalus approval 2026-09-26; wrkq:T-09274 revision 1 no-viewer compile constraint approved 2026-09-26; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
+authority: wrkq:T-08690 producer-owned v2 consumer and cutover amendment, pending Daedalus review; wrkq:T-08207 revision 10 input/execution inventory amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 11 request-scoped execution-format selector amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 12 response confirmation, Daedalus approval 2026-09-26; wrkq:T-09274 revision 1 no-viewer compile constraint approved 2026-09-26; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
 source:
   - wrkq:T-08207
   - wrkq:T-08690
@@ -98,6 +103,7 @@ required_tests:
   - generic execution.hosting allocation and all-driver hostedDrivers proof gate every birth; presentation false does not remove required process-container resources
   - activation preflight rejects nonzero incompatible harness-broker prepared operations; it rejects format-1 accepted headless runs without dispatched input and reports format-2 unlanded protected inputs without inventing a run, terminal, or cleanup release, and is rerun immediately before ASP activation
   - T-08207 rev11 freezes the explicit selector before compile in preparation and invocation; F2 has initialInputId/no runId, retry rereads it, a selector mismatch has no effect, and launch-argv-only F2 refuses before P
+  - T-08207 rev12 open and accepted turn/class-door response echo reads the frozen invocation format for F1 and F2, same-key replay preserves it, and an unproved invocation refuses without fabricating a format
   - retained v1 durable brokers prove stable runtime invocation and continuation IDs through tmux replay input interrupt and terminate without parsing v1 plan or lastAppliedIntentJson
   - an active external participant attempt is drained or retired rather than reconnected through prepared_profile_json
   - isolated A-to-B acceptance records the rollback pair before first v2 persistence, proves HRC B rejects ASP A/v1 compile before P, observes selected and running ASP B identities, then proves a fresh v2 birth and dead-seat v2 reprovision using old continuation
@@ -107,6 +113,7 @@ last_verified: final ASP v2 installed acceptance proved 9/9 harness/presentation
 reopen_when:
   - ASP v2 compile request/response, selected execution, release identity, or hosting declaration changes
   - boundary-P persistence ordering, retry, replay, dispatch, worker release validation, or frozen execution-format selection changes
+  - the persisted execution-format response echo or confirmation-before-consumer-reuse rule changes
   - reuse, presentation mismatch, startup reattachment, opaque v1 attach-fence, continuation, or external participant disposition changes
   - explicit operator-presentation compile constraint, no-viewer producer-answer fence, or presentation persistence/retry law changes
   - activation preflight, matched HRC/ASP ordering, rollback boundary, or fix-forward law changes

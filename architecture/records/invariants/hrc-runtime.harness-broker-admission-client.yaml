@@ -12,8 +12,13 @@ predicate: >
   promptless broker-session-open door, /v1/turns, and each four-door body. It is
   chosen and frozen before compile and is never an admission class, runtime
   intent, ASP selection, session preference, or provider default. Omission is
-  format 1. Agent-loop's promptless open must request format 2 before it creates
-  its invocation, and its later invoke must request the same durable format.
+  format 1. Successful broker-session-open and accepted turn/class-door
+  responses echo the exact invocation's frozen executionFormat; request intent
+  is never confirmation. Agent-loop's promptless open requests format 2 before
+  it creates its invocation, and its later invoke requests format 2 only after
+  the open response confirms that durable format. An absent echo from an older
+  HRC, or an explicit format-1 echo, retains the unknown/format-1 compatibility
+  path and never enables first-turn newest-run adoption.
   ACP real-launcher and every unchanged caller omit the selector and remain
   format 1 with an admission runId until their pinned producer tuple and caller
   contract advance; HRC publication, installation, or active ASPD cannot move
@@ -89,7 +94,7 @@ predicate: >
   count and no sender attribution. On a steer-capable seat that count is zero by
   construction.
   Each hold/preempt request remains an immediate isolated admission decision.
-authority: Lance principal rulings 2026-09-01 through 2026-09-05, including wrkq:T-07920 cold-birth ruling, wrkq:T-07926 mail-hint direction, and the 2026-09-05 ruling in spec wrkq:T-08092 that supersedes wrkq:T-07914 / Daedalus approvals wrkq:T-07843 rev 7, wrkq:T-07926 rev 2, wrkq:T-07962 rev 3, wrkq:T-08012 corrected design rev 3, wrkq:T-08098 companion design, and wrkq:T-08207 revisions 10 and 11 (2026-09-26) / T-08562 Daedalus approval EN-13574 adds a launch-provenance preservation test without changing the predicate, 2026-09-17
+authority: Lance principal rulings 2026-09-01 through 2026-09-05, including wrkq:T-07920 cold-birth ruling, wrkq:T-07926 mail-hint direction, and the 2026-09-05 ruling in spec wrkq:T-08092 that supersedes wrkq:T-07914 / Daedalus approvals wrkq:T-07843 rev 7, wrkq:T-07926 rev 2, wrkq:T-07962 rev 3, wrkq:T-08012 corrected design rev 3, wrkq:T-08098 companion design, and wrkq:T-08207 revisions 10 and 11 (2026-09-26); wrkq:T-08207 revision 12 response confirmation, Daedalus approval 2026-09-26 / T-08562 Daedalus approval EN-13574 adds a launch-provenance preservation test without changing the predicate, 2026-09-17
 source:
   - wrkq:T-08207
   - wrkq:T-08562
@@ -125,6 +130,7 @@ required_tests:
   - T-07926 mail-hint gates cover the bare held count, cadence and fail-open silence, no broker submission or presentation receipt, unchanged batch behavior, and a real PostToolUse additionalContext round-trip with no user row
   - T-08207 rev11 covers exact F2-capable request shapes for broker-session-open, /v1/turns, and steer/enqueue/invoke/preempt; F1-sealed runtime, attached, selector-message, and participant doors reject F2 before an effect; omission remains F1
   - T-08207 rev11 agent-loop opens a promptless F2 invocation before its first input and later invokes with F2; absent/different later selector refuses, while ACP-shaped dispatch omission remains F1/runId until the ACP producer pin and caller contract advance
+  - T-08207 rev12 successful open and accepted turn/class-door responses echo the persisted invocation format; agent-loop repeats F2 only after an exact F2 echo, while an absent/F1 echo keeps compatibility and typed mismatch never reinjects or probes for a newest run
   - T-07962 format-1 lost-disposition gates settle the legacy HRC waiter and run failed, project the runtime crashed, close the old broker client, reject later delivery to that invocation, and provision the next submission on a fresh runtime; format-2 loss/expiry retain only input correlation uncertainty, permit no reinjection, and do not complete the adapter before a later observed terminal
   - T-08207 accepted-input watch gates convert matching positive rejection and confirmed driver-cancel withdrawal before landing into typed input terminals with no run binding and restored adapter readiness; teardown cancellation, loss, expiry, invocation failure/exited, and liveness probes do not terminalize or re-arm a format-2 carrier
   - T-08012 invoke-only cold-birth rendezvous gate proves crossing invokes wait through the launch-carried owner terminal while enqueue and mail retain bare-boot admission
@@ -148,6 +154,7 @@ reopen_when:
   - invoke-only terminal rendezvous scope, registration-to-input/run coverage, owner-run cleanup narrowing, agent-loop pre-landing control, or synchronous teardown admission fencing changes
   - a mail hint carries envelope ids or bodies or gains a disposition
   - execution-format selector ingress/default, agent-loop promptless F2 session behavior, ACP format-1 compatibility, selector mismatch fence, or F1-sealed birth-door law changes
+  - the frozen execution-format response echo or agent-loop confirmation-before-repeat rule changes
   - HRC changes the per-format submission disposition terminal boundary, permits a failed invocation to receive later input, or permits a format-2 correlation loss to reinject a body
 supersedes:
   - wrkq:T-07914
