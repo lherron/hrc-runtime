@@ -450,20 +450,19 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     })
     expect(internal().db.runs.listByRuntimeId(admitted!.runtimeId!)).toHaveLength(0)
     expect(
-      internal().db.sqlite
-        .query<{ count: number }, [string]>(
+      internal()
+        .db.sqlite.query<{ count: number }, [string]>(
           'SELECT count(*) AS count FROM submission_admissions WHERE run_id IS NOT NULL AND runtime_id = ?'
         )
         .get(admitted!.runtimeId!)?.count
     ).toBe(0)
-    const admittedEvents = internal().db.sqlite
-      .query<{ hrc_seq: number; runtime_id: string | null; event_kind: string; payload_json: string }, []>(
-        'SELECT hrc_seq, runtime_id, event_kind, payload_json FROM hrc_events ORDER BY hrc_seq'
-      )
+    const admittedEvents = internal()
+      .db.sqlite.query<
+        { hrc_seq: number; runtime_id: string | null; event_kind: string; payload_json: string },
+        []
+      >('SELECT hrc_seq, runtime_id, event_kind, payload_json FROM hrc_events ORDER BY hrc_seq')
       .all()
-    expect(
-      admittedEvents.filter((event) => event.event_kind === 'input.admitted')
-    ).toEqual([
+    expect(admittedEvents.filter((event) => event.event_kind === 'input.admitted')).toEqual([
       expect.objectContaining({ runtime_id: admitted!.runtimeId }),
     ])
     expect(ledger.startCalls).toHaveLength(1)
@@ -497,9 +496,9 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
       runtimeId,
       payload: { turnId: 'turn-t08207-replay-fence', success: true },
     })
-    expect(
-      internal().db.brokerInvocationEvents.maxBrokerSeq(invocationId)
-    ).toBe(admissionAfterSeq + 2)
+    expect(internal().db.brokerInvocationEvents.maxBrokerSeq(invocationId)).toBe(
+      admissionAfterSeq + 2
+    )
 
     const replay = await internal().handleHeadlessBrokerDispatchTurn(
       s,
@@ -568,8 +567,8 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     ])
     expect(internal().db.runs.listByRuntimeId(firstBody.runtimeId)).toHaveLength(0)
     expect(
-      internal().db.sqlite
-        .query<{ count: number }, [string]>(
+      internal()
+        .db.sqlite.query<{ count: number }, [string]>(
           'SELECT count(*) AS count FROM submission_admissions WHERE run_id IS NOT NULL AND runtime_id = ?'
         )
         .get(firstBody.runtimeId)?.count
@@ -587,7 +586,9 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
         submissionDoor: 'invoke',
       }
     )
-    expect((await replay.json()) as { inputId: string }).toMatchObject({ inputId: firstBody.inputId })
+    expect((await replay.json()) as { inputId: string }).toMatchObject({
+      inputId: firstBody.inputId,
+    })
     expect(ledger.submissionCalls).toHaveLength(1)
   })
 

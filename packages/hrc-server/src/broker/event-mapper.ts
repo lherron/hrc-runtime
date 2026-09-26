@@ -2155,10 +2155,12 @@ export class BrokerEventMapper {
     now: string
   ): void {
     const invocation = this.db.brokerInvocations.getByInvocationId(envelope.invocationId)
-    const runtime = invocation === null ? null : this.db.runtimes.getByRuntimeId(invocation.runtimeId)
+    const runtime =
+      invocation === null ? null : this.db.runtimes.getByRuntimeId(invocation.runtimeId)
     if (invocation === null || runtime === null) return
     const input = this.format2InputForEnvelope(envelope, invocation, runtime)
-    if (input === undefined || input.status !== 'accepted' || input.landingKind !== undefined) return
+    if (input === undefined || input.status !== 'accepted' || input.landingKind !== undefined)
+      return
     const payload: Record<string, unknown> = isRecord(envelope.payload) ? envelope.payload : {}
     const reason =
       typeof payload['reason'] === 'string'
@@ -2228,7 +2230,8 @@ export class BrokerEventMapper {
     now: string
   ): void {
     const invocation = this.db.brokerInvocations.getByInvocationId(envelope.invocationId)
-    const runtime = invocation === null ? null : this.db.runtimes.getByRuntimeId(invocation.runtimeId)
+    const runtime =
+      invocation === null ? null : this.db.runtimes.getByRuntimeId(invocation.runtimeId)
     if (invocation === null || runtime === null) return
     const input = this.format2InputForEnvelope(envelope, invocation, runtime)
     if (input === undefined) return
@@ -2301,7 +2304,10 @@ export class BrokerEventMapper {
           db.runs.update(runId, { status: 'running', startedAt: occurredAt, updatedAt: now })
         }
         claimRuntimeTurnOwnership(db, ctx, runId, occurredAt, now, this.serverLog)
-        db.brokerInvocations.update(invocationId, { invocationState: 'turn_active', updatedAt: now })
+        db.brokerInvocations.update(invocationId, {
+          invocationState: 'turn_active',
+          updatedAt: now,
+        })
         return
       }
       case 'turn.completed':

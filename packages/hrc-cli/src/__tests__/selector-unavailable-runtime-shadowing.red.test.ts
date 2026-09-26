@@ -34,15 +34,13 @@ afterEach(() => {
 const scopeRef = 'agent:room-coordinator:project:taskboard:task:T-05967'
 
 /**
- * Resolving the scope handle below marker-scans a search root for a canonical
- * checkout of its project. Without a provisioned root this test silently
- * depends on the developer's machine having that project cloned next to this
- * one. Provision a real canonical checkout in a temp search root instead: the
- * resolution path still runs for real and still has to find the project by
- * marker scan — only the ambient machine dependency is removed.
+ * Resolve the scope handle against a temporary checkout. The explicit root
+ * keeps a stale or missing machine-wide wrkq project registry from shadowing
+ * this selector test, while the handle and runtime matching still run for real.
  */
 let projectSearchRoot: string | undefined
 let originalProjectSearchRoots: string | undefined
+let originalProjectRootOverride: string | undefined
 
 beforeEach(() => {
   projectSearchRoot = mkdtempSync(join(tmpdir(), 'hrc-selector-projects-'))
@@ -52,6 +50,8 @@ beforeEach(() => {
   createGitFixture(join(projectSearchRoot, 'taskboard'))
   originalProjectSearchRoots = process.env['HRC_PROJECT_SEARCH_ROOTS']
   process.env['HRC_PROJECT_SEARCH_ROOTS'] = projectSearchRoot
+  originalProjectRootOverride = process.env['ASP_PROJECT_ROOT_OVERRIDE']
+  process.env['ASP_PROJECT_ROOT_OVERRIDE'] = join(projectSearchRoot, 'taskboard')
 })
 
 afterEach(() => {
@@ -61,6 +61,12 @@ afterEach(() => {
     process.env['HRC_PROJECT_SEARCH_ROOTS'] = originalProjectSearchRoots
   }
   originalProjectSearchRoots = undefined
+  if (originalProjectRootOverride === undefined) {
+    Reflect.deleteProperty(process.env, 'ASP_PROJECT_ROOT_OVERRIDE')
+  } else {
+    process.env['ASP_PROJECT_ROOT_OVERRIDE'] = originalProjectRootOverride
+  }
+  originalProjectRootOverride = undefined
   if (projectSearchRoot !== undefined) {
     rmSync(projectSearchRoot, { recursive: true, force: true })
     projectSearchRoot = undefined

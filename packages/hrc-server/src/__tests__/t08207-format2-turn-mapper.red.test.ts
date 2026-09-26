@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 
 import { BrokerEventMapper } from '../broker/event-mapper.js'
 import {
+  type SeededFixture,
   TMUX_HOST_SESSION_ID,
   TMUX_INVOCATION_ID,
   TMUX_OPERATION_ID,
@@ -11,7 +12,6 @@ import {
   makeTmuxSeededFixture,
   ts,
   turnId,
-  type SeededFixture,
 } from './broker-event-mapper-fixtures.js'
 
 let fixture: SeededFixture
@@ -67,10 +67,15 @@ test('input-id-less provider start mints one execution; later submission.execute
   // correlation identity but no HRC inputId. A later broker disposition is the
   // sole submission-to-turn proof in this shape.
   const observedStart = {
-    ...envelope('turn.started', 1, { source: 'observed', turnId: nativeTurnId }, {
-      invocationId: TMUX_INVOCATION_ID,
-      turnId: nativeTurnId,
-    }),
+    ...envelope(
+      'turn.started',
+      1,
+      { source: 'observed', turnId: nativeTurnId },
+      {
+        invocationId: TMUX_INVOCATION_ID,
+        turnId: nativeTurnId,
+      }
+    ),
     correlation: {
       hostSessionId: TMUX_HOST_SESSION_ID,
       operationId: TMUX_OPERATION_ID,
@@ -98,22 +103,32 @@ test('input-id-less provider start mints one execution; later submission.execute
   })
 
   const executed = mapper.apply(
-    envelope('submission.executed', 2, {
-      submissionId: initialNativeSubmissionId,
-      turnId: nativeTurnId,
-    }, {
-      invocationId: TMUX_INVOCATION_ID,
-      turnId: nativeTurnId,
-    })
+    envelope(
+      'submission.executed',
+      2,
+      {
+        submissionId: initialNativeSubmissionId,
+        turnId: nativeTurnId,
+      },
+      {
+        invocationId: TMUX_INVOCATION_ID,
+        turnId: nativeTurnId,
+      }
+    )
   )
   mapper.apply(
-    envelope('submission.executed', 2, {
-      submissionId: initialNativeSubmissionId,
-      turnId: nativeTurnId,
-    }, {
-      invocationId: TMUX_INVOCATION_ID,
-      turnId: nativeTurnId,
-    })
+    envelope(
+      'submission.executed',
+      2,
+      {
+        submissionId: initialNativeSubmissionId,
+        turnId: nativeTurnId,
+      },
+      {
+        invocationId: TMUX_INVOCATION_ID,
+        turnId: nativeTurnId,
+      }
+    )
   )
 
   expect(db.runs.getByRunId(run.runId)).toMatchObject({ initiatingInputId: hrcInputId })
@@ -142,7 +157,9 @@ test('input-id-less provider start mints one execution; later submission.execute
     )
   )
   expect(db.runs.getByRunId(run.runId)).toMatchObject({ status: 'completed', nativeTurnId })
-  expect(terminal.lifecycleEvents.find((event) => event.eventKind === 'turn.completed')).toMatchObject({
+  expect(
+    terminal.lifecycleEvents.find((event) => event.eventKind === 'turn.completed')
+  ).toMatchObject({
     runId: run.runId,
   })
 })
@@ -157,10 +174,15 @@ test('a format-2 unowned turn obtains its own execution and cannot consume a lat
   const mapper = new BrokerEventMapper({ db, now: () => ts(100) })
 
   mapper.apply(
-    envelope('turn.started', 1, { turnId: nativeTurnId }, {
-      invocationId: TMUX_INVOCATION_ID,
-      turnId: nativeTurnId,
-    })
+    envelope(
+      'turn.started',
+      1,
+      { turnId: nativeTurnId },
+      {
+        invocationId: TMUX_INVOCATION_ID,
+        turnId: nativeTurnId,
+      }
+    )
   )
   const carrier = db.runs.getByTurnKey(
     `${TMUX_RUNTIME_ID}|${TMUX_OPERATION_ID}|${TMUX_INVOCATION_ID}|${nativeTurnId}|g=-|a=-`
@@ -173,13 +195,18 @@ test('a format-2 unowned turn obtains its own execution and cannot consume a lat
 
   db.inputs.insert(admittedInput('input-t08207-joined', 'submission-t08207-joined'))
   const absorbed = mapper.apply(
-    envelope('submission.absorbed', 2, {
-      submissionId: 'submission-t08207-joined',
-      turnId: nativeTurnId,
-    }, {
-      invocationId: TMUX_INVOCATION_ID,
-      turnId: nativeTurnId,
-    })
+    envelope(
+      'submission.absorbed',
+      2,
+      {
+        submissionId: 'submission-t08207-joined',
+        turnId: nativeTurnId,
+      },
+      {
+        invocationId: TMUX_INVOCATION_ID,
+        turnId: nativeTurnId,
+      }
+    )
   )
 
   expect(db.inputs.getByInputId('input-t08207-joined')).toMatchObject({
@@ -187,7 +214,9 @@ test('a format-2 unowned turn obtains its own execution and cannot consume a lat
     carrierRunId: carrier.runId,
     turnId: nativeTurnId,
   })
-  expect(absorbed.lifecycleEvents.find((event) => event.eventKind === 'input.landed')?.payload).toMatchObject({
+  expect(
+    absorbed.lifecycleEvents.find((event) => event.eventKind === 'input.landed')?.payload
+  ).toMatchObject({
     inputId: 'input-t08207-joined',
     kind: 'joined',
     carrierRunId: carrier.runId,
@@ -209,11 +238,16 @@ test('format-2 native input identity cannot collide with a different HRC input i
   const nativeTurnId = turnId('turn-t08207-native-collision')
 
   mapper.apply(
-    envelope('turn.started', 1, { turnId: nativeTurnId }, {
-      invocationId: TMUX_INVOCATION_ID,
-      turnId: nativeTurnId,
-      inputId: 'input-t08207-native-collision' as never,
-    })
+    envelope(
+      'turn.started',
+      1,
+      { turnId: nativeTurnId },
+      {
+        invocationId: TMUX_INVOCATION_ID,
+        turnId: nativeTurnId,
+        inputId: 'input-t08207-native-collision' as never,
+      }
+    )
   )
 
   const carrier = db.runs.getByTurnKey(
@@ -280,18 +314,28 @@ test('a failed format-2 landing rolls back the minted carrier and preserves inpu
   const mapper = new BrokerEventMapper({ db, now: () => ts(100) })
 
   mapper.apply(
-    envelope('submission.executed', 1, {
-      submissionId: 'submission-t08207-rollback',
-      turnId: nativeTurnId,
-    }, {
+    envelope(
+      'submission.executed',
+      1,
+      {
+        submissionId: 'submission-t08207-rollback',
+        turnId: nativeTurnId,
+      },
+      {
+        invocationId: TMUX_INVOCATION_ID,
+        turnId: nativeTurnId,
+      }
+    )
+  )
+  const started = envelope(
+    'turn.started',
+    2,
+    { source: 'observed', turnId: nativeTurnId },
+    {
       invocationId: TMUX_INVOCATION_ID,
       turnId: nativeTurnId,
-    })
+    }
   )
-  const started = envelope('turn.started', 2, { source: 'observed', turnId: nativeTurnId }, {
-    invocationId: TMUX_INVOCATION_ID,
-    turnId: nativeTurnId,
-  })
   const recordLanding = db.inputs.recordLanding.bind(db.inputs)
   db.inputs.recordLanding = () => {
     throw new Error('forced landing failure')
@@ -329,22 +373,37 @@ test('format-2 releases only an exact rejected input; teardown cancellation and 
   const mapper = new BrokerEventMapper({ db, now: () => ts(100) })
 
   const rejected = mapper.apply(
-    envelope('submission.rejected', 1, { submissionId: 'submission-t08207-rejected' }, {
-      invocationId: TMUX_INVOCATION_ID,
-    })
+    envelope(
+      'submission.rejected',
+      1,
+      { submissionId: 'submission-t08207-rejected' },
+      {
+        invocationId: TMUX_INVOCATION_ID,
+      }
+    )
   )
   const cancelled = mapper.apply(
-    envelope('submission.cancelled', 2, {
-      submissionId: 'submission-t08207-teardown',
-      reason: 'teardown',
-    }, {
-      invocationId: TMUX_INVOCATION_ID,
-    })
+    envelope(
+      'submission.cancelled',
+      2,
+      {
+        submissionId: 'submission-t08207-teardown',
+        reason: 'teardown',
+      },
+      {
+        invocationId: TMUX_INVOCATION_ID,
+      }
+    )
   )
   const invocationFailed = mapper.apply(
-    envelope('invocation.failed', 3, { reason: 'submission_correlation_lost' }, {
-      invocationId: TMUX_INVOCATION_ID,
-    })
+    envelope(
+      'invocation.failed',
+      3,
+      { reason: 'submission_correlation_lost' },
+      {
+        invocationId: TMUX_INVOCATION_ID,
+      }
+    )
   )
 
   expect(db.inputs.getByInputId('input-t08207-rejected')).toMatchObject({
@@ -355,16 +414,23 @@ test('format-2 releases only an exact rejected input; teardown cancellation and 
     status: 'accepted',
     cleanupProtection: 'protected',
   })
-  expect(rejected.lifecycleEvents.find((event) => event.eventKind === 'input.terminal')?.payload).toMatchObject({
+  expect(
+    rejected.lifecycleEvents.find((event) => event.eventKind === 'input.terminal')?.payload
+  ).toMatchObject({
     inputId: 'input-t08207-rejected',
     terminal: 'rejected',
   })
-  expect(cancelled.lifecycleEvents.find((event) => event.eventKind === 'input.correlation')?.payload).toMatchObject({
+  expect(
+    cancelled.lifecycleEvents.find((event) => event.eventKind === 'input.correlation')?.payload
+  ).toMatchObject({
     inputId: 'input-t08207-teardown',
     fact: 'cancelled',
     detail: 'teardown',
   })
-  expect(invocationFailed.lifecycleEvents.find((event) => event.eventKind === 'input.correlation')?.payload).toMatchObject({
+  expect(
+    invocationFailed.lifecycleEvents.find((event) => event.eventKind === 'input.correlation')
+      ?.payload
+  ).toMatchObject({
     inputId: 'input-t08207-teardown',
     fact: 'invocation_failed',
   })

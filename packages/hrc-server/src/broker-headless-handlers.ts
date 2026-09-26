@@ -22,14 +22,17 @@ import {
   isCompilerPrimingSubmissionTerminal,
 } from './compiler-priming.js'
 import { armFirstTurnWatch } from './first-turn-watch.js'
-import { appendHrcEvent, appendHrcEventWithinExistingTransaction, createUserPromptPayload } from './hrc-event-helper.js'
+import {
+  appendHrcEvent,
+  appendHrcEventWithinExistingTransaction,
+  createUserPromptPayload,
+} from './hrc-event-helper.js'
 import { formatDmAddress } from './messages.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
 import { prepareActuatorSplitIntent } from './actuator-split.js'
 import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
 import { bindAppHarnessBirthIntent, trackAppIdentityOperation } from './app-session-identity.js'
-import { CALLER_SURFACE_REUSE_REFUSAL } from './broker-decisions.js'
 import {
   aspdHeadlessBrokerEndpoint,
   assertPreparedAspdAttemptFormat,
@@ -39,6 +42,7 @@ import {
   readAspdPreparation,
 } from './aspd-headless-start.js'
 import { createBirthTimeline } from './birth-timeline.js'
+import { CALLER_SURFACE_REUSE_REFUSAL } from './broker-decisions.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { isClosedDbError } from './broker/controller/internal.js'
@@ -690,7 +694,9 @@ function assertFormat2DispatchIdentity(
       'format2 dispatch requires an idempotency key and canonical request hash',
       {
         hostSessionId: session.hostSessionId,
-        ...(options.dispatchIdempotencyKey === undefined ? { missing: 'dispatchIdempotencyKey' } : {}),
+        ...(options.dispatchIdempotencyKey === undefined
+          ? { missing: 'dispatchIdempotencyKey' }
+          : {}),
         ...(options.format2RequestHash === undefined ? { missing: 'format2RequestHash' } : {}),
       }
     )
@@ -835,7 +841,9 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
         actualInvocationId: existingRuntime.activeInvocationId,
       })
     }
-    const invocation = this.db.brokerInvocations.getByInvocationId(existingRuntime.activeInvocationId!)
+    const invocation = this.db.brokerInvocations.getByInvocationId(
+      existingRuntime.activeInvocationId!
+    )
     if (invocation?.executionFormat !== 'format2') {
       throw new HrcConflictError(
         HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT,
@@ -872,7 +880,11 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
         }
       )
       if (result.ok) {
-        this.db.inputs.bindBrokerSubmissionId(input.inputId, result.response.submissionId, timestamp())
+        this.db.inputs.bindBrokerSubmissionId(
+          input.inputId,
+          result.response.submissionId,
+          timestamp()
+        )
       }
     } catch (error) {
       // A transport error says only that the body may have crossed. The durable

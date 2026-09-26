@@ -1,10 +1,7 @@
 import { expect, test } from 'bun:test'
 
 import { persistStartGraph } from '../broker/controller/persistence.js'
-import {
-  makeFixture,
-  makeStartInput,
-} from './fixtures/broker-controller.fixture.js'
+import { makeFixture, makeStartInput } from './fixtures/broker-controller.fixture.js'
 
 const HELLO = {
   protocolVersion: 'harness-broker/0.2',
@@ -33,7 +30,9 @@ test('format 2 start graph persists an observed-execution invocation without an 
 
     expect(graph.run).toBeUndefined()
     expect(graph.runtime.activeRunId).toBeUndefined()
-    expect(fixture.db.runtimeOperations.getByOperationId(String(identity.operationId))?.runId).toBeUndefined()
+    expect(
+      fixture.db.runtimeOperations.getByOperationId(String(identity.operationId))?.runId
+    ).toBeUndefined()
     expect(graph.invocation).toMatchObject({ executionFormat: 'format2' })
     expect(graph.invocation.runId).toBeUndefined()
     expect(fixture.db.runs.listByRuntimeId(String(identity.runtimeId))).toHaveLength(0)
@@ -43,7 +42,9 @@ test('format 2 start graph persists an observed-execution invocation without an 
     // this narrow producer contract assigns the same bytes.
     expect(graph.input).toMatchObject({
       inputId: String(identity.initialInputId),
-      brokerSubmissionId: String(start.execution.dispatchRequest.startRequest.initialInput?.inputId),
+      brokerSubmissionId: String(
+        start.execution.dispatchRequest.startRequest.initialInput?.inputId
+      ),
       cleanupProtection: 'protected',
     })
     expect(
@@ -54,7 +55,9 @@ test('format 2 start graph persists an observed-execution invocation without an 
       {
         payload: {
           inputId: String(identity.initialInputId),
-          brokerSubmissionId: String(start.execution.dispatchRequest.startRequest.initialInput?.inputId),
+          brokerSubmissionId: String(
+            start.execution.dispatchRequest.startRequest.initialInput?.inputId
+          ),
           invocationId: String(identity.invocationId),
           afterSeq: 0,
         },
@@ -69,7 +72,11 @@ test('format 2 promptless open with compiler priming persists only its invocatio
   const fixture = await makeFixture()
   try {
     const start = makeStartInput()
-    const { runId: _legacyAdmissionRun, initialInputId: _initialInputId, ...identity } = start.identity
+    const {
+      runId: _legacyAdmissionRun,
+      initialInputId: _initialInputId,
+      ...identity
+    } = start.identity
 
     const graph = persistStartGraph(
       { db: fixture.db, now: () => '2026-09-26T13:20:00.000Z', serverInstanceId: 'srv-t08207' },
@@ -100,7 +107,8 @@ test('format 2 start rejects an initial HRC identity without its compiled input'
   try {
     const start = makeStartInput()
     const { runId: _legacyAdmissionRun, ...identity } = start.identity
-    const { initialInput: _initialInput, ...startRequest } = start.execution.dispatchRequest.startRequest
+    const { initialInput: _initialInput, ...startRequest } =
+      start.execution.dispatchRequest.startRequest
 
     expect(() =>
       persistStartGraph(
@@ -119,7 +127,9 @@ test('format 2 start rejects an initial HRC identity without its compiled input'
         HELLO,
         undefined
       )
-    ).toThrow('format 2 start graph requires the compiled initial input to match its frozen identity')
+    ).toThrow(
+      'format 2 start graph requires the compiled initial input to match its frozen identity'
+    )
   } finally {
     await fixture.cleanup()
   }
@@ -136,7 +146,10 @@ test('format 2 start rejects a compiled initial input that differs from its HRC 
         { db: fixture.db, now: () => '2026-09-26T13:20:00.000Z', serverInstanceId: 'srv-t08207' },
         {
           ...start,
-          identity: { ...identity, initialInputId: 'input-t08207-mismatch' as typeof identity.initialInputId },
+          identity: {
+            ...identity,
+            initialInputId: 'input-t08207-mismatch' as typeof identity.initialInputId,
+          },
           executionFormat: 'format2',
           dispatchIdempotencyKey: 't08207-mismatched-input',
           format2RequestHash: 'sha256:t08207-mismatched-input',
@@ -144,7 +157,9 @@ test('format 2 start rejects a compiled initial input that differs from its HRC 
         HELLO,
         undefined
       )
-    ).toThrow('format 2 start graph requires the compiled initial input to match its frozen identity')
+    ).toThrow(
+      'format 2 start graph requires the compiled initial input to match its frozen identity'
+    )
   } finally {
     await fixture.cleanup()
   }
@@ -197,9 +212,9 @@ test('format 1 start graph retains its admission run linkage', async () => {
 
     expect(graph.run?.runId).toBe(String(start.identity.runId))
     expect(graph.runtime.activeRunId).toBe(String(start.identity.runId))
-    expect(fixture.db.runtimeOperations.getByOperationId(String(start.identity.operationId))?.runId).toBe(
-      String(start.identity.runId)
-    )
+    expect(
+      fixture.db.runtimeOperations.getByOperationId(String(start.identity.operationId))?.runId
+    ).toBe(String(start.identity.runId))
     expect(graph.invocation.runId).toBe(String(start.identity.runId))
     expect(graph.invocation.executionFormat).toBeUndefined()
     const storedFormat = fixture.db.sqlite

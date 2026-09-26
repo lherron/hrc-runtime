@@ -358,13 +358,9 @@ function seedForensicsLedger(fixture: HrcServerTestFixture): void {
 }
 
 /**
- * The scope handles under test name a real project id. Project resolution
- * marker-scans a search root for a canonical checkout of that project, so
- * without a provisioned root these tests silently depend on the developer's
- * machine having that project cloned next to this one. Provision a real
- * canonical checkout in a temp search root instead: resolution still runs for
- * real and still has to find the project by marker scan — only the ambient
- * machine dependency is removed.
+ * The scope handles under test name real project ids. Give each CLI call an
+ * explicit temporary checkout so a stale or missing machine-wide wrkq root
+ * cannot shadow the monitor behavior under test.
  */
 let projectSearchRoot: string | undefined
 
@@ -379,7 +375,10 @@ function provisionProjectSearchRoot(projectIds: readonly string[]): string {
   return root
 }
 
-function cliEnv(fixture: HrcServerTestFixture): Record<string, string> {
+function cliEnv(
+  fixture: HrcServerTestFixture,
+  projectId = 'agent-control-plane'
+): Record<string, string> {
   if (projectSearchRoot === undefined) {
     throw new Error('project search root fixture is not provisioned')
   }
@@ -389,6 +388,7 @@ function cliEnv(fixture: HrcServerTestFixture): Record<string, string> {
     HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
     HRC_STATE_DIR: fixture.stateRoot,
     HRC_PROJECT_SEARCH_ROOTS: projectSearchRoot,
+    ASP_PROJECT_ROOT_OVERRIDE: join(projectSearchRoot, projectId),
   }
 }
 
@@ -532,7 +532,7 @@ describe('hrc monitor stats and selector convenience', () => {
 
     const previous = await runCli(
       ['monitor', 'events', staleScopeHandle, '--previous', '--ndjson'],
-      cliEnv(fixture)
+      cliEnv(fixture, 'hrc-runtime')
     )
 
     expect(previous.exitCode).toBe(0)
@@ -581,7 +581,10 @@ describe('hrc monitor stats and selector convenience', () => {
       payload: {},
     })
 
-    const result = await runCli(['monitor', 'stats', liveScopeHandle, '--json'], cliEnv(fixture))
+    const result = await runCli(
+      ['monitor', 'stats', liveScopeHandle, '--json'],
+      cliEnv(fixture, 'hrc-runtime')
+    )
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')

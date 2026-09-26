@@ -500,9 +500,7 @@ function mapInputRow(row: DurableInputRow): HrcInputRecord {
     ...(row.runtime_id !== null ? { runtimeId: row.runtime_id } : {}),
     ...(row.operation_id !== null ? { operationId: row.operation_id } : {}),
     ...(row.invocation_id !== null ? { invocationId: row.invocation_id } : {}),
-    ...(row.broker_submission_id !== null
-      ? { brokerSubmissionId: row.broker_submission_id }
-      : {}),
+    ...(row.broker_submission_id !== null ? { brokerSubmissionId: row.broker_submission_id } : {}),
     ...(row.door !== null ? { door: row.door } : {}),
     ...(row.admission_class !== null ? { admissionClass: row.admission_class } : {}),
     ...(row.origin !== null ? { origin: row.origin } : {}),
@@ -595,7 +593,10 @@ export class InputRepository {
       record.createdAt,
       record.updatedAt
     )
-    return requireRecord(this.getByInputId(record.inputId), `failed to reload input ${record.inputId}`)
+    return requireRecord(
+      this.getByInputId(record.inputId),
+      `failed to reload input ${record.inputId}`
+    )
   }
 
   getByInputId(inputId: string): HrcInputRecord | null {
@@ -629,8 +630,15 @@ export class InputRepository {
    * was protected before the write. A different later id is a causal conflict,
    * never a replacement of the original mapping.
    */
-  bindBrokerSubmissionId(inputId: string, brokerSubmissionId: string, updatedAt: string): HrcInputRecord {
-    const prior = requireRecord(this.getByInputId(inputId), `input not found for broker bind ${inputId}`)
+  bindBrokerSubmissionId(
+    inputId: string,
+    brokerSubmissionId: string,
+    updatedAt: string
+  ): HrcInputRecord {
+    const prior = requireRecord(
+      this.getByInputId(inputId),
+      `input not found for broker bind ${inputId}`
+    )
     if (prior.brokerSubmissionId !== undefined) {
       if (prior.brokerSubmissionId === brokerSubmissionId) return prior
       throw new Error(`input broker submission conflict for ${inputId}`)
@@ -678,7 +686,9 @@ export class InputRepository {
       prior.operationId === undefined ||
       prior.invocationId === undefined
     ) {
-      throw new Error(`format-2 input landing requires a complete input coordinate: ${landing.inputId}`)
+      throw new Error(
+        `format-2 input landing requires a complete input coordinate: ${landing.inputId}`
+      )
     }
     // Coverage cannot move from a protected input onto an imagined carrier.
     // The exact format-2 start mints this live row in the same mapper
@@ -729,7 +739,10 @@ export class InputRepository {
       landing.landedAt,
       landing.inputId
     )
-    return requireRecord(this.getByInputId(landing.inputId), `failed to reload landed input ${landing.inputId}`)
+    return requireRecord(
+      this.getByInputId(landing.inputId),
+      `failed to reload landed input ${landing.inputId}`
+    )
   }
 
   /**
@@ -780,7 +793,7 @@ export class InputRepository {
     )
     execute(
       this.db,
-      `UPDATE inputs SET uncertainty = ?, updated_at = ? WHERE input_id = ?`,
+      'UPDATE inputs SET uncertainty = ?, updated_at = ? WHERE input_id = ?',
       correlation.fact,
       correlation.observedAt,
       correlation.inputId

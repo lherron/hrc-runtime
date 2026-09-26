@@ -69,7 +69,9 @@ export function persistStartGraph(
   // protected in a separately auto-committed row from the invocation that is
   // about to carry it. Any failure rolls back both the placement and its
   // admission fact before the controller can await the broker write.
-  return ctx.db.sqlite.transaction(() => persistStartGraphInTransaction(ctx, input, hello, tmuxAllocation))()
+  return ctx.db.sqlite.transaction(() =>
+    persistStartGraphInTransaction(ctx, input, hello, tmuxAllocation)
+  )()
 }
 
 function persistStartGraphInTransaction(
@@ -117,7 +119,9 @@ function persistStartGraphInTransaction(
         'format 2 start graph requires an idempotency key and canonical request hash',
         {
           operationId: String(identity.operationId),
-          ...(input.dispatchIdempotencyKey === undefined ? { missing: 'dispatchIdempotencyKey' } : {}),
+          ...(input.dispatchIdempotencyKey === undefined
+            ? { missing: 'dispatchIdempotencyKey' }
+            : {}),
           ...(input.format2RequestHash === undefined ? { missing: 'format2RequestHash' } : {}),
         }
       )
@@ -448,7 +452,13 @@ function persistStartGraphInTransaction(
     })
   }
 
-  return { session, runtime, run, invocation, ...(admittedInput !== undefined ? { input: admittedInput } : {}) }
+  return {
+    session,
+    runtime,
+    run,
+    invocation,
+    ...(admittedInput !== undefined ? { input: admittedInput } : {}),
+  }
 }
 
 export function buildRuntimeStateJson(

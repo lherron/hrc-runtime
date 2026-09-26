@@ -321,12 +321,16 @@ export class HrcLifecycleEventRepository {
       throw new Error('failed to read inserted hrc event sequence')
     }
 
-    this.spillPersistedResult(inserted.seq, event.eventKind, event.runtimeId, event.payload, event.ts)
+    this.spillPersistedResult(
+      inserted.seq,
+      event.eventKind,
+      event.runtimeId,
+      event.payload,
+      event.ts
+    )
 
     const stored = this.db
-      .query<HrcEventRow, [number]>(
-        `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events WHERE hrc_seq = ?`
-      )
+      .query<HrcEventRow, [number]>(`SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events WHERE hrc_seq = ?`)
       .get(inserted.seq)
     if (!stored) {
       throw new Error(`failed to reload hrc event ${inserted.seq}`)
