@@ -540,9 +540,37 @@ export async function prepareAspdHeadlessAttempt(
     preparedAuthority: input.preparedAuthority,
   })
 
-  const mergedDispatchEnv = {
+  // Codex's TUI driver launches from dispatchEnv rather than rebuilding an
+  // agent session from the spec.  Carry the already-frozen allocation here,
+  // after caller launch overrides have been applied, so these process facts
+  // remain HRC-owned and agree with the admitted start request.
+  const launchIdentityEnv = {
+    HRC_RUNTIME_ID: String(compiled.identity.runtimeId),
+    HRC_INVOCATION_ID: String(compiled.identity.invocationId),
+    ...(compiled.identity.initialInputId !== undefined
+      ? { HRC_INITIAL_INPUT_ID: String(compiled.identity.initialInputId) }
+      : {}),
+    ...(compiled.identity.runId !== undefined
+      ? {
+          AGENT_RUN_ID: String(compiled.identity.runId),
+          HRC_RUN_ID: String(compiled.identity.runId),
+        }
+      : {}),
+  }
+  const baseDispatchEnv = {
     ...(compiled.execution.dispatchRequest.dispatchEnv ?? {}),
     ...hrcDispatchEnv,
+  }
+  // The HRC allocation is the sole run authority. Strip any value that reached
+  // the dispatch path before adding the frozen allocation below.
+  const {
+    AGENT_RUN_ID: _callerAgentRunId,
+    HRC_RUN_ID: _callerHrcRunId,
+    ...dispatchEnvWithoutRunIdentity
+  } = baseDispatchEnv
+  const mergedDispatchEnv: Record<string, string> = {
+    ...dispatchEnvWithoutRunIdentity,
+    ...launchIdentityEnv,
   }
   if (
     extractPiSdkBrokerCredentialEnv(

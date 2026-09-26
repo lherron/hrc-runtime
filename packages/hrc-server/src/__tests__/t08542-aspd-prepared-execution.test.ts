@@ -335,9 +335,28 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
 
   it('T-08207 freezes a format-2 no-run preparation and launches its observed-execution invocation', async () => {
     const s = await session()
+    const intent: HrcRuntimeIntent = {
+      ...headlessIntent(),
+      launch: {
+        env: {
+          HRC_RUNTIME_ID: 'caller-runtime-id',
+          HRC_INVOCATION_ID: 'caller-invocation-id',
+          HRC_INITIAL_INPUT_ID: 'caller-input-id',
+          HRC_RUN_ID: 'caller-run-id',
+          AGENT_RUN_ID: 'caller-agent-run-id',
+        },
+        unsetEnv: [
+          'HRC_RUNTIME_ID',
+          'HRC_INVOCATION_ID',
+          'HRC_INITIAL_INPUT_ID',
+          'HRC_RUN_ID',
+          'AGENT_RUN_ID',
+        ],
+      },
+    }
     const runtime = await internal().startHeadlessBrokerRuntime(
       s,
-      headlessIntent(),
+      intent,
       'format-2 initial input',
       undefined,
       {
@@ -361,6 +380,16 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     expect(invocation).toMatchObject({ executionFormat: 'format2' })
     expect(invocation?.runId).toBeUndefined()
     expect(ledger.startCalls[0]?.request.spec.correlation).not.toHaveProperty('runId')
+    const dispatch = ledger.startCalls[0]?.dispatch as
+      | { dispatchEnv?: Record<string, string> | undefined }
+      | undefined
+    expect(dispatch?.dispatchEnv).toMatchObject({
+      HRC_RUNTIME_ID: String(record.admission.identity.runtimeId),
+      HRC_INVOCATION_ID: String(record.admission.identity.invocationId),
+      HRC_INITIAL_INPUT_ID: String(record.admission.identity.initialInputId),
+    })
+    expect(dispatch?.dispatchEnv).not.toHaveProperty('HRC_RUN_ID')
+    expect(dispatch?.dispatchEnv).not.toHaveProperty('AGENT_RUN_ID')
   })
 
   it('T-08207 admits one protected format-2 input before broker start, then replays its exact key without a second body', async () => {
