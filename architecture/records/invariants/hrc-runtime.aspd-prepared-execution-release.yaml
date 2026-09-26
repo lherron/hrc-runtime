@@ -28,9 +28,13 @@ predicate: >
   fields, plural profiles, profile hashes, route choices, aliases or driver
   requests. Existing v1 harness-broker prepared operations are cancelled or
   abandoned and never resumed by v2. At activation HRC requires zero
-  incompatible harness-broker prepared operations and zero accepted headless
-  runs with dispatched_input_id NULL; it re-runs that inventory immediately
-  before activation. It may retain only durable v1
+  incompatible harness-broker prepared operations. Under T-08207 format 1, the
+  inventory also rejects an accepted headless run without a dispatched input.
+  Under format 2, admission is represented by a cleanup-protected input and an
+  execution exists only after observed turn.started; preflight reports an
+  unlanded input without fabricating or rejecting an accepted run or dropping
+  its protection. It re-runs the applicable inventory immediately before
+  activation. It may retain only durable v1
   broker workers whose reattachment uses contract-neutral persisted endpoint,
   lease, runtime and invocation identity. selectedProfileHash and
   startRequestHash remain opaque attach fences; HRC does not parse an old plan
@@ -52,8 +56,9 @@ predicate: >
   seat using its old continuation. Reattachment uses persisted connection
   identity without aspd and verifies frozen release/protocol identity before
   attach.
-authority: wrkq:T-08690 producer-owned v2 consumer and cutover amendment, pending Daedalus review; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
+authority: wrkq:T-08690 producer-owned v2 consumer and cutover amendment, pending Daedalus review; wrkq:T-08207 revision 10 input/execution inventory amendment, Daedalus approval 2026-09-26; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
 source:
+  - wrkq:T-08207
   - wrkq:T-08690
   - docs/aspd-headless-codex-integration.md
   - docs/harness-broker-substrate-spec.md
@@ -70,7 +75,7 @@ required_tests:
   - v2 preparation atomically persists the complete selected response before hosting, and launch consumes only reread frozen bytes
   - same-key retry resumes frozen v2 bytes; no retry restart or warm path re-resolves ASP selection or replays uncertain invocation.start
   - generic execution.hosting allocation and all-driver hostedDrivers proof gate every birth; presentation false does not remove required process-container resources
-  - activation preflight rejects nonzero incompatible harness-broker prepared operations or accepted headless runs without dispatched input, and is rerun immediately before ASP activation
+  - activation preflight rejects nonzero incompatible harness-broker prepared operations; it rejects format-1 accepted headless runs without dispatched input and reports format-2 unlanded protected inputs without inventing a run, terminal, or cleanup release, and is rerun immediately before ASP activation
   - retained v1 durable brokers prove stable runtime invocation and continuation IDs through tmux replay input interrupt and terminate without parsing v1 plan or lastAppliedIntentJson
   - an active external participant attempt is drained or retired rather than reconnected through prepared_profile_json
   - isolated A-to-B acceptance records the rollback pair before first v2 persistence, proves HRC B rejects ASP A/v1 compile before P, observes selected and running ASP B identities, then proves a fresh v2 birth and dead-seat v2 reprovision using old continuation

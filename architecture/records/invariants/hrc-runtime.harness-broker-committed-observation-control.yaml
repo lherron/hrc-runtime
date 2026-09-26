@@ -30,8 +30,27 @@ predicate: >
   Immutable attribution events govern; broker_turn_attributions cannot be a
   competing authority. Attribution sequence bounds prevent future evidence from
   rewriting an earlier projected row; historical ledger rows are not rewritten.
-  Submission-record resolution is distinct from execution ownership. A
-  definitively absorbed, submission-linked, admission-class steer auxiliary in
+  Submission-record resolution is distinct from execution ownership. Each
+  broker invocation freezes its execution format. In format 2, HRC admission
+  creates an input record but no execution run; only an exact observed
+  turn.started mints the immutable turn-keyed run. A start that names an input
+  or later definitive own attribution may bind that input once, while an
+  unowned human or autonomous start remains an execution with no initiating
+  input. A joined input records its carrier run and does not receive a run of
+  its own. Correlation loss, an RPC acknowledgement, a timeout, or a later
+  turn never mints a run or proves input terminality. Before landing, a format-2
+  input is a durable cleanup-protected fact keyed to its runtime and invocation;
+  process-local crossing registration is only the pre-await supplement. The
+  start/landing transaction atomically creates the run, binds the input, and
+  transfers protection to the carrier active run. Before landing, only matching
+  positive submission.rejected or proved submission.withdrawn may release input
+  protection. A submission.cancelled teardown, invocation state, uncertainty,
+  process-liveness, and control acknowledgement may not. A landed format-2
+  carrier ends only on its exact turn.completed, turn.failed, or
+  turn.interrupted. Cleanup and startup reconciliation consult this durable
+  input coverage as well as active runs. Format 1 retains its legacy
+  admission-time run projection while its invocation and replayable events
+  remain. A definitively absorbed, submission-linked, format-1 admission-class steer auxiliary in
   the same historical epoch with no startedAt settles idempotently against its
   exact owner, never against itself. Accepted or legacy ACK-completed auxiliaries
   become terminal coalesced with an owner link, preserved or settlement completion
@@ -119,8 +138,9 @@ predicate: >
   /v1/internal/desktop/register, T-08567) answers 404; Desktop threads join
   through the generic participant door governed by
   hrc-runtime.participant-session-lifecycle.
-authority: wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, and wrkq:T-08201 revision 5 (C-19938)
+authority: wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, wrkq:T-08201 revision 5 (C-19938), and wrkq:T-08207 revision 10 (2026-09-26)
 source:
+  - wrkq:T-08207
   - wrkq:T-08566
   - wrkq:T-08565
   - wrkq:T-07853
@@ -147,6 +167,8 @@ required_tests:
   - control RPC acceptance remains distinct from committed input turn permission and effect observations
   - T-08098 observed-mode replay proves foreign and unknown turn rows never resolve to a pending run, later own rows do, terminals affect only the own run, and replay preserves every resolution
   - T-08201 exact ownership gates cover multiple absorbed steers, delayed own attribution and old terminals after newer starts, repeated native ids across epochs, pre-fix borrowed rows, and first-launch-only compatibility
+  - T-08207 format-2 gates mint no run at admission, mint one run for an exact turn key, retain unowned starts, bind joined inputs to a carrier without a second run, preserve late landing after correlation loss/expiry, expose matching positive rejection or confirmed driver-cancel withdrawal as a pre-landing non-run input terminal, retain matching teardown cancellation as nonterminal, and close a carrier only from its exact completed, failed, or interrupted turn
+  - T-08207 durable input-protection gates preserve a shared runtime for another accepted input before landing, including after daemon restart, transfer coverage atomically at initiating and joined landing, release only for exact pre-landing rejection or confirmed withdrawal, and retain coverage through teardown cancellation, invocation failure/exited, and liveness uncertainty
   - T-08201 auxiliary gates cover accepted and ACK-completed coalescence, truthful failed/cancelled/zombie preservation, duplicate absorption, crash after commit before ACK, unresolved teardown, and both prune dependency guards
   - T-08201 installed Codex TUI and Claude original-run observers survive two mid-run steers and receive normal or interrupted terminals; raw/direct-wait interruption stays non-success while existing canonical mapping and stacked exit behavior remain unchanged
   - retired launch-wrapper hook, OTEL, and launch-callback ingest refuses without any run, runtime, launch, or event write, and quarantines retired spool entries unapplied, while Desktop registration requests and their spool entries behave unchanged
@@ -170,6 +192,7 @@ reopen_when:
   - observation and mutation fencing or effect-proof semantics change
   - observed turn attribution persistence no-run ownership rules or replay sequence bounds change
   - exact initiating evidence, historical epoch ownership, launch compatibility, auxiliary settlement or retention, or old-owner terminal isolation changes
+  - frozen execution format, input-versus-run projection, input cleanup protection, turn-key minting, or input landing semantics change
   - kicker trigger obligation authority or reminder bound changes
   - explicit-versus-timeout permission decision ownership changes
   - the offline reader gains acknowledgement, mutation, or follow
