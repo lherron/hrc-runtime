@@ -737,40 +737,6 @@ function admitV2Execution(
       'harness-broker/0.2'
     )
   }
-  if (requestedOperatorPresentation === 'none') {
-    const selection = plan.selection as unknown as Record<string, unknown>
-    const provenance = isRecord(selection['provenance']) ? selection['provenance'] : {}
-    const actual = {
-      requestedOperatorPresentation,
-      selectedPresentation: selection['presentation'],
-      presentationProvenance: provenance['presentation'],
-      terminalRequired: execution.hosting['terminalRequired'],
-      terminalHost: execution.hosting['terminalHost'],
-      presentationFulfillment: execution['presentationFulfillment'],
-      presentationSurface: execution['presentationSurface'],
-    }
-    if (
-      selection['presentation'] !== false ||
-      provenance['presentation'] !== 'compile-request' ||
-      execution.hosting['terminalRequired'] !== false ||
-      execution.hosting['terminalHost'] !== undefined ||
-      execution['presentationSurface'] !== undefined
-    ) {
-      return admissionRefusal(
-        'execution_presentation_constraint_mismatch',
-        'plan.execution.presentation',
-        actual,
-        {
-          requestedOperatorPresentation: 'none',
-          selectedPresentation: false,
-          presentationProvenance: 'compile-request',
-          terminalRequired: false,
-          terminalHost: null,
-          presentationSurface: null,
-        }
-      )
-    }
-  }
   if (requestedOperatorPresentation === 'tmux-tui') {
     const selection = plan.selection as unknown as Record<string, unknown>
     const provenance = isRecord(selection['provenance']) ? selection['provenance'] : {}

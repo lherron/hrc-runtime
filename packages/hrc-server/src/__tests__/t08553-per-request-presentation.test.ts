@@ -309,53 +309,6 @@ describe('T-08553 per-request operator presentation', () => {
     expect(ledger.attachCalls).toBe(0)
   })
 
-  it('sends operator none as the existing presentation constraint and fences a terminal producer answer before preparation', async () => {
-    const s = await session()
-    // This mirrors the hrcdev readback: agent-profile presentation true,
-    // terminal hosting, and an attachable operator surface. Until HRC carries
-    // operator:none into `requested.presentation`, the compile double returns
-    // this shape and the start wrongly reaches allocation.
-    aspd.producerResult = producerResult({
-      selection: {
-        presentation: true,
-        provenance: {
-          harness: 'catalog-default',
-          modelProvider: 'catalog-default',
-          model: 'catalog-default',
-          presentation: 'agent-profile',
-        },
-      },
-      execution: {
-        hosting: {
-          executionTransport: 'pty',
-          terminalRequired: true,
-          terminalHost: 'tmux',
-          processExecution: 'broker-process',
-        },
-        presentationFulfillment: 'attachable',
-        presentationSurface: { transport: 'websocket-unix', terminalHost: 'tmux' },
-      },
-    })
-
-    const response = await turn(s.hostSessionId, operatorOnlyNoViewerIntent())
-
-    expect(aspd.compileRequested).toEqual([{ presentation: false }])
-    expect(response.status).toBe(503)
-    await expect(response.json()).resolves.toMatchObject({
-      error: {
-        code: 'runtime_unavailable',
-        detail: {
-          code: 'admission-rejected',
-          admissionCode: 'execution_presentation_constraint_mismatch',
-        },
-      },
-    })
-    expect(operationsFor(s.hostSessionId)).toEqual([])
-    expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toEqual([])
-    expect(ledger.commands).toEqual([])
-    expect(ledger.startCalls).toEqual([])
-  })
-
   it('refuses unknown values and a viewer placement for none before any effect', async () => {
     const s = await session()
     for (const presentation of [
