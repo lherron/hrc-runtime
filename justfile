@@ -287,16 +287,39 @@ fleet-status:
         [[ -n "$loose" ]] && echo UNSUPERVISED || echo down
       fi'
 
-    probe() {
-      local label="$1" target="$2" out status health hrc aspd injector coherent
-      if [[ -z "$target" ]]; then
-        out="$(bash -c "$node_probe" 2>/dev/null)"
-      else
-        out="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" "bash -c $(printf '%q' "$node_probe")" 2>/dev/null)"
+    # A bare local probe is only the max3 row when this driver is max3. Every
+    # other driver reaches max3 over ssh, so a local hrcdev daemon cannot make a
+    # healthy-looking max3 row. The other rows already have explicit targets,
+    # and this helper keeps the same direct invocation for an operator on max3.
+    run_on_node() {
+      local label="$1" target="$2" command="$3" local_out local_status local_node
+      if [[ "$label" == max3 ]]; then
+        local_out="$(bash -c "$node_probe" 2>/dev/null)"
+        local_status="$(sed -n '1p' <<<"$local_out")"
+        local_node="$(jq -r '.node.nodeId // "unknown"' <<<"$local_status" 2>/dev/null)"
+        if [[ "$label" == max3 && "$local_node" == max3 ]]; then
+          bash -c "$command"
+          return
+        fi
       fi
+      if [[ -z "$target" ]]; then
+        bash -c "$command"
+      else
+        ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" "bash -c $(printf '%q' "$command")"
+      fi
+    }
+
+    probe() {
+      local label="$1" target="$2" out status health hrc aspd injector coherent actual_node
+      out="$(run_on_node "$label" "$target" "$node_probe" 2>/dev/null)"
       status="$(sed -n '1p' <<<"$out")"
       if [[ -z "$status" || "$status" == '{}' ]]; then
         printf '%-8s %-12s %s\n' "$label" 'unreachable' '-'
+        return
+      fi
+      actual_node="$(jq -r '.node.nodeId // "unknown"' <<<"$status")"
+      if [[ "$actual_node" != "$label" ]]; then
+        printf '%-8s %-12s %s\n' "$label" "wrong-driver:$actual_node" '-'
         return
       fi
       injector="$(sed -n '2p' <<<"$out")"
@@ -310,7 +333,7 @@ fleet-status:
     }
 
     printf '%-8s %-12s %-10s %-10s %-26s %s\n' NODE STATUS HRC ASPD INJECTOR COHERENCE
-    probe max3 ''
+    probe max3 'max3'
     probe svc 'mini'
     probe hrcdev 'hrcdev'
 
@@ -323,11 +346,7 @@ fleet-status:
     tool_probe='zsh -lic "bun --version 2>/dev/null | head -1; codex --version 2>/dev/null | head -1; claude --version 2>/dev/null | head -1" 2>/dev/null'
     tools() {
       local label="$1" target="$2" out
-      if [[ -z "$target" ]]; then
-        out="$(bash -c "$tool_probe")"
-      else
-        out="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" "$tool_probe" 2>/dev/null)"
-      fi
+      out="$(run_on_node "$label" "$target" "$tool_probe" 2>/dev/null)"
       if [[ -z "$out" ]]; then
         printf '%-8s %s\n' "$label" 'unreachable'
         return
@@ -347,7 +366,7 @@ fleet-status:
 
     ref_bun=''; ref_codex=''; ref_claude=''
     printf '\n%-8s %-10s %-10s %s\n' NODE BUN CODEX CLAUDE
-    tools max3 ''
+    tools max3 'max3'
     tools svc 'mini'
     tools hrcdev 'hrcdev'
 
@@ -375,17 +394,12 @@ fleet-status:
       echo "${bad# }"'
     layout() {
       local label="$1" target="$2" out
-      if [[ -z "$target" ]]; then
-        out="$(bash -c "$layout_probe" 2>/dev/null)"
-      else
-        out="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" "bash -c $(printf '%q' "$layout_probe")" 2>/dev/null)" ||
-          out='unreachable'
-      fi
+      out="$(run_on_node "$label" "$target" "$layout_probe" 2>/dev/null)" || out='unreachable'
       printf '%-8s %s\n' "$label" "${out:-canonical}"
     }
 
     printf '\n%-8s %s\n' NODE BUN-LAYOUT
-    layout max3 ''
+    layout max3 'max3'
     layout svc 'mini'
     layout hrcdev 'hrcdev'
 
