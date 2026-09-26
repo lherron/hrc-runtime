@@ -102,7 +102,7 @@ function runFleetStatus(driverNode: 'max3' | 'hrcdev', overrides: ProbeOverrides
       FAKE_SSH_MINI_NODE: overrides.mini ?? 'mini',
       FAKE_TRACE: tracePath,
       HOME: root,
-      PATH: bin + ':' + process.env.PATH,
+      PATH: `${bin}:${process.env.PATH}`,
     },
   })
 
