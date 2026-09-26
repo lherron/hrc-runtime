@@ -29,6 +29,7 @@ import { runtimeActivityPatch } from './runtime-activity.js'
 import { prepareActuatorSplitIntent } from './actuator-split.js'
 import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
 import { bindAppHarnessBirthIntent, trackAppIdentityOperation } from './app-session-identity.js'
+import { CALLER_SURFACE_REUSE_REFUSAL } from './broker-decisions.js'
 import {
   aspdHeadlessBrokerEndpoint,
   assertPreparedAspdAttemptFormat,
@@ -608,6 +609,7 @@ type Format2HeadlessDispatchOptions = DispatchRunPersistenceOptions & {
   executionFormat: 'format2'
   waitForCompletion?: boolean | undefined
   responseFormat?: HrcTurnResponseFormat | undefined
+  establishedBrokerInvocationId?: string | undefined
 }
 
 type Format2AcceptedStart = {
@@ -791,6 +793,19 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
         hostSessionId: session.hostSessionId,
       })
     }
+    if (
+      options.establishedBrokerInvocationId !== undefined &&
+      existing.invocationId !== options.establishedBrokerInvocationId
+    ) {
+      throw new HrcRuntimeUnavailableError(CALLER_SURFACE_REUSE_REFUSAL, {
+        hostSessionId: session.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        route: 'broker',
+        reason: CALLER_SURFACE_REUSE_REFUSAL,
+        expectedInvocationId: options.establishedBrokerInvocationId,
+        actualInvocationId: existing.invocationId,
+      })
+    }
     return format2Receipt(this, session, {
       runtime,
       input: existing,
@@ -807,6 +822,19 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
     )
     .at(-1)
   if (existingRuntime !== undefined) {
+    if (
+      options.establishedBrokerInvocationId !== undefined &&
+      existingRuntime.activeInvocationId !== options.establishedBrokerInvocationId
+    ) {
+      throw new HrcRuntimeUnavailableError(CALLER_SURFACE_REUSE_REFUSAL, {
+        hostSessionId: session.hostSessionId,
+        runtimeId: existingRuntime.runtimeId,
+        route: 'broker',
+        reason: CALLER_SURFACE_REUSE_REFUSAL,
+        expectedInvocationId: options.establishedBrokerInvocationId,
+        actualInvocationId: existingRuntime.activeInvocationId,
+      })
+    }
     const invocation = this.db.brokerInvocations.getByInvocationId(existingRuntime.activeInvocationId!)
     if (invocation?.executionFormat !== 'format2') {
       throw new HrcConflictError(
@@ -856,6 +884,15 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
       })
     }
     return format2Receipt(this, session, { runtime: existingRuntime, input })
+  }
+
+  if (options.establishedBrokerInvocationId !== undefined) {
+    throw new HrcRuntimeUnavailableError(CALLER_SURFACE_REUSE_REFUSAL, {
+      hostSessionId: session.hostSessionId,
+      route: 'broker',
+      reason: CALLER_SURFACE_REUSE_REFUSAL,
+      expectedInvocationId: options.establishedBrokerInvocationId,
+    })
   }
 
   let resolveAccepted!: (value: Format2AcceptedStart) => void

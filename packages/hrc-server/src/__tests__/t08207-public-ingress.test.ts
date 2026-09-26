@@ -92,6 +92,15 @@ function headlessBrokerIntent(): HrcRuntimeIntent {
   }
 }
 
+/** The frozen compiler intent can select Codex without projecting an HRC provider. */
+function compilerPrimedCodexIntent(): HrcRuntimeIntent {
+  return {
+    ...headlessBrokerIntent(),
+    harness: { interactive: false },
+    provision: { harness: 'codex' },
+  }
+}
+
 function seedLiveBrokerInvocation(
   fixture: HrcServerTestFixture,
   input: {
@@ -226,6 +235,127 @@ describe('T-08207 public turn dispatch selection', () => {
       }
     }
   )
+
+  test('routes a later format2 input through its exact established broker despite a compiler-only intent', async () => {
+    const scopeRef = 'agent:cody:project:hrc-runtime:task:T-08207'
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const broker = seedLiveBrokerInvocation(fixture, {
+      hostSessionId,
+      scopeRef,
+      generation,
+      executionFormat: FORMAT2,
+    })
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.sessions.updateIntent(hostSessionId, compilerPrimedCodexIntent(), fixture.now())
+    } finally {
+      db.close()
+    }
+    const routed: Array<Record<string, unknown>> = []
+    Reflect.set(
+      server!,
+      'handleHeadlessBrokerDispatchTurn',
+      async (
+        _session: unknown,
+        intent: { harness: Record<string, unknown> },
+        _prompt: string,
+        runId: string | undefined,
+        options: Record<string, unknown>
+      ) => {
+        routed.push({ harness: intent.harness, runId, ...options })
+        return Response.json({
+          hostSessionId,
+          generation,
+          runtimeId: broker.runtimeId,
+          transport: 'headless',
+          status: 'accepted',
+          inputId: 'input-established-format2',
+          startIdentity: { kind: 'broker', invocationId: broker.invocationId },
+          observation: {
+            broker: {
+              selector: {
+                invocationId: broker.invocationId,
+                runtimeId: broker.runtimeId,
+                generation,
+              },
+              afterSeq: 0,
+            },
+          },
+        })
+      }
+    )
+
+    const response = await fixture.postJson('/v1/turns', {
+      hostSessionId,
+      prompt: 'later format2 input',
+      executionFormat: FORMAT2,
+      idempotencyKey: 't08207-established-format2',
+      establishedBrokerInvocationId: broker.invocationId,
+    })
+
+    expect(response.status).toBe(202)
+    expect(await response.json()).toMatchObject({ executionFormat: FORMAT2 })
+    expect(routed).toEqual([
+      expect.objectContaining({
+        harness: { interactive: false },
+        runId: undefined,
+        executionFormat: FORMAT2,
+        establishedBrokerInvocationId: broker.invocationId,
+      }),
+    ])
+
+    const generic = await fixture.postJson('/v1/turns', {
+      hostSessionId,
+      prompt: 'generic format2 input remains routed normally',
+      executionFormat: FORMAT2,
+      idempotencyKey: 't08207-generic-format2',
+    })
+    expect(generic.status).toBe(503)
+    expect(await generic.json()).toMatchObject({
+      error: {
+        detail: {
+          code: 'format2_initial_input_undeliverable',
+          route: 'legacy-exec',
+        },
+      },
+    })
+  })
+
+  test('refuses a later format2 input when its established broker identity changed', async () => {
+    const scopeRef = 'agent:cody:project:hrc-runtime:task:T-08207'
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    seedLiveBrokerInvocation(fixture, {
+      hostSessionId,
+      scopeRef,
+      generation,
+      executionFormat: FORMAT2,
+    })
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.sessions.updateIntent(hostSessionId, compilerPrimedCodexIntent(), fixture.now())
+    } finally {
+      db.close()
+    }
+
+    const response = await fixture.postJson('/v1/turns', {
+      hostSessionId,
+      prompt: 'must not join another broker invocation',
+      executionFormat: FORMAT2,
+      idempotencyKey: 't08207-established-mismatch',
+      establishedBrokerInvocationId: 'inv-t08207-no-longer-live',
+    })
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toMatchObject({
+      error: {
+        detail: {
+          reason: 'caller-surface-reuse-refusal',
+          expectedInvocationId: 'inv-t08207-no-longer-live',
+          actualInvocationId: 'inv-t08207-format2',
+        },
+      },
+    })
+  })
 })
 
 describe('T-08207 public submission-door selection', () => {

@@ -60,6 +60,7 @@ import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
   getBrokerRuntimeDriver,
+  type HeadlessExecutionRoute,
   isProducerSelectedOrdinaryBirth,
   normalizeClaudeInteractiveBrokerIntent,
   normalizeCodexInteractiveBrokerIntent,
@@ -2310,6 +2311,24 @@ async function classifyRedirectOffCodexDispatch(
   }
 }
 
+function routeFormat2Dispatch(
+  server: Pick<
+    HrcServerInstanceForHandlers,
+    'headlessCodexBrokerEnabled' | 'headlessMuseBrokerEnabled'
+  >,
+  intent: HrcRuntimeIntent,
+  options: Pick<DispatchTurnForSessionOptions, 'establishedBrokerInvocationId'>
+): HeadlessExecutionRoute {
+  // An established invocation is the caller's exact broker ownership proof.
+  // Its frozen compiler intent can omit HRC's harness provider, so do not
+  // reclassify that already-open broker as a generic headless request.
+  if (options.establishedBrokerInvocationId !== undefined) return 'broker'
+  return decideHeadlessExecutionRoute(intent, {
+    brokerFlagEnabled: server.headlessCodexBrokerEnabled,
+    museBrokerFlagEnabled: server.headlessMuseBrokerEnabled,
+  })
+}
+
 async function dispatchAdmittedTurnForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
@@ -2351,10 +2370,7 @@ async function dispatchAdmittedTurnForSession(
         hostSessionId: session.hostSessionId,
       })
     }
-    const route = decideHeadlessExecutionRoute(format2Intent, {
-      brokerFlagEnabled: this.headlessCodexBrokerEnabled,
-      museBrokerFlagEnabled: this.headlessMuseBrokerEnabled,
-    })
+    const route = routeFormat2Dispatch(this, format2Intent, options)
     assertActuatorSplitRouteAdmission(format2Intent, route)
     if (route !== 'broker') {
       throw new HrcRuntimeUnavailableError('format2 requires the broker input route', {
