@@ -27,9 +27,24 @@ function admittedInput(inputId: string, brokerSubmissionId?: string) {
   }
 }
 
-function insertObservedCarrier(db: any, runId: string, turnId: string): void {
+function insertObservedCarrier(
+  db: any,
+  runId: string,
+  turnId: string,
+  coordinate: {
+    hostSessionId?: string
+    runtimeId?: string
+    operationId?: string
+    invocationId?: string
+    observedStartHrcSeq?: number
+  } = {}
+): void {
+  const hostSessionId = coordinate.hostSessionId ?? 'hsid-t08207'
+  const runtimeId = coordinate.runtimeId ?? 'rt-t08207'
+  const operationId = coordinate.operationId ?? 'op-t08207'
+  const invocationId = coordinate.invocationId ?? 'inv-t08207'
   db.sessions.insert({
-    hostSessionId: 'hsid-t08207',
+    hostSessionId,
     scopeRef: 'agent:cody:project:hrc-runtime:task:T-08207',
     laneRef: 'main',
     generation: 1,
@@ -39,8 +54,8 @@ function insertObservedCarrier(db: any, runId: string, turnId: string): void {
     ancestorScopeRefs: [],
   })
   db.runtimes.insert({
-    runtimeId: 'rt-t08207',
-    hostSessionId: 'hsid-t08207',
+    runtimeId,
+    hostSessionId,
     scopeRef: 'agent:cody:project:hrc-runtime:task:T-08207',
     laneRef: 'main',
     generation: 1,
@@ -55,8 +70,8 @@ function insertObservedCarrier(db: any, runId: string, turnId: string): void {
   })
   db.runs.insert({
     runId,
-    hostSessionId: 'hsid-t08207',
-    runtimeId: 'rt-t08207',
+    hostSessionId,
+    runtimeId,
     scopeRef: 'agent:cody:project:hrc-runtime:task:T-08207',
     laneRef: 'main',
     generation: 1,
@@ -65,10 +80,11 @@ function insertObservedCarrier(db: any, runId: string, turnId: string): void {
     startedAt: AT,
     updatedAt: AT,
     executionFormat: 'format2',
-    turnKey: `rt-t08207|op-t08207|inv-t08207|${turnId}|g=-|a=-`,
+    turnKey: `${runtimeId}|${operationId}|${invocationId}|${turnId}|g=-|a=-`,
     nativeTurnId: turnId,
-    operationId: 'op-t08207',
-    invocationId: 'inv-t08207',
+    observedStartHrcSeq: coordinate.observedStartHrcSeq ?? 42,
+    operationId,
+    invocationId,
   })
 }
 
@@ -121,6 +137,40 @@ test('one exact landing transfers protection to a carrier without permitting a c
   expect(() =>
     db.inputs.recordLanding({ ...landing, carrierRunId: 'run-t08207-b' })
   ).toThrow(/input.*landing|landing.*input/i)
+})
+
+test('format-2 landing refuses every live carrier whose durable coordinate or start sequence differs', () => {
+  const mismatches = [
+    ['host session', { hostSessionId: 'hsid-t08207-foreign' }],
+    ['runtime', { runtimeId: 'rt-t08207-foreign' }],
+    ['operation', { operationId: 'op-t08207-foreign' }],
+    ['invocation', { invocationId: 'inv-t08207-foreign' }],
+    ['observed start sequence', { observedStartHrcSeq: 43 }],
+  ] as const
+
+  for (const [name, coordinate] of mismatches) {
+    const db = openHrcDatabase(':memory:') as any
+    const inputId = `input-t08207-mismatch-${name}`
+    const carrierRunId = `run-t08207-mismatch-${name}`
+    const turnId = `turn-t08207-mismatch-${name}`
+    db.inputs.insert(admittedInput(inputId))
+    insertObservedCarrier(db, carrierRunId, turnId, coordinate)
+
+    expect(() =>
+      db.inputs.recordLanding({
+        inputId,
+        kind: 'initiating',
+        carrierRunId,
+        turnId,
+        runStartedHrcSeq: 42,
+        landedAt: AT,
+      })
+    ).toThrow(/exact carrier|carrier.*coordinate|coordinate.*carrier/i)
+    expect(db.inputs.getByInputId(inputId)).toMatchObject({
+      status: 'accepted',
+      cleanupProtection: 'protected',
+    })
+  }
 })
 
 test('only a proved pre-landing rejection releases an input without minting a run', () => {

@@ -643,20 +643,43 @@ export class InputRepository {
     if (prior.status !== 'accepted') {
       throw new Error(`input cannot land from status ${prior.status}: ${landing.inputId}`)
     }
+    if (
+      prior.hostSessionId === undefined ||
+      prior.runtimeId === undefined ||
+      prior.operationId === undefined ||
+      prior.invocationId === undefined
+    ) {
+      throw new Error(`format-2 input landing requires a complete input coordinate: ${landing.inputId}`)
+    }
     // Coverage cannot move from a protected input onto an imagined carrier.
     // The exact format-2 start mints this live row in the same mapper
     // transaction before it calls recordLanding; if that transaction aborts,
-    // both mutations roll back and protection remains on the input.
+    // both mutations roll back and protection remains on the input. It must
+    // also be this input's exact observed execution; a live run elsewhere is
+    // not cleanup coverage for this admission.
     const carrier = this.db
-      .query<{ run_id: string }, [string, string]>(
+      .query<{ run_id: string }, [string, string, string, string, string, string, number]>(
         `SELECT run_id FROM runs
           WHERE run_id = ?
             AND execution_format = 'format2'
             AND native_turn_id = ?
+            AND host_session_id = ?
+            AND runtime_id = ?
+            AND operation_id = ?
+            AND invocation_id = ?
+            AND observed_start_hrc_seq = ?
             AND completed_at IS NULL
             AND status = 'running'`
       )
-      .get(landing.carrierRunId, landing.turnId)
+      .get(
+        landing.carrierRunId,
+        landing.turnId,
+        prior.hostSessionId,
+        prior.runtimeId,
+        prior.operationId,
+        prior.invocationId,
+        landing.runStartedHrcSeq
+      )
     if (carrier === null || carrier === undefined) {
       throw new Error(
         `format-2 input landing requires an active exact carrier run: ${landing.carrierRunId}`

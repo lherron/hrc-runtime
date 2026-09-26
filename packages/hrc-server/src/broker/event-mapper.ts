@@ -2046,6 +2046,21 @@ export class BrokerEventMapper {
     if (durableInput.status !== 'accepted') return
     const run = this.db.runs.getByRunId(input.runId)
     if (run === null) throw new Error(`format-2 carrier run missing: ${input.runId}`)
+    if (
+      durableInput.hostSessionId === undefined ||
+      durableInput.runtimeId === undefined ||
+      durableInput.operationId === undefined ||
+      durableInput.invocationId === undefined ||
+      run.executionFormat !== 'format2' ||
+      run.hostSessionId !== durableInput.hostSessionId ||
+      run.runtimeId !== durableInput.runtimeId ||
+      run.operationId !== durableInput.operationId ||
+      run.invocationId !== durableInput.invocationId ||
+      run.nativeTurnId !== input.turnId ||
+      run.observedStartHrcSeq !== input.runStartedHrcSeq
+    ) {
+      throw new Error(`format-2 input landing carrier coordinate mismatch: ${input.inputId}`)
+    }
     if (input.kind === 'initiating') {
       if (run.initiatingInputId !== undefined && run.initiatingInputId !== input.inputId) {
         throw new Error(`format-2 initiating input conflict for ${input.runId}`)
