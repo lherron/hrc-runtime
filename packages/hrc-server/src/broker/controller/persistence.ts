@@ -11,6 +11,7 @@
 import { HrcErrorCode } from 'hrc-core'
 import type {
   HrcBrokerInvocationRecord,
+  HrcExecutionFormat,
   HrcRunRecord,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -60,6 +61,18 @@ export function persistStartGraph(
 } {
   const now = ctx.now()
   const identity = input.identity
+  const executionFormat: HrcExecutionFormat = input.executionFormat ?? 'format1'
+  if (executionFormat === 'format2' && identity.runId !== undefined) {
+    throw new BrokerControllerError(
+      'format2_admission_run_forbidden',
+      'format 2 start graph cannot carry an admission-time run identity',
+      {
+        operationId: String(identity.operationId),
+        runtimeId: String(identity.runtimeId),
+        runId: String(identity.runId),
+      }
+    )
+  }
   const session = ctx.db.sessions.getByHostSessionId(String(identity.hostSessionId))
   if (!session) {
     throw new BrokerControllerError(
@@ -302,6 +315,7 @@ export function persistStartGraph(
     operationId: String(identity.operationId),
     runtimeId: String(identity.runtimeId),
     ...(identity.runId !== undefined ? { runId: String(identity.runId) } : {}),
+    executionFormat,
     // G1 (daedalus, T-01874 Ph3) — persist the protocol NEGOTIATED in
     // broker.hello, not a compile-time constant. Durable v0.2 rows must record
     // 'harness-broker/0.2' because that is what hello returned; legacy stdio

@@ -1635,6 +1635,9 @@ async function startAspdInteractiveBrokerRuntime(
       },
       preparedAuthority: options.preparedAuthority,
       runId: options.diagnosticRunId,
+      // Rev11 seals all existing interactive births to the legacy admission
+      // format until a separately advanced caller contract selects format 2.
+      executionFormat: 'format1',
       endpoint: options.endpoint,
       responseFormat: options.responseFormat,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
@@ -1660,6 +1663,9 @@ async function startAspdInteractiveBrokerRuntime(
     ...(options.onAccepted ? { onAccepted: options.onAccepted } : {}),
     settleFailure: (error) => {
       const { record } = readAspdPreparation(server, operationId)
+      if (record.runId === undefined) {
+        throw new Error('interactive format-1 preparation is missing its admission run identity')
+      }
       return settleFailedInteractiveBrokerStart(server, {
         session,
         runId: record.runId,

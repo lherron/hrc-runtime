@@ -68,7 +68,7 @@ type Internal = {
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,
     prompt: string,
-    runId: string,
+    runId: string | undefined,
     options?: Record<string, unknown>
   ): Promise<HrcRuntimeSnapshot>
   executeHeadlessBrokerStartTurn(
@@ -324,6 +324,55 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     expect(persisted?.releaseId).toBe(releaseA.releaseId)
     await Bun.sleep(20)
     expect(aspd.openConnections).toBe(0)
+  })
+
+  it('T-08207 freezes a format-2 no-run preparation and launches its observed-execution invocation', async () => {
+    const s = await session()
+    const runtime = await internal().startHeadlessBrokerRuntime(
+      s,
+      headlessIntent(),
+      'format-2 initial input',
+      undefined,
+      { executionFormat: 'format2' }
+    )
+
+    const [operation] = operationsFor(s.hostSessionId)
+    const { record } = readAspdPreparation(internal(), operation!.operation_id)
+    const invocation = internal().db.brokerInvocations.getByInvocationId(
+      String(record.admission.identity.invocationId)
+    )
+    expect(record.runId).toBeUndefined()
+    expect(record.admission.executionFormat).toBe('format2')
+    expect(record.admission.identity.initialInputId).toMatch(/^input-/)
+    expect(record.admission.identity.runId).toBeUndefined()
+    expect(operation?.run_id).toBeUndefined()
+    expect(runtime.activeRunId).toBeUndefined()
+    expect(invocation).toMatchObject({ executionFormat: 'format2' })
+    expect(invocation?.runId).toBeUndefined()
+    expect(ledger.startCalls[0]?.request.spec.correlation).not.toHaveProperty('runId')
+  })
+
+  it('T-08207 rejects a same-key retry whose frozen format differs before another compile or launch', async () => {
+    const s = await session()
+    const key = 't08207-format-freeze'
+    const withheld = `${releaseA.releaseRoot}.t08207-withheld`
+    renameSync(releaseA.releaseRoot, withheld)
+    await expect(
+      internal().startHeadlessBrokerRuntime(s, headlessIntent(), 'input', undefined, {
+        executionFormat: 'format2',
+        dispatchIdempotencyKey: key,
+      })
+    ).rejects.toMatchObject({ detail: { code: 'release_unavailable' } })
+    const compilesBeforeMismatch = aspd.compileCalls
+    await expect(
+      internal().startHeadlessBrokerRuntime(s, headlessIntent(), 'input', 'run-t08207-f1', {
+        executionFormat: 'format1',
+        dispatchIdempotencyKey: key,
+      })
+    ).rejects.toMatchObject({ detail: { code: 'execution_format_mismatch' } })
+    expect(aspd.compileCalls).toBe(compilesBeforeMismatch)
+    expect(ledger.commands).toHaveLength(0)
+    renameSync(withheld, releaseA.releaseRoot)
   })
 
   it('returns the cold launch initial-input admission identity to an injector door', async () => {

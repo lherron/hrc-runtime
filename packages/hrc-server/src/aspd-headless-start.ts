@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto'
 
 import { HrcRuntimeUnavailableError } from 'hrc-core'
 import type {
+  HrcExecutionFormat,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -105,7 +106,8 @@ export type AspdPreparationRecord = {
   hostSessionId: string
   generation: number
   runtimeId: string
-  runId: string
+  /** Format 2 has no admission-time run; it mints a carrier on turn.started. */
+  runId?: string | undefined
   operationId: string
   dispatchIdempotencyKey?: string | undefined
   aspd: AspdServiceIdentity
@@ -117,6 +119,8 @@ export type AspdPreparationRecord = {
     plan: SelectedExecutionPlan
     hrcPolicy: RuntimeCompileRequest['hrcPolicy']
     identity: RuntimeIdentityAllocation
+    /** HRC admission format frozen before this preparation crosses P. */
+    executionFormat: HrcExecutionFormat
   }
   hosting: {
     /** Producer-selected diagnostic key used only to name per-runtime paths. */
@@ -304,7 +308,9 @@ export type AspdPrepareInput = {
   /** Door-owned prompt carriage is frozen at compile, never used to select execution. */
   launchCarriedPrompt?: { prompt: string; mode: AspdLaunchCarriedPromptMode } | undefined
   preparedAuthority?: Parameters<typeof assertActuatorSplitAdmission>[0]['preparedAuthority']
-  runId: string
+  runId?: string | undefined
+  /** Selected by the creating door before compile; absence is format 1. */
+  executionFormat?: HrcExecutionFormat | undefined
   endpoint: string
   allowCompilerInitialInputWithoutIdentity?: boolean | undefined
   responseFormat?: HrcTurnResponseFormat | undefined
@@ -321,6 +327,7 @@ export async function prepareAspdHeadlessAttempt(
   input: AspdPrepareInput
 ): Promise<string> {
   const { session, intent, runId, endpoint } = input
+  const executionFormat = input.executionFormat ?? 'format1'
   const runtimeId = `rt-${randomUUID()}`
   const timing =
     input.timing ??
@@ -380,6 +387,7 @@ export async function prepareAspdHeadlessAttempt(
         ...(input.policy !== undefined ? { policy: input.policy } : {}),
         allowCompilerInitialInputWithoutIdentity: input.allowCompilerInitialInputWithoutIdentity,
         responseFormat: input.responseFormat,
+        executionFormat,
       },
       {
         // T-08555: the worker's codex home hangs off ASP_HOME. Send HRC's own, the
@@ -403,7 +411,12 @@ export async function prepareAspdHeadlessAttempt(
           runtimeId: () => runtimeId,
           invocationId: () => `inv-${randomUUID()}`,
           initialInputId: () => `input-${randomUUID()}`,
-          runId: () => runId,
+          runId: () => {
+            if (runId === undefined) {
+              throw new Error('format-1 compile requested a run identity for a no-run preparation')
+            }
+            return runId
+          },
           traceId: () => `trace-${randomUUID()}`,
         },
       }
@@ -625,6 +638,7 @@ export async function prepareAspdHeadlessAttempt(
       execution: compiled.execution,
       hrcPolicy: compiled.hrcPolicy,
       identity: compiled.identity,
+      executionFormat,
     },
     hosting: {
       driverKind: brokerDriver,
@@ -658,7 +672,7 @@ export async function prepareAspdHeadlessAttempt(
     server.db.runtimeOperations.insert({
       operationId,
       runtimeId,
-      runId,
+      ...(runId !== undefined ? { runId } : {}),
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       operationKind: 'broker_invocation',
@@ -720,7 +734,7 @@ export function readAspdPreparation(
 export function assertPreparedAspdAttemptRoute(
   resumable: {
     operationId: string
-    runId: string
+    runId?: string | undefined
     route: AspdPreparationRoute
     driverKind: string
   },
@@ -747,17 +761,44 @@ export function assertPreparedAspdAttemptRoute(
   )
 }
 
+/** A keyed retry must launch only a preparation frozen to the same format. */
+export function assertPreparedAspdAttemptFormat(
+  resumable: { operationId: string; runId?: string | undefined; executionFormat: HrcExecutionFormat },
+  selectedExecutionFormat: HrcExecutionFormat,
+  hostSessionId: string
+): void {
+  if (resumable.executionFormat === selectedExecutionFormat) return
+  throw aspdStartError(
+    'execution_format_mismatch',
+    `the frozen aspd preparation is ${resumable.executionFormat}; this retry selected ${selectedExecutionFormat}`,
+    {
+      operationId: resumable.operationId,
+      ...(resumable.runId !== undefined ? { runId: resumable.runId } : {}),
+      hostSessionId,
+      frozenExecutionFormat: resumable.executionFormat,
+      selectedExecutionFormat,
+    }
+  )
+}
+
 /**
  * The never-submitted preparation a same-key caller retry resumes, if any.
  * Status `prepared` is the only resumable state.
  */
-export function findPreparedAspdAttemptForRetry(
+type PreparedAspdRetry = {
+  operationId: string
+  runId?: string | undefined
+  route: AspdPreparationRoute
+  driverKind: string
+  executionFormat: HrcExecutionFormat
+}
+
+/** Read any frozen preparation by its caller key, including format-2 no-run rows. */
+export function findPreparedAspdAttemptForFormatRetry(
   server: Pick<HrcServerInstanceForHandlers, 'db'>,
   hostSessionId: string,
   dispatchIdempotencyKey: string
-):
-  | { operationId: string; runId: string; route: AspdPreparationRoute; driverKind: string }
-  | undefined {
+): PreparedAspdRetry | undefined {
   for (const operation of server.db.runtimeOperations.listPreparedByHostSession(hostSessionId)) {
     if (operation.preparationJson === undefined) continue
     try {
@@ -771,6 +812,7 @@ export function findPreparedAspdAttemptForRetry(
           runId: record.runId,
           route: record.route,
           driverKind: record.hosting.driverKind,
+          executionFormat: record.admission.executionFormat ?? 'format1',
         }
       }
     } catch {
@@ -778,6 +820,30 @@ export function findPreparedAspdAttemptForRetry(
     }
   }
   return undefined
+}
+
+/**
+ * Compatibility lookup for legacy format-1 callers that require an accepted
+ * admission run. A no-run preparation stays invisible to this path; its
+ * format-aware caller must select it explicitly before creation.
+ */
+export function findPreparedAspdAttemptForRetry(
+  server: Pick<HrcServerInstanceForHandlers, 'db'>,
+  hostSessionId: string,
+  dispatchIdempotencyKey: string
+): { operationId: string; runId: string; route: AspdPreparationRoute; driverKind: string } | undefined {
+  const record = findPreparedAspdAttemptForFormatRetry(
+    server,
+    hostSessionId,
+    dispatchIdempotencyKey
+  )
+  if (record?.executionFormat !== 'format1' || record.runId === undefined) return undefined
+  return {
+    operationId: record.operationId,
+    runId: record.runId,
+    route: record.route,
+    driverKind: record.driverKind,
+  }
 }
 
 function recordPrelaunchRefusal(
@@ -821,6 +887,9 @@ export async function launchAspdPreparedAttempt(
   options: AspdLaunchOptions
 ): Promise<{ runtime: HrcRuntimeSnapshot; intent: HrcRuntimeIntent }> {
   const { status, record } = readAspdPreparation(server, operationId)
+  // Records written before rev11 are durable format-1 preparations. New records
+  // always carry this field, but the fallback preserves a safe rollback path.
+  const executionFormat = record.admission.executionFormat ?? 'format1'
   options.birthTimeline?.enrich({
     runtimeId: record.runtimeId,
     operationId,
@@ -857,6 +926,21 @@ export async function launchAspdPreparedAttempt(
       'preparation_generation_superseded',
       'the host session generation moved past this frozen preparation',
       { frozenGeneration: record.generation, currentGeneration: session?.generation }
+    )
+  }
+
+  if (
+    executionFormat === 'format2' &&
+    (record.runId !== undefined || record.admission.identity.runId !== undefined)
+  ) {
+    refuse(
+      'execution_format_mismatch',
+      'format-2 preparation carries an admission-time run identity',
+      {
+        executionFormat,
+        recordRunId: record.runId,
+        identityRunId: record.admission.identity.runId,
+      }
     )
   }
 
@@ -898,6 +982,7 @@ export async function launchAspdPreparedAttempt(
     execution: admission.execution,
     plan: admission.plan,
     hrcPolicy: admission.hrcPolicy,
+    executionFormat,
     identity: admission.identity,
     ...(options.birthTimeline !== undefined ? { birthTimeline: options.birthTimeline } : {}),
     ...(record.dispatch.runtimeAuthority !== undefined

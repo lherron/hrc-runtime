@@ -291,6 +291,35 @@ describe('v2 compile request carrier', () => {
     expect(promptless.identity.runId).toBeUndefined()
   })
 
+  it('format 2 allocates an initial input but never an admission run for a prompted birth', async () => {
+    let captured: Record<string, unknown> | undefined
+    const result = await compileBrokerRuntimePlan(
+      {
+        intent: intent({ initialPrompt: 'first observed input' }),
+        scopeRef: 'agent:astra:project:hrc-runtime',
+        hostSessionId: 'host-1',
+        generation: 1,
+        executionFormat: 'format2',
+      },
+      {
+        ids,
+        compileHarnessInvocation: async ({ compileRequest }) => {
+          captured = compileRequest as unknown as Record<string, unknown>
+          return validResponse(compileRequest.identity) as never
+        },
+      }
+    )
+
+    expect(captured?.['identity']).toMatchObject({ ...identity, initialInputId: 'input-1' })
+    expect(captured?.['identity']).not.toHaveProperty('runId')
+    expect(captured?.['correlation']).not.toHaveProperty('runId')
+    expect(result).toMatchObject({
+      admitted: true,
+      identity: { ...identity, initialInputId: 'input-1' },
+    })
+    expect(result.identity).not.toHaveProperty('runId')
+  })
+
   it('admits and freezes exactly the producer-selected execution', async () => {
     const result = await compile(validResponse())
 
@@ -461,8 +490,8 @@ describe('v2 compile request carrier', () => {
   // HRC's allocated initialInputId, exactly as pre-v2 interactive tmux profiles.
   const promptedIdentity = { ...identity, initialInputId: 'input-1', runId: 'run-1' }
 
-  function promptedTerminalResponse() {
-    const response = validResponse(promptedIdentity)
+  function promptedTerminalResponse(responseIdentity = promptedIdentity) {
+    const response = validResponse(responseIdentity)
     const startRequest = response.plan.execution.dispatchRequest.startRequest as {
       spec: Record<string, unknown>
       initialInput?: unknown
@@ -491,6 +520,34 @@ describe('v2 compile request carrier', () => {
     })
 
     expect(result).toMatchObject({ admitted: true, identity: promptedIdentity })
+  })
+
+  it('refuses a format-2 prompt that the selected profile can carry only through launch argv', async () => {
+    const result = await compileBrokerRuntimePlan(
+      {
+        intent: intent({ initialPrompt: 'must be a broker-deliverable input' }),
+        scopeRef: 'agent:astra:project:hrc-runtime',
+        hostSessionId: 'host-1',
+        generation: 1,
+        executionFormat: 'format2',
+      },
+      {
+        ids,
+        compileHarnessInvocation: async ({ compileRequest }) =>
+          promptedTerminalResponse(compileRequest.identity) as never,
+      }
+    )
+
+    expect(result).toMatchObject({
+      admitted: false,
+      rejectedBy: 'hrc-admission',
+      code: 'format2_initial_input_undeliverable',
+      admissionDiagnostic: {
+        field: 'startRequest.initialInput',
+        expected: 'broker-deliverable initialInput',
+        actual: null,
+      },
+    })
   })
 
   it('still refuses a prompted broker-input execution that drops the allocated initial input', async () => {

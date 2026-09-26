@@ -575,6 +575,9 @@ function materializeParticipantBrokerBookkeeping(
         invocationId: attempt.invocationId,
         operationId: attempt.operationId,
         runtimeId: attempt.runtimeId,
+        // Participant ensureInvocation has no initial-input admission path, so
+        // it is explicitly sealed to format 1 until that protocol advances.
+        executionFormat: 'format1',
         brokerProtocol: protocol,
         brokerDriver: descriptor.brokerDriver,
         invocationState: 'ready',

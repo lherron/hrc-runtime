@@ -9,6 +9,7 @@ import type {
   HrcBrokerInvocationEventRecord,
   HrcBrokerInvocationRecord,
   HrcDispatchOrigin,
+  HrcExecutionFormat,
   HrcRunRecord,
   HrcRuntimeSnapshot,
 } from 'hrc-core'
@@ -482,6 +483,8 @@ export type BrokerControllerStartInput = {
   plan: SelectedExecutionPlan
   /** HRC-owned policy, carried separately from producer-selected execution. */
   hrcPolicy: RuntimeCompileRequest['hrcPolicy']
+  /** Frozen HRC admission format; omitted retains the format-1 compatibility path. */
+  executionFormat?: HrcExecutionFormat | undefined
   identity: RuntimeIdentityAllocation
   /** Ephemeral correlated birth timing; never part of compile or start bytes. */
   birthTimeline?: BirthTimeline | undefined

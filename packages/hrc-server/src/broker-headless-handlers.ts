@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
 import type {
   DispatchTurnResponse,
+  HrcExecutionFormat,
   HrcRunRecord,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
@@ -24,7 +25,8 @@ import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
 import { bindAppHarnessBirthIntent, trackAppIdentityOperation } from './app-session-identity.js'
 import {
   aspdHeadlessBrokerEndpoint,
-  findPreparedAspdAttemptForRetry,
+  assertPreparedAspdAttemptFormat,
+  findPreparedAspdAttemptForFormatRetry,
   launchAspdPreparedAttempt,
   prepareAspdHeadlessAttempt,
   readAspdPreparation,
@@ -509,8 +511,10 @@ export async function startHeadlessBrokerRuntime(
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent,
   prompt: string,
-  runId: string,
+  runId: string | undefined,
   options: DispatchRunPersistenceOptions & {
+    /** Frozen before compile; public ingress remains responsible for selecting it. */
+    executionFormat?: HrcExecutionFormat | undefined
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
@@ -519,19 +523,29 @@ export async function startHeadlessBrokerRuntime(
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
+  const executionFormat = options.executionFormat ?? 'format1'
+  if (executionFormat === 'format2' && runId !== undefined) {
+    throw new HrcRuntimeUnavailableError(
+      'format 2 broker birth cannot carry an admission-time run identity',
+      { code: 'execution_format_mismatch', runId, route: 'broker' }
+    )
+  }
   // R-4.3.2: never born a substitute runtime at a reserved participant
   // address. Delivery routes into the participant's own runtime before this
   // point; this is the backstop at the place a runtime is actually born.
   assertParticipantAddressNotSubstituted(this, session)
   // T-08576 D5: an app birth carries only HRC-owned identity; it consumes its
   // run grant exactly when its compile identity allocates the run id.
-  const boundIntent = bindAppHarnessBirthIntent(
-    this.db,
-    session,
-    intent,
-    runId,
-    hasInitialUserTurn(prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent)
-  )
+  const boundIntent =
+    runId === undefined
+      ? intent
+      : bindAppHarnessBirthIntent(
+          this.db,
+          session,
+          intent,
+          runId,
+          hasInitialUserTurn(prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent)
+        )
   const requestedTurnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...boundIntent, initialPrompt: prompt } : boundIntent
   // Presentation is producer-resolved at compilation. Before that boundary we
@@ -542,7 +556,7 @@ export async function startHeadlessBrokerRuntime(
     createBirthTimeline({
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
-      birthId: runId,
+      birthId: runId ?? `format2-${randomUUID()}`,
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       runId,
@@ -594,9 +608,10 @@ async function startAspdHeadlessBrokerRuntime(
   server: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
   requestedTurnIntent: HrcRuntimeIntent,
-  runId: string,
+  runId: string | undefined,
   endpoint: string,
   options: DispatchRunPersistenceOptions & {
+    executionFormat?: HrcExecutionFormat | undefined
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
@@ -604,15 +619,19 @@ async function startAspdHeadlessBrokerRuntime(
   },
   birthTimeline: ReturnType<typeof createBirthTimeline>
 ): Promise<HrcRuntimeSnapshot> {
+  const executionFormat = options.executionFormat ?? 'format1'
   const resumable =
     options.dispatchIdempotencyKey !== undefined
-      ? findPreparedAspdAttemptForRetry(
+      ? findPreparedAspdAttemptForFormatRetry(
           server,
           session.hostSessionId,
           options.dispatchIdempotencyKey
         )
       : undefined
   let operationId: string
+  if (resumable !== undefined) {
+    assertPreparedAspdAttemptFormat(resumable, executionFormat, session.hostSessionId)
+  }
   if (resumable !== undefined && resumable.runId === runId) {
     // A keyed v2 retry launches only its persisted attempt. It does not
     // re-resolve selection, driver, or presentation from the retry intent.
@@ -630,6 +649,7 @@ async function startAspdHeadlessBrokerRuntime(
       intent: preparedActuatorSplit.intent,
       preparedAuthority: preparedActuatorSplit.authority,
       runId,
+      executionFormat,
       endpoint,
       allowCompilerInitialInputWithoutIdentity: options.allowCompilerInitialInputWithoutIdentity,
       ...(options.coldBirthPromptMode !== undefined
@@ -656,6 +676,19 @@ async function startAspdHeadlessBrokerRuntime(
     birthTimeline,
     settleFailure: (error) => {
       const { record } = readAspdPreparation(server, operationId)
+      if (record.runId === undefined) {
+        // Format 2 has no accepted run to complete synthetically. Its durable
+        // input protection stays with the ingress/mapper until exact evidence.
+        throw new HrcRuntimeUnavailableError(error.message, {
+          ...error.detail,
+          code: error.code,
+          hostSessionId: session.hostSessionId,
+          runtimeId: record.runtimeId,
+          invocationId: String(record.admission.identity.invocationId),
+          operationId,
+          route: 'broker',
+        })
+      }
       return settleFailedHeadlessBrokerStart(server, {
         session,
         runId: record.runId,

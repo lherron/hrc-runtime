@@ -10,7 +10,8 @@
  * Key invariants:
  *  - Runtime identities are allocated BEFORE compile and mirrored into both
  *    `identity` and `correlation` (same values).
- *  - initialInputId + runId are allocated ONLY when an initial user turn exists.
+ *  - Format 1 allocates initialInputId + runId for an initial user turn;
+ *    format 2 allocates only initialInputId and waits for observed turn.start.
  *  - placement.dispatchEnv is a DISPATCH-TIME channel: carried on the request's
  *    placement and surfaced on the result, but NEVER folded into the hashed
  *    startRequest/spec material. W3B passes it as the second argument to
@@ -28,6 +29,7 @@
 
 import { parseScopeRef } from 'agent-scope'
 import {
+  type HrcExecutionFormat,
   type HrcRuntimeIntent,
   type HrcTurnResponseFormat,
   parseAppSessionScopeRef,
@@ -98,6 +100,8 @@ export type BrokerCompileAdapterInput = {
   policy?: RuntimeCompileRequest['hrcPolicy'] | undefined
   allowCompilerInitialInputWithoutIdentity?: boolean | undefined
   responseFormat?: HrcTurnResponseFormat | undefined
+  /** Admission format selected by HRC before compile; omitted stays format 1. */
+  executionFormat?: HrcExecutionFormat | undefined
 }
 
 /**
@@ -256,6 +260,7 @@ export type V2ExecutionRejectionCode =
   | 'execution-hash-mismatch'
   | 'execution-identity-mismatch'
   | 'execution-release-invalid'
+  | 'format2_initial_input_undeliverable'
 
 function hasOwnKeys(value: Record<string, unknown>): boolean {
   return Object.keys(value).length > 0
@@ -605,7 +610,8 @@ function hasValidExecutionRelease(release: unknown): release is AspcExecutionRel
 function admitV2Execution(
   response: unknown,
   identity: RuntimeIdentityAllocation,
-  agentId: string
+  agentId: string,
+  executionFormat: HrcExecutionFormat
 ):
   | { admitted: true; plan: V2CompiledPlan; execution: V2SelectedExecution }
   | { admitted: false; code: V2ExecutionRejectionCode; diagnostic: HrcAdmissionDiagnostic } {
@@ -740,6 +746,22 @@ function admitV2Execution(
   if (startIdentityMismatches.length > 0) {
     return identityAdmissionRefusal('start-request-identity', startIdentityMismatches)
   }
+  // A format-2 first prompt has exactly one delivery channel: the frozen
+  // broker initialInput. Format 1 may use a terminal profile's launch argv,
+  // but admitting that shape for format 2 would create an HRC input with no
+  // broker-addressable submission identity. Refuse before boundary P.
+  if (
+    executionFormat === 'format2' &&
+    identity.initialInputId !== undefined &&
+    !isRecord(startRequestRecord['initialInput'])
+  ) {
+    return admissionRefusal(
+      'format2_initial_input_undeliverable',
+      'startRequest.initialInput',
+      startRequestRecord['initialInput'],
+      'broker-deliverable initialInput'
+    )
+  }
   // v2 declares the canonical start-request hash. compatibilityHash is a
   // broader producer cache/reuse key, not a spec hash, so HRC must not invent
   // an equality between the two domains.
@@ -768,9 +790,11 @@ export async function compileBrokerRuntimePlan(
 ): Promise<BrokerCompileAdapterResult> {
   const { intent } = input
   const { ids } = deps
+  const executionFormat = input.executionFormat ?? 'format1'
 
-  // (1) Allocate identities BEFORE compile. initialInputId + runId only exist
-  //     when there is an initial user turn.
+  // (1) Allocate identities BEFORE compile. Both formats allocate an initial
+  // input for a real first user turn; format 2 must not allocate its run before
+  // the broker observes an exact native turn.started.
   const withInitialTurn = hasInitialUserTurn(intent)
   const identity: RuntimeIdentityAllocation = {
     requestId: ids.requestId() as RequestId,
@@ -781,7 +805,10 @@ export async function compileBrokerRuntimePlan(
     invocationId: ids.invocationId() as InvocationId,
     traceId: ids.traceId() as TraceId,
     ...(withInitialTurn
-      ? { initialInputId: ids.initialInputId() as InputId, runId: ids.runId() as RunId }
+      ? {
+          initialInputId: ids.initialInputId() as InputId,
+          ...(executionFormat === 'format1' ? { runId: ids.runId() as RunId } : {}),
+        }
       : {}),
   }
 
@@ -833,7 +860,12 @@ export async function compileBrokerRuntimePlan(
     }
   }
 
-  const selection = admitV2Execution(response, identity, v2AgentIdForScope(input.scopeRef))
+  const selection = admitV2Execution(
+    response,
+    identity,
+    v2AgentIdForScope(input.scopeRef),
+    executionFormat
+  )
 
   if (!selection.admitted) {
     return {
