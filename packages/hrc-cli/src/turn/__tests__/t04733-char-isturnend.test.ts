@@ -370,6 +370,98 @@ describe('T-04733 char: stacked-aggregator isTurnEnd = turn.completed ONLY', () 
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// T-08218 — canonical turn.completed retains the raw terminal outcome in payload
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('T-08218 stacked terminal outcome from canonical completion payload', () => {
+  for (const terminal of [
+    {
+      label: 'failed terminal',
+      payload: {
+        success: false,
+        body: 'partial work',
+        replyMessageId: 'msg-failed',
+        error: { message: 'worker failed' },
+        message: 'ignored lower-priority message',
+      },
+      message: 'worker failed',
+    },
+    {
+      label: 'interrupted terminal',
+      payload: {
+        success: false,
+        interrupted: true,
+        body: 'interrupted partial work',
+        replyMessageId: 'msg-interrupted',
+        errorMessage: 'worker interrupted',
+      },
+      message: 'worker interrupted',
+    },
+    {
+      label: 'failure with no message fields',
+      payload: { success: false },
+      message: 'turn ended with error',
+    },
+  ]) {
+    it(`emits one final error frame for a ${terminal.label}`, async () => {
+      const { aggregator, lines } = await makeAggregator()
+
+      await aggregator.receive(aggEvent(11, 'turn.completed', terminal.payload))
+
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toMatchObject({
+        type: 'turn_stacked',
+        version: 1,
+        phase: 'error',
+        flush: 'final',
+        result: 'turn_error',
+        exitCode: 4,
+        error: { message: terminal.message },
+        taskState: null,
+        scope: 'larry@agent-spaces:T-01449',
+        sessionRef: 'agent:larry:project:agent-spaces:task:T-01449/lane:main',
+        scopeRef: 'agent:larry:project:agent-spaces:task:T-01449',
+        laneRef: 'main',
+        runId: 'run-test',
+        generation: 1,
+        hrcSeqRange: { from: 11, to: 11 },
+      })
+      if (terminal.payload.body !== undefined) {
+        expect(lines[0]).toMatchObject({ finalBody: terminal.payload.body })
+      }
+      if (terminal.payload.replyMessageId !== undefined) {
+        expect(lines[0]).toMatchObject({ replyMessageId: terminal.payload.replyMessageId })
+      }
+    })
+  }
+
+  for (const terminal of [
+    { label: 'explicit success', payload: { success: true, body: 'done' } },
+    {
+      label: 'legacy omitted success despite interrupted diagnostics',
+      payload: { interrupted: true, body: 'legacy done' },
+    },
+    { label: 'legacy non-boolean success', payload: { success: 'false', body: 'legacy text' } },
+  ]) {
+    it(`keeps the ${terminal.label} terminal successful`, async () => {
+      const { aggregator, lines } = await makeAggregator()
+
+      await aggregator.receive(aggEvent(11, 'turn.completed', terminal.payload))
+
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toMatchObject({
+        phase: 'final',
+        flush: 'final',
+        result: 'success',
+        exitCode: 0,
+        finalBody: terminal.payload.body,
+      })
+      expect(lines[0]).not.toHaveProperty('error')
+    })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Tests — Group 2: watch-loop isTurnEnd = turn_end || turn.completed
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -461,4 +553,39 @@ describe('T-04733 char: watch-loop isTurnEnd = turn_end || turn.completed', () =
     const hasFinalPhase = lines.some((l) => l['phase'] === 'final')
     expect(hasFinalPhase).toBe(false)
   })
+
+  for (const terminal of [
+    {
+      label: 'failed canonical completion',
+      payload: { success: false, error: { message: 'worker failed' } },
+      message: 'worker failed',
+    },
+    {
+      label: 'interrupted canonical completion',
+      payload: { success: false, interrupted: true, message: 'worker interrupted' },
+      message: 'worker interrupted',
+    },
+  ]) {
+    it(`exits 4 and keeps a final error frame for ${terminal.label}`, async () => {
+      const client = makeWlClient([
+        wlEvent({ eventKind: 'turn.completed', hrcSeq: 10, payload: terminal.payload }),
+      ])
+
+      const result = await runTurn(client, { stacked: '1s' } as TurnOptions, [
+        'cody@agent-spaces',
+        'hello',
+      ])
+
+      expect(result.exitCode).toBe(4)
+      const lines = parseStackedLines(result.stdout)
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toMatchObject({
+        phase: 'error',
+        flush: 'final',
+        result: 'turn_error',
+        exitCode: 4,
+        error: { message: terminal.message },
+      })
+    })
+  }
 })

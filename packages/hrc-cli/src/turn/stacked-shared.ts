@@ -32,6 +32,20 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/**
+ * Broker lifecycle policy projects failed and interrupted raw terminals into
+ * canonical `turn.completed`. The explicit boolean is the only payload shape
+ * that changes a stacked reader's terminal outcome; missing and non-boolean
+ * values retain the legacy success interpretation.
+ */
+export function isCanonicalTurnCompletionFailure(event: HrcLifecycleEvent): boolean {
+  return (
+    event.eventKind === 'turn.completed' &&
+    isRecord(event.payload) &&
+    event.payload['success'] === false
+  )
+}
+
 const sharedTextEncoder = new TextEncoder()
 
 /**

@@ -23,7 +23,7 @@ import {
 } from '../render-frame.js'
 import { resolveLaunchTarget } from '../resolve-intent.js'
 import { type StackedAggregator, createStackedAggregator } from '../stacked-aggregator.js'
-import { isRecord } from '../stacked-shared.js'
+import { isCanonicalTurnCompletionFailure, isRecord } from '../stacked-shared.js'
 import { type StackedSeatSummarizer, createStackedSummarizer } from '../stacked-summary.js'
 import { FlushReason, Phase, Result, type StackedHandoff } from '../stacked-types.js'
 
@@ -1123,7 +1123,7 @@ function deriveStackedPhase(
     return 'permission'
   }
   if (event.eventKind === 'turn.completed') {
-    return 'final'
+    return isCanonicalTurnCompletionFailure(event) ? 'error' : 'final'
   }
   if (event.eventKind === 'run_failed' || event.eventKind === 'turn.error') {
     return 'error'

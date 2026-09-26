@@ -1,6 +1,7 @@
 import type { HrcLifecycleEvent } from 'hrc-core'
 
 import {
+  isCanonicalTurnCompletionFailure,
   isRecord,
   mechanicalSummary,
   redactSecrets,
@@ -172,15 +173,17 @@ export class StackedAggregator {
     }
 
     if (isStackedAggregatorFinal(event)) {
-      this.phase = Phase.Final
+      const failedTerminal = isCanonicalTurnCompletionFailure(event)
+      this.phase = failedTerminal ? Phase.Error : Phase.Final
       const final = finalFromEvent(event)
       this.finalBody = final.finalBody
       this.replyMessageId = final.replyMessageId
       await this.forceFlush(FlushReason.Final, {
-        exitCode: 0,
-        result: Result.Success,
+        exitCode: failedTerminal ? 4 : 0,
+        result: failedTerminal ? Result.TurnError : Result.Success,
         finalBody: this.finalBody,
         replyMessageId: this.replyMessageId,
+        ...(failedTerminal ? { error: terminalErrorFromEvent(event) } : {}),
         terminal: true,
       })
       return
@@ -394,7 +397,7 @@ export class StackedAggregator {
       return Phase.Error
     }
     if (flush === FlushReason.Final) {
-      return Phase.Final
+      return this.phase === Phase.Error ? Phase.Error : Phase.Final
     }
     if (flush === FlushReason.Permission) {
       return Phase.Permission
@@ -427,7 +430,7 @@ export class StackedAggregator {
     if (events.length === 0 && flush === FlushReason.Interval) {
       return 'No activity.'
     }
-    const summaryEvents = phase === Phase.Final ? wholeTurnEvents : events
+    const summaryEvents = flush === FlushReason.Final ? wholeTurnEvents : events
     try {
       return await this.options.summarizer.summarize({
         events,
@@ -476,7 +479,7 @@ export class StackedAggregator {
       ...(input.exitCode !== undefined ? { exitCode: input.exitCode } : {}),
       ...(input.result !== undefined ? { result: input.result } : {}),
       ...(input.taskState !== undefined ? { taskState: input.taskState } : {}),
-      ...(input.phase === Phase.Final && input.replyMessageId !== undefined
+      ...(input.flush === FlushReason.Final && input.replyMessageId !== undefined
         ? { replyMessageId: input.replyMessageId }
         : {}),
       at,
@@ -495,7 +498,7 @@ export class StackedAggregator {
       laneRef: this.options.handoff.laneRef,
       runId: this.options.handoff.runId,
       generation: this.options.handoff.generation,
-      ...(input.phase === Phase.Final && input.finalBody !== undefined
+      ...(input.flush === FlushReason.Final && input.finalBody !== undefined
         ? { finalBody: input.finalBody }
         : {}),
     }
@@ -580,6 +583,21 @@ function errorFromEvent(event: HrcLifecycleEvent): StackedError {
       stringValue(payload['message']) ??
       stringValue(payload['errorMessage']) ??
       event.eventKind,
+    ...(stringValue(nested['code'] ?? payload['code'] ?? event.errorCode) !== undefined
+      ? { code: stringValue(nested['code'] ?? payload['code'] ?? event.errorCode) }
+      : {}),
+  }
+}
+
+function terminalErrorFromEvent(event: HrcLifecycleEvent): StackedError {
+  const payload = isRecord(event.payload) ? event.payload : {}
+  const nested = isRecord(payload['error']) ? payload['error'] : {}
+  return {
+    message:
+      stringValue(nested['message']) ??
+      stringValue(payload['message']) ??
+      stringValue(payload['errorMessage']) ??
+      'turn ended with error',
     ...(stringValue(nested['code'] ?? payload['code'] ?? event.errorCode) !== undefined
       ? { code: stringValue(nested['code'] ?? payload['code'] ?? event.errorCode) }
       : {}),
