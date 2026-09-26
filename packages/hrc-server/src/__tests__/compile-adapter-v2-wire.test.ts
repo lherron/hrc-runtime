@@ -323,7 +323,22 @@ describe('v2 compile request carrier', () => {
     let captured: Record<string, unknown> | undefined
     const result = await compileBrokerRuntimePlan(
       {
-        intent: intent({ initialPrompt: 'first observed input' }),
+        intent: intent({
+          initialPrompt: 'first observed input',
+          placement: {
+            agentRoot: '/tmp/astra',
+            cwd: '/tmp/project',
+            runMode: 'task',
+            bundle: { kind: 'compose', compose: [] },
+            dryRun: true,
+            correlation: {
+              runtimeId: 'caller-runtime-id',
+              invocationId: 'caller-invocation-id',
+              initialInputId: 'caller-input-id',
+              runId: 'caller-run-id',
+            },
+          } as HrcRuntimeIntent['placement'],
+        }),
         scopeRef: 'agent:astra:project:hrc-runtime',
         hostSessionId: 'host-1',
         generation: 1,
@@ -340,7 +355,25 @@ describe('v2 compile request carrier', () => {
 
     expect(captured?.['identity']).toMatchObject({ ...identity, initialInputId: 'input-1' })
     expect(captured?.['identity']).not.toHaveProperty('runId')
+    expect(captured?.['correlation']).toMatchObject({
+      runtimeId: identity.runtimeId,
+      invocationId: identity.invocationId,
+      inputId: 'input-1',
+    })
     expect(captured?.['correlation']).not.toHaveProperty('runId')
+    const placement = captured?.['placement'] as
+      | { correlation?: Record<string, unknown> }
+      | undefined
+    // ASP builds the process environment from placement correlation, while the
+    // broker spec receives the top-level correlation.  Keep the immutable HRC
+    // launch tuple on both paths so the format-2 worker gets launch identity
+    // without a run id and without trusting caller dispatchEnv.
+    expect(placement?.correlation).toMatchObject({
+      runtimeId: identity.runtimeId,
+      invocationId: identity.invocationId,
+      initialInputId: 'input-1',
+    })
+    expect(placement?.correlation).not.toHaveProperty('runId')
     expect(result).toMatchObject({
       admitted: true,
       identity: { ...identity, initialInputId: 'input-1' },

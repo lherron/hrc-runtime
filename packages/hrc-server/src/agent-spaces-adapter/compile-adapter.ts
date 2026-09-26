@@ -283,8 +283,30 @@ export function buildV2CompileRequest(input: {
   responseFormat?: HrcTurnResponseFormat | undefined
 }): V2RuntimeCompileRequest {
   const { intent } = input
+  // The compiler uses placement correlation to build the launch environment,
+  // while `correlation` below becomes the broker event lineage.  HRC owns the
+  // allocated execution facts in both channels; never inherit caller-provided
+  // identity values into either one.
+  const {
+    runtimeId: _callerRuntimeId,
+    invocationId: _callerInvocationId,
+    initialInputId: _callerInitialInputId,
+    runId: _callerRunId,
+    ...callerPlacementCorrelation
+  } = (intent.placement.correlation ?? {}) as Record<string, unknown>
   const placement = {
     ...intent.placement,
+    correlation: {
+      ...callerPlacementCorrelation,
+      runtimeId: input.identity.runtimeId,
+      ...(input.identity.invocationId !== undefined
+        ? { invocationId: input.identity.invocationId }
+        : {}),
+      ...(input.identity.initialInputId !== undefined
+        ? { initialInputId: input.identity.initialInputId }
+        : {}),
+      ...(input.identity.runId !== undefined ? { runId: input.identity.runId } : {}),
+    },
     ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
   }
   const requested = { ...(intent.selection ?? {}) }
@@ -329,6 +351,7 @@ export function buildV2CompileRequest(input: {
       generation: input.identity.generation,
       runtimeId: input.identity.runtimeId,
       invocationId: input.identity.invocationId,
+      ...optional('inputId', input.identity.initialInputId),
       traceId: input.identity.traceId,
       ...optional('runId', input.identity.runId),
       scopeRef: input.scopeRef,
