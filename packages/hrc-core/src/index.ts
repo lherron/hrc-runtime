@@ -179,6 +179,7 @@ export type {
   HrcLocalBridgeRecord,
   HrcManagedSessionKind,
   HrcManagedSessionRecord,
+  HrcContinuationProvider,
   HrcProvider,
   HrcRuntimeControllerKind,
   HrcRuntimeOperationKind,

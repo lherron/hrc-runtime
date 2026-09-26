@@ -36,7 +36,6 @@ import type {
   HrcBrokerInvocationRecord,
   HrcContinuationRef,
   HrcLifecycleEvent,
-  HrcProvider,
   HrcProviderTranscriptArtifactMetadata,
   HrcProviderTranscriptReportedPayload,
   HrcRuntimeSnapshot,
@@ -2208,7 +2207,7 @@ export class BrokerEventMapper {
         // safely emit `codex resume <uuid>`. Claude rows omit kind and stay
         // compatible.
         const continuation: HrcContinuationRef = {
-          provider: payload.provider as HrcProvider,
+          provider: payload.provider,
           ...(payload.kind !== undefined ? { kind: payload.kind } : {}),
           key: payload.key,
         }

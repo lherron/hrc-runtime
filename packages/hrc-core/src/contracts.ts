@@ -9,6 +9,14 @@ import type {
 } from './placement-conventions.js'
 
 export type HrcProvider = 'anthropic' | 'openai' | 'meta'
+/**
+ * Producer-owned label recorded with a durable continuation. This is distinct
+ * from {@link HrcProvider}, which is HRC's closed runtime-selection domain:
+ * the harness-broker protocol permits providers to add continuation labels
+ * without asking HRC to select that provider for a new runtime. Resume gates
+ * must narrow this opaque label for the driver they own.
+ */
+export type HrcContinuationProvider = string
 export type HrcHarness =
   | 'agent-sdk'
   | 'claude-code'
@@ -26,7 +34,7 @@ export type HrcTurnResponseFormat =
   | { kind: 'json_schema'; schema: Record<string, unknown> }
 
 export type HrcContinuationRef = {
-  provider: HrcProvider
+  provider: HrcContinuationProvider
   /**
    * Continuation kind, when the provider distinguishes resume key shapes.
    * For Codex this is `'session'` when `key` is a resume-compatible session

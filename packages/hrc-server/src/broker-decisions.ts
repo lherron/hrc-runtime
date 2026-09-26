@@ -66,16 +66,44 @@ export function deriveInteractiveHarness(
   return harness.provider === 'openai' ? 'codex-cli' : 'claude-code'
 }
 
+function selectionProviderForContinuation(
+  provider: HrcContinuationRef['provider']
+): HrcProvider | undefined {
+  switch (provider) {
+    case 'anthropic':
+      return 'anthropic'
+    case 'openai':
+    case 'codex':
+    case 'openai-codex':
+      return 'openai'
+    case 'meta':
+    case 'muse':
+      return 'meta'
+    default:
+      return undefined
+  }
+}
+
 export function toRuntimeContinuationRef(
   continuation: HrcContinuationRef | undefined
 ): RuntimeContinuationRef | undefined {
   if (continuation?.key === undefined) {
     return undefined
   }
+  const selectionProvider = selectionProviderForContinuation(continuation.provider)
+  if (selectionProvider === undefined) {
+    return undefined
+  }
   return {
     schemaVersion: 'runtime-continuation/v1',
     hrc: {
+      provider: selectionProvider,
+      continuationId: continuation.key,
+      key: continuation.key,
+    },
+    broker: {
       provider: continuation.provider,
+      ...(continuation.kind !== undefined ? { kind: continuation.kind } : {}),
       continuationId: continuation.key,
       key: continuation.key,
     },
@@ -893,9 +921,9 @@ export function decideInteractiveTmuxBrokerContinuation(options: {
   if (options.allowedBrokerDriver === 'codex-app-server') {
     // App server: only the driver's native Codex thread UUID is safe. The
     // compiler passes it to driver.resumeThreadId; no CLI resume argv is built.
-    // Broker-native continuation authority is currently wider than the legacy
-    // HrcProvider type used by this persisted record.
-    if ((continuation.provider as string) !== 'codex') {
+    // Continuation providers are producer-owned labels, so every driver
+    // narrows provider, kind, and key before it uses a persisted record.
+    if (continuation.provider !== 'codex') {
       return undefined
     }
     if (continuation.kind !== 'thread') {
