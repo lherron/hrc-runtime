@@ -1,4 +1,4 @@
-import { HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
+import { HrcRuntimeUnavailableError } from 'hrc-core'
 import type {
   HrcContinuationRef,
   HrcHarness,

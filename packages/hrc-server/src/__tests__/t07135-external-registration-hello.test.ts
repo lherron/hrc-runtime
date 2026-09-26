@@ -4,9 +4,9 @@ import { mkdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { HrcLifecycleEvent } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { ExternalRegistrationGrant, HrcDatabase } from 'hrc-store-sqlite'
-import type { HrcLifecycleEvent } from 'hrc-core'
 
 import { projectBrokerHostingState } from '../broker/runtime-hosting.js'
 import { externalRegistrationRetryDelayMs } from '../external-registration-rendezvous.js'
@@ -281,7 +281,9 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
 
   test('records one session birth with the EPR mint and preserves it across delivery retry', async () => {
     issue()
-    const lost = new ScriptedClient({ established: () => Promise.reject(new Error('response lost')) })
+    const lost = new ScriptedClient({
+      established: () => Promise.reject(new Error('response lost')),
+    })
 
     await expect(performExternalRegistrationHello(server, REGISTRATION_ID, lost)).rejects.toThrow(
       'response lost'

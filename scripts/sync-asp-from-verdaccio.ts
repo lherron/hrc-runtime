@@ -23,14 +23,11 @@ export const aspSyncSpec: SyncSpec = {
         // while the set splits. T-08597 (T-08569B interpretation migration)
         // completes the trim: spaces-config, spaces-runtime, spaces-execution,
         // and agent-spaces leave this list with the manifests that declared
-        // them. hrc-frame-render keeps a type-only spaces-runtime edge.
+        // them. The later CLI-route consolidation also removed aspc and the
+        // standalone harness packages from HRC manifests. hrc-frame-render
+        // keeps a type-only spaces-runtime edge.
         'spaces-runtime-contracts',
         'spaces-aspc-protocol',
-        'spaces-aspc',
-        'spaces-harness-claude',
-        'spaces-harness-muse',
-        'spaces-harness-pi',
-        'spaces-harness-pi-sdk',
       ],
     },
   ],

@@ -17,8 +17,8 @@ import {
   openHrcDatabase,
 } from 'hrc-store-sqlite'
 
-import type { FederationConfig } from '../federation/federation-config.js'
 import { InMemoryBindingHintCache } from '../federation/binding-cache.js'
+import type { FederationConfig } from '../federation/federation-config.js'
 import type { BindingRegistryClient } from '../federation/registry-client.js'
 import { retireFederationScope } from '../federation/retirement.js'
 import type { FederationRetirementDependencies } from '../federation/retirement.js'
@@ -92,11 +92,7 @@ function retirementDependencies(
       oldDb.sqlite.transaction(() => {
         const continuities = oldDb.continuities.disassociateScope(scopeRef)
         for (const continuity of continuities) {
-          oldDb.sessions.setContinuationReuseDisabled(
-            continuity.activeHostSessionId,
-            true,
-            NOW
-          )
+          oldDb.sessions.setContinuationReuseDisabled(continuity.activeHostSessionId, true, NOW)
         }
       })()
     },
@@ -109,14 +105,22 @@ describe('T-08384 retired-home continuity fence', () => {
   test.each([
     { label: 'a stale routing hint only', staleHint: true, staleContinuity: false },
     { label: 'a stale continuity only', staleHint: false, staleContinuity: true },
-    { label: 'both a stale routing hint and stale continuity', staleHint: true, staleContinuity: true },
+    {
+      label: 'both a stale routing hint and stale continuity',
+      staleHint: true,
+      staleContinuity: true,
+    },
   ])('$label cannot make the retired old home executable', async (scenario) => {
     const oldDb = openHrcDatabase(':memory:')
     const newDb = openHrcDatabase(':memory:')
     const registry = openBindingRegistry(':memory:')
     try {
       const oldLedger = createPlacementLedgerRepository(oldDb.sqlite)
-      const oldBinding = registry.establish({ scopeRef: SCOPE, homeNodeId: OLD_HOME, now: NOW }).binding
+      const oldBinding = registry.establish({
+        scopeRef: SCOPE,
+        homeNodeId: OLD_HOME,
+        now: NOW,
+      }).binding
       oldLedger.installActive(oldBinding)
 
       const cache = new InMemoryBindingHintCache()
@@ -207,7 +211,11 @@ describe('T-08384 retired-home continuity fence', () => {
     const db = openHrcDatabase(':memory:')
     const registry = openBindingRegistry(':memory:')
     try {
-      const binding = registry.establish({ scopeRef: SCOPE, homeNodeId: OLD_HOME, now: NOW }).binding
+      const binding = registry.establish({
+        scopeRef: SCOPE,
+        homeNodeId: OLD_HOME,
+        now: NOW,
+      }).binding
       createPlacementLedgerRepository(db.sqlite).installActive(binding)
       seedContinuity(db, OLD_HOST_SESSION_ID, OLD_HOME)
 
@@ -231,7 +239,11 @@ describe('T-08384 retired-home continuity fence', () => {
     let oldServer: Awaited<ReturnType<typeof createHrcServer>> | undefined
     let newServer: Awaited<ReturnType<typeof createHrcServer>> | undefined
     try {
-      const oldBinding = registry.establish({ scopeRef: SCOPE, homeNodeId: OLD_HOME, now: NOW }).binding
+      const oldBinding = registry.establish({
+        scopeRef: SCOPE,
+        homeNodeId: OLD_HOME,
+        now: NOW,
+      }).binding
       createPlacementLedgerRepository(oldDb.sqlite).installActive(oldBinding)
       seedContinuity(oldDb, OLD_HOST_SESSION_ID, OLD_HOME)
 
@@ -304,7 +316,10 @@ describe('T-08384 retired-home continuity fence', () => {
         },
       })
       expect(established.status).toBe(200)
-      const establishedBody = (await established.json()) as { hostSessionId: string; created: boolean }
+      const establishedBody = (await established.json()) as {
+        hostSessionId: string
+        created: boolean
+      }
       expect(establishedBody.created).toBe(true)
       expect(findContinuitySession(newDb, SESSION_REF)?.hostSessionId).toBe(
         establishedBody.hostSessionId

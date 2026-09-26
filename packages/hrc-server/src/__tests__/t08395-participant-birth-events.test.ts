@@ -103,6 +103,8 @@ describe('T-08395 participant registrations produce project-visible births', () 
     expect(ledger.projectEventPosts.map((post) => post.attributes['session'])).toEqual(
       expect.arrayContaining([direct.hostSessionId, legacy.hostSessionId])
     )
-    expect(ledger.projectEventPosts.every((post) => post.attributes['cause'] === 'resolve')).toBe(true)
+    expect(ledger.projectEventPosts.every((post) => post.attributes['cause'] === 'resolve')).toBe(
+      true
+    )
   })
 })

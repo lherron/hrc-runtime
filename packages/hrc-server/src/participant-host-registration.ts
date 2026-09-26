@@ -10,12 +10,12 @@ import type {
   ParticipantRegistrationPolicy,
 } from 'hrc-store-sqlite'
 
+import { appendHrcEvent } from './hrc-event-helper.js'
 import { claimParticipantAddress } from './participant-address-provisioning.js'
 import {
   driveParticipantReplacement,
   isNeverAttachedDirectAttempt,
 } from './participant-succession.js'
-import { appendHrcEvent } from './hrc-event-helper.js'
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
 import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'

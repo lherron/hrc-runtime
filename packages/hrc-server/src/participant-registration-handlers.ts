@@ -5,8 +5,8 @@ import { buildScopeRef, parseScopeRef, validateScopeRef } from 'agent-scope'
 import {
   HrcBadRequestError,
   HrcErrorCode,
-  HrcNotFoundError,
   type HrcLifecycleEvent,
+  HrcNotFoundError,
 } from 'hrc-core'
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import {
@@ -18,6 +18,7 @@ import {
   validateParticipantAdapterPreparation,
 } from 'spaces-runtime-contracts'
 
+import { appendHrcEvent } from './hrc-event-helper.js'
 import { parseParticipantBrokerDescriptor } from './participant-broker-descriptor.js'
 import { scheduleParticipantEstablishment } from './participant-establishment.js'
 import {
@@ -29,7 +30,6 @@ import {
   isAbsorbingParticipantAttempt,
   obtainParticipantWriterEvidence,
 } from './participant-writer-evidence.js'
-import { appendHrcEvent } from './hrc-event-helper.js'
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
 import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
