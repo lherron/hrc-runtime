@@ -3,13 +3,12 @@ import { describe, expect, test } from 'bun:test'
 import { computeInstallPolicy, detectContextFromGitDirs } from './install-policy'
 
 describe('install policy', () => {
-  test('keeps main-checkout install side effects enabled by default', () => {
+  test('keeps main-checkout install local by default', () => {
     expect(computeInstallPolicy({ context: 'main' })).toEqual({
       context: 'main',
       syncMode: 'on',
       linkMode: 'on',
-      publishChannel: 'dev',
-      publishTag: 'latest',
+      publicationMode: 'none',
     })
   })
 
@@ -18,8 +17,7 @@ describe('install policy', () => {
       context: 'linked-worktree',
       syncMode: 'off',
       linkMode: 'off',
-      publishChannel: 'worktree',
-      publishTag: 'worktree',
+      publicationMode: 'worktree',
     })
   })
 
@@ -29,7 +27,7 @@ describe('install policy', () => {
     ).toMatchObject({
       syncMode: 'forced',
       linkMode: 'forced',
-      publishChannel: 'worktree',
+      publicationMode: 'worktree',
     })
   })
 

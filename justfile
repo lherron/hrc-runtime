@@ -16,8 +16,8 @@ info:
     @echo "  just test      - Run tests"
     @echo "  just lint      - Run biome linter"
     @echo "  just verify    - Declared landing gate: env-up + check + lint + typecheck + test"
-    @echo "  just install-dev - Local install: build the working tree and cut the CLI over (no push)"
-    @echo "  just install   - Release install; refuses an unpushed, dirty, or uncontained tree"
+    @echo "  just install-dev - Development install: build and publish only the isolated worktree tag"
+    @echo "  just install   - Select a local committed release; run just publish after push for Verdaccio"
     @echo "  just env-up    - Provision the ephemeral daemon + fixture agent homes"
     @echo "  just env-down  - Tear that environment down"
     @echo "  just e2e       - Run the suite against the provisioned environment"
@@ -174,8 +174,10 @@ rebuild:
 # allow-dirty=1. `just` arguments are positional, so they are passed through opaquely
 # and parsed by scripts/install-options.ts rather than bound to recipe parameters.
 # Linked Git worktrees auto-disable the global wrapper cutover unless force-link=1 is passed explicitly.
-# Linked worktrees publish HRC packages to the isolated worktree tag/channel.
-# An install builds and publishes the tree on disk, so it refuses a worktree with
+# Linked worktrees retain their isolated worktree publication channel; main-checkout
+# installs select a local release and do not write a registry.
+# Main-checkout installs archive HEAD, so the selected bytes are committed. The
+# guard refuses a worktree with
 # tracked modifications to SOURCE (staged or unstaged; untracked files are ignored)
 # before it builds anything. Documentation -- docs/, architecture/, and any
 # .md/.markdown/.html/.htm/.txt file -- cannot change what an install builds, so it
@@ -184,8 +186,8 @@ rebuild:
 install *options:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "[install] RELEASE path: requires a clean tree pushed to and contained by origin/main."
-    echo "[install] For a LOCAL install use \`just install-dev\` -- same build and cutover, no push."
+    echo "[install] LOCAL release path: requires a clean committed source tree; no registry write."
+    echo "[install] Run \`just publish\` after push to prove and publish the selected release."
     # Repo-owned hooks, not lefthook's generated template. Set here because a
     # fresh clone otherwise silently falls back to .git/hooks, whose final branch
     # is `pnpm lefthook` — which materialises a pnpm node_modules that shadows the
@@ -194,7 +196,7 @@ install *options:
     bun scripts/install-dirty-guard.ts --source-root="$PWD" {{ options }}
     policy="$(bun scripts/install-policy.ts shell {{ options }})"
     eval "$policy"
-    echo "[install] context=${PRAESIDIUM_INSTALL_CONTEXT} sync=${PRAESIDIUM_INSTALL_SYNC_MODE} link=${PRAESIDIUM_INSTALL_LINK_MODE} publish=${PRAESIDIUM_INSTALL_PUBLISH_CHANNEL} tag=${PRAESIDIUM_INSTALL_PUBLISH_TAG}"
+    echo "[install] context=${PRAESIDIUM_INSTALL_CONTEXT} sync=${PRAESIDIUM_INSTALL_SYNC_MODE} link=${PRAESIDIUM_INSTALL_LINK_MODE} publication=${PRAESIDIUM_INSTALL_PUBLICATION_MODE}"
     echo "[install] dependency pulls are explicit; preserving bun.lock"
     # Warn, never refuse. The dev workspace makes the suite resolve agent-spaces
     # SOURCE while this install builds the locked tuple, so the two can disagree —
@@ -207,7 +209,7 @@ install *options:
     bun scripts/atomic-install.ts \
       --context="$PRAESIDIUM_INSTALL_CONTEXT" \
       --link-mode="$PRAESIDIUM_INSTALL_LINK_MODE" \
-      --publish-channel="$PRAESIDIUM_INSTALL_PUBLISH_CHANNEL" \
+      --publication-mode="$PRAESIDIUM_INSTALL_PUBLICATION_MODE" \
       --source-root="$PWD"
 
 # A node runs three processes this lane deploys, in dependency order:
@@ -222,11 +224,11 @@ install *options:
 
 # Deploy to the max3 logical node (defaults to the latest pushed main and latest injector)
 deploy-max3 ref="origin/main" aspd="origin/main" injector="latest" restart="wait":
-    @just _deploy-node "max3" "max3" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}"
+    @just _deploy-node "max3" "max3" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}" "publish"
 
 # Deploy to the svc logical node (user lherron on mini)
 deploy-svc ref="@max3" aspd="@max3" injector="@max3" restart="wait":
-    @just _deploy-node "mini" "svc" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}"
+    @just _deploy-node "mini" "svc" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}" "no-publish"
 
 # `hrcdev` here is the Tart macOS guest VM hosted on max3 (`ssh hrcdev`), NOT the
 # ~/praesidium/var/install/hrc-dev lane, which is a git-archive export with its
@@ -234,7 +236,7 @@ deploy-svc ref="@max3" aspd="@max3" injector="@max3" restart="wait":
 
 # Deploy to the hrcdev logical node (the Tart guest VM on max3)
 deploy-hrcdev ref="@max3" aspd="@max3" injector="@max3" restart="wait":
-    @just _deploy-node "hrcdev" "hrcdev" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}"
+    @just _deploy-node "hrcdev" "hrcdev" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}" "no-publish"
 
 # The targets are resolved ONCE and passed to every node as literals. Letting
 # each node resolve `@max3` for itself would race a concurrent max3 install and
@@ -248,8 +250,12 @@ deploy-fleet restart="wait":
     aspd_sha="$(just _max3-aspd-commit)"
     injector="$(just _max3-injector-version)"
     echo "[fleet] targets from max3: hrc ${hrc_sha} aspd ${aspd_sha} injector ${injector}"
-    just _deploy-node "mini" "svc" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}"
-    just _deploy-node "hrcdev" "hrcdev" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}"
+    # This deliberately goes through the max3 fast path. It proves the exact
+    # running target has been selected, restarted/read back, and published
+    # before either consumer node begins deployment.
+    just _deploy-node "max3" "max3" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}" "publish"
+    just _deploy-node "mini" "svc" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}" "no-publish"
+    just _deploy-node "hrcdev" "hrcdev" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}" "no-publish"
     just fleet-status
 
 # Run this before and after a deploy; an unreachable node prints as unreachable
@@ -579,7 +585,7 @@ install-mail-injector-launchd version:
     echo "[injector] ${service_target} pid ${pid} running hrc-mail-injector@${version} for node ${node_id}"
 
 [private]
-_deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/main" injector="latest" restart="wait":
+_deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/main" injector="latest" restart="wait" publication="no-publish":
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -599,7 +605,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     fi
 
     ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-      bash -s -- "{{ expected-node }}" "$target_ref" "$aspd_ref" "$injector" "{{ restart }}" <<'REMOTE'
+      bash -s -- "{{ expected-node }}" "$target_ref" "$aspd_ref" "$injector" "{{ restart }}" "{{ publication }}" <<'REMOTE'
     set -euo pipefail
 
     expected_node="$1"
@@ -607,6 +613,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     aspd_ref="$3"
     injector_version="$4"
     restart_mode="$5"
+    publication="$6"
     repo="$HOME/praesidium/hrc-runtime"
     asp_repo="$HOME/praesidium/agent-spaces"
     aspd_ns="$HOME/praesidium/var/aspd"
@@ -846,6 +853,15 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     [[ "$(jq -r '.api.aspd.release.sourceCommit // ""' <<<"$status_after")" == "$aspd_sha" ]] ||
       fail "restarted daemon does not see aspd ${aspd_sha}: $(jq -c '.api.aspd' <<<"$status_after")"
 
+    case "$publication" in
+      publish)
+        [[ "$expected_node" == max3 ]] || fail 'only max3 may perform canonical HRC publication'
+        just _publish-selected-release
+        ;;
+      no-publish) ;;
+      *) fail "publication mode must be publish or no-publish, got ${publication}" ;;
+    esac
+
     # Supervisor identity, not just health. Everything above proves a healthy
     # daemon running the requested release — and a detached daemon that
     # self-daemonized past an unloaded LaunchAgent proves exactly that too, while
@@ -905,21 +921,21 @@ check-deps:
     bun scripts/sync-asp-from-verdaccio.ts --check
     bun scripts/sync-wrkq-from-verdaccio.ts --check
 
-# Publish timestamped dev package set to local Verdaccio
-publish-dev:
-    bun scripts/publish-local-verdaccio.ts
+# Publish the current locally selected release after canonical source proof.
+publish dry-run="":
+    @just _publish-selected-release "{{ dry-run }}"
 
-# Publish a canonical package set from the freshly fetched named source ref
-publish-canonical:
-    bun scripts/publish-local-verdaccio.ts --channel canonical
-
-# Validate a canonical package set without publishing
-publish-canonical-dry-run:
-    bun scripts/publish-local-verdaccio.ts --channel canonical --dry-run
-
-# Validate timestamped dev package set without publishing
-publish-dev-dry-run:
-    bun scripts/publish-local-verdaccio.ts --dry-run
+[private]
+_publish-selected-release dry-run="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=(--selected-release)
+    case '{{ dry-run }}' in
+      '') ;;
+      1|'dry-run=1') args+=(--dry-run) ;;
+      *) echo 'publish: dry-run must be empty or 1' >&2; exit 2 ;;
+    esac
+    bun scripts/publish-local-verdaccio.ts "${args[@]}"
 
 # Publish isolated linked-worktree package set to local Verdaccio
 publish-worktree:
@@ -928,14 +944,6 @@ publish-worktree:
 # Validate isolated linked-worktree package set without publishing
 publish-worktree-dry-run:
     bun scripts/publish-local-verdaccio.ts --channel worktree --dry-run
-
-# Publish exact semver package set to local Verdaccio
-publish-semver version tag="latest" force="":
-    bun scripts/publish-local-verdaccio.ts --version "{{version}}" --tag "{{tag}}" {{force}}
-
-# Validate exact semver package set without publishing
-publish-semver-dry-run version tag="latest":
-    bun scripts/publish-local-verdaccio.ts --version "{{version}}" --tag "{{tag}}" --dry-run
 
 # Serve the ACP Session Dashboard (acp-ops-web) against the local dev stack
 serve-dashboard:
@@ -954,17 +962,14 @@ cp-test prompt="List skills available. Use only what is in your context, no tool
         "{{prompt}}"
 
 # Local dev install: build the working tree as it stands and cut the local CLI
-# over to it. `just install` is still the release path — it proves the source is
-# committed and contained by a freshly fetched origin/main before it publishes.
-# This recipe deliberately skips that proof, so it needs no push and tolerates a
-# dirty tree; it publishes on the `worktree` tag, leaving the `latest` dev
-# channel other repos pull untouched. Run `hrc server restart` afterwards to move
-# the daemon onto it.
+# over to it. It publishes only on the isolated worktree tag; it never advances
+# canonical latest and cannot satisfy `just publish` source proof. Run `hrc
+# server restart` afterwards to move the daemon onto it.
 install-dev:
     #!/usr/bin/env bash
     set -euo pipefail
     bun scripts/atomic-install.ts \
       --context=main \
       --link-mode=on \
-      --publish-channel=worktree \
+      --publication-mode=worktree \
       --source-root="$PWD"

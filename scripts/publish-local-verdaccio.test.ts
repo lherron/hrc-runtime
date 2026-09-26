@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { type GitFixture, createGitFixture, runGit } from '../test-support/git-fixture.js'
 
 import {
   assertNoCanonicalVersionReplacement,
+  assertSelectedReleaseUnchanged,
   createPraesidiumBuild,
   provePublicationSource,
+  readSelectedRelease,
   timestampVersion,
 } from './publish-local-verdaccio'
 
@@ -18,6 +20,65 @@ afterEach(async () => {
   await Promise.all(
     fixtures.splice(0).map((fixture) => rm(fixture, { recursive: true, force: true }))
   )
+})
+
+describe('T-08559 selected-release canonical publication', () => {
+  async function selectedReleaseFixture() {
+    const root = await mkdtemp(join(tmpdir(), 'hrc-selected-release-'))
+    fixtures.push(root)
+    const install = join(root, 'install')
+    const release = join(install, 'hrc-runtime-releases', 'release-fixture')
+    const currentLink = join(install, 'hrc-runtime-current')
+    const lockDir = join(install, 'hrc-runtime-install.lock')
+    const manifestPath = join(release, 'praesidium-release.json')
+    const manifest = {
+      schema: 1,
+      releaseId: 'release-fixture',
+      hrcBuild: createPraesidiumBuild({
+        canonicalRemote: 'ssh://git.example.test/praesidium.git',
+        sourceCommit: '1111111111111111111111111111111111111111',
+        setVersion: '0.5.13-dev.fixture',
+        builtAt: '2026-07-24T12:00:00.000Z',
+      }),
+      aspContracts: [],
+      installedAt: '2026-07-24T12:00:01.000Z',
+    }
+    await mkdir(release, { recursive: true })
+    await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`)
+    await symlink(release, currentLink)
+    return { currentLink, lockDir, manifestPath, release, manifest }
+  }
+
+  test('captures the exact selected manifest and detects a concurrent manifest mutation', async () => {
+    const fixture = await selectedReleaseFixture()
+    const paths = { currentLink: fixture.currentLink, lockDir: fixture.lockDir }
+    const selected = await readSelectedRelease(paths)
+
+    expect(selected.releasePath).toBe(await realpath(fixture.release))
+    expect(selected.build).toEqual(fixture.manifest.hrcBuild)
+
+    await writeFile(
+      fixture.manifestPath,
+      `${JSON.stringify({ ...fixture.manifest, installedAt: '2026-07-24T12:00:02.000Z' })}\n`
+    )
+    await expect(assertSelectedReleaseUnchanged(selected, paths)).rejects.toThrow(
+      'selected release manifest changed'
+    )
+  })
+
+  test('detects a concurrent selected-release turnover', async () => {
+    const fixture = await selectedReleaseFixture()
+    const paths = { currentLink: fixture.currentLink, lockDir: fixture.lockDir }
+    const selected = await readSelectedRelease(paths)
+    const nextRelease = join(dirname(fixture.release), 'release-next')
+    await mkdir(nextRelease, { recursive: true })
+    await rename(fixture.currentLink, `${fixture.currentLink}.prior`)
+    await symlink(nextRelease, fixture.currentLink)
+
+    await expect(assertSelectedReleaseUnchanged(selected, paths)).rejects.toThrow(
+      'selected release changed'
+    )
+  })
 })
 
 async function canonicalFixture(): Promise<{ root: string; remote: string; repo: GitFixture }> {

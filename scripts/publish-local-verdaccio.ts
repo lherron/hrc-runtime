@@ -1,16 +1,17 @@
 import { spawnSync } from 'node:child_process'
-import { access, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { access, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { type PraesidiumBuild, environmentWithoutGitOverrides } from 'hrc-core'
 
+import { acquireInstallLock } from './lib/install-lock'
 import {
   documentationNoticeLine,
   parsePorcelainPaths,
   partitionInstallScope,
 } from './lib/install-source-scope'
-import { PRAESIDIUM_BUILD_FIELDS } from './lib/praesidium-build'
+import { PRAESIDIUM_BUILD_FIELDS, parsePraesidiumBuild } from './lib/praesidium-build'
 import { assertPublishContainment } from './lib/publish-containment'
 import { activeRegistryUrl } from './lib/registry'
 
@@ -50,11 +51,9 @@ type Manifest = {
 }
 
 type Options = {
-  channel?: 'canonical' | 'dev' | 'worktree'
+  channel?: 'worktree'
   dryRun: boolean
-  force: boolean
-  tag?: string
-  version?: string
+  selectedRelease: boolean
 }
 
 type RegistryMetadata = {
@@ -74,6 +73,8 @@ let internalNames = new Set<string>()
 let publishTag = 'latest'
 let publicationBuiltAt = ''
 let publicationSource: PublicationSource
+let publicationBuild: PraesidiumBuild
+let packageRoot = ROOT
 
 export type PublicationSource = {
   repository: 'hrc-runtime'
@@ -101,38 +102,26 @@ export function createPraesidiumBuild(input: {
 }
 
 function parseArgs(argv: string[]): Options {
-  const options: Options = { dryRun: false, force: false }
+  const options: Options = { dryRun: false, selectedRelease: false }
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--dry-run') {
       options.dryRun = true
-    } else if (arg === '--force') {
-      options.force = true
+    } else if (arg === '--selected-release') {
+      options.selectedRelease = true
     } else if (arg === '--channel') {
       const value = argv[++i]
-      if (value !== 'canonical' && value !== 'dev' && value !== 'worktree') {
-        throw new Error('--channel must be "canonical", "dev", or "worktree"')
+      if (value !== 'worktree') {
+        throw new Error('--channel only accepts "worktree"')
       }
       options.channel = value
     } else if (arg.startsWith('--channel=')) {
       const value = arg.slice('--channel='.length)
-      if (value !== 'canonical' && value !== 'dev' && value !== 'worktree') {
-        throw new Error('--channel must be "canonical", "dev", or "worktree"')
+      if (value !== 'worktree') {
+        throw new Error('--channel only accepts "worktree"')
       }
       options.channel = value
-    } else if (arg === '--version') {
-      const value = argv[++i]
-      if (!value) throw new Error('--version requires a value')
-      options.version = value
-    } else if (arg.startsWith('--version=')) {
-      options.version = arg.slice('--version='.length)
-    } else if (arg === '--tag') {
-      const value = argv[++i]
-      if (!value) throw new Error('--tag requires a value')
-      options.tag = value
-    } else if (arg.startsWith('--tag=')) {
-      options.tag = arg.slice('--tag='.length)
     } else if (arg === '--help' || arg === '-h') {
       printHelp()
       process.exit(0)
@@ -141,28 +130,20 @@ function parseArgs(argv: string[]): Options {
     }
   }
 
+  if (options.selectedRelease === (options.channel === 'worktree')) {
+    throw new Error('choose exactly one publication mode: --selected-release or --channel worktree')
+  }
   return options
 }
 
 function printHelp(): void {
   console.log(`Usage:
-  bun scripts/publish-local-verdaccio.ts [--dry-run]
-  bun scripts/publish-local-verdaccio.ts --channel canonical [--dry-run]
+  bun scripts/publish-local-verdaccio.ts --selected-release [--dry-run]
   bun scripts/publish-local-verdaccio.ts --channel worktree [--dry-run]
-  bun scripts/publish-local-verdaccio.ts --version <semver> [--tag <tag>] [--force] [--dry-run]
 
-Default mode publishes a timestamped dev set as <base>-dev.YYYYMMDDHHMMSS tagged latest.
-Worktree channel publishes <base>-worktree.YYYYMMDDHHMMSS.<shortsha> tagged worktree.
-Explicit --version publishes that exact version. Stable versions default to --tag latest.
-Explicit prerelease versions require --tag.`)
-}
-
-function isSemver(version: string): boolean {
-  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)
-}
-
-function isPrerelease(version: string): boolean {
-  return /^\d+\.\d+\.\d+-/.test(version)
+Selected-release publication is the sole canonical latest writer. It publishes
+the tuple already stored in the current atomic release. Worktree publication is
+isolated on the worktree tag.`)
 }
 
 function gitShortSha(): string {
@@ -186,24 +167,6 @@ export function timestampVersion(
   ].join('')
   const base = baseVersion.split('-')[0]
   return channel === 'worktree' ? `${base}-worktree.${stamp}.${shortSha}` : `${base}-dev.${stamp}`
-}
-
-function resolvePublishVersion(baseVersion: string, options: Options): string {
-  const version =
-    options.version ??
-    process.env.HRC_PUBLISH_VERSION ??
-    timestampVersion(baseVersion, options.channel === 'worktree' ? 'worktree' : 'dev')
-  if (!isSemver(version)) {
-    throw new Error(`Publish version must be valid semver: ${version}`)
-  }
-  if (options.version && isPrerelease(version) && !options.tag) {
-    throw new Error('Explicit prerelease publishes require --tag')
-  }
-  return version
-}
-
-function resolveTag(_version: string, options: Options): string {
-  return options.tag ?? (options.channel === 'worktree' ? 'worktree' : 'latest')
 }
 
 function run(cmd: string, args: string[], cwd = ROOT): { status: number; out: string } {
@@ -314,6 +277,102 @@ export function provePublicationSource(input: {
   }
 }
 
+export type SelectedRelease = {
+  releasePath: string
+  manifestPath: string
+  manifestText: string
+  build: PraesidiumBuild
+}
+
+export type SelectedReleasePaths = {
+  currentLink: string
+  lockDir: string
+}
+
+export function selectedReleasePaths(): SelectedReleasePaths {
+  const installRoot = join(homedir(), '.bun', 'install')
+  return {
+    currentLink: join(installRoot, 'hrc-runtime-current'),
+    lockDir: join(installRoot, 'hrc-runtime-install.lock'),
+  }
+}
+
+function expectSelectedReleaseManifest(
+  value: unknown,
+  manifestPath: string
+): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`selected release manifest is invalid: ${manifestPath}`)
+  }
+  const expected = ['aspContracts', 'hrcBuild', 'installedAt', 'releaseId', 'schema']
+  const actual = Object.keys(value).sort()
+  if (
+    actual.length !== expected.length ||
+    actual.some((field, index) => field !== expected[index])
+  ) {
+    throw new Error(`selected release manifest has unexpected fields: ${manifestPath}`)
+  }
+  if (
+    value['schema'] !== 1 ||
+    typeof value['releaseId'] !== 'string' ||
+    !/^release-[A-Za-z0-9._-]+$/.test(value['releaseId']) ||
+    !Array.isArray(value['aspContracts']) ||
+    typeof value['installedAt'] !== 'string' ||
+    !Number.isFinite(Date.parse(value['installedAt']))
+  ) {
+    throw new Error(`selected release manifest is invalid: ${manifestPath}`)
+  }
+}
+
+export async function readSelectedRelease(
+  paths: SelectedReleasePaths = selectedReleasePaths()
+): Promise<SelectedRelease> {
+  const { currentLink } = paths
+  let releasePath: string
+  try {
+    releasePath = await realpath(currentLink)
+  } catch {
+    throw new Error(`canonical publication requires a selected atomic release at ${currentLink}`)
+  }
+  const manifestPath = join(releasePath, 'praesidium-release.json')
+  const manifestText = await readFile(manifestPath, 'utf8').catch(() => '')
+  if (!manifestText) {
+    throw new Error(`selected release has no release manifest: ${manifestPath}`)
+  }
+  let manifest: unknown
+  try {
+    manifest = JSON.parse(manifestText)
+  } catch {
+    throw new Error(`selected release manifest is invalid JSON: ${manifestPath}`)
+  }
+  expectSelectedReleaseManifest(manifest, manifestPath)
+  return {
+    releasePath,
+    manifestPath,
+    manifestText,
+    build: parsePraesidiumBuild(
+      manifest['hrcBuild'],
+      { repository: 'hrc-runtime', setName: 'hrc' },
+      'selected release hrcBuild'
+    ),
+  }
+}
+
+export async function assertSelectedReleaseUnchanged(
+  selected: SelectedRelease,
+  paths: SelectedReleasePaths = selectedReleasePaths()
+): Promise<void> {
+  const { currentLink } = paths
+  const current = await realpath(currentLink).catch(() => '')
+  if (current !== selected.releasePath) {
+    throw new Error('selected release changed while canonical publication was in progress')
+  }
+  const manifestText = await readFile(selected.manifestPath, 'utf8').catch(() => '')
+  if (manifestText !== selected.manifestText) {
+    throw new Error('selected release manifest changed while canonical publication was in progress')
+  }
+}
+
 function stripBunConditions(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripBunConditions)
   if (!value || typeof value !== 'object') return value
@@ -362,7 +421,7 @@ async function versionExists(name: string, version: string): Promise<boolean> {
 async function packageNames(): Promise<Set<string>> {
   const names = await Promise.all(
     PACKAGES.map(async (rel) => {
-      const manifest = (await Bun.file(join(ROOT, rel, 'package.json')).json()) as Manifest
+      const manifest = (await Bun.file(join(packageRoot, rel, 'package.json')).json()) as Manifest
       if (!manifest.name) throw new Error(`${rel}/package.json must include name`)
       return manifest.name
     })
@@ -441,13 +500,18 @@ type PackedPackage = {
 }
 
 async function packForPublish(rel: string): Promise<PackedPackage> {
-  const pkgDir = join(ROOT, rel)
+  const pkgDir = join(packageRoot, rel)
   const packageJsonPath = join(pkgDir, 'package.json')
   const originalPackageJson = await readFile(packageJsonPath, 'utf8')
   let tmp = ''
 
   try {
     tmp = await mkdtemp(join(tmpdir(), 'hrc-publish-'))
+    const stagedPackage = join(tmp, 'package')
+    const stage = run('rsync', ['-a', '--exclude=node_modules/', `${pkgDir}/`, `${stagedPackage}/`])
+    if (stage.status !== 0) {
+      throw new Error(`could not stage ${rel} for publication: ${stage.out}`)
+    }
     const manifest = JSON.parse(originalPackageJson) as Manifest
     if (!manifest.name || !manifest.version) {
       throw new Error(`${rel}/package.json must include name and version`)
@@ -457,12 +521,7 @@ async function packForPublish(rel: string): Promise<PackedPackage> {
     const publishManifest = {
       ...manifestWithoutPrivate,
       version: publishVersion,
-      praesidiumBuild: createPraesidiumBuild({
-        canonicalRemote: publicationSource.canonicalRemote,
-        sourceCommit: publicationSource.sourceCommit,
-        setVersion: publishVersion,
-        builtAt: publicationBuiltAt,
-      }),
+      praesidiumBuild: publicationBuild,
       dependencies: pinInternalDependencies(manifest.dependencies, internalNames, publishVersion),
       devDependencies: pinInternalDependencies(
         manifest.devDependencies,
@@ -482,9 +541,12 @@ async function packForPublish(rel: string): Promise<PackedPackage> {
       exports: stripBunConditions(manifest.exports),
     }
 
-    await writeFile(packageJsonPath, `${JSON.stringify(publishManifest, null, 2)}\n`)
+    await writeFile(
+      join(stagedPackage, 'package.json'),
+      `${JSON.stringify(publishManifest, null, 2)}\n`
+    )
 
-    const pack = run('bun', ['pm', 'pack', '--destination', tmp, '--ignore-scripts'], pkgDir)
+    const pack = run('bun', ['pm', 'pack', '--destination', tmp, '--ignore-scripts'], stagedPackage)
     if (pack.status !== 0) {
       throw new Error(`bun pm pack failed for ${manifest.name}: ${pack.out}`)
     }
@@ -539,8 +601,6 @@ async function packForPublish(rel: string): Promise<PackedPackage> {
   } catch (error) {
     if (tmp) await rm(tmp, { recursive: true, force: true })
     throw error
-  } finally {
-    await writeFile(packageJsonPath, originalPackageJson)
   }
 }
 
@@ -557,23 +617,16 @@ export async function assertNoCanonicalVersionReplacement(
   }
 }
 
-async function publishPackedPackage(packed: PackedPackage, options: Options): Promise<void> {
+async function publishPackedPackage(packed: PackedPackage, dryRun: boolean): Promise<void> {
   const id = `${packed.name}@${packed.version}`
 
-  if ((await versionExists(packed.name, packed.version)) && !options.force) {
-    throw new Error(`${id} already exists in ${REGISTRY}; use --force to replace it`)
+  if (await versionExists(packed.name, packed.version)) {
+    throw new Error(`${id} already exists in ${REGISTRY}; publication never replaces a package`)
   }
 
-  if (options.dryRun) {
+  if (dryRun) {
     console.log(`DRY_RUN  ${id} --tag ${publishTag}`)
     return
-  }
-
-  if (options.force) {
-    const unpublish = run('npm', ['unpublish', id, '--force', '--registry', REGISTRY])
-    if (unpublish.status !== 0 && !/E404|404 Not Found|not found/i.test(unpublish.out)) {
-      throw new Error(`npm unpublish failed for ${id}: ${unpublish.out}`)
-    }
   }
 
   const publish = run('npm', [
@@ -654,13 +707,7 @@ async function verifyCanonicalPublishedSet(
           `Published tarball identity mismatch for ${packed.name}@${packed.version}: ${manifest.name ?? '<missing>'}@${manifest.version ?? '<missing>'}`
         )
       }
-      const expectedBuild = createPraesidiumBuild({
-        canonicalRemote: publicationSource.canonicalRemote,
-        sourceCommit: publicationSource.sourceCommit,
-        setVersion: packed.version,
-        builtAt: publicationBuiltAt,
-      })
-      if (stableJson(manifest.praesidiumBuild) !== stableJson(expectedBuild)) {
+      if (stableJson(manifest.praesidiumBuild) !== stableJson(publicationBuild)) {
         throw new Error(`Published provenance mismatch for ${packed.name}@${packed.version}`)
       }
     } finally {
@@ -678,59 +725,95 @@ async function verifyCanonicalPublishedSet(
 
 async function main() {
   const options = parseArgs(process.argv.slice(2))
-  // Before ANYTHING touches the registry — packing, `npm ping`, `npm unpublish`,
-  // upload. A node under publish containment (T-07959) must fail here, with the
-  // loopback command named, rather than after a tarball is already on the wire.
-  // Dry runs are refused too: a dry run validated against the wrong registry
-  // proves nothing about the publish it is standing in for.
+  // Before ANYTHING touches the registry — pack, ping, or upload. A node under
+  // publish containment (T-07959) must fail before it can expose a tuple.
   assertPublishContainment(REGISTRY)
-  if (options.channel === 'canonical' && options.force) {
-    throw new Error('Canonical publication does not permit --force replacement')
-  }
-  const canonical = options.channel === 'canonical'
-  const sourceRoot = resolve(process.env.HRC_PUBLISH_SOURCE_ROOT ?? ROOT)
-  publicationSource = provePublicationSource({
-    canonical,
-    root: sourceRoot,
-    expectedSourceCommit: process.env.HRC_PUBLISH_EXPECTED_SOURCE_COMMIT,
-  })
-  publicationBuiltAt = process.env.HRC_PUBLISH_BUILT_AT ?? new Date().toISOString()
-  if (!Number.isFinite(Date.parse(publicationBuiltAt))) {
-    throw new Error(`HRC_PUBLISH_BUILT_AT must be an ISO timestamp: ${publicationBuiltAt}`)
-  }
-  if (!canonical) {
-    console.log(
-      `NON_CANONICAL publication channel=${options.channel ?? 'dev'} force=${options.force}`
-    )
-  }
-  const ping = run('npm', ['ping', '--registry', REGISTRY])
-  if (ping.status !== 0) {
-    throw new Error(`Verdaccio is not reachable at ${REGISTRY}: ${ping.out}`)
-  }
-
-  const firstManifest = (await Bun.file(join(ROOT, PACKAGES[0], 'package.json')).json()) as Manifest
-  if (!firstManifest.version) {
-    throw new Error(`${PACKAGES[0]}/package.json must include version`)
-  }
-  publishVersion = resolvePublishVersion(firstManifest.version, options)
-  publishTag = resolveTag(publishVersion, options)
-  internalNames = await packageNames()
-
-  const mode = options.dryRun ? 'Dry-run publishing' : 'Publishing'
-  console.log(
-    `${mode} ${PACKAGES.length} HRC package(s) as ${publishVersion} --tag ${publishTag} to ${REGISTRY}`
-  )
+  const canonical = options.selectedRelease
+  const paths = selectedReleasePaths()
+  const releaseLock = canonical ? await acquireInstallLock(paths.lockDir, ROOT) : undefined
+  let selected: SelectedRelease | undefined
   const packedPackages: PackedPackage[] = []
   try {
+    if (canonical) {
+      selected = await readSelectedRelease(paths)
+      publicationSource = provePublicationSource({
+        canonical: true,
+        root: ROOT,
+        expectedSourceCommit: selected.build.sourceCommit,
+      })
+      if (publicationSource.canonicalRemote !== selected.build.canonicalRemote) {
+        throw new Error('selected release canonical remote differs from the current checkout')
+      }
+      packageRoot = selected.releasePath
+      publicationBuild = selected.build
+      publishVersion = selected.build.setVersion
+      publicationBuiltAt = selected.build.builtAt
+      publishTag = 'latest'
+    } else {
+      const sourceRoot = resolve(process.env.HRC_PUBLISH_SOURCE_ROOT ?? ROOT)
+      publicationSource = provePublicationSource({
+        canonical: false,
+        root: sourceRoot,
+        expectedSourceCommit: process.env.HRC_PUBLISH_EXPECTED_SOURCE_COMMIT,
+      })
+      packageRoot = ROOT
+      const firstManifest = (await Bun.file(
+        join(packageRoot, PACKAGES[0], 'package.json')
+      ).json()) as Manifest
+      if (!firstManifest.version)
+        throw new Error(`${PACKAGES[0]}/package.json must include version`)
+      publishVersion =
+        process.env.HRC_PUBLISH_VERSION ?? timestampVersion(firstManifest.version, 'worktree')
+      publicationBuiltAt = process.env.HRC_PUBLISH_BUILT_AT ?? new Date().toISOString()
+      if (!Number.isFinite(Date.parse(publicationBuiltAt))) {
+        throw new Error(`HRC_PUBLISH_BUILT_AT must be an ISO timestamp: ${publicationBuiltAt}`)
+      }
+      publicationBuild = createPraesidiumBuild({
+        canonicalRemote: publicationSource.canonicalRemote,
+        sourceCommit: publicationSource.sourceCommit,
+        setVersion: publishVersion,
+        builtAt: publicationBuiltAt,
+      })
+      publishTag = 'worktree'
+      console.log('NON_CANONICAL publication channel=worktree')
+    }
+
+    const ping = run('npm', ['ping', '--registry', REGISTRY])
+    if (ping.status !== 0) throw new Error(`Verdaccio is not reachable at ${REGISTRY}: ${ping.out}`)
+    internalNames = await packageNames()
+    const mode = options.dryRun ? 'Dry-run publishing' : 'Publishing'
+    console.log(
+      `${mode} ${PACKAGES.length} HRC package(s) as ${publishVersion} --tag ${publishTag} to ${REGISTRY}`
+    )
+
     for (const rel of PACKAGES) packedPackages.push(await packForPublish(rel))
-    if (canonical) await assertNoCanonicalVersionReplacement(packedPackages)
-    for (const packed of packedPackages) await publishPackedPackage(packed, options)
 
     let fetched:
       | Array<{ name: string; version: string; tarball: string; bytes: number }>
       | undefined
+    const existing = await Promise.all(
+      packedPackages.map((packed) => versionExists(packed.name, packed.version))
+    )
+    if (canonical && existing.some(Boolean) && !existing.every(Boolean)) {
+      await assertNoCanonicalVersionReplacement(packedPackages)
+    }
+    if (canonical && existing.every(Boolean)) {
+      if (!options.dryRun) {
+        fetched = await verifyCanonicalPublishedSet(packedPackages)
+        console.log('CANONICAL_PUBLICATION_ALREADY_COMPLETE selected release tuple is unchanged')
+      } else {
+        console.log(
+          'DRY_RUN_CANONICAL_PUBLICATION_ALREADY_COMPLETE selected release tuple already exists'
+        )
+      }
+    } else {
+      for (const packed of packedPackages) await publishPackedPackage(packed, options.dryRun)
+      if (canonical && !options.dryRun) {
+        fetched = await verifyCanonicalPublishedSet(packedPackages)
+      }
+    }
     if (canonical && !options.dryRun) {
-      fetched = await verifyCanonicalPublishedSet(packedPackages)
+      await assertSelectedReleaseUnchanged(selected as SelectedRelease, paths)
       console.log(
         `PRAESIDIUM_PUBLISH_PROOF ${JSON.stringify({
           schema: 1,
@@ -745,32 +828,11 @@ async function main() {
         })}`
       )
     }
-
-    const buildOutput = process.env.HRC_PUBLISH_BUILD_OUTPUT
-    if (buildOutput !== undefined && !options.dryRun) {
-      await writeFile(
-        buildOutput,
-        `${JSON.stringify(
-          {
-            schema: 1,
-            canonical,
-            canonicalRef: publicationSource.canonicalRef,
-            build: createPraesidiumBuild({
-              canonicalRemote: publicationSource.canonicalRemote,
-              sourceCommit: publicationSource.sourceCommit,
-              setVersion: publishVersion,
-              builtAt: publicationBuiltAt,
-            }),
-          },
-          null,
-          2
-        )}\n`
-      )
-    }
   } finally {
     await Promise.all(
       packedPackages.map((packed) => rm(packed.tmp, { recursive: true, force: true }))
     )
+    await releaseLock?.()
   }
 }
 

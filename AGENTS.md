@@ -7,7 +7,7 @@ Verdaccio registry at `http://mini:4873/`.
 
 ## Build & deploy
 
-Read `~/praesidium/build_deploy_guide.md` before building, installing, or promoting anything in agent-spaces, hrc-runtime, or agent-control-plane. It is the agent digest of the published references `/a/hrc-build-deploy-guide` and `/a/asp-hrc-acp-dev-guide` on the taskboard. The rules that bite most: push before `just install` (a main-checkout install refuses an unpushed or non-clean tree; for a local install use `just install-dev`, which needs neither); install ≠ activate (`hrc server restart --reason …`, then read back `runningEqualsInstalled`); an HRC install before `just pull-deps` ships the OLD agent-spaces tuple — and so does one after a `pull-deps` that did not move `bun.lock`, so read back `git log -1 -- bun.lock` before installing; never `bun update`/`bun add` a synced package (`check-lock-coherence` refuses the split lock it leaves); fleet promotion is `just deploy-*` / `just fleet-status`, never by hand.
+Read `~/praesidium/build_deploy_guide.md` before building, installing, or promoting anything in agent-spaces, hrc-runtime, or agent-control-plane. It is the agent digest of the published references `/a/hrc-build-deploy-guide` and `/a/asp-hrc-acp-dev-guide` on the taskboard. The rules that bite most: `just install` selects a local committed HRC release; push before the separate canonical `just publish`; install ≠ activate (`hrc server restart --reason …`, then read back `runningEqualsInstalled`); an HRC install before `just pull-deps` ships the OLD agent-spaces tuple — and so does one after a `pull-deps` that did not move `bun.lock`, so read back `git log -1 -- bun.lock` before installing; never `bun update`/`bun add` a synced package (`check-lock-coherence` refuses the split lock it leaves); fleet promotion is `just deploy-*` / `just fleet-status`, never by hand.
 
 ## Validation
 
@@ -129,19 +129,20 @@ with no writes since 2026-09-18. Reading them for current kicker state finds not
 - Plist: `launchd/com.praesidium.hrc-server.plist` (canonical source) → `~/Library/LaunchAgents/`.
 - Socket `var/run/hrc/hrc.sock`; state DB `var/state/hrc/state.sqlite`; logs `var/logs/hrc-server.{log,err.log}`.
 
-**Use `just install-dev` for local installs.** It runs the same atomic build,
-entrypoint smoke, and CLI cutover against the working tree as it stands — no push,
-no clean-tree requirement, no `origin/main` containment — and publishes under the
-`worktree` tag, so the `latest` channel other repos pull is untouched. `just
-install` is the release path: use it when the commit is pushed and the install is
-meant to be promoted to the fleet.
+**Use `just install` to select a local committed release.** It performs the
+atomic build, entrypoint smoke, and CLI cutover without `origin/main`
+containment or a registry write. Push and run `just publish` only when that
+selected release should become the canonical `latest` tuple. `just install-dev`
+remains the dirty-worktree path and publishes only the isolated `worktree` tag.
 
 `just install` builds an immutable release away from the checkout and atomically
-advances the shared `hrc` indirection only after build, entrypoint smoke, and
-publication succeed ([docs/atomic-install.md](docs/atomic-install.md)).
+advances the shared `hrc` indirection only after build and entrypoint smoke
+succeed ([docs/atomic-install.md](docs/atomic-install.md)). `just publish`
+then captures that selected release under the shared install lock, proves its
+source is canonical, and publishes its immutable tuple.
 `just install` refuses a worktree with tracked modifications before it builds
-anything, listing the dirty paths; pass `allow-dirty=1` to install uncommitted
-work deliberately.
+anything, listing the dirty paths; its local release bytes still come from
+`git archive HEAD`.
 **Install does not reload the daemon.** Build, publish, install, and restart are
 separate states — record each. After runtime changes: `just install`, `hrc server
 restart`, `hrc server status`; the readback must name the new release in
@@ -402,6 +403,7 @@ deployed tuple. Never "fix" an ACP lag from this repo.
 ## Cross-Repo Publishing
 
 HRC publishes `agent-action-render`, `hrc-core`, `hrc-sdk`, `hrc-frame-render`
-(plus dev/E2E packages) to Verdaccio for ACP. Publication is owned by repo
-scripts (`just publish-dev[-dry-run]`; main-checkout `just install` publishes the
-same coherent set) — do not hand-edit package manifests or publish individually.
+(plus dev/E2E packages) to Verdaccio for ACP. `just publish [dry-run=1]` is
+the canonical writer for the selected local release; `just install` itself
+does not change the registry. Do not hand-edit package manifests or publish
+individual packages.

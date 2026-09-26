@@ -64,13 +64,13 @@ hrc server restart
 hrc server status
 ```
 
-`just install` prepares an immutable release image away from the checkout
-and atomically advances the shared `hrc` / `hrcchat` (and `hrcmail`)
-indirection only after dependency install, build, entrypoint smoke checks,
-and package publication all succeed. The final `hrc server status`
+`just install` prepares an immutable local release image away from the checkout
+and atomically advances the shared HRC indirection only after dependency install,
+build, and entrypoint smoke checks succeed. The final `hrc server status`
 readback must name the newly installed release in `binaryPath` /
-`packagePath` — build, publish, install, and restart are separate states,
-and each should be recorded when validating a runtime-affecting change.
+`packagePath`. For a canonical package release, push the commit and then run
+`just publish`; publication reads the already selected release and is a
+separate state from installation and restart.
 
 **In-flight gating.** `hrc server stop`/`restart` refuse by default when
 runs are still in flight. Use `--wait` to drain (up to

@@ -1,12 +1,15 @@
 # Atomic HRC CLI installs
 
 `just install` prepares a complete HRC runtime image away from the checkout and
-cuts the installed `hrc`, `hrcchat`, and `hrcmail` commands over only after dependency
-installation, build, entrypoint smoke checks, and package publication succeed.
+cuts the installed commands over only after dependency installation, build, and
+entrypoint smoke checks succeed. It selects a local release candidate. The
+separate `just publish` command later proves and publishes that selected
+candidate.
 
 ## Dirty-worktree guard
 
-An install builds and publishes the tree on disk, not the commit. Before any
+An ordinary main-checkout install builds the committed `HEAD` snapshot, not the
+working tree. Before any
 policy is computed or anything is built, `just install` runs
 `scripts/install-dirty-guard.ts`, which refuses (exit 1, nothing built) when
 `git status --porcelain=v1 --untracked-files=no` reports tracked modifications
@@ -16,7 +19,7 @@ never packs them and scratch files in a checkout are normal. Pass
 
 ```bash
 just install                 # refuses if tracked source files are modified
-just install allow-dirty=1   # installs the working tree as-is
+just install allow-dirty=1   # bypasses the guard; candidate bytes still come from HEAD
 ```
 
 ### What counts as source
@@ -45,19 +48,15 @@ or an `allow-dirty=1` that switches the guard off for the code too.
 
 No exclusion list is needed beyond that, because the install churns no tracked
 file: its output is untracked or ignored (`dist/`, `node_modules/`,
-`asp_modules/`, `asp-lock.json`), it runs `bun install --frozen-lockfile` so
-`bun.lock` is never advanced, and the publish step's rewrite of each
-`package.json` is restored in a `finally` before the recipe returns. A
-`package.json` still modified when the guard runs is the residue of a failed
-publish, which is exactly what should be refused.
+`asp_modules/`, `asp-lock.json`), and it runs `bun install --frozen-lockfile`
+so `bun.lock` is never advanced. Canonical publication stages package copies
+outside the selected release and never rewrites a release manifest or package
+manifest.
 
-The guard is not the canonical-publication check. A main-checkout install still
-proves its publication source separately and more strictly after the guard
-passes: `provePublicationSource` reads `--untracked-files=all`, so an untracked
-source file — source that is not checked in — refuses there even though the
-guard let it by. It applies the same source cut, so documentation dirt does not
-refuse in either place. The guard is what covers the linked-worktree install
-path, which publishes to the worktree channel without that proof.
+The guard is not the canonical-publication check. `just publish`, not local
+installation, freshly proves a clean source and `origin/main` containment
+before it can write the registry. The linked-worktree path remains an explicitly
+noncanonical worktree-tag publication path.
 
 Install options are `name=value` tokens (`no-sync=1`, `force-sync=1`,
 `force-link=1`, `allow-dirty=1`) accepted in any order. `just` recipe arguments
@@ -78,20 +77,22 @@ The active commands use one stable indirection:
 
 Each release directory contains its own source snapshot, workspace packages,
 build outputs, `node_modules`, and `praesidium-release.json`. That manifest
-records the release ID, the exact canonical HRC package build, the exact
-canonical ASP package build selected by the lock/install, and the installation
+records the release ID, the exact local HRC package build candidate, the exact
+ASP package build selected by the lock/install, and the installation
 time. Cutover is refused unless both coherent build tuples validate. The
 checkout's `node_modules` is not removed or rewritten by a main-checkout
 install. The final rename of `hrc-runtime-current` changes all three commands
 together.
 
-Main-checkout atomic installs are canonical publications. Before copying source,
-the installer freshly fetches `HRC_CANONICAL_REF` (default `origin/main`),
-requires a clean checkout, proves `HEAD` is contained by that ref, and archives
-that exact commit. Canonical packages carry the seven-field `praesidiumBuild`
-tuple, cannot replace an existing name/version, and are read back through
-cache-empty registry tarball requests. Linked-worktree publication remains
-explicitly non-canonical.
+Main-checkout atomic installs are local release selection. They archive the
+committed `HEAD`, mint a seven-field `praesidiumBuild` tuple, and atomically
+select the result without contacting Verdaccio. `just publish` acquires the
+same lock, captures the selected manifest, proves its tuple's source equals
+checkout `HEAD` and is contained by a freshly fetched `origin/main`, stages
+package copies outside the release, and reads cache-bypassed registry tarballs
+after publication. It refuses name/version replacement and rechecks that the
+selected release has not changed. Linked-worktree publication remains explicitly
+noncanonical.
 
 On the first atomic install, the installer converts legacy Bun links that point
 directly into the checkout. It first points `hrc-runtime-current` at the same
@@ -107,7 +108,8 @@ All HRC installs on the machine serialize through:
 ~/.bun/install/hrc-runtime-install.lock/
 ```
 
-A second install fails immediately with an `install already in progress`
+A second install or selected-release publication fails immediately with an
+`install already in progress`
 diagnostic that includes the owner PID, source root, and start time. It never
 mutates the release under preparation or the active links. This guarantee also
 covers linked-worktree installs, even though their default policy leaves global
@@ -120,7 +122,7 @@ release.
 
 ## Failure and rollback behavior
 
-- Dependency, build, smoke, or publication failure deletes only the incomplete
+- Dependency, build, or smoke failure deletes only the incomplete
   uniquely named release and leaves `hrc-runtime-current` unchanged.
 - `hrc --help`, `hrcchat --help`, and `hrcmail --help` run from the prepared image before cutover.
 - Successfully installed release directories are retained, so rollback is an

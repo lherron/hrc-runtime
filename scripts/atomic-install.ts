@@ -24,19 +24,17 @@ import {
 } from 'hrc-core'
 import { DIRECT_STORE_OPEN_COMMANDS, readStoreSchemaState } from 'hrc-store-sqlite'
 
-import type { InstallContext, PublishChannel, SideEffectMode } from './install-policy'
-import {
-  ASP_CONTRACT_PACKAGE_NAMES,
-  readInstalledAspContracts,
-  readPublishedHrcBuild,
-} from './lib/praesidium-build'
-import { assertPublishContainment } from './lib/publish-containment'
-import { activeRegistryUrl } from './lib/registry'
+import type { InstallContext, PublicationMode, SideEffectMode } from './install-policy'
+import { acquireInstallLock } from './lib/install-lock'
+import { ASP_CONTRACT_PACKAGE_NAMES, readInstalledAspContracts } from './lib/praesidium-build'
 import {
   type PublicationSource,
+  createPraesidiumBuild,
   provePublicationSource,
   timestampVersion,
 } from './publish-local-verdaccio'
+
+export { acquireInstallLock } from './lib/install-lock'
 
 export const CLI_PACKAGES = {
   'hrc-cli': { bin: 'hrc', entrypoint: 'src/cli.ts', helpExitCode: 0 },
@@ -69,7 +67,7 @@ export type PreparedReleaseBuilds = {
 type CliOptions = {
   context: InstallContext
   linkMode: SideEffectMode
-  publishChannel: PublishChannel
+  publicationMode: PublicationMode
   sourceRoot: string
 }
 
@@ -295,38 +293,6 @@ export async function bootstrapInstalledSurface(
   }
 }
 
-export async function acquireInstallLock(
-  lockDir: string,
-  sourceRoot: string
-): Promise<() => Promise<void>> {
-  await mkdir(dirname(lockDir), { recursive: true })
-  try {
-    await mkdir(lockDir)
-  } catch (error) {
-    if (errorCode(error) !== 'EEXIST') throw error
-    const owner = await readFile(join(lockDir, 'owner.json'), 'utf8').catch(
-      () => 'owner unavailable'
-    )
-    throw new Error(`install already in progress; lock ${lockDir} is held (${owner.trim()})`)
-  }
-
-  const token = randomUUID()
-  await writeFile(
-    join(lockDir, 'owner.json'),
-    JSON.stringify({ token, pid: process.pid, sourceRoot, startedAt: new Date().toISOString() })
-  )
-
-  return async () => {
-    const owner = await readFile(join(lockDir, 'owner.json'), 'utf8').catch(() => '')
-    if (owner && !owner.includes(token)) {
-      throw new Error(
-        `refusing to release an install lock now owned by another process: ${lockDir}`
-      )
-    }
-    await rm(lockDir, { recursive: true })
-  }
-}
-
 /** Production lifecycle plus a dependency-injected preparation hook for the live harness. */
 export async function installAtomicRelease(options: AtomicInstallOptions): Promise<string> {
   const sourceRoot = resolve(options.sourceRoot)
@@ -448,7 +414,10 @@ async function copyCanonicalSourceSnapshot(
   }
 }
 
-async function worktreePublishVersion(sourceRoot: string): Promise<string> {
+async function releaseBuildVersion(
+  sourceRoot: string,
+  publicationMode: PublicationMode
+): Promise<string> {
   const manifest = JSON.parse(await readFile(join(sourceRoot, 'package.json'), 'utf8')) as {
     version: string
   }
@@ -460,18 +429,26 @@ async function worktreePublishVersion(sourceRoot: string): Promise<string> {
   if (gitResult.status !== 0 || !gitResult.stdout.trim()) {
     throw new Error(`cannot resolve worktree publish SHA: ${gitResult.stderr || gitResult.stdout}`)
   }
-  return timestampVersion(manifest.version, 'worktree', new Date(), gitResult.stdout.trim())
+  return timestampVersion(
+    manifest.version,
+    publicationMode === 'worktree' ? 'worktree' : 'dev',
+    new Date(),
+    gitResult.stdout.trim()
+  )
 }
 
 async function prepareProductionRelease(
   releasePath: string,
-  options: Pick<CliOptions, 'publishChannel' | 'sourceRoot'>,
+  options: Pick<CliOptions, 'publicationMode' | 'sourceRoot'>,
   source: PublicationSource
 ): Promise<PreparedReleaseBuilds> {
-  if (source.canonical) {
-    await copyCanonicalSourceSnapshot(options.sourceRoot, releasePath, source.sourceCommit)
-  } else {
+  if (options.publicationMode === 'worktree') {
     await copySourceSnapshot(options.sourceRoot, releasePath)
+  } else {
+    // A local main-checkout install is a commit-only candidate. It may be
+    // unpushed, but its bytes must still come from the recorded HEAD rather
+    // than an untracked or modified file next to it.
+    await copyCanonicalSourceSnapshot(options.sourceRoot, releasePath, source.sourceCommit)
   }
   await runCommand('bun', ['install', '--frozen-lockfile'], releasePath)
   await runCommand('bun', ['run', 'clean'], releasePath)
@@ -487,28 +464,15 @@ async function prepareProductionRelease(
     )
   }
 
-  const buildOutput = join(releasePath, '.praesidium-hrc-build.json')
-  const publishArgs = ['scripts/publish-local-verdaccio.ts']
-  const publishEnv = {
-    ...process.env,
-    HRC_PUBLISH_SOURCE_ROOT: options.sourceRoot,
-    HRC_PUBLISH_EXPECTED_SOURCE_COMMIT: source.sourceCommit,
-    HRC_PUBLISH_BUILT_AT: new Date().toISOString(),
-    HRC_PUBLISH_BUILD_OUTPUT: buildOutput,
-  }
-  if (options.publishChannel === 'worktree') {
-    publishArgs.push('--channel', 'worktree')
-    publishEnv.HRC_PUBLISH_VERSION = await worktreePublishVersion(options.sourceRoot)
-  } else {
-    publishArgs.push('--channel', 'canonical')
-  }
-  await runCommand('bun', publishArgs, releasePath, publishEnv)
-  const builds = {
-    hrcBuild: await readPublishedHrcBuild(buildOutput, source.canonical),
+  return {
+    hrcBuild: createPraesidiumBuild({
+      canonicalRemote: source.canonicalRemote,
+      sourceCommit: source.sourceCommit,
+      setVersion: await releaseBuildVersion(options.sourceRoot, options.publicationMode),
+      builtAt: new Date().toISOString(),
+    }),
     aspContracts: await readInstalledAspContracts(releasePath),
   }
-  await rm(buildOutput, { force: true })
-  return builds
 }
 
 async function runUnlinkedInstall(
@@ -520,8 +484,13 @@ async function runUnlinkedInstall(
     await runCommand('bun', ['install', '--frozen-lockfile'], options.sourceRoot)
     await runCommand('bun', ['run', 'clean'], options.sourceRoot)
     await runCommand('bun', ['run', 'build'], options.sourceRoot)
-    const publishArgs = ['scripts/publish-local-verdaccio.ts', '--channel', 'worktree']
-    await runCommand('bun', publishArgs, options.sourceRoot)
+    if (options.publicationMode === 'worktree') {
+      await runCommand(
+        'bun',
+        ['scripts/publish-local-verdaccio.ts', '--channel', 'worktree'],
+        options.sourceRoot
+      )
+    }
   } finally {
     await releaseLock()
   }
@@ -539,7 +508,7 @@ function parseCli(argv: string[]): CliOptions {
 
   const context = values.get('context')
   const linkMode = values.get('link-mode')
-  const publishChannel = values.get('publish-channel')
+  const publicationMode = values.get('publication-mode')
   const sourceRoot = resolve(values.get('source-root') ?? process.cwd())
   if (context !== 'main' && context !== 'linked-worktree') {
     throw new Error(`invalid --context: ${context ?? '(missing)'}`)
@@ -547,22 +516,17 @@ function parseCli(argv: string[]): CliOptions {
   if (linkMode !== 'on' && linkMode !== 'off' && linkMode !== 'forced') {
     throw new Error(`invalid --link-mode: ${linkMode ?? '(missing)'}`)
   }
-  if (publishChannel !== 'dev' && publishChannel !== 'worktree') {
-    throw new Error(`invalid --publish-channel: ${publishChannel ?? '(missing)'}`)
+  if (publicationMode !== 'none' && publicationMode !== 'worktree') {
+    throw new Error(`invalid --publication-mode: ${publicationMode ?? '(missing)'}`)
   }
-  return { context, linkMode, publishChannel, sourceRoot }
+  return { context, linkMode, publicationMode, sourceRoot }
 }
 
 async function main(): Promise<void> {
   const options = parseCli(process.argv.slice(2))
-  // Every install path here ends in a publish. `publish-local-verdaccio` holds
-  // the authoritative refusal, but it only runs AFTER the release snapshot is
-  // copied, installed, and built — minutes on the small guest this guard exists
-  // for. Same function, same message, evaluated before any of that work.
-  assertPublishContainment(activeRegistryUrl())
   const paths = defaultInstalledSurfacePaths()
   console.log(
-    `[install] concurrency lock=${paths.lockDir} link=${options.linkMode} publish=${options.publishChannel}`
+    `[install] concurrency lock=${paths.lockDir} link=${options.linkMode} publication=${options.publicationMode}`
   )
 
   if (options.linkMode === 'off') {
@@ -572,16 +536,36 @@ async function main(): Promise<void> {
   }
 
   const publicationSource = provePublicationSource({
-    canonical: options.publishChannel !== 'worktree',
+    canonical: false,
     root: options.sourceRoot,
   })
+  let builds: PreparedReleaseBuilds | undefined
   const releasePath = await installAtomicRelease({
     context: options.context,
     linkMode: options.linkMode,
     paths,
     sourceRoot: options.sourceRoot,
-    prepareRelease: (path) => prepareProductionRelease(path, options, publicationSource),
+    prepareRelease: async (path) => {
+      builds = await prepareProductionRelease(path, options, publicationSource)
+      return builds
+    },
   })
+  if (options.publicationMode === 'worktree') {
+    const build = builds?.hrcBuild
+    if (build === undefined) throw new Error('worktree release has no HRC build tuple')
+    await runCommand(
+      'bun',
+      ['scripts/publish-local-verdaccio.ts', '--channel', 'worktree'],
+      releasePath,
+      {
+        ...process.env,
+        HRC_PUBLISH_SOURCE_ROOT: options.sourceRoot,
+        HRC_PUBLISH_EXPECTED_SOURCE_COMMIT: build.sourceCommit,
+        HRC_PUBLISH_BUILT_AT: build.builtAt,
+        HRC_PUBLISH_VERSION: build.setVersion,
+      }
+    )
+  }
   console.log(`[install] atomic HRC CLI cutover complete: ${releasePath}`)
   for (const line of schemaArmedWindowLines()) console.log(line)
 }

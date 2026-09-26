@@ -32,7 +32,7 @@ A fresh HRC database selects incremental auto-vacuum before journal setup or mig
 
 ## hrc-runtime.canonical-package-publication
 
-Every canonical HRC package set is produced from one clean commit contained by a freshly fetched named canonical ref, carries the exact normative praesidiumBuild tuple, refuses same-name/version replacement, and is verified by cache-empty registry tarball reads before publication succeeds.
+`just install` selects a local immutable HRC release without a registry write. `just publish` is the sole canonical package writer: under the same install lock it captures the selected release once, requires its exact stored HRC tuple to match a clean checkout commit contained by a freshly fetched named canonical ref, and treats the release as read-only. It stages package copies outside that release, publishes the stored tuple verbatim, refuses a partial or replacement set, verifies every package by a cache-empty registry tarball read, and rechecks the selected release identity before success. Worktree publication is isolated from canonical latest.
 
 ## hrc-runtime.collaboration-presentation-authority
 
@@ -76,7 +76,7 @@ Mobile suffix-roster families are finite. Every enabled ACP quick-pick base has 
 
 ## hrc-runtime.observable-release
 
-Every atomic HRC release records its exact HRC build and the installed versions of the thin ASP contract set (aspContracts) in praesidium-release.json before cutover; no locked ASP execution build is recorded anywhere. The daemon captures that immutable identity at startup, fails closed for invalid atomic manifests, and reports on every status read whether the running release still equals the installed release. Source and worktree daemons report unmanaged explicitly.
+Every atomic HRC release records its exact HRC build and the installed versions of the thin ASP contract set (aspContracts) in praesidium-release.json before cutover; no locked ASP execution build is recorded anywhere. The daemon captures that immutable identity at startup, fails closed for invalid atomic manifests, and reports on every status read whether the running release still equals the installed release. A local selected/running release may name a source commit not yet contained upstream; that identity is not canonical publication evidence. Only the later selected release canonical publication proves containment and the registry tuple. Source and worktree daemons report unmanaged explicitly.
 
 ## hrc-runtime.participant-session-lifecycle
 

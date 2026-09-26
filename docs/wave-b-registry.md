@@ -1,6 +1,6 @@
 # Verdaccio single-authority contract
 
-Status: current as of 2026-07-23. This document supersedes every prior Wave B
+Status: current as of 2026-09-26. This document supersedes every prior Wave B
 assumption about node-local Verdaccio stores, cross-store mirroring, or max3 as
 a registry authority.
 
@@ -14,14 +14,12 @@ http://mini:4873/
 ```
 
 Mini hosts the only Verdaccio service and writable package store. The service
-is operationally owned by `svc`. Every consumer and publisher on `svc`, `lab`,
-and `max3` uses the canonical mini endpoint; no independent registry is an
+is operationally owned by `svc`. Every consumer and publisher on `svc` and
+`max3` uses the canonical mini endpoint; no independent registry is an
 authorized source or publish target.
 
-Physical co-hosting does not change logical-node identity. `svc` and `lab` run
-on mini but remain separate logical nodes with separate users, roots, runtime
-state, placement authority, and credentials. Never infer HRC node identity from
-the registry hostname, URL, or network address.
+Physical co-hosting does not change logical-node identity. Never infer HRC node
+identity from the registry hostname, URL, or network address.
 
 Uplinks remain disabled for Praesidium boundary packages. Missing boundary
 packages fail closed instead of silently resolving different content from the
@@ -49,23 +47,28 @@ another node.
 Publication, lockfile selection, installation, and daemon activation are
 separate states:
 
-1. Publish the coherent package set to mini.
-2. Select and commit exact package versions in the consumer lock.
-3. Install/build from that pushed source and lock.
-4. Install the owning runtime release.
+1. Select and build the owning runtime release.
+2. Publish the coherent package set to mini when it is a canonical producer
+   release.
+3. Select and commit exact package versions in the consumer lock.
+4. Install/build from that pushed source and lock.
 5. Restart the affected daemon and verify its installed release and health.
 
 The repository-owned publication commands enforce package-set coherence and
 safe packed manifests:
 
 ```bash
-just publish-dev-dry-run
-just publish-dev
+just install
+just publish dry-run=1
+just publish
 ```
 
-Main-checkout `just install` may publish as part of the repository lifecycle.
-Linked worktrees retain their isolated publication channel unless an operator
-explicitly requests a cutover.
+For HRC, `just install` selects a local atomic release and does not write the
+registry. Only max3's `just publish` may advance the canonical HRC `latest`
+tuple; its selected release must be pushed and contained by `origin/main`.
+Linked worktrees retain their isolated `worktree` channel. svc and hrcdev
+deployment lanes consume explicit HRC targets and do not publish the shared
+tuple.
 
 ## Publish containment: hrcdev
 
@@ -85,11 +88,11 @@ federation config, else the hostname — and refuses a non-loopback publish from
 contained node before anything touches the registry.
 
 There is no override flag. `just deploy-hrcdev` names the loopback registry
-explicitly for the guest-side install. An agent or operator publishing by hand on
-the guest passes it the same way:
+explicitly for the guest-side install. An agent or operator publishing a
+noncanonical worktree package set on the guest passes it the same way:
 
 ```bash
-VERDACCIO_REGISTRY=http://127.0.0.1:4873/ just install
+VERDACCIO_REGISTRY=http://127.0.0.1:4873/ just publish-worktree
 ```
 
 A guest that must genuinely publish to mini is an operator lifecycle decision

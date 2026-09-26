@@ -4,19 +4,27 @@ status: active
 owner_project: hrc-runtime
 scope: canonical HRC package publication
 predicate: >
-  Every canonical HRC package set is produced from one clean commit contained
-  by a freshly fetched named canonical ref, carries the exact normative
-  praesidiumBuild tuple, refuses same-name/version replacement, and is verified
-  by cache-empty registry tarball reads before publication succeeds.
-authority: wrkq:T-06958
+  `just install` selects a local immutable HRC release without a registry
+  write. `just publish` is the sole canonical package writer: under the same
+  install lock it captures the selected release once, requires its exact stored
+  HRC tuple to match a clean checkout commit contained by a freshly fetched
+  named canonical ref, and treats the release as read-only. It stages package
+  copies outside that release, publishes the stored tuple verbatim, refuses a
+  partial or replacement set, verifies every package by a cache-empty registry
+  tarball read, and rechecks the selected release identity before success.
+  Worktree publication is isolated from canonical latest.
+authority: wrkq:T-06958; wrkq:T-08559 (Daedalus approval EN-18147, 2026-09-26)
 source:
   - scripts/publish-local-verdaccio.ts
   - scripts/publish-local-verdaccio.test.ts
+  - scripts/t08559-install-publish-split.test.ts
+  - scripts/lib/install-lock.ts
   - scripts/lib/praesidium-build.ts
 required_tests:
   - bun test scripts/publish-local-verdaccio.test.ts
-  - just publish-canonical-dry-run
-last_verified: 2026-07-24
-reopen_when: Package publication, versioning, registry authority, or provenance fields change.
+  - bun test scripts/t08559-install-publish-split.test.ts
+  - bun run build
+last_verified: 2026-09-26 focused regression and build; installed smoke pending
+reopen_when: Local release selection, package publication, versioning, registry authority, or provenance fields change.
 supersedes: []
 superseded_by: []

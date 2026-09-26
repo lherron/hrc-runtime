@@ -7,15 +7,14 @@ import { environmentWithoutGitOverrides } from 'hrc-core'
 import { type InstallOptions, parseInstallOptions, truthy } from './install-options'
 
 export type InstallContext = 'main' | 'linked-worktree'
-export type PublishChannel = 'dev' | 'worktree'
+export type PublicationMode = 'none' | 'worktree'
 export type SideEffectMode = 'on' | 'off' | 'forced'
 
 export type InstallPolicy = {
   context: InstallContext
   syncMode: SideEffectMode
   linkMode: SideEffectMode
-  publishChannel: PublishChannel
-  publishTag: 'latest' | 'worktree'
+  publicationMode: PublicationMode
 }
 
 type InstallPolicyInput = {
@@ -75,14 +74,13 @@ export function computeInstallPolicy(input: InstallPolicyInput): InstallPolicy {
       ? 'off'
       : 'on'
   const linkMode: SideEffectMode = forceLink ? 'forced' : isWorktree ? 'off' : 'on'
-  const publishChannel: PublishChannel = isWorktree ? 'worktree' : 'dev'
+  const publicationMode: PublicationMode = isWorktree ? 'worktree' : 'none'
 
   return {
     context: input.context,
     syncMode,
     linkMode,
-    publishChannel,
-    publishTag: publishChannel === 'worktree' ? 'worktree' : 'latest',
+    publicationMode,
   }
 }
 
@@ -94,8 +92,7 @@ function emitShell(policy: InstallPolicy): void {
   console.log(`PRAESIDIUM_INSTALL_CONTEXT=${shellValue(policy.context)}`)
   console.log(`PRAESIDIUM_INSTALL_SYNC_MODE=${shellValue(policy.syncMode)}`)
   console.log(`PRAESIDIUM_INSTALL_LINK_MODE=${shellValue(policy.linkMode)}`)
-  console.log(`PRAESIDIUM_INSTALL_PUBLISH_CHANNEL=${shellValue(policy.publishChannel)}`)
-  console.log(`PRAESIDIUM_INSTALL_PUBLISH_TAG=${shellValue(policy.publishTag)}`)
+  console.log(`PRAESIDIUM_INSTALL_PUBLICATION_MODE=${shellValue(policy.publicationMode)}`)
 }
 
 function parseCli(argv: string[]): InstallOptions {
