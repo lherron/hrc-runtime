@@ -4119,6 +4119,30 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "RecoverUnstartedRunRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RecoverUnstartedRunRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RecoverUnstartedRunResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RecoverUnstartedRunResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RecoverUnstartedRunStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RecoverUnstartedRunStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "recordCliLaunch",
       "kind": "value",
       "file": "packages/hrc-core/src/cli-metrics.ts",

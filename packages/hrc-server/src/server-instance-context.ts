@@ -13,6 +13,7 @@ import type { HrcServerInstanceClassBodyMethods } from './index.js'
 import type { BrokerReattachOutcome } from './startup-reconcile.js'
 import type { SubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
 
+import type { AcceptedRunRecoveryHandlersMethods } from './accepted-run-recovery-handlers.js'
 import type { AcpEventBridge } from './acp-event-bridge.js'
 import type { AppSessionHandlersMethods } from './app-session-handlers.js'
 import type { BridgeSurfaceHandlersMethods } from './bridge-surface-handlers.js'
@@ -81,7 +82,8 @@ export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
  * the previous `(...args: any[]) => any` mirror so cross-handler calls are
  * type-checked.
  */
-type DecomposedHandlerMethods = AppSessionHandlersMethods &
+type DecomposedHandlerMethods = AcceptedRunRecoveryHandlersMethods &
+  AppSessionHandlersMethods &
   BridgeSurfaceHandlersMethods &
   BrokerHeadlessHandlersMethods &
   BrokerInteractiveHandlersMethods &

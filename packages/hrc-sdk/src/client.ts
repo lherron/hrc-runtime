@@ -134,6 +134,8 @@ import type {
   PruneRuntimesResponse,
   ReconcileActiveRunsRequest,
   ReconcileActiveRunsResponse,
+  RecoverUnstartedRunRequest,
+  RecoverUnstartedRunResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   ResolveSessionRequest,
@@ -959,6 +961,12 @@ export class HrcClient {
     request: ReconcileActiveRunsRequest = {}
   ): Promise<ReconcileActiveRunsResponse> {
     return this.postJson<ReconcileActiveRunsResponse>('/v1/runs/reconcile-active', request)
+  }
+
+  async recoverUnstartedRun(
+    request: RecoverUnstartedRunRequest
+  ): Promise<RecoverUnstartedRunResponse> {
+    return this.postJson<RecoverUnstartedRunResponse>('/v1/runs/recover-unstarted', request)
   }
 
   async dropContinuation(request: DropContinuationRequest): Promise<DropContinuationResponse> {

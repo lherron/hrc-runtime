@@ -1435,6 +1435,23 @@ export type ReconcileActiveRunsResponse = {
   summary: ReconcileActiveRunsSummary
 }
 
+/** T-08385's reviewed single-run recovery door; it is never a bulk sweep. */
+export type RecoverUnstartedRunRequest = {
+  runId: string
+  dryRun?: boolean | undefined
+  yes?: boolean | undefined
+}
+
+export type RecoverUnstartedRunStatus = 'matched' | 'recovered' | 'projection_pending' | 'skipped'
+
+export type RecoverUnstartedRunResponse = {
+  ok: true
+  runId: string
+  runtimeId?: string | undefined
+  status: RecoverUnstartedRunStatus
+  reason?: string | undefined
+}
+
 export type SendWindowLiteralInputRequest = {
   runtimeId: string
   text: string

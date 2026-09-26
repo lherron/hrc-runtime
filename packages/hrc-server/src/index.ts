@@ -54,6 +54,10 @@ import type { TranscriptIndexer } from 'hrc-transcript-index'
 
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase, SqliteSlowStatement } from 'hrc-store-sqlite'
+import {
+  type AcceptedRunRecoveryHandlersMethods,
+  acceptedRunRecoveryHandlersMethods,
+} from './accepted-run-recovery-handlers.js'
 import { AcpEventBridge } from './acp-event-bridge.js'
 import { projectAspdServiceStatus } from './agent-spaces-adapter/aspd-preparation-client.js'
 import {
@@ -823,7 +827,8 @@ function decorateSessionTitles(db: HrcDatabase, sessions: HrcSessionRecord[]): H
 
 // biome-ignore lint/correctness/noUnusedVariables: Declaration merges prototype-attached handler methods into HrcServerInstance.
 interface HrcServerInstance
-  extends AppSessionHandlersMethods,
+  extends AcceptedRunRecoveryHandlersMethods,
+    AppSessionHandlersMethods,
     EventHandlersMethods,
     TurnDispatchHandlersMethods,
     BrokerInteractiveHandlersMethods,
@@ -1045,6 +1050,8 @@ class HrcServerInstance implements HrcServer {
       this.handleSweepZombieRuns(request),
     [exactRouteKey('POST', '/v1/runs/reconcile-active')]: (request) =>
       this.handleReconcileActiveRuns(request),
+    [exactRouteKey('POST', '/v1/runs/recover-unstarted')]: (request) =>
+      this.handleRecoverUnstartedRun(request),
     [exactRouteKey('POST', '/v1/runs/prepare-attached')]: (request) =>
       this.handlePrepareAttachedRun(request),
     [exactRouteKey('POST', '/v1/runs/resume-attached')]: (request) =>
@@ -3085,6 +3092,7 @@ export type HrcServerInstanceClassBodyMethods = {
 
 Object.assign(
   HrcServerInstance.prototype,
+  acceptedRunRecoveryHandlersMethods,
   appSessionHandlersMethods,
   eventHandlersMethods,
   turnDispatchHandlersMethods,

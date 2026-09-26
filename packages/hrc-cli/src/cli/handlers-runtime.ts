@@ -10,6 +10,7 @@ import type {
   PruneRuntimesResponse,
   ReconcileActiveRunsRequest,
   ReconcileActiveRunsResponse,
+  RecoverUnstartedRunRequest,
   SweepRuntimesRequest,
   SweepRuntimesResponse,
   SweepZombieRunsRequest,
@@ -667,6 +668,23 @@ export async function cmdRunReconcileActive(args: string[]): Promise<void> {
   }
 
   printReconcileActiveHuman(result, request.dryRun === true)
+}
+
+export async function cmdRunRecoverUnstarted(args: string[]): Promise<void> {
+  const runId = requireArg(args, 0, 'runId')
+  const { yes, jsonOutput, dryRun } = resolveMutationGate(args, 'run recover-unstarted')
+  const request: RecoverUnstartedRunRequest = {
+    runId,
+    dryRun,
+    ...(yes ? { yes } : {}),
+  }
+  const result = await createClient().recoverUnstartedRun(request)
+  if (jsonOutput) {
+    printJson(result)
+    return
+  }
+  const suffix = result.reason ? ` reason=${result.reason}` : ''
+  process.stdout.write(`run recovery ${result.status} ${result.runId}${suffix}\n`)
 }
 
 function printReconcileActiveHuman(result: ReconcileActiveRunsResponse, dryRun: boolean): void {

@@ -24,7 +24,13 @@ import {
   cmdSurfaceList,
   cmdSurfaceUnbind,
 } from './handlers-control.js'
-import { cmdLs, cmdRunReconcileActive, cmdRunSweepZombies, cmdShow } from './handlers-runtime.js'
+import {
+  cmdLs,
+  cmdRunReconcileActive,
+  cmdRunRecoverUnstarted,
+  cmdRunSweepZombies,
+  cmdShow,
+} from './handlers-runtime.js'
 import { cmdAttach, cmdResumeContinuation, cmdRun, cmdStart } from './handlers-scope-cmd.js'
 import { cmdAdminStatus } from './handlers-server.js'
 import { registerMovedCommandShim, throwMovedCommand } from './moved-command.js'
@@ -384,6 +390,20 @@ Semantics:
       const cmd = actionArgs[actionArgs.length - 1] as Command
       const rawArgv = rawArgvForVerb(cmd, 'reconcile-active', { offset: 1, fallback: [] })
       await cmdRunReconcileActive(rawArgv)
+    })
+
+  adminRuns
+    .command('recover-unstarted')
+    .description(
+      'recover one accepted run that never started by withdrawing its exact broker submission'
+    )
+    .argument('<runId>', 'accepted run id')
+    .option('--dry-run', 'preview without mutating (default unless --yes)')
+    .option('--yes', 'confirm the exact withdrawal and bounded recovery')
+    .option('--json', 'output the structured recovery result')
+    .action(async (_runId, _opts, cmd: Command) => {
+      const rawArgv = rawArgvForVerb(cmd, 'recover-unstarted', { offset: 1, fallback: [] })
+      await cmdRunRecoverUnstarted(rawArgv)
     })
 
   // -- show / ls (T-04219 P2: context-aware viewer + noun lister) --------------

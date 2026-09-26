@@ -154,6 +154,8 @@ export type {
   ResolveSessionResponse,
   ReconcileActiveRunsRequest,
   ReconcileActiveRunsResponse,
+  RecoverUnstartedRunRequest,
+  RecoverUnstartedRunResponse,
   ResumeAttachedRunRequest,
   ResumeAttachedRunResponse,
   ResumeContinuationRequest,

@@ -80,6 +80,7 @@ import type {
   UsageUpdatedPayload,
 } from 'spaces-harness-broker-protocol'
 
+import { terminalizeWithdrawnAcceptedRun } from '../accepted-run-recovery.js'
 import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
 import { timeLoopActivity } from '../event-loop-lag'
 import {
@@ -782,6 +783,23 @@ export class BrokerEventMapper {
       stale || isRetryableInvocationFailure(persistedEnvelope)
         ? undefined
         : emitLifecycleEvent(db, persistedEnvelope, ctx, now)
+    // T-08385: a replayed exact broker withdrawal settles only the matching
+    // accepted input. It never changes runtime status; a fresh operator probe
+    // is the sole authority for a subsequent ready projection.
+    const withdrawnRecoveryEvent =
+      !stale && persistedEnvelope.type === 'submission.withdrawn'
+        ? terminalizeWithdrawnAcceptedRun(db, {
+            runId: ctx.runId,
+            runtimeId: ctx.runtimeId,
+            invocationId: String(persistedEnvelope.invocationId),
+            submissionId: this.extractSubmissionIdFromPayload(persistedEnvelope.payload),
+            reason:
+              typeof (persistedEnvelope.payload as { reason?: unknown })?.reason === 'string'
+                ? (persistedEnvelope.payload as { reason: string }).reason
+                : undefined,
+            now,
+          })
+        : undefined
     const derived = derivedDescriptors.map((descriptor) =>
       emitDerivedTurnEvent(db, descriptor.eventKind, persistedEnvelope, ctx, now, {
         toolUseId: descriptor.toolUseId,
@@ -812,6 +830,7 @@ export class BrokerEventMapper {
       events: [],
       lifecycleEvents: [
         ...(lifecycleEvent ? [lifecycleEvent] : []),
+        ...(withdrawnRecoveryEvent ? [withdrawnRecoveryEvent] : []),
         ...derived,
         ...this.pendingLateStartEvents,
       ],

@@ -70,6 +70,7 @@ export {
 export { parseLaunchCommandScopedRunRequest } from './parsers/command-runs.js'
 export {
   parsePruneRuntimesRequest,
+  parseRecoverUnstartedRunRequest,
   parseReconcileActiveRunsRequest,
   parseSweepRuntimesRequest,
   parseSweepZombieRunsRequest,

@@ -2,6 +2,7 @@ import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type {
   PruneRuntimesRequest,
   ReconcileActiveRunsRequest,
+  RecoverUnstartedRunRequest,
   SweepRuntimeTransport,
   SweepRuntimesRequest,
   SweepZombieRunsRequest,
@@ -229,6 +230,27 @@ export function parseReconcileActiveRunsRequest(input: unknown): ReconcileActive
 
   return {
     ...(olderThan ? { olderThan: olderThan.trim() } : {}),
+    ...(typeof dryRun === 'boolean' ? { dryRun } : {}),
+    ...(typeof yes === 'boolean' ? { yes } : {}),
+  }
+}
+
+export function parseRecoverUnstartedRunRequest(input: unknown): RecoverUnstartedRunRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  const runId = input['runId']
+  if (typeof runId !== 'string' || runId.trim().length === 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runId must be a non-empty string',
+      { field: 'runId' }
+    )
+  }
+  const dryRun = readOptionalBooleanField(input, 'dryRun')
+  const yes = readOptionalBooleanField(input, 'yes')
+  return {
+    runId: runId.trim(),
     ...(typeof dryRun === 'boolean' ? { dryRun } : {}),
     ...(typeof yes === 'boolean' ? { yes } : {}),
   }
