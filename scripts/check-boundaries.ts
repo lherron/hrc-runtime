@@ -34,6 +34,8 @@ const layers: Layer[] = [
       'acp-',
       'gateway-discord',
       'gateway-ios',
+      'hrc-injector-core',
+      'hrc-mail-injector',
       'coordination-substrate',
       'wrkq-lib',
       'wlearn',
@@ -349,6 +351,8 @@ export {
   collectRequiredTsFiles,
   findMailScopedViolation,
   formatBoundaryViolationDiagnostic,
+  isForbidden,
+  layers,
   reportBoundaryViolations,
   type Violation,
 }
