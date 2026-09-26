@@ -93,7 +93,9 @@ function persistStartGraphInTransaction(
     )
   }
   const initialInputId = input.execution.dispatchRequest.startRequest.initialInput?.inputId
-  if (executionFormat === 'format2') {
+  const hasInitialInput = initialInputId !== undefined || identity.initialInputId !== undefined
+  let format2AdmissionIdentity: { idempotencyKey: string; requestHash: string } | undefined
+  if (executionFormat === 'format2' && hasInitialInput) {
     if (input.dispatchIdempotencyKey === undefined || input.format2RequestHash === undefined) {
       throw new BrokerControllerError(
         'format2_admission_identity_missing',
@@ -119,6 +121,10 @@ function persistStartGraphInTransaction(
           identityInitialInputId: identity.initialInputId,
         }
       )
+    }
+    format2AdmissionIdentity = {
+      idempotencyKey: input.dispatchIdempotencyKey,
+      requestHash: input.format2RequestHash,
     }
   }
   const session = ctx.db.sessions.getByHostSessionId(String(identity.hostSessionId))
@@ -391,14 +397,14 @@ function persistStartGraphInTransaction(
   // the broker response and bind through InputRepository after their body
   // write.  Never derive either identity for any other input.
   const initialNativeSubmissionId =
-    executionFormat === 'format2' ? String(input.execution.dispatchRequest.startRequest.initialInput?.inputId) : undefined
+    format2AdmissionIdentity !== undefined ? String(initialInputId) : undefined
   const admittedInput =
-    executionFormat === 'format2'
+    format2AdmissionIdentity !== undefined
       ? ctx.db.inputs.insert({
           inputId: String(identity.initialInputId),
           admissionHostSessionId: session.hostSessionId,
-          idempotencyKey: input.dispatchIdempotencyKey!,
-          requestHash: input.format2RequestHash!,
+          idempotencyKey: format2AdmissionIdentity.idempotencyKey,
+          requestHash: format2AdmissionIdentity.requestHash,
           hostSessionId: session.hostSessionId,
           runtimeId: runtime.runtimeId,
           operationId: String(identity.operationId),

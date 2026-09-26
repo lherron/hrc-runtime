@@ -65,6 +65,66 @@ test('format 2 start graph persists an observed-execution invocation without an 
   }
 })
 
+test('format 2 promptless open start persists only its invocation', async () => {
+  const fixture = await makeFixture()
+  try {
+    const start = makeStartInput()
+    const { runId: _legacyAdmissionRun, initialInputId: _initialInputId, ...identity } = start.identity
+    const { initialInput: _initialInput, ...startRequest } = start.execution.dispatchRequest.startRequest
+
+    const graph = persistStartGraph(
+      { db: fixture.db, now: () => '2026-09-26T13:20:00.000Z', serverInstanceId: 'srv-t08207' },
+      {
+        ...start,
+        identity,
+        execution: {
+          ...start.execution,
+          dispatchRequest: { ...start.execution.dispatchRequest, startRequest },
+        },
+        executionFormat: 'format2',
+      },
+      HELLO,
+      undefined
+    )
+
+    expect(graph.invocation).toMatchObject({ executionFormat: 'format2' })
+    expect(graph.run).toBeUndefined()
+    expect(graph.input).toBeUndefined()
+    expect(fixture.db.runs.listByRuntimeId(String(identity.runtimeId))).toEqual([])
+    expect(fixture.db.inputs.getByInputId(String(start.identity.initialInputId))).toBeNull()
+    expect(
+      fixture.db.hrcEvents.listByKind('input.admitted', { runtimeId: String(identity.runtimeId) })
+    ).toEqual([])
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('format 2 start still rejects a one-sided initial-input identity', async () => {
+  const fixture = await makeFixture()
+  try {
+    const start = makeStartInput()
+    const { runId: _legacyAdmissionRun, initialInputId: _initialInputId, ...identity } = start.identity
+
+    expect(() =>
+      persistStartGraph(
+        { db: fixture.db, now: () => '2026-09-26T13:20:00.000Z', serverInstanceId: 'srv-t08207' },
+        {
+          ...start,
+          identity,
+          executionFormat: 'format2',
+          dispatchIdempotencyKey: 't08207-one-sided-input',
+          format2RequestHash: 'sha256:t08207-one-sided-input',
+        },
+        HELLO,
+        undefined
+      )
+    ).toThrow('format 2 start graph requires the compiled initial input to match its frozen identity')
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
 test('format 2 start graph rolls back the protected input and admission event together', async () => {
   const fixture = await makeFixture()
   try {

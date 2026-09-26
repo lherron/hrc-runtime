@@ -2,8 +2,6 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 
 import { BrokerEventMapper } from '../broker/event-mapper.js'
 import {
-  GENERATION,
-  LANE_REF,
   TMUX_HOST_SESSION_ID,
   TMUX_INVOCATION_ID,
   TMUX_OPERATION_ID,
@@ -134,6 +132,19 @@ test('input-id-less provider start mints one execution; later submission.execute
       ?.hrcSeq,
   })
   expect(db.runs.listRuns({ hostSessionId: TMUX_HOST_SESSION_ID })).toHaveLength(1)
+
+  const terminal = mapper.apply(
+    envelope(
+      'turn.completed',
+      3,
+      { turnId: nativeTurnId, status: 'completed', producedContent: true },
+      { invocationId: TMUX_INVOCATION_ID, turnId: nativeTurnId }
+    )
+  )
+  expect(db.runs.getByRunId(run.runId)).toMatchObject({ status: 'completed', nativeTurnId })
+  expect(terminal.lifecycleEvents.find((event) => event.eventKind === 'turn.completed')).toMatchObject({
+    runId: run.runId,
+  })
 })
 
 test('a format-2 unowned turn obtains its own execution and cannot consume a later joined input', () => {
