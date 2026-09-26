@@ -260,6 +260,7 @@ export type V2ExecutionRejectionCode =
   | 'execution-hash-mismatch'
   | 'execution-identity-mismatch'
   | 'execution-release-invalid'
+  | 'execution_presentation_constraint_mismatch'
   | 'format2_initial_input_undeliverable'
 
 function hasOwnKeys(value: Record<string, unknown>): boolean {
@@ -287,6 +288,18 @@ export function buildV2CompileRequest(input: {
     ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
   }
   const requested = { ...(intent.selection ?? {}) }
+  // T-09274: `presentation.operator` is the user-level request constraint.
+  // Carry it through the existing producer-v2 boolean rather than deriving a
+  // profile, driver, or hosting plan in HRC. An explicit operator choice has
+  // precedence over the lower-level requested.presentation field only.
+  if (intent.presentation?.operator === 'none') {
+    requested.presentation = false
+  } else if (
+    intent.presentation?.operator === 'tmux-tui' ||
+    intent.presentation?.operator === 'observer'
+  ) {
+    requested.presentation = true
+  }
   const summonDirectives = { ...(intent.summonDirectives ?? {}) }
 
   return {
@@ -611,7 +624,8 @@ function admitV2Execution(
   response: unknown,
   identity: RuntimeIdentityAllocation,
   agentId: string,
-  executionFormat: HrcExecutionFormat
+  executionFormat: HrcExecutionFormat,
+  requestedOperatorPresentation: 'none' | 'tmux-tui' | 'observer' | undefined
 ):
   | { admitted: true; plan: V2CompiledPlan; execution: V2SelectedExecution }
   | { admitted: false; code: V2ExecutionRejectionCode; diagnostic: HrcAdmissionDiagnostic } {
@@ -713,6 +727,42 @@ function admitV2Execution(
       presentationSurface: execution['presentationSurface'],
       terminalRequired: execution.hosting['terminalRequired'],
     })
+  }
+  if (requestedOperatorPresentation === 'none') {
+    const selection = plan.selection as unknown as Record<string, unknown>
+    const provenance = isRecord(selection['provenance']) ? selection['provenance'] : {}
+    const actual = {
+      requestedOperatorPresentation,
+      selectedPresentation: selection['presentation'],
+      presentationProvenance: provenance['presentation'],
+      terminalRequired: execution.hosting['terminalRequired'],
+      terminalHost: execution.hosting['terminalHost'],
+      presentationFulfillment: execution['presentationFulfillment'],
+      presentationSurface: execution['presentationSurface'],
+    }
+    if (
+      selection['presentation'] !== false ||
+      provenance['presentation'] !== 'compile-request' ||
+      execution.hosting['terminalRequired'] !== false ||
+      execution.hosting['terminalHost'] !== undefined ||
+      execution['presentationFulfillment'] === 'attachable' ||
+      execution['presentationSurface'] !== undefined
+    ) {
+      return admissionRefusal(
+        'execution_presentation_constraint_mismatch',
+        'plan.execution.presentation',
+        actual,
+        {
+          requestedOperatorPresentation: 'none',
+          selectedPresentation: false,
+          presentationProvenance: 'compile-request',
+          terminalRequired: false,
+          terminalHost: null,
+          presentationFulfillment: 'intrinsic | birth-variant',
+          presentationSurface: null,
+        }
+      )
+    }
   }
   const profileField = (
     ['profileId', 'profileHash', 'compatibilityHash', 'startRequestHash'] as const
@@ -864,7 +914,8 @@ export async function compileBrokerRuntimePlan(
     response,
     identity,
     v2AgentIdForScope(input.scopeRef),
-    executionFormat
+    executionFormat,
+    intent.presentation?.operator
   )
 
   if (!selection.admitted) {

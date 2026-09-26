@@ -182,6 +182,34 @@ describe('v2 compile request carrier', () => {
     expect(request.selectionContext).toBeUndefined()
   })
 
+  it('maps an explicit operator choice through the existing presentation request without changing other selection', () => {
+    const none = buildV2CompileRequest({
+      intent: intent({
+        selection: { model: 'gpt-5.5', presentation: true },
+        presentation: { operator: 'none' },
+      }),
+      scopeRef: 'agent:astra:project:hrc-runtime',
+      identity,
+    })
+    const viewer = buildV2CompileRequest({
+      intent: intent({
+        selection: { presentation: false },
+        presentation: { operator: 'tmux-tui' },
+      }),
+      scopeRef: 'agent:astra:project:hrc-runtime',
+      identity,
+    })
+    const unselected = buildV2CompileRequest({
+      intent: intent(),
+      scopeRef: 'agent:astra:project:hrc-runtime',
+      identity,
+    })
+
+    expect(none.requested).toEqual({ model: 'gpt-5.5', presentation: false })
+    expect(viewer.requested).toEqual({ presentation: true })
+    expect(unselected.requested).toEqual({})
+  })
+
   it('does not allocate user-turn identity for an interactive birth without materialized input', async () => {
     const result = await compileBrokerRuntimePlan(
       {

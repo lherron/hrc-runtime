@@ -27,12 +27,16 @@ import { createBrokerDurableHeadlessAllocator } from '../broker-interactive-hand
 import { HarnessBrokerController } from '../broker/controller'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
-import { assertNoOperatorPresentationConflict } from '../presentation-operator'
+import {
+  assertNoOperatorPresentationConflict,
+  liveRuntimePresentation,
+} from '../presentation-operator'
 import {
   type AspdDouble,
   type HostingLedger,
   type Release,
   makeRelease,
+  producerResult,
   startAspdDouble,
   tmuxManagerDouble,
   workerClient,
@@ -128,6 +132,21 @@ beforeEach(async () => {
   releaseB = makeRelease(join(scratch, 'releases'), 'b')
   aspdSocket = join(scratch, 'aspd.sock')
   aspd = startAspdDouble(aspdSocket, releaseA)
+  // A no-viewer response is terminal-free and does not carry an attachable
+  // operator surface. The explicit mismatch test below overrides this with
+  // the actual hrcdev bad shape.
+  aspd.producerResult = producerResult({
+    selection: {
+      presentation: false,
+      provenance: {
+        harness: 'catalog-default',
+        modelProvider: 'catalog-default',
+        model: 'catalog-default',
+        presentation: 'compile-request',
+      },
+    },
+    execution: { presentationFulfillment: 'birth-variant' },
+  })
   setEnv('HRC_ASPD_SOCKET', aspdSocket)
   // A resolver-governed selection that would be wrong if this route consulted it.
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
@@ -184,6 +203,13 @@ describe('T-08553 per-request operator presentation', () => {
     return {
       ...headlessIntent(),
       selection: { presentation: false },
+      presentation: { operator: 'none' },
+    }
+  }
+
+  function operatorOnlyNoViewerIntent(): HrcRuntimeIntent {
+    return {
+      ...headlessIntent(),
       presentation: { operator: 'none' },
     }
   }
@@ -248,6 +274,53 @@ describe('T-08553 per-request operator presentation', () => {
     expect(response.status).toBeLessThan(500)
   })
 
+  it('sends operator none as the existing presentation constraint and fences a terminal producer answer before preparation', async () => {
+    const s = await session()
+    // This mirrors the hrcdev readback: agent-profile presentation true,
+    // terminal hosting, and an attachable operator surface. Until HRC carries
+    // operator:none into `requested.presentation`, the compile double returns
+    // this shape and the start wrongly reaches allocation.
+    aspd.producerResult = producerResult({
+      selection: {
+        presentation: true,
+        provenance: {
+          harness: 'catalog-default',
+          modelProvider: 'catalog-default',
+          model: 'catalog-default',
+          presentation: 'agent-profile',
+        },
+      },
+      execution: {
+        hosting: {
+          executionTransport: 'pty',
+          terminalRequired: true,
+          terminalHost: 'tmux',
+          processExecution: 'broker-process',
+        },
+        presentationFulfillment: 'attachable',
+        presentationSurface: { transport: 'websocket-unix', terminalHost: 'tmux' },
+      },
+    })
+
+    const response = await turn(s.hostSessionId, operatorOnlyNoViewerIntent())
+
+    expect(aspd.compileRequested).toEqual([{ presentation: false }])
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: 'runtime_unavailable',
+        detail: {
+          code: 'admission-rejected',
+          admissionCode: 'execution_presentation_constraint_mismatch',
+        },
+      },
+    })
+    expect(operationsFor(s.hostSessionId)).toEqual([])
+    expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toEqual([])
+    expect(ledger.commands).toEqual([])
+    expect(ledger.startCalls).toEqual([])
+  })
+
   it('refuses unknown values and a viewer placement for none before any effect', async () => {
     const s = await session()
     for (const presentation of [
@@ -291,10 +364,7 @@ describe('T-08553 per-request operator presentation', () => {
 
   it('refuses explicit none against a live viewer or interactive surface and leaves it untouched', async () => {
     const s = await session()
-    const live = [
-      liveRuntime(s, 'rt-t08553-tui', 'headless', 'tmux-tui'),
-      liveRuntime(s, 'rt-t08553-tmux', 'tmux', 'none'),
-    ]
+    const live = [liveRuntime(s, 'rt-t08553-tui', 'headless', 'tmux-tui')]
     for (const runtime of live) {
       internal().db.runtimes.insert(runtime as never)
       const before = internal().db.runtimes.getByRuntimeId(runtime.runtimeId)
@@ -308,6 +378,15 @@ describe('T-08553 per-request operator presentation', () => {
       expect(internal().db.runtimes.getByRuntimeId(runtime.runtimeId)).toEqual(before)
       internal().db.runtimes.update(runtime.runtimeId, { status: 'terminated' } as never)
     }
+    const legacyTmux = {
+      ...liveRuntime(s, 'rt-t08553-tmux', 'tmux', 'none'),
+      // A non-broker legacy tmux runtime has no durable broker hosting fact;
+      // its transport remains the interactive fallback.
+      controllerKind: 'process',
+    } as HrcRuntimeSnapshot
+    expect(() => assertNoOperatorPresentationConflict(noViewerIntent(), [legacyTmux])).toThrow(
+      'interactive'
+    )
     expect(aspd.compileCalls).toBe(0)
     expect(operationsFor(s.hostSessionId)).toEqual([])
   })
@@ -357,6 +436,19 @@ describe('T-08553 per-request operator presentation', () => {
     expect(() => assertNoOperatorPresentationConflict(noViewerIntent(), [unreadable])).toThrow(
       'unknown'
     )
+  })
+
+  it('reads durable broker presentation before the broad tmux transport fallback', async () => {
+    const s = await session()
+    const brokerTui = liveRuntime(s, 'rt-t08553-broker-tui', 'tmux', 'tmux-tui')
+    const legacyTmux = {
+      ...brokerTui,
+      runtimeId: 'rt-t08553-legacy-tmux',
+      controllerKind: 'process',
+    } as HrcRuntimeSnapshot
+
+    expect(liveRuntimePresentation(brokerTui)).toBe('tmux-tui')
+    expect(liveRuntimePresentation(legacyTmux)).toBe('interactive')
   })
 
   it('a same-key retry reaches its frozen no-viewer preparation without re-evaluating node defaults', async () => {

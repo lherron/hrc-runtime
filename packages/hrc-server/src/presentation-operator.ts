@@ -125,12 +125,17 @@ export function liveRuntimePresentation(
   runtime: HrcRuntimeSnapshot
 ): 'none' | 'tmux-tui' | 'observer' | 'interactive' | 'unknown' | undefined {
   if (isRuntimeUnavailableStatus(runtime.status) || runtime.status === 'failed') return undefined
+  if (runtime.controllerKind === 'harness-broker') {
+    // A harness broker can run on a tmux substrate even when its durable
+    // operator surface is none, or own a TUI over a tmux transport. Hosting is
+    // the source of truth; the transport is only a legacy fallback.
+    const hosting = parseBrokerRuntimeHostingState(runtime)
+    if (hosting === undefined) return 'unknown'
+    if (hosting.presentation.kind === 'tmux-tui') return 'tmux-tui'
+    if (hosting.presentation.kind === 'observer') return 'observer'
+    return 'none'
+  }
   if (runtime.transport === 'tmux') return 'interactive'
-  if (runtime.controllerKind !== 'harness-broker') return 'none'
-  const hosting = parseBrokerRuntimeHostingState(runtime)
-  if (hosting === undefined) return 'unknown'
-  if (hosting.presentation.kind === 'tmux-tui') return 'tmux-tui'
-  if (hosting.presentation.kind === 'observer') return 'observer'
   return 'none'
 }
 
