@@ -26,8 +26,8 @@ function toyRegistry(): Registry {
 }
 
 describe('check-cli-surface — passes on good', () => {
-  test('the live hrc + hrcchat surfaces are conformant', () => {
-    // Guards the real CLIs against future help/registry drift.
+  test('the live hrc surface is conformant', () => {
+    // Guards the real CLI against future help/registry drift.
     expect(collectFindings()).toHaveLength(0)
   })
 })

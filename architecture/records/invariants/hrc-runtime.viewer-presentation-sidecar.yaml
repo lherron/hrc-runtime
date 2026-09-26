@@ -38,8 +38,7 @@ source:
   - wrkq:T-07729
   - docs/proposals/viewer-sidecar-spec.md
   - packages/hrc-server/src/runtime-io-handlers.ts
-  - packages/hrc-viewer/src/viewer.ts
-  - packages/hrc-viewer/src/ghostmux.ts
+  - wrkq:T-08623
   - packages/hrc-server/src/runtime-control-handlers/session-rotation.ts
 required_tests:
   - just architecture-records

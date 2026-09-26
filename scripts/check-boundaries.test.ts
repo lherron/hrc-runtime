@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import {
   type Violation,
   collectRequiredTsFiles,
-  findHrcViewerSdkViolations,
   findMailScopedViolation,
   formatBoundaryViolationDiagnostic,
 } from './check-boundaries.ts'
@@ -27,10 +26,6 @@ describe('check-boundaries diagnostics', () => {
     } finally {
       await rm(fixtureRoot, { recursive: true, force: true })
     }
-  })
-
-  test('hrc-viewer uses only its §5.4 side-effect-free SDK allowlist', async () => {
-    expect(await findHrcViewerSdkViolations()).toEqual([])
   })
 
   test('forbidden layer imports teach fix, why, and exception path', () => {

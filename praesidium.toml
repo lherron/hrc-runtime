@@ -4,7 +4,7 @@ slug = "hrc-runtime"
 [commands]
 # HRC consumes ASP packages from Verdaccio and publishes HRC packages for ACP
 # consumption. Full main-checkout `just install` keeps the ordinary ASP sync,
-# dev/latest publish, and hrc/hrcchat wrapper links. Linked-worktree installs
+# dev/latest publish and hrc wrapper links. Linked-worktree installs
 # auto-detect Git worktree context, skip ASP sync and wrapper relinks by default,
 # and publish only isolated worktree-tagged artifacts.
 prep = "bun install --frozen-lockfile && bun run prepare"

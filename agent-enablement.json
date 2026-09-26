@@ -134,7 +134,7 @@
         "TB": {
           "status": "required",
           "minimumRung": "process-carrier",
-          "rationale": "AGENTS.md is an active process carrier for the cross-repo publish/sync, daemon lifecycle, and hrcchat validation rituals."
+          "rationale": "AGENTS.md is an active process carrier for the cross-repo publish/sync and daemon lifecycle."
         },
         "TC": {
           "status": "required",
@@ -149,7 +149,7 @@
         "TD.selfDescribingSurfaceConformance": {
           "status": "required",
           "minimumRung": "registry-derived-help-docs-plus-drift-gate",
-          "rationale": "hrc + hrcchat ship large CLIs where stale help would misfire agents; hrc-runtime already meets this bar with check-cli-surface.ts and is the N=2 PRESENT corroboration of the refinement."
+          "rationale": "hrc ships a large CLI where stale help would misfire agents; hrc-runtime already meets this bar with check-cli-surface.ts and is the N=2 PRESENT corroboration of the refinement."
         },
         "TE": {
           "status": "required",

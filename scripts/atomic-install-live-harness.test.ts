@@ -32,7 +32,7 @@ async function makeLegacyLinkedSurface(): Promise<{
   fixtures.push(root)
 
   const checkout = join(root, 'checkout')
-  const packageRoot = join(checkout, 'packages', 'hrcchat-cli')
+  const packageRoot = join(checkout, 'packages', 'hrc-cli')
   const dependencyRoot = join(checkout, 'node_modules')
   const globalModules = join(root, 'global', 'node_modules')
   const binDir = join(root, 'bin')
@@ -42,7 +42,7 @@ async function makeLegacyLinkedSurface(): Promise<{
   await mkdir(globalModules, { recursive: true })
   await mkdir(binDir, { recursive: true })
 
-  const entrypoint = join(packageRoot, 'src', 'main.ts')
+  const entrypoint = join(packageRoot, 'src', 'cli.ts')
   await writeFile(
     entrypoint,
     "#!/usr/bin/env bun\nimport value from 'fixture-dependency'\nconsole.log(value)\n"
@@ -57,9 +57,9 @@ async function makeLegacyLinkedSurface(): Promise<{
     "export default 'legacy-surface-ok'\n"
   )
 
-  await symlink(packageRoot, join(globalModules, 'hrcchat-cli'))
-  const binPath = join(binDir, 'hrcchat')
-  await symlink(join(globalModules, 'hrcchat-cli', 'src', 'main.ts'), binPath)
+  await symlink(packageRoot, join(globalModules, 'hrc-cli'))
+  const binPath = join(binDir, 'hrc')
+  await symlink(join(globalModules, 'hrc-cli', 'src', 'cli.ts'), binPath)
 
   return { binPath, dependencyRoot }
 }
@@ -147,13 +147,8 @@ async function makeAtomicSurface(): Promise<{
   // Model the pre-migration Bun-link topology. installAtomicRelease first
   // converts this to the stable current-link topology without changing roots.
   await symlink(join(oldRelease, 'packages', 'hrc-cli'), join(paths.globalModules, 'hrc-cli'))
-  await symlink(
-    join(oldRelease, 'packages', 'hrcchat-cli'),
-    join(paths.globalModules, 'hrcchat-cli')
-  )
   await symlink(join(paths.globalModules, 'hrc-cli', 'src', 'cli.ts'), join(paths.binDir, 'hrc'))
-  const binPath = join(paths.binDir, 'hrcchat')
-  await symlink(join(paths.globalModules, 'hrcchat-cli', 'src', 'main.ts'), binPath)
+  const binPath = join(paths.binDir, 'hrc')
 
   return { binPath, oldRelease, paths, sourceRoot: join(root, 'checkout') }
 }
@@ -168,10 +163,8 @@ function invokeInstalled(binPath: string): { exitCode: number; stderr: string; s
 }
 
 describe('T-06685 installed CLI continuity harness', () => {
-  test('entrypoint smoke expects the hrcchat retirement exit', () => {
-    expect(CLI_PACKAGES['hrcchat-cli'].helpExitCode).toBe(2)
+  test('entrypoint smoke expects the HRC CLI exit', () => {
     expect(CLI_PACKAGES['hrc-cli'].helpExitCode).toBe(0)
-    expect(CLI_PACKAGES['hrc-viewer'].helpExitCode).toBe(0)
   })
 
   test('real atomic-install entrypoints are executable before publication', async () => {

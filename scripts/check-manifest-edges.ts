@@ -58,7 +58,11 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 async function readPackageInfo(dir: string): Promise<PackageInfo | undefined> {
-  const packageJson = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8')) as PackageJson
+  const manifestPath = join(dir, 'package.json')
+  if (!(await fileExists(manifestPath))) {
+    return undefined
+  }
+  const packageJson = JSON.parse(await readFile(manifestPath, 'utf8')) as PackageJson
   if (typeof packageJson.name !== 'string') {
     return undefined
   }

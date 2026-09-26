@@ -40,8 +40,6 @@ import {
 
 export const CLI_PACKAGES = {
   'hrc-cli': { bin: 'hrc', entrypoint: 'src/cli.ts', helpExitCode: 0 },
-  'hrcchat-cli': { bin: 'hrcchat', entrypoint: 'src/main.ts', helpExitCode: 2 },
-  'hrc-viewer': { bin: 'hrc-viewer', entrypoint: 'src/main.ts', helpExitCode: 0 },
 } as const
 
 type CliPackageName = keyof typeof CLI_PACKAGES

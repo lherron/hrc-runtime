@@ -158,36 +158,6 @@
         "typescript": "^5.8.3",
       },
     },
-    "packages/hrc-viewer": {
-      "name": "hrc-viewer",
-      "version": "0.1.0",
-      "bin": {
-        "hrc-viewer": "./bin/hrc-viewer.js",
-      },
-      "dependencies": {
-        "agent-scope": "latest",
-        "hrc-sdk": "*",
-      },
-      "devDependencies": {
-        "@types/bun": "1.3.14",
-        "typescript": "^5.8.3",
-      },
-    },
-    "packages/hrcchat-cli": {
-      "name": "hrcchat-cli",
-      "version": "0.1.0",
-      "bin": {
-        "hrcchat": "./bin/hrcchat.js",
-      },
-      "dependencies": {
-        "commander": "^14.0.0",
-        "hrc-core": "*",
-      },
-      "devDependencies": {
-        "@types/bun": "1.3.14",
-        "typescript": "^5.8.3",
-      },
-    },
   },
   "overrides": {
     "@types/bun": "1.3.14",
@@ -256,10 +226,6 @@
     "hrc-store-sqlite": ["hrc-store-sqlite@workspace:packages/hrc-store-sqlite"],
 
     "hrc-transcript-index": ["hrc-transcript-index@workspace:packages/hrc-transcript-index"],
-
-    "hrc-viewer": ["hrc-viewer@workspace:packages/hrc-viewer"],
-
-    "hrcchat-cli": ["hrcchat-cli@workspace:packages/hrcchat-cli"],
 
     "json-schema-traverse": ["json-schema-traverse@1.0.0", "http://mini:4873/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz", {}, "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug=="],
 

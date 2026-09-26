@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * check-cli-surface — self-describing surface conformance for the hrc + hrcchat CLIs.
+ * check-cli-surface — self-describing surface conformance for the hrc CLI.
  *
  * agent-enablement toolkit §10-D (axis TD) + §7/§5 carrier-health (fail-when-stale).
  * Catalog: archagent/agent-enablement/catalog/typescript/discovery/surface-conformance.
@@ -10,12 +10,12 @@
  * agent obeys confident-but-false help and misfires. This gate binds the curated text to the live
  * Commander registry:
  *
- *   1. ROSTER COMPLETENESS — every visible top-level command appears in that CLI's generated
+ *   1. ROSTER COMPLETENESS — every visible top-level command appears in the generated
  *      `info` COMMANDS roster (guards against the generator being bypassed / a command going
- *      undocumented; this is the class that dropped `turn` from `hrcchat info`).
- *   2. COMMAND-PATH RESOLUTION — every binary-prefixed `hrc <path>` / `hrcchat <path>` token in the
+ *      undocumented).
+ *   2. COMMAND-PATH RESOLUTION — every binary-prefixed `hrc <path>` token in the
  *      curated prose + usage reference resolves to a real registered command/subcommand.
- *   3. FLAG RESOLUTION — every `--long` flag adjacent to such a token resolves to that CLI's
+ *   3. FLAG RESOLUTION — every `--long` flag adjacent to such a token resolves to the CLI's
  *      registered long-option set.
  *
  * Exit 0 = conformant. Exit 1 = drift (with teaching diagnostics). The generated rosters mean
@@ -26,8 +26,6 @@ import type { Command } from 'commander'
 
 import { buildProgram as buildHrcProgram } from '../packages/hrc-cli/src/cli/build-program.ts'
 import { buildInfoText as buildHrcInfoText } from '../packages/hrc-cli/src/cli/help.ts'
-import { buildInfoText as buildHrcchatInfoText } from '../packages/hrcchat-cli/src/commands/info.ts'
-import { program as hrcchatProgram } from '../packages/hrcchat-cli/src/main.ts'
 
 // ───────────────────────── registry model ─────────────────────────
 
@@ -103,14 +101,14 @@ function cleanToken(raw: string): string {
   return raw.replace(/^[`'"(]+/, '').replace(/[`'".,)]+$/, '')
 }
 
-/** Extract every `hrc …` / `hrcchat …` claim from a curated text block. */
+/** Extract every `hrc …` claim from a curated text block. */
 function extractClaims(source: string, text: string): Claim[] {
   const claims: Claim[] = []
   const lines = text.split('\n')
   lines.forEach((line, index) => {
     const hits: { bin: string; at: number }[] = []
-    for (const match of line.matchAll(/\b(hrcchat|hrc)\b/g)) {
-      hits.push({ bin: match[1], at: match.index })
+    for (const match of line.matchAll(/\bhrc\b/g)) {
+      hits.push({ bin: 'hrc', at: match.index })
     }
 
     hits.forEach((hit, hitIndex) => {
@@ -304,20 +302,17 @@ function report(findings: Finding[]): void {
 /** Run the conformance check against the live HRC CLI surfaces; returns all drift findings. */
 export function collectFindings(): Finding[] {
   const hrc = buildRegistry('hrc', buildHrcProgram())
-  const hrcchat = buildRegistry('hrcchat', hrcchatProgram)
-  const registries: Record<string, Registry> = { hrc, hrcchat }
+  const registries: Record<string, Registry> = { hrc }
 
   const hrcAgentInfo = buildHrcInfoText(hrc.root, undefined, 'agent')
   const hrcHumanInfo = buildHrcInfoText(hrc.root, undefined, 'human')
-  const hrcchatInfo = buildHrcchatInfoText(hrcchat.root)
 
   const claims: Claim[] = [
     ...extractClaims('hrc info --agent', hrcAgentInfo),
     ...extractClaims('hrc info --human', hrcHumanInfo),
-    ...extractClaims('hrcchat info', hrcchatInfo),
   ]
 
-  return [...checkRosterCompleteness(hrcchat, hrcchatInfo), ...checkClaims(registries, claims)]
+  return checkClaims(registries, claims)
 }
 
 // Pure helpers exported for the regression fixture (scripts/check-cli-surface.test.ts).
@@ -342,5 +337,5 @@ if (import.meta.main) {
     )
     process.exit(1)
   }
-  console.log('check-cli-surface: hrc + hrcchat help/info match live registries ✓')
+  console.log('check-cli-surface: hrc help/info match live registry ✓')
 }

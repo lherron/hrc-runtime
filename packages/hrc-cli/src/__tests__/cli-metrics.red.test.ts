@@ -1,5 +1,5 @@
 /**
- * T-06511 red bar: every real hrc/hrcchat process must append one bounded CLI
+ * T-06511 red bar: every real hrc process must append one bounded CLI
  * metrics record from its exit handler, including failures and SDK RPC spans.
  *
  * These are subprocess tests by design. Mocking process.exit would skip the
@@ -14,7 +14,6 @@ import { pathToFileURL } from 'node:url'
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..', '..', '..')
 const HRC_ENTRY = join(REPO_ROOT, 'packages', 'hrc-cli', 'src', 'cli.ts')
-const HRCCHAT_ENTRY = join(REPO_ROOT, 'packages', 'hrcchat-cli', 'src', 'main.ts')
 const MANY_RPC_PRELOAD = join(import.meta.dir, 'fixtures', 'cli-metrics-many-rpc.preload.ts')
 const STDOUT_PRELOAD = join(import.meta.dir, 'fixtures', 'cli-metrics-stdout.preload.ts')
 const METRICS_AGENT = 'metrics-red-agent'
@@ -161,7 +160,7 @@ async function readOnlyMetric(stateRoot: string): Promise<MetricLine> {
 function expectBaseMetric(
   line: MetricLine,
   expected: {
-    bin: 'hrc' | 'hrcchat'
+    bin: 'hrc'
     cmd: string
     exitCode: number
     stdoutBytes: number
@@ -202,8 +201,8 @@ function dateStamp(daysAgo: number): string {
 }
 
 describe('T-06511 CLI metrics recorder [RED]', () => {
-  test('imports of both bin modules remain side-effect-free', async () => {
-    for (const entry of [HRC_ENTRY, HRCCHAT_ENTRY]) {
+  test('imports the bin module without side effects', async () => {
+    for (const entry of [HRC_ENTRY]) {
       const sandbox = await createSandbox()
       const result = await runBun(
         ['-e', `await import(${JSON.stringify(pathToFileURL(entry).href)})`],
@@ -226,22 +225,6 @@ describe('T-06511 CLI metrics recorder [RED]', () => {
       cmd: 'info',
       exitCode: 0,
       stdoutBytes: result.stdout.byteLength,
-    })
-    expect(line.record.flags).toEqual([])
-    expect(line.record.rpc).toEqual([])
-  })
-
-  test('records the hrcchat retirement fence without an RPC', async () => {
-    const sandbox = await createSandbox()
-    const result = await runEntry(HRCCHAT_ENTRY, ['info'], sandbox)
-    const line = await readOnlyMetric(sandbox.stateRoot)
-
-    expect(result.exitCode).toBe(2)
-    expectBaseMetric(line, {
-      bin: 'hrcchat',
-      cmd: '',
-      exitCode: 2,
-      stdoutBytes: 0,
     })
     expect(line.record.flags).toEqual([])
     expect(line.record.rpc).toEqual([])

@@ -2,7 +2,7 @@
 
 The HRC (Harness Runtime Controller) layer of the three-repo split (ASP / HRC /
 ACP): harness runtime lifecycle, event normalization, session/run state, and the
-`hrc` / `hrcchat` CLIs. ASP packages are external deps from the canonical
+`hrc` CLI. ASP packages are external deps from the canonical
 Verdaccio registry at `http://mini:4873/`.
 
 ## Build & deploy
@@ -111,8 +111,8 @@ HRC source reaching an ACP-owned package — or either repo's tests asserting th
 other's behavior — is a split violation: the assertion belongs in the other repo,
 or the shared semantic belongs in `agent-action-render` / `hrc-frame-render` so
 both sides test against it. Shared render semantics (tool emoji, action lines,
-admission labels) live in `agent-action-render`, consumed by `hrcchat-cli` and
-gateway-discord through the RenderFrame contract.
+admission labels) live in `agent-action-render`, consumed by gateway-discord through
+the RenderFrame contract.
 
 The mail kicker is no longer in this repo. It is now `hrc-mail-injector` in
 agent-control-plane (`packages/hrc-mail-injector`, `src/policy/`), running as its
@@ -137,8 +137,8 @@ install` is the release path: use it when the commit is pushed and the install i
 meant to be promoted to the fleet.
 
 `just install` builds an immutable release away from the checkout and atomically
-advances the shared `hrc` / `hrcchat` indirection only after build, entrypoint
-smoke, and publication succeed ([docs/atomic-install.md](docs/atomic-install.md)).
+advances the shared `hrc` indirection only after build, entrypoint smoke, and
+publication succeed ([docs/atomic-install.md](docs/atomic-install.md)).
 `just install` refuses a worktree with tracked modifications before it builds
 anything, listing the dirty paths; pass `allow-dirty=1` to install uncommitted
 work deliberately.
@@ -359,9 +359,6 @@ tmux runtimes drive a tmux pane and survive `hrc server restart`. On long tool
 calls mind the zombie sweeper: 30 min of `hrc_events` silence
 (`HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800`) marks the run zombie regardless of
 process liveness.
-
-After changing `hrcchat-cli` rendering, install and run a real round-trip through
-a live `hrc-server` — unit tests don't catch terminal rendering regressions.
 
 Federation doctrine is platform-wide; repo details in
 [docs/federation-peer-protocol.md](docs/federation-peer-protocol.md).

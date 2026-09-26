@@ -55,24 +55,23 @@ export const hrcPackages = [
   'hrc-sdk',
   'hrc-server',
   'hrc-store-sqlite',
-  'hrcchat-cli',
 ]
 
 export const layers: Layer[] = [
   {
     name: 'HRC Core Contracts',
     roots: ['packages/hrc-core/src', 'packages/hrc-events/src'],
-    forbidden: ['hrc-server', 'hrc-cli', 'hrcchat-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
+    forbidden: ['hrc-server', 'hrc-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
   },
   {
     name: 'HRC Storage',
     roots: ['packages/hrc-store-sqlite/src'],
-    forbidden: ['hrc-server', 'hrc-cli', 'hrcchat-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
+    forbidden: ['hrc-server', 'hrc-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
   },
   {
     name: 'HRC Rendering',
     roots: ['packages/agent-action-render/src', 'packages/hrc-frame-render/src'],
-    forbidden: ['hrc-server', 'hrc-cli', 'hrcchat-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
+    forbidden: ['hrc-server', 'hrc-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
   },
   {
     name: 'HRC Runtime',
@@ -81,7 +80,7 @@ export const layers: Layer[] = [
   },
   {
     name: 'HRC Operator CLIs',
-    roots: ['packages/hrc-cli/src', 'packages/hrcchat-cli/src'],
+    roots: ['packages/hrc-cli/src'],
     forbidden: ['acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
   },
 ]
