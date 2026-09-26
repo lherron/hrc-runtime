@@ -5,6 +5,7 @@ import type { FinalSummaryRecoveryResult, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 
+import { printJson } from '../print.js'
 import { resolveRuntimeArg } from '../selector-resolve.js'
 import { hasFlag, parseFlag, requireArg } from './argv.js'
 import { isHrcDomainErrorLike } from './errors.js'
@@ -381,6 +382,7 @@ async function waitForKeypress(timeoutMs?: number): Promise<void> {
 export async function cmdSessionReport(args: string[]): Promise<void> {
   const runtimeArg = parseFlag(args, '--runtime') ?? requireArg(args, 0, '<runtimeId>')
   const scopeLabel = parseFlag(args, '--scope') ?? runtimeArg
+  const jsonOutput = hasFlag(args, '--json')
   const waitKey = hasFlag(args, '--wait-key')
   // Bounded grace (T-05237, C3): cap the keypress hold so a consolidated viewer
   // pane cannot keep a pty alive forever. Non-positive/absent ⇒ unbounded (legacy).
@@ -390,9 +392,11 @@ export async function cmdSessionReport(args: string[]): Promise<void> {
 
   let block: string | null = null
   let recovery: FinalSummaryRecoveryResult | undefined
+  let runtimeId: string | null = null
+  let finalSummary: unknown = null
   try {
     const client = createClient()
-    const runtimeId = await resolveRuntimeArg(runtimeArg, client)
+    runtimeId = await resolveRuntimeArg(runtimeArg, client)
     const inspect = await client.brokerInspect(
       {
         runtimeId,
@@ -402,9 +406,21 @@ export async function cmdSessionReport(args: string[]): Promise<void> {
       { timeoutMs: SESSION_SUMMARY_FETCH_TIMEOUT_MS }
     )
     recovery = inspect.finalSummaryRecovery
+    finalSummary = inspect.finalSummary ?? null
     block = formatSessionSummary(inspect.finalSummary, scopeLabel)
   } catch {
     // swallow — fall through to the keypress gate regardless
+  }
+
+  if (jsonOutput) {
+    printJson({
+      target: runtimeArg,
+      runtimeId,
+      scopeLabel,
+      finalSummary,
+      finalSummaryRecovery: recovery ?? null,
+    })
+    return
   }
 
   if (block) {

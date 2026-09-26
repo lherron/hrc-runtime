@@ -416,10 +416,24 @@ The output always names the resolved kind and the concrete ID(s).
     .alias('list')
     .description('list runtimes | sessions | launches | messages')
     .argument('[noun]', 'runtimes | sessions | launches | messages')
+    .option('--json', 'output as JSON')
     .allowUnknownOption(true)
     .allowExcessArguments(true)
     .action(async (noun: string | undefined, _opts, cmd: Command) => {
-      const rest = rawArgvForVerb(cmd, 'ls', { offset: 2, fallback: cmd.args.slice(1) })
+      const rawRest = rawArgvForVerb(cmd, 'ls', { offset: 2, fallback: cmd.args.slice(1) })
+      const rest: string[] = []
+      for (let index = 0; index < rawRest.length; index += 1) {
+        const arg = rawRest[index]
+        if (arg === '--output' && rawRest[index + 1] === 'json') {
+          index += 1
+          continue
+        }
+        if (arg === '--output=json') continue
+        rest.push(arg as string)
+      }
+      if (cmd.opts<{ json?: boolean }>().json && !rest.includes('--json')) {
+        rest.push('--json')
+      }
       assertNoUnknownOptions(rest, {
         boolean: [
           '--stale',
@@ -595,10 +609,11 @@ The output always names the resolved kind and the concrete ID(s).
     .command('list')
     .description('list surface bindings')
     .argument('<runtimeId>', 'runtime ID')
+    .option('--json', 'output as JSON')
     .action(async (runtimeId, _opts, cmd: Command) => {
       const args = toLegacyArgv([runtimeId], cmd.opts(), {
         strings: [],
-        booleans: [],
+        booleans: ['json'],
       })
       await cmdSurfaceList(args)
     })
@@ -698,10 +713,11 @@ The output always names the resolved kind and the concrete ID(s).
     .command('list')
     .description('list bridges')
     .argument('<runtimeId>', 'runtime ID')
+    .option('--json', 'output as JSON')
     .action(async (runtimeId, _opts, cmd: Command) => {
       const args = toLegacyArgv([runtimeId], cmd.opts(), {
         strings: [],
-        booleans: [],
+        booleans: ['json'],
       })
       await cmdBridgeList(args)
     })

@@ -207,10 +207,11 @@ Exit codes:
     .option('--scope <scope>', 'scope reference')
     .option('--lane <lane>', 'lane reference')
     .option('--create', 'create a session if none exists')
+    .option('--json', 'output as JSON')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
         strings: ['scope', 'lane'],
-        booleans: ['create'],
+        booleans: ['create', 'json'],
       })
       await cmdSessionResolve(args)
     })
@@ -241,10 +242,11 @@ Exit codes:
     .argument('<hostSessionId>', 'host session ID')
     .option('--live', 'join backing runtime(s) and attach broker/HRC-derived inspection')
     .option('--probe', 'with --live, request a live liveness probe (capability-gated)')
+    .option('--json', 'output as JSON')
     .action(async (hostSessionId, _opts, cmd: Command) => {
       const args = toLegacyArgv([hostSessionId], cmd.opts(), {
         strings: [],
-        booleans: ['live', 'probe'],
+        booleans: ['live', 'probe', 'json'],
       })
       await cmdSessionGet(args)
     })
@@ -308,6 +310,7 @@ Exit codes:
     .option('--runtime <runtimeId>', 'runtime ID')
     .option('--scope <scope>', 'scope label for the report header')
     .option('--wait-key', 'wait for a keypress before returning (viewer windows)')
+    .option('--json', 'output session summary data as JSON')
     .option(
       '--wait-timeout <seconds>',
       'bound --wait-key to N seconds, then auto-close (consolidated viewer panes; T-05237)'
@@ -315,7 +318,7 @@ Exit codes:
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
         strings: ['runtime', 'scope', 'wait-timeout'],
-        booleans: ['wait-key'],
+        booleans: ['wait-key', 'json'],
       })
       await cmdSessionReport(args)
     })

@@ -385,6 +385,11 @@ export async function cmdBrokerTranscript(args: string[]): Promise<void> {
   })
   const events = tail === undefined ? filtered : filtered.slice(-tail)
 
+  if (hasFlag(args, '--json')) {
+    process.stdout.write(`${JSON.stringify(events, null, 2)}\n`)
+    return
+  }
+
   for (const event of events) process.stdout.write(`${renderTranscriptEvent(event, full)}\n`)
 }
 

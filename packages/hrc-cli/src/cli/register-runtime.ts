@@ -115,6 +115,7 @@ function registerBrokerReads(monitor: Command): void {
     .option('--kinds <kinds>', 'comma-separated user,exec,cot,notice kinds', 'user,exec,cot,notice')
     .option('--tail <n>', 'emit only the last n rendered events')
     .option('--full', 'do not clip long event text')
+    .option('--json', 'output filtered raw broker events as JSON')
     .option('--latest', 'select the newest runtime when a scope is ambiguous')
     .option('--previous [n]', 'select the nth-most-recent prior (non-live) runtime for a scope')
     .addHelpText(
@@ -125,7 +126,7 @@ function registerBrokerReads(monitor: Command): void {
       await cmdBrokerTranscript(
         toLegacyArgv(target ? [target] : [], cmd.opts(), {
           strings: ['seq', 'kinds', 'source-ref', 'tail', 'previous'],
-          booleans: ['full', 'latest'],
+          booleans: ['full', 'json', 'latest'],
         })
       )
     })
