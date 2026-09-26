@@ -23,7 +23,32 @@ predicate: >
   executable execution shape. Presentation is a producer-resolved boolean input
   to birth, not a HRC route selector. A validated explicit operator presentation
   is frozen in the existing compile-request presentation field before boundary
-  P, not used as an HRC default or hosting selector. For operator none, HRC
+  P, not used as an HRC default or hosting selector. A neutral v2 headless
+  carrier (neither harness.provider nor harness.id, harness.interactive not
+  true, execution.preferredMode not interactive) with explicit operator
+  tmux-tui is prepared on this same producer-selected path before legacy
+  harness classification. It freezes requested.presentation:true and admits
+  only selected presentation true with compile-request provenance,
+  terminal-required tmux hosting, and a present tmux presentation surface with
+  terminal or websocket-unix transport;
+  every absent or contradictory viewer fact refuses typed
+  execution_presentation_constraint_mismatch before P or effect. It allocates
+  only the selected execution's hosting and presentation surface; raw operator
+  text never selects a local driver or surface. Terminal-required hosting and
+  presentation-surface transport remain separate producer facts: the published
+  terminal-required Codex execution with websocket-unix/tmux surface uses the
+  tmux viewer allocator, not the terminal-only allocator. HRC freezes one
+  deterministic observer socket path in boundary-P hosting paths and worker
+  argv, passes that same path to the renderer dispatch, and exposes the
+  allocated viewer pane for attach. Launch and retry verify the path and argv
+  against the frozen selected execution; an absent allocator, socket, pane, or
+  dispatch binding refuses rather than silently degrading the viewer. A
+  terminal/tmux surface retains terminal-pane allocation, and a nonterminal
+  websocket-unix/tmux surface retains observer-pane allocation. Before a producer-selected
+  public start returns or delivers into a live harness-broker runtime, HRC
+  checks the explicit presentation against its durable live presentation and
+  refuses a mismatch without mutation. Concrete-harness tmux-tui and observer
+  retain their existing routes. For operator none, HRC
   admits only a producer-selected false value with compile-request provenance
   and an execution without a required terminal, terminal host, or presentation
   surface. presentationFulfillment remains a producer recipe-capability label;
@@ -80,7 +105,7 @@ predicate: >
   seat using its old continuation. Reattachment uses persisted connection
   identity without aspd and verifies frozen release/protocol identity before
   attach.
-authority: wrkq:T-08690 producer-owned v2 consumer and cutover amendment, pending Daedalus review; wrkq:T-08207 revision 10 input/execution inventory amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 11 request-scoped execution-format selector amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 12 response confirmation, Daedalus approval 2026-09-26; wrkq:T-09274 revision 1 no-viewer compile constraint approved 2026-09-26, corrected by revision 2 approval 2026-09-26; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
+authority: wrkq:T-08690 producer-owned v2 consumer and cutover amendment, pending Daedalus review; wrkq:T-08207 revision 10 input/execution inventory amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 11 request-scoped execution-format selector amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 12 response confirmation, Daedalus approval 2026-09-26; wrkq:T-09274 revision 1 no-viewer compile constraint approved 2026-09-26, corrected by revision 2 approval 2026-09-26; revision 6 neutral v2 tmux-tui producer-route, answer fence and viewer-hosting realization approved 2026-09-26; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
 source:
   - wrkq:T-08207
   - wrkq:T-08690
@@ -93,9 +118,12 @@ source:
   - packages/hrc-server/src/agent-spaces-adapter/aspd-preparation-client.ts
   - packages/hrc-server/src/agent-spaces-adapter/compile-adapter.ts
   - packages/hrc-server/src/aspd-headless-start.ts
+  - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
+  - packages/hrc-server/src/broker/controller/allocation.ts
   - packages/hrc-server/src/broker/controller/dispatch.ts
   - packages/hrc-server/src/broker/controller/persistence.ts
   - packages/hrc-server/src/broker/runtime-hosting.ts
+  - packages/hrc-server/src/broker/runtime-state.ts
   - packages/hrc-server/src/startup-reconcile.ts
 required_tests:
   - just architecture-records
@@ -110,13 +138,14 @@ required_tests:
   - isolated A-to-B acceptance records the rollback pair before first v2 persistence, proves HRC B rejects ASP A/v1 compile before P, observes selected and running ASP B identities, then proves a fresh v2 birth and dead-seat v2 reprovision using old continuation
   - corrupted frozen execution release, unavailable aspd before boundary P, and post-boundary release/worker mismatch refuse without fallback or reprepare
   - T-09274 freezes requested false before P, admits the published false compile-request nonterminal no-surface Codex plan even when static fulfillment is attachable, and rejects selected-true, wrong-provenance, terminal, or surfaced responses before allocation; omitted/default and explicit viewer controls remain unchanged
+  - T-09274 neutral v2 tmux-tui freezes requested true before P and uses the producer-selected hosting/surface through both public start and turn doors; selected-true/compile-request terminal tmux hosting with a present terminal/tmux or websocket-unix/tmux surface is required before effects, including the published Codex viewer plan; terminal-required websocket-unix/tmux hosting freezes one observer socket in paths and worker argv, allocates the viewer pane rather than the terminal-only pane, and passes the same socket to renderer dispatch, with missing or mismatched binding refused; public-start reuse checks live presentation before return, and it never reaches legacy Claude classification, while concrete-harness tmux-tui and observer controls retain their existing routes
 last_verified: final ASP v2 installed acceptance proved 9/9 harness/presentation/default cases, 8/8 invalid-wire refusals, four accepted identities, and agent-harness default against source 631e7b246aaede313ee6e0aacd71e766f26ae07c / tuple 0.1.1-dev.20260921215301 / release asp-631e7b246aae-20260922T025351Z-01f30b; HRC implementation, activation preflight and coordinated installed acceptance pending
 reopen_when:
   - ASP v2 compile request/response, selected execution, release identity, or hosting declaration changes
   - boundary-P persistence ordering, retry, replay, dispatch, worker release validation, or frozen execution-format selection changes
   - the persisted execution-format response echo or confirmation-before-consumer-reuse rule changes
   - reuse, presentation mismatch, startup reattachment, opaque v1 attach-fence, continuation, or external participant disposition changes
-  - explicit operator-presentation compile constraint, no-viewer producer-answer fence, or presentation persistence/retry law changes
+  - explicit operator-presentation compile constraint, neutral-v2 tmux-tui route or producer-answer condition, no-viewer producer-answer fence, public-start presentation reuse fence, or presentation persistence/retry law changes
   - activation preflight, matched HRC/ASP ordering, rollback boundary, or fix-forward law changes
   - any fallback, v1 selector adapter, profile/target resolution, driver exception, or old-plan parser is introduced
 supersedes: []
