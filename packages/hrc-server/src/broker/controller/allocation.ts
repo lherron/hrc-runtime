@@ -34,7 +34,10 @@ export function isTmuxTuiRoute(input: BrokerControllerStartInput): boolean {
  * the tmux-tui route this is policy-selected, never driver-name-selected.
  */
 export function isObserverPaneRoute(input: BrokerControllerStartInput): boolean {
-  return input.execution.presentationSurface?.transport === 'websocket-unix'
+  return (
+    input.execution.presentationSurface?.transport === 'websocket-unix' &&
+    !input.execution.hosting.terminalRequired
+  )
 }
 
 /** A viewer-pane route carrying an operator-attachable renderer surface. */
@@ -45,6 +48,12 @@ export type ViewerPaneRoute = 'tmux-tui' | 'observer'
  * ordinary headless). Keeps dispatch call sites branch-free.
  */
 export function viewerPaneRouteOf(input: BrokerControllerStartInput): ViewerPaneRoute | undefined {
+  if (
+    input.execution.presentationSurface?.transport === 'websocket-unix' &&
+    input.execution.hosting.terminalRequired
+  ) {
+    return 'tmux-tui'
+  }
   if (isTmuxTuiRoute(input)) return 'tmux-tui'
   if (isObserverPaneRoute(input)) return 'observer'
   return undefined

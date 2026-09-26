@@ -368,11 +368,12 @@ async function releaseNeverStartedLease(
     observer: allocators.observerPaneAllocator,
   } as const
   const viewerRoute = viewerPaneRouteOf(input)
-  const owner = executionUsesTerminalSurface(input.execution)
-    ? allocators.tmuxAllocator
-    : viewerRoute !== undefined
+  const owner =
+    input.execution.presentationSurface?.transport === 'websocket-unix' && viewerRoute !== undefined
       ? viewerAllocators[viewerRoute]
-      : allocators.headlessSubstrateAllocator
+      : executionUsesTerminalSurface(input.execution)
+        ? allocators.tmuxAllocator
+        : allocators.headlessSubstrateAllocator
   // Every durable allocator's lease is released the same way (its tmux server and
   // broker socket), so an allocator without its own release uses the headless one.
   const release = owner?.release ?? allocators.headlessSubstrateAllocator?.release
@@ -410,7 +411,7 @@ function resolveViewerPaneDispatch(
   dispatchEnv: Record<string, string> | undefined
 } {
   const viewerPaneRoute =
-    executionUsesHeadlessSubstrate(input.execution) &&
+    input.execution.presentationSurface?.transport === 'websocket-unix' &&
     viewerPaneRouteOf(input) !== undefined &&
     tmuxAllocation?.lease !== undefined
   let dispatchRuntime: InvocationRuntimeContext | undefined
@@ -434,6 +435,31 @@ function resolveViewerPaneDispatch(
         }
       : input.dispatchEnv
   return { dispatchRuntime, dispatchEnv }
+}
+
+function assertFrozenWebsocketViewerAllocation(
+  input: BrokerControllerStartInput,
+  allocation: BrokerTmuxAllocation | undefined
+): void {
+  if (input.execution.presentationSurface?.transport !== 'websocket-unix') return
+  const observerSocketPath = allocation?.observerSocketPath
+  const argv = input.aspdExecution?.argv
+  const observerFlag = argv?.indexOf('--experimental-observer-socket') ?? -1
+  const matchingFrozenSocket =
+    argv === undefined ||
+    (observerFlag >= 0 &&
+      argv[observerFlag + 1] === observerSocketPath &&
+      argv.lastIndexOf('--experimental-observer-socket') === observerFlag)
+  const viewerWindow = input.execution.hosting.terminalRequired
+    ? allocation?.tuiWindow
+    : allocation?.observerWindow
+  if (!observerSocketPath || !allocation?.lease || !viewerWindow || !matchingFrozenSocket) {
+    throw new BrokerControllerError(
+      'broker_tmux_allocation_invalid',
+      'producer-declared websocket viewer lacks one frozen observer socket and viewer pane',
+      { runtimeId: String(input.identity.runtimeId) }
+    )
+  }
 }
 
 async function startControllerAttempt(
@@ -507,7 +533,14 @@ async function startControllerAttempt(
     // substrate (presentation='none') + Unix v0.2 IPC, exactly like the durable
     // interactive route. Durability truth still comes from the negotiated hello +
     // persisted substrate/endpoint, never from a compile-time marker or flag.
-    if (input.brokerClient === undefined && executionUsesTerminalSurface(input.execution)) {
+    if (
+      input.brokerClient === undefined &&
+      input.execution.presentationSurface?.transport === 'websocket-unix'
+    ) {
+      tmuxAllocation = await allocateViewerOrHeadlessSubstrate(ctx.allocationContext(), input)
+      attempt.tmuxAllocation = tmuxAllocation
+      markPhase('broker-viewer-alloc')
+    } else if (input.brokerClient === undefined && executionUsesTerminalSurface(input.execution)) {
       tmuxAllocation = await allocateTmuxIfRequired(ctx.allocationContext(), input)
       attempt.tmuxAllocation = tmuxAllocation
       markPhase('broker-tmux-alloc')
@@ -597,9 +630,16 @@ async function startControllerAttempt(
         await client.close().catch(() => undefined)
         if (tmuxAllocation !== undefined) {
           const allocation = ctx.allocationContext()
-          const releasing = executionUsesTerminalSurface(input.execution)
-            ? allocation.tmuxAllocator
-            : allocation.headlessSubstrateAllocator
+          const viewerRoute = viewerPaneRouteOf(input)
+          const releasing =
+            input.execution.presentationSurface?.transport === 'websocket-unix' &&
+            viewerRoute !== undefined
+              ? viewerRoute === 'tmux-tui'
+                ? allocation.tmuxTuiAllocator
+                : allocation.observerPaneAllocator
+              : executionUsesTerminalSurface(input.execution)
+                ? allocation.tmuxAllocator
+                : allocation.headlessSubstrateAllocator
           await releasing?.release?.(tmuxAllocation).catch(() => undefined)
         }
         return {
@@ -760,6 +800,7 @@ async function startControllerAttempt(
       attempt.tmuxAllocation = tmuxAllocation
       markPhase('broker-tmux-alloc')
     }
+    assertFrozenWebsocketViewerAllocation(input, tmuxAllocation)
     // T-01874 Ph3 — a headless durable runtime has presentation='none' and no
     // operator pane, so it dispatches NO runtime.terminalSurface (and no tmux
     // shim): the broker-window pane must never become a terminalSurface. Only

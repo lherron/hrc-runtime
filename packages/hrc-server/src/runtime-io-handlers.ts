@@ -467,6 +467,7 @@ export async function startRuntimeForSession(
         restartStyle !== 'fresh_pty'
       ) {
         assertActuatorSplitRuntimeReuse(intent, existingRuntime)
+        assertNoOperatorPresentationConflict(intent, [existingRuntime])
         if (attachedRunDoor) return await attachedRunSelected(existingRuntime)
         await this.publishPresentation(existingRuntime, presentationOptions)
         const initialPrompt = intent.initialPrompt ?? ''

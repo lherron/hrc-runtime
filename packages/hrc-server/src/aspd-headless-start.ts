@@ -202,8 +202,8 @@ export function aspdInteractiveRouteFor(_brokerDriver: string): AspdPreparationR
 }
 
 function presentationForExecution(execution: SelectedExecution): AspdHostingPresentation {
-  if (execution.hosting.terminalRequired) return 'terminal'
-  return execution.presentationSurface?.transport === 'websocket-unix' ? 'attachable' : 'none'
+  if (execution.presentationSurface?.transport === 'websocket-unix') return 'attachable'
+  return execution.hosting.terminalRequired ? 'terminal' : 'none'
 }
 
 /**
@@ -797,7 +797,11 @@ export function assertPreparedAspdAttemptRoute(
 
 /** A keyed retry must launch only a preparation frozen to the same format. */
 export function assertPreparedAspdAttemptFormat(
-  resumable: { operationId: string; runId?: string | undefined; executionFormat: HrcExecutionFormat },
+  resumable: {
+    operationId: string
+    runId?: string | undefined
+    executionFormat: HrcExecutionFormat
+  },
   selectedExecutionFormat: HrcExecutionFormat,
   hostSessionId: string
 ): void {
@@ -865,7 +869,9 @@ export function findPreparedAspdAttemptForRetry(
   server: Pick<HrcServerInstanceForHandlers, 'db'>,
   hostSessionId: string,
   dispatchIdempotencyKey: string
-): { operationId: string; runId: string; route: AspdPreparationRoute; driverKind: string } | undefined {
+):
+  | { operationId: string; runId: string; route: AspdPreparationRoute; driverKind: string }
+  | undefined {
   const record = findPreparedAspdAttemptForFormatRetry(
     server,
     hostSessionId,

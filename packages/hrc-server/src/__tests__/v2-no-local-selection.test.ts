@@ -75,6 +75,40 @@ test('only an explicitly interactive presentation retains the interactive birth 
   )
 })
 
+test('neutral headless tmux-tui is producer-selected; concrete and observer controls keep their routes', () => {
+  const neutral = {
+    placement: { kind: 'inline' } as unknown as HrcRuntimeIntent['placement'],
+    harness: { interactive: false },
+    execution: { preferredMode: 'headless' as const },
+    presentation: { operator: 'tmux-tui' as const },
+  } satisfies HrcRuntimeIntent
+  expect(isProducerSelectedOrdinaryBirth(neutral)).toBe(true)
+  expect(
+    isProducerSelectedOrdinaryBirth({
+      ...neutral,
+      harness: { provider: 'openai', interactive: false },
+    })
+  ).toBe(false)
+  expect(
+    isProducerSelectedOrdinaryBirth({
+      ...neutral,
+      harness: { id: 'codex-cli', interactive: false },
+    })
+  ).toBe(false)
+  expect(isProducerSelectedOrdinaryBirth({ ...neutral, harness: { interactive: true } })).toBe(
+    false
+  )
+  expect(
+    isProducerSelectedOrdinaryBirth({
+      ...neutral,
+      execution: { preferredMode: 'interactive' },
+    })
+  ).toBe(false)
+  expect(
+    isProducerSelectedOrdinaryBirth({ ...neutral, presentation: { operator: 'observer' } })
+  ).toBe(false)
+})
+
 test('ordinary public start and turn enter producer-selected hosting before any legacy route decision', () => {
   for (const path of ['runtime-io-handlers.ts', 'turn-dispatch-handlers.ts']) {
     const text = source(path)

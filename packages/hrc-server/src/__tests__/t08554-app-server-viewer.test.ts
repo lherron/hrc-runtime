@@ -24,6 +24,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import {
   createBrokerDurableHeadlessAllocator,
+  createBrokerDurableTmuxAllocator,
   createBrokerTmuxTuiAllocator,
 } from '../broker-interactive-handlers/substrate-allocator'
 import { HarnessBrokerController } from '../broker/controller'
@@ -36,6 +37,7 @@ import {
   type HostingLedger,
   type Release,
   makeRelease,
+  producerResult,
   startAspdDouble,
   tmuxManagerDouble,
   workerClient,
@@ -66,6 +68,12 @@ type Internal = {
     prompt: string,
     runId: string,
     options?: Record<string, unknown>
+  ): Promise<HrcRuntimeSnapshot>
+  startRuntimeForSession(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    restartStyle: 'reuse_pty' | 'fresh_pty',
+    options: Record<string, unknown>
   ): Promise<HrcRuntimeSnapshot>
 }
 
@@ -119,6 +127,10 @@ async function bootServer(overrides: { codexCliTmuxBrokerEnabled?: boolean } = {
     headlessSubstrateAllocator: createBrokerDurableHeadlessAllocator(internal().options, {
       tmuxManagerFactory: tmuxManagerFactory as never,
       generateAttachToken: () => 'attach-token-t08542',
+    }),
+    tmuxAllocator: createBrokerDurableTmuxAllocator(internal().options, {
+      tmuxManagerFactory: tmuxManagerFactory as never,
+      generateAttachToken: () => 'attach-token-t08554-terminal',
     }),
     tmuxTuiAllocator: createBrokerTmuxTuiAllocator(internal().options, {
       tmuxManagerFactory: tmuxManagerFactory as never,
@@ -180,6 +192,14 @@ describe('T-08554 explicit app-server viewer', () => {
     return { ...headlessIntent(), presentation: { operator: 'tmux-tui' } }
   }
 
+  function neutralViewerIntent(): HrcRuntimeIntent {
+    return {
+      ...headlessIntent(),
+      harness: { interactive: false },
+      presentation: { operator: 'tmux-tui' },
+    } as HrcRuntimeIntent
+  }
+
   async function turn(hostSessionId: string, runtimeIntent: unknown, extra = {}) {
     return await fixture.postJson('/v1/turns', {
       hostSessionId,
@@ -206,6 +226,198 @@ describe('T-08554 explicit app-server viewer', () => {
       )
       .all(hostSessionId)
   }
+
+  it('realizes the published Codex websocket viewer from the frozen producer answer', async () => {
+    await server.stop()
+    await bootServer({ codexCliTmuxBrokerEnabled: true })
+    aspd.producerResult = producerResult({
+      selection: {
+        harness: 'codex',
+        modelProvider: 'openai-codex',
+        model: 'gpt-5.6-terra',
+        presentation: true,
+        provenance: {
+          harness: 'catalog-default',
+          modelProvider: 'catalog-default',
+          model: 'catalog-default',
+          presentation: 'compile-request',
+        },
+      },
+      execution: {
+        recipeId: 'codex-app-server',
+        hosting: {
+          executionTransport: 'jsonrpc-stdio',
+          terminalRequired: true,
+          terminalHost: 'tmux',
+          processExecution: 'broker-process',
+        },
+        presentationSurface: { transport: 'websocket-unix', terminalHost: 'tmux' },
+      },
+    })
+    const s = await session()
+    const response = await turn(s.hostSessionId, neutralViewerIntent())
+    if (response.status >= 300) throw new Error(`${response.status}: ${await response.text()}`)
+    expect(response.status).toBeLessThan(300)
+    expect(aspd.compileRequested).toEqual([{ presentation: true }])
+    const [op] = preparations(s.hostSessionId)
+    const record = JSON.parse(op?.preparation_json ?? '{}')
+    const observerSocketPath = record.hosting.paths.observerSocketPath as string
+    expect(observerSocketPath).toContain('/bipc/')
+    expect(record.hosting.argv).toContain('--experimental-observer-socket')
+    expect(record.hosting.argv).toContain(observerSocketPath)
+    expect(
+      record.hosting.argv.filter((arg: string) => arg === '--experimental-observer-socket')
+    ).toHaveLength(1)
+    expect(ledger.commands.at(-1)).toContain('--experimental-observer-socket')
+    expect(ledger.startCalls[0]?.dispatch).toMatchObject({
+      dispatchEnv: { HARNESS_BROKER_OBSERVER_SOCKET: observerSocketPath },
+      runtime: { terminalSurfaceRequired: true },
+    })
+    const [runtime] = internal().db.runtimes.listByHostSessionId(s.hostSessionId)
+    expect(runtime && parseBrokerRuntimeHostingState(runtime)?.presentation.kind).toBe('tmux-tui')
+    expect(runtime?.runtimeStateJson).toMatchObject({
+      broker: { endpoint: { observerSocketPath } },
+    })
+  })
+
+  it('public start returns a producer-selected viewer with an attachable pane', async () => {
+    await server.stop()
+    await bootServer({ codexCliTmuxBrokerEnabled: true })
+    aspd.producerResult = producerResult({
+      selection: {
+        harness: 'codex',
+        modelProvider: 'openai-codex',
+        model: 'gpt-5.6-terra',
+        presentation: true,
+        provenance: {
+          harness: 'catalog-default',
+          modelProvider: 'catalog-default',
+          model: 'catalog-default',
+          presentation: 'compile-request',
+        },
+      },
+      execution: {
+        hosting: {
+          executionTransport: 'jsonrpc-stdio',
+          terminalRequired: true,
+          terminalHost: 'tmux',
+          processExecution: 'broker-process',
+        },
+        presentationSurface: { transport: 'websocket-unix', terminalHost: 'tmux' },
+      },
+    })
+    const s = await session()
+    const response = await fixture.postJson('/v1/runtimes/start', {
+      hostSessionId: s.hostSessionId,
+      intent: neutralViewerIntent(),
+    })
+    expect(response.status).toBe(200)
+    expect(aspd.compileRequested).toEqual([{ presentation: true }])
+    const [runtime] = internal().db.runtimes.listByHostSessionId(s.hostSessionId)
+    expect(runtime && parseBrokerRuntimeHostingState(runtime)?.presentation.kind).toBe('tmux-tui')
+    ;(server as unknown as Record<string, unknown>)['reconcileTmuxRuntimeLiveness'] = async (
+      current: HrcRuntimeSnapshot
+    ) => current
+    const attach = await fixture.postJson('/v1/runtimes/attach', { runtimeId: runtime?.runtimeId })
+    expect(attach.status).toBe(200)
+    const body = (await attach.json()) as { argv: string[]; bindingFence: { runtimeId: string } }
+    expect(body.bindingFence.runtimeId).toBe(runtime?.runtimeId)
+    expect(body.argv.join(' ')).toContain(':tui')
+  })
+
+  it('refuses a neutral viewer start against a live no-viewer broker before reuse', async () => {
+    const s = await session()
+    const noViewer = liveRuntime(s, 'rt-t09274-none', 'headless', 'none')
+    internal().db.runtimes.insert(noViewer as never)
+    ;(server as unknown as Record<string, unknown>)['reconcileTmuxRuntimeLiveness'] = async (
+      runtime: HrcRuntimeSnapshot
+    ) => runtime
+    const before = internal().db.runtimes.getByRuntimeId(noViewer.runtimeId)
+    await expect(
+      internal().startRuntimeForSession(s, neutralViewerIntent(), 'reuse_pty', {})
+    ).rejects.toThrow('presentation')
+    expect(internal().db.runtimes.getByRuntimeId(noViewer.runtimeId)).toEqual(before)
+    expect(aspd.compileCalls).toBe(0)
+    expect(ledger.commands).toEqual([])
+  })
+
+  it('refuses contradictory neutral viewer answers before preparation or allocation', async () => {
+    const valid = producerResult({
+      selection: {
+        harness: 'codex',
+        modelProvider: 'openai-codex',
+        model: 'gpt-5.6-terra',
+        presentation: true,
+        provenance: {
+          harness: 'catalog-default',
+          modelProvider: 'catalog-default',
+          model: 'catalog-default',
+          presentation: 'compile-request',
+        },
+      },
+      execution: {
+        hosting: {
+          executionTransport: 'jsonrpc-stdio',
+          terminalRequired: true,
+          terminalHost: 'tmux',
+          processExecution: 'broker-process',
+        },
+        presentationSurface: { transport: 'websocket-unix', terminalHost: 'tmux' },
+      },
+    })
+    const cases = [
+      { selection: { ...valid.selection, presentation: false }, execution: valid.execution },
+      {
+        selection: {
+          ...valid.selection,
+          provenance: { ...valid.selection.provenance, presentation: 'catalog-default' },
+        },
+        execution: valid.execution,
+      },
+      {
+        selection: valid.selection,
+        execution: {
+          ...valid.execution,
+          hosting: {
+            executionTransport: 'jsonrpc-stdio' as const,
+            terminalRequired: false as const,
+            processExecution: 'broker-process' as const,
+          },
+        },
+      },
+      {
+        selection: valid.selection,
+        execution: { ...valid.execution, presentationSurface: undefined },
+      },
+      {
+        selection: valid.selection,
+        execution: {
+          ...valid.execution,
+          presentationSurface: { transport: 'unknown', terminalHost: 'tmux' },
+        },
+      },
+      {
+        selection: valid.selection,
+        execution: {
+          ...valid.execution,
+          presentationSurface: { transport: 'websocket-unix', terminalHost: 'other' },
+        },
+      },
+    ]
+    for (const [index, result] of cases.entries()) {
+      aspd.producerResult = result as never
+      const s = await session(`agent:t08554case${index}:project:hrc-runtime:task:T-08554`)
+      const response = await turn(s.hostSessionId, neutralViewerIntent())
+      expect(response.status).toBe(503)
+      await expect(response.json()).resolves.toMatchObject({
+        error: { detail: { admissionCode: 'execution_presentation_constraint_mismatch' } },
+      })
+      expect(preparations(s.hostSessionId)).toEqual([])
+      expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toEqual([])
+    }
+    expect(ledger.commands).toEqual([])
+    expect(ledger.startCalls).toEqual([])
+  })
 
   it('explicit tmux-tui stays headless on a redirecting node and freezes the viewer in an aspd preparation', async () => {
     const recorded = await bootMax3Node()
@@ -265,7 +477,10 @@ describe('T-08554 explicit app-server viewer', () => {
     const s = await session()
     const tui = liveRuntime(s, 'rt-a', 'headless', 'tmux-tui') as unknown as HrcRuntimeSnapshot
     const plain = liveRuntime(s, 'rt-b', 'headless', 'none') as unknown as HrcRuntimeSnapshot
-    const tmux = liveRuntime(s, 'rt-c', 'tmux', 'none') as unknown as HrcRuntimeSnapshot
+    const tmux = {
+      ...liveRuntime(s, 'rt-c', 'tmux', 'none'),
+      controllerKind: 'process',
+    } as unknown as HrcRuntimeSnapshot
     expect(() => assertNoOperatorPresentationConflict(viewerIntent(), [tui])).not.toThrow()
     expect(() => assertNoOperatorPresentationConflict(viewerIntent(), [plain])).toThrow("'none'")
     expect(() => assertNoOperatorPresentationConflict(viewerIntent(), [tmux])).toThrow(

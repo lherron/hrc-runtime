@@ -43,7 +43,7 @@ export type AspdProducerResult = {
           processExecution: 'broker-process'
         }
       | {
-          executionTransport: 'pty'
+          executionTransport: 'jsonrpc-stdio' | 'pty'
           terminalRequired: true
           terminalHost: 'tmux'
           processExecution: 'broker-process'
@@ -498,11 +498,17 @@ export function workerClient(
     },
     async enqueue(request: { body: string }) {
       ledger.submissionCalls.push({ door: 'enqueue', body: request.body })
-      return { submissionId: `submission-warm-${ledger.submissionCalls.length}`, admission: 'admitted' as const }
+      return {
+        submissionId: `submission-warm-${ledger.submissionCalls.length}`,
+        admission: 'admitted' as const,
+      }
     },
     async invoke(request: { body: string }) {
       ledger.submissionCalls.push({ door: 'invoke', body: request.body })
-      return { submissionId: `submission-warm-${ledger.submissionCalls.length}`, admission: 'admitted' as const }
+      return {
+        submissionId: `submission-warm-${ledger.submissionCalls.length}`,
+        admission: 'admitted' as const,
+      }
     },
     async dispose() {},
     async close() {},

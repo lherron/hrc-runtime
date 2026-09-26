@@ -737,20 +737,6 @@ function admitV2Execution(
       'harness-broker/0.2'
     )
   }
-  if (!hasValidHosting(execution.hosting)) {
-    return admissionRefusal(
-      'execution-hosting-invalid',
-      'plan.execution.hosting',
-      execution.hosting
-    )
-  }
-  if (!hasCoherentPresentation(execution, execution.hosting)) {
-    return admissionRefusal('execution-presentation-invalid', 'plan.execution.presentation', {
-      presentationFulfillment: execution['presentationFulfillment'],
-      presentationSurface: execution['presentationSurface'],
-      terminalRequired: execution.hosting['terminalRequired'],
-    })
-  }
   if (requestedOperatorPresentation === 'none') {
     const selection = plan.selection as unknown as Record<string, unknown>
     const provenance = isRecord(selection['provenance']) ? selection['provenance'] : {}
@@ -784,6 +770,57 @@ function admitV2Execution(
         }
       )
     }
+  }
+  if (requestedOperatorPresentation === 'tmux-tui') {
+    const selection = plan.selection as unknown as Record<string, unknown>
+    const provenance = isRecord(selection['provenance']) ? selection['provenance'] : {}
+    const surface: Record<string, unknown> = isRecord(execution['presentationSurface'])
+      ? execution['presentationSurface']
+      : {}
+    const actual = {
+      requestedOperatorPresentation,
+      selectedPresentation: selection['presentation'],
+      presentationProvenance: provenance['presentation'],
+      terminalRequired: execution.hosting['terminalRequired'],
+      terminalHost: execution.hosting['terminalHost'],
+      presentationSurface: execution['presentationSurface'],
+    }
+    if (
+      selection['presentation'] !== true ||
+      provenance['presentation'] !== 'compile-request' ||
+      execution.hosting['terminalRequired'] !== true ||
+      execution.hosting['terminalHost'] !== 'tmux' ||
+      (surface['transport'] !== 'terminal' && surface['transport'] !== 'websocket-unix') ||
+      surface['terminalHost'] !== 'tmux'
+    ) {
+      return admissionRefusal(
+        'execution_presentation_constraint_mismatch',
+        'plan.execution.presentation',
+        actual,
+        {
+          requestedOperatorPresentation: 'tmux-tui',
+          selectedPresentation: true,
+          presentationProvenance: 'compile-request',
+          terminalRequired: true,
+          terminalHost: 'tmux',
+          presentationSurface: { transport: ['terminal', 'websocket-unix'], terminalHost: 'tmux' },
+        }
+      )
+    }
+  }
+  if (!hasValidHosting(execution.hosting)) {
+    return admissionRefusal(
+      'execution-hosting-invalid',
+      'plan.execution.hosting',
+      execution.hosting
+    )
+  }
+  if (!hasCoherentPresentation(execution, execution.hosting)) {
+    return admissionRefusal('execution-presentation-invalid', 'plan.execution.presentation', {
+      presentationFulfillment: execution['presentationFulfillment'],
+      presentationSurface: execution['presentationSurface'],
+      terminalRequired: execution.hosting['terminalRequired'],
+    })
   }
   const profileField = (
     ['profileId', 'profileHash', 'compatibilityHash', 'startRequestHash'] as const
@@ -936,7 +973,13 @@ export async function compileBrokerRuntimePlan(
     identity,
     v2AgentIdForScope(input.scopeRef),
     executionFormat,
-    intent.presentation?.operator
+    intent.presentation?.operator === 'tmux-tui' &&
+      (intent.harness.provider !== undefined ||
+        intent.harness.id !== undefined ||
+        intent.harness.interactive === true ||
+        intent.execution?.preferredMode === 'interactive')
+      ? undefined
+      : intent.presentation?.operator
   )
 
   if (!selection.admitted) {

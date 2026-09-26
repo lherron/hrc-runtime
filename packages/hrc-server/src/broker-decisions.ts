@@ -33,7 +33,14 @@ import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
  */
 export function isProducerSelectedOrdinaryBirth(intent: HrcRuntimeIntent): boolean {
   const operator = intent.presentation?.operator
-  return operator !== 'tmux-tui' && operator !== 'observer'
+  if (operator === 'observer') return false
+  if (operator !== 'tmux-tui') return true
+  return (
+    intent.harness.provider === undefined &&
+    intent.harness.id === undefined &&
+    intent.harness.interactive !== true &&
+    intent.execution?.preferredMode !== 'interactive'
+  )
 }
 
 export function deriveInteractiveHarness(
