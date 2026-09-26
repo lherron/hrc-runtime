@@ -745,7 +745,6 @@ function admitV2Execution(
       provenance['presentation'] !== 'compile-request' ||
       execution.hosting['terminalRequired'] !== false ||
       execution.hosting['terminalHost'] !== undefined ||
-      execution['presentationFulfillment'] === 'attachable' ||
       execution['presentationSurface'] !== undefined
     ) {
       return admissionRefusal(
@@ -758,7 +757,6 @@ function admitV2Execution(
           presentationProvenance: 'compile-request',
           terminalRequired: false,
           terminalHost: null,
-          presentationFulfillment: 'intrinsic | birth-variant',
           presentationSurface: null,
         }
       )

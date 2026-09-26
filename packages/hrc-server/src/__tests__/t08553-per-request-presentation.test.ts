@@ -274,6 +274,41 @@ describe('T-08553 per-request operator presentation', () => {
     expect(response.status).toBeLessThan(500)
   })
 
+  it('admits the published nonterminal Codex plan whose static fulfillment is attachable', async () => {
+    const s = await session()
+    // Real hrcdev ASPD readback for the Codex withoutPresentation recipe:
+    // presentation is explicitly false, hosting is nonterminal, and no
+    // presentation surface exists. The fulfillment label names recipe
+    // capability; it is not a selected operator surface.
+    aspd.producerResult = producerResult({
+      selection: {
+        presentation: false,
+        provenance: {
+          harness: 'catalog-default',
+          modelProvider: 'catalog-default',
+          model: 'catalog-default',
+          presentation: 'compile-request',
+        },
+      },
+      execution: { presentationFulfillment: 'attachable' },
+    })
+
+    const response = await turn(s.hostSessionId, operatorOnlyNoViewerIntent())
+    await Bun.sleep(50)
+
+    expect(aspd.compileRequested).toEqual([{ presentation: false }])
+    expect(response.status).toBeLessThan(500)
+    const [op] = routeDecisions(s.hostSessionId)
+    const preparation = JSON.parse(op?.preparation_json ?? '{}')
+    expect(preparation.dispatch.routeDecision).toMatchObject({
+      preparation: 'aspd',
+      hostingPresentation: 'none',
+      selectedBy: 'producer-selected-execution',
+    })
+    expect(preparation.hosting.presentation).toBe('none')
+    expect(ledger.attachCalls).toBe(0)
+  })
+
   it('sends operator none as the existing presentation constraint and fences a terminal producer answer before preparation', async () => {
     const s = await session()
     // This mirrors the hrcdev readback: agent-profile presentation true,
