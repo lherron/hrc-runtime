@@ -122,6 +122,31 @@ function emitSessionTiming(
 export class ContinuityRepository {
   constructor(private readonly db: Database) {}
 
+  /**
+   * Remove every executable continuity selection for one scope while leaving
+   * its historical session rows intact. Callers that require an atomic
+   * lifecycle transition must own the surrounding transaction.
+   */
+  disassociateScope(scopeRef: string): HrcContinuityRecord[] {
+    const rows = this.db
+      .query<ContinuityRow, [string]>(
+        `
+          SELECT scope_ref, lane_ref, active_host_session_id, updated_at
+          FROM continuities
+          WHERE scope_ref = ?
+        `
+      )
+      .all(scopeRef)
+    const continuities = rows.flatMap((row) => {
+      const continuity = this.getByKey(row.scope_ref, row.lane_ref)
+      return continuity === null ? [] : [continuity]
+    })
+    if (continuities.length === 0) return continuities
+
+    execute(this.db, 'DELETE FROM continuities WHERE scope_ref = ?', scopeRef)
+    return continuities
+  }
+
   upsert(record: ContinuityUpsertInput): HrcContinuityRecord {
     execute(
       this.db,

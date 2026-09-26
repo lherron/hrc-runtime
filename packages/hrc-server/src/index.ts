@@ -2828,6 +2828,19 @@ class HrcServerInstance implements HrcServer {
               runtime.scopeRef === scopeRef && !isRuntimeUnavailableStatus(runtime.status)
           )
           .map((runtime) => runtime.runtimeId),
+      fenceContinuities: (scopeRef: string) => {
+        this.db.sqlite.transaction(() => {
+          const continuities = this.db.continuities.disassociateScope(scopeRef)
+          const fencedAt = timestamp()
+          for (const continuity of continuities) {
+            this.db.sessions.setContinuationReuseDisabled(
+              continuity.activeHostSessionId,
+              true,
+              fencedAt
+            )
+          }
+        })()
+      },
       log: writeServerLog,
     }
     return json(await retireFederationScope(dependencies, body as FederationRetirementRequest))

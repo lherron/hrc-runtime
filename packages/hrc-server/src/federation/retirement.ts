@@ -23,6 +23,11 @@ export type FederationRetirementDependencies = {
   readonly ledger: Pick<PlacementLedgerRepository, 'get' | 'retire'>
   readonly registry: Pick<BindingRegistryClient, 'deleteBinding'>
   readonly liveRuntimeIds: (scopeRef: string) => readonly string[]
+  /**
+   * Atomically disables automatic continuation reuse and disassociates every
+   * exact scope-to-session selection. Historical session rows remain intact.
+   */
+  readonly fenceContinuities: (scopeRef: string) => void
   readonly log: RetirementLog
   readonly now?: (() => string) | undefined
 }
@@ -113,6 +118,15 @@ export async function retireFederationScope(
         ...(local.record === undefined ? {} : { ledger: ledgerView(local.record) }),
       })
     }
+
+    // The durable local retirement mark is the hard stop. Before releasing
+    // collective authority, remove every exact continuity selection that could
+    // otherwise let a stale delivery skip fresh-establishment authority and
+    // enqueue against this permanently retired home. The fencer retains the
+    // session and continuation payload as history, but disables its automatic
+    // reuse. If it throws, leave the registry binding in place: retrying this
+    // ordered retirement remains safe and no successor can establish early.
+    deps.fenceContinuities(request.scopeRef)
 
     try {
       const deleted = await deps.registry.deleteBinding({

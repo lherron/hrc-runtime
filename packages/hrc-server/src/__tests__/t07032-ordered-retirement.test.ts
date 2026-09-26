@@ -47,6 +47,7 @@ describe('T-07032 federation v1.3 ordered retirement', () => {
         owner: {},
         registry: registryClient,
         liveRuntimeIds: () => [],
+        fenceContinuities: () => {},
         log: () => {},
         now: () => NOW,
       }
