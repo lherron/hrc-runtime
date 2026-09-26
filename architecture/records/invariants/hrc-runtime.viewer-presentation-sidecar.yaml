@@ -26,6 +26,27 @@ predicate: >
   normalized (scopeRef, laneRef), with runtime and generation fences for
   adoption and reap. A pre-record generation is adopt-only and cannot cause a
   pane to be minted until an invocation establishes presentation authority.
+  The existing store-only presentation row may expose operatorSurfaces as
+  active Ghostty (surfaceId, clientTty) pairs with nonempty clientTty; an
+  absent field on an older server yields no eligible operator surfaces. The
+  scope form of hrc attach binds its invoking Ghostty surface immediately
+  before exec, while descriptor-only attach does not bind. An attach exit
+  does not unbind because binding records lack an attachment-instance fence.
+  ACP's hrc-viewer may paint an HRC-reported operator Ghostty surface only when
+  the same presentation-row runtime reports a nonempty clientTty for that
+  surface and an independent tmux-client probe observes that exact TTY live on
+  the row's attach target. Missing, negative, or indeterminate evidence
+  withholds operator-surface paint. HRC keeps one active Ghostty binding per
+  client TTY and retires an older conflicting surface in the new bind
+  transaction. Operator surfaces may receive only status bars, terminal
+  background, and title. The viewer never mints, adopts, rebinds, reaps, or
+  writes hrc_* metadata on them. A keyed metadata-owned pane may coexist with
+  multiple operator surfaces; each permitted presentation write reaches the
+  deduplicated set of the pane and exact-TTY-qualified operator surfaces, while
+  pane topology and reap range only over the keyed pane. The presentation row
+  remains a store-only projection, and viewer observation and polling do not
+  mutate lifecycle state. The viewer obtains these pairs through the existing
+  presentation read, not a per-runtime surfaces route.
   Viewer absence, death, lag, reconnect, reconciliation, and polling cannot
   mutate or finalize runtime, run, or turn state and cannot delay or fail their
   lifecycle paths.
@@ -39,6 +60,8 @@ source:
   - docs/proposals/viewer-sidecar-spec.md
   - packages/hrc-server/src/runtime-io-handlers.ts
   - wrkq:T-08623
+  - wrkq:T-09269
+  - wrkq:T-09270
   - packages/hrc-server/src/runtime-control-handlers/session-rotation.ts
 required_tests:
   - just architecture-records
@@ -47,7 +70,9 @@ required_tests:
   - single production viewer per GUI user and non-production disablement gate
   - viewer pane identity, runtime-fenced reap, and role-qualified scope coexistence gates
   - live production Ghostty shadow matrix for start, run, reuse, retitle, terminate, and restart
-last_verified: 2026-08-26 human operator override; implementation gates pending
-reopen_when: Viewer cardinality or placement per GUI user, the shared Ghostty registry boundary, Ghostty actuation ownership, presentation authority or read model, invocation suppression lifetime, pane identity, upgrade adoption rule, lifecycle failure isolation, or ghostmux boundary changes.
+  - operator-surface exact-TTY matching, conflicting-bind retirement, store-only row, no-metadata and no-reap gates
+  - installed Ghostty attach, detach, reuse, and stale-binding paint matrix
+last_verified: 2026-08-26 human operator override for prior sidecar law; operator-surface implementation gates pending
+reopen_when: Viewer cardinality or placement per GUI user, the shared Ghostty registry boundary, Ghostty actuation ownership, operator-surface TTY identity or binding uniqueness, presentation authority or read model, invocation suppression lifetime, pane identity, upgrade adoption rule, lifecycle failure isolation, or ghostmux boundary changes.
 supersedes: []
 superseded_by: []
