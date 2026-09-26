@@ -253,11 +253,28 @@ export class HrcLifecycleEventRepository {
     private readonly db: Database,
     private readonly toolResultBlobs = new ToolResultBlobRepository(db)
   ) {
-    const append = db.transaction((event: HrcLifecycleEventInput) => {
-      const streamSeq = allocateStreamSeq(this.db)
-      execute(
-        this.db,
-        `
+    const append = db.transaction((event: HrcLifecycleEventInput) => this.appendPersisted(event))
+    // allocateStreamSeq reads before it updates. Reserve the WAL writer first
+    // so ordinary busy_timeout handling applies instead of BUSY_SNAPSHOT.
+    this.appendInTransaction = (event) => append.immediate(event)
+  }
+
+  /**
+   * Append while the caller already owns the encompassing SQLite transaction.
+   *
+   * This is deliberately narrow: multi-row protocol transitions use it when
+   * their lifecycle fact must commit or roll back with the state rows. Ordinary
+   * callers use append(), which reserves its own immediate writer transaction.
+   */
+  appendWithinExistingTransaction(event: HrcLifecycleEventInput): HrcLifecycleEvent {
+    return this.appendPersisted(event)
+  }
+
+  private appendPersisted(event: HrcLifecycleEventInput): HrcLifecycleEvent {
+    const streamSeq = allocateStreamSeq(this.db)
+    execute(
+      this.db,
+      `
           INSERT INTO hrc_events (
             stream_seq,
             ts,
@@ -279,53 +296,43 @@ export class HrcLifecycleEventRepository {
             payload_json
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        streamSeq,
-        event.ts,
-        event.hostSessionId,
-        event.scopeRef,
-        event.laneRef,
-        event.generation,
-        event.runtimeId ?? null,
-        event.runId ?? null,
-        event.launchId ?? null,
-        event.appId ?? null,
-        event.appSessionKey ?? null,
-        event.category,
-        event.eventKind,
-        event.transport ?? null,
-        event.errorCode ?? null,
-        event.replayed ? 1 : 0,
-        event.evidenceOrigin ?? null,
-        JSON.stringify(event.payload ?? {})
+      streamSeq,
+      event.ts,
+      event.hostSessionId,
+      event.scopeRef,
+      event.laneRef,
+      event.generation,
+      event.runtimeId ?? null,
+      event.runId ?? null,
+      event.launchId ?? null,
+      event.appId ?? null,
+      event.appSessionKey ?? null,
+      event.category,
+      event.eventKind,
+      event.transport ?? null,
+      event.errorCode ?? null,
+      event.replayed ? 1 : 0,
+      event.evidenceOrigin ?? null,
+      JSON.stringify(event.payload ?? {})
+    )
+
+    const inserted = this.db.query<{ seq: number }, []>('SELECT last_insert_rowid() AS seq').get()
+    if (!inserted) {
+      throw new Error('failed to read inserted hrc event sequence')
+    }
+
+    this.spillPersistedResult(inserted.seq, event.eventKind, event.runtimeId, event.payload, event.ts)
+
+    const stored = this.db
+      .query<HrcEventRow, [number]>(
+        `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events WHERE hrc_seq = ?`
       )
+      .get(inserted.seq)
+    if (!stored) {
+      throw new Error(`failed to reload hrc event ${inserted.seq}`)
+    }
 
-      const inserted = this.db.query<{ seq: number }, []>('SELECT last_insert_rowid() AS seq').get()
-      if (!inserted) {
-        throw new Error('failed to read inserted hrc event sequence')
-      }
-
-      this.spillPersistedResult(
-        inserted.seq,
-        event.eventKind,
-        event.runtimeId,
-        event.payload,
-        event.ts
-      )
-
-      const stored = this.db
-        .query<HrcEventRow, [number]>(
-          `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events WHERE hrc_seq = ?`
-        )
-        .get(inserted.seq)
-      if (!stored) {
-        throw new Error(`failed to reload hrc event ${inserted.seq}`)
-      }
-
-      return this.mapRow(stored)
-    })
-    // allocateStreamSeq reads before it updates. Reserve the WAL writer first
-    // so ordinary busy_timeout handling applies instead of BUSY_SNAPSHOT.
-    this.appendInTransaction = (event) => append.immediate(event)
+    return this.mapRow(stored)
   }
 
   private mapRow(row: HrcEventRow, options: { hydrate?: boolean } = {}): HrcLifecycleEvent {

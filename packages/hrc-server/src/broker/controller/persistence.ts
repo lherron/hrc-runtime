@@ -12,6 +12,7 @@ import { HrcErrorCode } from 'hrc-core'
 import type {
   HrcBrokerInvocationRecord,
   HrcExecutionFormat,
+  HrcInputRecord,
   HrcRunRecord,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -23,6 +24,7 @@ import { neutralSpecHash } from 'spaces-runtime-contracts'
 
 import { assertAppStartGraphRunIdentity } from '../../app-session-identity.js'
 import { armFirstTurnWatch } from '../../first-turn-watch'
+import { appendHrcEventWithinExistingTransaction } from '../../hrc-event-helper'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import {
   dispatchOriginRunFields,
@@ -48,17 +50,34 @@ export type PersistenceContext = {
   serverInstanceId: string
 }
 
+export type PersistedBrokerStartGraph = {
+  session: HrcSessionRecord
+  runtime: HrcRuntimeSnapshot
+  run?: HrcRunRecord | undefined
+  invocation: HrcBrokerInvocationRecord
+  /** Present only for a format-2 initial input admitted at boundary P. */
+  input?: HrcInputRecord | undefined
+}
+
 export function persistStartGraph(
   ctx: PersistenceContext,
   input: BrokerControllerStartInput,
   hello: BrokerHelloResponse,
   tmuxAllocation: BrokerTmuxAllocation | undefined
-): {
-  session: HrcSessionRecord
-  runtime: HrcRuntimeSnapshot
-  run?: HrcRunRecord | undefined
-  invocation: HrcBrokerInvocationRecord
-} {
+): PersistedBrokerStartGraph {
+  // Boundary P is one durable decision: a format-2 initial input cannot be
+  // protected in a separately auto-committed row from the invocation that is
+  // about to carry it. Any failure rolls back both the placement and its
+  // admission fact before the controller can await the broker write.
+  return ctx.db.sqlite.transaction(() => persistStartGraphInTransaction(ctx, input, hello, tmuxAllocation))()
+}
+
+function persistStartGraphInTransaction(
+  ctx: PersistenceContext,
+  input: BrokerControllerStartInput,
+  hello: BrokerHelloResponse,
+  tmuxAllocation: BrokerTmuxAllocation | undefined
+): PersistedBrokerStartGraph {
   const now = ctx.now()
   const identity = input.identity
   const executionFormat: HrcExecutionFormat = input.executionFormat ?? 'format1'
@@ -72,6 +91,35 @@ export function persistStartGraph(
         runId: String(identity.runId),
       }
     )
+  }
+  const initialInputId = input.execution.dispatchRequest.startRequest.initialInput?.inputId
+  if (executionFormat === 'format2') {
+    if (input.dispatchIdempotencyKey === undefined || input.format2RequestHash === undefined) {
+      throw new BrokerControllerError(
+        'format2_admission_identity_missing',
+        'format 2 start graph requires an idempotency key and canonical request hash',
+        {
+          operationId: String(identity.operationId),
+          ...(input.dispatchIdempotencyKey === undefined ? { missing: 'dispatchIdempotencyKey' } : {}),
+          ...(input.format2RequestHash === undefined ? { missing: 'format2RequestHash' } : {}),
+        }
+      )
+    }
+    if (
+      initialInputId === undefined ||
+      identity.initialInputId === undefined ||
+      String(initialInputId) !== String(identity.initialInputId)
+    ) {
+      throw new BrokerControllerError(
+        'format2_initial_input_identity_mismatch',
+        'format 2 start graph requires the compiled initial input to match its frozen identity',
+        {
+          operationId: String(identity.operationId),
+          compiledInitialInputId: initialInputId,
+          identityInitialInputId: identity.initialInputId,
+        }
+      )
+    }
   }
   const session = ctx.db.sessions.getByHostSessionId(String(identity.hostSessionId))
   if (!session) {
@@ -225,7 +273,6 @@ export function persistStartGraph(
   // structural fact: interactive tmux profiles deliver launch text through argv
   // and carry no `initialInput` at all, so they keep `dispatchedInputId ===
   // undefined` and the separate T-07920 launch-primed attribution it selects.
-  const initialInputId = input.execution.dispatchRequest.startRequest.initialInput?.inputId
   const run =
     identity.runId !== undefined
       ? ctx.db.runs.insert({
@@ -336,7 +383,60 @@ export function persistStartGraph(
     updatedAt: now,
   })
 
-  return { session, runtime, run, invocation }
+  // The HRC input id and the broker submission id remain separate fields even
+  // for the launch-carried format-2 input.  The producer's initial-input
+  // contract registers a native submission whose id is the supplied
+  // `initialInput.inputId`; this is the narrow, source-backed first-input
+  // binding.  Later class-door submissions receive their native id only from
+  // the broker response and bind through InputRepository after their body
+  // write.  Never derive either identity for any other input.
+  const initialNativeSubmissionId =
+    executionFormat === 'format2' ? String(input.execution.dispatchRequest.startRequest.initialInput?.inputId) : undefined
+  const admittedInput =
+    executionFormat === 'format2'
+      ? ctx.db.inputs.insert({
+          inputId: String(identity.initialInputId),
+          admissionHostSessionId: session.hostSessionId,
+          idempotencyKey: input.dispatchIdempotencyKey!,
+          requestHash: input.format2RequestHash!,
+          hostSessionId: session.hostSessionId,
+          runtimeId: runtime.runtimeId,
+          operationId: String(identity.operationId),
+          invocationId: String(identity.invocationId),
+          ...(initialNativeSubmissionId !== undefined
+            ? { brokerSubmissionId: initialNativeSubmissionId }
+            : {}),
+          door: input.submissionDoor,
+          admissionClass: input.submissionDoor,
+          ...(input.origin !== undefined ? { origin: JSON.stringify(input.origin) } : {}),
+          status: 'accepted',
+          cleanupProtection: 'protected',
+          admittedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+      : undefined
+
+  if (admittedInput !== undefined) {
+    appendHrcEventWithinExistingTransaction(ctx.db, 'input.admitted', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport,
+      payload: {
+        inputId: admittedInput.inputId,
+        idempotencyKey: admittedInput.idempotencyKey,
+        requestHash: admittedInput.requestHash,
+        brokerSubmissionId: admittedInput.brokerSubmissionId,
+        door: admittedInput.door,
+      },
+    })
+  }
+
+  return { session, runtime, run, invocation, ...(admittedInput !== undefined ? { input: admittedInput } : {}) }
 }
 
 export function buildRuntimeStateJson(

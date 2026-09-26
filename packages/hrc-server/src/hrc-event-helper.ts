@@ -76,6 +76,7 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'broker.turn.origin': 'turn',
   'turn.message': 'turn',
   'turn.message_segment': 'turn',
+  'input.admitted': 'input',
   'input.rejected': 'input',
   'input.landed': 'input',
   'input.terminal': 'input',
@@ -149,7 +150,23 @@ export function appendHrcEvent(
   eventKind: string,
   params: AppendHrcEventParams
 ): HrcLifecycleEvent {
-  const input: HrcLifecycleEventInput = {
+  return db.hrcEvents.append(createHrcEventInput(eventKind, params))
+}
+
+/** Appends a lifecycle fact inside the caller's already-open SQLite transaction. */
+export function appendHrcEventWithinExistingTransaction(
+  db: HrcDatabase,
+  eventKind: string,
+  params: AppendHrcEventParams
+): HrcLifecycleEvent {
+  return db.hrcEvents.appendWithinExistingTransaction(createHrcEventInput(eventKind, params))
+}
+
+function createHrcEventInput(
+  eventKind: string,
+  params: AppendHrcEventParams
+): HrcLifecycleEventInput {
+  return {
     ts: params.ts,
     hostSessionId: params.hostSessionId,
     scopeRef: params.scopeRef,
@@ -167,5 +184,4 @@ export function appendHrcEvent(
     replayed: params.replayed,
     payload: params.payload ?? {},
   }
-  return db.hrcEvents.append(input)
 }

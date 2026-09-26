@@ -113,6 +113,33 @@ test('format-2 admission persists a protected input before any execution run exi
   expect(() => db.inputs.insert(admittedInput('input-t08207-b', 'submission-t08207-a'))).toThrow()
 })
 
+test('format-2 warm admission binds its native submission exactly once', () => {
+  const db = openHrcDatabase(':memory:') as any
+  db.inputs.insert(admittedInput('input-t08207-warm'))
+
+  expect(
+    db.inputs.bindBrokerSubmissionId(
+      'input-t08207-warm',
+      'submission-t08207-warm',
+      '2026-09-26T06:30:01.000Z'
+    )
+  ).toMatchObject({ brokerSubmissionId: 'submission-t08207-warm' })
+  expect(
+    db.inputs.bindBrokerSubmissionId(
+      'input-t08207-warm',
+      'submission-t08207-warm',
+      '2026-09-26T06:30:02.000Z'
+    )
+  ).toMatchObject({ brokerSubmissionId: 'submission-t08207-warm' })
+  expect(() =>
+    db.inputs.bindBrokerSubmissionId(
+      'input-t08207-warm',
+      'submission-t08207-conflict',
+      '2026-09-26T06:30:03.000Z'
+    )
+  ).toThrow(/broker submission conflict/)
+})
+
 test('one exact landing transfers protection to a carrier without permitting a conflicting rebind', () => {
   const db = openHrcDatabase(':memory:') as any
   db.inputs.insert(admittedInput('input-t08207-a'))

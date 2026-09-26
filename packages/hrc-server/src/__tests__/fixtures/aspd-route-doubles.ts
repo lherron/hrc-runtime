@@ -399,10 +399,13 @@ export type HostingLedger = {
   commands: string[]
   killedServers: string[]
   startCalls: Array<{ request: InvocationStartRequest; dispatch: unknown }>
+  submissionCalls: Array<{ door: 'enqueue' | 'invoke'; body: string }>
   attachCalls: number
   startGate?: Promise<void> | undefined
   helloReleaseOverride?: BrokerHelloResponse['release'] | null | undefined
   startThrows?: Error | undefined
+  /** Test-only assertion point immediately before the external broker write. */
+  onBeforeStartInvocation?: ((request: InvocationStartRequest) => void) | undefined
   onFirstHostingEffect?: (() => void) | undefined
 }
 
@@ -479,6 +482,7 @@ export function workerClient(
       return { status: 'ok' as const, activeInvocations: 0, drivers: [] }
     },
     async startInvocationFromRequest(request: InvocationStartRequest, dispatch: unknown) {
+      ledger.onBeforeStartInvocation?.(request)
       ledger.startCalls.push({ request, dispatch })
       if (ledger.startThrows) throw ledger.startThrows
       await ledger.startGate
@@ -491,6 +495,14 @@ export function workerClient(
         },
         events,
       }
+    },
+    async enqueue(request: { body: string }) {
+      ledger.submissionCalls.push({ door: 'enqueue', body: request.body })
+      return { submissionId: `submission-warm-${ledger.submissionCalls.length}`, admission: 'admitted' as const }
+    },
+    async invoke(request: { body: string }) {
+      ledger.submissionCalls.push({ door: 'invoke', body: request.body })
+      return { submissionId: `submission-warm-${ledger.submissionCalls.length}`, admission: 'admitted' as const }
     },
     async dispose() {},
     async close() {},

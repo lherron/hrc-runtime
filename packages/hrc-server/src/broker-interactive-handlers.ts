@@ -1,8 +1,14 @@
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
+import {
+  HrcConflictError,
+  HrcErrorCode,
+  HrcRuntimeUnavailableError,
+  HrcUnprocessableEntityError,
+} from 'hrc-core'
 import type {
   DispatchTurnResponse,
+  HrcExecutionFormat,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -352,8 +358,9 @@ export async function handleHeadlessBrokerDispatchTurn(
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent,
   prompt: string,
-  runId: string,
+  runId: string | undefined,
   options: DispatchRunPersistenceOptions & {
+    executionFormat?: HrcExecutionFormat | undefined
     waitForCompletion?: boolean | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
@@ -363,6 +370,26 @@ export async function handleHeadlessBrokerDispatchTurn(
     redirectOffBirthJoin?: RedirectOffBirthJoin | undefined
   } = {}
 ): Promise<Response> {
+  if (options.executionFormat === 'format2') {
+    if (runId !== undefined) {
+      throw new HrcConflictError(
+        HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+        'format2 dispatch cannot carry an admission-time run identity',
+        { runId, route: 'broker' }
+      )
+    }
+    return await this.executeHeadlessBrokerFormat2DispatchTurn(session, intent, prompt, {
+      ...options,
+      executionFormat: 'format2',
+    })
+  }
+  if (runId === undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+      'format1 dispatch requires an admission-time run identity',
+      { route: 'broker' }
+    )
+  }
   const requestedTurnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
   // Re-resolve actuator authority for every turn, including reuse and durable

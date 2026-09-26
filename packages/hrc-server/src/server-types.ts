@@ -114,6 +114,11 @@ export type AttachedRunObservation = {
 }
 
 export type DispatchRunPersistenceOptions = Pick<HrcRunRecord, 'dispatchIdempotencyKey'> & {
+  /**
+   * Stable canonical request hash for a format-2 input admission. It is frozen
+   * with a prepared attempt and is checked before a retry may write a body.
+   */
+  format2RequestHash?: string | undefined
   /** Process-local birth trace; observational and never persisted. */
   birthTimeline?: BirthTimeline | undefined
   /** Admission syscall selected by the caller; never inferred from seat state. */
@@ -198,6 +203,7 @@ export function dispatchRunPersistence(
 ): DispatchRunPersistenceOptions {
   return {
     dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    format2RequestHash: options.format2RequestHash,
     birthTimeline: options.birthTimeline,
     submissionDoor: options.submissionDoor,
     submissionOrigin: options.submissionOrigin,

@@ -55,9 +55,14 @@ test('input-id-less provider start mints one execution; later submission.execute
     executionFormat: 'format2',
     updatedAt: ts(),
   })
-  const hrcInputId = 'input-t08207-initiating'
+  // Captured hrcdev Codex format-2 wire: invocation `inv-d23624a5…` emitted
+  // this native `submission.executed.payload.submissionId` for its launch
+  // input. The producer contract prebound that native field at admission; the
+  // mapper never compares a broker input field to `inputs.input_id`.
+  const hrcInputId = 'input-26dd05e4-0bfa-4e72-9049-61d11fd2d60b'
   const nativeTurnId = turnId('turn-t08207-initiating')
-  db.inputs.insert(admittedInput(hrcInputId, 'submission-t08207-initiating'))
+  const initialNativeSubmissionId = 'input-26dd05e4-0bfa-4e72-9049-61d11fd2d60b'
+  db.inputs.insert(admittedInput(hrcInputId, initialNativeSubmissionId))
   const mapper = new BrokerEventMapper({ db, now: () => ts(100) })
 
   // Live Codex provider evidence (T-08207 artifact) has a top-level turnId and
@@ -96,7 +101,7 @@ test('input-id-less provider start mints one execution; later submission.execute
 
   const executed = mapper.apply(
     envelope('submission.executed', 2, {
-      submissionId: 'submission-t08207-initiating',
+      submissionId: initialNativeSubmissionId,
       turnId: nativeTurnId,
     }, {
       invocationId: TMUX_INVOCATION_ID,
@@ -105,7 +110,7 @@ test('input-id-less provider start mints one execution; later submission.execute
   )
   mapper.apply(
     envelope('submission.executed', 2, {
-      submissionId: 'submission-t08207-initiating',
+      submissionId: initialNativeSubmissionId,
       turnId: nativeTurnId,
     }, {
       invocationId: TMUX_INVOCATION_ID,
@@ -177,6 +182,79 @@ test('a format-2 unowned turn obtains its own execution and cannot consume a lat
     carrierRunId: carrier.runId,
   })
   expect(db.runs.listRuns({ hostSessionId: TMUX_HOST_SESSION_ID })).toHaveLength(1)
+})
+
+test('format-2 native input identity cannot collide with a different HRC input id', () => {
+  const db = fixture.db as any
+  db.brokerInvocations.update(TMUX_INVOCATION_ID, {
+    executionFormat: 'format2',
+    updatedAt: ts(),
+  })
+  // The native id names input A's HRC id, while its durable native binding owns
+  // input B. A direct getByInputId(nativeId) would land A incorrectly.
+  db.inputs.insert(admittedInput('input-t08207-native-collision', 'submission-t08207-a'))
+  db.inputs.insert(admittedInput('input-t08207-b', 'input-t08207-native-collision'))
+  const mapper = new BrokerEventMapper({ db, now: () => ts(100) })
+  const nativeTurnId = turnId('turn-t08207-native-collision')
+
+  mapper.apply(
+    envelope('turn.started', 1, { turnId: nativeTurnId }, {
+      invocationId: TMUX_INVOCATION_ID,
+      turnId: nativeTurnId,
+      inputId: 'input-t08207-native-collision' as never,
+    })
+  )
+
+  const carrier = db.runs.getByTurnKey(
+    `${TMUX_RUNTIME_ID}|${TMUX_OPERATION_ID}|${TMUX_INVOCATION_ID}|${nativeTurnId}|g=-|a=-`
+  )
+  expect(carrier).toMatchObject({ initiatingInputId: 'input-t08207-b' })
+  expect(db.inputs.getByInputId('input-t08207-native-collision')).toMatchObject({
+    status: 'accepted',
+    cleanupProtection: 'protected',
+  })
+  expect(db.inputs.getByInputId('input-t08207-b')).toMatchObject({
+    status: 'initiating',
+    carrierRunId: carrier.runId,
+  })
+})
+
+test('format-2 conflicting native envelope fields leave both protected inputs unowned', () => {
+  const db = fixture.db as any
+  db.brokerInvocations.update(TMUX_INVOCATION_ID, {
+    executionFormat: 'format2',
+    updatedAt: ts(),
+  })
+  db.inputs.insert(admittedInput('input-t08207-conflict-a', 'submission-t08207-conflict-a'))
+  db.inputs.insert(admittedInput('input-t08207-conflict-b', 'submission-t08207-conflict-b'))
+  const mapper = new BrokerEventMapper({ db, now: () => ts(100) })
+  const nativeTurnId = turnId('turn-t08207-native-conflict')
+
+  mapper.apply(
+    envelope(
+      'turn.started',
+      1,
+      { turnId: nativeTurnId, submissionId: 'submission-t08207-conflict-b' } as never,
+      {
+        invocationId: TMUX_INVOCATION_ID,
+        turnId: nativeTurnId,
+        inputId: 'submission-t08207-conflict-a' as never,
+      }
+    )
+  )
+
+  const carrier = db.runs.getByTurnKey(
+    `${TMUX_RUNTIME_ID}|${TMUX_OPERATION_ID}|${TMUX_INVOCATION_ID}|${nativeTurnId}|g=-|a=-`
+  )
+  expect(carrier).toMatchObject({ initiatingInputId: undefined, executionFormat: 'format2' })
+  expect(db.inputs.getByInputId('input-t08207-conflict-a')).toMatchObject({
+    status: 'accepted',
+    cleanupProtection: 'protected',
+  })
+  expect(db.inputs.getByInputId('input-t08207-conflict-b')).toMatchObject({
+    status: 'accepted',
+    cleanupProtection: 'protected',
+  })
 })
 
 test('a failed format-2 landing rolls back the minted carrier and preserves input protection for retry', () => {

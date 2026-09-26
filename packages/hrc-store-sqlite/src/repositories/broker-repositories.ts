@@ -624,6 +624,35 @@ export class InputRepository {
     return row === null || row === undefined ? null : mapInputRow(row)
   }
 
+  /**
+   * Bind the native id returned by a warm broker submission after its HRC input
+   * was protected before the write. A different later id is a causal conflict,
+   * never a replacement of the original mapping.
+   */
+  bindBrokerSubmissionId(inputId: string, brokerSubmissionId: string, updatedAt: string): HrcInputRecord {
+    const prior = requireRecord(this.getByInputId(inputId), `input not found for broker bind ${inputId}`)
+    if (prior.brokerSubmissionId !== undefined) {
+      if (prior.brokerSubmissionId === brokerSubmissionId) return prior
+      throw new Error(`input broker submission conflict for ${inputId}`)
+    }
+    execute(
+      this.db,
+      `UPDATE inputs SET broker_submission_id = ?, updated_at = ?
+        WHERE input_id = ? AND broker_submission_id IS NULL`,
+      brokerSubmissionId,
+      updatedAt,
+      inputId
+    )
+    const bound = requireRecord(
+      this.getByInputId(inputId),
+      `failed to reload broker-bound input ${inputId}`
+    )
+    if (bound.brokerSubmissionId !== brokerSubmissionId) {
+      throw new Error(`input broker submission conflict for ${inputId}`)
+    }
+    return bound
+  }
+
   recordLanding(landing: InputLandingRecord): HrcInputRecord {
     const prior = requireRecord(
       this.getByInputId(landing.inputId),

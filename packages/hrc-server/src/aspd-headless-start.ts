@@ -133,6 +133,8 @@ export type AspdPreparationRecord = {
   }
   dispatch: {
     dispatchEnv?: Record<string, string> | undefined
+    /** Stable format-2 admission body identity, retained across a preparation retry. */
+    format2RequestHash?: string | undefined
     lifecyclePolicy?: BrokerLifecyclePolicyOverlay | undefined
     routeDecision: Record<string, unknown>
     runtimeAuthority?: Record<string, unknown> | undefined
@@ -315,6 +317,7 @@ export type AspdPrepareInput = {
   allowCompilerInitialInputWithoutIdentity?: boolean | undefined
   responseFormat?: HrcTurnResponseFormat | undefined
   dispatchIdempotencyKey?: string | undefined
+  format2RequestHash?: string | undefined
   timing?: PrecompileLaunchTimingContext | undefined
   birthTimeline?: BirthTimeline | undefined
   /** T-08708: the attached-run door's diagnostics sink; observational only. */
@@ -649,6 +652,9 @@ export async function prepareAspdHeadlessAttempt(
     },
     dispatch: {
       ...(dispatchEnv !== undefined ? { dispatchEnv } : {}),
+      ...(input.format2RequestHash !== undefined
+        ? { format2RequestHash: input.format2RequestHash }
+        : {}),
       ...(lifecyclePolicy !== undefined ? { lifecyclePolicy } : {}),
       routeDecision,
       ...(runtimeAuthority !== undefined ? { runtimeAuthority } : {}),
@@ -992,6 +998,9 @@ export async function launchAspdPreparedAttempt(
       ? { requestedResponseFormat: record.dispatch.requestedResponseFormat }
       : {}),
     ...dispatchRunPersistence(options),
+    ...(record.dispatch.format2RequestHash !== undefined
+      ? { format2RequestHash: record.dispatch.format2RequestHash }
+      : {}),
     dispatchEnv: record.dispatch.dispatchEnv,
     routeDecision: record.dispatch.routeDecision,
     ...(record.dispatch.lifecyclePolicy !== undefined

@@ -1,10 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
+import {
+  HrcConflictError,
+  HrcErrorCode,
+  HrcRuntimeUnavailableError,
+  HrcUnprocessableEntityError,
+} from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcExecutionFormat,
+  HrcInputRecord,
   HrcRunRecord,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
@@ -16,7 +22,7 @@ import {
   isCompilerPrimingSubmissionTerminal,
 } from './compiler-priming.js'
 import { armFirstTurnWatch } from './first-turn-watch.js'
-import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
+import { appendHrcEvent, appendHrcEventWithinExistingTransaction, createUserPromptPayload } from './hrc-event-helper.js'
 import { formatDmAddress } from './messages.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
@@ -598,6 +604,275 @@ export async function startHeadlessBrokerRuntime(
   })
 }
 
+type Format2HeadlessDispatchOptions = DispatchRunPersistenceOptions & {
+  executionFormat: 'format2'
+  waitForCompletion?: boolean | undefined
+  responseFormat?: HrcTurnResponseFormat | undefined
+}
+
+type Format2AcceptedStart = {
+  runtime: HrcRuntimeSnapshot
+  input: HrcInputRecord
+  afterSeq: number
+}
+
+function format2Receipt(
+  session: HrcSessionRecord,
+  accepted: Format2AcceptedStart
+): Response {
+  const { runtime, input, afterSeq } = accepted
+  if (input.invocationId === undefined || input.runtimeId === undefined) {
+    throw new HrcRuntimeUnavailableError('format2 input has no durable invocation placement', {
+      inputId: input.inputId,
+      hostSessionId: session.hostSessionId,
+    })
+  }
+  return json({
+    inputId: input.inputId,
+    hostSessionId: session.hostSessionId,
+    generation: runtime.generation,
+    runtimeId: input.runtimeId,
+    transport: 'headless',
+    status: 'accepted',
+    supportsInFlightInput: false,
+    startIdentity: { kind: 'broker', invocationId: input.invocationId },
+    observation: {
+      broker: {
+        selector: {
+          invocationId: input.invocationId,
+          runtimeId: input.runtimeId,
+          generation: runtime.generation,
+        },
+        afterSeq,
+      },
+    },
+  })
+}
+
+function assertFormat2DispatchIdentity(
+  session: HrcSessionRecord,
+  options: Format2HeadlessDispatchOptions
+): { idempotencyKey: string; requestHash: string } {
+  if (options.dispatchIdempotencyKey === undefined || options.format2RequestHash === undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+      'format2 dispatch requires an idempotency key and canonical request hash',
+      {
+        hostSessionId: session.hostSessionId,
+        ...(options.dispatchIdempotencyKey === undefined ? { missing: 'dispatchIdempotencyKey' } : {}),
+        ...(options.format2RequestHash === undefined ? { missing: 'format2RequestHash' } : {}),
+      }
+    )
+  }
+  return {
+    idempotencyKey: options.dispatchIdempotencyKey,
+    requestHash: options.format2RequestHash,
+  }
+}
+
+function reserveWarmFormat2Input(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot,
+  input: { inputId: string; idempotencyKey: string; requestHash: string },
+  options: Format2HeadlessDispatchOptions
+): HrcInputRecord {
+  const invocationId = runtime.activeInvocationId
+  const operationId = runtime.activeOperationId
+  if (invocationId === undefined || operationId === undefined) {
+    throw new HrcRuntimeUnavailableError('format2 runtime has no invocation placement', {
+      runtimeId: runtime.runtimeId,
+      hostSessionId: session.hostSessionId,
+    })
+  }
+  const now = timestamp()
+  return server.db.sqlite.transaction(() => {
+    const admitted = server.db.inputs.insert({
+      inputId: input.inputId,
+      admissionHostSessionId: session.hostSessionId,
+      idempotencyKey: input.idempotencyKey,
+      requestHash: input.requestHash,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      operationId,
+      invocationId,
+      door: options.submissionDoor,
+      admissionClass: options.submissionDoor,
+      ...(options.origin !== undefined ? { origin: JSON.stringify(options.origin) } : {}),
+      status: 'accepted',
+      cleanupProtection: 'protected',
+      admittedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+    appendHrcEventWithinExistingTransaction(server.db, 'input.admitted', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'headless',
+      payload: {
+        inputId: admitted.inputId,
+        idempotencyKey: admitted.idempotencyKey,
+        requestHash: admitted.requestHash,
+        door: admitted.door,
+      },
+    })
+    return admitted
+  })()
+}
+
+/**
+ * Rev11's runless admission path. A format-2 initial input is reserved by the
+ * start graph; a later input into the same frozen invocation receives the
+ * identical durable reservation before its submission RPC. Neither path mints
+ * an admission run or stores `submission_admissions.run_id`.
+ */
+export async function executeHeadlessBrokerFormat2DispatchTurn(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  intent: HrcRuntimeIntent,
+  prompt: string,
+  options: Format2HeadlessDispatchOptions
+): Promise<Response> {
+  const identity = assertFormat2DispatchIdentity(session, options)
+  const existing = this.db.inputs.getByAdmission(session.hostSessionId, identity.idempotencyKey)
+  if (existing !== null) {
+    if (existing.requestHash !== identity.requestHash) {
+      throw new HrcConflictError(
+        HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+        'format2 idempotency key was replayed with a different request',
+        {
+          hostSessionId: session.hostSessionId,
+          idempotencyKey: identity.idempotencyKey,
+          existingInputId: existing.inputId,
+        }
+      )
+    }
+    const runtime =
+      existing.runtimeId === undefined ? null : this.db.runtimes.getByRuntimeId(existing.runtimeId)
+    if (runtime === null || runtime === undefined || existing.invocationId === undefined) {
+      throw new HrcRuntimeUnavailableError('format2 admission has no live durable placement', {
+        inputId: existing.inputId,
+        hostSessionId: session.hostSessionId,
+      })
+    }
+    return format2Receipt(session, {
+      runtime,
+      input: existing,
+      afterSeq: this.db.brokerInvocationEvents.maxBrokerSeq(existing.invocationId),
+    })
+  }
+
+  const existingRuntime = this.db.runtimes
+    .listByHostSessionId(session.hostSessionId)
+    .filter(
+      (runtime) =>
+        runtime.controllerKind === 'harness-broker' &&
+        runtime.activeInvocationId !== undefined &&
+        !isRuntimeUnavailableStatus(runtime.status)
+    )
+    .at(-1)
+  if (existingRuntime !== undefined) {
+    const invocation = this.db.brokerInvocations.getByInvocationId(existingRuntime.activeInvocationId!)
+    if (invocation?.executionFormat !== 'format2') {
+      throw new HrcConflictError(
+        HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+        'format2 dispatch cannot join a format1 invocation',
+        {
+          hostSessionId: session.hostSessionId,
+          runtimeId: existingRuntime.runtimeId,
+          invocationId: existingRuntime.activeInvocationId,
+        }
+      )
+    }
+    const input = reserveWarmFormat2Input(
+      this,
+      session,
+      existingRuntime,
+      { inputId: `input-${randomUUID()}`, ...identity },
+      options
+    )
+    const afterSeq = this.db.brokerInvocationEvents.maxBrokerSeq(existingRuntime.activeInvocationId!)
+    try {
+      await this.brokerWarmupComplete
+      const result = await submitThroughBrokerDoor(
+        this.getHarnessBrokerController(),
+        options.submissionDoor ?? 'invoke',
+        {
+          runtimeId: existingRuntime.runtimeId,
+          body: prompt,
+          origin: submissionOrigin(session.scopeRef, options),
+          ...(toBrokerResponseFormat(options.responseFormat) !== undefined
+            ? { responseFormat: toBrokerResponseFormat(options.responseFormat) }
+            : {}),
+          ...(options.freshContext !== undefined ? { freshContext: options.freshContext } : {}),
+          ...(options.ttlMs !== undefined ? { ttlMs: options.ttlMs } : {}),
+          ...(options.turnPolicy !== undefined ? { turnPolicy: options.turnPolicy } : {}),
+        }
+      )
+      if (result.ok) {
+        this.db.inputs.bindBrokerSubmissionId(input.inputId, result.response.submissionId, timestamp())
+      }
+    } catch (error) {
+      // A transport error says only that the body may have crossed. The durable
+      // reservation remains protected for same-key replay and exact evidence.
+      writeServerLog('WARN', 'format2.input.dispatch_uncertain', {
+        inputId: input.inputId,
+        runtimeId: existingRuntime.runtimeId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    return format2Receipt(session, { runtime: existingRuntime, input, afterSeq })
+  }
+
+  let resolveAccepted!: (value: Format2AcceptedStart) => void
+  let rejectAccepted!: (error: unknown) => void
+  const accepted = new Promise<Format2AcceptedStart>((resolve, reject) => {
+    resolveAccepted = resolve
+    rejectAccepted = reject
+  })
+  void accepted.catch(() => undefined)
+  const bootOperation = this.startHeadlessBrokerRuntime(session, intent, prompt, undefined, {
+    ...dispatchRunPersistence(options),
+    executionFormat: 'format2',
+    responseFormat: options.responseFormat,
+    onAccepted: (runtime) => {
+      const input = this.db.inputs.getByAdmission(session.hostSessionId, identity.idempotencyKey)
+      if (input === null || input.invocationId === undefined) {
+        rejectAccepted(
+          new HrcRuntimeUnavailableError('format2 start graph did not reserve its initial input', {
+            hostSessionId: session.hostSessionId,
+            runtimeId: runtime.runtimeId,
+          })
+        )
+        return
+      }
+      resolveAccepted({
+        runtime,
+        input,
+        afterSeq: this.db.brokerInvocationEvents.maxBrokerSeq(input.invocationId),
+      })
+    },
+  })
+  trackAppIdentityOperation(session, bootOperation)
+  recordStartBirth(bootOperation, startBirthOfIntent('headless', intent))
+  this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
+  void bootOperation
+    .catch((error) => {
+      rejectAccepted(error)
+    })
+    .finally(() => {
+      if (this.runtimeStartOperations.get(session.hostSessionId) === bootOperation) {
+        this.runtimeStartOperations.delete(session.hostSessionId)
+      }
+    })
+
+  return format2Receipt(session, await accepted)
+}
+
 /**
  * T-08542 — the aspd-prepared headless codex start. A same-host-session,
  * same-idempotency-key retry whose frozen run identity this dispatch reused
@@ -662,6 +937,7 @@ async function startAspdHeadlessBrokerRuntime(
         : {}),
       responseFormat: options.responseFormat,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+      format2RequestHash: options.format2RequestHash,
       birthTimeline,
       observation: options.attachBeforeInvocationStart?.observation,
     })
@@ -1593,6 +1869,7 @@ export function recordDetachedHeadlessTurnFailure(
 
 export const brokerHeadlessHandlersMethods = {
   startHeadlessBrokerRuntime,
+  executeHeadlessBrokerFormat2DispatchTurn,
   executeHeadlessBrokerStartTurn,
   executeHeadlessBrokerInputTurn,
   enqueueDurableHeadlessTurnInput,

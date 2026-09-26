@@ -71,6 +71,13 @@ type Internal = {
     runId: string | undefined,
     options?: Record<string, unknown>
   ): Promise<HrcRuntimeSnapshot>
+  handleHeadlessBrokerDispatchTurn(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    runId: string | undefined,
+    options?: Record<string, unknown>
+  ): Promise<Response>
   executeHeadlessBrokerStartTurn(
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,
@@ -146,7 +153,7 @@ beforeEach(async () => {
   // A resolver-governed selection that would be wrong if this route consulted it.
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
 
-  ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
+  ledger = { commands: [], killedServers: [], startCalls: [], submissionCalls: [], attachCalls: 0 }
   await bootServer()
 })
 
@@ -333,7 +340,11 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
       headlessIntent(),
       'format-2 initial input',
       undefined,
-      { executionFormat: 'format2' }
+      {
+        executionFormat: 'format2',
+        dispatchIdempotencyKey: 't08207-format2-start',
+        format2RequestHash: 'sha256:t08207-format2-start',
+      }
     )
 
     const [operation] = operationsFor(s.hostSessionId)
@@ -350,6 +361,189 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     expect(invocation).toMatchObject({ executionFormat: 'format2' })
     expect(invocation?.runId).toBeUndefined()
     expect(ledger.startCalls[0]?.request.spec.correlation).not.toHaveProperty('runId')
+  })
+
+  it('T-08207 admits one protected format-2 input before broker start, then replays its exact key without a second body', async () => {
+    const s = await session()
+    const idempotencyKey = 't08207-format2-admission-key'
+    const requestHash = 'sha256:t08207-format2-admission'
+    let observedInputId: string | undefined
+    let resolveBeforeBrokerWrite: (() => void) | undefined
+    const beforeBrokerWrite = new Promise<void>((resolve) => {
+      resolveBeforeBrokerWrite = resolve
+    })
+
+    ledger.onBeforeStartInvocation = (request) => {
+      observedInputId = request.initialInput?.inputId
+      resolveBeforeBrokerWrite?.()
+    }
+
+    const first = await internal().handleHeadlessBrokerDispatchTurn(
+      s,
+      headlessIntent(),
+      'first format-2 input',
+      undefined,
+      {
+        executionFormat: 'format2',
+        dispatchIdempotencyKey: idempotencyKey,
+        format2RequestHash: requestHash,
+        submissionDoor: 'invoke',
+        waitForCompletion: false,
+      }
+    )
+    expect(await first.json()).toMatchObject({
+      inputId: observedInputId,
+      hostSessionId: s.hostSessionId,
+      transport: 'headless',
+      status: 'accepted',
+      supportsInFlightInput: false,
+      startIdentity: { kind: 'broker' },
+    })
+    await beforeBrokerWrite
+    expect(observedInputId).toMatch(/^input-/)
+    const admitted = internal().db.inputs.getByInputId(observedInputId!)
+    expect(admitted).toMatchObject({
+      inputId: observedInputId,
+      admissionHostSessionId: s.hostSessionId,
+      idempotencyKey,
+      requestHash,
+      runtimeId: expect.any(String),
+      operationId: expect.any(String),
+      invocationId: expect.any(String),
+      status: 'accepted',
+      cleanupProtection: 'protected',
+    })
+    expect(internal().db.runs.listByRuntimeId(admitted!.runtimeId!)).toHaveLength(0)
+    expect(
+      internal().db.sqlite
+        .query<{ count: number }, [string]>(
+          'SELECT count(*) AS count FROM submission_admissions WHERE run_id IS NOT NULL AND runtime_id = ?'
+        )
+        .get(admitted!.runtimeId!)?.count
+    ).toBe(0)
+    const admittedEvents = internal().db.sqlite
+      .query<{ hrc_seq: number; runtime_id: string | null; event_kind: string; payload_json: string }, []>(
+        'SELECT hrc_seq, runtime_id, event_kind, payload_json FROM hrc_events ORDER BY hrc_seq'
+      )
+      .all()
+    expect(
+      admittedEvents.filter((event) => event.event_kind === 'input.admitted')
+    ).toEqual([
+      expect.objectContaining({ runtime_id: admitted!.runtimeId }),
+    ])
+    expect(ledger.startCalls).toHaveLength(1)
+
+    const replay = await internal().handleHeadlessBrokerDispatchTurn(
+      s,
+      headlessIntent(),
+      'first format-2 input',
+      undefined,
+      {
+        executionFormat: 'format2',
+        dispatchIdempotencyKey: idempotencyKey,
+        format2RequestHash: requestHash,
+        submissionDoor: 'invoke',
+        waitForCompletion: false,
+      }
+    )
+    expect(await replay.json()).toMatchObject({ inputId: observedInputId, status: 'accepted' })
+    expect(ledger.startCalls).toHaveLength(1)
+  })
+
+  it('T-08207 protects and binds a warm format-2 body before one native broker submission', async () => {
+    const s = await session()
+    await internal().handleHeadlessBrokerDispatchTurn(
+      s,
+      headlessIntent(),
+      'format-2 launch input',
+      undefined,
+      {
+        executionFormat: 'format2',
+        dispatchIdempotencyKey: 't08207-format2-warm-bootstrap',
+        format2RequestHash: 'sha256:t08207-format2-warm-bootstrap',
+        submissionDoor: 'invoke',
+      }
+    )
+
+    // The initial receipt is intentionally early (before the broker write).
+    // Let the real controller publish its active broker binding, then exercise
+    // the warm class door through that binding.
+    await Bun.sleep(20)
+    const first = await internal().handleHeadlessBrokerDispatchTurn(
+      s,
+      headlessIntent(),
+      'format-2 warm body',
+      undefined,
+      {
+        executionFormat: 'format2',
+        dispatchIdempotencyKey: 't08207-format2-warm-body',
+        format2RequestHash: 'sha256:t08207-format2-warm-body',
+        submissionDoor: 'invoke',
+      }
+    )
+    const firstBody = (await first.json()) as { inputId: string; runtimeId: string; status: string }
+    const admitted = internal().db.inputs.getByInputId(firstBody.inputId)
+    expect(admitted).toMatchObject({
+      idempotencyKey: 't08207-format2-warm-body',
+      runtimeId: firstBody.runtimeId,
+      brokerSubmissionId: 'submission-warm-1',
+      cleanupProtection: 'protected',
+      status: 'accepted',
+    })
+    expect(ledger.submissionCalls).toEqual([
+      expect.objectContaining({ body: 'format-2 warm body' }),
+    ])
+    expect(internal().db.runs.listByRuntimeId(firstBody.runtimeId)).toHaveLength(0)
+    expect(
+      internal().db.sqlite
+        .query<{ count: number }, [string]>(
+          'SELECT count(*) AS count FROM submission_admissions WHERE run_id IS NOT NULL AND runtime_id = ?'
+        )
+        .get(firstBody.runtimeId)?.count
+    ).toBe(0)
+
+    const replay = await internal().handleHeadlessBrokerDispatchTurn(
+      s,
+      headlessIntent(),
+      'format-2 warm body',
+      undefined,
+      {
+        executionFormat: 'format2',
+        dispatchIdempotencyKey: 't08207-format2-warm-body',
+        format2RequestHash: 'sha256:t08207-format2-warm-body',
+        submissionDoor: 'invoke',
+      }
+    )
+    expect((await replay.json()) as { inputId: string }).toMatchObject({ inputId: firstBody.inputId })
+    expect(ledger.submissionCalls).toHaveLength(1)
+  })
+
+  it('T-08207 keeps a format-2 input protected when the broker start rejects after reservation', async () => {
+    const s = await session()
+    ledger.startThrows = new Error('controlled broker start refusal')
+    const response = await internal().handleHeadlessBrokerDispatchTurn(
+      s,
+      headlessIntent(),
+      'possibly-written format-2 input',
+      undefined,
+      {
+        executionFormat: 'format2',
+        dispatchIdempotencyKey: 't08207-format2-error-key',
+        format2RequestHash: 'sha256:t08207-format2-error',
+        submissionDoor: 'invoke',
+        waitForCompletion: false,
+      }
+    )
+    expect((await response.json()) as { status: string }).toMatchObject({ status: 'accepted' })
+    await Bun.sleep(0)
+    const [input] = internal().db.inputs.listProtectedByRuntimeId(
+      internal().db.runtimes.listByHostSessionId(s.hostSessionId)[0]!.runtimeId
+    )
+    expect(input).toMatchObject({
+      idempotencyKey: 't08207-format2-error-key',
+      cleanupProtection: 'protected',
+      status: 'accepted',
+    })
   })
 
   it('T-08207 rejects a same-key retry whose frozen format differs before another compile or launch', async () => {

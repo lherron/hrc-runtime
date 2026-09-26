@@ -533,6 +533,8 @@ export type BrokerControllerStartInput = {
   firstTurnTimeoutMs?: number | undefined
   /** Caller retry identity persisted atomically with the accepted run row. */
   dispatchIdempotencyKey?: string | undefined
+  /** Canonical format-2 admission body hash, frozen before the broker write. */
+  format2RequestHash?: string | undefined
   /** Public submission door whose cold-start carriage selected this run. */
   submissionDoor?: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
   /**

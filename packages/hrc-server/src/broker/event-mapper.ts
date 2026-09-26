@@ -1252,24 +1252,35 @@ export class BrokerEventMapper {
     invocation: HrcBrokerInvocationRecord,
     runtime: HrcRuntimeSnapshot
   ): HrcInputRecord | undefined {
-    const inputIdentity = envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
-    const submissionId = this.extractSubmissionIdFromPayload(envelope.payload)
-    const candidates = [
-      ...(inputIdentity !== undefined
-        ? [
-            this.db.inputs.getByInputId(String(inputIdentity)),
-            this.db.inputs.getByBrokerSubmissionId(String(inputIdentity)),
-          ]
-        : []),
-      ...(submissionId !== undefined ? [this.db.inputs.getByBrokerSubmissionId(submissionId)] : []),
-    ]
-    return candidates.find(
-      (input): input is HrcInputRecord =>
+    // Format-2 HRC input identifiers are never correlated to native envelope
+    // `inputId` fields.  A native disposition is attributable only through its
+    // `submissionId` and the prebound/returned broker submission identity.
+    // The launch-carried initial input is prebound before start under the
+    // producer's explicit contract; later inputs bind the submission id the
+    // broker returned.  Both comparisons remain inside this invocation's
+    // durable placement fence.
+    const nativeIds = [
+      envelope.inputId,
+      this.extractInputIdFromPayload(envelope.payload),
+      this.extractSubmissionIdFromPayload(envelope.payload),
+    ].filter((value): value is string => typeof value === 'string')
+    const matches = new Map<string, HrcInputRecord>()
+    for (const nativeId of new Set(nativeIds)) {
+      const input = this.db.inputs.getByBrokerSubmissionId(nativeId)
+      if (
         input !== null &&
         input.invocationId === String(invocation.invocationId) &&
         input.runtimeId === runtime.runtimeId &&
         input.operationId === invocation.operationId
-    )
+      ) {
+        matches.set(input.inputId, input)
+      }
+    }
+    // An envelope that names two different native submissions cannot decide
+    // which HRC input is its subject.  Preserve both reservations and wait for
+    // unambiguous evidence; choosing the first field would let a malformed or
+    // conflicting payload misdeliver a protected body.
+    return matches.size === 1 ? [...matches.values()][0] : undefined
   }
 
   private format2InputsForDisposition(
