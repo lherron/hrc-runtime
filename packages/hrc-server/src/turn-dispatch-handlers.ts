@@ -1517,6 +1517,9 @@ export async function openHeadlessBrokerSessionForSession(
     {
       allowCompilerInitialInputWithoutIdentity: true,
       executionFormat,
+      // Format 2 session-open creates no user input. Compile its empty broker
+      // start without profile priming, or Codex observes priming as a native turn.
+      ...(executionFormat === 'format2' ? { coldBirthPromptMode: 'replace-priming' } : {}),
     }
   )
   const invocationId = runtime.activeInvocationId

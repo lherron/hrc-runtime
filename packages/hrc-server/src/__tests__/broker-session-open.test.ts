@@ -400,6 +400,7 @@ describe('POST /v1/broker-sessions/open', () => {
       runId?: string
       allowCompilerInitialInputWithoutIdentity?: boolean
       executionFormat?: 'format1' | 'format2'
+      coldBirthPromptMode?: 'replace-priming' | 'append-to-priming'
     } = {}
     ;(server as any).startHeadlessBrokerRuntime = async (
       _session: unknown,
@@ -409,6 +410,7 @@ describe('POST /v1/broker-sessions/open', () => {
       options?: {
         allowCompilerInitialInputWithoutIdentity?: boolean
         executionFormat?: 'format1' | 'format2'
+        coldBirthPromptMode?: 'replace-priming' | 'append-to-priming'
       }
     ) => {
       captured.intentInitialPrompt = intent.initialPrompt
@@ -418,6 +420,7 @@ describe('POST /v1/broker-sessions/open', () => {
       captured.allowCompilerInitialInputWithoutIdentity =
         options?.allowCompilerInitialInputWithoutIdentity
       captured.executionFormat = options?.executionFormat
+      captured.coldBirthPromptMode = options?.coldBirthPromptMode
       return seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation)
     }
     installSeatProbe('idle')
@@ -444,6 +447,7 @@ describe('POST /v1/broker-sessions/open', () => {
     expect(captured.runId?.startsWith('broker-session-open-')).toBe(true)
     expect(captured.allowCompilerInitialInputWithoutIdentity).toBe(true)
     expect(captured.executionFormat).toBe('format1')
+    expect(captured.coldBirthPromptMode).toBeUndefined()
     expect(presentationRuntimeIds).toEqual([RUNTIME_ID])
 
     const db = openHrcDatabase(fixture.dbPath)
@@ -463,17 +467,22 @@ describe('POST /v1/broker-sessions/open', () => {
       prompt?: string
       runId?: string
       executionFormat?: 'format1' | 'format2'
+      coldBirthPromptMode?: 'replace-priming' | 'append-to-priming'
     } = {}
     ;(server as any).startHeadlessBrokerRuntime = async (
       _session: unknown,
       _intent: unknown,
       prompt: string,
       runId: string | undefined,
-      options?: { executionFormat?: 'format1' | 'format2' }
+      options?: {
+        executionFormat?: 'format1' | 'format2'
+        coldBirthPromptMode?: 'replace-priming' | 'append-to-priming'
+      }
     ) => {
       captured.prompt = prompt
       captured.runId = runId
       captured.executionFormat = options?.executionFormat
+      captured.coldBirthPromptMode = options?.coldBirthPromptMode
       return seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation, {
         executionFormat: 'format2',
       })
@@ -487,7 +496,12 @@ describe('POST /v1/broker-sessions/open', () => {
     })
 
     expect(res.status).toBe(200)
-    expect(captured).toEqual({ prompt: '', runId: undefined, executionFormat: 'format2' })
+    expect(captured).toEqual({
+      prompt: '',
+      runId: undefined,
+      executionFormat: 'format2',
+      coldBirthPromptMode: 'replace-priming',
+    })
   })
 
   it('refuses a format2 open against a reusable format1 invocation before attaching it', async () => {
