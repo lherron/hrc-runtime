@@ -2,6 +2,7 @@ import type {
   HrcBrokerInvocationEventRecord,
   HrcBrokerInvocationRecord,
   HrcCompiledRuntimePlanRecord,
+  HrcExecutionFormat,
   HrcLifecyclePolicyRecord,
   HrcPermissionDecisionRecord,
   HrcRuntimeArtifactRecord,
@@ -64,6 +65,7 @@ export type BrokerInvocationRow = {
   operation_id: string
   runtime_id: string
   run_id: string | null
+  execution_format: HrcExecutionFormat | null
   broker_protocol: string
   broker_driver: string
   broker_pid: number | null
@@ -188,6 +190,7 @@ export const BROKER_INVOCATION_COLUMNS = `
   operation_id,
   runtime_id,
   run_id,
+  execution_format,
   broker_protocol,
   broker_driver,
   broker_pid,
@@ -357,6 +360,7 @@ export function mapBrokerInvocationRow(row: BrokerInvocationRow): HrcBrokerInvoc
     operationId: row.operation_id,
     runtimeId: row.runtime_id,
     ...(row.run_id !== null ? { runId: row.run_id } : {}),
+    ...(row.execution_format === 'format2' ? { executionFormat: 'format2' as const } : {}),
     brokerProtocol: row.broker_protocol,
     brokerDriver: row.broker_driver,
     ...(row.broker_pid !== null ? { brokerPid: row.broker_pid } : {}),

@@ -13,6 +13,9 @@ import type {
   HrcContinuationRef,
   HrcDispatchOrigin,
   HrcHarness,
+  HrcInputCorrelationFact,
+  HrcInputRecord,
+  HrcInputTerminal,
   HrcLifecycleEvent,
   HrcLocalBridgeRecord,
   HrcManagedSessionRecord,
@@ -407,9 +410,12 @@ export type DispatchTurnTerminalOutcome = 'completed' | 'failed' | 'cancelled' |
 export type DispatchTurnResponse = {
   /** Present for broker-backed dispatches; /v1/turns is the invoke-door alias. */
   submissionId?: string | undefined
+  /** HRC's durable admission identity. Format-2 accepted responses require it. */
+  inputId?: string | undefined
   admission?: 'admitted' | 'rejected' | undefined
   reason?: string | undefined
-  runId: string
+  /** Absent for format-2 acceptance until an exact native turn.started lands. */
+  runId?: string | undefined
   hostSessionId: string
   generation: number
   /** Absent while a durably accepted turn is queued ahead of runtime allocation. */
@@ -428,7 +434,8 @@ export type DispatchTurnResponse = {
   /** Absent until a queued turn has been assigned to a runtime invocation. */
   startIdentity?: { kind: 'broker'; invocationId: string } | { kind: 'sdk' } | undefined
   observation: {
-    lifecycle: {
+    /** Absent for a format-2 accepted input because no execution exists yet. */
+    lifecycle?: {
       selector: {
         runId: string
         runtimeId?: string | undefined
@@ -439,7 +446,8 @@ export type DispatchTurnResponse = {
     broker?: {
       selector: {
         invocationId: string
-        runId: string
+        /** Added at observed landing; format-2 admission is invocation-scoped. */
+        runId?: string | undefined
         runtimeId: string
         generation: number
       }
@@ -447,6 +455,42 @@ export type DispatchTurnResponse = {
     }
   }
 }
+
+/** Exact readback of HRC's durable format-2 admission record. */
+export type GetInputResponse = {
+  input: HrcInputRecord
+}
+
+/** One observed execution landing on a previously accepted input. */
+export type WatchInputLanding = {
+  type: 'landing'
+  inputId: string
+  kind: 'initiating' | 'joined'
+  carrierRunId: string
+  turnId: string
+  brokerSubmissionId: string
+  /** LifecycleSeq only; never a broker cursor. */
+  runStartedHrcSeq: number
+}
+
+/** A pre-landing input terminal proven by the broker. */
+export type WatchInputTerminal = {
+  type: 'terminal'
+  inputId: string
+  terminal: HrcInputTerminal
+  error?: { code?: string | undefined; message?: string | undefined } | undefined
+}
+
+/** A retained correlation fact that leaves a format-2 input nonterminal. */
+export type WatchInputCorrelation = {
+  type: 'correlation'
+  inputId: string
+  fact: HrcInputCorrelationFact
+  detail?: string | undefined
+}
+
+/** Canonical HRC input watch item; it is not a renamed native broker envelope. */
+export type WatchInputEvent = WatchInputLanding | WatchInputTerminal | WatchInputCorrelation
 
 // -- Four-door broker admission surface (T-07867) ---------------------------
 

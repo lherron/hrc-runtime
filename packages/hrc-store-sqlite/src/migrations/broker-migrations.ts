@@ -1,6 +1,7 @@
 import {
   EVENT_INPUT_ID_SQL,
   EVENT_SUBMISSION_ID_SQL,
+  EFFECTIVE_TURN_ID_SQL,
   INPUT_REJECTED_TYPE_SQL,
   SUBMISSION_DISPOSITION_TYPES_SQL,
 } from '../repositories/broker.js'
@@ -1102,6 +1103,112 @@ const submissionAdmissionsMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-08207 format 2: admissions are durable inputs and execution runs are
+ * minted only from an exact native turn.started observation. The migration is
+ * additive: format-1 rows retain their admission-time run identity.
+ */
+const format2InputsAndObservedRunsMigration: HrcMigration = {
+  id: '0076_format2_inputs_and_observed_runs',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS inputs (
+        input_id TEXT PRIMARY KEY,
+        admission_host_session_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        host_session_id TEXT,
+        runtime_id TEXT,
+        operation_id TEXT,
+        invocation_id TEXT,
+        broker_submission_id TEXT,
+        door TEXT,
+        admission_class TEXT,
+        origin TEXT,
+        status TEXT NOT NULL,
+        uncertainty TEXT,
+        cleanup_protection TEXT NOT NULL,
+        landing_kind TEXT,
+        carrier_run_id TEXT,
+        turn_id TEXT,
+        run_started_hrc_seq INTEGER,
+        legacy_run_id TEXT,
+        admitted_at TEXT,
+        landed_at TEXT,
+        terminal_at TEXT,
+        terminal_kind TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (admission_host_session_id, idempotency_key)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_inputs_broker_submission_id
+        ON inputs(broker_submission_id)
+        WHERE broker_submission_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_inputs_runtime_protected
+        ON inputs(runtime_id, invocation_id, cleanup_protection)
+        WHERE cleanup_protection = 'protected';
+      CREATE INDEX IF NOT EXISTS idx_inputs_carrier_run
+        ON inputs(carrier_run_id)
+        WHERE carrier_run_id IS NOT NULL;
+    `)
+
+    const columns = (table: string) =>
+      new Set(
+        db
+          .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+          .all()
+          .map((column) => column.name)
+      )
+    const runColumns = columns('runs')
+    const runAdditions: Array<[string, string]> = [
+      ['execution_format', "TEXT NOT NULL DEFAULT 'format1'"],
+      ['turn_key', 'TEXT'],
+      ['native_turn_id', 'TEXT'],
+      ['native_harness_generation', 'INTEGER'],
+      ['native_turn_attempt', 'INTEGER'],
+      ['initiating_input_id', 'TEXT'],
+      ['ownership_conflict_json', 'TEXT'],
+      ['observation_state', 'TEXT'],
+      ['observed_start_hrc_seq', 'INTEGER'],
+    ]
+    for (const [column, type] of runAdditions) {
+      if (!runColumns.has(column)) db.exec(`ALTER TABLE runs ADD COLUMN ${column} ${type}`)
+    }
+    const invocationColumns = columns('broker_invocations')
+    if (!invocationColumns.has('execution_format')) {
+      db.exec("ALTER TABLE broker_invocations ADD COLUMN execution_format TEXT NOT NULL DEFAULT 'format1'")
+    }
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_turn_key
+        ON runs(turn_key)
+        WHERE turn_key IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_runs_initiating_input
+        ON runs(initiating_input_id)
+        WHERE initiating_input_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_broker_invocations_execution_format
+        ON broker_invocations(execution_format);
+      CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_input_id
+        ON broker_invocation_events(invocation_id, json_extract(broker_event_json, '$.inputId'));
+      CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_turn_id
+        ON broker_invocation_events(invocation_id, ${EFFECTIVE_TURN_ID_SQL});
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_input_id_seq
+        ON hrc_events(
+          CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.inputId') END,
+          hrc_seq
+        )
+        WHERE category = 'input';
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_turn_id_seq
+        ON hrc_events(
+          CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.turnId') END,
+          hrc_seq
+        )
+        WHERE event_kind IN ('turn.started', 'turn.completed', 'turn.failed', 'turn.interrupted');
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -1129,4 +1236,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   retainedEvidenceMigration,
   submissionAdmissionsMigration,
   submissionLookupIndexesMigration,
+  format2InputsAndObservedRunsMigration,
 ]

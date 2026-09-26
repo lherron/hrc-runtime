@@ -77,6 +77,9 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'turn.message': 'turn',
   'turn.message_segment': 'turn',
   'input.rejected': 'input',
+  'input.landed': 'input',
+  'input.terminal': 'input',
+  'input.correlation': 'input',
   'broker.submission.milestone': 'input',
   'broker.submission.stalled': 'input',
   // T-08536: the steer door failed open to enqueue; countable downgrades.

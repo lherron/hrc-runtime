@@ -49,6 +49,7 @@ describe('HrcErrorCode completeness (T-00949)', () => {
     expect(HrcErrorCode.UNKNOWN_SESSION).toBeDefined()
     expect(HrcErrorCode.UNKNOWN_HOST_SESSION).toBeDefined()
     expect(HrcErrorCode.UNKNOWN_RUNTIME).toBeDefined()
+    expect(HrcErrorCode.UNKNOWN_INPUT).toBe('unknown_input')
     expect(HrcErrorCode.UNKNOWN_REGISTRATION_CLASS).toBe('unknown_class')
   })
 
@@ -91,6 +92,7 @@ describe('HrcErrorCode values are string constants (T-00949)', () => {
     expect(HrcErrorCode.UNKNOWN_SESSION).toBe('unknown_session')
     expect(HrcErrorCode.UNKNOWN_HOST_SESSION).toBe('unknown_host_session')
     expect(HrcErrorCode.UNKNOWN_RUNTIME).toBe('unknown_runtime')
+    expect(HrcErrorCode.UNKNOWN_INPUT).toBe('unknown_input')
     expect(HrcErrorCode.MISSING_RUNTIME_INTENT).toBe('missing_runtime_intent')
     expect(HrcErrorCode.PROVIDER_MISMATCH).toBe('provider_mismatch')
     expect(HrcErrorCode.INFLIGHT_UNSUPPORTED).toBe('inflight_unsupported')
@@ -116,6 +118,7 @@ describe('httpStatusForErrorCode (T-00949)', () => {
     expect(httpStatusForErrorCode(HrcErrorCode.UNKNOWN_SESSION)).toBe(404)
     expect(httpStatusForErrorCode(HrcErrorCode.UNKNOWN_HOST_SESSION)).toBe(404)
     expect(httpStatusForErrorCode(HrcErrorCode.UNKNOWN_RUNTIME)).toBe(404)
+    expect(httpStatusForErrorCode(HrcErrorCode.UNKNOWN_INPUT)).toBe(404)
   })
 
   test('409 for conflict codes', () => {
@@ -276,6 +279,7 @@ describe('HrcNotFoundError (n-31 / T-00985)', () => {
       'unknown_session',
       'unknown_host_session',
       'unknown_runtime',
+      'unknown_input',
       'unknown_surface',
       'unknown_bridge',
     ] as const

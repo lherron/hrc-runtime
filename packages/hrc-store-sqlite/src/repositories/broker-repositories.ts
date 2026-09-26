@@ -3,6 +3,7 @@ import {
   type HrcBrokerInvocationEventRecord,
   type HrcBrokerInvocationRecord,
   type HrcCompiledRuntimePlanRecord,
+  type HrcInputRecord,
   type HrcLifecyclePolicyRecord,
   type HrcPermissionDecisionRecord,
   type HrcRuntimeArtifactRecord,
@@ -40,6 +41,7 @@ import {
   mapRuntimeArtifactRow,
   mapRuntimeOperationRow,
 } from './broker.js'
+import type { InputRow as DurableInputRow } from './rows.js'
 import {
   type PatchEntrySpec,
   buildSetClause,
@@ -315,6 +317,7 @@ const BROKER_INVOCATION_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<BrokerInvocati
   { key: 'operationId', column: 'operation_id' },
   { key: 'runtimeId', column: 'runtime_id' },
   { key: 'runId', column: 'run_id' },
+  { key: 'executionFormat', column: 'execution_format' },
   { key: 'brokerProtocol', column: 'broker_protocol' },
   { key: 'brokerDriver', column: 'broker_driver' },
   { key: 'brokerPid', column: 'broker_pid' },
@@ -352,6 +355,7 @@ export class BrokerInvocationRepository {
           operation_id,
           runtime_id,
           run_id,
+          execution_format,
           broker_protocol,
           broker_driver,
           broker_pid,
@@ -375,12 +379,13 @@ export class BrokerInvocationRepository {
           last_lifecycle_escalation_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.invocationId,
       record.operationId,
       record.runtimeId,
       record.runId ?? null,
+      record.executionFormat ?? 'format1',
       record.brokerProtocol,
       record.brokerDriver,
       record.brokerPid ?? null,
@@ -452,6 +457,309 @@ export class BrokerInvocationRepository {
       invocationId
     )
     return this.getByInvocationId(invocationId)
+  }
+}
+
+const INPUT_COLUMNS = `
+  input_id,
+  admission_host_session_id,
+  idempotency_key,
+  request_hash,
+  host_session_id,
+  runtime_id,
+  operation_id,
+  invocation_id,
+  broker_submission_id,
+  door,
+  admission_class,
+  origin,
+  status,
+  uncertainty,
+  cleanup_protection,
+  landing_kind,
+  carrier_run_id,
+  turn_id,
+  run_started_hrc_seq,
+  legacy_run_id,
+  admitted_at,
+  landed_at,
+  terminal_at,
+  terminal_kind,
+  error_code,
+  error_message,
+  created_at,
+  updated_at`
+
+function mapInputRow(row: DurableInputRow): HrcInputRecord {
+  return {
+    inputId: row.input_id,
+    admissionHostSessionId: row.admission_host_session_id,
+    idempotencyKey: row.idempotency_key,
+    requestHash: row.request_hash,
+    ...(row.host_session_id !== null ? { hostSessionId: row.host_session_id } : {}),
+    ...(row.runtime_id !== null ? { runtimeId: row.runtime_id } : {}),
+    ...(row.operation_id !== null ? { operationId: row.operation_id } : {}),
+    ...(row.invocation_id !== null ? { invocationId: row.invocation_id } : {}),
+    ...(row.broker_submission_id !== null
+      ? { brokerSubmissionId: row.broker_submission_id }
+      : {}),
+    ...(row.door !== null ? { door: row.door } : {}),
+    ...(row.admission_class !== null ? { admissionClass: row.admission_class } : {}),
+    ...(row.origin !== null ? { origin: row.origin } : {}),
+    status: row.status,
+    ...(row.uncertainty !== null ? { uncertainty: row.uncertainty } : {}),
+    cleanupProtection: row.cleanup_protection,
+    ...(row.landing_kind === 'initiating' || row.landing_kind === 'joined'
+      ? { landingKind: row.landing_kind }
+      : {}),
+    ...(row.carrier_run_id !== null ? { carrierRunId: row.carrier_run_id } : {}),
+    ...(row.turn_id !== null ? { turnId: row.turn_id } : {}),
+    ...(row.run_started_hrc_seq !== null ? { runStartedHrcSeq: row.run_started_hrc_seq } : {}),
+    ...(row.legacy_run_id !== null ? { legacyRunId: row.legacy_run_id } : {}),
+    ...(row.admitted_at !== null ? { admittedAt: row.admitted_at } : {}),
+    ...(row.landed_at !== null ? { landedAt: row.landed_at } : {}),
+    ...(row.terminal_at !== null ? { terminalAt: row.terminal_at } : {}),
+    ...(row.terminal_kind === 'rejected' || row.terminal_kind === 'withdrawn'
+      ? { terminal: row.terminal_kind }
+      : {}),
+    ...(row.error_code !== null ? { errorCode: row.error_code } : {}),
+    ...(row.error_message !== null ? { errorMessage: row.error_message } : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export type InputLandingRecord = {
+  inputId: string
+  kind: 'initiating' | 'joined'
+  carrierRunId: string
+  turnId: string
+  runStartedHrcSeq: number
+  landedAt: string
+}
+
+export type InputTerminalRecord = {
+  inputId: string
+  terminal: 'rejected' | 'withdrawn'
+  terminalAt: string
+  errorCode?: string | undefined
+  errorMessage?: string | undefined
+}
+
+export type InputCorrelationRecord = {
+  inputId: string
+  fact: 'lost' | 'expired' | 'cancelled' | 'invocation_failed' | 'invocation_exited'
+  observedAt: string
+}
+
+/** T-08207's durable format-2 admission ledger. */
+export class InputRepository {
+  constructor(private readonly db: Database) {}
+
+  insert(record: HrcInputRecord): HrcInputRecord {
+    execute(
+      this.db,
+      `INSERT INTO inputs (
+        input_id, admission_host_session_id, idempotency_key, request_hash,
+        host_session_id, runtime_id, operation_id, invocation_id, broker_submission_id,
+        door, admission_class, origin, status, uncertainty, cleanup_protection,
+        landing_kind, carrier_run_id, turn_id, run_started_hrc_seq, legacy_run_id,
+        admitted_at, landed_at, terminal_at, terminal_kind, error_code, error_message, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      record.inputId,
+      record.admissionHostSessionId,
+      record.idempotencyKey,
+      record.requestHash,
+      record.hostSessionId ?? null,
+      record.runtimeId ?? null,
+      record.operationId ?? null,
+      record.invocationId ?? null,
+      record.brokerSubmissionId ?? null,
+      record.door ?? null,
+      record.admissionClass ?? null,
+      record.origin ?? null,
+      record.status,
+      record.uncertainty ?? null,
+      record.cleanupProtection,
+      record.landingKind ?? null,
+      record.carrierRunId ?? null,
+      record.turnId ?? null,
+      record.runStartedHrcSeq ?? null,
+      record.legacyRunId ?? null,
+      record.admittedAt ?? null,
+      record.landedAt ?? null,
+      record.terminalAt ?? null,
+      record.terminal ?? null,
+      record.errorCode ?? null,
+      record.errorMessage ?? null,
+      record.createdAt,
+      record.updatedAt
+    )
+    return requireRecord(this.getByInputId(record.inputId), `failed to reload input ${record.inputId}`)
+  }
+
+  getByInputId(inputId: string): HrcInputRecord | null {
+    const row = this.db
+      .query<DurableInputRow, [string]>(`SELECT ${INPUT_COLUMNS} FROM inputs WHERE input_id = ?`)
+      .get(inputId)
+    return row === null || row === undefined ? null : mapInputRow(row)
+  }
+
+  getByAdmission(hostSessionId: string, idempotencyKey: string): HrcInputRecord | null {
+    const row = this.db
+      .query<DurableInputRow, [string, string]>(
+        `SELECT ${INPUT_COLUMNS} FROM inputs
+          WHERE admission_host_session_id = ? AND idempotency_key = ?`
+      )
+      .get(hostSessionId, idempotencyKey)
+    return row === null || row === undefined ? null : mapInputRow(row)
+  }
+
+  getByBrokerSubmissionId(brokerSubmissionId: string): HrcInputRecord | null {
+    const row = this.db
+      .query<DurableInputRow, [string]>(
+        `SELECT ${INPUT_COLUMNS} FROM inputs WHERE broker_submission_id = ?`
+      )
+      .get(brokerSubmissionId)
+    return row === null || row === undefined ? null : mapInputRow(row)
+  }
+
+  recordLanding(landing: InputLandingRecord): HrcInputRecord {
+    const prior = requireRecord(
+      this.getByInputId(landing.inputId),
+      `input not found for landing ${landing.inputId}`
+    )
+    if (prior.landingKind !== undefined) {
+      if (
+        prior.landingKind === landing.kind &&
+        prior.carrierRunId === landing.carrierRunId &&
+        prior.turnId === landing.turnId &&
+        prior.runStartedHrcSeq === landing.runStartedHrcSeq
+      ) {
+        return prior
+      }
+      throw new Error(`input landing conflict for ${landing.inputId}`)
+    }
+    if (prior.status !== 'accepted') {
+      throw new Error(`input cannot land from status ${prior.status}: ${landing.inputId}`)
+    }
+    // Coverage cannot move from a protected input onto an imagined carrier.
+    // The exact format-2 start mints this live row in the same mapper
+    // transaction before it calls recordLanding; if that transaction aborts,
+    // both mutations roll back and protection remains on the input.
+    const carrier = this.db
+      .query<{ run_id: string }, [string, string]>(
+        `SELECT run_id FROM runs
+          WHERE run_id = ?
+            AND execution_format = 'format2'
+            AND native_turn_id = ?
+            AND completed_at IS NULL
+            AND status = 'running'`
+      )
+      .get(landing.carrierRunId, landing.turnId)
+    if (carrier === null || carrier === undefined) {
+      throw new Error(
+        `format-2 input landing requires an active exact carrier run: ${landing.carrierRunId}`
+      )
+    }
+    execute(
+      this.db,
+      `UPDATE inputs
+        SET status = ?, cleanup_protection = 'carrier-run', landing_kind = ?,
+            carrier_run_id = ?, turn_id = ?, run_started_hrc_seq = ?, landed_at = ?, updated_at = ?
+        WHERE input_id = ? AND landing_kind IS NULL`,
+      landing.kind,
+      landing.kind,
+      landing.carrierRunId,
+      landing.turnId,
+      landing.runStartedHrcSeq,
+      landing.landedAt,
+      landing.landedAt,
+      landing.inputId
+    )
+    return requireRecord(this.getByInputId(landing.inputId), `failed to reload landed input ${landing.inputId}`)
+  }
+
+  /**
+   * Only positive broker rejection or proved withdrawal ends a pre-landing
+   * format-2 input. Other correlation facts intentionally retain protection.
+   */
+  recordTerminal(terminal: InputTerminalRecord): HrcInputRecord {
+    const prior = requireRecord(
+      this.getByInputId(terminal.inputId),
+      `input not found for terminal ${terminal.inputId}`
+    )
+    if (prior.terminal !== undefined) {
+      if (prior.terminal === terminal.terminal) return prior
+      throw new Error(`input terminal conflict for ${terminal.inputId}`)
+    }
+    if (prior.status !== 'accepted' || prior.landingKind !== undefined) {
+      throw new Error(`input cannot terminalize from status ${prior.status}: ${terminal.inputId}`)
+    }
+    execute(
+      this.db,
+      `UPDATE inputs
+        SET status = ?, cleanup_protection = 'released', terminal_kind = ?, terminal_at = ?,
+            error_code = ?, error_message = ?, updated_at = ?
+        WHERE input_id = ? AND landing_kind IS NULL AND terminal_kind IS NULL`,
+      terminal.terminal,
+      terminal.terminal,
+      terminal.terminalAt,
+      terminal.errorCode ?? null,
+      terminal.errorMessage ?? null,
+      terminal.terminalAt,
+      terminal.inputId
+    )
+    return requireRecord(
+      this.getByInputId(terminal.inputId),
+      `failed to reload terminal input ${terminal.inputId}`
+    )
+  }
+
+  /**
+   * Correlation facts remain observable but cannot release protection or make
+   * an input terminal. The canonical input event stream retains every fact;
+   * this column is only the latest current-state summary for `getInput`.
+   */
+  recordCorrelation(correlation: InputCorrelationRecord): HrcInputRecord {
+    requireRecord(
+      this.getByInputId(correlation.inputId),
+      `input not found for correlation ${correlation.inputId}`
+    )
+    execute(
+      this.db,
+      `UPDATE inputs SET uncertainty = ?, updated_at = ? WHERE input_id = ?`,
+      correlation.fact,
+      correlation.observedAt,
+      correlation.inputId
+    )
+    return requireRecord(
+      this.getByInputId(correlation.inputId),
+      `failed to reload correlated input ${correlation.inputId}`
+    )
+  }
+
+  listProtectedByInvocationId(invocationId: string): HrcInputRecord[] {
+    const rows = this.db
+      .query<DurableInputRow, [string]>(
+        `SELECT ${INPUT_COLUMNS} FROM inputs
+          WHERE invocation_id = ? AND cleanup_protection = 'protected'
+          ORDER BY created_at ASC, input_id ASC`
+      )
+      .all(invocationId)
+    return rows.map(mapInputRow)
+  }
+
+  /** Durable restart-safe input hold used by owner-scoped runtime termination. */
+  listProtectedByRuntimeId(runtimeId: string): HrcInputRecord[] {
+    const rows = this.db
+      .query<DurableInputRow, [string]>(
+        `SELECT ${INPUT_COLUMNS} FROM inputs
+          WHERE runtime_id = ? AND cleanup_protection = 'protected'
+          ORDER BY created_at ASC, input_id ASC`
+      )
+      .all(runtimeId)
+    return rows.map(mapInputRow)
   }
 }
 

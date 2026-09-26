@@ -92,6 +92,15 @@ export type RunRow = {
   updated_at: string
   error_code: HrcErrorCode | null
   error_message: string | null
+  execution_format: string | null
+  turn_key: string | null
+  native_turn_id: string | null
+  native_harness_generation: number | null
+  native_turn_attempt: number | null
+  initiating_input_id: string | null
+  ownership_conflict_json: string | null
+  observation_state: string | null
+  observed_start_hrc_seq: number | null
   operation_id: string | null
   invocation_id: string | null
   dispatched_input_id: string | null
@@ -107,6 +116,37 @@ export type RunRow = {
   origin_actor: string | null
   origin_kind: string | null
   origin_causation_ref: string | null
+}
+
+export type InputRow = {
+  input_id: string
+  admission_host_session_id: string
+  idempotency_key: string
+  request_hash: string
+  host_session_id: string | null
+  runtime_id: string | null
+  operation_id: string | null
+  invocation_id: string | null
+  broker_submission_id: string | null
+  door: string | null
+  admission_class: string | null
+  origin: string | null
+  status: string
+  uncertainty: string | null
+  cleanup_protection: string
+  landing_kind: string | null
+  carrier_run_id: string | null
+  turn_id: string | null
+  run_started_hrc_seq: number | null
+  legacy_run_id: string | null
+  admitted_at: string | null
+  landed_at: string | null
+  terminal_at: string | null
+  terminal_kind: string | null
+  error_code: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
 }
 
 export type LaunchRow = {

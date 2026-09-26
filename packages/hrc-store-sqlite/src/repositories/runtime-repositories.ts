@@ -1076,6 +1076,15 @@ const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
   { key: 'updatedAt', column: 'updated_at' },
   { key: 'errorCode', column: 'error_code' },
   { key: 'errorMessage', column: 'error_message' },
+  { key: 'executionFormat', column: 'execution_format' },
+  { key: 'turnKey', column: 'turn_key' },
+  { key: 'nativeTurnId', column: 'native_turn_id' },
+  { key: 'nativeHarnessGeneration', column: 'native_harness_generation' },
+  { key: 'nativeTurnAttempt', column: 'native_turn_attempt' },
+  { key: 'initiatingInputId', column: 'initiating_input_id' },
+  { key: 'ownershipConflictJson', column: 'ownership_conflict_json' },
+  { key: 'observationState', column: 'observation_state' },
+  { key: 'observedStartHrcSeq', column: 'observed_start_hrc_seq' },
   { key: 'operationId', column: 'operation_id' },
   { key: 'invocationId', column: 'invocation_id' },
   { key: 'dispatchedInputId', column: 'dispatched_input_id' },
@@ -1124,6 +1133,15 @@ export class RunRepository {
           updated_at,
           error_code,
           error_message,
+          execution_format,
+          turn_key,
+          native_turn_id,
+          native_harness_generation,
+          native_turn_attempt,
+          initiating_input_id,
+          ownership_conflict_json,
+          observation_state,
+          observed_start_hrc_seq,
           operation_id,
           invocation_id,
           dispatched_input_id,
@@ -1139,7 +1157,7 @@ export class RunRepository {
           origin_actor,
           origin_kind,
           origin_causation_ref
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runId,
       record.hostSessionId,
@@ -1155,6 +1173,15 @@ export class RunRepository {
       record.updatedAt,
       record.errorCode ?? null,
       record.errorMessage ?? null,
+      record.executionFormat ?? 'format1',
+      record.turnKey ?? null,
+      record.nativeTurnId ?? null,
+      record.nativeHarnessGeneration ?? null,
+      record.nativeTurnAttempt ?? null,
+      record.initiatingInputId ?? null,
+      record.ownershipConflictJson ?? null,
+      record.observationState ?? null,
+      record.observedStartHrcSeq ?? null,
       record.operationId ?? null,
       record.invocationId ?? null,
       record.dispatchedInputId ?? null,
@@ -1236,6 +1263,13 @@ export class RunRepository {
       )
       .get(submissionId)
 
+    return row ? mapRunRow(row) : null
+  }
+
+  getByTurnKey(turnKey: string): HrcRunRecord | null {
+    const row = this.db
+      .query<RunRow, [string]>(`SELECT ${RUN_COLUMNS} FROM runs WHERE turn_key = ? LIMIT 1`)
+      .get(turnKey)
     return row ? mapRunRow(row) : null
   }
 

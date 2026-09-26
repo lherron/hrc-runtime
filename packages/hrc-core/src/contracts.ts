@@ -621,6 +621,72 @@ export type HrcDispatchOrigin = {
   causationRef?: string | undefined
 }
 
+/** The persisted identity format of an execution invocation. */
+export type HrcExecutionFormat = 'format1' | 'format2'
+
+/** Durable input state. Format 2 preserves accepted inputs before any run exists. */
+export type HrcInputStatus =
+  | 'accepted'
+  | 'initiating'
+  | 'joined'
+  | 'rejected'
+  | 'withdrawn'
+  | string
+
+/** Cleanup coverage moves from an admitted input to its observed carrier run. */
+export type HrcInputCleanupProtection = 'protected' | 'carrier-run' | 'released' | string
+
+export type HrcInputLandingKind = 'initiating' | 'joined'
+
+/** The only proved format-2 outcomes that end an input before it has landed. */
+export type HrcInputTerminal = 'rejected' | 'withdrawn'
+
+/**
+ * Visibility facts that stay nonterminal while HRC cannot prove an input was
+ * removed from the broker. They never release cleanup protection.
+ */
+export type HrcInputCorrelationFact =
+  | 'lost'
+  | 'expired'
+  | 'cancelled'
+  | 'invocation_failed'
+  | 'invocation_exited'
+
+/**
+ * One HRC-admitted input, distinct from the execution run observed later.
+ * `inputId` belongs to HRC; `brokerSubmissionId` remains the native envelope id.
+ */
+export type HrcInputRecord = {
+  inputId: string
+  admissionHostSessionId: string
+  idempotencyKey: string
+  requestHash: string
+  hostSessionId?: string | undefined
+  runtimeId?: string | undefined
+  operationId?: string | undefined
+  invocationId?: string | undefined
+  brokerSubmissionId?: string | undefined
+  door?: string | undefined
+  admissionClass?: string | undefined
+  origin?: string | undefined
+  status: HrcInputStatus
+  uncertainty?: string | undefined
+  cleanupProtection: HrcInputCleanupProtection
+  landingKind?: HrcInputLandingKind | undefined
+  carrierRunId?: string | undefined
+  turnId?: string | undefined
+  runStartedHrcSeq?: number | undefined
+  legacyRunId?: string | undefined
+  admittedAt?: string | undefined
+  landedAt?: string | undefined
+  terminalAt?: string | undefined
+  terminal?: HrcInputTerminal | undefined
+  errorCode?: string | undefined
+  errorMessage?: string | undefined
+  createdAt: string
+  updatedAt: string
+}
+
 export type HrcRunRecord = {
   runId: string
   hostSessionId: string
@@ -646,6 +712,18 @@ export type HrcRunRecord = {
   errorMessage?: string | undefined
   // ── Harness-broker run linkage (T-01690 W1B). Nullable/additive; set only by
   // the harness-broker controller/mapper. Legacy runs leave these unset.
+  /** Format 1 allocates at admission; format 2 allocates on exact turn.start. */
+  executionFormat?: HrcExecutionFormat | undefined
+  /** Immutable native execution coordinate for a format-2 run. */
+  turnKey?: string | undefined
+  nativeTurnId?: string | undefined
+  nativeHarnessGeneration?: number | undefined
+  nativeTurnAttempt?: number | undefined
+  /** Input that initiated this observed execution; omitted for unowned starts. */
+  initiatingInputId?: string | undefined
+  ownershipConflictJson?: string | undefined
+  observationState?: string | undefined
+  observedStartHrcSeq?: number | undefined
   operationId?: string | undefined
   invocationId?: string | undefined
   // ── Legacy broker input correlation for non-admission drivers.
@@ -862,6 +940,8 @@ export type HrcBrokerInvocationRecord = {
   operationId: string
   runtimeId: string
   runId?: string | undefined
+  /** Frozen at invocation creation; recovery chooses persisted format, never release version. */
+  executionFormat?: HrcExecutionFormat | undefined
   brokerProtocol: string
   brokerDriver: string
   brokerPid?: number | undefined

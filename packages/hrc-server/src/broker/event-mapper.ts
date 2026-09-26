@@ -27,7 +27,7 @@
  * launches/execs anything. It is inert unless invoked by the W3B controller,
  * which is unreachable unless `HRC_HEADLESS_CODEX_BROKER_ENABLED` is set.
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 
@@ -35,6 +35,7 @@ import type {
   HrcBrokerInvocationEventRecord,
   HrcBrokerInvocationRecord,
   HrcContinuationRef,
+  HrcInputRecord,
   HrcLifecycleEvent,
   HrcProviderTranscriptArtifactMetadata,
   HrcProviderTranscriptReportedPayload,
@@ -189,6 +190,14 @@ type CaptureWarningLogState = {
   count: number
 }
 
+type Format2TurnStart = {
+  runId: string
+  turnId: string
+  initiatingInputId?: string | undefined
+  joinedInputIds: string[]
+  minted: boolean
+}
+
 export class BrokerEventMapper {
   private readonly db: HrcDatabase
   private readonly now: () => string
@@ -203,6 +212,8 @@ export class BrokerEventMapper {
    * projection can interleave.
    */
   private pendingLateStartEvents: HrcLifecycleEvent[] = []
+  /** Canonical input facts appended during THIS synchronous broker projection. */
+  private pendingInputEvents: HrcLifecycleEvent[] = []
   /**
    * T-08566 — true only inside {@link applyRetained}'s synchronous transaction.
    * Same instance-state safety argument as `pendingLateStartEvents`.
@@ -583,6 +594,17 @@ export class BrokerEventMapper {
     const historicalGeneration =
       operation?.runtimeId === invocation.runtimeId ? operation.generation : runtime.generation
 
+    // Format 2 mints an execution only from this exact native turn.started.
+    // It must run before raw-event append so the raw and canonical rows carry
+    // the observed carrier id in the same SQLite transaction.
+    const format2TurnStart = this.prepareFormat2TurnStart(
+      envelope,
+      invocation,
+      runtime,
+      historicalGeneration,
+      now
+    )
+
     // ── Broker FIFO queue correlation (order-robust resolution) ─────────────
     // Resolve runId by finding the most recent input.accepted at seq <=
     // envelope.seq and looking up the run HRC dispatched with that inputId.
@@ -596,7 +618,8 @@ export class BrokerEventMapper {
     // when the run wasn't dispatched through the broker-input path (e.g. the
     // initial start-turn input on a fresh invocation, where the start path
     // pre-sets invocation.runId correctly).
-    const resolvedRunId = this.resolveRunIdForEvent(envelope, invocation, runtime)
+    const resolvedRunId =
+      format2TurnStart?.runId ?? this.resolveRunIdForEvent(envelope, invocation, runtime)
 
     const ctx: ProjectionContext = {
       runtimeId: runtime.runtimeId,
@@ -753,6 +776,7 @@ export class BrokerEventMapper {
     // (and semantically the tool_call precedes the awaiting_input it triggers).
     const derivedDescriptors: DerivedTurnDescriptor[] = []
     this.pendingLateStartEvents = []
+    this.pendingInputEvents = []
     const participantAttempt = db.participantRegistrations.getAttemptByInvocationId(
       String(envelope.invocationId)
     )
@@ -783,6 +807,9 @@ export class BrokerEventMapper {
       stale || isRetryableInvocationFailure(persistedEnvelope)
         ? undefined
         : emitLifecycleEvent(db, persistedEnvelope, ctx, now)
+    if (!stale && format2TurnStart?.minted) {
+      this.finalizeFormat2TurnStart(format2TurnStart, ctx, lifecycleEvent, now)
+    }
     // T-08385: a replayed exact broker withdrawal settles only the matching
     // accepted input. It never changes runtime status; a fresh operator probe
     // is the sole authority for a subsequent ready projection.
@@ -831,6 +858,7 @@ export class BrokerEventMapper {
       lifecycleEvents: [
         ...(lifecycleEvent ? [lifecycleEvent] : []),
         ...(withdrawnRecoveryEvent ? [withdrawnRecoveryEvent] : []),
+        ...this.pendingInputEvents,
         ...derived,
         ...this.pendingLateStartEvents,
       ],
@@ -962,6 +990,9 @@ export class BrokerEventMapper {
     invocation: HrcBrokerInvocationRecord,
     runtime: HrcRuntimeSnapshot
   ): string | undefined {
+    if (invocation.executionFormat === 'format2') {
+      return this.resolveFormat2RunId(envelope, invocation, runtime)
+    }
     const fallbackRunId = invocation.runId
     const submissionId = this.extractSubmissionIdFromPayload(envelope.payload)
     const submissionRecord =
@@ -1066,6 +1097,212 @@ export class BrokerEventMapper {
     const fencedInput = this.findPriorFencedInputAccepted(envelope.invocationId, envelope.seq)
     if (fencedInput) return fencedInput.runId
     return fallbackRunId
+  }
+
+  /**
+   * Format-2 execution identity never falls back to an admission, active run,
+   * or nearest bracket. Only an exact native turn coordinate selects a run.
+   */
+  private resolveFormat2RunId(
+    envelope: InvocationEventEnvelope,
+    invocation: HrcBrokerInvocationRecord,
+    runtime: HrcRuntimeSnapshot
+  ): string | undefined {
+    const turnId = this.extractTurnId(envelope)
+    if (turnId === undefined) return undefined
+    return this.db.runs.getByTurnKey(this.format2TurnKey(envelope, invocation, runtime, turnId))
+      ?.runId
+  }
+
+  private prepareFormat2TurnStart(
+    envelope: InvocationEventEnvelope,
+    invocation: HrcBrokerInvocationRecord,
+    runtime: HrcRuntimeSnapshot,
+    generation: number,
+    now: string
+  ): Format2TurnStart | undefined {
+    if (
+      this.retainedProjection ||
+      invocation.executionFormat !== 'format2' ||
+      envelope.type !== 'turn.started'
+    ) {
+      return undefined
+    }
+    const turnId = this.extractTurnId(envelope)
+    if (turnId === undefined) return undefined
+
+    const turnKey = this.format2TurnKey(envelope, invocation, runtime, turnId)
+    const existing = this.db.runs.getByTurnKey(turnKey)
+    if (existing !== null) {
+      return {
+        runId: existing.runId,
+        turnId,
+        ...(existing.initiatingInputId !== undefined
+          ? { initiatingInputId: existing.initiatingInputId }
+          : {}),
+        joinedInputIds: [],
+        minted: false,
+      }
+    }
+
+    const direct = this.format2InputForEnvelope(envelope, invocation, runtime)
+    const executed = this.format2InputsForDisposition(
+      invocation,
+      runtime,
+      turnId,
+      'submission.executed'
+    )
+    const initiating = direct ?? executed[0]
+    const joined = this.format2InputsForDisposition(
+      invocation,
+      runtime,
+      turnId,
+      'submission.absorbed'
+    )
+      .filter((input) => input.inputId !== initiating?.inputId)
+      .map((input) => input.inputId)
+
+    const runId = `run-${randomUUID()}`
+    this.db.runs.insert({
+      runId,
+      hostSessionId: runtime.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
+      generation,
+      transport: lifecycleTransportFromRuntime(runtime.transport),
+      status: 'running',
+      startedAt: envelope.time ?? now,
+      updatedAt: now,
+      executionFormat: 'format2',
+      turnKey,
+      nativeTurnId: turnId,
+      ...(envelope.harnessGeneration !== undefined
+        ? { nativeHarnessGeneration: envelope.harnessGeneration }
+        : {}),
+      ...(envelope.turnAttempt !== undefined ? { nativeTurnAttempt: envelope.turnAttempt } : {}),
+      ...(initiating !== undefined ? { initiatingInputId: initiating.inputId } : {}),
+      observationState: 'observed',
+      operationId: invocation.operationId,
+      invocationId: String(invocation.invocationId),
+    })
+    return {
+      runId,
+      turnId,
+      ...(initiating !== undefined ? { initiatingInputId: initiating.inputId } : {}),
+      joinedInputIds: [...new Set(joined)],
+      minted: true,
+    }
+  }
+
+  private finalizeFormat2TurnStart(
+    start: Format2TurnStart,
+    ctx: ProjectionContext,
+    lifecycleEvent: HrcLifecycleEvent | undefined,
+    now: string
+  ): void {
+    if (lifecycleEvent?.eventKind !== 'turn.started') return
+    this.db.runs.update(start.runId, {
+      observedStartHrcSeq: lifecycleEvent.hrcSeq,
+      observationState: 'observed',
+      updatedAt: now,
+    })
+    if (start.initiatingInputId !== undefined) {
+      this.landFormat2Input({
+        inputId: start.initiatingInputId,
+        kind: 'initiating',
+        runId: start.runId,
+        turnId: start.turnId,
+        runStartedHrcSeq: lifecycleEvent.hrcSeq,
+        ctx,
+        now,
+      })
+    }
+    for (const inputId of start.joinedInputIds) {
+      this.landFormat2Input({
+        inputId,
+        kind: 'joined',
+        runId: start.runId,
+        turnId: start.turnId,
+        runStartedHrcSeq: lifecycleEvent.hrcSeq,
+        ctx,
+        now,
+      })
+    }
+  }
+
+  private format2TurnKey(
+    envelope: InvocationEventEnvelope,
+    invocation: HrcBrokerInvocationRecord,
+    runtime: HrcRuntimeSnapshot,
+    turnId: string
+  ): string {
+    return [
+      runtime.runtimeId,
+      invocation.operationId,
+      String(invocation.invocationId),
+      turnId,
+      `g=${envelope.harnessGeneration ?? '-'}`,
+      `a=${envelope.turnAttempt ?? '-'}`,
+    ].join('|')
+  }
+
+  private format2InputForEnvelope(
+    envelope: InvocationEventEnvelope,
+    invocation: HrcBrokerInvocationRecord,
+    runtime: HrcRuntimeSnapshot
+  ): HrcInputRecord | undefined {
+    const inputIdentity = envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
+    const submissionId = this.extractSubmissionIdFromPayload(envelope.payload)
+    const candidates = [
+      ...(inputIdentity !== undefined
+        ? [
+            this.db.inputs.getByInputId(String(inputIdentity)),
+            this.db.inputs.getByBrokerSubmissionId(String(inputIdentity)),
+          ]
+        : []),
+      ...(submissionId !== undefined ? [this.db.inputs.getByBrokerSubmissionId(submissionId)] : []),
+    ]
+    return candidates.find(
+      (input): input is HrcInputRecord =>
+        input !== null &&
+        input.invocationId === String(invocation.invocationId) &&
+        input.runtimeId === runtime.runtimeId &&
+        input.operationId === invocation.operationId
+    )
+  }
+
+  private format2InputsForDisposition(
+    invocation: HrcBrokerInvocationRecord,
+    runtime: HrcRuntimeSnapshot,
+    turnId: string,
+    type: 'submission.executed' | 'submission.absorbed'
+  ): HrcInputRecord[] {
+    const inputs = new Map<string, HrcInputRecord>()
+    for (const event of this.db.brokerInvocationEvents.listByInvocationId(
+      String(invocation.invocationId)
+    )) {
+      if (event.type !== type) continue
+      let payload: unknown
+      try {
+        payload = JSON.parse(event.brokerEventJson) as unknown
+      } catch {
+        continue
+      }
+      if (!isRecord(payload) || payload['turnId'] !== turnId) continue
+      const submissionId = payload['submissionId']
+      if (typeof submissionId !== 'string') continue
+      const input = this.db.inputs.getByBrokerSubmissionId(submissionId)
+      if (
+        input !== null &&
+        input.invocationId === String(invocation.invocationId) &&
+        input.runtimeId === runtime.runtimeId &&
+        input.operationId === invocation.operationId
+      ) {
+        inputs.set(input.inputId, input)
+      }
+    }
+    return [...inputs.values()]
   }
 
   private bracketMintingMode(invocation: HrcBrokerInvocationRecord): string | undefined {
@@ -1664,6 +1901,9 @@ export class BrokerEventMapper {
           `invocation_exited:${payload.reason ?? 'process-exit'}`,
           envelope.time ?? now
         )
+        if (db.brokerInvocations.getByInvocationId(invocationId)?.executionFormat === 'format2') {
+          this.recordFormat2InvocationCorrelation(envelope, ctx, 'invocation_exited', now)
+        }
         break
       }
       case 'invocation.failed': {
@@ -1677,6 +1917,9 @@ export class BrokerEventMapper {
           lifecycleTerminalReason: payload.reason ?? payload.code ?? 'failed',
           updatedAt: now,
         })
+        if (db.brokerInvocations.getByInvocationId(invocationId)?.executionFormat === 'format2') {
+          this.recordFormat2InvocationCorrelation(envelope, ctx, 'invocation_failed', now)
+        }
         break
       }
       case 'invocation.disposed': {
@@ -1789,6 +2032,298 @@ export class BrokerEventMapper {
     }
   }
 
+  private landFormat2Input(input: {
+    inputId: string
+    kind: 'initiating' | 'joined'
+    runId: string
+    turnId: string
+    runStartedHrcSeq: number
+    ctx: ProjectionContext
+    now: string
+  }): void {
+    const durableInput = this.db.inputs.getByInputId(input.inputId)
+    if (durableInput === null || durableInput.landingKind !== undefined) return
+    if (durableInput.status !== 'accepted') return
+    const run = this.db.runs.getByRunId(input.runId)
+    if (run === null) throw new Error(`format-2 carrier run missing: ${input.runId}`)
+    if (input.kind === 'initiating') {
+      if (run.initiatingInputId !== undefined && run.initiatingInputId !== input.inputId) {
+        throw new Error(`format-2 initiating input conflict for ${input.runId}`)
+      }
+      if (run.initiatingInputId === undefined) {
+        this.db.runs.update(input.runId, {
+          initiatingInputId: input.inputId,
+          updatedAt: input.now,
+        })
+      }
+    }
+    const landed = this.db.inputs.recordLanding({
+      inputId: input.inputId,
+      kind: input.kind,
+      carrierRunId: input.runId,
+      turnId: input.turnId,
+      runStartedHrcSeq: input.runStartedHrcSeq,
+      landedAt: input.now,
+    })
+    if (landed.brokerSubmissionId === undefined) {
+      throw new Error(`format-2 landed input has no broker submission: ${landed.inputId}`)
+    }
+    this.pendingInputEvents.push(
+      appendHrcEvent(this.db, 'input.landed', {
+        ts: input.now,
+        hostSessionId: input.ctx.hostSessionId,
+        scopeRef: input.ctx.scopeRef,
+        laneRef: input.ctx.laneRef,
+        generation: input.ctx.generation,
+        runtimeId: input.ctx.runtimeId,
+        runId: input.runId,
+        transport: input.ctx.transport,
+        payload: {
+          inputId: landed.inputId,
+          kind: input.kind,
+          carrierRunId: input.runId,
+          turnId: input.turnId,
+          brokerSubmissionId: landed.brokerSubmissionId,
+          runStartedHrcSeq: input.runStartedHrcSeq,
+        },
+      })
+    )
+  }
+
+  private landFormat2InputFromEnvelope(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    kind: 'initiating' | 'joined',
+    now: string
+  ): void {
+    if (ctx.runId === undefined) return
+    const invocation = this.db.brokerInvocations.getByInvocationId(envelope.invocationId)
+    const runtime = this.db.runtimes.getByRuntimeId(ctx.runtimeId)
+    const turnId = this.extractTurnId(envelope)
+    const run = this.db.runs.getByRunId(ctx.runId)
+    if (
+      invocation === null ||
+      runtime === null ||
+      turnId === undefined ||
+      run?.observedStartHrcSeq === undefined
+    ) {
+      return
+    }
+    const input = this.format2InputForEnvelope(envelope, invocation, runtime)
+    if (input === undefined) return
+    this.landFormat2Input({
+      inputId: input.inputId,
+      kind,
+      runId: ctx.runId,
+      turnId,
+      runStartedHrcSeq: run.observedStartHrcSeq,
+      ctx,
+      now,
+    })
+  }
+
+  private recordFormat2InputTerminal(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    terminal: 'rejected' | 'withdrawn',
+    now: string
+  ): void {
+    const invocation = this.db.brokerInvocations.getByInvocationId(envelope.invocationId)
+    const runtime = invocation === null ? null : this.db.runtimes.getByRuntimeId(invocation.runtimeId)
+    if (invocation === null || runtime === null) return
+    const input = this.format2InputForEnvelope(envelope, invocation, runtime)
+    if (input === undefined || input.status !== 'accepted' || input.landingKind !== undefined) return
+    const payload: Record<string, unknown> = isRecord(envelope.payload) ? envelope.payload : {}
+    const reason =
+      typeof payload['reason'] === 'string'
+        ? payload['reason']
+        : typeof payload['message'] === 'string'
+          ? payload['message']
+          : undefined
+    const terminalized = this.db.inputs.recordTerminal({
+      inputId: input.inputId,
+      terminal,
+      terminalAt: envelope.time ?? now,
+      ...(reason !== undefined ? { errorMessage: reason } : {}),
+    })
+    this.pendingInputEvents.push(
+      appendHrcEvent(this.db, 'input.terminal', {
+        ts: envelope.time ?? now,
+        hostSessionId: ctx.hostSessionId,
+        scopeRef: ctx.scopeRef,
+        laneRef: ctx.laneRef,
+        generation: ctx.generation,
+        runtimeId: ctx.runtimeId,
+        transport: ctx.transport,
+        payload: {
+          inputId: terminalized.inputId,
+          terminal,
+          ...(reason !== undefined ? { error: { message: reason } } : {}),
+        },
+      })
+    )
+  }
+
+  private recordFormat2InputCorrelation(
+    input: HrcInputRecord,
+    ctx: ProjectionContext,
+    fact: 'lost' | 'expired' | 'cancelled' | 'invocation_failed' | 'invocation_exited',
+    now: string,
+    detail?: string
+  ): void {
+    const correlated = this.db.inputs.recordCorrelation({
+      inputId: input.inputId,
+      fact,
+      observedAt: now,
+    })
+    this.pendingInputEvents.push(
+      appendHrcEvent(this.db, 'input.correlation', {
+        ts: now,
+        hostSessionId: ctx.hostSessionId,
+        scopeRef: ctx.scopeRef,
+        laneRef: ctx.laneRef,
+        generation: ctx.generation,
+        runtimeId: ctx.runtimeId,
+        ...(correlated.carrierRunId !== undefined ? { runId: correlated.carrierRunId } : {}),
+        transport: ctx.transport,
+        payload: {
+          inputId: correlated.inputId,
+          fact,
+          ...(detail !== undefined ? { detail } : {}),
+        },
+      })
+    )
+  }
+
+  private recordFormat2CorrelationForEnvelope(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    fact: 'lost' | 'expired' | 'cancelled',
+    now: string
+  ): void {
+    const invocation = this.db.brokerInvocations.getByInvocationId(envelope.invocationId)
+    const runtime = invocation === null ? null : this.db.runtimes.getByRuntimeId(invocation.runtimeId)
+    if (invocation === null || runtime === null) return
+    const input = this.format2InputForEnvelope(envelope, invocation, runtime)
+    if (input === undefined) return
+    const payload: Record<string, unknown> = isRecord(envelope.payload) ? envelope.payload : {}
+    const detail =
+      typeof payload['reason'] === 'string'
+        ? payload['reason']
+        : typeof payload['message'] === 'string'
+          ? payload['message']
+          : undefined
+    this.recordFormat2InputCorrelation(input, ctx, fact, envelope.time ?? now, detail)
+  }
+
+  private recordFormat2InvocationCorrelation(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    fact: 'invocation_failed' | 'invocation_exited',
+    now: string
+  ): void {
+    const payload: Record<string, unknown> = isRecord(envelope.payload) ? envelope.payload : {}
+    const detail =
+      typeof payload['reason'] === 'string'
+        ? payload['reason']
+        : typeof payload['code'] === 'string'
+          ? payload['code']
+          : undefined
+    for (const input of this.db.inputs.listProtectedByInvocationId(String(envelope.invocationId))) {
+      this.recordFormat2InputCorrelation(input, ctx, fact, envelope.time ?? now, detail)
+    }
+  }
+
+  private projectFormat2Turn(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    const db = this.db
+    const invocationId = envelope.invocationId
+    const { runId } = ctx
+    switch (envelope.type) {
+      case 'submission.executed':
+      case 'turn.attributed':
+        this.landFormat2InputFromEnvelope(envelope, ctx, 'initiating', now)
+        return
+      case 'submission.absorbed':
+        this.landFormat2InputFromEnvelope(envelope, ctx, 'joined', now)
+        return
+      case 'submission.rejected':
+        this.recordFormat2InputTerminal(envelope, ctx, 'rejected', now)
+        return
+      case 'submission.withdrawn':
+        this.recordFormat2InputTerminal(envelope, ctx, 'withdrawn', now)
+        return
+      case 'submission.lost':
+        this.recordFormat2CorrelationForEnvelope(envelope, ctx, 'lost', now)
+        return
+      case 'submission.expired':
+        this.recordFormat2CorrelationForEnvelope(envelope, ctx, 'expired', now)
+        return
+      case 'submission.cancelled':
+        // `reason: teardown` ends only the broker's process-local tracker.
+        this.recordFormat2CorrelationForEnvelope(envelope, ctx, 'cancelled', now)
+        return
+      case 'turn.started': {
+        const occurredAt = envelope.time ?? now
+        noteFirstTurnStarted(db, ctx.runtimeId, ctx.generation, occurredAt)
+        if (runId === undefined) return
+        const run = db.runs.getByRunId(runId)
+        if (run?.completedAt === undefined) {
+          db.runs.update(runId, { status: 'running', startedAt: occurredAt, updatedAt: now })
+        }
+        claimRuntimeTurnOwnership(db, ctx, runId, occurredAt, now, this.serverLog)
+        db.brokerInvocations.update(invocationId, { invocationState: 'turn_active', updatedAt: now })
+        return
+      }
+      case 'turn.completed':
+      case 'turn.failed':
+      case 'turn.interrupted': {
+        // A format-2 execution terminal must name its carrier turn. An
+        // invocation exit, broker loss and a terminal without that coordinate
+        // remain observational and cannot close a different run.
+        if (runId === undefined || this.extractTurnId(envelope) === undefined) return
+        const occurredAt = envelope.time ?? now
+        const run = db.runs.getByRunId(runId)
+        if (run?.completedAt === undefined) {
+          const payload = envelope.payload as TurnFailedPayload
+          db.runs.markCompleted(runId, {
+            status:
+              envelope.type === 'turn.completed'
+                ? 'completed'
+                : envelope.type === 'turn.failed'
+                  ? 'failed'
+                  : 'cancelled',
+            completedAt: occurredAt,
+            updatedAt: now,
+            ...(envelope.type === 'turn.failed' && payload.message !== undefined
+              ? { errorMessage: payload.message }
+              : {}),
+          })
+        }
+        this.nextBufferChunkSeqByRunId.delete(runId)
+        markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now, {
+          exactOwner: true,
+          newerTurnActive: hasOtherOpenTurn(db, envelope),
+        })
+        this.markInvocationReadyAfterTerminal(invocationId, ctx, envelope, now)
+        return
+      }
+      case 'turn.retry': {
+        const payload = envelope.payload as TurnRetryPayload
+        this.updateLifecyclePosition(invocationId, ctx.runtimeId, envelope.time ?? now, now, {
+          currentHarnessGeneration: payload.toHarnessGeneration,
+          currentTurnAttempt: payload.toAttempt,
+        })
+        return
+      }
+      default:
+        return
+    }
+  }
+
   // ── Input disposition + turn lifecycle -> run state + invocation turn state ─
   private projectTurn(
     envelope: InvocationEventEnvelope,
@@ -1797,6 +2332,10 @@ export class BrokerEventMapper {
   ): void {
     const db = this.db
     const invocationId = envelope.invocationId
+    if (db.brokerInvocations.getByInvocationId(invocationId)?.executionFormat === 'format2') {
+      this.projectFormat2Turn(envelope, ctx, now)
+      return
+    }
     const { runId } = ctx
     switch (envelope.type) {
       // ── Input disposition -> run touch ──────────────────────────────────────

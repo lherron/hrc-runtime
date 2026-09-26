@@ -30,6 +30,7 @@ import {
   BrokerInvocationEventRepository,
   BrokerInvocationRepository,
   CompiledRuntimePlanRepository,
+  InputRepository,
   LifecyclePolicyRepository,
   PermissionDecisionRepository,
   RuntimeArtifactRepository,
@@ -126,6 +127,7 @@ export type HrcDatabase = {
   lifecyclePolicies: LifecyclePolicyRepository
   runtimeOperations: RuntimeOperationRepository
   brokerInvocations: BrokerInvocationRepository
+  inputs: InputRepository
   submissionAdmissions: SubmissionAdmissionRepository
   steerContributions: SteerContributionRepository
   retainedEvidenceOutcomes: RetainedEvidenceOutcomeRepository
@@ -250,6 +252,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),
     brokerInvocations: new BrokerInvocationRepository(sqlite),
+    inputs: new InputRepository(sqlite),
     submissionAdmissions: new SubmissionAdmissionRepository(sqlite),
     steerContributions: new SteerContributionRepository(sqlite, runIdOwnership),
     retainedEvidenceOutcomes: new RetainedEvidenceOutcomeRepository(sqlite),

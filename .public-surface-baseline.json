@@ -6364,6 +6364,102 @@
       "file": "packages/hrc-sdk/src/cli-helpers.ts",
       "hash": "hrc-sdk|writePlacementWarnings|value",
       "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "GetInputResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|GetInputResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcExecutionFormat",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcExecutionFormat|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcInputCleanupProtection",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcInputCleanupProtection|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcInputCorrelationFact",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcInputCorrelationFact|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcInputLandingKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcInputLandingKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcInputRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcInputRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcInputStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcInputStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcInputTerminal",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcInputTerminal|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "WatchInputCorrelation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|WatchInputCorrelation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "WatchInputEvent",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|WatchInputEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "WatchInputLanding",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|WatchInputLanding|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "WatchInputTerminal",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|WatchInputTerminal|type",
+      "count": 1
     }
   ]
 }
