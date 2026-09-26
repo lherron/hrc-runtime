@@ -21,10 +21,19 @@ predicate: >
   presentation persistence, runtime identity, dispatch overlays, reuse,
   reattach, projection, reaping and public control; ASP owns selection and the
   executable execution shape. Presentation is a producer-resolved boolean input
-  to birth, not a HRC route selector; an explicit presentation mismatch never
-  mutates or silently replaces a live runtime, while omission reuses its
-  established birth variant when ordinary lifecycle admission permits it. This is
-  a clean v2 cutover. HRC neither accepts nor translates v1 selection
+  to birth, not a HRC route selector. A validated explicit operator presentation
+  is frozen in the existing compile-request presentation field before boundary
+  P, not used as an HRC default or hosting selector. For operator none, HRC
+  admits only a producer-selected false value with compile-request provenance
+  and an execution without a required terminal, terminal host, attachable
+  fulfillment, or presentation surface. A mismatch refuses before P,
+  allocation, worker effect, or body write; HRC never removes a terminal or
+  viewer from the producer result. Retry
+  and launch reread the frozen constraint and selected execution. An explicit
+  presentation mismatch never mutates or silently replaces a live runtime,
+  while omission reuses its established birth variant when ordinary lifecycle
+  admission permits it. This is a clean v2 cutover. HRC neither accepts nor
+  translates v1 selection
   fields, plural profiles, profile hashes, route choices, aliases or driver
   requests. Existing v1 harness-broker prepared operations are cancelled or
   abandoned and never resumed by v2. At activation HRC requires zero
@@ -65,10 +74,11 @@ predicate: >
   seat using its old continuation. Reattachment uses persisted connection
   identity without aspd and verifies frozen release/protocol identity before
   attach.
-authority: wrkq:T-08690 producer-owned v2 consumer and cutover amendment, pending Daedalus review; wrkq:T-08207 revision 10 input/execution inventory amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 11 request-scoped execution-format selector amendment, Daedalus approval 2026-09-26; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
+authority: wrkq:T-08690 producer-owned v2 consumer and cutover amendment, pending Daedalus review; wrkq:T-08207 revision 10 input/execution inventory amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 11 request-scoped execution-format selector amendment, Daedalus approval 2026-09-26; wrkq:T-09274 revision 1 no-viewer compile constraint approved 2026-09-26; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
 source:
   - wrkq:T-08207
   - wrkq:T-08690
+  - wrkq:T-09274
   - docs/aspd-headless-codex-integration.md
   - docs/harness-broker-substrate-spec.md
   - architecture/records/invariants/hrc-runtime.asp-toolchain-selection.yaml
@@ -92,11 +102,13 @@ required_tests:
   - an active external participant attempt is drained or retired rather than reconnected through prepared_profile_json
   - isolated A-to-B acceptance records the rollback pair before first v2 persistence, proves HRC B rejects ASP A/v1 compile before P, observes selected and running ASP B identities, then proves a fresh v2 birth and dead-seat v2 reprovision using old continuation
   - corrupted frozen execution release, unavailable aspd before boundary P, and post-boundary release/worker mismatch refuse without fallback or reprepare
+  - T-09274 freezes the no-viewer requested false constraint before P, rejects a returned true, terminal-required, or attachable plan before allocation, and preserves omitted/default and explicit viewer controls
 last_verified: final ASP v2 installed acceptance proved 9/9 harness/presentation/default cases, 8/8 invalid-wire refusals, four accepted identities, and agent-harness default against source 631e7b246aaede313ee6e0aacd71e766f26ae07c / tuple 0.1.1-dev.20260921215301 / release asp-631e7b246aae-20260922T025351Z-01f30b; HRC implementation, activation preflight and coordinated installed acceptance pending
 reopen_when:
   - ASP v2 compile request/response, selected execution, release identity, or hosting declaration changes
   - boundary-P persistence ordering, retry, replay, dispatch, worker release validation, or frozen execution-format selection changes
   - reuse, presentation mismatch, startup reattachment, opaque v1 attach-fence, continuation, or external participant disposition changes
+  - explicit operator-presentation compile constraint, no-viewer producer-answer fence, or presentation persistence/retry law changes
   - activation preflight, matched HRC/ASP ordering, rollback boundary, or fix-forward law changes
   - any fallback, v1 selector adapter, profile/target resolution, driver exception, or old-plan parser is introduced
 supersedes: []

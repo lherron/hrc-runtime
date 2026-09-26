@@ -9,7 +9,13 @@ predicate: >
   sends one v2 compile request to configured aspd and preserves absence in both
   selection sources. Explicit request overrides use only the optional camelCase
   requested fields harness, modelProvider, model, reasoningEffort and
-  presentation. Raw per-summon overrides use only
+  presentation. A validated explicit intent.presentation.operator is encoded
+  only in that existing requested.presentation boolean (none as false, a
+  supported tmux-tui or observer viewer as true); without an operator choice,
+  intent.selection.presentation is forwarded unchanged or remains absent. The
+  explicit operator choice takes precedence only for this request field. It
+  does not change summon directives, profiles, targets, defaults, recipes,
+  drivers, or hosting. Raw per-summon overrides use only
   selectionContext.summonDirectives with the snake_case keys harness,
   model_provider, model, reasoning_effort and presentation. It forwards an
   explicit false unchanged and does not resolve,
@@ -19,7 +25,8 @@ predicate: >
   result before selecting the recipe, worker and driver. HRC admits only the one
   producer-selected execution returned by a compatible aspd protocol, allocates
   resources solely from execution.hosting, and launches only from its frozen
-  execution release. Presentation false never authorizes terminal-free hosting.
+  execution release. Presentation false alone never authorizes HRC to infer
+  terminal-free hosting.
   HRC has no compiler child, resolver, facade, local default, driver-name list or
   fallback. Every selected driver, without a Codex exception, requires positive
   executionRelease.worker.hostedDrivers membership before hosting and again from
@@ -27,10 +34,15 @@ predicate: >
   are rejected, never translated. A configured endpoint that is unavailable,
   incompatible, unidentified, or returns no valid selected execution refuses
   before effects. Declaration and preview observation may use the same service
-  admission boundary but do not create or reinterpret a preparation.
-authority: wrkq:T-08690 producer-owned v2 consumer amendment, pending Daedalus review; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
+  admission boundary but do not create or reinterpret a preparation. For an
+  explicit operator none, HRC admits only producer-selected presentation false
+  with compile-request provenance, no required terminal or terminal host, and
+  neither attachable fulfillment nor a presentation surface;
+  a mismatch refuses before preparation or hosting, without coercing the plan.
+authority: wrkq:T-08690 producer-owned v2 consumer amendment, pending Daedalus review; wrkq:T-09274 revision 1 no-viewer compile constraint approved 2026-09-26; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
 source:
   - wrkq:T-08690
+  - wrkq:T-09274
   - docs/aspd-headless-codex-integration.md
   - docs/harness-broker-substrate-spec.md
   - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
@@ -46,7 +58,8 @@ required_tests:
   - every supported selected driver has positive hostedDrivers evidence before boundary P and again from frozen bytes at launch; no driver exemption exists
   - removed v1 selectors aliases and profile adapters refuse before any preparation or hosting effect
   - unavailable incompatible unidentified or malformed aspd selection refuses before effects and never falls back to a facade resolver or local choice
+  - T-09274 explicit operator none reaches the existing requested.presentation false field; a producer true, terminal-required, or attachable response refuses before boundary P, while omitted and explicit selection controls preserve established precedence
 last_verified: final ASP v2 installed acceptance proved 9/9 harness/presentation/default cases, 8/8 invalid-wire refusals, four accepted identities, and agent-harness default against source 631e7b246aaede313ee6e0aacd71e766f26ae07c / tuple 0.1.1-dev.20260921215301 / release asp-631e7b246aae-20260922T025351Z-01f30b; HRC dependency advance, implementation and installed acceptance pending
-reopen_when: ASP v2 selection wire or precedence, the producer-selected execution or hosting declaration, supported-driver evidence, aspd admission protocol, HRC fallback boundary, or declaration/preview observation boundary changes.
+reopen_when: ASP v2 selection wire or precedence, HRC operator presentation constraint encoding, no-viewer admission mismatch fence, the producer-selected execution or hosting declaration, supported-driver evidence, aspd admission protocol, HRC fallback boundary, or declaration/preview observation boundary changes.
 supersedes: []
 superseded_by: []
