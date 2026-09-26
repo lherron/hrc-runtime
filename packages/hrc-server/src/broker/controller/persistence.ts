@@ -93,23 +93,12 @@ function persistStartGraphInTransaction(
     )
   }
   const initialInputId = input.execution.dispatchRequest.startRequest.initialInput?.inputId
-  const hasInitialInput = initialInputId !== undefined || identity.initialInputId !== undefined
   let format2AdmissionIdentity: { idempotencyKey: string; requestHash: string } | undefined
-  if (executionFormat === 'format2' && hasInitialInput) {
-    if (input.dispatchIdempotencyKey === undefined || input.format2RequestHash === undefined) {
-      throw new BrokerControllerError(
-        'format2_admission_identity_missing',
-        'format 2 start graph requires an idempotency key and canonical request hash',
-        {
-          operationId: String(identity.operationId),
-          ...(input.dispatchIdempotencyKey === undefined ? { missing: 'dispatchIdempotencyKey' } : {}),
-          ...(input.format2RequestHash === undefined ? { missing: 'format2RequestHash' } : {}),
-        }
-      )
-    }
+  // ASP may emit compiler priming without an HRC input identity. Only an
+  // identity allocation makes a format-2 start input an HRC admission.
+  if (executionFormat === 'format2' && identity.initialInputId !== undefined) {
     if (
       initialInputId === undefined ||
-      identity.initialInputId === undefined ||
       String(initialInputId) !== String(identity.initialInputId)
     ) {
       throw new BrokerControllerError(
@@ -119,6 +108,17 @@ function persistStartGraphInTransaction(
           operationId: String(identity.operationId),
           compiledInitialInputId: initialInputId,
           identityInitialInputId: identity.initialInputId,
+        }
+      )
+    }
+    if (input.dispatchIdempotencyKey === undefined || input.format2RequestHash === undefined) {
+      throw new BrokerControllerError(
+        'format2_admission_identity_missing',
+        'format 2 start graph requires an idempotency key and canonical request hash',
+        {
+          operationId: String(identity.operationId),
+          ...(input.dispatchIdempotencyKey === undefined ? { missing: 'dispatchIdempotencyKey' } : {}),
+          ...(input.format2RequestHash === undefined ? { missing: 'format2RequestHash' } : {}),
         }
       )
     }

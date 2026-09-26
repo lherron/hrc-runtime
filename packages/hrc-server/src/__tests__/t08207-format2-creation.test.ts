@@ -65,22 +65,17 @@ test('format 2 start graph persists an observed-execution invocation without an 
   }
 })
 
-test('format 2 promptless open start persists only its invocation', async () => {
+test('format 2 promptless open with compiler priming persists only its invocation', async () => {
   const fixture = await makeFixture()
   try {
     const start = makeStartInput()
     const { runId: _legacyAdmissionRun, initialInputId: _initialInputId, ...identity } = start.identity
-    const { initialInput: _initialInput, ...startRequest } = start.execution.dispatchRequest.startRequest
 
     const graph = persistStartGraph(
       { db: fixture.db, now: () => '2026-09-26T13:20:00.000Z', serverInstanceId: 'srv-t08207' },
       {
         ...start,
         identity,
-        execution: {
-          ...start.execution,
-          dispatchRequest: { ...start.execution.dispatchRequest, startRequest },
-        },
         executionFormat: 'format2',
       },
       HELLO,
@@ -100,11 +95,12 @@ test('format 2 promptless open start persists only its invocation', async () => 
   }
 })
 
-test('format 2 start still rejects a one-sided initial-input identity', async () => {
+test('format 2 start rejects an initial HRC identity without its compiled input', async () => {
   const fixture = await makeFixture()
   try {
     const start = makeStartInput()
-    const { runId: _legacyAdmissionRun, initialInputId: _initialInputId, ...identity } = start.identity
+    const { runId: _legacyAdmissionRun, ...identity } = start.identity
+    const { initialInput: _initialInput, ...startRequest } = start.execution.dispatchRequest.startRequest
 
     expect(() =>
       persistStartGraph(
@@ -112,9 +108,38 @@ test('format 2 start still rejects a one-sided initial-input identity', async ()
         {
           ...start,
           identity,
+          execution: {
+            ...start.execution,
+            dispatchRequest: { ...start.execution.dispatchRequest, startRequest },
+          },
           executionFormat: 'format2',
           dispatchIdempotencyKey: 't08207-one-sided-input',
           format2RequestHash: 'sha256:t08207-one-sided-input',
+        },
+        HELLO,
+        undefined
+      )
+    ).toThrow('format 2 start graph requires the compiled initial input to match its frozen identity')
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('format 2 start rejects a compiled initial input that differs from its HRC identity', async () => {
+  const fixture = await makeFixture()
+  try {
+    const start = makeStartInput()
+    const { runId: _legacyAdmissionRun, ...identity } = start.identity
+
+    expect(() =>
+      persistStartGraph(
+        { db: fixture.db, now: () => '2026-09-26T13:20:00.000Z', serverInstanceId: 'srv-t08207' },
+        {
+          ...start,
+          identity: { ...identity, initialInputId: 'input-t08207-mismatch' as typeof identity.initialInputId },
+          executionFormat: 'format2',
+          dispatchIdempotencyKey: 't08207-mismatched-input',
+          format2RequestHash: 'sha256:t08207-mismatched-input',
         },
         HELLO,
         undefined
