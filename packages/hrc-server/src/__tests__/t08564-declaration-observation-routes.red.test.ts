@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { buildV2CompileRequest } from '../agent-spaces-adapter/compile-adapter'
 import { type HrcServer, createHrcServer } from '../index'
 import {
   type AspdObservationDouble,
@@ -116,20 +117,54 @@ function requestParams(double: AspdObservationDouble, method: string): Record<st
 }
 
 describe('POST /v1/declarations/resolve (T-08564 Phase A red)', () => {
-  test('returns authorized observed provisioning without reissuing producer selection as an HRC request (T-08914)', async () => {
+  test('returns authorized observed provisioning and carries supported suffix selection directives to v2 (T-08914)', async () => {
     await boot()
-    const { response, body } = await post('/v1/declarations/resolve', resolveRequest())
+    const { response, body } = await post(
+      '/v1/declarations/resolve',
+      resolveRequest({
+        provision: {
+          node: 'hrcdev',
+          model: 'gpt-6-luna',
+          reasoning_effort: 'xhigh',
+          yolo: true,
+        },
+      })
+    )
 
     expect(response.status).toBe(200)
     expect(body.intent.harness).toEqual({ interactive: false })
     expect(body.intent).not.toHaveProperty('selection')
+    // `provision` stays the durable declaration record. Only the v2-supported,
+    // raw selection subset is carried separately to ASP's selection context.
+    // Placement and denied profile scalars must never become selection input.
+    expect(body.intent.summonDirectives).toEqual({
+      model: 'gpt-6-luna',
+      reasoning_effort: 'xhigh',
+    })
     expect(body.intent.provision).toMatchObject({
       harness: 'claude-code',
-      model: 'x',
+      model: 'gpt-6-luna',
     })
     // The producer advertises yolo, but HRC's existing deny law keeps it out
     // of the intent that callers can carry to a birth.
     expect(body.intent.provision).not.toHaveProperty('yolo')
+    expect(
+      buildV2CompileRequest({
+        intent: body.intent,
+        scopeRef: 'agent:smokey:project:hrc-runtime:task:T-08914',
+        identity: {
+          requestId: 'request-t08914',
+          operationId: 'operation-t08914',
+          hostSessionId: 'host-t08914',
+          generation: 1,
+          runtimeId: 'runtime-t08914',
+          invocationId: 'invocation-t08914',
+          traceId: 'trace-t08914',
+        },
+      }).selectionContext
+    ).toEqual({
+      summonDirectives: { model: 'gpt-6-luna', reasoning_effort: 'xhigh' },
+    })
     expect(body.declaration.agentSources).toEqual({
       agentsRoot,
       aspHome,

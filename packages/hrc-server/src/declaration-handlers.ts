@@ -23,6 +23,7 @@ import {
   type HrcExecutionMode,
   type HrcRuntimeIntent,
   HrcRuntimeUnavailableError,
+  type HrcSummonHarnessDirectives,
   HrcUnprocessableEntityError,
   type ResolveRuntimeIntentResponse,
   createPhaseRecorder,
@@ -266,6 +267,36 @@ function authorizedScalars(scalars: Record<string, unknown> | undefined): Provis
   return carried as ProvisioningScalars
 }
 
+/**
+ * The handle's explicit suffix is both a durable birth record (`provision`)
+ * and the raw v2 selection input ASP owns (`summonDirectives`).  Keep those
+ * carriers deliberately separate: the observed declaration's effective
+ * provision table includes profile baseline values and must never be promoted
+ * into a selection request.  Only the typed selection-shaped subset of the
+ * caller's already-authorized suffix crosses this boundary.
+ */
+function summonDirectivesFromProvision(
+  scalars: Record<string, unknown> | undefined
+): HrcSummonHarnessDirectives | undefined {
+  const provision = authorizedScalars(scalars)
+  const modelProvider = provision['model_provider']
+  const model = provision['model']
+  const reasoningEffort = provision['reasoning_effort']
+  const presentation = provision['presentation']
+  const directives: HrcSummonHarnessDirectives = {
+    ...(typeof modelProvider === 'string' ? { model_provider: modelProvider } : {}),
+    ...(typeof model === 'string' ? { model } : {}),
+    ...(reasoningEffort === 'low' ||
+    reasoningEffort === 'medium' ||
+    reasoningEffort === 'high' ||
+    reasoningEffort === 'xhigh'
+      ? { reasoning_effort: reasoningEffort }
+      : {}),
+    ...(typeof presentation === 'boolean' ? { presentation } : {}),
+  }
+  return Object.keys(directives).length > 0 ? directives : undefined
+}
+
 function declarationContext(body: ResolveByPathsBody): AspcRuntimeDeclarationContext {
   const directives = authorizedScalars(body.provision)
   return {
@@ -408,6 +439,7 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
     }
 
     const provision = authorizedScalars(declaration.provisioning.scalars)
+    const summonDirectives = summonDirectivesFromProvision(body.provision)
     const placement = declaration.placement
     const bundle = observedRuntimeBundle(placement.bundle)
     if (bundle === undefined) {
@@ -439,6 +471,7 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
             }
           : {}),
       },
+      ...(summonDirectives !== undefined ? { summonDirectives } : {}),
       ...(Object.keys(provision).length > 0 ? { provision } : {}),
       ...(body.initialPrompt !== undefined ? { initialPrompt: body.initialPrompt } : {}),
     }
