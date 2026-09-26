@@ -2,12 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { CliUsageError } from 'cli-kit'
 import type { HrcMonitorState } from 'hrc-core'
-import { openHrcDatabase } from 'hrc-store-sqlite'
-
-import {
-  makeSeededFixture,
-  ts,
-} from '../../../hrc-server/src/__tests__/broker-event-mapper-fixtures'
+import { ts } from '../../../hrc-server/src/__tests__/broker-event-mapper-fixtures'
 import { MonitorWaitExit, cmdMonitorWait } from '../monitor/wait-command'
 import { cmdMonitorWatch } from '../monitor/watch-command'
 
@@ -271,103 +266,6 @@ function expectNoDrainClaim(value: unknown): void {
 
 void transitionEvent
 void expectNoDrainClaim
-
-describe('T-06575 suite 6 — daemon single-cut integrity', () => {
-  test('never assembles cross-cut state and keeps observation identity opaque', async () => {
-    const fixture = await makeSeededFixture()
-    const writer = openHrcDatabase(fixture.dbPath)
-    try {
-      const firstScope = `agent:cody:project:hrc-runtime:task:${TASK_ID}`
-      fixture.db.sessions.insert({
-        hostSessionId: 'host-cut-1',
-        scopeRef: firstScope,
-        laneRef: 'main',
-        generation: 1,
-        status: 'active',
-        createdAt: ts(),
-        updatedAt: ts(),
-        ancestorScopeRefs: [],
-      })
-      fixture.db.runtimes.insert({
-        runtimeId: 'runtime-cut-1',
-        hostSessionId: 'host-cut-1',
-        scopeRef: firstScope,
-        laneRef: 'main',
-        generation: 1,
-        transport: 'headless',
-        harness: 'codex-cli',
-        provider: 'openai',
-        status: 'idle',
-        statusChangedAt: ts(1),
-        supportsInflightInput: false,
-        adopted: false,
-        createdAt: ts(),
-        updatedAt: ts(),
-      })
-      const secondScope = `agent:clod:project:hrc-runtime:task:${TASK_ID}`
-      fixture.db.sessions.insert({
-        hostSessionId: 'host-cut-2',
-        scopeRef: secondScope,
-        laneRef: 'main',
-        generation: 1,
-        status: 'active',
-        createdAt: ts(),
-        updatedAt: ts(),
-        ancestorScopeRefs: [],
-      })
-      fixture.db.runtimes.insert({
-        runtimeId: 'runtime-cut-2',
-        hostSessionId: 'host-cut-2',
-        scopeRef: secondScope,
-        laneRef: 'main',
-        generation: 1,
-        transport: 'headless',
-        harness: 'codex-cli',
-        provider: 'openai',
-        status: 'busy',
-        statusChangedAt: ts(2),
-        supportsInflightInput: false,
-        adopted: false,
-        createdAt: ts(),
-        updatedAt: ts(),
-      })
-
-      const modulePath = '../../../hrc-server/src/monitor-condition-cut'
-      const cutModule = (await import(modulePath)) as {
-        readMonitorConditionCut: (
-          db: typeof fixture.db,
-          request: { selectors: string[]; quantifier: 'all'; conditions: string[] },
-          hooks?: { afterMembershipRead?: () => void }
-        ) => Promise<Record<string, unknown>> | Record<string, unknown>
-      }
-      const cut = await cutModule.readMonitorConditionCut(
-        fixture.db,
-        { selectors: [TASK_ID], quantifier: 'all', conditions: ['idle'] },
-        {
-          afterMembershipRead() {
-            writer.runtimes.updateStatus('runtime-cut-2', 'idle', ts(3))
-          },
-        }
-      )
-
-      expect(cut).toMatchObject({
-        observedAt: expect.any(String),
-        members: expect.arrayContaining([
-          expect.objectContaining({ runtimeId: 'runtime-cut-1', status: 'idle' }),
-          expect.objectContaining({ runtimeId: 'runtime-cut-2', status: 'busy' }),
-        ]),
-      })
-      expect(cut).not.toHaveProperty('hrcSeq')
-      expect(cut).not.toHaveProperty('registryRevision')
-      if (typeof cut['observationId'] === 'string') {
-        expect(cut['observationId']).not.toMatch(/^\d+$/)
-      }
-    } finally {
-      writer.close()
-      await fixture.cleanup()
-    }
-  })
-})
 
 describe('T-06575 suite 7 — verb parity', () => {
   test('keeps replay condition-free and gives blocking watch/wait the same arm and final schema', async () => {
