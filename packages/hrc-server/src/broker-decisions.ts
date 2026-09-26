@@ -1,4 +1,4 @@
-import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
+import { HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
 import type {
   HrcContinuationRef,
   HrcHarness,
@@ -34,24 +34,6 @@ import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
 export function isProducerSelectedOrdinaryBirth(intent: HrcRuntimeIntent): boolean {
   const operator = intent.presentation?.operator
   return operator !== 'tmux-tui' && operator !== 'observer'
-}
-
-export function validateEnsureRuntimeIntent(
-  intent: HrcRuntimeIntent,
-  options: { allowNonInteractive?: boolean } = {}
-): void {
-  if (!isRecord(intent.harness)) {
-    throw new HrcUnprocessableEntityError(
-      HrcErrorCode.MISSING_RUNTIME_INTENT,
-      'intent.harness is required'
-    )
-  }
-
-  if (intent.harness.interactive !== true && options.allowNonInteractive !== true) {
-    throw new HrcRuntimeUnavailableError(
-      'ensureRuntime supports only interactive runtimes in phase 1'
-    )
-  }
 }
 
 export function deriveInteractiveHarness(
@@ -289,29 +271,6 @@ export function decideCodexAppServerPresentation(input: {
   }
   // The policy is the trigger: only an explicit `tmux-tui` selects the viewer.
   return input.operatorPresentation === 'tmux-tui' ? 'tmux-tui' : 'none'
-}
-
-/**
- * HRC-owned operator-presentation policy for a headless muse-serve runtime.
- * `observer` requests the observer-pane viewer route (broker window +
- * operator-attachable renderer pane + observer socket); `none` is ordinary
- * headless. Same shape as the codex decision: the POLICY is the trigger,
- * driver applicability (muse-serve only) is the gate, and an explicit
- * per-request `presentation.operator` replaces the node policy.
- */
-export function decideMuseServePresentation(input: {
-  operatorPresentation: string | undefined
-  brokerDriver: string
-  requestedOperator?: 'none' | 'tmux-tui' | 'observer' | undefined
-}): OperatorPresentation {
-  // Applicability gate: only the muse-serve driver can host the renderer pane.
-  if (input.brokerDriver !== 'muse-serve') {
-    return 'none'
-  }
-  if (input.requestedOperator !== undefined) {
-    return input.requestedOperator === 'observer' ? 'observer' : 'none'
-  }
-  return input.operatorPresentation === 'observer' ? 'observer' : 'none'
 }
 
 export type InteractiveTmuxBrokerDriver =
