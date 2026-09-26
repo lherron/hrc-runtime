@@ -142,13 +142,19 @@ predicate: >
   behavior remains unchanged. Revision 7 is operator-authorized implementation work, not
   implementation acceptance and does not accept final-tail loss; Phase 5 completeness requires its separately verified
   retention and catch-up contract without dependence on a future user resume.
-  External attachment accepts only `ParticipantBrokerDescriptor`; HRC neither
-  accepts nor translates an `agent-runtime-profile/v1` `BrokerExecutionProfile`.
+  Participant establishment has no prompt/input admission selector. Its
+  `ensureInvocation` writes `execution_format='format1'` explicitly and rejects
+  a format-2 selector before a driver effect; it never inherits a repository or
+  process default. Format-2 participant support needs a separate approved input
+  delivery and landing design. External attachment accepts only
+  `ParticipantBrokerDescriptor`; HRC neither accepts nor translates an
+  `agent-runtime-profile/v1` `BrokerExecutionProfile`.
   Legacy `prepared_profile_json` reconnect is drained or retired before v2
   cutover. HRC B precedes ASP B, and main aspd remains on ASP A until that
   coordinated cutover.
-authority: Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15
+authority: Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15; wrkq:T-08207 revision 11 participant F1 fence, Daedalus approval 2026-09-26
 source:
+  - wrkq:T-08207
   - wrkq:T-08344
   - wrkq:T-08501
   - commit:8f1b61c77f89cbe415fdebab9336ff460e59fc55
@@ -169,6 +175,7 @@ required_tests:
   - T-08344 post-join profile validation rejects foreign identity hash mismatches ownership mismatches and runtime or lifecycle-policy fields before effects
   - T-08344 participant presentation discriminator persists actual HRC lease IDs and selected lifecycle policy before ensure while crash retries preserve token bytes full dispatch and ensure digest and missing leases block
   - T-08344 participant-served registrations establish a resident invocation attach terminate and resume through the generic path
+  - T-08207 rev11 participant ensure persists explicit format1 and rejects format2 before driver effect
   - T-08344 C.5.1 concurrent duplicate lost-response request-conflict and crash-boundary receipt gates preserve at-most-once driver start and truthful indeterminate outcomes
   - T-08344 C.5.2 spawn-before-completion recovery preserves credential bytes and exactly one broker process and window
   - T-08344 retirement discriminator rejects old-owner writes before and after successor claim completion while unresolved input remains independently protected
@@ -189,7 +196,7 @@ last_verified:
 reopen_when:
   - protocol join optional post-join preparation or the pre-hosting post-realization and pre-ensure persistence boundaries change
   - registration policy session identity or HRC versus adapter authority changes
-  - resident-invocation receipt idempotency hosting rediscovery or uncertain-start recovery changes
+  - resident-invocation receipt idempotency hosting rediscovery uncertain-start recovery or explicit participant execution-format fence changes
   - successor admission irreversible retirement pending-input exclusion or epoch fencing changes
   - activation classification historical recovery replay release or acknowledgement ownership changes
   - EPR compatibility or legacy migration semantics change
