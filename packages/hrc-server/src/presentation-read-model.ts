@@ -39,6 +39,13 @@ export function projectPresentationRuntime(
     ? getBrokerRuntimeTmuxSocketPath(runtime)
     : undefined
   const title = db.sessionTitles.getByHostSessionId(runtime.hostSessionId)?.title
+  const operatorSurfaces = db.surfaceBindings
+    .findByRuntime(runtime.runtimeId)
+    .flatMap((binding) =>
+      binding.surfaceKind === 'ghostty' && binding.clientTty !== undefined
+        ? [{ surfaceId: binding.surfaceId, clientTty: binding.clientTty }]
+        : []
+    )
   return {
     runtimeId: runtime.runtimeId,
     hostSessionId: runtime.hostSessionId,
@@ -52,6 +59,7 @@ export function projectPresentationRuntime(
       ? { tmux: { socketPath, attachTarget: getBrokerRuntimeTmuxAttachTarget(runtime) } }
       : {}),
     ...(title !== undefined ? { title } : {}),
+    operatorSurfaces,
   }
 }
 

@@ -48,6 +48,7 @@ export function parseBindSurfaceRequest(input: unknown): BindSurfaceRequest {
 
   const surfaceKind = requireTrimmedStringField(input, 'surfaceKind')
   const surfaceId = requireTrimmedStringField(input, 'surfaceId')
+  const clientTty = readOptionalNonEmptyStringField(input, 'clientTty')
   const runtimeId = requireTrimmedStringField(input, 'runtimeId')
   const hostSessionId = requireTrimmedStringField(input, 'hostSessionId')
   const generation = input['generation']
@@ -60,6 +61,7 @@ export function parseBindSurfaceRequest(input: unknown): BindSurfaceRequest {
   return {
     surfaceKind,
     surfaceId,
+    ...(clientTty !== undefined ? { clientTty } : {}),
     runtimeId,
     hostSessionId,
     generation,

@@ -126,6 +126,7 @@ export class SurfaceBindingRepository {
         INSERT INTO surface_bindings (
           surface_kind,
           surface_id,
+          client_tty,
           host_session_id,
           runtime_id,
           generation,
@@ -135,8 +136,9 @@ export class SurfaceBindingRepository {
           bound_at,
           unbound_at,
           reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
         ON CONFLICT(surface_kind, surface_id) DO UPDATE SET
+          client_tty = excluded.client_tty,
           host_session_id = excluded.host_session_id,
           runtime_id = excluded.runtime_id,
           generation = excluded.generation,
@@ -149,6 +151,7 @@ export class SurfaceBindingRepository {
       `,
       record.surfaceKind,
       record.surfaceId,
+      record.clientTty ?? null,
       record.hostSessionId,
       record.runtimeId,
       record.generation,
@@ -184,6 +187,45 @@ export class SurfaceBindingRepository {
     )
 
     return this.findBySurface(surfaceKind, surfaceId)
+  }
+
+  /**
+   * One terminal can authorize only its newest Ghostty attachment. The caller
+   * holds the surrounding bind transaction so a reader cannot observe both.
+   */
+  unbindOtherGhosttyClientTty(
+    clientTty: string,
+    surfaceId: string,
+    unboundAt: string,
+    reason: string
+  ): HrcSurfaceBindingRecord[] {
+    const rows = this.db
+      .query<SurfaceBindingRow, [string, string]>(
+        `SELECT ${SURFACE_BINDING_COLUMNS} FROM surface_bindings
+          WHERE surface_kind = 'ghostty'
+            AND client_tty = ?
+            AND surface_id <> ?
+            AND unbound_at IS NULL
+          ORDER BY bound_at ASC, surface_id ASC`
+      )
+      .all(clientTty, surfaceId)
+
+    const displaced: HrcSurfaceBindingRecord[] = []
+    for (const row of rows) {
+      execute(
+        this.db,
+        `UPDATE surface_bindings
+           SET unbound_at = ?, reason = ?
+         WHERE surface_kind = ? AND surface_id = ? AND unbound_at IS NULL`,
+        unboundAt,
+        reason,
+        row.surface_kind,
+        row.surface_id
+      )
+      const updated = this.findBySurface(row.surface_kind, row.surface_id)
+      if (updated) displaced.push(updated)
+    }
+    return displaced
   }
 
   findBySurface(surfaceKind: string, surfaceId: string): HrcSurfaceBindingRecord | null {

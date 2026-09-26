@@ -1549,6 +1549,8 @@ export type HrcSubscriberReceiptAckResponse = {
 export type BindSurfaceRequest = {
   surfaceKind: string
   surfaceId: string
+  /** Controlling terminal identity captured by an interactive Ghostty attach. */
+  clientTty?: string | undefined
   runtimeId: string
   hostSessionId: string
   generation: number

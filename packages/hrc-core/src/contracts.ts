@@ -711,6 +711,8 @@ export type HrcLaunchRecord = {
 export type HrcSurfaceBindingRecord = {
   surfaceKind: string
   surfaceId: string
+  /** The terminal that owned the CLI attach at bind time. */
+  clientTty?: string | undefined
   hostSessionId: string
   runtimeId: string
   generation: number
@@ -1145,6 +1147,8 @@ export type HrcPresentationRuntimeRow = {
   presentation?: HrcRuntimePresentationRecord | undefined
   tmux?: HrcPresentationTmuxTarget | undefined
   title?: string | undefined
+  /** Active Ghostty bindings whose controlling terminal was captured at attach. */
+  operatorSurfaces: Array<{ surfaceId: string; clientTty: string }>
 }
 
 export type ListPresentationRuntimesResponse = {

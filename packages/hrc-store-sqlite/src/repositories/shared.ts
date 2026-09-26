@@ -431,6 +431,7 @@ export const LOCAL_BRIDGE_COLUMNS = `
 export const SURFACE_BINDING_COLUMNS = `
   surface_kind,
   surface_id,
+  client_tty,
   host_session_id,
   runtime_id,
   generation,
@@ -796,6 +797,7 @@ export function mapSurfaceBindingRow(row: SurfaceBindingRow): HrcSurfaceBindingR
   return {
     surfaceKind: row.surface_kind,
     surfaceId: row.surface_id,
+    clientTty: row.client_tty ?? undefined,
     hostSessionId: row.host_session_id,
     runtimeId: row.runtime_id,
     generation: row.generation,

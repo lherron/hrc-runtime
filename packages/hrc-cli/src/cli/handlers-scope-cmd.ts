@@ -39,7 +39,6 @@ import {
   waitForAttachProcess,
 } from './runtime-select.js'
 import {
-  type ExecAttachDescriptor,
   buildManagedRunIntent,
   buildManagedStartIntent,
   parseScopePrompt,
@@ -1399,7 +1398,6 @@ export async function cmdAttach(args: string[]): Promise<void> {
     }
     const client = createClient()
     const descriptor = await client.getAttachDescriptor(target)
-    await bindGhosttySurfaceIfPresent(client, descriptor)
     printJson(descriptor)
     return
   }
@@ -1430,11 +1428,8 @@ export async function cmdAttach(args: string[]): Promise<void> {
       )
     }
 
-    const descriptor: ExecAttachDescriptor = await attachWithRetry(
-      client,
-      resolved.hostSessionId,
-      runtime
-    )
+    const descriptor = await attachWithRetry(client, resolved.hostSessionId, runtime)
+    await bindGhosttySurfaceIfPresent(client, descriptor)
     execAttachCommand(descriptor.argv, descriptor.env)
   } catch (err) {
     if (jsonOutput) {

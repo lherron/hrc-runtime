@@ -200,6 +200,7 @@ export type ActiveInputDeliveryRow = {
 export type SurfaceBindingRow = {
   surface_kind: string
   surface_id: string
+  client_tty: string | null
   host_session_id: string
   runtime_id: string
   generation: number

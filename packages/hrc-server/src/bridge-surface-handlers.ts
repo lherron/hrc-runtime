@@ -9,6 +9,7 @@ import {
 } from 'hrc-core'
 import type {
   DeliverBridgeResponse,
+  HrcLifecycleEvent,
   HrcLocalBridgeRecord,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -86,61 +87,105 @@ export async function handleBindSurface(
     )
   }
 
-  const session = requireSession(this.db, runtime.hostSessionId)
-  const existing = this.db.surfaceBindings.findBySurface(body.surfaceKind, body.surfaceId)
-  if (existing && existing.unboundAt === undefined && existing.runtimeId === runtime.runtimeId) {
-    return json(existing)
-  }
-
   const tmuxPane =
     runtime.transport === 'tmux' && runtime.controllerKind !== 'harness-broker'
       ? requireTmuxPane(runtime)
       : null
   const now = timestamp()
-  const binding = this.db.surfaceBindings.bind({
-    surfaceKind: body.surfaceKind,
-    surfaceId: body.surfaceId,
-    hostSessionId: runtime.hostSessionId,
-    runtimeId: runtime.runtimeId,
-    generation: runtime.generation,
-    windowId: body.windowId ?? tmuxPane?.windowId,
-    tabId: body.tabId,
-    paneId: body.paneId ?? tmuxPane?.paneId,
-    boundAt: now,
-  })
+  const mutation = this.db.sqlite.transaction(() => {
+    const session = requireSession(this.db, runtime.hostSessionId)
+    const existing = this.db.surfaceBindings.findBySurface(body.surfaceKind, body.surfaceId)
+    if (
+      existing &&
+      existing.unboundAt === undefined &&
+      existing.runtimeId === runtime.runtimeId &&
+      existing.clientTty === body.clientTty
+    ) {
+      return { binding: existing, events: [] as HrcLifecycleEvent[] }
+    }
 
-  const eventKind =
-    existing && existing.unboundAt === undefined ? 'surface.rebound' : 'surface.bound'
-  const eventJson: Record<string, unknown> = {
-    surfaceKind: binding.surfaceKind,
-    surfaceId: binding.surfaceId,
-    hostSessionId: binding.hostSessionId,
-    runtimeId: binding.runtimeId,
-    generation: binding.generation,
-    boundAt: binding.boundAt,
-    ...(binding.windowId ? { windowId: binding.windowId } : {}),
-    ...(binding.tabId ? { tabId: binding.tabId } : {}),
-    ...(binding.paneId ? { paneId: binding.paneId } : {}),
-  }
+    const events: HrcLifecycleEvent[] = []
+    const displaced =
+      body.surfaceKind === 'ghostty' && body.clientTty !== undefined
+        ? this.db.surfaceBindings.unbindOtherGhosttyClientTty(
+            body.clientTty,
+            body.surfaceId,
+            now,
+            'client_tty_rebound'
+          )
+        : []
+    for (const retired of displaced) {
+      const retiredSession = requireSession(this.db, retired.hostSessionId)
+      events.push(
+        appendHrcEvent(this.db, 'surface.unbound', {
+          ts: now,
+          hostSessionId: retiredSession.hostSessionId,
+          scopeRef: retiredSession.scopeRef,
+          laneRef: retiredSession.laneRef,
+          generation: retiredSession.generation,
+          runtimeId: retired.runtimeId,
+          payload: {
+            surfaceKind: retired.surfaceKind,
+            surfaceId: retired.surfaceId,
+            runtimeId: retired.runtimeId,
+            unboundAt: retired.unboundAt,
+            ...(retired.clientTty ? { clientTty: retired.clientTty } : {}),
+            ...(retired.reason ? { reason: retired.reason } : {}),
+          },
+        })
+      )
+    }
 
-  if (eventKind === 'surface.rebound' && existing) {
-    eventJson['previousHostSessionId'] = existing.hostSessionId
-    eventJson['previousRuntimeId'] = existing.runtimeId
-    eventJson['previousGeneration'] = existing.generation
-  }
+    const binding = this.db.surfaceBindings.bind({
+      surfaceKind: body.surfaceKind,
+      surfaceId: body.surfaceId,
+      clientTty: body.clientTty,
+      hostSessionId: runtime.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      generation: runtime.generation,
+      windowId: body.windowId ?? tmuxPane?.windowId,
+      tabId: body.tabId,
+      paneId: body.paneId ?? tmuxPane?.paneId,
+      boundAt: now,
+    })
 
-  const event = appendHrcEvent(this.db, eventKind, {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    payload: eventJson,
-  })
-  this.notifyEvent(event)
+    const eventKind =
+      existing && existing.unboundAt === undefined ? 'surface.rebound' : 'surface.bound'
+    const eventJson: Record<string, unknown> = {
+      surfaceKind: binding.surfaceKind,
+      surfaceId: binding.surfaceId,
+      hostSessionId: binding.hostSessionId,
+      runtimeId: binding.runtimeId,
+      generation: binding.generation,
+      boundAt: binding.boundAt,
+      ...(binding.clientTty ? { clientTty: binding.clientTty } : {}),
+      ...(binding.windowId ? { windowId: binding.windowId } : {}),
+      ...(binding.tabId ? { tabId: binding.tabId } : {}),
+      ...(binding.paneId ? { paneId: binding.paneId } : {}),
+    }
 
-  return json(binding)
+    if (eventKind === 'surface.rebound' && existing) {
+      eventJson['previousHostSessionId'] = existing.hostSessionId
+      eventJson['previousRuntimeId'] = existing.runtimeId
+      eventJson['previousGeneration'] = existing.generation
+      if (existing.clientTty) eventJson['previousClientTty'] = existing.clientTty
+    }
+
+    events.push(
+      appendHrcEvent(this.db, eventKind, {
+        ts: now,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        payload: eventJson,
+      })
+    )
+    return { binding, events }
+  })()
+  for (const event of mutation.events) this.notifyEvent(event)
+  return json(mutation.binding)
 }
 
 export async function handleUnbindSurface(
@@ -186,6 +231,7 @@ export async function handleUnbindSurface(
       surfaceId: binding.surfaceId,
       runtimeId: binding.runtimeId,
       unboundAt: binding.unboundAt,
+      ...(binding.clientTty ? { clientTty: binding.clientTty } : {}),
       ...(binding.reason ? { reason: binding.reason } : {}),
     },
   })

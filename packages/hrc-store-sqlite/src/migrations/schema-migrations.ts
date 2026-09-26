@@ -3605,6 +3605,19 @@ const runtimeScopeLookupIndexMigration: HrcMigration = {
   },
 }
 
+/** T-09269: qualify operator Ghostty bindings by the invoking controlling TTY. */
+const surfaceBindingClientTtyMigration: HrcMigration = {
+  id: '0072_surface_binding_client_tty',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE surface_bindings ADD COLUMN client_tty TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_surface_bindings_active_ghostty_client_tty
+        ON surface_bindings(client_tty)
+        WHERE surface_kind = 'ghostty' AND unbound_at IS NULL AND client_tty IS NOT NULL;
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -3672,4 +3685,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   participantProtocolJoinMigration,
   participantLiveIncarnationBindingMigration,
   runtimeScopeLookupIndexMigration,
+  surfaceBindingClientTtyMigration,
 ]

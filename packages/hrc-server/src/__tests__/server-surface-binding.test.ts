@@ -366,6 +366,54 @@ describe('POST /v1/surfaces/bind', () => {
     expect(ej['runtimeId']).toBe(rt2.runtimeId)
   })
 
+  it('projects only the newest Ghostty surface for a controlling TTY', async () => {
+    server = await createHrcServer(serverOpts())
+    const first = await ensureRuntime('tty-binding-first')
+    const second = await ensureRuntime('tty-binding-second')
+
+    const firstResponse = await postJson('/v1/surfaces/bind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-first',
+      clientTty: '/dev/ttys014',
+      ...first,
+    })
+    expect(firstResponse.status).toBe(200)
+    expect((await firstResponse.json()) as HrcSurfaceBindingRecord).toMatchObject({
+      surfaceId: 'ghostty-first',
+      clientTty: '/dev/ttys014',
+    })
+
+    const secondResponse = await postJson('/v1/surfaces/bind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-second',
+      clientTty: '/dev/ttys014',
+      ...second,
+    })
+    expect(secondResponse.status).toBe(200)
+
+    const presentation = (await (await fetchSocket('/v1/presentation/runtimes')).json()) as {
+      runtimes: Array<{
+        runtimeId: string
+        operatorSurfaces?: Array<{ surfaceId: string; clientTty: string }>
+      }>
+    }
+    expect(
+      presentation.runtimes.find((row) => row.runtimeId === first.runtimeId)?.operatorSurfaces
+    ).toEqual([])
+    expect(
+      presentation.runtimes.find((row) => row.runtimeId === second.runtimeId)?.operatorSurfaces
+    ).toEqual([{ surfaceId: 'ghostty-second', clientTty: '/dev/ttys014' }])
+
+    const events = await fetchEvents()
+    expect(
+      events.some(
+        (event) =>
+          event.eventKind === 'surface.unbound' &&
+          (event.payload as Record<string, unknown>)['surfaceId'] === 'ghostty-first'
+      )
+    ).toBe(true)
+  })
+
   it('rejects bind with stale fence (409 stale_context)', async () => {
     server = await createHrcServer(serverOpts())
     const { runtimeId } = await ensureRuntime('stale-fence-test')

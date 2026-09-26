@@ -1,6 +1,7 @@
 import { readSync } from 'node:fs'
 
 import { HrcDomainError, HrcErrorCode, formatDiagnosticDuration } from 'hrc-core'
+import type { HrcAttachDescriptor } from 'hrc-core'
 import type { FinalSummaryRecoveryResult, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
@@ -9,7 +10,6 @@ import { printJson } from '../print.js'
 import { resolveRuntimeArg } from '../selector-resolve.js'
 import { hasFlag, parseFlag, requireArg } from './argv.js'
 import { isHrcDomainErrorLike } from './errors.js'
-import type { ExecAttachDescriptor } from './scope.js'
 import { createClient, fatal } from './shared.js'
 
 export function isRuntimeUnavailableStatus(status: string): boolean {
@@ -81,7 +81,7 @@ export async function attachWithRetry(
   client: HrcClient,
   hostSessionId: string,
   runtime: HrcRuntimeSnapshot
-): Promise<ExecAttachDescriptor> {
+): Promise<HrcAttachDescriptor> {
   const attemptedRuntimeIds = new Set<string>()
   let candidate: HrcRuntimeSnapshot | undefined = runtime
 
@@ -104,18 +104,48 @@ export async function attachWithRetry(
 
 export async function bindGhosttySurfaceIfPresent(
   client: HrcClient,
-  descriptor: AttachDescriptor
+  descriptor: AttachDescriptor | HrcAttachDescriptor
 ): Promise<void> {
   const ghosttySurfaceId = process.env['GHOSTTY_SURFACE_UUID']?.trim()
-  if (!ghosttySurfaceId) {
+  const clientTty = controllingTty()
+  const bindingFence = toBindingFence(descriptor)
+  if (!ghosttySurfaceId || !clientTty || !bindingFence) {
     return
   }
 
   await client.bindSurface({
     surfaceKind: 'ghostty',
-    ...descriptor.bindingFence,
+    ...bindingFence,
     surfaceId: ghosttySurfaceId,
+    clientTty,
   })
+}
+
+function toBindingFence(
+  descriptor: AttachDescriptor | HrcAttachDescriptor
+): AttachDescriptor['bindingFence'] | undefined {
+  if ('bindingFence' in descriptor) return descriptor.bindingFence
+  const runtimeId = descriptor.fence.runtimeId
+  return runtimeId === undefined
+    ? undefined
+    : {
+        hostSessionId: descriptor.fence.hostSessionId,
+        runtimeId,
+        generation: descriptor.fence.generation,
+      }
+}
+
+/** An operator binding needs a terminal identity, never a guessed surface owner. */
+function controllingTty(): string | undefined {
+  if (process.stdin.isTTY !== true) return undefined
+  const result = Bun.spawnSync(['tty'], {
+    stdin: 'inherit',
+    stdout: 'pipe',
+    stderr: 'ignore',
+  })
+  if (result.exitCode !== 0) return undefined
+  const tty = new TextDecoder().decode(result.stdout).trim()
+  return tty.startsWith('/dev/') ? tty : undefined
 }
 
 export async function spawnAttachDescriptor(
