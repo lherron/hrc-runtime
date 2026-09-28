@@ -70,7 +70,7 @@ pre-push:
       # One stdin consumer is intentional: Lefthook cannot fan pre-push stdin out to commands.
       run: >-
         sh -c 'refs=$(cat);
-        printf "%s\n" "$refs" | bun scripts/run-if-code-changed.ts pre-push -- sh -c '"'"'bun scripts/install-workspace-deps.ts && bash scripts/dev-env.sh up && eval "$(bash scripts/dev-env.sh env)" && TMPDIR=/tmp bun run test:fast'"'"' {files}; rc=$?;
+        printf "%s\n" "$refs" | bun scripts/run-if-code-changed.ts pre-push -- sh -c '"'"'bun scripts/install-workspace-deps.ts && bash scripts/dev-env.sh up && eval "$(bash scripts/dev-env.sh env)" && HRC_PRE_PUSH=1 TMPDIR=/tmp bun run test:fast'"'"' {files}; rc=$?;
         if [ $rc -eq 0 ] && command -v wrkp >/dev/null 2>&1; then
           printf "%s\n" "$refs" | wrkp git push "$@" || true;
         fi; exit $rc' sh {0}
