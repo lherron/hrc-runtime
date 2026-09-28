@@ -305,14 +305,17 @@ Durations accept suffixed forms like `5s`, `10s`, `30m`, `5m`.
 hrc server status
 hrc server status --json
 
-# Restart the daemon (daemon mode by default):
-hrc server restart
+# Restart the daemon (the daemon authorizes and restarts itself):
+hrc server restart --reason "<why>"
+hrc server restart --node svc --wait --reason "<why>"
 
 # Stop the daemon:
-hrc server stop
+hrc server stop --reason "<why>"
 ```
 
-In-flight gating: `stop` and `restart` refuse by default when runs are still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`, default 300000) or `--force` to proceed anyway (`--force` is also the SIGTERM→SIGKILL escalation). For `restart`, tmux-transport runs are excluded from the gate (they survive a daemon restart); only headless/sdk runs block it. After actuation, `restart --wait` also waits up to `--timeout-ms` (default 5000) for a healthy daemon whose `processStartedAt` differs from the pre-restart process; an unproved restart exits nonzero with a typed refusal. Other flags: `--timeout-ms <n>`, `--foreground` / `--daemon`.
+Authorization (T-09861): `stop` and `restart` are requests to the daemon, which authorizes them server-side from the lifecycle credential it minted for the caller's runtime (a 0600 file at `<runtime root>/lifecycle/<runtimeId>.credential`, located via `HRC_RUNTIME_ID`); env scope strings are attribution only. Allowed: `mable@<project>:primary` on any node (`--node <id>` reaches a federation peer), and on its own node only `mable@<project>:minisvc` (svc) or `mable@hrc-runtime:hrcdev` (hrcdev). Everyone else, including every credential-less caller, is refused with the node's authorized callers named. `--reason <text>` is required, and `--wait`/`--drain`/`--force` are authorized before anything runs. Against a daemon that predates the contract the CLI fails closed and names the break-glass (`launchctl kickstart -k gui/$UID/com.praesidium.hrc-server`, recorded `unattributed` at the next boot). This stops accidental and doctrinal violations and makes deliberate ones detectable and attributable; it does not stop a determined same-uid actor.
+
+In-flight gating (daemon-side, after authorization): `stop` and `restart` refuse by default when runs are still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`, default 300000) or `--force` to proceed anyway. For `restart`, tmux-transport runs are excluded from the gate (they survive a daemon restart); only headless/sdk runs block it. After the grant, `restart` waits up to `--proof-timeout-ms` (default 30000) for a healthy daemon whose `processStartedAt` differs from the pre-restart process (for `--node`, the peer's federation health); an unproved restart exits nonzero with `[restart_unproven]`.
 
 Related backend control: `hrc server tmux status [--json]`, `hrc server tmux kill --yes` (destructive — kills the HRC tmux server and broker-tmux leases, claimed orphans included). Note: `hrc server restart` does **not** reload launchd plist `EnvironmentVariables`.
 

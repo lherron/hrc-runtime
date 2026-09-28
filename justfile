@@ -634,8 +634,11 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       injector="$(npm view hrc-mail-injector@latest version)"
     fi
 
+    phase1_log="$(mktemp "${TMPDIR:-/tmp}/deploy-{{ expected-node }}.XXXXXX")"
+    trap 'rm -f "$phase1_log"' EXIT
+    # ---- phase 1 on the node: containment, aspd, install ----------------------
     ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-      bash -s -- "{{ expected-node }}" "$target_ref" "$aspd_ref" "$injector" "{{ restart }}" "{{ publication }}" <<'REMOTE'
+      bash -s -- "{{ expected-node }}" "$target_ref" "$aspd_ref" "$injector" "{{ restart }}" "{{ publication }}" <<'REMOTE' | tee "$phase1_log"
     set -euo pipefail
 
     expected_node="$1"
@@ -794,8 +797,6 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
 
     # ---- 2. hrc-server ------------------------------------------------------
     cd "$repo"
-    lifecycle_env=(env -u HRC_SESSION_REF -u HRC_RUN_ID -u HRC_BIRTH_CREDENTIAL
-      -u ASP_SCOPE_REF -u ASP_TASK_ID -u ASP_DEFAULT_TASK -u ASP_HANDLE)
     if (( hrc_current == 1 )); then
       echo "[hrc] already at ${target_sha}: checkout, installed release, and running daemon agree"
     else
@@ -814,22 +815,53 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
         install_env=(env VERDACCIO_REGISTRY=http://127.0.0.1:4873/)
       fi
       "${install_env[@]}" just install no-sync=1
-      # Lifecycle mutations refuse a partial HRC/ASP session envelope (T-06007
-      # gate). A node's login profile may export convenience vars from that
-      # envelope (svc exports ASP_DEFAULT_TASK=minisvc), which would make this
-      # operator deploy shell look like a half-formed agent session. Strip exactly
-      # the envelope keys for the lifecycle calls — the gate's own prescribed
-      # remediation ("run from a clean operator shell").
-      #
-      # Every node runs a gui LaunchAgent that `hrc server restart` detects and
-      # kickstarts. hrcdev has been launchd-managed since 2026-08-18; a comment
-      # that once claimed it ran unsupervised is what let T-07957 pass as a green
-      # deploy over a self-daemonized daemon carrying none of the plist's
-      # environment. The CLI now refuses that path; the assertion below proves the
-      # outcome on the node instead of trusting the mechanism.
-      "${lifecycle_env[@]}" hrc server restart "${restart_flags[@]}" \
-        --reason "deploy ${expected_node} to ${target_sha}"
+      # T-09861: the restart does NOT run here. This ssh shell has no runtime
+      # identity, so the daemon would refuse it; the invoking seat restarts this
+      # node through the lifecycle endpoint (`--node`) between the two ssh phases.
+      echo "DEPLOY_RESTART_NEEDED=1"
     fi
+    echo "DEPLOY_TARGET_SHA=${target_sha}"
+    echo "DEPLOY_ASPD_SHA=${aspd_sha}"
+    echo "DEPLOY_ASPD_RELEASE=${aspd_release}"
+    REMOTE
+
+    # ---- restart, from the invoking seat (T-09861) ---------------------------
+    # Install and restart stay ONE recipe invocation. The restart runs in THIS
+    # process — the invoking seat, with its own runtime identity and daemon-minted
+    # lifecycle credential — through the lifecycle endpoint: local for max3,
+    # `--node` over federation for svc/hrcdev. Running a recipe grants nothing: an
+    # unauthorized caller gets its install and a non-zero exit with the refusal.
+    target_sha="$(sed -n 's/^DEPLOY_TARGET_SHA=//p' "$phase1_log" | tail -1)"
+    aspd_sha="$(sed -n 's/^DEPLOY_ASPD_SHA=//p' "$phase1_log" | tail -1)"
+    aspd_release="$(sed -n 's/^DEPLOY_ASPD_RELEASE=//p' "$phase1_log" | tail -1)"
+    [[ -n "$target_sha" && -n "$aspd_sha" ]] || { echo "deploy-{{ expected-node }}: phase 1 reported no targets" >&2; exit 1; }
+    if grep -qx 'DEPLOY_RESTART_NEEDED=1' "$phase1_log"; then
+      case '{{ restart }}' in
+        wait) restart_flags=(--wait --wait-timeout-ms 300000) ;;
+        force) restart_flags=(--force) ;;
+        *) echo "deploy-{{ expected-node }}: restart mode must be wait or force" >&2; exit 1 ;;
+      esac
+      hrc server restart --node '{{ expected-node }}' "${restart_flags[@]}" \
+        --reason "deploy {{ expected-node }} to ${target_sha}"
+    fi
+
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
+      bash -s -- "{{ expected-node }}" "$target_sha" "$aspd_sha" "$aspd_release" "$injector" "{{ publication }}" <<'REMOTE'
+    set -euo pipefail
+
+    expected_node="$1"
+    target_sha="$2"
+    aspd_sha="$3"
+    aspd_release="$4"
+    injector_version="$5"
+    publication="$6"
+    repo="$HOME/praesidium/hrc-runtime"
+    export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+    fail() {
+      printf 'deploy-%s: %s\n' "$expected_node" "$*" >&2
+      exit 1
+    }
+    cd "$repo"
 
     # The daemon can lag its supervisor respawn by a few seconds; a single
     # unretried status probe here failed three deploys in a row on max3.

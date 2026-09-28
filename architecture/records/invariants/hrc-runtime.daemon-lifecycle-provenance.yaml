@@ -9,12 +9,15 @@ predicate: >
   Server facts are the server category kinds server.shutting_down,
   server.stopped, server.previous_exit_unattributed and server.started under the
   non-seat sentinels hostSessionId hrc-server, scopeRef server:hrc, lane main,
-  generation 0. A graceful shutdown appends server.shutting_down with the full
-  shutdown-intent attribution, missing values as explicit null, before any
-  teardown; it is initiation evidence only. stop() records a teardownIncomplete
+  generation 0. A graceful shutdown appends server.shutting_down with the
+  verified lifecycle grant (requestId, requestedBy, callerKind, originNode,
+  reason, action, flags) the daemon itself authorized, or an explicit null grant
+  with an ungranted marker and a server.lifecycle.ungranted_shutdown WARN for an
+  ungranted graceful shutdown, before any teardown; it is initiation evidence
+  only. stop() records a teardownIncomplete
   reason at every continue-past-failure site before the store closes, unlinks
   the socket and flushes metrics before db.close(), and appends server.stopped
-  (attribution plus shuttingDownHrcSeq) only when that record is empty and the
+  (the same grant attribution plus shuttingDownHrcSeq) only when that record is empty and the
   foreground stop deadline has not expired; otherwise it writes a
   server.stop.incomplete log line and no stopped fact. server.stopped attests
   every teardown step before the store closed and nothing after it; lock release
@@ -27,22 +30,32 @@ predicate: >
   server:<nodeId>:<ledgerIncarnationId>:<hrcSeq>, and advances its cursor only
   after an accepted post. Status lastRestart derives solely from the local
   ledger: the latest server.started plus the immediately preceding
-  server.stopped attribution, null attribution otherwise.
-authority: wrkq:T-08137 rev 4 (Daedalus approval EN-19426, 2026-09-28; Lance stop() reorder ruling C-25789, 2026-09-27)
+  server.stopped attribution (its grant, or a pre-contract predecessor's flat
+  attribution), null attribution otherwise. Lifecycle refusals are log lines,
+  never server facts.
+authority: wrkq:T-08137 rev 4 (Daedalus approval EN-19426, 2026-09-28; Lance stop() reorder ruling C-25789, 2026-09-27); attribution source amended by wrkq:T-09861 rev 4 (Daedalus approval EN-20244, 2026-09-28)
 source:
   - wrkq:T-08137
+  - wrkq:T-09861
   - packages/hrc-server/src/server-lifecycle.ts
   - packages/hrc-server/src/wrkq/server-project-events.ts
   - packages/hrc-server/src/index.ts
   - packages/hrc-cli/src/cli/handlers-server.ts
   - packages/hrc-server/src/__tests__/t08137-daemon-lifecycle-provenance.test.ts
   - packages/hrc-cli/src/__tests__/t08137-shutdown-deadline-flag.test.ts
+  - packages/hrc-server/src/server-lifecycle-controller.ts
+  - packages/hrc-server/src/server-lifecycle-authority.ts
+  - packages/hrc-server/src/server-lifecycle-credentials.ts
+  - packages/hrc-server/src/__tests__/t09861-server-lifecycle-authority.test.ts
+  - packages/hrc-cli/src/__tests__/t09861-server-lifecycle-e2e.test.ts
 required_tests:
   - just architecture-records
   - bun test packages/hrc-server/src/__tests__/t08137-daemon-lifecycle-provenance.test.ts
   - bun test packages/hrc-cli/src/__tests__/t08137-shutdown-deadline-flag.test.ts
   - bun test packages/hrc-cli/src/__tests__/t07646-server-status-json-parity.test.ts
-last_verified: 2026-09-28 focused regression; installed smoke pending
-reopen_when: The stop() teardown order, the continue-past-failure site set, the stopped attestation boundary, boot classification, the sentinel envelope, the timeline projection key or cursor rule, or the lastRestart derivation changes.
+  - bun test packages/hrc-server/src/__tests__/t09861-server-lifecycle-authority.test.ts
+  - bun test packages/hrc-cli/src/__tests__/t09861-server-lifecycle-e2e.test.ts
+last_verified: 2026-09-28 T-09861 scratch-daemon e2e (granted restart/stop, ungranted SIGTERM, SIGKILL unattributed); installed smoke pending
+reopen_when: The lifecycle grant shape or its authorization source, the stop() teardown order, the continue-past-failure site set, the stopped attestation boundary, boot classification, the sentinel envelope, the timeline projection key or cursor rule, or the lastRestart derivation changes.
 supersedes: []
 superseded_by: []

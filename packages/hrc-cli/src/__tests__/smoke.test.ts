@@ -219,11 +219,11 @@ describe('hrc-cli commander migration smoke fixtures', () => {
   })
 
   it('bad integer flags exit non-zero with the usage error message intact', async () => {
-    const result = await runCli(['server', 'stop', '--timeout-ms', '0'], cliEnv())
+    const result = await runCli(['server', 'stop', '--wait-timeout-ms', '0'], cliEnv())
 
     expect(result.exitCode).not.toBe(0)
     expect(result.stdout).toBe('')
-    expect(result.stderr).toContain('--timeout-ms must be an integer >= 1')
+    expect(result.stderr).toContain('--wait-timeout-ms must be an integer >= 1')
   })
 
   it('unknown verbs exit non-zero and report the unknown command', async () => {

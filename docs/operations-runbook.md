@@ -72,11 +72,24 @@ readback must name the newly installed release in `binaryPath` /
 `just publish`; publication reads the already selected release and is a
 separate state from installation and restart.
 
-**In-flight gating.** `hrc server stop`/`restart` refuse by default when
-runs are still in flight. Use `--wait` to drain (up to
-`--wait-timeout-ms`, default 300000) or `--force` to escalate
-SIGTERM→SIGKILL. Tmux-transport runs are excluded from the restart gate
-(they survive a daemon restart); only headless/SDK runs block it.
+**Who may restart (T-09861).** The daemon authorizes `hrc server
+stop|restart` itself, from the lifecycle credential it minted for the
+caller's runtime: `mable@<project>:primary` on any node (`--node <id>` for a
+peer), or on its own node only `mable@<project>:minisvc` (svc) /
+`mable@hrc-runtime:hrcdev` (hrcdev). `--reason` is required. Anyone else —
+including a credential-less shell — is refused and should ask
+`mable@<project>:primary`. Break-glass (wedged daemon, or a daemon that
+predates the contract): `launchctl kickstart -k
+gui/$UID/com.praesidium.hrc-server`, which the next boot records as
+`unattributed`. This stops accidental and doctrinal violations and makes
+deliberate ones detectable and attributable; it does not stop a determined
+same-uid actor.
+
+**In-flight gating.** After authorization, the daemon refuses stop/restart
+by default when runs are still in flight. Use `--wait` to drain (up to
+`--wait-timeout-ms`, default 300000) or `--force` to skip the gate.
+Tmux-transport runs are excluded from the restart gate (they survive a
+daemon restart); only headless/SDK runs block it.
 
 **Zombie sweeper threshold.** After 30 minutes of `hrc_events` silence
 (`HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800`) the sweeper marks a run zombie

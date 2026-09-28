@@ -87,17 +87,35 @@ export function registerServerSessionCommands(program: Command): void {
       await cmdServerServe(args)
     })
 
+  // T-09861: stop/restart are requests to the daemon, which authorizes them
+  // from the lifecycle credential it minted for the caller's runtime. Every
+  // flag is authorized before anything runs. This stops accidental and
+  // doctrinal violations and makes deliberate ones attributable; it does not
+  // stop a determined same-uid actor.
+  const lifecycleHelp = `
+Authorization (T-09861): the daemon decides, never this CLI or its env.
+  Allowed: mable@<project>:primary on any node (--node <id> for a peer node),
+           and on its own node only mable@<project>:minisvc (svc) or
+           mable@hrc-runtime:hrcdev (hrcdev). Everyone else is refused.
+  --reason <text> is required. A daemon that predates the contract is refused
+  with the documented break-glass: launchctl kickstart -k gui/$UID/com.praesidium.hrc-server
+  This stops accidental and doctrinal violations and records deliberate ones;
+  it does not stop a determined same-uid actor.
+`
+
   server
     .command('stop')
-    .description('stop the HRC daemon')
-    .option('--timeout-ms <n>', 'shutdown timeout in milliseconds')
-    .option('--reason <text>', 'operator reason (required from a primary-scoped runtime)')
-    .option('--force', 'force stop (skip in-flight check; SIGKILL if SIGTERM fails)')
+    .description('ask the HRC daemon to stop itself (authorized server-side)')
+    .option('--reason <text>', 'why (required)')
+    .option('--node <nodeId>', 'stop a peer node daemon over federation (mable primary only)')
+    .option('--force', 'skip the in-flight check')
     .option('--wait', 'wait for in-flight runs to drain before stopping')
     .option('--wait-timeout-ms <n>', 'max time to wait for in-flight drain (default 300000)')
+    .option('--proof-timeout-ms <n>', 'max time to observe the daemon gone (default 30000)')
+    .addHelpText('after', lifecycleHelp)
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['timeout-ms', 'wait-timeout-ms', 'reason'],
+        strings: ['wait-timeout-ms', 'proof-timeout-ms', 'reason', 'node'],
         booleans: ['force', 'wait'],
       })
       await cmdServerStop(args)
@@ -105,33 +123,26 @@ export function registerServerSessionCommands(program: Command): void {
 
   server
     .command('restart')
-    .description('restart the HRC daemon')
-    .option('--timeout-ms <n>', 'stop/start actuation timeout in milliseconds (default 5000)')
+    .description('ask the HRC daemon to restart itself (authorized server-side)')
     .option(
       '--proof-timeout-ms <n>',
       'max time to prove a healthy new daemon process answers (default 30000)'
     )
-    .option('--reason <text>', 'operator reason (required from a primary-scoped runtime)')
-    .option('--force', 'force restart (skip in-flight check; SIGKILL if SIGTERM fails)')
-    .option('--wait', 'drain in-flight runs, then prove a healthy new daemon process answers')
+    .option('--reason <text>', 'why (required)')
+    .option('--node <nodeId>', 'restart a peer node daemon over federation (mable primary only)')
+    .option('--force', 'skip the in-flight check')
+    .option('--wait', 'drain in-flight runs first (then prove a healthy new process)')
     .option('--wait-timeout-ms <n>', 'max time to wait for in-flight drain (default 300000)')
     .option('--drain', 'close daemon turn admission, drain, recheck, and restart')
     .option(
       '--drain-timeout-ms <n>',
       'max closed-admission drain time before explicit force fallback (default 300000)'
     )
-    .option('--daemon', 'restart as background daemon')
-    .option('--foreground', 'restart in foreground')
+    .addHelpText('after', lifecycleHelp)
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: [
-          'timeout-ms',
-          'proof-timeout-ms',
-          'wait-timeout-ms',
-          'drain-timeout-ms',
-          'reason',
-        ],
-        booleans: ['force', 'wait', 'drain', 'daemon', 'foreground'],
+        strings: ['proof-timeout-ms', 'wait-timeout-ms', 'drain-timeout-ms', 'reason', 'node'],
+        booleans: ['force', 'wait', 'drain'],
       })
       await cmdServerRestart(args)
     })

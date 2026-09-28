@@ -22,11 +22,10 @@
  * Reference: T-00946 (parent), T-00957 (CLI implementation task)
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
-  CLI_PATH,
   cliEnv,
   describeDaemonLifecycle,
   runCli,
@@ -124,6 +123,16 @@ describe('unknown command', () => {
 // 2b. server/tmux admin lifecycle
 // ===========================================================================
 describeDaemonLifecycle('server/tmux admin lifecycle', () => {
+  // T-09861: only a Mable primary holding a daemon-minted credential may stop
+  // or restart; the runtime's credential file is located by HRC_RUNTIME_ID.
+  const MABLE_PRIMARY_SCOPE = 'agent:mable:project:hrc-runtime:task:primary'
+  function mableEnv(runtimeId: string): Record<string, string> {
+    return cliEnv({
+      HRC_RUNTIME_ID: runtimeId,
+      HRC_SESSION_REF: `${MABLE_PRIMARY_SCOPE}/lane:default`,
+    })
+  }
+
   async function resolveHostSessionId(scope: string): Promise<string> {
     const result = await runCli(
       ['session', 'resolve', '--scope', scope, '--lane', 'default', '--create'],
@@ -210,6 +219,7 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     expect(readyStatus.running).toBe(true)
 
     await ensureTmuxRuntime(testProjectScope('server-stop-preserves-tmux'))
+    const mable = await ensureTmuxRuntime(MABLE_PRIMARY_SCOPE)
 
     const beforeTmux = await runCli(['server', 'tmux', 'status', '--json'], cliEnv())
     expect(beforeTmux.exitCode).toBe(0)
@@ -221,7 +231,10 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     expect(before.running).toBe(true)
     expect(before.sessionCount).toBeGreaterThan(0)
 
-    const stopResult = await runCli(['server', 'stop'], cliEnv())
+    const stopResult = await runCli(
+      ['server', 'stop', '--reason', 'tmux preservation'],
+      mableEnv(mable.runtimeId)
+    )
     expect(stopResult.exitCode).toBe(0)
     expect(stopResult.stderr).toMatch(/daemon stopped/i)
 
@@ -247,6 +260,7 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     expect(readyStatus.running).toBe(true)
 
     const seeded = await ensureTmuxRuntime(testProjectScope('server-restart-preserves-runtime'))
+    const mable = await ensureTmuxRuntime(MABLE_PRIMARY_SCOPE)
 
     const beforeTmux = await runCli(['server', 'tmux', 'status', '--json'], cliEnv())
     expect(beforeTmux.exitCode).toBe(0)
@@ -256,7 +270,10 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     }
     expect(before.running).toBe(true)
 
-    const restartResult = await runCli(['server', 'restart'], cliEnv())
+    const restartResult = await runCli(
+      ['server', 'restart', '--reason', 'tmux preservation'],
+      mableEnv(mable.runtimeId)
+    )
     expect(restartResult.exitCode).toBe(0)
     expect(restartResult.stderr).toMatch(/daemon restarted/i)
 
@@ -283,341 +300,8 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     expect(monitor.runtime?.transport).toBe('tmux')
   })
 
-  it('server restart --wait returns only after a healthy new process answers', async () => {
-    const primaryScope = 'agent:test:project:hrc-runtime:task:primary'
-    const isolatedEnv = cliEnv({
-      HRC_LAUNCHD_LABEL: 'com.praesidium.hrc-T-07157-isolated',
-      HRC_SESSION_REF: `${primaryScope}/lane:main`,
-      ASP_SCOPE_REF: primaryScope,
-      ASP_TASK_ID: 'primary',
-      ASP_DEFAULT_TASK: 'primary',
-    })
-    try {
-      const startResult = await runCli(['server', 'start', '--daemon'], isolatedEnv)
-      expect(startResult.exitCode).toBe(0)
-
-      const before = await waitForServerStatus((value) => value.running === true, isolatedEnv)
-      const beforeStartedAt = before.release?.processStartedAt as string | undefined
-      expect(beforeStartedAt).toBeString()
-
-      const restartResult = await runCli(
-        [
-          'server',
-          'restart',
-          '--wait',
-          '--timeout-ms',
-          '5000',
-          '--reason',
-          'T-07157 isolated restart proof',
-        ],
-        isolatedEnv
-      )
-      expect(restartResult.exitCode).toBe(0)
-      expect(restartResult.stderr).toContain('restart proven')
-
-      const after = await waitForServerStatus(
-        (value) => value.running === true && value.release?.processStartedAt !== beforeStartedAt,
-        isolatedEnv
-      )
-      expect(after.release?.processStartedAt).toBeString()
-      expect(after.release?.processStartedAt).not.toBe(beforeStartedAt)
-    } finally {
-      await runCli(
-        ['server', 'stop', '--force', '--reason', 'T-07157 isolated test cleanup'],
-        isolatedEnv
-      ).catch(() => undefined)
-    }
-  })
-
-  it.if(process.platform === 'darwin')(
-    'server restart --drain keeps proving after the actuation timeout while a new daemon starts slowly',
-    async () => {
-      const isolatedLabel = 'com.praesidium.hrc-T-07216-slow-start'
-      const primaryScope = 'agent:test:project:hrc-runtime:task:primary'
-      const isolatedEnv = cliEnv({
-        HRC_LAUNCHD_LABEL: isolatedLabel,
-        HRC_SESSION_REF: `${primaryScope}/lane:main`,
-        ASP_SCOPE_REF: primaryScope,
-        ASP_TASK_ID: 'primary',
-        ASP_DEFAULT_TASK: 'primary',
-      })
-      try {
-        const startResult = await runCli(['server', 'start', '--daemon'], isolatedEnv)
-        expect(startResult.exitCode).toBe(0)
-
-        const before = await waitForServerStatus((value) => value.running === true, isolatedEnv)
-        const beforeStartedAt = before.release?.processStartedAt as string | undefined
-        expect(beforeStartedAt).toBeString()
-
-        const shimDir = join(tmpDir, 'launchctl-slow-start')
-        await mkdir(shimDir, { recursive: true })
-        await writeFile(
-          join(shimDir, 'launchctl'),
-          `#!/bin/sh
-if [ "$1" = "print" ]; then
-  exit 0
-fi
-if [ "$1" = "kickstart" ]; then
-  (
-    sleep 0.25
-    if [ -f "$HRC_RUNTIME_DIR/server.pid" ]; then
-      old_pid="$(sed -n '1p' "$HRC_RUNTIME_DIR/server.pid")"
-      kill "$old_pid" 2>/dev/null || true
-      while kill -0 "$old_pid" 2>/dev/null; do sleep 0.01; done
-    fi
-    exec "$HRC_TEST_BUN_PATH" "$HRC_TEST_CLI_PATH" server serve
-  ) </dev/null >>"$HRC_RUNTIME_DIR/slow-launch.log" 2>&1 &
-  exit 0
-fi
-exit 1
-`
-        )
-        await chmod(join(shimDir, 'launchctl'), 0o755)
-
-        const restartResult = await runCli(
-          [
-            'server',
-            'restart',
-            '--drain',
-            '--timeout-ms',
-            '100',
-            '--reason',
-            'T-07216 simulated slow-start proof',
-          ],
-          {
-            ...isolatedEnv,
-            HRC_TEST_BUN_PATH: process.execPath,
-            HRC_TEST_CLI_PATH: CLI_PATH,
-            PATH: `${shimDir}:${process.env.PATH ?? ''}`,
-          }
-        )
-        expect(restartResult.exitCode).toBe(0)
-        expect(restartResult.stderr).toContain('restart proven')
-
-        const after = await waitForServerStatus(
-          (value) => value.running === true && value.release?.processStartedAt !== beforeStartedAt,
-          isolatedEnv
-        )
-        expect(after.release?.processStartedAt).toBeString()
-        expect(after.release?.processStartedAt).not.toBe(beforeStartedAt)
-      } finally {
-        await runCli(
-          ['server', 'stop', '--force', '--reason', 'T-07216 isolated test cleanup'],
-          isolatedEnv
-        ).catch(() => undefined)
-      }
-    }
-  )
-
-  it.if(process.platform === 'darwin')(
-    'server restart --wait rejects a launchctl success that did not replace the process',
-    async () => {
-      const isolatedLabel = 'com.praesidium.hrc-T-07157-noop'
-      const primaryScope = 'agent:test:project:hrc-runtime:task:primary'
-      const isolatedEnv = cliEnv({
-        HRC_LAUNCHD_LABEL: isolatedLabel,
-        HRC_SESSION_REF: `${primaryScope}/lane:main`,
-        ASP_SCOPE_REF: primaryScope,
-        ASP_TASK_ID: 'primary',
-        ASP_DEFAULT_TASK: 'primary',
-      })
-      try {
-        const startResult = await runCli(['server', 'start', '--daemon'], isolatedEnv)
-        expect(startResult.exitCode).toBe(0)
-
-        const before = await waitForServerStatus((value) => value.running === true, isolatedEnv)
-        const beforeStartedAt = before.release?.processStartedAt as string | undefined
-        expect(beforeStartedAt).toBeString()
-
-        const shimDir = join(tmpDir, 'launchctl-noop')
-        await mkdir(shimDir, { recursive: true })
-        await writeFile(join(shimDir, 'launchctl'), '#!/bin/sh\nexit 0\n')
-        await chmod(join(shimDir, 'launchctl'), 0o755)
-
-        const restartResult = await runCli(
-          [
-            'server',
-            'restart',
-            '--wait',
-            '--proof-timeout-ms',
-            '100',
-            '--reason',
-            'T-07157 launchctl no-op proof',
-          ],
-          {
-            ...isolatedEnv,
-            PATH: `${shimDir}:${process.env.PATH ?? ''}`,
-          }
-        )
-        expect(restartResult.exitCode).toBe(1)
-        expect(restartResult.stderr).toContain('[restart_unproven]')
-        expect(restartResult.stderr).toContain(`before pid=${before.pid}`)
-        expect(restartResult.stderr).toContain(`observed pid=${before.pid}`)
-        expect(restartResult.stderr).toContain('old pid alive=yes')
-        expect(restartResult.stderr).toContain('socket responsive=yes')
-
-        const after = await waitForServerStatus((value) => value.running === true, isolatedEnv)
-        expect(after.release?.processStartedAt).toBe(beforeStartedAt)
-      } finally {
-        await runCli(
-          ['server', 'stop', '--force', '--reason', 'T-07157 isolated test cleanup'],
-          isolatedEnv
-        ).catch(() => undefined)
-      }
-    }
-  )
-
-  // Regression (T-07580). Observed live during the T-07575 activation restart:
-  // `launchctl kickstart -k` raced launchd's own in-flight restart of the job
-  // and returned EALREADY (37). The actuation had happened and the daemon came
-  // back on the new build, but hrc treated the non-zero status as fatal, exited
-  // 1 before requireRestartProof ever ran, and reported a hard failure for a
-  // restart that worked. The danger is the false RED, not the noise: the
-  // operator's next move is a retry or --force against a healthy daemon that
-  // has already taken live turns.
-  it.if(process.platform === 'darwin')(
-    'server restart proves the outcome when launchctl reports EALREADY but the job did restart',
-    async () => {
-      const isolatedLabel = 'com.praesidium.hrc-T-07580-ealready'
-      const primaryScope = 'agent:test:project:hrc-runtime:task:primary'
-      const isolatedEnv = cliEnv({
-        HRC_LAUNCHD_LABEL: isolatedLabel,
-        HRC_SESSION_REF: `${primaryScope}/lane:main`,
-        ASP_SCOPE_REF: primaryScope,
-        ASP_TASK_ID: 'primary',
-        ASP_DEFAULT_TASK: 'primary',
-      })
-      try {
-        const startResult = await runCli(['server', 'start', '--daemon'], isolatedEnv)
-        expect(startResult.exitCode).toBe(0)
-
-        const before = await waitForServerStatus((value) => value.running === true, isolatedEnv)
-        const beforeStartedAt = before.release?.processStartedAt as string | undefined
-        expect(beforeStartedAt).toBeString()
-
-        // Actuates a real restart, then exits 37 — exactly what launchd did.
-        const shimDir = join(tmpDir, 'launchctl-ealready')
-        await mkdir(shimDir, { recursive: true })
-        await writeFile(
-          join(shimDir, 'launchctl'),
-          `#!/bin/sh
-if [ "$1" = "print" ]; then
-  exit 0
-fi
-if [ "$1" = "kickstart" ]; then
-  (
-    if [ -f "$HRC_RUNTIME_DIR/server.pid" ]; then
-      old_pid="$(sed -n '1p' "$HRC_RUNTIME_DIR/server.pid")"
-      kill "$old_pid" 2>/dev/null || true
-      while kill -0 "$old_pid" 2>/dev/null; do sleep 0.01; done
-    fi
-    exec "$HRC_TEST_BUN_PATH" "$HRC_TEST_CLI_PATH" server serve
-  ) </dev/null >>"$HRC_RUNTIME_DIR/ealready-launch.log" 2>&1 &
-  exit 37
-fi
-exit 1
-`
-        )
-        await chmod(join(shimDir, 'launchctl'), 0o755)
-
-        const restartResult = await runCli(
-          [
-            'server',
-            'restart',
-            '--wait',
-            '--timeout-ms',
-            '5000',
-            '--reason',
-            'T-07580 EALREADY proof',
-          ],
-          {
-            ...isolatedEnv,
-            HRC_TEST_BUN_PATH: process.execPath,
-            HRC_TEST_CLI_PATH: CLI_PATH,
-            PATH: `${shimDir}:${process.env.PATH ?? ''}`,
-          }
-        )
-
-        // The proof, not launchctl's status, decides the verdict.
-        expect(restartResult.exitCode).toBe(0)
-        expect(restartResult.stderr).toContain('restart proven')
-        // ...and the benign race is still surfaced rather than swallowed.
-        expect(restartResult.stderr).toContain('already in progress')
-        expect(restartResult.stderr).not.toContain('launchctl kickstart failed')
-
-        const after = await waitForServerStatus(
-          (value) => value.running === true && value.release?.processStartedAt !== beforeStartedAt,
-          isolatedEnv
-        )
-        expect(after.release?.processStartedAt).toBeString()
-        expect(after.release?.processStartedAt).not.toBe(beforeStartedAt)
-      } finally {
-        await runCli(
-          ['server', 'stop', '--force', '--reason', 'T-07580 isolated test cleanup'],
-          isolatedEnv
-        ).catch(() => undefined)
-      }
-    }
-  )
-
-  // Guards the fix against over-correction: EALREADY must not become a blanket
-  // pass. If the job did NOT come back, the restart is still unproven.
-  it.if(process.platform === 'darwin')(
-    'server restart still fails unproven when launchctl reports EALREADY and nothing restarted',
-    async () => {
-      const isolatedLabel = 'com.praesidium.hrc-T-07580-ealready-noop'
-      const primaryScope = 'agent:test:project:hrc-runtime:task:primary'
-      const isolatedEnv = cliEnv({
-        HRC_LAUNCHD_LABEL: isolatedLabel,
-        HRC_SESSION_REF: `${primaryScope}/lane:main`,
-        ASP_SCOPE_REF: primaryScope,
-        ASP_TASK_ID: 'primary',
-        ASP_DEFAULT_TASK: 'primary',
-      })
-      try {
-        const startResult = await runCli(['server', 'start', '--daemon'], isolatedEnv)
-        expect(startResult.exitCode).toBe(0)
-
-        const before = await waitForServerStatus((value) => value.running === true, isolatedEnv)
-        const beforeStartedAt = before.release?.processStartedAt as string | undefined
-        expect(beforeStartedAt).toBeString()
-
-        const shimDir = join(tmpDir, 'launchctl-ealready-noop')
-        await mkdir(shimDir, { recursive: true })
-        await writeFile(
-          join(shimDir, 'launchctl'),
-          '#!/bin/sh\nif [ "$1" = "print" ]; then\n exit 0\nfi\nexit 37\n'
-        )
-        await chmod(join(shimDir, 'launchctl'), 0o755)
-
-        const restartResult = await runCli(
-          [
-            'server',
-            'restart',
-            '--wait',
-            '--proof-timeout-ms',
-            '100',
-            '--reason',
-            'T-07580 EALREADY no-op proof',
-          ],
-          {
-            ...isolatedEnv,
-            PATH: `${shimDir}:${process.env.PATH ?? ''}`,
-          }
-        )
-        expect(restartResult.exitCode).toBe(1)
-        expect(restartResult.stderr).toContain('[restart_unproven]')
-
-        const after = await waitForServerStatus((value) => value.running === true, isolatedEnv)
-        expect(after.release?.processStartedAt).toBe(beforeStartedAt)
-      } finally {
-        await runCli(
-          ['server', 'stop', '--force', '--reason', 'T-07580 isolated test cleanup'],
-          isolatedEnv
-        ).catch(() => undefined)
-      }
-    }
-  )
+  // T-09861: restart/stop proof, refusals and the retired launchctl-kill path
+  // are covered against scratch daemons in t09861-server-lifecycle-e2e.test.ts.
 
   it('tmux kill requires --yes and then kills the HRC tmux server explicitly', async () => {
     const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
