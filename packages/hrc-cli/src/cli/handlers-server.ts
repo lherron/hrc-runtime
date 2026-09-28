@@ -1,33 +1,40 @@
-import { randomUUID } from 'node:crypto'
+import { spawn } from 'node:child_process'
+import { openSync, readFileSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
-import type { KillBrokerTmuxLeasesResponse } from 'hrc-core'
+import {
+  HRC_LIFECYCLE_CREDENTIAL_HEADER,
+  HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE,
+  HRC_LIFECYCLE_RUNTIME_HEADER,
+  HRC_LIFECYCLE_SESSION_REF_HEADER,
+  HRC_SERVER_LAUNCHD_LABEL,
+  isLifecycleCredentialRuntimeId,
+  lifecycleCredentialPath,
+} from 'hrc-core'
+import type {
+  HrcServerLifecycleAction,
+  HrcServerLifecycleGrant,
+  HrcServerLifecycleInFlightItem,
+  HrcServerLifecycleRequest,
+  KillBrokerTmuxLeasesResponse,
+} from 'hrc-core'
 import type { ServerShutdownAttribution } from 'hrc-server'
 
 import {
-  type ServerLifecycleCallerKind,
-  type ShutdownIntent,
   collectServerRuntimeStatus,
   collectTmuxStatus,
-  consumeShutdownIntent,
   daemonizeAndWait,
   detectLaunchdOwner,
   detectStrandedLaunchAgent,
-  evaluateServerLifecycleAuthorization,
   execProcess,
-  formatInFlightWork,
   formatServerRuntimeStatus,
   formatStrandedLaunchAgentRefusal,
   formatTmuxStatus,
   isLiveProcess,
   launchctlKickstart,
-  listInFlightWork,
   resolveServerMode,
   resolveServerPaths,
-  stopServerProcess,
-  waitForInFlightDrain,
   writeServerProcessLog,
-  writeShutdownIntent,
 } from '../cli-runtime.js'
 import { agentHarnessGuardMessage } from '../harness-guard.js'
 import { printJson } from '../print.js'
@@ -136,35 +143,31 @@ function rejectionCauseChain(reason: unknown): SerializedRejectionCause[] {
   return chain
 }
 
-function shutdownIntentLogDetails(intent: ShutdownIntent | undefined): Record<string, unknown> {
-  return {
-    callerKind: intent?.callerKind ?? null,
-    requestedBy: intent?.requestedBy ?? null,
-    ...(intent
-      ? {
-          requestedAction: intent.action,
-          requestedRunId: intent.requestedRunId,
-          requestedReason: intent.reason,
-          requestedByPid: intent.byPid,
-        }
-      : {}),
-  }
+function grantLogDetails(grant: HrcServerLifecycleGrant | undefined): Record<string, unknown> {
+  return grant === undefined
+    ? { grant: null }
+    : {
+        grant: {
+          requestId: grant.requestId,
+          requestedBy: grant.requestedBy,
+          callerKind: grant.callerKind,
+          originNode: grant.originNode,
+          action: grant.action,
+          reason: grant.reason,
+        },
+      }
 }
 
-/** T-08137: the `server.shutting_down` payload; every absent intent field is explicit null. */
+/**
+ * T-09861 §7: the `server.shutting_down` payload. A granted shutdown carries
+ * the daemon's own verified grant; anything else (a raw SIGTERM from `kill` or
+ * `launchctl kickstart -k`, or an unhandled rejection) is explicitly ungranted.
+ */
 export function shutdownAttribution(
   reason: string,
-  intent: ShutdownIntent | undefined
+  grant: HrcServerLifecycleGrant | undefined
 ): ServerShutdownAttribution {
-  return {
-    reason,
-    callerKind: intent?.callerKind ?? null,
-    requestedBy: intent?.requestedBy ?? null,
-    requestedAction: intent?.action ?? null,
-    requestedRunId: intent?.requestedRunId ?? null,
-    requestedReason: intent?.reason ?? null,
-    requestedByPid: intent?.byPid ?? null,
-  }
+  return grant === undefined ? { reason, grant: null, ungranted: true } : { reason, grant }
 }
 
 /**
@@ -253,72 +256,6 @@ async function refuseStrandedLaunchAgent(action: 'start' | 'restart'): Promise<v
   if (stranded !== null) fatal(formatStrandedLaunchAgentRefusal(stranded, action))
 }
 
-/**
- * Block stop/restart when agent runs are still active. Default behaviour: list
- * what's running and exit non-zero. `--force` skips the check (and is also the
- * SIGTERM→SIGKILL escalation flag for the actual process kill). `--wait` polls
- * up to `--wait-timeout-ms` for runs to drain on their own; if the timeout
- * fires with work still in flight, we error out (no force fallback — the
- * operator has to opt in to that explicitly).
- *
- * For `restart`, tmux runs are excluded from the gate: tmux sessions are owned
- * by the tmux server, not by hrc, and they keep running across a daemon
- * restart. Only headless/sdk runs (which the daemon supervises directly) are
- * actually at risk.
- */
-async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): Promise<void> {
-  if (hasFlag(args, '--force')) return
-  const wait = hasFlag(args, '--wait')
-  const waitTimeoutMs = parseIntegerFlag(args, '--wait-timeout-ms', {
-    defaultValue: 300_000,
-    min: 1,
-  })
-
-  const filter = action === 'restart' ? { excludeTransports: ['tmux'] as const } : undefined
-  const noun = action === 'restart' ? 'headless run' : 'run'
-
-  let inFlight = listInFlightWork(undefined, filter)
-  if (inFlight.length === 0) return
-
-  if (!wait) {
-    const refusalCode =
-      action === 'restart' ? 'restart_refused_in_flight' : 'stop_refused_in_flight'
-    process.stderr.write(
-      `hrc: [${refusalCode}] refusing to ${action}: ${inFlight.length} ${noun}(s) in flight. Use --wait to drain or --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
-    )
-    process.stderr.write(
-      `hrc: [${refusalCode}] ${action} refused: ${inFlight.length} ${noun}(s) remain in flight; no ${action} was attempted.\n`
-    )
-    throw new CliStatusExit(2)
-  }
-
-  process.stderr.write(
-    `hrc: waiting up to ${waitTimeoutMs}ms for ${inFlight.length} in-flight ${noun}(s) to drain...\n`
-  )
-  let lastReportedCount = inFlight.length
-  inFlight = await waitForInFlightDrain({
-    timeoutMs: waitTimeoutMs,
-    filter,
-    onTick: (items) => {
-      if (items.length !== lastReportedCount) {
-        process.stderr.write(`hrc: ${items.length} ${noun}(s) still in flight\n`)
-        lastReportedCount = items.length
-      }
-    },
-  })
-
-  if (inFlight.length > 0) {
-    const refusalCode = action === 'restart' ? 'restart_drain_timeout' : 'stop_drain_timeout'
-    process.stderr.write(
-      `hrc: [${refusalCode}] drain timed out after ${waitTimeoutMs}ms with ${inFlight.length} ${noun}(s) still in flight. Re-run with --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
-    )
-    process.stderr.write(
-      `hrc: [${refusalCode}] ${action} refused: ${inFlight.length} ${noun}(s) remained in flight after ${waitTimeoutMs}ms; no ${action} was attempted.\n`
-    )
-    throw new CliStatusExit(2)
-  }
-}
-
 function processStartedAt(
   status: Awaited<ReturnType<typeof collectServerRuntimeStatus>>
 ): string | undefined {
@@ -330,13 +267,6 @@ async function requireRestartProof(
   timeoutMs: number
 ): Promise<void> {
   const beforeStartedAt = processStartedAt(before)
-  if (before.running && beforeStartedAt === undefined) {
-    process.stderr.write(
-      'hrc: [restart_refused_unobservable] daemon is healthy but its processStartedAt could not be read; refusing an unprovable restart\n'
-    )
-    throw new CliStatusExit(2)
-  }
-
   const deadline = Date.now() + timeoutMs
   let observed = before
   while (true) {
@@ -365,217 +295,183 @@ async function requireRestartProof(
   const apiHealth = observed.apiHealth.ok ? 'healthy' : observed.apiHealth.error
 
   process.stderr.write(
-    `hrc: [restart_unproven] restart actuation returned, but no healthy new process answered within ${timeoutMs}ms (before processStartedAt=${beforeStartedAt ?? '(not running)'}, before pid=${beforePid ?? '(none)'}, observed processStartedAt=${processStartedAt(observed) ?? '(unavailable)'}, observed pid=${observed.pid ?? '(none)'}, old pid alive=${oldPidAlive}, observed pid alive=${observed.pidAlive ? 'yes' : 'no'}, socket responsive=${observed.socketResponsive ? 'yes' : 'no'}, api health=${apiHealth}, observed status=${observed.status})\n`
+    `hrc: [restart_unproven] restart was granted, but no healthy new process answered within ${timeoutMs}ms (before processStartedAt=${beforeStartedAt ?? '(not running)'}, before pid=${beforePid ?? '(none)'}, observed processStartedAt=${processStartedAt(observed) ?? '(unavailable)'}, observed pid=${observed.pid ?? '(none)'}, old pid alive=${oldPidAlive}, observed pid alive=${observed.pidAlive ? 'yes' : 'no'}, socket responsive=${observed.socketResponsive ? 'yes' : 'no'}, api health=${apiHealth}, observed status=${observed.status})\n`
   )
   throw new CliStatusExit(1)
 }
 
-async function closeAdmissionAndDrainForRestart(
-  args: string[],
-  attribution: {
-    requestedBy: string | null
-    reason: string | null
+async function requireStopProof(
+  before: Awaited<ReturnType<typeof collectServerRuntimeStatus>>,
+  timeoutMs: number
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const observed = await collectServerRuntimeStatus({ includeTmux: false })
+    const oldAlive = before.pid !== undefined && isLiveProcess(before.pid)
+    if (!observed.socketResponsive && !oldAlive) return
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
-): Promise<{
-  operationId: string
-  forceFallback: boolean
-}> {
-  const timeoutMs = parseIntegerFlag(args, '--drain-timeout-ms', {
-    defaultValue: 300_000,
-    min: 1,
-  })
-  const operationId = `restart-drain-${randomUUID()}`
-  const client = createClient()
-  const closed = await client.closeTurnAdmission({
-    operationId,
-    requestedBy: attribution.requestedBy,
-    requestedRunId: process.env['HRC_RUN_ID'] ?? null,
-    reason: attribution.reason ?? 'hrc server restart --drain',
-  })
   process.stderr.write(
-    `hrc: turn admission closed (${operationId}); active admissions=${closed.activeAdmissions}\n`
+    `hrc: [stop_unproven] stop was granted, but pid ${before.pid ?? '(unknown)'} still answered after ${timeoutMs}ms\n`
   )
+  throw new CliStatusExit(1)
+}
 
-  const filter = {
-    excludeTransports: ['tmux'] as const,
-    includeAcceptedRuns: true,
+/**
+ * T-09861 §3: the credential rides in headers, read from the 0600 file the
+ * daemon minted for this caller's runtime. `HRC_RUNTIME_ID` only LOCATES it;
+ * `HRC_SESSION_REF` is attribution for the server's binding check. A caller
+ * with neither simply presents nothing and is refused server-side.
+ */
+function lifecycleCredentialHeaders(runtimeRoot: string): Record<string, string> {
+  const headers: Record<string, string> = {}
+  const sessionRef = process.env['HRC_SESSION_REF']?.trim()
+  if (sessionRef) headers[HRC_LIFECYCLE_SESSION_REF_HEADER] = sessionRef
+  const runtimeId = process.env['HRC_RUNTIME_ID']?.trim()
+  if (!runtimeId || !isLifecycleCredentialRuntimeId(runtimeId)) return headers
+  let value: string
+  try {
+    value = readFileSync(lifecycleCredentialPath(runtimeRoot, runtimeId), 'utf8').trim()
+  } catch {
+    return headers
   }
-  let inFlight = listInFlightWork(undefined, filter)
-  if (inFlight.length > 0) {
-    process.stderr.write(
-      `hrc: waiting up to ${timeoutMs}ms for ${inFlight.length} in-flight headless run(s) under closed admission...\n`
-    )
-    let lastReportedCount = inFlight.length
-    inFlight = await waitForInFlightDrain({
-      timeoutMs,
-      filter,
-      onTick: (items) => {
-        if (items.length !== lastReportedCount) {
-          process.stderr.write(`hrc: ${items.length} headless run(s) still in flight\n`)
-          lastReportedCount = items.length
-        }
-      },
+  if (value.length === 0) return headers
+  headers[HRC_LIFECYCLE_RUNTIME_HEADER] = runtimeId
+  headers[HRC_LIFECYCLE_CREDENTIAL_HEADER] = value
+  return headers
+}
+
+function formatInFlight(items: readonly HrcServerLifecycleInFlightItem[]): string {
+  if (items.length === 0) return '(no in-flight work)\n'
+  return `${items
+    .map((item) => {
+      const transport = item.transport ? ` [${item.transport}]` : ''
+      const started = item.startedAt ? ` since ${item.startedAt}` : ''
+      return `  ${item.runId}  ${item.scopeRef}~${item.laneRef}  ${item.status}${transport}${started}`
     })
-  }
-
-  // One final registry cut while admission is still closed. No new turn can
-  // cross the daemon gate between this observation and actuation.
-  inFlight = listInFlightWork(undefined, filter)
-  if (inFlight.length > 0) {
-    process.stderr.write(
-      `hrc: drain timed out after ${timeoutMs}ms with ${inFlight.length} headless run(s) still in flight. Falling back explicitly to force restart semantics under closed admission.\n${formatInFlightWork(inFlight)}`
-    )
-    return { operationId, forceFallback: true }
-  }
-
-  process.stderr.write('hrc: drain complete; closed-admission recheck found no headless work\n')
-  return { operationId, forceFallback: false }
+    .join('\n')}\n`
 }
 
-async function requireServerLifecycleAuthorization(args: string[]): Promise<{
-  callerKind: ServerLifecycleCallerKind
-  requestedBy: string | null
-  reason: string | null
-}> {
-  const result = await evaluateServerLifecycleAuthorization(
-    process.env,
-    parseFlag(args, '--reason')
-  )
-  if (!result.allowed) {
-    fatal(result.message)
-  }
-  return {
-    callerKind: result.callerKind,
-    requestedBy: result.requestedBy,
-    reason: result.reason,
-  }
-}
-
-export async function cmdServerStop(args: string[]): Promise<void> {
-  const attribution = await requireServerLifecycleAuthorization(args)
-  const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
-  const force = hasFlag(args, '--force')
-  const before = await collectServerRuntimeStatus({ includeTmux: false })
-
-  if (!before.running && before.pid === undefined) {
-    process.stderr.write('hrc: daemon is not running\n')
-    return
-  }
-
-  await gateOnInFlightWork(args, 'stop')
-
-  const owner = await detectLaunchdOwner()
-  if (owner) {
-    fatal(
-      `daemon is supervised by launchd (${owner.serviceTarget}); launchd will respawn it. ` +
-        `To stop permanently: launchctl unload -w ~/Library/LaunchAgents/${owner.label}.plist`
-    )
-  }
-
-  writeShutdownIntent('stop', attribution)
-  await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
-  process.stderr.write('hrc: daemon stopped\n')
-}
-
-export async function cmdServerRestart(args: string[]): Promise<void> {
-  const attribution = await requireServerLifecycleAuthorization(args)
-  const mode = resolveServerMode(args, 'daemon')
-  const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
+/**
+ * T-09861 §5 — `hrc server stop|restart` is a thin client of the daemon's
+ * lifecycle endpoint. It never signals, kills or kickstarts a running daemon,
+ * and it never decides authority: the daemon does, from the credential it
+ * minted. Against a daemon without the capability it fails closed.
+ */
+async function requestServerLifecycle(
+  args: string[],
+  action: HrcServerLifecycleAction
+): Promise<void> {
+  const targetNode = parseFlag(args, '--node')?.trim() || undefined
   const proofTimeoutMs = parseIntegerFlag(args, '--proof-timeout-ms', {
     defaultValue: DEFAULT_RESTART_PROOF_TIMEOUT_MS,
     min: 1,
   })
+  const wait = hasFlag(args, '--wait')
   const drain = hasFlag(args, '--drain')
-  if (drain && hasFlag(args, '--wait')) {
+  if (drain && wait) {
     fatal('--drain and --wait are mutually exclusive; --drain owns the closed-admission wait')
   }
 
-  let admissionOperationId: string | undefined
-  let restartInitiated = false
-  let force = hasFlag(args, '--force')
+  const before = await collectServerRuntimeStatus({ includeTmux: false })
+  if (!before.socketResponsive) {
+    if (action === 'stop' && targetNode === undefined && !before.running) {
+      process.stderr.write('hrc: daemon is not running\n')
+      return
+    }
+    fatal(
+      `no HRC daemon answers on ${before.socketPath}; nothing to ${action}. Start a down daemon with: hrc server start`
+    )
+  }
+
+  const client = createClient()
+  const status = await client.getStatus()
+  if (status.capabilities?.serverLifecycle !== true) {
+    process.stderr.write(
+      `hrc: [server_lifecycle_unsupported] ${HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE}\n`
+    )
+    throw new CliStatusExit(1)
+  }
+  const localNodeId = status.node?.nodeId
+  const remote = targetNode !== undefined && targetNode !== localNodeId
+
+  const request: HrcServerLifecycleRequest = {
+    action,
+    ...(parseFlag(args, '--reason') === undefined ? {} : { reason: parseFlag(args, '--reason') }),
+    ...(targetNode === undefined ? {} : { targetNode }),
+    wait,
+    drain,
+    force: hasFlag(args, '--force'),
+    waitTimeoutMs: parseIntegerFlag(args, '--wait-timeout-ms', { defaultValue: 300_000, min: 1 }),
+    drainTimeoutMs: parseIntegerFlag(args, '--drain-timeout-ms', {
+      defaultValue: 300_000,
+      min: 1,
+    }),
+    proofTimeoutMs,
+    ...(process.env['HRC_RUN_ID'] ? { requestedRunId: process.env['HRC_RUN_ID'] } : {}),
+  }
+
+  let response: Awaited<ReturnType<typeof client.serverLifecycle>>
   try {
-    if (drain) {
-      const result = await closeAdmissionAndDrainForRestart(args, attribution)
-      admissionOperationId = result.operationId
-      force ||= result.forceFallback
-    } else {
-      await gateOnInFlightWork(args, 'restart')
-    }
-
-    const before =
-      hasFlag(args, '--wait') || drain
-        ? await collectServerRuntimeStatus({ includeTmux: false })
-        : undefined
-
-    if (before?.running && processStartedAt(before) === undefined) {
-      await requireRestartProof(before, proofTimeoutMs)
-    }
-
-    // Ahead of the shutdown intent and of any process mutation: this refusal has
-    // to leave the running daemon exactly as it found it, so an operator who hits
-    // it can bootstrap the job and retry without a node outage in between, and
-    // without a stale restart intent left behind to mis-attribute the next
-    // shutdown. It is a no-op when the job IS loaded, so ordering it before the
-    // owner probe costs only one launchctl call. `--force` does not bypass it:
-    // force governs the in-flight gate and the SIGTERM escalation, not which
-    // supervisor owns the daemon, and the T-07957 outage came from a --force
-    // restart taking the self-daemonize path.
-    await refuseStrandedLaunchAgent('restart')
-
-    writeShutdownIntent('restart', attribution)
-
-    const owner = await detectLaunchdOwner()
-    if (owner) {
-      restartInitiated = true
-      const kickstart = await launchctlKickstart(owner, { kill: true })
-
-      // A non-zero launchctl status describes the actuation request, not the
-      // outcome. When we can prove the outcome, the proof is authoritative and
-      // launchctl's complaint is context — failing here instead would report a
-      // false RED for a restart that worked, whose natural operator response is
-      // a retry or --force against a healthy daemon that has already taken live
-      // turns.
-      if (!kickstart.ok) {
-        process.stderr.write(`hrc: ${kickstart.message}\n`)
-      }
-      if (before !== undefined) {
-        await requireRestartProof(before, proofTimeoutMs)
-      } else if (!kickstart.ok && !kickstart.benign) {
-        // Nothing to prove against (no --wait/--drain baseline), so a hard
-        // launchctl failure stays a failure.
-        fatal(kickstart.message)
-      }
-      process.stderr.write(`hrc: daemon restarted via launchd (${owner.serviceTarget})\n`)
-      return
-    }
-
-    restartInitiated = true
-    await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
-    if (mode === 'daemon') {
-      await daemonizeAndWait(timeoutMs)
-      if (before !== undefined) await requireRestartProof(before, proofTimeoutMs)
-      process.stderr.write('hrc: daemon restarted\n')
-      return
-    }
-
-    return serverForeground()
+    response = await client.serverLifecycle(request, lifecycleCredentialHeaders(status.runtimeRoot))
   } catch (error) {
-    if (admissionOperationId !== undefined && !restartInitiated) {
-      try {
-        await createClient().reopenTurnAdmission({ operationId: admissionOperationId })
-        process.stderr.write(
-          `hrc: restart aborted before actuation; turn admission reopened (${admissionOperationId})\n`
-        )
-      } catch (reopenError) {
-        process.stderr.write(
-          `hrc: WARNING restart aborted but turn admission could not be reopened: ${
-            reopenError instanceof Error ? reopenError.message : String(reopenError)
-          }\nhrc: recovery: run 'hrc server restart' without --drain to reopen admission during restart.\n`
-        )
+    if (isHrcDomainErrorLike(error) && error.code === 'server_lifecycle_refused') {
+      process.stderr.write(`hrc: [server_lifecycle_refused] ${error.message}\n`)
+      throw new CliStatusExit(1)
+    }
+    if (isHrcDomainErrorLike(error) && error.code === 'server_lifecycle_in_flight') {
+      const detail = (error.detail ?? {}) as {
+        refusalCode?: string
+        inFlight?: HrcServerLifecycleInFlightItem[]
       }
+      const code = detail.refusalCode ?? `${action}_refused_in_flight`
+      const items = detail.inFlight ?? []
+      process.stderr.write(`hrc: [${code}] ${error.message}\n${formatInFlight(items)}`)
+      process.stderr.write(
+        `hrc: [${code}] ${action} refused: ${items.length} run(s) in flight; no ${action} was attempted.\n`
+      )
+      throw new CliStatusExit(2)
     }
     throw error
   }
+
+  const grant = response.grant
+  process.stderr.write(
+    `hrc: ${action} granted on ${response.targetNode} (${grant.requestId}; ${grant.callerKind} ${grant.requestedBy})\n`
+  )
+  for (const note of response.notes ?? []) process.stderr.write(`hrc: ${note}\n`)
+
+  if (remote) {
+    if (action === 'restart') {
+      const proof = response.remote
+      if (proof?.proven !== true) {
+        process.stderr.write(
+          `hrc: [restart_unproven] ${response.targetNode} did not report a new process within ${proofTimeoutMs}ms (before startedAt=${proof?.beforeStartedAt ?? '(unknown)'}, observed startedAt=${proof?.afterStartedAt ?? '(unavailable)'})\n`
+        )
+        throw new CliStatusExit(1)
+      }
+      process.stderr.write(
+        `hrc: restart proven on ${response.targetNode} (startedAt ${proof.beforeStartedAt ?? '(unknown)'} -> ${proof.afterStartedAt})\n`
+      )
+    }
+    return
+  }
+
+  if (action === 'restart') {
+    await requireRestartProof(before, proofTimeoutMs)
+    process.stderr.write('hrc: daemon restarted\n')
+    return
+  }
+  await requireStopProof(before, proofTimeoutMs)
+  process.stderr.write('hrc: daemon stopped\n')
+}
+
+export async function cmdServerStop(args: string[]): Promise<void> {
+  await requestServerLifecycle(args, 'stop')
+}
+
+export async function cmdServerRestart(args: string[]): Promise<void> {
+  await requestServerLifecycle(args, 'restart')
 }
 
 export async function cmdServerStatus(args: string[]): Promise<void> {
@@ -648,6 +544,40 @@ export async function cmdServerSubscribers(args: string[]): Promise<void> {
   }
 }
 
+/**
+ * T-09861: the launchd job this daemon runs under, if any. launchd sets
+ * XPC_SERVICE_NAME to the job label for its jobs; a terminal-launched process
+ * carries some other value (or none), so only an exact label match counts.
+ */
+function launchdJobLabel(): string | undefined {
+  const label = process.env['HRC_LAUNCHD_LABEL'] ?? HRC_SERVER_LAUNCHD_LABEL
+  return process.env['XPC_SERVICE_NAME'] === label ? label : undefined
+}
+
+/**
+ * The detached successor for an unsupervised (scratch) daemon's granted
+ * restart: it waits for this pid to exit — and so release the lock and socket
+ * — then re-runs this exact command line.
+ */
+function spawnUnsupervisedSuccessor(logPath: string): void {
+  let out: number | 'ignore' = 'ignore'
+  try {
+    out = openSync(logPath, 'a')
+  } catch {}
+  const child = spawn(
+    '/bin/sh',
+    [
+      '-c',
+      'while kill -0 "$0" 2>/dev/null; do sleep 0.05; done; exec "$@"',
+      String(process.pid),
+      process.execPath,
+      ...process.argv.slice(1),
+    ],
+    { detached: true, stdio: ['ignore', out, out], env: { ...process.env } }
+  )
+  child.unref()
+}
+
 async function serverForeground(localPersonaAllowlist?: readonly string[]): Promise<void> {
   // Refuse to boot as a child of a coding-agent harness: the server would leak
   // the harness's recursion-guard env into every child harness it launches,
@@ -667,6 +597,46 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
 
   const paths = resolveServerPaths()
 
+  let shutdownStarted = false
+  let shutdownReason: string | undefined
+  let shutdownGrant: HrcServerLifecycleGrant | undefined
+  /** An authorized grant whose SIGTERM (launchd bootout) has not arrived yet. */
+  let pendingGrant: HrcServerLifecycleGrant | undefined
+  let shutdownExitCode = 0
+  let afterStop: (() => void) | undefined
+
+  // T-09861 §5: the daemon performs an authorized action itself. Restart exits
+  // for launchd's KeepAlive respawn (or hands off to a detached successor when
+  // unsupervised); stop unloads its own job. The grant is recorded before
+  // anything is torn down.
+  const lifecycleExecutor = (grant: HrcServerLifecycleGrant): void => {
+    const label = launchdJobLabel()
+    if (grant.action === 'stop' && label !== undefined) {
+      pendingGrant = grant
+      const uid = typeof process.getuid === 'function' ? process.getuid() : undefined
+      const bootout = spawn('launchctl', ['bootout', `gui/${uid ?? ''}/${label}`], {
+        detached: true,
+        stdio: 'ignore',
+      })
+      bootout.on('exit', (code) => {
+        if (code !== 0 && !shutdownStarted) {
+          pendingGrant = undefined
+          writeServerProcessLog('server.lifecycle.bootout_failed', {
+            pid: process.pid,
+            exitCode: code,
+            requestId: grant.requestId,
+          })
+        }
+      })
+      bootout.unref()
+      return
+    }
+    if (grant.action === 'restart' && label === undefined) {
+      afterStop = () => spawnUnsupervisedSuccessor(`${paths.runtimeRoot}/server.log`)
+    }
+    shutdown(`lifecycle:${grant.action}`, { grant })
+  }
+
   const server = await createHrcServer({
     runtimeRoot: paths.runtimeRoot,
     stateRoot: paths.stateRoot,
@@ -685,32 +655,29 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     wrkqLedger: new WrkqStdioLedgerClient(),
     // T-08137: the ONE instance that records daemon lifecycle provenance.
     lifecycleProvenance: true,
+    // T-09861: and the ONE instance that performs authorized lifecycle actions.
+    lifecycleExecutor,
   })
-
-  let shutdownStarted = false
-  let shutdownReason: string | undefined
-  let shutdownIntent: ShutdownIntent | undefined
-  let shutdownExitCode = 0
 
   const shutdown = (
     reason: string,
-    options: { exitCode?: number; intent?: ShutdownIntent | undefined } = {}
+    options: { exitCode?: number; grant?: HrcServerLifecycleGrant | undefined } = {}
   ): void => {
     shutdownExitCode = Math.max(shutdownExitCode, options.exitCode ?? 0)
     if (shutdownStarted) return
 
     shutdownStarted = true
     shutdownReason = reason
-    shutdownIntent = options.intent ?? consumeShutdownIntent()
+    shutdownGrant = options.grant ?? pendingGrant
     writeServerProcessLog('server.shutting_down', {
       pid: process.pid,
       reason,
-      ...shutdownIntentLogDetails(shutdownIntent),
+      ...grantLogDetails(shutdownGrant),
     })
     // T-08137: the durable copy of the line above, appended synchronously before
     // any teardown. Its failure must never block shutdown.
     try {
-      server.beginLifecycleShutdown(shutdownAttribution(reason, shutdownIntent))
+      server.beginLifecycleShutdown(shutdownAttribution(reason, shutdownGrant))
     } catch (error) {
       writeServerProcessLog('server.lifecycle_shutdown_record_failed', {
         pid: process.pid,
@@ -733,19 +700,27 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
           pid: process.pid,
           reason,
           causeChain: rejectionCauseChain(error),
-          ...shutdownIntentLogDetails(shutdownIntent),
+          ...grantLogDetails(shutdownGrant),
         })
       }
       try {
         await unlink(paths.pidPath)
       } catch {}
+      try {
+        afterStop?.()
+      } catch (error) {
+        writeServerProcessLog('server.lifecycle.successor_spawn_failed', {
+          pid: process.pid,
+          causeChain: rejectionCauseChain(error),
+        })
+      }
       process.exit(shutdownExitCode)
     })().catch((error) => {
       writeServerProcessLog('server.shutdown_failed', {
         pid: process.pid,
         reason,
         causeChain: rejectionCauseChain(error),
-        ...shutdownIntentLogDetails(shutdownIntent),
+        ...grantLogDetails(shutdownGrant),
       })
       process.exit(1)
     })
@@ -753,7 +728,6 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
 
   process.on('unhandledRejection', (reason) => {
     const decision = shutdownStarted ? 'continue_shutdown' : 'fail_fast'
-    const intent = shutdownIntent ?? consumeShutdownIntent()
     shutdownExitCode = 1
     writeServerProcessLog('server.unhandled_rejection', {
       pid: process.pid,
@@ -761,13 +735,13 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
       shutdownInProgress: shutdownStarted,
       shutdownReason: shutdownReason ?? null,
       causeChain: rejectionCauseChain(reason),
-      ...shutdownIntentLogDetails(intent),
+      ...grantLogDetails(shutdownGrant),
     })
     if (!shutdownStarted) {
       // Installing the listener prevents Bun's implicit immediate exit. The
       // fail-fast path still exits non-zero, but only after server.stop() has
       // deliberately drained and closed daemon-owned resources.
-      shutdown('unhandledRejection', { exitCode: 1, intent })
+      shutdown('unhandledRejection', { exitCode: 1 })
     }
   })
 
@@ -784,7 +758,8 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
   })
 
   // Ignore SIGHUP so the daemon survives when the parent terminal/session exits
-  // (e.g., Claude Code terminating). SIGINT and SIGTERM still trigger graceful shutdown.
+  // (e.g., Claude Code terminating). SIGINT and SIGTERM still trigger graceful
+  // shutdown; without a pending grant they are recorded as ungranted (§7).
   process.on('SIGHUP', () => {})
   process.on('SIGINT', () => shutdown('SIGINT'))
   process.on('SIGTERM', () => shutdown('SIGTERM'))

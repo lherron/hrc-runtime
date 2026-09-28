@@ -1,5 +1,5 @@
 import { existsSync, openSync } from 'node:fs'
-import { mkdir, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 
 import type {
   FederationPeerHealthObservation,
@@ -282,10 +282,8 @@ export function formatStrandedLaunchAgentRefusal(
 }
 
 /**
- * `EALREADY` from launchctl. `kickstart -k` asked launchd to kill and relaunch a
- * job whose restart was already in flight, so launchd declined to start a second
- * one. The actuation still happened — this is a race with our own shutdown or
- * with launchd's KeepAlive respawn, not a failure to restart.
+ * `EALREADY` from launchctl: launchd was already bringing the job up, so it
+ * declined to start a second one. The actuation still happened.
  */
 export const LAUNCHCTL_EALREADY = 37
 
@@ -311,13 +309,10 @@ export type LaunchctlKickstartResult = {
  * *actuation request*, not the *outcome*, and only observing the daemon can
  * establish the latter. Callers own the verdict — see `requireRestartProof`.
  */
-export async function launchctlKickstart(
-  owner: LaunchdOwner,
-  opts: { kill?: boolean } = {}
-): Promise<LaunchctlKickstartResult> {
-  const argv = ['launchctl', 'kickstart']
-  if (opts.kill) argv.push('-k')
-  argv.push(owner.serviceTarget)
+export async function launchctlKickstart(owner: LaunchdOwner): Promise<LaunchctlKickstartResult> {
+  // Start only (T-09861): the CLI never kills or restarts a running daemon;
+  // stop/restart go through the daemon's lifecycle endpoint.
+  const argv = ['launchctl', 'kickstart', owner.serviceTarget]
   const result = await execProcess(argv)
   if (result.exitCode === 0) {
     return { ok: true, exitCode: 0, detail: '', benign: false, message: '' }
@@ -682,58 +677,4 @@ export async function daemonizeAndWait(timeoutMs = 5_000): Promise<number> {
 
   process.stderr.write(`hrc: daemon started (pid ${proc.pid}), log at ${logPath}\n`)
   return proc.pid
-}
-
-export async function stopServerProcess(options?: {
-  timeoutMs?: number | undefined
-  force?: boolean | undefined
-  allowNotRunning?: boolean | undefined
-}): Promise<void> {
-  const { pidPath, socketPath } = resolveServerPaths()
-  const pid = readPidFile(pidPath)
-  const socketResponsive = await isUnixSocketResponsive(socketPath)
-
-  if (pid === undefined) {
-    if (!socketResponsive || options?.allowNotRunning) {
-      return
-    }
-    fatalExit(`daemon is responsive on ${socketPath}, but pid file is missing at ${pidPath}`)
-  }
-
-  const timeoutMs = options?.timeoutMs ?? 5_000
-  const force = options?.force ?? false
-
-  if (!isLiveProcess(pid)) {
-    try {
-      await unlink(pidPath)
-    } catch {}
-    if (!socketResponsive || options?.allowNotRunning) {
-      return
-    }
-    fatalExit(`daemon socket ${socketPath} is still responsive, but pid ${pid} is not alive`)
-  }
-
-  process.kill(pid, 'SIGTERM')
-  let stopped = await waitForCondition(
-    async () => !isLiveProcess(pid) && !(await isUnixSocketResponsive(socketPath)),
-    timeoutMs
-  )
-
-  if (!stopped && force) {
-    process.kill(pid, 'SIGKILL')
-    stopped = await waitForCondition(
-      async () => !isLiveProcess(pid) && !(await isUnixSocketResponsive(socketPath)),
-      timeoutMs
-    )
-  }
-
-  if (!stopped) {
-    fatalExit(
-      `daemon pid ${pid} did not stop within ${timeoutMs}ms${force ? ' after SIGTERM/SIGKILL' : ''}`
-    )
-  }
-
-  try {
-    await unlink(pidPath)
-  } catch {}
 }

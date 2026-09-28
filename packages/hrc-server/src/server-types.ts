@@ -28,6 +28,7 @@ import type { ExternalParticipantClientFactory } from './external-registration-r
 import type { FederationConfig } from './federation/federation-config.js'
 import type { ParticipantAdapterRegistry } from './participant-adapter-registry.js'
 import type { RegistrationClassConfig } from './registration-classes-config.js'
+import type { ServerLifecycleExecutor } from './server-lifecycle-controller.js'
 import type { ServerShutdownAttribution } from './server-lifecycle.js'
 import type { WrkqLedgerClient } from './wrkq/ledger-client.js'
 
@@ -407,6 +408,12 @@ export type HrcServerOptions = {
    * fixture cleanup can never claim to be the installed daemon.
    */
   lifecycleProvenance?: boolean | undefined
+  /**
+   * T-09861: performs an authorized stop/restart. Only `hrc server serve`
+   * wires one; without it the daemon advertises no `serverLifecycle`
+   * capability and refuses every lifecycle request.
+   */
+  lifecycleExecutor?: ServerLifecycleExecutor | undefined
   /**
    * @deprecated Retired with the OTLP log listener (T-08566 stage 1). Accepted
    * and ignored so existing embedders compile; no listener is ever bound.

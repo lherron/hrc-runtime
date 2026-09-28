@@ -1455,6 +1455,46 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HRC_LIFECYCLE_BREAK_GLASS",
+      "kind": "value",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HRC_LIFECYCLE_BREAK_GLASS|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_LIFECYCLE_CREDENTIAL_HEADER",
+      "kind": "value",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HRC_LIFECYCLE_CREDENTIAL_HEADER|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE",
+      "kind": "value",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_LIFECYCLE_RUNTIME_HEADER",
+      "kind": "value",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HRC_LIFECYCLE_RUNTIME_HEADER|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_LIFECYCLE_SESSION_REF_HEADER",
+      "kind": "value",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HRC_LIFECYCLE_SESSION_REF_HEADER|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HRC_MAIL_REPLY_SCHEMA_DIALECT",
       "kind": "value",
       "file": "packages/hrc-core/src/hrcmail-contracts.ts",
@@ -1531,6 +1571,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HRC_RUNTIME_PRESENTATION_EVENT|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_SERVER_LAUNCHD_LABEL",
+      "kind": "value",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HRC_SERVER_LAUNCHD_LABEL|value",
       "count": 1
     },
     {
@@ -3087,6 +3135,70 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcServerLifecycleAction",
+      "kind": "type",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HrcServerLifecycleAction|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcServerLifecycleCallerKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HrcServerLifecycleCallerKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcServerLifecycleFlags",
+      "kind": "type",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HrcServerLifecycleFlags|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcServerLifecycleGrant",
+      "kind": "type",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HrcServerLifecycleGrant|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcServerLifecycleInFlightItem",
+      "kind": "type",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HrcServerLifecycleInFlightItem|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcServerLifecycleRemoteProof",
+      "kind": "type",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HrcServerLifecycleRemoteProof|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcServerLifecycleRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HrcServerLifecycleRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcServerLifecycleResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|HrcServerLifecycleResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcSessionRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -3543,6 +3655,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "isLifecycleCredentialRuntimeId",
+      "kind": "value",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|isLifecycleCredentialRuntimeId|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "isLinkedCheckout",
       "kind": "value",
       "file": "packages/hrc-core/src/placement-policy.ts",
@@ -3619,6 +3739,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|LedgerSkewScan|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "lifecycleCredentialDirectory",
+      "kind": "value",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|lifecycleCredentialDirectory|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "lifecycleCredentialPath",
+      "kind": "value",
+      "file": "packages/hrc-core/src/server-lifecycle.ts",
+      "hash": "hrc-core|lifecycleCredentialPath|value",
       "count": 1
     },
     {

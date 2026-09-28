@@ -4,6 +4,28 @@ export const HRC_API_VERSION = packageJson.version
 
 export { HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV } from './federation.js'
 
+export {
+  HRC_LIFECYCLE_BREAK_GLASS,
+  HRC_LIFECYCLE_CREDENTIAL_HEADER,
+  HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE,
+  HRC_LIFECYCLE_RUNTIME_HEADER,
+  HRC_LIFECYCLE_SESSION_REF_HEADER,
+  HRC_SERVER_LAUNCHD_LABEL,
+  isLifecycleCredentialRuntimeId,
+  lifecycleCredentialDirectory,
+  lifecycleCredentialPath,
+} from './server-lifecycle.js'
+export type {
+  HrcServerLifecycleAction,
+  HrcServerLifecycleCallerKind,
+  HrcServerLifecycleFlags,
+  HrcServerLifecycleGrant,
+  HrcServerLifecycleInFlightItem,
+  HrcServerLifecycleRemoteProof,
+  HrcServerLifecycleRequest,
+  HrcServerLifecycleResponse,
+} from './server-lifecycle.js'
+
 export { environmentWithoutGitOverrides } from './git-environment.js'
 
 export { expandRegistryHome, findWrkqProjectEntry } from './project-registry.js'

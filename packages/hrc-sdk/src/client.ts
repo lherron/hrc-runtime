@@ -32,6 +32,7 @@ import type {
 } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
+import type { HrcServerLifecycleRequest, HrcServerLifecycleResponse } from 'hrc-core'
 import type {
   BrokerEventsFollowRequest,
   BrokerEventsFollowResponse,
@@ -793,6 +794,27 @@ export class HrcClient {
 
   async getTurnAdmission(): Promise<HrcTurnAdmissionState> {
     return this.getJson<HrcTurnAdmissionState>('/v1/server/turn-admission')
+  }
+
+  /**
+   * T-09861: ask the daemon to stop or restart itself (or, with `targetNode`,
+   * a peer's daemon). The daemon authorizes from `credentialHeaders` — the
+   * lifecycle credential it minted for the caller's runtime — never from env.
+   * The call is held while an authorized `--wait`/`--drain` runs.
+   */
+  async serverLifecycle(
+    request: HrcServerLifecycleRequest,
+    credentialHeaders: Readonly<Record<string, string>> = {}
+  ): Promise<HrcServerLifecycleResponse> {
+    const res = await this.unixFetch('/v1/server/lifecycle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...credentialHeaders },
+      body: JSON.stringify(request),
+    })
+    if (!res.ok) {
+      await this.throwTypedError(res)
+    }
+    return (await res.json()) as HrcServerLifecycleResponse
   }
 
   async closeTurnAdmission(request: HrcTurnAdmissionCloseRequest): Promise<HrcTurnAdmissionState> {

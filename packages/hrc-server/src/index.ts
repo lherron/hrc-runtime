@@ -15,6 +15,11 @@ import {
   assertNoRetainedProjection,
   awaitRetainedRecoveryOwner,
 } from './broker/runtime-exclusive-owner'
+import { ServerLifecycleController } from './server-lifecycle-controller.js'
+import {
+  LIFECYCLE_LIVE_RUNTIME_STATUSES,
+  LifecycleCredentialStore,
+} from './server-lifecycle-credentials.js'
 import { probeBrokerHealth } from './startup-reconcile/broker-probe.js'
 
 import {
@@ -393,6 +398,7 @@ const HRC_SERVER_BINARY_PATH = realpathSync(resolve(process.argv[1] ?? process.e
 
 export type { HrcServer, HrcServerOptions } from './server-types.js'
 export type { ServerShutdownAttribution } from './server-lifecycle.js'
+export type { ServerLifecycleExecutor } from './server-lifecycle-controller.js'
 export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
 export type { ServerMetricRecord } from './request-metrics.js'
 
@@ -1018,6 +1024,11 @@ class HrcServerInstance implements HrcServer {
     | undefined
   /** T-08137 rev 4: set by the foreground when its stop deadline fires. */
   private shutdownDeadlineExpired = false
+  /** T-09861 §3: this incarnation's per-runtime lifecycle credentials. */
+  readonly lifecycleCredentials: LifecycleCredentialStore
+  /** T-09861 §5: `POST /v1/server/lifecycle` and its federation twin. */
+  readonly lifecycleController: ServerLifecycleController
+  private lifecycleCredentialSweepTimer: ReturnType<typeof setInterval> | undefined
   readonly ctx: ServerContext
   readonly requestMetricsEnabled = process.env['HRC_METRICS'] !== '0'
   private readonly requestMetricSampler = new ServerRequestMetricSampler()
@@ -1072,6 +1083,8 @@ class HrcServerInstance implements HrcServer {
       this.handleSubscriberReceiptAck(request),
     [exactRouteKey('GET', '/v1/server/turn-admission')]: () =>
       Response.json(this.turnAdmissionGate.snapshot()),
+    [exactRouteKey('POST', '/v1/server/lifecycle')]: (request) =>
+      this.lifecycleController.handleLocalRequest(request),
     [exactRouteKey('POST', '/v1/server/turn-admission/close')]: (request) =>
       this.handleCloseTurnAdmission(request),
     [exactRouteKey('POST', '/v1/server/turn-admission/reopen')]: (request) =>
@@ -1248,6 +1261,33 @@ class HrcServerInstance implements HrcServer {
     readonly lockHandle: ServerLockHandle
   ) {
     this.turnAdmissionGate = new TurnAdmissionGate(options.runtimeRoot)
+    // T-09861 §3: mint at every launch (store observer) and backfill every live
+    // runtime now, so seats born before this incarnation hold a value it minted.
+    this.lifecycleCredentials = new LifecycleCredentialStore(options.runtimeRoot)
+    db.runtimes.setChangeObserver((runtime) => this.lifecycleCredentials.observe(runtime))
+    this.lifecycleCredentials.reconcile(
+      db.runtimes.listByStatus([...LIFECYCLE_LIVE_RUNTIME_STATUSES])
+    )
+    this.lifecycleController = new ServerLifecycleController({
+      node: () => ({
+        nodeId: options.federationConfig?.nodeId ?? deriveNodeIdFromHostname(),
+        nodeIdDeclared: options.federationConfig?.nodeIdProvenance === 'declared',
+      }),
+      peers: () => options.federationConfig?.peers ?? new Map(),
+      dbPath: options.dbPath,
+      credentials: this.lifecycleCredentials,
+      isLive: (binding) => {
+        const runtime = db.runtimes.getByRuntimeId(binding.runtimeId)
+        return (
+          runtime !== null &&
+          LIFECYCLE_LIVE_RUNTIME_STATUSES.has(runtime.status) &&
+          runtime.scopeRef === binding.scopeRef &&
+          runtime.generation === binding.generation
+        )
+      },
+      turnAdmission: this.turnAdmissionGate,
+      executor: () => options.lifecycleExecutor,
+    })
     this.server = Bun.serve({
       unix: options.socketPath,
       idleTimeout: 255,
@@ -1336,11 +1376,13 @@ class HrcServerInstance implements HrcServer {
                 runtimeProjection: true,
                 collectiveHistory: collectiveHistory?.isAuthority === true,
                 semanticTurnHandoff: true,
+                serverLifecycle: this.lifecycleController.capable,
               },
               ...(includeRuntimes ? { runtimes: await listRuntimesForProjection(this, url) } : {}),
             }),
             establish: ({ scopeRef, correlationId }) =>
               establishRemotePolicyAuthority(this, { scopeRef, correlationId }),
+            serverLifecycle: (request) => this.lifecycleController.handlePeerRequest(request),
             rosterStart: async ({ body }) => {
               const parsed = parseStartRuntimeRequest(body)
               if (!isSuffixStartRuntimeRequest(parsed) || parsed.summonIntent !== 'implicit') {
@@ -1550,6 +1592,17 @@ class HrcServerInstance implements HrcServer {
     this.startFirstTurnWatchdog()
     this.transcriptIndexer.start()
     this.startForeignHomeShadowTeardown()
+    // T-09861: raw-SQL status writes bypass the store observer; sweep their files.
+    this.lifecycleCredentialSweepTimer = setInterval(() => {
+      try {
+        this.lifecycleCredentials.reconcile(
+          this.db.runtimes.listByStatus([...LIFECYCLE_LIVE_RUNTIME_STATUSES])
+        )
+      } catch (error) {
+        writeServerLog('WARN', 'server.lifecycle.credential_sweep_failed', { error })
+      }
+    }, 60_000)
+    this.lifecycleCredentialSweepTimer.unref?.()
     for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
       if (grant.consumed) {
         scheduleExternalRegistrationCollectiveEstablishment(this, grant.registrationId)
@@ -1786,6 +1839,13 @@ class HrcServerInstance implements HrcServer {
   beginLifecycleShutdown(attribution: ServerShutdownAttribution): void {
     if (this.options.lifecycleProvenance !== true) return
     if (this.lifecycleShutdown !== undefined || this.stopping) return
+    if (attribution.grant === null) {
+      // T-09861 §7: residual R1 (raw kill / kickstart -k) — detected, not prevented.
+      writeServerLog('WARN', 'server.lifecycle.ungranted_shutdown', {
+        pid: process.pid,
+        reason: attribution.reason,
+      })
+    }
     const event = appendServerLifecycleEvent(this.db, 'server.shutting_down', {
       pid: process.pid,
       ...attribution,
@@ -1907,6 +1967,11 @@ class HrcServerInstance implements HrcServer {
       clearInterval(this.brokerLeaseGcTimer)
       this.brokerLeaseGcTimer = undefined
     }
+    if (this.lifecycleCredentialSweepTimer) {
+      clearInterval(this.lifecycleCredentialSweepTimer)
+      this.lifecycleCredentialSweepTimer = undefined
+    }
+    this.db.runtimes.setChangeObserver(undefined)
     if (this.retainedEvidenceStartupTimer) {
       clearTimeout(this.retainedEvidenceStartupTimer)
       this.retainedEvidenceStartupTimer = undefined
@@ -3240,6 +3305,7 @@ class HrcServerInstance implements HrcServer {
         backend: {
           tmux: tmuxStatus,
         },
+        serverLifecycle: this.lifecycleController.capable,
       },
     } satisfies HrcStatusSummaryResponse
     if (includeSessions !== 'true') return json(summary)

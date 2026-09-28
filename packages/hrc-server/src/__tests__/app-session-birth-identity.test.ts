@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { HrcRuntimeIntent } from 'hrc-core'
 import { neutralStartRequestHash } from 'spaces-runtime-contracts'
 
-import { evaluateServerLifecycleAuthorization } from '../../../hrc-cli/src/cli-runtime/shutdown-intent'
 import { buildHrcCorrelationEnv } from '../agent-spaces-adapter/cli-adapter'
 import {
   buildV2CompileRequest,
@@ -18,7 +17,6 @@ import {
   APP_SCOPE,
   KEY,
   NOW,
-  PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE,
   adversarialIntent,
   appHost,
   aspd,
@@ -298,7 +296,7 @@ describe('T-08576 app-session birth identity boundary', () => {
     })
   })
 
-  it('R-B6 refuses the actual composed grantless app birth envelope', async () => {
+  it('R-B6 the composed grantless app birth envelope carries no lifecycle authority', async () => {
     await bootAspdBirthServer()
     const response = await post('/v1/app-sessions/ensure', {
       selector: { appId: APP_ID, appSessionKey: KEY },
@@ -316,12 +314,10 @@ describe('T-08576 app-session birth identity boundary', () => {
       AGENT_GENERATION: '1',
       HRC_GENERATION: '1',
     })
-    const authorization = await evaluateServerLifecycleAuthorization(env, 'must not authorize')
-    expect(authorization).toEqual({
-      allowed: false,
-      message: PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE,
-    })
-    expect((authorization as { callerKind?: string }).callerKind).not.toBe('operator')
+    // T-09861: lifecycle authority never rides the launch env. The composed
+    // birth env carries no lifecycle key or secret; the daemon authorizes a
+    // stop/restart only from the credential file it minted.
+    expect(Object.keys(env).filter((key) => /LIFECYCLE/i.test(key))).toEqual([])
     await expectBirthAutoDispatch({
       hostSessionId,
       body: '',
@@ -330,7 +326,7 @@ describe('T-08576 app-session birth identity boundary', () => {
     })
   })
 
-  it('R-B6 refuses the actual composed granted app birth envelope', async () => {
+  it('R-B6 the composed granted app birth envelope carries no lifecycle authority', async () => {
     await bootAspdBirthServer()
     const response = await post('/v1/app-sessions/ensure', {
       selector: { appId: APP_ID, appSessionKey: KEY },
@@ -358,12 +354,10 @@ describe('T-08576 app-session birth identity boundary', () => {
       generation: 1,
       runtimeId: response.body.runtimeId,
     })
-    const authorization = await evaluateServerLifecycleAuthorization(env, 'must not authorize')
-    expect(authorization).toEqual({
-      allowed: false,
-      message: PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE,
-    })
-    expect((authorization as { callerKind?: string }).callerKind).not.toBe('operator')
+    // T-09861: lifecycle authority never rides the launch env. The composed
+    // birth env carries no lifecycle key or secret; the daemon authorizes a
+    // stop/restart only from the credential file it minted.
+    expect(Object.keys(env).filter((key) => /LIFECYCLE/i.test(key))).toEqual([])
   })
 
   for (const channel of ['lockedEnv', 'env', 'dispatchEnv'] as const) {

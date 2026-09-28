@@ -427,7 +427,7 @@ describe('launchctlKickstart', () => {
     }
   })
 
-  it.if(IS_DARWIN)('invokes launchctl kickstart without -k by default', async () => {
+  it.if(IS_DARWIN)('invokes launchctl kickstart without -k (start only, T-09861)', async () => {
     shim = await writeShim({ exitCode: 0 })
     process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
 
@@ -439,23 +439,6 @@ describe('launchctlKickstart', () => {
 
     const log = await readFile(shim.logFile, 'utf8')
     expect(log.trim()).toBe('kickstart gui/501/com.example.hrc')
-  })
-
-  it.if(IS_DARWIN)('adds -k when opts.kill is true', async () => {
-    shim = await writeShim({ exitCode: 0 })
-    process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
-
-    await launchctlKickstart(
-      {
-        label: 'com.example.hrc',
-        domain: 'gui/501',
-        serviceTarget: 'gui/501/com.example.hrc',
-      },
-      { kill: true }
-    )
-
-    const log = await readFile(shim.logFile, 'utf8')
-    expect(log.trim()).toBe('kickstart -k gui/501/com.example.hrc')
   })
 
   it.if(IS_DARWIN)('reports success without a failure message when launchctl exits 0', async () => {
@@ -481,14 +464,11 @@ describe('launchctlKickstart', () => {
     shim = await writeShim({ exitCode: LAUNCHCTL_EALREADY })
     process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
 
-    const result = await launchctlKickstart(
-      {
-        label: 'com.example.hrc',
-        domain: 'gui/501',
-        serviceTarget: 'gui/501/com.example.hrc',
-      },
-      { kill: true }
-    )
+    const result = await launchctlKickstart({
+      label: 'com.example.hrc',
+      domain: 'gui/501',
+      serviceTarget: 'gui/501/com.example.hrc',
+    })
 
     expect(result.ok).toBe(false)
     expect(result.exitCode).toBe(LAUNCHCTL_EALREADY)

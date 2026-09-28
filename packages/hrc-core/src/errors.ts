@@ -39,6 +39,13 @@ export const HrcErrorCode = {
   ASK_CLIENT_UNSUPPORTED: 'ask_client_unsupported',
   /** The daemon has durably closed new turn admission for a drained restart. */
   SERVER_DRAINING: 'server_draining',
+  /**
+   * T-09861: a server stop/restart request the daemon did not authorize. The
+   * refusal changed no state: no drain, no admission close, no signal.
+   */
+  SERVER_LIFECYCLE_REFUSED: 'server_lifecycle_refused',
+  /** T-09861: an authorized stop/restart refused because work is in flight (no --wait/--drain/--force). */
+  SERVER_LIFECYCLE_IN_FLIGHT: 'server_lifecycle_in_flight',
   RUNTIME_UNAVAILABLE: 'runtime_unavailable',
   RUN_ZOMBIE_TIMEOUT: 'run_zombie_timeout',
   RUNTIME_TERMINATED_WITH_ACTIVE_RUN: 'runtime_terminated_with_active_run',
@@ -150,7 +157,7 @@ export const HrcErrorCode = {
 
 export type HrcErrorCode = (typeof HrcErrorCode)[keyof typeof HrcErrorCode]
 
-export type HrcHttpStatus = 400 | 404 | 409 | 422 | 500 | 503
+export type HrcHttpStatus = 400 | 403 | 404 | 409 | 422 | 500 | 503
 
 export type HrcHttpError = {
   error: {
@@ -188,6 +195,8 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.BROKER_DESCRIPTOR_ABSENT]: 422,
   [HrcErrorCode.ASK_CLIENT_UNSUPPORTED]: 422,
   [HrcErrorCode.SERVER_DRAINING]: 503,
+  [HrcErrorCode.SERVER_LIFECYCLE_REFUSED]: 403,
+  [HrcErrorCode.SERVER_LIFECYCLE_IN_FLIGHT]: 409,
   [HrcErrorCode.RUNTIME_UNAVAILABLE]: 503,
   [HrcErrorCode.RUN_ZOMBIE_TIMEOUT]: 500,
   [HrcErrorCode.RUNTIME_TERMINATED_WITH_ACTIVE_RUN]: 500,

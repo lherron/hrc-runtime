@@ -1495,6 +1495,11 @@ export type HrcCapabilityStatus = {
         version?: string | undefined
       }
     }
+    /**
+     * T-09861: this daemon authorizes and performs `POST /v1/server/lifecycle`.
+     * Absent on a pre-contract daemon, against which the CLI fails closed.
+     */
+    serverLifecycle?: boolean | undefined
   }
 }
 

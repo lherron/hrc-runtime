@@ -359,11 +359,34 @@ export type LiveSeatRefRow = {
   hostSessionId: string
 }
 
+/**
+ * T-09861: told of every inserted runtime and every repository status change,
+ * so the daemon can mint and revoke per-runtime lifecycle credentials at the
+ * launch/teardown boundary. Raw-SQL status writes bypass it; the daemon's
+ * periodic reconcile and request-time liveness check cover those.
+ */
+export type RuntimeChangeObserver = (runtime: HrcRuntimeSnapshot) => void
+
 export class RuntimeRepository {
+  private changeObserver: RuntimeChangeObserver | undefined
+
   constructor(
     private readonly db: Database,
     private readonly runIdOwnership: RunIdOwnershipRegistry = new RunIdOwnershipRegistry(db)
   ) {}
+
+  setChangeObserver(observer: RuntimeChangeObserver | undefined): void {
+    this.changeObserver = observer
+  }
+
+  private notifyChange(runtime: HrcRuntimeSnapshot | null): void {
+    if (runtime === null || this.changeObserver === undefined) return
+    try {
+      this.changeObserver(runtime)
+    } catch {
+      // An observer failure must never fail the store write it observes.
+    }
+  }
 
   count(): number {
     const row = this.db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM runtimes').get()
@@ -463,10 +486,12 @@ export class RuntimeRepository {
       record.updatedAt
     )
 
-    return requireRecord(
+    const inserted = requireRecord(
       this.getByRuntimeId(record.runtimeId),
       `failed to reload runtime ${record.runtimeId}`
     )
+    this.notifyChange(inserted)
+    return inserted
   }
 
   getByRuntimeId(runtimeId: string): HrcRuntimeSnapshot | null {
@@ -635,7 +660,9 @@ export class RuntimeRepository {
 
     const { clause, values } = buildSetClause(entries)
     execute(this.db, `UPDATE runtimes SET ${clause} WHERE runtime_id = ?`, ...values, runtimeId)
-    return this.getByRuntimeId(runtimeId)
+    const updated = this.getByRuntimeId(runtimeId)
+    if (statusChanged) this.notifyChange(updated)
+    return updated
   }
 
   updateStatus(runtimeId: string, status: string, updatedAt: string): HrcRuntimeSnapshot | null {

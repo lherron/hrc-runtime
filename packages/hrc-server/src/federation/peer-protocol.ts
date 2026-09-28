@@ -34,6 +34,8 @@ export type PeerProtocolHealth = {
     readonly runtimeProjection?: boolean | undefined
     readonly collectiveHistory?: boolean | undefined
     readonly semanticTurnHandoff?: boolean | undefined
+    /** T-09861: accepts attested `POST /v1/federation/server-lifecycle`. */
+    readonly serverLifecycle?: boolean | undefined
   }
   /** Additive F3 projection, returned only when the caller asks for it. */
   readonly runtimes?: readonly HrcRuntimeSnapshot[] | undefined
@@ -102,6 +104,16 @@ export type PeerCollectiveHistoryQueryHandler = (request: {
   readonly filter: Readonly<Record<string, unknown>>
 }) => Promise<ListMessagesResponse> | ListMessagesResponse
 
+/**
+ * T-09861 §5 — an attested stop/restart from a Mable primary on the origin
+ * node. The peer is token-authenticated before this runs; the handler re-checks
+ * the attestation itself and answers with its own status and body.
+ */
+export type PeerServerLifecycleHandler = (request: {
+  readonly authenticatedNodeId: string
+  readonly body: Readonly<Record<string, unknown>>
+}) => Promise<{ readonly status: number; readonly body: Record<string, unknown> }>
+
 export type PeerProtocolRequestHandlerOptions = {
   readonly localNodeId: string
   readonly peers: ReadonlyMap<string, PeerEntry>
@@ -122,6 +134,7 @@ export type PeerProtocolRequestHandlerOptions = {
   readonly collectiveHistoryReplicate?: PeerCollectiveHistoryReplicateHandler | undefined
   readonly collectiveHistoryCheckpoint?: PeerCollectiveHistoryCheckpointHandler | undefined
   readonly collectiveHistoryQuery?: PeerCollectiveHistoryQueryHandler | undefined
+  readonly serverLifecycle?: PeerServerLifecycleHandler | undefined
 }
 
 export type PeerProtocolEndpointControl = {
@@ -491,6 +504,18 @@ export function createPeerProtocolRequestHandler(
           },
           200
         )
+      }
+
+      if (request.method === 'POST' && url.pathname === '/v1/federation/server-lifecycle') {
+        const body = await requestRecord(request)
+        if (options.serverLifecycle === undefined) {
+          return refusal(404, 'peer_upgrade_required', { retryable: false })
+        }
+        const outcome = await options.serverLifecycle({
+          authenticatedNodeId: peer.nodeId,
+          body,
+        })
+        return responseJson(outcome.body, outcome.status)
       }
 
       const claimStartResponse = await handleClaimStartRequest({

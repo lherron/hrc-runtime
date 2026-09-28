@@ -66,25 +66,36 @@ type Inspectable = HrcServer & {
   markShutdownDeadlineExpired(): void
 }
 
+// T-09861 §7: the attribution source is the daemon's verified grant.
 const SEAT_ATTRIBUTION: ServerShutdownAttribution = {
+  reason: 'lifecycle:restart',
+  grant: {
+    requestId: 'lifecycle-t08137',
+    requestedBy: 'agent:mable:project:hrc-runtime:task:primary',
+    callerKind: 'mable-primary',
+    originNode: 'max3',
+    reason: 'T-08137 smoke',
+    action: 'restart',
+    flags: { wait: true, drain: false, force: false },
+  },
+}
+
+const NO_INTENT: ServerShutdownAttribution = {
+  reason: 'SIGTERM',
+  grant: null,
+  ungranted: true,
+}
+
+/** What a pre-contract predecessor wrote (flat, caller-intent attribution). */
+const LEGACY_ATTRIBUTION = {
   reason: 'SIGTERM',
   callerKind: 'seat',
   requestedBy: 'agent:clod:project:hrc-runtime:task:T-08137/lane:main',
   requestedAction: 'restart',
   requestedRunId: 'run-t08137',
-  requestedReason: 'T-08137 smoke',
+  requestedReason: 'legacy smoke',
   requestedByPid: 4242,
-}
-
-const NO_INTENT: ServerShutdownAttribution = {
-  reason: 'SIGTERM',
-  callerKind: null,
-  requestedBy: null,
-  requestedAction: null,
-  requestedRunId: null,
-  requestedReason: null,
-  requestedByPid: null,
-}
+} as unknown as ServerShutdownAttribution
 
 function rejected(message: string): Promise<never> {
   const promise = Promise.reject(new Error(message))
@@ -214,12 +225,28 @@ describe('T-08137 daemon lifecycle provenance', () => {
     expect(payload(after[3])['previousPid']).toBe(process.pid)
     expect(status.lastRestart).toEqual({
       at: after[3]?.ts,
-      requestedBy: SEAT_ATTRIBUTION.requestedBy,
+      requestedBy: SEAT_ATTRIBUTION.grant?.requestedBy,
       reason: 'T-08137 smoke',
     })
   })
 
-  it('a no-intent stop records explicit nulls and renders external attribution', async () => {
+  it("T-09861 lastRestart still reads a pre-contract predecessor's flat stopped attribution", async () => {
+    const first = await startLifecycle()
+    first.beginLifecycleShutdown(LEGACY_ATTRIBUTION)
+    await first.stop()
+    const second = await startLifecycle()
+    const status = (await (await fixture.fetchSocket('/v1/status')).json()) as {
+      lastRestart: unknown
+    }
+    await second.stop()
+    expect(status.lastRestart).toEqual({
+      at: serverRows()[3]?.ts,
+      requestedBy: 'agent:clod:project:hrc-runtime:task:T-08137/lane:main',
+      reason: 'legacy smoke',
+    })
+  })
+
+  it('an ungranted stop records grant null with the ungranted marker and renders external attribution', async () => {
     const first = await startLifecycle()
     first.beginLifecycleShutdown(NO_INTENT)
     await first.stop()
@@ -519,8 +546,11 @@ describe('T-08137 daemon lifecycle provenance', () => {
         expect(post.idempotencyKey).toMatch(new RegExp(`^server:[^:]+:${incarnation}:\\d+$`))
       }
       const stopped = ledger.projectEventPosts[1]
-      expect(stopped?.attributes['requested_by']).toBe(SEAT_ATTRIBUTION.requestedBy)
+      expect(stopped?.attributes['requested_by']).toBe(SEAT_ATTRIBUTION.grant?.requestedBy)
       expect(stopped?.attributes['reason']).toBe('T-08137 smoke')
+      expect(stopped?.attributes['caller_kind']).toBe('mable-primary')
+      expect(stopped?.attributes['origin_node']).toBe('max3')
+      expect(stopped?.attributes['flags']).toBe('wait')
       expect(stopped?.idempotencyKey?.endsWith(`:${rows[2]?.hrc_seq}`)).toBe(true)
       expect(cursor).toBe(rows[3]?.hrc_seq)
     })

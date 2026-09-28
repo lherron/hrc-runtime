@@ -1,4 +1,4 @@
-import type { HrcLastRestart, HrcLifecycleEvent } from 'hrc-core'
+import type { HrcLastRestart, HrcLifecycleEvent, HrcServerLifecycleGrant } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { appendHrcEvent } from './hrc-event-helper.js'
@@ -26,20 +26,23 @@ export type ServerLifecycleEventKind =
   | 'server.started'
 
 /**
- * The shutdown intent the foreground consumed, flattened. Every field is
- * explicit JSON null when absent: a no-intent SIGTERM is `requestedBy: null`,
- * which renders as external attribution.
+ * T-09861 §7: what `server.shutting_down` / `server.stopped` attribute a
+ * shutdown to. The attribution SOURCE is the daemon's own verified lifecycle
+ * grant — never a caller-written file or env. A graceful shutdown with no grant
+ * (a raw `kill`/`launchctl kickstart -k` SIGTERM) carries an explicit
+ * `grant: null` plus `ungranted: true`; it is still initiation evidence only.
  */
-export type ServerShutdownAttribution = {
-  /** The signal or cause that began shutdown (`SIGTERM`, `unhandledRejection`). */
-  reason: string
-  callerKind: string | null
-  requestedBy: string | null
-  requestedAction: string | null
-  requestedRunId: string | null
-  requestedReason: string | null
-  requestedByPid: number | null
-}
+export type ServerShutdownAttribution =
+  | {
+      /** The signal or cause that began shutdown (`SIGTERM`, `lifecycle:restart`). */
+      reason: string
+      grant: HrcServerLifecycleGrant
+    }
+  | {
+      reason: string
+      grant: null
+      ungranted: true
+    }
 
 export type ServerBootProvenance = {
   pid: number
@@ -116,7 +119,9 @@ export function recordServerBoot(db: HrcDatabase, boot: ServerBootProvenance): H
 
 /**
  * `lastRestart`: the latest `server.started` plus the server fact immediately
- * preceding it. Only a completed `server.stopped` carries attribution through.
+ * preceding it. Only a completed `server.stopped` carries attribution through:
+ * its verified grant (T-09861), or the flat attribution a pre-contract
+ * predecessor wrote.
  */
 export function projectLastRestart(db: HrcDatabase): HrcLastRestart | null {
   const started = db.hrcEvents.findLatestLocalInScope(SERVER_EVENT_SCOPE_REF, {
@@ -128,6 +133,14 @@ export function projectLastRestart(db: HrcDatabase): HrcLastRestart | null {
     return { at: started.ts, requestedBy: null, reason: null }
   }
   const payload = record(previous.payload)
+  if ('grant' in payload) {
+    const grant = record(payload['grant'])
+    return {
+      at: started.ts,
+      requestedBy: stringOrNull(grant['requestedBy']),
+      reason: stringOrNull(grant['reason']),
+    }
+  }
   return {
     at: started.ts,
     requestedBy: stringOrNull(payload['requestedBy']),

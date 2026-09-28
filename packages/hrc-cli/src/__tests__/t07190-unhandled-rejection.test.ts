@@ -42,11 +42,10 @@ test('a booted foreground server handles rejected promises with deliberate fatal
     expect(stderr).toContain('"decision":"continue_shutdown"')
     expect(stderr).toContain('T-07190 outer rejection')
     expect(stderr).toContain('T-07190 inner cause')
-    expect(stderr).toContain('"requestedAction":"restart"')
-    expect(stderr).toContain(
-      '"requestedBy":"agent:test:project:hrc-runtime:task:primary/lane:main"'
-    )
-    expect(stderr).toContain('"requestedRunId":"run-t07190"')
+    // T-09861: no grant was issued, so the fatal-policy shutdown is ungranted;
+    // a caller-written file can no longer attribute it.
+    expect(stderr).toContain('"grant":null')
+    expect(stderr).not.toContain('"requestedBy"')
     expect(stderr).toContain('server.shutting_down')
     expect(stderr.indexOf('server.listening')).toBeLessThan(
       stderr.indexOf('server.unhandled_rejection')

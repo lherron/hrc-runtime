@@ -36,10 +36,6 @@ export const NOW = '2026-09-17T07:10:00.000Z'
 export const APP_ID = 't08576'
 export const KEY = 'birth'
 export const APP_SCOPE = `app:${APP_ID}`
-export const PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE =
-  'refusing server lifecycle mutation: partial HRC/ASP session envelope; ' +
-  'run from a clean operator shell or a recognized primary scope'
-
 export let root: string
 export let socketPath: string
 export let server: HrcServer

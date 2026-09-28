@@ -2,8 +2,6 @@ import { Database } from 'bun:sqlite'
 import { existsSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { resolveDatabasePath } from 'hrc-core'
-
 /**
  * One in-flight unit of work that would be killed by stopping/restarting hrc.
  */
@@ -27,17 +25,6 @@ export type InFlightWork = {
 const IN_FLIGHT_RECENCY_MS = 5 * 60_000
 
 /**
- * The caller's own runId, if invoked from inside an agent runtime. Used to
- * filter the caller from the in-flight list so `hrc server restart --wait`
- * doesn't deadlock waiting on itself: the agent can't finish its turn until
- * the wait returns, and the wait can't return until the agent isn't in
- * flight. Self-exclusion breaks the cycle.
- */
-function selfRunId(): string | undefined {
-  return process.env['HRC_RUN_ID']
-}
-
-/**
  * Optional filter for the in-flight list. `excludeTransports` drops rows whose
  * `runs.transport` matches any listed value. Used by `hrc server restart` to
  * skip tmux runs, which keep running independently of the daemon and are not
@@ -47,12 +34,19 @@ export type InFlightFilter = {
   excludeTransports?: readonly string[] | undefined
   /** Include recent accepted rows that are queued but not yet active on a runtime. */
   includeAcceptedRuns?: boolean | undefined
+  /**
+   * The requesting caller's own runId. A `restart --wait` from inside an agent
+   * turn would otherwise deadlock waiting on itself: the turn cannot finish
+   * until the wait returns. Attribution only — it can only shrink the gate for a
+   * caller the daemon already authorized.
+   */
+  excludeRunId?: string | undefined
 }
 
 /**
- * Read in-flight runs directly from hrc state.sqlite. We hit the file rather
- * than the daemon because callers want this data right before stopping the
- * daemon — querying the daemon mid-shutdown is racy and pointless.
+ * Read in-flight runs from hrc state.sqlite on a separate read-only
+ * connection. T-09861 moved this gate into the daemon: the lifecycle endpoint
+ * authorizes first, then gates, waits or drains, then acts.
  *
  * "In flight" = a runtime is currently `busy` with an `active_run_id`, **and**
  * the hrc_events stream shows recent activity for that runtime. We use the
@@ -62,8 +56,8 @@ export type InFlightFilter = {
  * alone because abandoned `runs.status='started'` rows accumulate when
  * launches die hard.
  */
-export function listInFlightWork(dbPath?: string, filter?: InFlightFilter): InFlightWork[] {
-  const path = dbPath ?? resolveDatabasePath()
+export function listInFlightWork(dbPath: string, filter?: InFlightFilter): InFlightWork[] {
+  const path = dbPath
   if (!existsSync(path)) return []
   const db = new Database(path, { readonly: true })
   try {
@@ -117,7 +111,7 @@ export function listInFlightWork(dbPath?: string, filter?: InFlightFilter): InFl
              ORDER BY r.started_at ASC`
           )
           .all(cutoff)
-    const self = selfRunId()
+    const self = filter?.excludeRunId
     const excluded = filter?.excludeTransports?.length
       ? new Set(filter.excludeTransports)
       : undefined
@@ -157,7 +151,7 @@ export function formatInFlightWork(items: InFlightWork[]): string {
 export async function waitForInFlightDrain(options: {
   timeoutMs: number
   pollIntervalMs?: number | undefined
-  dbPath?: string | undefined
+  dbPath: string
   filter?: InFlightFilter | undefined
   onTick?: ((items: InFlightWork[]) => void) | undefined
 }): Promise<InFlightWork[]> {

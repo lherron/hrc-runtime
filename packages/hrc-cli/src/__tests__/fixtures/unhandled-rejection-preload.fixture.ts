@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 const runtimeRoot = process.env['HRC_RUNTIME_DIR']
@@ -19,18 +19,6 @@ const timer = setInterval(() => {
 
   clearInterval(timer)
   setTimeout(() => {
-    writeFileSync(
-      join(runtimeRoot, 'shutdown-intent.json'),
-      `${JSON.stringify({
-        action: 'restart',
-        requestedBy: 'agent:test:project:hrc-runtime:task:primary/lane:main',
-        requestedRunId: 'run-t07190',
-        reason: 'exercise rejection attribution',
-        byPid: process.pid + 1,
-        at: new Date().toISOString(),
-      })}\n`
-    )
-
     Promise.reject(
       new Error('T-07190 outer rejection', {
         cause: new Error('T-07190 inner cause'),

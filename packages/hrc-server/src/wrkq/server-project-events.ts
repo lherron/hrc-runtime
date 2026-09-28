@@ -74,8 +74,13 @@ export function deriveServerProjectEvent(input: {
   }
   const payload = isRecord(event.payload) ? event.payload : {}
   const stopped = event.eventKind === 'server.stopped'
-  const requestedBy = text(payload['requestedBy']) ?? 'external'
-  const reason = text(payload['requestedReason'])
+  // T-09861: a contract daemon attributes from its verified grant; a
+  // pre-contract predecessor's row still carries the flat fields.
+  const granted = 'grant' in payload
+  const grant = isRecord(payload['grant']) ? payload['grant'] : {}
+  const flags = isRecord(grant['flags']) ? grant['flags'] : {}
+  const requestedBy = text(granted ? grant['requestedBy'] : payload['requestedBy']) ?? 'external'
+  const reason = text(granted ? grant['reason'] : payload['requestedReason'])
 
   // ORDER IS THE CONTRACT (wrkq renders producer order): provenance, then the
   // process, then how it started or who stopped it.
@@ -87,9 +92,22 @@ export function deriveServerProjectEvent(input: {
       ? {
           requested_by: requestedBy,
           ...attr('reason', reason),
-          ...attr('caller_kind', payload['callerKind']),
-          ...attr('action', payload['requestedAction']),
-          ...attr('run_id', payload['requestedRunId']),
+          ...(granted
+            ? {
+                ...attr('caller_kind', grant['callerKind']),
+                ...attr('action', grant['action']),
+                ...attr('origin_node', grant['originNode']),
+                ...attr('request_id', grant['requestId']),
+                ...attr(
+                  'flags',
+                  ['wait', 'drain', 'force'].filter((flag) => flags[flag] === true).join(',')
+                ),
+              }
+            : {
+                ...attr('caller_kind', payload['callerKind']),
+                ...attr('action', payload['requestedAction']),
+                ...attr('run_id', payload['requestedRunId']),
+              }),
           ...attr('signal', payload['reason']),
         }
       : {
