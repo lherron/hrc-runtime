@@ -8,6 +8,7 @@ import type { HrcServer } from '../index'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { parseSubmissionRequest } from '../server-parsers.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { seedDispatchedBrokerInvocation } from './persisted-invocation.fixture.js'
 
 /**
  * T-08610 contract: `POST /v1/submissions/invoke` gains `ttlMs` and
@@ -109,6 +110,10 @@ beforeEach(async () => {
   server = await createHrcServer(fixture.serverOpts())
   internal = server as unknown as HrcServerInstanceForHandlers
   hostSessionId = (await fixture.resolveSession('t08610-session')).hostSessionId
+  seedDispatchedBrokerInvocation(internal.db, {
+    invocationId: 'inv-t08610',
+    runtimeId: 'rt-t08610',
+  })
   captured = []
   installDispatchDouble()
 })

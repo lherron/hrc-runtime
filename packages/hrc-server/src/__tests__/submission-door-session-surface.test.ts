@@ -8,6 +8,7 @@ import type { HrcServerInstanceForHandlers } from '../server-instance-context.js
 import { parseSubmissionRequest } from '../server-parsers.js'
 import { projectSubmissionResponse } from '../turn-dispatch-handlers.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { seedDispatchedBrokerInvocation } from './persisted-invocation.fixture.js'
 
 const runtimeIntent: HrcRuntimeIntent = {
   placement: {
@@ -47,6 +48,7 @@ beforeEach(async () => {
   server = await createHrcServer(fixture.serverOpts())
   internal = server as unknown as HrcServerInstanceForHandlers
   hostSessionId = (await fixture.resolveSession('submission-session-surface')).hostSessionId
+  seedDispatchedBrokerInvocation(internal.db, { invocationId: 'inv-fixed', runtimeId: 'rt-fixed' })
   captures = []
 })
 
