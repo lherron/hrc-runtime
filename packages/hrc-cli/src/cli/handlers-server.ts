@@ -367,6 +367,14 @@ async function requestServerLifecycle(
     defaultValue: DEFAULT_RESTART_PROOF_TIMEOUT_MS,
     min: 1,
   })
+  const waitTimeoutMs = parseIntegerFlag(args, '--wait-timeout-ms', {
+    defaultValue: 300_000,
+    min: 1,
+  })
+  const drainTimeoutMs = parseIntegerFlag(args, '--drain-timeout-ms', {
+    defaultValue: 300_000,
+    min: 1,
+  })
   const wait = hasFlag(args, '--wait')
   const drain = hasFlag(args, '--drain')
   if (drain && wait) {
@@ -402,11 +410,8 @@ async function requestServerLifecycle(
     wait,
     drain,
     force: hasFlag(args, '--force'),
-    waitTimeoutMs: parseIntegerFlag(args, '--wait-timeout-ms', { defaultValue: 300_000, min: 1 }),
-    drainTimeoutMs: parseIntegerFlag(args, '--drain-timeout-ms', {
-      defaultValue: 300_000,
-      min: 1,
-    }),
+    waitTimeoutMs,
+    drainTimeoutMs,
     proofTimeoutMs,
     ...(process.env['HRC_RUN_ID'] ? { requestedRunId: process.env['HRC_RUN_ID'] } : {}),
   }
