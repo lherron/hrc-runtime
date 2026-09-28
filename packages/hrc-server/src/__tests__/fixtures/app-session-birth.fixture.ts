@@ -515,6 +515,10 @@ export async function expectBirthAutoDispatch(input: {
   await settle(() => (ledger?.enqueueCalls.length ?? 0) > enqueueIndex)
   const enqueue = ledger?.enqueueCalls[enqueueIndex]
   const invocationId = enqueue === undefined ? undefined : String(enqueue.request.invocationId)
+  // 78b1077b / T-08716: the post-birth dispatch REUSES the invocation this
+  // birth started instead of starting a second writer. Pin the reuse
+  // positively: the auto-dispatch lands on the latest birth's invocation.
+  expect(invocationId).toBe(String(ledger?.startCalls.at(-1)?.request.spec.invocationId))
   const start = ledger?.startCalls.find(
     (call) => String(call.request.spec.invocationId) === invocationId
   )

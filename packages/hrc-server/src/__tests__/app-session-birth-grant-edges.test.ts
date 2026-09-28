@@ -16,6 +16,7 @@ import {
   post,
   seedAppIdentity,
   setUpAppSessionBirthFixture,
+  settle,
   tearDownAppSessionBirthFixture,
 } from './fixtures/app-session-birth.fixture'
 
@@ -44,7 +45,8 @@ describe('T-08576 app-session birth grant edges', () => {
       correlation: frozenPreparations(hostSessionId)[0]?.intent?.placement?.correlation,
       row,
     }).toEqual({
-      birthCount: 2,
+      // 78b1077b / T-08716: one start per real birth; the dispatch reuses it.
+      birthCount: 1,
       env: {
         AGENT_HOST_SESSION_ID: hostSessionId,
         HRC_HOST_SESSION_ID: hostSessionId,
@@ -56,6 +58,11 @@ describe('T-08576 app-session birth grant edges', () => {
       correlation: { hostSessionId, generation: 1, runId },
       row: expect.objectContaining({ hostSessionId, generation: 1, runtimeId: expect.any(String) }),
     })
+    // The initial turn ran on the invocation this apply born, not a second one.
+    await settle(() => (ledger?.enqueueCalls.length ?? 0) > 0)
+    expect(String(ledger?.enqueueCalls.at(-1)?.request.invocationId)).toBe(
+      String(ledger?.startCalls[0]?.request.spec.invocationId)
+    )
   })
 
   it('R-B7(g7) [green-phase grant seam] refuses an ungranted app compile identity before graph writes', async () => {

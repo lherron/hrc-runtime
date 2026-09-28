@@ -283,10 +283,16 @@ async function ensureAppSessionOwned(
     const runtime = await this.ensureRuntimeForSession(session, spec.runtimeIntent, restartStyle)
     runtimeId = runtime.runtimeId
 
-    // Auto-dispatch harness turn — with or without prompt (T-01021 / T-01024)
+    // Auto-dispatch harness turn — with or without prompt (T-01021 / T-01024).
+    // Ensure materializes the session and admits its first turn; it never
+    // waits for that turn to complete. A reused live v2 headless runtime would
+    // otherwise block ensure on the provider turn (T-09746, since 78b1077b).
     const runId = `run-${randomUUID()}`
     const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
-    await this.dispatchTurnForSession(session, intent, body.initialPrompt ?? '', { runId })
+    await this.dispatchTurnForSession(session, intent, body.initialPrompt ?? '', {
+      runId,
+      waitForCompletion: false,
+    })
   }
 
   if (spec.kind === 'command') {
@@ -363,7 +369,10 @@ async function ensureExistingAppSession(
         if (body.initialPrompt) {
           const runId = `run-${randomUUID()}`
           const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
-          await this.dispatchTurnForSession(session, intent, body.initialPrompt, { runId })
+          await this.dispatchTurnForSession(session, intent, body.initialPrompt, {
+            runId,
+            waitForCompletion: false,
+          })
         }
       } else {
         // No live runtime, unavailable, or forceRestart — proceed with re-ensure.
@@ -392,6 +401,7 @@ async function ensureExistingAppSession(
           const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
           await this.dispatchTurnForSession(session, intent, body.initialPrompt ?? '', {
             runId,
+            waitForCompletion: false,
           })
         }
       }

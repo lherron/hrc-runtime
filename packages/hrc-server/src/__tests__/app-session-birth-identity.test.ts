@@ -197,7 +197,8 @@ describe('T-08576 app-session birth identity boundary', () => {
     await expectBirthAutoDispatch({
       hostSessionId,
       body: '',
-      expectedStartCount: 2,
+      // 78b1077b / T-08716: one start per real birth; the dispatch reuses it.
+      expectedStartCount: 1,
     })
   })
 
@@ -324,7 +325,8 @@ describe('T-08576 app-session birth identity boundary', () => {
     await expectBirthAutoDispatch({
       hostSessionId,
       body: '',
-      expectedStartCount: 2,
+      // 78b1077b / T-08716: one start per real birth; the dispatch reuses it.
+      expectedStartCount: 1,
     })
   })
 
@@ -580,7 +582,8 @@ describe('T-08576 app-session birth identity boundary', () => {
     await expectBirthAutoDispatch({
       hostSessionId: appHost,
       body: '',
-      expectedStartCount: 2,
+      // 78b1077b / T-08716: one start per real birth; the dispatch reuses it.
+      expectedStartCount: 1,
     })
   })
 
@@ -774,7 +777,8 @@ describe('T-08576 app-session birth identity boundary', () => {
     await expectBirthAutoDispatch({
       hostSessionId: promptedHost,
       body: 'grant this start',
-      expectedStartCount: 2,
+      // 78b1077b / T-08716: one start per real birth; the dispatch reuses it.
+      expectedStartCount: 1,
     })
 
     const priorCalls = ledger?.startCalls.length ?? 0
@@ -791,7 +795,8 @@ describe('T-08576 app-session birth identity boundary', () => {
       correlation: frozenPreparations(promptlessHost)[0]?.intent?.placement?.correlation,
       env: identityProjection(dispatchedIdentityEnv(priorCalls)),
     }).toEqual({
-      birthCount: 4,
+      // 78b1077b / T-08716: one start per real birth; the dispatch reuses it.
+      birthCount: 2,
       correlation: { hostSessionId: promptlessHost, generation: 1 },
       env: {
         AGENT_HOST_SESSION_ID: promptlessHost,
@@ -803,7 +808,8 @@ describe('T-08576 app-session birth identity boundary', () => {
     await expectBirthAutoDispatch({
       hostSessionId: promptlessHost,
       body: '',
-      expectedStartCount: 4,
+      // 78b1077b / T-08716: one start per real birth; the dispatch reuses it.
+      expectedStartCount: 2,
       enqueueIndex: 1,
     })
   })
@@ -840,10 +846,11 @@ describe('T-08576 app-session birth identity boundary', () => {
         runtimeId: run.runtimeId,
       })),
     }).toEqual({
-      birthCount: 3,
+      // 78b1077b / T-08716: one start per real birth; the dispatch reuses it.
+      birthCount: 1,
       enqueueCount: 2,
       lastEnqueue: expect.objectContaining({
-        invocationId: String(ledger?.startCalls[2]?.request.spec.invocationId),
+        invocationId: String(ledger?.startCalls[0]?.request.spec.invocationId),
         body: 'reuse the live birth',
       }),
       newRuns: [
@@ -879,7 +886,8 @@ describe('T-08576 app-session birth identity boundary', () => {
       correlation: frozenPreparations(appHost)[0]?.intent?.placement?.correlation,
       row: internal.db.runs.getByRunId(runId),
     }).toEqual({
-      birthCount: 2,
+      // 78b1077b / T-08716: one start per real birth; the dispatch reuses it.
+      birthCount: 1,
       runId: expect.stringMatching(/^run-/),
       agentRunId: runId,
       differsFromHistorical: true,
@@ -890,6 +898,11 @@ describe('T-08576 app-session birth identity boundary', () => {
         runtimeId: response.body.runtimeId,
       }),
     })
+    // The initial turn ran on the invocation the restart born, not a second one.
+    await settle(() => (ledger?.enqueueCalls.length ?? 0) > 0)
+    expect(String(ledger?.enqueueCalls.at(-1)?.request.invocationId)).toBe(
+      String(ledger?.startCalls[0]?.request.spec.invocationId)
+    )
   })
 
   it('R-B7(g6) clear-context relaunch follows the stored initial-turn predicate', async () => {
