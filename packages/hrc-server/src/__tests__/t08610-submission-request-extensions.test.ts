@@ -137,7 +137,10 @@ describe('invoke parser: ttlMs + coldBirth', () => {
     expect(parseSubmissionRequest(invokeBody(), 'invoke')).not.toHaveProperty('ttlMs')
   })
 
-  it('accepts a stable idempotency key on session-bound doors but not steer', () => {
+  // T-08207 (bb418a48) made steer an idempotent door too: format2 ingress
+  // requires a runless idempotent input on every door, steer included (pinned
+  // in t08207-public-ingress). Only the session-shaping fields stay off steer.
+  it('accepts a stable idempotency key on every door, steer included', () => {
     expect(
       parseSubmissionRequest(invokeBody({ idempotencyKey: 'failure-notice-1' }), 'enqueue')
     ).toMatchObject({ idempotencyKey: 'failure-notice-1' })
@@ -145,7 +148,12 @@ describe('invoke parser: ttlMs + coldBirth', () => {
       idempotencyKey: 'failure-notice-1',
     })
     void _runtimeIntent
-    expect(() => parseSubmissionRequest(steer, 'steer')).toThrow('unknown field "idempotencyKey"')
+    expect(parseSubmissionRequest(steer, 'steer')).toMatchObject({
+      idempotencyKey: 'failure-notice-1',
+    })
+    expect(() => parseSubmissionRequest({ ...steer, turnPolicy: 'open' }, 'steer')).toThrow(
+      'unknown field "turnPolicy"'
+    )
   })
 
   it('rejects bad promptMode, empty coldBirth, and unknown coldBirth fields', () => {

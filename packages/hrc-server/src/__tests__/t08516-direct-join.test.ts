@@ -319,25 +319,26 @@ describe('T-08516 direct protocol join', () => {
     expect(stored.runtimes).toHaveLength(0)
   })
 
-  test('IDENTITY_MINTED conflict names the exact predecessor state', async () => {
+  // 22674499 (direct pre-attach participant succession) made a never-attached
+  // IDENTITY_MINTED occupant supersedable without a predecessor token: it has
+  // no socket, no prepared descriptor, no broker identity and no runtime, so
+  // there is no writer to fence. ACTIVE and DETACHED occupants still refuse
+  // (below). Pinned alongside t08517/t08526, which 22674499 updated.
+  test('a never-attached IDENTITY_MINTED occupant is superseded, not conflicted', async () => {
     await start()
     await join({})
-    const before = readStore()
 
-    const intruder = await observe(await join({ hostIncarnationId: 'incarnation-beta' }))
-    expect(intruder.status).toBe(409)
-    expect(intruder.body).toMatchObject({
-      status: 'rejected',
-      reason: 'host_binding_conflict',
-      detail: `${SCOPE} is held by host incarnation incarnation-alpha (attempt IDENTITY_MINTED); an explicit matching expectedPredecessor is required`,
-    })
+    const successor = await observe(await join({ hostIncarnationId: 'incarnation-beta' }))
+    expect(successor.status).toBe(200)
+    expect(successor.body).toMatchObject({ status: 'registered', generation: 2, created: true })
 
-    // Speaking the protocol transfers nothing. The occupant's binding, its
-    // registration and its identities are exactly as they were.
     const after = readStore()
-    expect(after.registrations).toEqual(before.registrations)
-    expect(after.bindings).toEqual(before.bindings)
-    expect(after.attempts).toEqual(before.attempts)
+    const alpha = after.bindings.find((b) => b['host_incarnation_id'] === 'incarnation-alpha')
+    expect(alpha).toMatchObject({ state: 'RETIRED', disposition_reason: 'pre_attach_superseded' })
+    const abandoned = after.attempts.filter((a) => a['state'] === 'ABANDONED')
+    expect(abandoned).toHaveLength(1)
+    expect(String(abandoned[0]?.['disposition_reason'])).toStartWith('pre_attach_superseded:')
+    expect(after.attempts.filter((a) => a['state'] === 'IDENTITY_MINTED')).toHaveLength(1)
   })
 
   test('ACTIVE conflict names the exact predecessor state', async () => {
