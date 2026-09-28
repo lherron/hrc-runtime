@@ -1,0 +1,42 @@
+id: hrc-runtime.self-restart-turn-boundary
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: agent-initiated fresh-context restart at the arming turn's terminal
+predicate: >
+  An agent may arm or cancel a restart only for the live runtime identified by
+  its daemon-minted lifecycle credential and verified scope and generation;
+  the request has no target selector. Arming requires a handoff id and a current
+  broker seat observation in turn-active state, and binds one intent for that
+  host session to the observed runtime, invocation, and native turn id. A
+  terminal for a different turn cannot consume the intent or rotate the session.
+  Only a committed, non-retained terminal for the bound turn may claim the intent
+  once. On that terminal, HRC rotates the session to generation plus one with
+  continuation dropped, then delivers a prompt naming the handoff as the
+  successor's first turn through the semantic turn-handoff delivery path. The
+  CLI checks that the named wrkq handoff is pending and belongs to the caller's
+  agent and project; HRC stores the id without making wrkq an authorization
+  dependency. External-lifecycle participants cannot use this rotation. Queued
+  input on the old session and intents stranded by runtime or daemon loss before
+  the bound terminal are outside this contract by Lance's direction.
+authority: Lance request and explicit scope exclusions, 2026-09-28; Daedalus approval of wrkq:T-09872 revision 2, 2026-09-28
+source:
+  - wrkq:T-09872
+  - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
+  - architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml
+  - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
+  - packages/hrc-server/src/server-lifecycle-credentials.ts
+  - packages/hrc-server/src/broker/dispatch-observability.ts
+  - packages/hrc-server/src/broker/event-mapper.ts
+  - packages/hrc-server/src/event-notification-handlers.ts
+  - packages/hrc-server/src/runtime-control-handlers/session-rotation.ts
+  - packages/hrc-server/src/target-message-handlers.ts
+required_tests:
+  - just architecture-records
+  - T-09872 exact runtime invocation and turn identity gate, including an older terminal after arming
+  - T-09872 credential, handoff, no-active-turn, participant, and cancel refusal gates
+  - T-09872 installed Claude and Codex self-restart handoff acceptance
+last_verified: 2026-09-28 design approval by source review; implementation and installed acceptance pending
+reopen_when: Self-restart identity or authority, broker turn binding, terminal matching, continuation disposition, successor prompt delivery, participant exclusion, or Lance's scope exclusions change.
+supersedes: []
+superseded_by: []
