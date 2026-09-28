@@ -52,6 +52,14 @@ type WrkqHandoff = {
   scope_ref?: unknown
 }
 
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
 function checkHandoff(handoffId: string, scope: CallerScope): void {
   const result = spawnSync('wrkq', ['handoff', 'get', handoffId, '--json'], {
     encoding: 'utf8',
@@ -63,16 +71,17 @@ function checkHandoff(handoffId: string, scope: CallerScope): void {
       `could not run wrkq to check ${handoffId}: ${result.error.message}`
     )
   }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(result.stdout)
-  } catch {
-    parsed = undefined
-  }
+  const parsed = parseJson(result.stdout) ?? parseJson(result.stderr)
   const record = (parsed as { handoff?: WrkqHandoff } | undefined)?.handoff ?? parsed
   if (result.status !== 0 || record === null || typeof record !== 'object') {
-    const detail = (result.stderr || result.stdout).trim().split('\n')[0] ?? ''
-    refuse('handoff_not_found', `wrkq has no handoff ${handoffId}${detail ? ` (${detail})` : ''}`)
+    // wrkq reports failures as a pretty-printed {error:{code,message}} document.
+    const error = (parsed as { error?: { code?: unknown; message?: unknown } } | undefined)?.error
+    const detail =
+      typeof error?.message === 'string'
+        ? error.message
+        : ((result.stderr || result.stdout).trim().split('\n')[0] ?? '')
+    const code = typeof error?.code === 'string' ? error.code : 'handoff_not_found'
+    refuse(code, `could not read handoff ${handoffId}${detail ? `: ${detail}` : ''}`)
   }
   const handoff = record as WrkqHandoff
   if (handoff.agent_id !== scope.agentId || handoff.project_id !== scope.projectId) {
