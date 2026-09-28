@@ -21,6 +21,8 @@ import { join } from 'node:path'
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
+
 import { launchAspdPreparedAttempt, prepareAspdHeadlessAttempt } from '../aspd-headless-start'
 
 import {
@@ -29,6 +31,7 @@ import {
   createBrokerTmuxTuiAllocator,
 } from '../broker-interactive-handlers/substrate-allocator'
 import { HarnessBrokerController } from '../broker/controller'
+import { BrokerEventMapper } from '../broker/event-mapper'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import {
@@ -334,6 +337,29 @@ function runRow(runId: string): {
       [string]
     >('SELECT dispatched_input_id, correlation_json FROM runs WHERE run_id = ?')
     .get(runId) as never
+}
+
+/** The broker's real attribution of the argv launch turn, through the real mapper. */
+function observeLaunchTurn(invocationId: string): string {
+  const db = internal().db
+  db.brokerInvocations.update(invocationId, {
+    capabilitiesJson: JSON.stringify({ bracketMintingMode: 'harness-evidence' }),
+    updatedAt: new Date().toISOString(),
+  })
+  const mapper = new BrokerEventMapper({ db, now: () => new Date().toISOString() })
+  const submissionId = `human_submission_${invocationId}_1`
+  const turnId = `turn_${invocationId}_1`
+  const envelope = (seq: number, type: InvocationEventEnvelope['type'], payload: object) =>
+    ({
+      invocationId,
+      seq,
+      time: new Date().toISOString(),
+      type,
+      payload,
+    }) as InvocationEventEnvelope
+  mapper.apply(envelope(9001, 'turn.started', { turnId, source: 'hook-observed' }))
+  mapper.apply(envelope(9002, 'submission.executed', { submissionId, turnId }))
+  return submissionId
 }
 
 // ── G-B-route + G-B-D1 ────────────────────────────────────────────────────────
@@ -761,11 +787,15 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
   it('a prompted Claude birth whose producer launch-carries the prompt is admitted and launched with it', async () => {
     aspd.launchCarriedInitialPrompt = true
     const s = await seedInteractive()
-    await kickerSummons(s, 'T8712-FIRST')
+    const pending = kickerSummons(s, 'T8712-FIRST')
     await settle(() => ledger.startCalls.length === 1)
     expect(ledger.startCalls).toHaveLength(1)
     expect(launchPrompt(ledger.startCalls[0]?.request)).toContain('T8712-FIRST')
     expect(initialInputText(ledger.startCalls[0]?.request)).toBeUndefined()
+    // T-09643: the summons answers with the broker's name for the launch turn.
+    const submissionId = observeLaunchTurn(String(ledger.startCalls[0]?.request.spec.invocationId))
+    const body = (await (await pending).json()) as Record<string, unknown>
+    expect(body['submissionId']).toBe(submissionId)
     const [op] = operations(s.hostSessionId)
     expect(op?.record.admission.execution.driver).toBe('claude-code-tmux')
     expect(op?.error_code).toBeNull()

@@ -47,6 +47,7 @@ import { connectObservedBrokerUnixClient } from './broker/client-observability.j
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { isClosedDbError } from './broker/controller/internal.js'
 import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
+import { waitForLaunchCarriedSubmissionIdentity } from './launch-carried-submission.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import { recordStartBirth, startBirthOfIntent } from './presentation-operator.js'
 import {
@@ -67,6 +68,7 @@ import {
   type DispatchRunPersistenceOptions,
   dispatchOriginRunFields,
   dispatchRunPersistence,
+  isLaunchCarriedInvokeCorrelationJson,
 } from './server-types.js'
 import {
   aspdUnconfiguredError,
@@ -1158,6 +1160,30 @@ export function settleFailedHeadlessBrokerStart(
   )
 }
 
+/**
+ * T-09643: the submission identity a door reports for a v2 cold birth.
+ *
+ * A launch that carries its first turn as broker `initialInput` (codex-app-server)
+ * is admitted under that input's id, known at the durable start graph. An
+ * argv-carried launch (claude-code-tmux, muse-cli-tmux) has no initialInput;
+ * the start graph marks its run launch-carried and the broker names the turn
+ * only once observed. The door waits (bounded) for that identity -- the body is
+ * already on the launch, so answering without one reports a delivered write as
+ * unavailable. Anything else keeps no identity and the door refuses as before.
+ */
+async function coldBirthDoorSubmissionId(
+  server: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot,
+  runId: string
+): Promise<string | undefined> {
+  const compiled = compilerPrimingSubmissionId(server.db, runtime)
+  if (compiled !== undefined) return compiled
+  if (!isLaunchCarriedInvokeCorrelationJson(server.db.runs.getCorrelationJson(runId))) {
+    return undefined
+  }
+  return await waitForLaunchCarriedSubmissionIdentity(server, runId, runtime.runtimeId)
+}
+
 export async function executeHeadlessBrokerStartTurn(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
@@ -1333,7 +1359,7 @@ export async function executeHeadlessBrokerStartTurn(
     const submissionId =
       options.submissionDoor === undefined
         ? undefined
-        : compilerPrimingSubmissionId(this.db, runtime)
+        : await coldBirthDoorSubmissionId(this, runtime, runId)
     return json({
       runId,
       hostSessionId: session.hostSessionId,
@@ -1346,11 +1372,17 @@ export async function executeHeadlessBrokerStartTurn(
     } satisfies DispatchTurnResponseBase)
   }
   const runtime = await bootOperation
-  const submissionId =
+  const compiledSubmissionId =
     options.submissionDoor === undefined ? undefined : compilerPrimingSubmissionId(this.db, runtime)
   // A blocking caller waits for the FIRST turn now, because the first turn is the
   // delivery. There is no second submission whose completion it could await.
   await this.waitForHeadlessBrokerRunCompletion(runId, runtime.runtimeId)
+  // An argv-carried launch turn is named by the broker once observed, which a
+  // completed first turn has been (T-09643).
+  const submissionId =
+    options.submissionDoor === undefined
+      ? undefined
+      : (compiledSubmissionId ?? this.db.runs.getByRunId(runId)?.brokerSubmissionId)
   return json({
     runId,
     hostSessionId: session.hostSessionId,

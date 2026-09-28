@@ -128,14 +128,42 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
       updatedAt: fixture.now(),
     }
     let independentSubmissions = 0
+    // T-09643: the broker names the argv launch turn once observed; the
+    // non-waiting receipt answers with that identity instead of none.
+    const launchSubmissionId = 'human_submission_t08004_1'
     internal.startInteractiveTmuxBrokerRuntime = async (
-      _session: HrcSessionRecord,
+      startSession: HrcSessionRecord,
       _intent: HrcRuntimeIntent,
-      _runId: string,
+      startRunId: string,
       options
     ) => {
       options.onColdBirthPromptRoute?.(true)
+      internal.db.runtimes.insert(runtime)
+      internal.db.runs.insert({
+        runId: startRunId,
+        hostSessionId: startSession.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        scopeRef: startSession.scopeRef,
+        laneRef: startSession.laneRef,
+        generation: startSession.generation,
+        transport: 'tmux',
+        status: 'accepted',
+        acceptedAt: fixture.now(),
+        updatedAt: fixture.now(),
+        invocationId: runtime.activeInvocationId,
+        operationId: runtime.activeOperationId,
+      })
       await options.onAccepted?.(runtime)
+      setTimeout(() => {
+        try {
+          internal.db.runs.update(startRunId, {
+            brokerSubmissionId: launchSubmissionId,
+            updatedAt: fixture.now(),
+          })
+        } catch {
+          // The test already failed and closed the store.
+        }
+      }, 50)
       return runtime
     }
     internal.executeInteractiveBrokerInputTurn = async () => {
@@ -158,6 +186,9 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
     await Bun.sleep(0)
 
     expect(response.status).toBe(200)
+    expect(((await response.json()) as { submissionId?: string }).submissionId).toBe(
+      launchSubmissionId
+    )
     expect(independentSubmissions).toBe(0)
     expect(
       internal.db.brokerInvocationEvents

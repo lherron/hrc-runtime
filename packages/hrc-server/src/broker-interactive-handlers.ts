@@ -63,6 +63,7 @@ import {
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
 import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
+import { waitForLaunchCarriedSubmissionIdentity } from './launch-carried-submission.js'
 import { resolveBrokerDurableIpcEnabled } from './option-resolvers.js'
 import {
   assertRuntimeNotBusy,
@@ -865,12 +866,19 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     const runtime = await accepted
     // A launch-carried broker input is part of the durable start graph written
     // before `onAccepted`. Preserve that admission identity in the early birth
-    // receipt when the driver has one (codex-app-server initialInput). Drivers
-    // whose launch prompt rides argv legitimately return only runtime
-    // correlation here and learn their submission identity later.
-    const launchSubmissionId = submissionDoorCarriesColdLaunch(flagOptions.submissionDoor)
+    // receipt when the driver has one (codex-app-server initialInput). A driver
+    // whose launch prompt rides argv learns its identity only when the broker
+    // observes the launch turn; a submission door waits (bounded) for it rather
+    // than answering without one, because the body is already written (T-09643).
+    const acceptedSubmissionId = submissionDoorCarriesColdLaunch(flagOptions.submissionDoor)
       ? this.db.runs.getByRunId(runId)?.brokerSubmissionId
       : undefined
+    const launchSubmissionId =
+      acceptedSubmissionId === undefined &&
+      promptRodeLaunch &&
+      submissionDoorCarriesColdLaunch(flagOptions.submissionDoor)
+        ? await waitForLaunchCarriedSubmissionIdentity(this, runId, runtime.runtimeId)
+        : acceptedSubmissionId
     return json({
       runId,
       hostSessionId: session.hostSessionId,
@@ -887,7 +895,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   const runtime = await bootOperation
   if (promptRodeLaunch) {
     const submissionId = submissionDoorCarriesColdLaunch(flagOptions.submissionDoor)
-      ? await waitForLaunchCarriedInvokeSubmission(this, runId, runtime.runtimeId)
+      ? await waitForLaunchCarriedSubmissionIdentity(this, runId, runtime.runtimeId)
       : undefined
     return json({
       runId,
@@ -904,36 +912,6 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     waitForCompletion: false,
     responseFormat: flagOptions.responseFormat,
     ...dispatchRunPersistence(flagOptions),
-  })
-}
-
-async function waitForLaunchCarriedInvokeSubmission(
-  server: HrcServerInstanceForHandlers,
-  runId: string,
-  runtimeId: string
-): Promise<string> {
-  const deadline = Date.now() + 2 * 60 * 1000
-  while (Date.now() < deadline) {
-    const run = server.db.runs.getByRunId(runId)
-    if (run?.brokerSubmissionId !== undefined) return run.brokerSubmissionId
-    if (run !== null && !isRunActive(run)) {
-      throw new HrcRuntimeUnavailableError(
-        'launch-carried invoke ended without broker submission identity',
-        {
-          runtimeId,
-          runId,
-          status: run.status,
-          errorCode: run.errorCode,
-          errorMessage: run.errorMessage,
-        }
-      )
-    }
-    await delay(25)
-  }
-  throw new HrcRuntimeUnavailableError('launch-carried invoke admission timed out', {
-    runtimeId,
-    runId,
-    route: 'interactive-broker',
   })
 }
 

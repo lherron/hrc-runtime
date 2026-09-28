@@ -258,3 +258,113 @@ describe('T-08531 cold enqueue on claude-code-tmux carries priming and caller in
     })
   }
 })
+
+// T-09643: the non-blocking tmux drivers (codex-cli-tmux, pi-tui-tmux,
+// muse-cli-tmux) take the early-receipt branch. Their launch turn is named by
+// the broker only once observed, so that receipt must wait for the identity
+// instead of answering without one (the door then reported 503 for a delivered
+// body).
+describe('T-09643 non-blocking cold receipt waits for the launch turn identity', () => {
+  function stubColdStart(
+    internal: HrcServerInstanceForHandlers,
+    runtime: HrcRuntimeSnapshot,
+    nameLaunchTurn: ((runId: string) => void) | undefined
+  ): void {
+    internal.startInteractiveTmuxBrokerRuntime = async (
+      startSession: HrcSessionRecord,
+      _intent: HrcRuntimeIntent,
+      startRunId: string,
+      options
+    ) => {
+      options.onColdBirthPromptRoute?.(true)
+      internal.db.runtimes.insert(runtime)
+      internal.db.runs.insert({
+        runId: startRunId,
+        hostSessionId: startSession.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        scopeRef: startSession.scopeRef,
+        laneRef: startSession.laneRef,
+        generation: startSession.generation,
+        transport: 'tmux',
+        status: 'accepted',
+        acceptedAt: fixture.now(),
+        updatedAt: fixture.now(),
+        invocationId: runtime.activeInvocationId,
+        operationId: runtime.activeOperationId,
+      })
+      await options.onAccepted?.(runtime)
+      if (nameLaunchTurn !== undefined) setTimeout(() => nameLaunchTurn(startRunId), 50)
+      return runtime
+    }
+    internal.executeInteractiveBrokerInputTurn = async () => {
+      throw new Error('cold caller body was submitted a second time')
+    }
+    internal.publishPresentation = async () => undefined
+  }
+
+  it('answers with the broker-named launch submission, not an identity-less receipt', async () => {
+    const resolved = await fixture.resolveSession(SCOPE)
+    const internal = server as unknown as HrcServerInstanceForHandlers
+    const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
+    if (session === null) throw new Error('T-09643 fixture session missing')
+    const launchSubmissionId = 'human_submission_t09643_1'
+    stubColdStart(internal, coldRuntime(session, 'nonblocking'), (runId) => {
+      try {
+        internal.db.runs.update(runId, {
+          brokerSubmissionId: launchSubmissionId,
+          updatedAt: fixture.now(),
+        })
+      } catch {
+        // The test already failed and closed the store.
+      }
+    })
+
+    const response = await internal.handleInteractiveTmuxBrokerDispatchTurn(
+      session,
+      claudeIntent(),
+      CALLER,
+      'run-t09643-nonblocking',
+      {
+        flagEnvName: 'HRC_MUSE_CLI_TMUX_BROKER_ENABLED',
+        allowedBrokerDriver: 'muse-cli-tmux',
+        waitForCompletion: false,
+        submissionDoor: 'enqueue',
+        coldBirthPromptMode: 'append-to-priming',
+      }
+    )
+    const body = (await response.json()) as { submissionId?: string; admission?: string }
+    expect(body.submissionId).toBe(launchSubmissionId)
+    expect(body.admission).toBe('admitted')
+  })
+
+  it('an expired wait is an explicit error, never an identity-less receipt', async () => {
+    const resolved = await fixture.resolveSession(SCOPE)
+    const internal = server as unknown as HrcServerInstanceForHandlers & {
+      launchCarriedSubmissionWaitMs: number
+    }
+    internal.launchCarriedSubmissionWaitMs = 100
+    const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
+    if (session === null) throw new Error('T-09643 fixture session missing')
+    stubColdStart(internal, coldRuntime(session, 'nonblocking-timeout'), undefined)
+
+    const outcome = await internal
+      .handleInteractiveTmuxBrokerDispatchTurn(
+        session,
+        claudeIntent(),
+        CALLER,
+        'run-t09643-nonblocking-timeout',
+        {
+          flagEnvName: 'HRC_MUSE_CLI_TMUX_BROKER_ENABLED',
+          allowedBrokerDriver: 'muse-cli-tmux',
+          waitForCompletion: false,
+          submissionDoor: 'enqueue',
+          coldBirthPromptMode: 'append-to-priming',
+        }
+      )
+      .then(
+        () => 'resolved',
+        (error: unknown) => (error instanceof Error ? error.message : String(error))
+      )
+    expect(outcome).toBe('launch-carried submission identity timed out')
+  })
+})
