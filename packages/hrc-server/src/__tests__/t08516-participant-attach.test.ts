@@ -256,6 +256,37 @@ describe('T-08516 participant attachment', () => {
     expect(stored['establishment_last_error']).toBe('broker unreachable')
   })
 
+  test('T-09758 an identical retry on an established attempt with a dead endpoint is not attached', async () => {
+    const identity = await join()
+    const descriptor = composeDescriptor(identity)
+    const request = {
+      registrationId: identity.registrationId,
+      attemptId: identity.attemptId,
+      attachEpoch: identity.attachEpoch,
+      descriptor,
+    }
+    await attach(request)
+
+    // Establishment installed this attempt's identity into a broker that has
+    // since gone: HRC holds no client for it and nothing listens at the socket.
+    withStore((db) =>
+      db.sqlite
+        .query(
+          `UPDATE participant_registration_attempts
+              SET state = 'ACTIVE', broker_identity_json = ?, establishment_work_state = 'completed'
+            WHERE attempt_id = ?`
+        )
+        .run(JSON.stringify({ brokerInstanceId: 'broker-gone' }), identity.attemptId)
+    )
+
+    const retried = await observe(await attach(request))
+    expect(retried.status).toBe(409)
+    expect(retried.body).toMatchObject({
+      status: 'rejected',
+      reason: 'participant_established_endpoint_dead',
+    })
+  })
+
   test('a different descriptor cannot overwrite a frozen attempt', async () => {
     const identity = await join()
     const descriptor = composeDescriptor(identity)

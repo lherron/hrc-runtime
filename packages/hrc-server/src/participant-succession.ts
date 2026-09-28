@@ -291,11 +291,22 @@ function retirementDecision(
   return directRetirementDecision(current)
 }
 
+/**
+ * A committed intent is replayed only while its successor is still the
+ * registration's current attempt. A bridge successor keeps its predecessor's
+ * host binding, so once a broker has received its identity, the same
+ * predecessor triple names the successor itself and a matching request is the
+ * next replacement, not a retry of this one. A host successor gets a new
+ * binding, so its triple stays unambiguous after establishment.
+ */
 function findCommittedResult(
   server: HrcServerInstanceForHandlers,
   registration: ParticipantRegistration,
   request: DirectJoinRequest
 ): DirectJoinResult | null {
+  const currentAttempt = server.db.participantRegistrations.getAttemptByRegistrationId(
+    registration.registrationId
+  )
   for (const prior of server.db.participantRegistrations.listAttemptsByRegistrationId(
     registration.registrationId
   )) {
@@ -303,10 +314,16 @@ function findCommittedResult(
     if (!intent || !sameRequest(intent, request) || intent.allocatedAttemptId === undefined)
       continue
     const successor = server.db.participantRegistrations.getAttempt(intent.allocatedAttemptId)
+    if (
+      successor === null ||
+      successor.attemptId !== currentAttempt?.attemptId ||
+      (intent.kind === 'bridge' && successor.brokerIdentityJson !== undefined)
+    )
+      continue
     const current = server.db.participantRegistrations.getRegistrationById(
       registration.registrationId
     )
-    if (successor !== null && current !== null) return identityResult(current, successor, false)
+    if (current !== null) return identityResult(current, successor, false)
   }
   return null
 }

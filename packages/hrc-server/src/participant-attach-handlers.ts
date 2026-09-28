@@ -10,6 +10,7 @@ import {
 
 import { scheduleParticipantEstablishment } from './participant-establishment.js'
 import { persistHostingIntentIfRequired } from './participant-registration-handlers.js'
+import { observeParticipantTransportEvidence } from './participant-transport-evidence.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { json, timestamp } from './server-util.js'
 
@@ -268,6 +269,36 @@ function locateAttachTarget(
   return { ok: true, registration, attempt: current }
 }
 
+/**
+ * A converging retry reports `attached` only while establishment is still
+ * HRC's work or HRC holds the broker that received this attempt's identity.
+ * Once the identity is installed, establishment is never rescheduled for this
+ * attempt, so a converged attach on a lost broker would be a false `attached`
+ * that no work ever repairs; the lost broker needs a replacement instead.
+ */
+async function establishedAttachmentNotLive(
+  server: HrcServerInstanceForHandlers,
+  registration: ParticipantRegistration,
+  attempt: ParticipantAttempt
+): Promise<AttachParticipantResponse | null> {
+  const controller = server.harnessBrokerController
+  if (attempt.brokerIdentityJson === undefined || controller === undefined) return null
+  if (controller.activeClientInvocationId(attempt.runtimeId) === attempt.invocationId) return null
+  const probe = await observeParticipantTransportEvidence(server, registration, attempt, 'bridge')
+  if (probe.outcome === 'dead') {
+    return {
+      status: 'rejected',
+      reason: 'participant_established_endpoint_dead',
+      detail: `attempt ${attempt.attemptId} epoch ${attempt.attachEpoch} already installed its identity into a broker whose endpoint is dead; register a replacement naming this binding as expectedPredecessor`,
+    }
+  }
+  return {
+    status: 'pending',
+    reason: 'participant_established_endpoint_unconfirmed',
+    detail: `attempt ${attempt.attemptId} epoch ${attempt.attachEpoch} already installed its identity, and HRC holds no connection to that broker (${probe.evidence.liveness.reason}); reconnect or replacement owns it`,
+  }
+}
+
 export async function handleAttachParticipant(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -408,6 +439,8 @@ export async function handleAttachParticipant(
     // carries the same bytes converges; different bytes are a replacement
     // request, which is not something an attachment may perform in place.
     if (persisted?.preparedDescriptorJson === descriptorJson) {
+      const notLive = await establishedAttachmentNotLive(this, registration, persisted)
+      if (notLive !== null) return json(notLive, notLive.status === 'rejected' ? 409 : 200)
       return json({
         status: 'attached',
         registrationId: registration.registrationId,
