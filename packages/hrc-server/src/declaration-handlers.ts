@@ -614,6 +614,11 @@ export async function handleRunPreview(
       async ({ service, client }) => {
         const runtimeId = `dry-rt-${randomUUID()}`
         const aspHome = getAspHome()
+        // PC-1: the inspection must carry exactly what this compile sent. The
+        // v2 compile builder adds minted correlation ids to the intent's
+        // placement, so capture the sent placement rather than re-reading the
+        // intent (T-09746).
+        let sentPlacement: Record<string, unknown> | undefined
         const compiled = await phases.step('compile', () =>
           compileBrokerRuntimePlan(
             {
@@ -626,8 +631,12 @@ export async function handleRunPreview(
               continuation: undefined,
             },
             {
-              compileHarnessInvocation: (compileRequest) =>
-                client.compileHarnessInvocation({ ...compileRequest, aspHome }),
+              compileHarnessInvocation: (compileRequest) => {
+                sentPlacement = (
+                  compileRequest as unknown as { compileRequest?: { placement?: unknown } }
+                ).compileRequest?.placement as Record<string, unknown> | undefined
+                return client.compileHarnessInvocation({ ...compileRequest, aspHome })
+              },
               ids: previewCompileIds(runtimeId),
               timing: createPrecompileLaunchTimingContext('preview', runtimeId, resolveStateRoot()),
             }
@@ -658,9 +667,10 @@ export async function handleRunPreview(
         await phases.step('admission', () => undefined)
 
         // PC-1: the inspection carries the correlation and dispatchEnv the same
-        // preview compiled. The compile echoes the intent placement through its
-        // request, so these are the compiled values; dispatchEnv stays inert.
-        const compiledPlacement = previewIntent.placement as unknown as Record<string, unknown>
+        // preview compiled — read from the request actually sent, never from
+        // the intent. dispatchEnv stays inert.
+        const compiledPlacement =
+          sentPlacement ?? (previewIntent.placement as unknown as Record<string, unknown>)
         let inspected: Awaited<ReturnType<typeof client.inspectRuntimePlacement>>
         try {
           inspected = await phases.step('inspect-prompt', async () => {

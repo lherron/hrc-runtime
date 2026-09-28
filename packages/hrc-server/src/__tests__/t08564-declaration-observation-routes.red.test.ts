@@ -453,7 +453,8 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
     ] as Record<string, unknown>
     const inspectParams = requestParams(aspd!, 'aspc.inspectRuntimePlacement')
     expect(inspectParams['preparationCorrelation']).toEqual(compiledPlacement['correlation'])
-    expect(inspectParams['preparationCorrelation']).toEqual(correlation)
+    // 19b2bb64 / T-08576 R-B1: v2 compile mints invocationId/runtimeId into the correlation.
+    expect(inspectParams['preparationCorrelation']).toMatchObject(correlation)
     expect(inspectParams['dispatchEnv']).toEqual(compiledPlacement['dispatchEnv'])
     expect(inspectParams['dispatchEnv']).toEqual(dispatchEnv)
     expect(aspd!.connections).toHaveLength(1)
