@@ -2798,6 +2798,9 @@ class HrcServerInstance implements HrcServer {
   async handleClearContext(request: Request): Promise<Response> {
     const body = parseClearContextRequest(await parseJsonBody(request))
     const requested = requireSession(this.db, body.hostSessionId)
+    // T-09762: an operator rotate mints generation+1 through rotateSessionContext
+    // directly, so it gets the same retired-scope fence as auto-rotate and the doors.
+    await assertScopeNotRetired(this, { scopeRef: requested.scopeRef, path: 'resolve-session' })
     const appSelector = appSelectorForSession(requested)
     if (appSelector !== null) {
       // T-08576 D8.1: generic clear-context stays supported for app sessions, under

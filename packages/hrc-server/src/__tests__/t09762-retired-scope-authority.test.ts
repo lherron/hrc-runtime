@@ -27,6 +27,9 @@
  *     turn for a retired scope's existing session.
  * B3. Stale-generation auto-rotation mints a successor generation for a
  *     retired scope.
+ * B5. An operator `hrc session rotate` (POST /v1/clear-context and its
+ *     /v1/sessions/clear-context alias) calls rotateSessionContext directly and
+ *     mints generation+1 of a retired scope, bypassing the auto-rotate fence.
  * B4. The refusal is untyped or swallowed: it must be the gate's typed
  *     `stale_context` conflict with `reason: scope-retired`, returned to the
  *     caller, and nothing (no session, no runtime) may be minted.
@@ -410,4 +413,15 @@ describe('T-09762 B: every door refuses a retired scope with a typed conflict', 
     }
     mintedNothing()
   })
+
+  test.each(['/v1/clear-context', '/v1/sessions/clear-context'])(
+    'B5 an operator rotate via %s is refused, never minting generation+1',
+    async (route) => {
+      await start(new Date().toISOString())
+      await expectScopeRetiredRefusal(
+        await fixture.postJson(route, { hostSessionId: HOST_SESSION_ID, relaunch: false })
+      )
+      mintedNothing()
+    }
+  )
 })
