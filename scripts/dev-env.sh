@@ -52,6 +52,8 @@ ENV_FILE="${ROOT}/env.sh"
 PID_FILE="${ROOT}/daemon.pid"
 LOG_FILE="${ROOT}/daemon.log"
 SOCKET="${RUN_DIR}/hrc.sock"
+WRKQ_DB_FILE="${ROOT}/wrkq.db"
+DAEMON_WRKQ_FILE="${ROOT}/daemon.wrkq"
 PROJECT_SEARCH_ROOT=""
 
 # Every agent id the suites address. A fixture home is a directory plus an
@@ -85,6 +87,8 @@ export HRC_RUNTIME_DIR='${RUN_DIR}'
 export HRC_STATE_DIR='${STATE_DIR}'
 export ASP_AGENTS_ROOT='${AGENTS_DIR}'
 export HRC_PROJECT_SEARCH_ROOTS='${PROJECT_SEARCH_ROOT}'
+export WRKQ_DB='${WRKQ_DB_FILE}'
+unset WRKQ_DB_PATH WRKQ_DB_PATH_FILE
 EOF
 }
 
@@ -134,6 +138,27 @@ provision_build() {
   (cd "${REPO_ROOT}" && bun run build)
 }
 
+# The suites shell out to `wrkq` (task state, the project registry, envelope
+# reads) and, through the wrkp `just` shim, write run.settled facts. Inherited,
+# WRKQ_DB points at the operator's shared ledger: the suites then read and write
+# production state, and every call waits on a remote round trip — ~5s each when
+# that ledger is slow, 100+ calls per run, which is what made the pre-push gate
+# slow and flaky (T-09868). No assertion depends on that ledger's contents (the
+# hrc-cli suite passes 839/839 with wrkq unavailable), so the environment gets
+# its own empty, migrated ledger like it gets its own daemon, and so does that
+# daemon (its wrkq authority reads HRC_WRKQ_DB). The path-named aliases are
+# cleared: wrkq refuses a WRKQ_DB_PATH/WRKQ_DB_PATH_FILE that disagrees with
+# WRKQ_DB (T-08302). Without wrkqadm the path stays unmigrated and wrkq refuses
+# fast, which the suites tolerate.
+provision_wrkq() {
+  if command -v wrkqadm >/dev/null 2>&1; then
+    WRKQ_DB="${WRKQ_DB_FILE}" wrkqadm migrate >/dev/null \
+      || die "could not migrate the ephemeral wrkq ledger at ${WRKQ_DB_FILE}"
+  else
+    log "wrkqadm not found; ${WRKQ_DB_FILE} stays unmigrated and wrkq will refuse"
+  fi
+}
+
 resolve_project_search_root() {
   # A hook exports GIT_DIR/GIT_WORK_TREE for its own checkout. The helper drops
   # every GIT_* override before asking Git for the common directory, whose owner
@@ -147,9 +172,16 @@ resolve_project_search_root() {
 }
 
 start_daemon() {
+  # A daemon started before it was pointed at the environment's own ledger
+  # still reaches the operator's; reusing it would keep half the environment
+  # on production state, so it is replaced rather than reused.
   if daemon_responds; then
-    log "daemon already healthy on ${SOCKET} (reused)"
-    return 0
+    if [[ "$(cat "${DAEMON_WRKQ_FILE}" 2>/dev/null || true)" == "${WRKQ_DB_FILE}" ]]; then
+      log "daemon already healthy on ${SOCKET} (reused)"
+      return 0
+    fi
+    log "replacing daemon started without the ephemeral wrkq ledger"
+    stop_daemon
   fi
 
   # Reaching here with files present means the previous daemon died or was
@@ -165,9 +197,11 @@ start_daemon() {
     cd "${REPO_ROOT}"
     HRC_RUNTIME_DIR="${RUN_DIR}" HRC_STATE_DIR="${STATE_DIR}" ASP_AGENTS_ROOT="${AGENTS_DIR}" \
       HRC_PROJECT_SEARCH_ROOTS="${PROJECT_SEARCH_ROOT}" \
-      nohup bun "${REPO_ROOT}/packages/hrc-cli/bin/hrc.js" server serve \
+      HRC_WRKQ_DB="${WRKQ_DB_FILE}" HRC_WRKQD_TOKEN_FILE='' WRKQ_DB="${WRKQ_DB_FILE}" \
+      nohup env -u WRKQ_DB_PATH -u WRKQ_DB_PATH_FILE bun "${REPO_ROOT}/packages/hrc-cli/bin/hrc.js" server serve \
       >"${LOG_FILE}" 2>&1 &
     printf '%s\n' "$!" > "${PID_FILE}"
+    printf '%s\n' "${WRKQ_DB_FILE}" > "${DAEMON_WRKQ_FILE}"
   )
 
   local waited=0
@@ -211,6 +245,7 @@ cmd_up() {
   provision_build
   resolve_project_search_root
   provision_agents
+  provision_wrkq
   start_daemon
   write_env_file
 
@@ -219,6 +254,7 @@ cmd_up() {
   log "  runtime dir  ${RUN_DIR}   (HRC_RUNTIME_DIR)"
   log "  state dir    ${STATE_DIR}   (HRC_STATE_DIR)"
   log "  agents root  ${AGENTS_DIR}   (ASP_AGENTS_ROOT, ${#FIXTURE_AGENTS[@]} fixture homes)"
+  log "  wrkq ledger  ${WRKQ_DB_FILE}   (WRKQ_DB)"
   log "  projects     ${PROJECT_SEARCH_ROOT}   (HRC_PROJECT_SEARCH_ROOTS)"
   log "  daemon       ${SOCKET}  pid $(cat "${PID_FILE}" 2>/dev/null || echo '?')"
   log "  daemon log   ${LOG_FILE}"
