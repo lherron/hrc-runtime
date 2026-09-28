@@ -15,8 +15,15 @@ import { isRunActive } from './require-helpers.js'
  * projected onto `runs.broker_submission_id` by the event mapper). The wait ends
  * at that identity -- about boot plus turn start -- never at the provider turn's
  * completion. The bound is a ceiling for a seat that never starts its turn.
+ *
+ * 60s, measured (2026-09-28, 225 argv-carried claude births since the v2
+ * cutover, max3 + mini): accept to the launch turn's `turn.started`, which the
+ * broker's `submission.executed` accompanies, was p50 2.05s, p99 6.5s, max
+ * 25.6s. The bound is over twice that worst case and under the 120s first-turn
+ * watchdog, and it caps how long one kicker drive slot can be held. Expiry is an
+ * explicit error; the caller keeps its possibly-written fence.
  */
-export const LAUNCH_CARRIED_SUBMISSION_WAIT_MS = 2 * 60 * 1000
+export const LAUNCH_CARRIED_SUBMISSION_WAIT_MS = 60 * 1000
 
 export type LaunchCarriedSubmissionWaitServer = {
   readonly db: HrcDatabase
