@@ -42,28 +42,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
-import type {
-  BrokerHelloResponse,
-  InvocationEventEnvelope,
-  InvocationRuntimeContext,
-  InvocationStartRequest,
-  InvocationStartResponse,
-} from 'spaces-harness-broker-protocol'
 
 import * as brokerDecisions from '../broker-decisions'
 import * as substrateAllocator from '../broker-interactive-handlers/substrate-allocator'
-import type { BrokerClientLike } from '../broker/controller'
-import { HarnessBrokerController } from '../broker/controller'
-import type { SelectedExecution } from '../broker/selected-execution'
 import * as tmuxSocket from '../tmux-socket'
 import { makeFrozenWorkerLaunch } from './fixtures/frozen-substrate'
-
-import {
-  makeHrcPolicy,
-  makeIdentity,
-  makeSelectedExecution,
-  makeSelectedExecutionPlan,
-} from './broker-compile-fixtures'
 
 const NOW = '2026-06-18T10:00:00.000Z'
 
@@ -118,138 +101,6 @@ const getBrokerObserverSocketPath = (
   }
 ).getBrokerObserverSocketPath
 
-// ── Producer-selected viewer fixture (headless codex-app-server) ───────────────
-
-function makeViewerExecution(identity: ReturnType<typeof makeIdentity>): {
-  execution: SelectedExecution
-  startRequest: InvocationStartRequest
-} {
-  return makeSelectedExecution(identity, {
-    brokerDriver: 'codex-app-server',
-    presentationSurface: { transport: 'terminal', terminalHost: 'tmux' },
-  })
-}
-
-// ── Minimal fake broker client ─────────────────────────────────────────────────
-
-class FakeEvents implements AsyncIterable<InvocationEventEnvelope> {
-  [Symbol.asyncIterator]() {
-    return { next: async () => ({ done: true as const, value: undefined }) }
-  }
-}
-
-class FakeUnixBrokerClient {
-  readonly startCalls: Array<{
-    request: InvocationStartRequest
-    dispatchEnvOrOptions?: unknown
-    runtime?: InvocationRuntimeContext
-  }> = []
-  readonly events = new FakeEvents()
-
-  get helloResponse(): BrokerHelloResponse {
-    return {
-      brokerInfo: { name: 'harness-broker', version: '0.2.0-test' },
-      protocolVersion: 'harness-broker/0.2',
-      capabilities: {
-        multiInvocation: false,
-        transports: ['unix-jsonrpc-ndjson'],
-        eventNotifications: true,
-        brokerToClientRequests: true,
-        attachReplay: true,
-      },
-      drivers: [
-        {
-          kind: 'codex-app-server',
-          version: '0.2.0-test',
-          available: true,
-          capabilities: minimalCapabilities(),
-        },
-      ],
-    }
-  }
-
-  startResponse: InvocationStartResponse = {
-    invocationId: 'invocation_viewer',
-    state: 'ready',
-    capabilities: minimalCapabilities(),
-  }
-
-  onPermissionRequest(): void {}
-  onClose(): void {}
-  async hello(): Promise<BrokerHelloResponse> {
-    return this.helloResponse
-  }
-  async health() {
-    return { status: 'ok' as const, activeInvocations: 0, drivers: [] }
-  }
-  async startInvocationFromRequest(
-    request: InvocationStartRequest,
-    dispatchEnvOrOptions?: unknown,
-    runtime?: InvocationRuntimeContext
-  ) {
-    this.startCalls.push({ request, dispatchEnvOrOptions, runtime })
-    return {
-      invocationId: this.startResponse.invocationId,
-      response: this.startResponse,
-      events: this.events,
-    }
-  }
-  async input() {
-    return { inputId: 'i', accepted: true, disposition: 'started' as const }
-  }
-  async interrupt() {
-    return { accepted: true, effect: 'turn_interrupted' as const }
-  }
-  async stop() {
-    return { accepted: true, state: 'stopping' as const }
-  }
-  async status() {
-    return this.startResponse
-  }
-  async dispose() {}
-  async close() {}
-  async attach() {
-    return {}
-  }
-  async snapshot() {
-    return {}
-  }
-  async eventsSince() {
-    return { events: [] }
-  }
-  async ackEvents() {
-    return {}
-  }
-  async permissionRespond() {
-    return {}
-  }
-}
-
-function minimalCapabilities(): InvocationStartResponse['capabilities'] {
-  return {
-    input: {
-      user: true,
-      steer: false,
-      appendContext: false,
-      localImages: false,
-      fileRefs: false,
-      queue: false,
-    },
-    turns: { concurrency: 'single', interrupt: 'protocol' },
-    continuation: { supported: false, provider: 'openai', keyKind: 'session' },
-    events: {
-      assistantDeltas: true,
-      toolCalls: true,
-      usage: false,
-      diagnostics: false,
-      replay: false,
-      ack: false,
-    },
-    control: { stop: true, dispose: true, status: true, attach: false },
-    permissions: { brokerToClientRequests: true, eventAudit: false },
-  } as unknown as InvocationStartResponse['capabilities']
-}
-
 // ── DB fixture ────────────────────────────────────────────────────────────────
 
 type Fixture = { db: HrcDatabase; dir: string; cleanup: () => Promise<void> }
@@ -274,78 +125,6 @@ async function makeFixture(): Promise<Fixture> {
       db.close()
       await rm(dir, { recursive: true, force: true })
     },
-  }
-}
-
-// ── Viewer allocation stub ─────────────────────────────────────────────────────
-// What createBrokerTmuxTuiAllocator.allocate() should return:
-// - presentation='tmux-tui' (has tuiWindow + lease)
-// - brokerCommand includes --experimental-observer-socket <observerSocketPath>
-// - observerSocketPath same as in dispatch env
-
-function viewerAllocationStub(runtimeRoot: string, runtimeId: string): Record<string, unknown> {
-  const ipcHash = '0b2ef1c4d7a3' // synthetic hash for test
-  const ipcDir = `${runtimeRoot}/bipc/${ipcHash}`
-  const brokerIpcSocketPath = `${ipcDir}/b.sock`
-  const observerSocketPath = `${ipcDir}/observer.sock`
-  const btmuxSocketPath = `${runtimeRoot}/btmux/codex-app-server-${runtimeId}.sock`
-  const sessionName = `hrc-codex-app-server-${runtimeId}`
-  const tuiPane = {
-    socketPath: btmuxSocketPath,
-    sessionId: '$2',
-    windowId: '@2',
-    paneId: '%2',
-    sessionName,
-    windowName: 'tui',
-  }
-  const tuiLease = {
-    kind: 'tmux-pane' as const,
-    ownership: 'hrc' as const,
-    socketPath: btmuxSocketPath,
-    sessionId: '$2',
-    windowId: '@2',
-    paneId: '%2',
-    sessionName,
-    windowName: 'tui',
-    allowedOps: {
-      inspect: true as const,
-      sendInput: true as const,
-      sendInterrupt: true as const,
-      capture: true,
-      resize: false,
-    },
-  }
-  return {
-    socketPath: btmuxSocketPath,
-    allocatedAt: NOW,
-    generation: 1,
-    brokerIpcSocketPath,
-    observerSocketPath,
-    attachToken: 'viewer-attach-token',
-    attachTokenRef: { kind: 'file', path: `${ipcDir}/attach.token`, redacted: true },
-    // IMPORTANT: brokerCommand MUST include --experimental-observer-socket so the broker
-    // actually SERVES the observer socket (not just set in env). HRC passes ONE path.
-    brokerCommand:
-      `exec harness-broker run --transport unix --socket ${brokerIpcSocketPath}` +
-      ` --event-ledger ${ipcDir}/events.ndjson` +
-      ` --experimental-observer-socket ${observerSocketPath}`,
-    brokerPid: 7777,
-    brokerWindow: {
-      socketPath: btmuxSocketPath,
-      sessionId: '$1',
-      windowId: '@1',
-      paneId: '%1',
-      sessionName,
-      windowName: 'broker',
-    },
-    tuiWindow: tuiPane,
-    lease: tuiLease,
-    // Legacy single-pane mirror for backward compat
-    sessionId: '$2',
-    windowId: '@2',
-    paneId: '%2',
-    sessionName,
-    windowName: 'tui',
   }
 }
 
@@ -469,66 +248,9 @@ describe('T-04921 Test 4 — observer integration: observer socket wiring (RED)'
     expect(observerSocketPath).toContain('/bipc/')
   })
 
-  it('brokerCommand observer path and dispatchEnv HARNESS_BROKER_OBSERVER_SOCKET are the SAME (RED)', async () => {
-    // HRC selects ONE observer socket path and passes it to BOTH the broker launch
-    // command (so the broker SERVES it) and the renderer dispatch env (so the renderer
-    // CONNECTS to it). Two independent derivations would break: they could diverge.
-    // TODAY FAILS: neither is wired.
-
-    const identity = makeIdentity({
-      runtimeId: 'runtime_obstest' as ReturnType<typeof makeIdentity>['runtimeId'],
-      invocationId: 'invocation_obstest' as ReturnType<typeof makeIdentity>['invocationId'],
-      runId: 'run_obstest' as ReturnType<typeof makeIdentity>['runId'],
-      hostSessionId: 'hostSession_viewer' as ReturnType<typeof makeIdentity>['hostSessionId'],
-    })
-    const { execution } = makeViewerExecution(identity)
-
-    const unixClient = new FakeUnixBrokerClient()
-    const stub = viewerAllocationStub(fixture.dir, String(identity.runtimeId))
-    const observerSocketPath = stub['observerSocketPath'] as string
-
-    const controller = new HarnessBrokerController({
-      db: fixture.db,
-      brokerClientFactory: async () => unixClient as unknown as BrokerClientLike,
-      brokerUnixClientFactory: async () => unixClient,
-      tmuxTuiAllocator: {
-        allocate: async () => stub,
-      },
-      now: () => NOW,
-    } as unknown as ConstructorParameters<typeof HarnessBrokerController>[0])
-
-    const result = await controller.start({
-      plan: makeSelectedExecutionPlan(),
-      execution,
-      hrcPolicy: makeHrcPolicy(),
-      identity,
-      dispatchEnv: { HRC_DISPATCH: 'viewer-obs' },
-    } as unknown as Parameters<typeof controller.start>[0])
-
-    expect(result.ok).toBe(true)
-
-    // The dispatch env sent to the broker must include HARNESS_BROKER_OBSERVER_SOCKET
-    // pointing to the SAME path that the brokerCommand carries.
-    // TODAY FAILS: dispatch env does not include HARNESS_BROKER_OBSERVER_SOCKET.
-    const startCall = unixClient.startCalls[0]
-    expect(startCall).toBeDefined()
-
-    const sentDispatchEnv =
-      (startCall?.dispatchEnvOrOptions as Record<string, string> | undefined) ?? {}
-
-    const envObserverPath = sentDispatchEnv['HARNESS_BROKER_OBSERVER_SOCKET']
-    expect(typeof envObserverPath).toBe('string') // ← RED today (undefined)
-    expect(envObserverPath).toBe(observerSocketPath) // ← RED today (path mismatch or undefined)
-
-    // Belt-and-suspenders: the brokerCommand in the stub already carries the flag.
-    // The persisted state must also reflect the observer socket path.
-    const runtime = fixture.db.runtimes.getByRuntimeId(String(identity.runtimeId))
-    const brokerState = runtime?.runtimeStateJson?.['broker'] as Record<string, unknown> | undefined
-    const endpoint = brokerState?.['endpoint'] as Record<string, unknown> | undefined
-    // The endpoint block should note the observer socket alongside the main IPC socket.
-    // TODAY FAILS: observerSocketPath is not persisted in endpoint.
-    expect(endpoint?.['observerSocketPath']).toBe(observerSocketPath) // ← RED today
-  })
+  // T-04921 is completed. The brokerCommand/dispatchEnv observer-socket
+  // identity is pinned green on the current viewer route in
+  // t08554-app-server-viewer; its pre-v2 red twin here was removed (T-09746).
 
   it('MUST FAIL: connecting to observer socket without broker serving it rejects (negative invariant)', async () => {
     // This test verifies the observer socket is SERVER-SIDE (broker must serve it).
