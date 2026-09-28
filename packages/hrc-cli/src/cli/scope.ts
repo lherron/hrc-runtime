@@ -22,6 +22,7 @@ import {
 } from 'hrc-sdk'
 import type { ProfileAwareResolvedScopeInput, ResolvedAgentHarness } from 'hrc-sdk'
 
+import { dotEnvProjectNote, dotEnvSource } from '../cli-runtime/dotenv-sources.js'
 import { fatal, formatAgentNotFound, writePlacementWarnings } from './shared.js'
 
 export function createDefaultRuntimeIntent(
@@ -159,6 +160,8 @@ function resolveDefaultProjectId(): string | undefined {
         `Pass '<agent>@${aspProject}' or --project-id ${aspProject} to target ASP_PROJECT instead.\n`
     )
   }
+  const note = dotEnvProjectNote({ projectId, aspProject, source: dotEnvSource('ASP_PROJECT') })
+  if (note !== undefined) process.stderr.write(note)
   return projectId
 }
 

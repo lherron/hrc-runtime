@@ -57,14 +57,16 @@ function readDotEnvFile(envPath: string): Record<string, string> | undefined {
  * (real environment wins), and credential-class keys are never applied —
  * each refusal is reported once per file through `warn`.
  */
+/** Applies one env file; returns the keys it actually set (unset before, not refused). */
 export function applyDotEnvFile(
   envPath: string,
   env: Record<string, string | undefined> = process.env,
   warn: WarnSink = defaultWarn
-): void {
+): string[] {
   const parsed = readDotEnvFile(envPath)
-  if (!parsed) return
+  if (!parsed) return []
   const refused: string[] = []
+  const applied: string[] = []
   for (const [key, value] of Object.entries(parsed)) {
     if (env[key] !== undefined) continue
     if (isCredentialClassKey(key)) {
@@ -72,12 +74,14 @@ export function applyDotEnvFile(
       continue
     }
     env[key] = value
+    applied.push(key)
   }
   if (refused.length > 0) {
     warn(
       `env-hygiene: refusing credential-class keys from ${envPath}: ${refused.join(', ')} (env files carry context only; use real env or *_FILE indirection, see .env.secrets)`
     )
   }
+  return applied
 }
 
 /**
@@ -120,17 +124,29 @@ export function loadDotEnvLocal(
     env?: Record<string, string | undefined>
     warn?: WarnSink
   } = {}
-): void {
+): Record<string, string> {
   const cwd = options.cwd ?? process.cwd()
   const env = options.env ?? process.env
   const warn = options.warn ?? defaultWarn
   warnAutoLoadedCredentials(cwd, env, warn)
+  // Provenance: key -> the .env.local that supplied it, so a caller can say
+  // where an ambient value came from instead of acting on it silently.
+  const sources: Record<string, string> = {}
+  // Bun has already auto-loaded cwd/.env.local, so its keys look like real
+  // env. A value that byte-matches that file almost certainly came from it
+  // (the same heuristic warnAutoLoadedCredentials uses).
+  const cwdEnvPath = join(cwd, '.env.local')
+  for (const [key, value] of Object.entries(readDotEnvFile(cwdEnvPath) ?? {})) {
+    if (env[key] === value) sources[key] = cwdEnvPath
+  }
   let dir = cwd
   while (true) {
-    applyDotEnvFile(join(dir, '.env.local'), env, warn)
+    const envPath = join(dir, '.env.local')
+    for (const key of applyDotEnvFile(envPath, env, warn)) sources[key] = envPath
     if (existsSync(join(dir, '.git'))) break // nearest git root — boundary
     const parent = dirname(dir)
     if (parent === dir) break // filesystem root — no git root found
     dir = parent
   }
+  return sources
 }

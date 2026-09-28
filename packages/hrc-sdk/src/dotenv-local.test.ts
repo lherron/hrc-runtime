@@ -124,6 +124,45 @@ describe('loadDotEnvLocal', () => {
   })
 })
 
+describe('loadDotEnvLocal provenance', () => {
+  it('reports which file supplied each applied key; real env and refused keys are absent', () => {
+    const { root, cleanup } = fixture()
+    try {
+      mkdirSync(join(root, '.git'))
+      mkdirSync(join(root, 'sub', 'inner'), { recursive: true })
+      writeFileSync(join(root, '.env.local'), 'ASP_PROJECT=outer\nSHARED=outer\nWRKQD_TOKEN=dev\n')
+      writeFileSync(join(root, 'sub', 'inner', '.env.local'), 'SHARED=inner\n')
+
+      const env: Record<string, string | undefined> = { REAL: 'set', ASP_HOME: 'real' }
+      writeFileSync(join(root, 'sub', '.env.local'), 'ASP_HOME=file\n')
+      const sources = loadDotEnvLocal({ cwd: join(root, 'sub', 'inner'), env, warn: () => {} })
+
+      expect(sources).toEqual({
+        SHARED: join(root, 'sub', 'inner', '.env.local'),
+        ASP_PROJECT: join(root, '.env.local'),
+      })
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+describe('loadDotEnvLocal provenance for the bun-autoloaded cwd file', () => {
+  it('attributes a cwd .env.local value already present in env to that file', () => {
+    const { root, cleanup } = fixture()
+    try {
+      mkdirSync(join(root, '.git'))
+      writeFileSync(join(root, '.env.local'), 'ASP_PROJECT=agents\n')
+      const env: Record<string, string | undefined> = { ASP_PROJECT: 'agents' }
+      expect(loadDotEnvLocal({ cwd: root, env, warn: () => {} })).toEqual({
+        ASP_PROJECT: join(root, '.env.local'),
+      })
+    } finally {
+      cleanup()
+    }
+  })
+})
+
 describe('parseDotEnvContent', () => {
   it('skips comments, blanks, and eq-less lines', () => {
     expect(parseDotEnvContent('# c\n\nKEY=v\nnoise\nA=b=c\n')).toEqual({

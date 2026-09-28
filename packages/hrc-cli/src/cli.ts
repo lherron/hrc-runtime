@@ -2,11 +2,12 @@
 import { installCliMetricsRecorder } from 'hrc-core'
 import { loadDotEnvLocal } from 'hrc-sdk'
 
+import { recordDotEnvSources } from './cli-runtime/dotenv-sources.js'
 import { runProgram } from './cli/program.js'
 
 // Shared context-only .env.local loader (hrc-sdk): walks up to the nearest
 // git root, real env wins, credential-class keys are refused with a warning.
-loadDotEnvLocal()
+recordDotEnvSources(loadDotEnvLocal())
 
 // -- public surface re-exports ------------------------------------------------
 // The CLI was decomposed into ./cli/* modules (big-file refactor). These
