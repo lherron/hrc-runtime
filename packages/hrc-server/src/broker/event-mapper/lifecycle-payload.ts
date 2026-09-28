@@ -269,13 +269,14 @@ export function lifecyclePayload(
       return event as unknown as Record<string, unknown>
     }
     case 'turn.completed':
-      return { success: true, transport, source: 'broker' }
+      return { success: true, transport, source: 'broker', ...terminalTurnIdentity(envelope) }
     case 'turn.failed': {
       const payload = envelope.payload as TurnFailedPayload
       return {
         success: false,
         transport,
         source: 'broker',
+        ...terminalTurnIdentity(envelope),
         message: payload.message,
         ...(payload.code !== undefined ? { code: payload.code } : {}),
         ...(payload.data !== undefined ? { data: payload.data } : {}),
@@ -284,8 +285,37 @@ export function lifecyclePayload(
       }
     }
     case 'turn.interrupted':
-      return { success: false, interrupted: true, transport, source: 'broker' }
+      return {
+        success: false,
+        interrupted: true,
+        transport,
+        source: 'broker',
+        ...terminalTurnIdentity(envelope),
+      }
     default:
       return { transport }
+  }
+}
+
+/**
+ * T-09872 §4: broker turn.failed/turn.interrupted fold into the `turn.completed`
+ * lifecycle kind, so the terminal row itself must say WHICH broker turn ended.
+ * A self-restart intent matches on (runtimeId, invocationId, turnId); without
+ * these an older turn's delayed terminal would be indistinguishable.
+ */
+function terminalTurnIdentity(envelope: InvocationEventEnvelope): {
+  invocationId: string
+  turnId?: string
+} {
+  const payload: Record<string, unknown> = isRecord(envelope.payload) ? envelope.payload : {}
+  const turnId =
+    typeof envelope.turnId === 'string'
+      ? envelope.turnId
+      : typeof payload['turnId'] === 'string'
+        ? payload['turnId']
+        : undefined
+  return {
+    invocationId: String(envelope.invocationId),
+    ...(turnId !== undefined ? { turnId } : {}),
   }
 }

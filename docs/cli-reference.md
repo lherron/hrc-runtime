@@ -360,6 +360,39 @@ conversation are `/quit` (or `/clear`) inside the harness,
 `hrc session drop-continuation <hostSessionId>`, and
 `hrc run|start <scope> --new-session`.
 
+### `hrc restartme` — agent self-restart (T-09872)
+
+An agent restarts ITSELF into a fresh context: write a handoff,
+`hrc restartme --handoff <id>`, end your turn.
+
+```
+wrkq handoff create --scope <agent>@<project> -t '<title>' --body-file - <<'EOF'
+<objective, decisions, durable evidence, remaining work, next action>
+EOF
+hrc restartme --handoff H-xxxxx   # arm; prints "restart armed (handoff H-xxxxx); end your turn now ..."
+hrc restartme --cancel            # disarm
+```
+
+- Self-only, no target. The daemon identifies the caller from its lifecycle
+  credential (`<runtimeRoot>/lifecycle/<runtimeId>.credential`, located by
+  `HRC_RUNTIME_ID`, attributed by `HRC_SESSION_REF`). Restarting another seat
+  stays with `hrc turn --fresh-context <target>`.
+- The CLI refuses unless `wrkq handoff get <id>` shows a **pending** handoff
+  whose agent and project are the caller's. Without `--handoff` it prints the
+  recipe above.
+- Arming binds to the broker turn active right now (`no_active_turn` otherwise).
+  Only that turn's terminal fires it; an older turn's late terminal does not.
+- On that terminal HRC rotates the session (generation+1, continuation
+  dropped; `context.cleared` with `reason: self-restart`) and delivers the
+  successor's first prompt: run `wrkq handoff get <id> --json`, absorb it,
+  acknowledge it, continue.
+- Ledger: `session.restart_armed` → `turn.completed` → `context.cleared` →
+  `session.restart_executed`; `session.restart_cancelled` on `--cancel`.
+- Refused for external-lifecycle participants (`participant_rotation_unsupported`).
+  An armed intent is in daemon memory: a daemon restart before the turn ends
+  drops it; re-arm.
+- Exit: 0 armed/cancelled; 1 refused; 2 usage.
+
 ### Retired spellings
 
 The pre-consolidation spellings `broker`, `launch`, `inflight`, `surface`,

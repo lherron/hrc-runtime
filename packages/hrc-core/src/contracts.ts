@@ -1500,6 +1500,8 @@ export type HrcCapabilityStatus = {
      * Absent on a pre-contract daemon, against which the CLI fails closed.
      */
     serverLifecycle?: boolean | undefined
+    /** T-09872: this daemon serves `POST /v1/runtimes/restart-self` (`hrc restartme`). */
+    selfRestart?: boolean | undefined
   }
 }
 

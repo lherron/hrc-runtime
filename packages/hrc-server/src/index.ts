@@ -15,15 +15,18 @@ import {
   assertNoRetainedProjection,
   awaitRetainedRecoveryOwner,
 } from './broker/runtime-exclusive-owner'
+import { SelfRestartIntents, handleRestartSelf } from './self-restart.js'
 import { ServerLifecycleController } from './server-lifecycle-controller.js'
 import {
   LIFECYCLE_LIVE_RUNTIME_STATUSES,
   LifecycleCredentialStore,
+  isLifecycleBindingLive,
 } from './server-lifecycle-credentials.js'
 import { probeBrokerHealth } from './startup-reconcile/broker-probe.js'
 
 import {
   HRC_API_VERSION,
+  HRC_RESTART_SELF_PATH,
   HrcBadRequestError,
   HrcConflictError,
   HrcErrorCode,
@@ -967,6 +970,7 @@ class HrcServerInstance implements HrcServer {
   readonly pendingBrokerLiteralInputs = new Map<string, PendingBrokerLiteralInput>()
   readonly queuedTurnInputDrains = new Set<string>()
   readonly turnAdmissionGate: TurnAdmissionGate
+  readonly selfRestartIntents = new SelfRestartIntents()
   zombieSweepTimer: ReturnType<typeof setInterval> | undefined
   zombieSweepInFlight: Promise<SweepZombieRunsResponse> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
@@ -1091,6 +1095,7 @@ class HrcServerInstance implements HrcServer {
       this.handleReopenTurnAdmission(request),
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => this.handleStartRuntime(request),
+    [exactRouteKey('POST', HRC_RESTART_SELF_PATH)]: (request) => handleRestartSelf(this, request),
     [exactRouteKey('POST', '/v1/command-runs/launch')]: (request) =>
       this.handleLaunchCommandScopedRun(request),
     [exactRouteKey('POST', '/v1/broker-sessions/open')]: (request) =>
@@ -1276,15 +1281,7 @@ class HrcServerInstance implements HrcServer {
       peers: () => options.federationConfig?.peers ?? new Map(),
       dbPath: options.dbPath,
       credentials: this.lifecycleCredentials,
-      isLive: (binding) => {
-        const runtime = db.runtimes.getByRuntimeId(binding.runtimeId)
-        return (
-          runtime !== null &&
-          LIFECYCLE_LIVE_RUNTIME_STATUSES.has(runtime.status) &&
-          runtime.scopeRef === binding.scopeRef &&
-          runtime.generation === binding.generation
-        )
-      },
+      isLive: (binding) => isLifecycleBindingLive(db, binding),
       turnAdmission: this.turnAdmissionGate,
       executor: () => options.lifecycleExecutor,
     })
@@ -3306,6 +3303,7 @@ class HrcServerInstance implements HrcServer {
           tmux: tmuxStatus,
         },
         serverLifecycle: this.lifecycleController.capable,
+        selfRestart: true,
       },
     } satisfies HrcStatusSummaryResponse
     if (includeSessions !== 'true') return json(summary)

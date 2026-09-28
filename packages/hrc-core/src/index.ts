@@ -26,6 +26,15 @@ export type {
   HrcServerLifecycleResponse,
 } from './server-lifecycle.js'
 
+export { HRC_RESTART_SELF_PATH, selfRestartResumePrompt } from './self-restart.js'
+export type {
+  HrcRestartSelfArmed,
+  HrcRestartSelfCancelled,
+  HrcRestartSelfRefusalCode,
+  HrcRestartSelfRequest,
+  HrcRestartSelfResponse,
+} from './self-restart.js'
+
 export { environmentWithoutGitOverrides } from './git-environment.js'
 
 export { expandRegistryHome, findWrkqProjectEntry } from './project-registry.js'

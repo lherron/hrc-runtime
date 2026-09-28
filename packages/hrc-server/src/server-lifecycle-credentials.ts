@@ -8,6 +8,7 @@ import {
   lifecycleCredentialDirectory,
   lifecycleCredentialPath,
 } from 'hrc-core'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { constantTimeEqual } from './constant-time.js'
 import { writeServerLog } from './server-log.js'
@@ -42,6 +43,20 @@ export type LifecycleCredentialBinding = {
   readonly scopeRef: string
   readonly generation: number
   readonly mintedAt: string
+}
+
+/** A binding is valid only while its runtime is live with the bound scope and generation. */
+export function isLifecycleBindingLive(
+  db: HrcDatabase,
+  binding: LifecycleCredentialBinding
+): boolean {
+  const runtime = db.runtimes.getByRuntimeId(binding.runtimeId)
+  return (
+    runtime !== null &&
+    LIFECYCLE_LIVE_RUNTIME_STATUSES.has(runtime.status) &&
+    runtime.scopeRef === binding.scopeRef &&
+    runtime.generation === binding.generation
+  )
 }
 
 type HeldCredential = LifecycleCredentialBinding & { readonly value: string }

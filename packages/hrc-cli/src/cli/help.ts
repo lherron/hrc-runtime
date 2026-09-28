@@ -210,6 +210,9 @@ CURSORS
 PLACEMENT
   hrc start/resume --cwd <absolute-path> changes execution cwd without changing project root.
 
+SELF-RESTART
+  To restart into fresh context: write a handoff, \`hrc restartme --handoff <id>\`, end your turn.
+
 RUNBOOK
 ${blocks.join('\n\n')}`
 }

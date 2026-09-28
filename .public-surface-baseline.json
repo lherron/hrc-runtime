@@ -1567,6 +1567,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HRC_RESTART_SELF_PATH",
+      "kind": "value",
+      "file": "packages/hrc-core/src/self-restart.ts",
+      "hash": "hrc-core|HRC_RESTART_SELF_PATH|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HRC_RUNTIME_PRESENTATION_EVENT",
       "kind": "value",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -2955,6 +2963,46 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcRequestedHarnessSelection|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRestartSelfArmed",
+      "kind": "type",
+      "file": "packages/hrc-core/src/self-restart.ts",
+      "hash": "hrc-core|HrcRestartSelfArmed|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRestartSelfCancelled",
+      "kind": "type",
+      "file": "packages/hrc-core/src/self-restart.ts",
+      "hash": "hrc-core|HrcRestartSelfCancelled|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRestartSelfRefusalCode",
+      "kind": "type",
+      "file": "packages/hrc-core/src/self-restart.ts",
+      "hash": "hrc-core|HrcRestartSelfRefusalCode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRestartSelfRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/self-restart.ts",
+      "hash": "hrc-core|HrcRestartSelfRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRestartSelfResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/self-restart.ts",
+      "hash": "hrc-core|HrcRestartSelfResponse|type",
       "count": 1
     },
     {
@@ -4731,6 +4779,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/invocation-exposure.ts",
       "hash": "hrc-core|selectorFor|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "selfRestartResumePrompt",
+      "kind": "value",
+      "file": "packages/hrc-core/src/self-restart.ts",
+      "hash": "hrc-core|selfRestartResumePrompt|value",
       "count": 1
     },
     {

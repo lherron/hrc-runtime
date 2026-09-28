@@ -30,9 +30,19 @@ import type {
   TraceMessageResponse,
   WatchInputEvent,
 } from 'hrc-core'
-import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
+import {
+  HRC_RESTART_SELF_PATH,
+  HrcDomainError,
+  HrcErrorCode,
+  getHrcCliRpcMetricsHook,
+} from 'hrc-core'
 import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
-import type { HrcServerLifecycleRequest, HrcServerLifecycleResponse } from 'hrc-core'
+import type {
+  HrcRestartSelfRequest,
+  HrcRestartSelfResponse,
+  HrcServerLifecycleRequest,
+  HrcServerLifecycleResponse,
+} from 'hrc-core'
 import type {
   BrokerEventsFollowRequest,
   BrokerEventsFollowResponse,
@@ -815,6 +825,26 @@ export class HrcClient {
       await this.throwTypedError(res)
     }
     return (await res.json()) as HrcServerLifecycleResponse
+  }
+
+  /**
+   * T-09872: arm or cancel the CALLER's own restart at the end of its current
+   * turn. The daemon identifies the caller from `credentialHeaders` (the same
+   * lifecycle credential `serverLifecycle` presents); there is no target.
+   */
+  async restartSelf(
+    request: HrcRestartSelfRequest,
+    credentialHeaders: Readonly<Record<string, string>> = {}
+  ): Promise<HrcRestartSelfResponse> {
+    const res = await this.unixFetch(HRC_RESTART_SELF_PATH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...credentialHeaders },
+      body: JSON.stringify(request),
+    })
+    if (!res.ok) {
+      await this.throwTypedError(res)
+    }
+    return (await res.json()) as HrcRestartSelfResponse
   }
 
   async closeTurnAdmission(request: HrcTurnAdmissionCloseRequest): Promise<HrcTurnAdmissionState> {

@@ -46,6 +46,11 @@ export const HrcErrorCode = {
   SERVER_LIFECYCLE_REFUSED: 'server_lifecycle_refused',
   /** T-09861: an authorized stop/restart refused because work is in flight (no --wait/--drain/--force). */
   SERVER_LIFECYCLE_IN_FLIGHT: 'server_lifecycle_in_flight',
+  /**
+   * T-09872: `hrc restartme` refused (no/invalid lifecycle credential, or no
+   * turn-active turn to bind). `detail.refusal` names which. Nothing was armed.
+   */
+  SELF_RESTART_REFUSED: 'self_restart_refused',
   RUNTIME_UNAVAILABLE: 'runtime_unavailable',
   RUN_ZOMBIE_TIMEOUT: 'run_zombie_timeout',
   RUNTIME_TERMINATED_WITH_ACTIVE_RUN: 'runtime_terminated_with_active_run',
@@ -197,6 +202,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.SERVER_DRAINING]: 503,
   [HrcErrorCode.SERVER_LIFECYCLE_REFUSED]: 403,
   [HrcErrorCode.SERVER_LIFECYCLE_IN_FLIGHT]: 409,
+  [HrcErrorCode.SELF_RESTART_REFUSED]: 403,
   [HrcErrorCode.RUNTIME_UNAVAILABLE]: 503,
   [HrcErrorCode.RUN_ZOMBIE_TIMEOUT]: 500,
   [HrcErrorCode.RUNTIME_TERMINATED_WITH_ACTIVE_RUN]: 500,

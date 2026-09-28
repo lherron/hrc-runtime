@@ -24,6 +24,7 @@ import {
   cmdSurfaceList,
   cmdSurfaceUnbind,
 } from './handlers-control.js'
+import { cmdRestartMe } from './handlers-restartme.js'
 import {
   cmdLs,
   cmdRunReconcileActive,
@@ -532,6 +533,20 @@ The output always names the resolved kind and the concrete ID(s).
       await cmdSummon(createClient(), { json: opts.json === true }, [target])
     })
 
+  program
+    .command('restartme')
+    .description(
+      'restart this agent into a fresh context when the current turn ends (needs a pending wrkq handoff)'
+    )
+    .option('--handoff <id>', 'the pending wrkq handoff the successor will consume')
+    .option('--cancel', 'disarm a restart armed earlier')
+    .action(async (opts) => {
+      await cmdRestartMe({
+        ...(opts.handoff === undefined ? {} : { handoff: String(opts.handoff) }),
+        cancel: opts.cancel === true,
+      })
+    })
+
   const sendCmd = program
     .command('send')
     .description(
@@ -816,6 +831,16 @@ The output always names the resolved kind and the concrete ID(s).
       example: 'hrc peek cody@hrc-runtime:T-07011 --lines 40',
       exitCodes: '0 captured; 2 usage; 1 no bound runtime',
       output: 'the pane text as captured; --json wraps it with capture metadata',
+    },
+  })
+  annotateTop(program, 'restartme', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc restartme --handoff H-00123',
+      exitCodes:
+        '0 armed or cancelled; 1 refused (no handoff, wrong-scope or non-pending handoff, no credential, no active turn); 2 usage',
+      output:
+        'write a handoff (wrkq handoff create --scope <agent>@<project>), arm, then END YOUR TURN; the successor (generation+1, fresh context) starts by consuming the handoff',
     },
   })
   annotateTop(program, 'turn', {

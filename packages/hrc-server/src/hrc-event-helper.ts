@@ -7,6 +7,10 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'session.resolved': 'session',
   'session.generation_auto_rotated': 'session',
   'session.continuation_dropped': 'session',
+  // T-09872 `hrc restartme`: arm/cancel/execute of an agent's own restart.
+  'session.restart_armed': 'session',
+  'session.restart_cancelled': 'session',
+  'session.restart_executed': 'session',
   // T-07594 (durable law `hrc-runtime.viewer-presentation-sidecar` §5.2): the
   // session-title write/clear becomes a ledger fact so a presentation consumer
   // can retitle from the stream instead of polling.

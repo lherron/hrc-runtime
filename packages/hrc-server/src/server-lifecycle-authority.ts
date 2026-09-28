@@ -172,6 +172,75 @@ function breakGlassSuffix(): string {
   return `; Lance acts through a Mable primary or the documented break-glass (${HRC_LIFECYCLE_BREAK_GLASS}), which the next boot records as unattributed`
 }
 
+export type LifecycleCredentialRefusalCode =
+  | 'credential_missing'
+  | 'credential_unknown'
+  | 'credential_revoked'
+  | 'credential_mismatch'
+
+export type LifecycleCallerVerification =
+  | { readonly ok: true; readonly binding: LifecycleCredentialBinding }
+  | {
+      readonly ok: false
+      readonly code: LifecycleCredentialRefusalCode
+      readonly detail: string
+      /** The scopeRef to name in the refusal: the binding's when known, else the attributed one. */
+      readonly scopeRef: string | undefined
+    }
+
+/**
+ * Identify the caller from the credential this daemon minted: presented,
+ * recognized, still live with its bound identity, and attributed to the same
+ * seat. Says WHO is calling, never what they may do. Shared by the server
+ * lifecycle authority (T-09861) and `hrc restartme` (T-09872).
+ */
+export function verifyLifecycleCaller(input: {
+  readonly caller: LifecycleCallerPresentation
+  readonly verifyCredential: (
+    runtimeId: string,
+    value: string
+  ) => LifecycleCredentialBinding | undefined
+  readonly isLive: (binding: LifecycleCredentialBinding) => boolean
+}): LifecycleCallerVerification {
+  const attributed = attributedScope(input.caller.attributedSessionRef)
+  const runtimeId = input.caller.runtimeId?.trim()
+  const value = input.caller.credential?.trim()
+  if (!runtimeId || !value) {
+    return {
+      ok: false,
+      code: 'credential_missing',
+      detail: 'no lifecycle credential: this caller is not a runtime this daemon launched',
+      scopeRef: attributed,
+    }
+  }
+  const binding = input.verifyCredential(runtimeId, value)
+  if (binding === undefined) {
+    return {
+      ok: false,
+      code: 'credential_unknown',
+      detail: 'lifecycle credential not recognized by this daemon',
+      scopeRef: attributed,
+    }
+  }
+  if (!input.isLive(binding)) {
+    return {
+      ok: false,
+      code: 'credential_revoked',
+      detail: 'lifecycle credential revoked: its runtime is not live',
+      scopeRef: attributed,
+    }
+  }
+  if (attributed === undefined || attributed !== binding.scopeRef) {
+    return {
+      ok: false,
+      code: 'credential_mismatch',
+      detail: 'lifecycle credential is bound to a different seat than HRC_SESSION_REF',
+      scopeRef: binding.scopeRef,
+    }
+  }
+  return { ok: true, binding }
+}
+
 /**
  * Verify the caller locally (Rules A and B). `isLive` re-reads the store: a
  * credential is valid only while its runtime is live with the bound identity.
@@ -188,12 +257,7 @@ export function authorizeLocalLifecycleCaller(input: {
   ) => LifecycleCredentialBinding | undefined
   readonly isLive: (binding: LifecycleCredentialBinding) => boolean
 }): LifecycleAuthorization {
-  const attributed = attributedScope(input.caller.attributedSessionRef)
-  const refusal = (
-    code: LifecycleRefusalCode,
-    detail: string,
-    project = callerProject(attributed)
-  ) =>
+  const refusal = (code: LifecycleRefusalCode, detail: string, project: string) =>
     ({
       allowed: false,
       code,
@@ -204,34 +268,16 @@ export function authorizeLocalLifecycleCaller(input: {
       })} (${detail})`,
     }) as const
 
-  const runtimeId = input.caller.runtimeId?.trim()
-  const value = input.caller.credential?.trim()
-  if (!runtimeId || !value) {
-    return {
-      allowed: false,
-      code: 'credential_missing',
-      message: `${lifecycleRefusalText({
-        action: input.action,
-        targetNodeId: input.targetNodeId,
-        project: callerProject(attributed),
-      })} (no lifecycle credential: this caller is not a runtime this daemon launched${breakGlassSuffix()})`,
-    }
-  }
-
-  const binding = input.verifyCredential(runtimeId, value)
-  if (binding === undefined) {
-    return refusal('credential_unknown', 'lifecycle credential not recognized by this daemon')
-  }
-  if (!input.isLive(binding)) {
-    return refusal('credential_revoked', 'lifecycle credential revoked: its runtime is not live')
-  }
-  if (attributed === undefined || attributed !== binding.scopeRef) {
+  const verification = verifyLifecycleCaller(input)
+  if (!verification.ok) {
+    const suffix = verification.code === 'credential_missing' ? breakGlassSuffix() : ''
     return refusal(
-      'credential_mismatch',
-      'lifecycle credential is bound to a different seat than HRC_SESSION_REF',
-      callerProject(binding.scopeRef)
+      verification.code,
+      `${verification.detail}${suffix}`,
+      callerProject(verification.scopeRef)
     )
   }
+  const binding = verification.binding
 
   const project = callerProject(binding.scopeRef)
   if (isMablePrimaryScope(binding.scopeRef)) {

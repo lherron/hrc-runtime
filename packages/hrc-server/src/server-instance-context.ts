@@ -47,7 +47,9 @@ import type { RuntimeIoHandlersMethods } from './runtime-io-handlers.js'
 import type { SdkTurnHandlersMethods } from './sdk-turn-handlers.js'
 import type { SelectorMessageHandlersMethods } from './selector-message-handlers.js'
 import type { SelectorWaitHandlersMethods } from './selector-wait-handlers.js'
+import type { SelfRestartIntents } from './self-restart.js'
 import type { ServerContext } from './server-context.js'
+import type { LifecycleCredentialStore } from './server-lifecycle-credentials.js'
 import type {
   HrcServerOptions,
   InvokeFirstTurnRendezvous,
@@ -182,6 +184,10 @@ type HrcServerInstanceDataForHandlers = {
   readonly pendingBrokerLiteralInputs: Map<string, PendingBrokerLiteralInput>
   readonly queuedTurnInputDrains: Set<string>
   readonly turnAdmissionGate: TurnAdmissionGate
+  /** T-09861 §3: this incarnation's per-runtime lifecycle credentials. */
+  readonly lifecycleCredentials: LifecycleCredentialStore
+  /** T-09872: armed `hrc restartme` intents, one per host session. */
+  readonly selfRestartIntents: SelfRestartIntents
   zombieSweepTimer: ReturnType<typeof setInterval> | undefined
   zombieSweepInFlight: Promise<unknown> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined

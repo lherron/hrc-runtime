@@ -924,10 +924,24 @@ export async function handleSemanticTurnHandoff(
   request: Request
 ): Promise<Response> {
   const parsedBody = parseSemanticDmRequest(await parseJsonBody(request))
-  const body: SemanticTurnHandoffRequest = {
-    ...parsedBody,
-    runtimeIntent: requireCompleteRuntimeIntent(parsedBody.runtimeIntent),
-  }
+  return json(
+    await persistAndDeliverSemanticTurnHandoff.call(this, {
+      ...parsedBody,
+      runtimeIntent: requireCompleteRuntimeIntent(parsedBody.runtimeIntent),
+    })
+  )
+}
+
+/**
+ * The `/v1/messages/turn-handoff` body after wire parsing: persist the durable
+ * request row, then deliver it. Also the internal door for a self-restart's
+ * resume prompt (T-09872 §4), so the successor is born exactly as a handoff
+ * target would be.
+ */
+export async function persistAndDeliverSemanticTurnHandoff(
+  this: HrcServerInstanceForHandlers,
+  body: SemanticTurnHandoffRequest
+): Promise<SemanticTurnHandoffStartedResponse> {
   if (body.to.kind !== 'session') {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
@@ -1003,7 +1017,7 @@ export async function handleSemanticTurnHandoff(
     },
   })
 
-  return json(await deliverPersistedSemanticTurnHandoff.call(this, sessionBody, record, respondTo))
+  return await deliverPersistedSemanticTurnHandoff.call(this, sessionBody, record, respondTo)
 }
 
 export async function deliverPersistedSemanticTurnHandoff(
@@ -1984,6 +1998,7 @@ export const targetMessageHandlersMethods = {
   handleQueryMessages,
   handleTraceMessage,
   handleSemanticTurnHandoff,
+  persistAndDeliverSemanticTurnHandoff,
   tryDeliverSemanticTurnToInteractiveRuntime,
   handleSemanticDm,
   deliverPersistedSemanticDm,

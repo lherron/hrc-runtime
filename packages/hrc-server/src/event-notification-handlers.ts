@@ -14,6 +14,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import { TURN_TEXT_LIMIT, appendHrcEvent } from './hrc-event-helper.js'
 import { extractTextFromTurnMessagePayload } from './messages.js'
 import { isRecord } from './parsers/common.js'
+import { maybeExecuteSelfRestart } from './self-restart.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import type { TurnResponseFinalizer } from './server-types.js'
@@ -113,6 +114,8 @@ export function notifyEvent(
       })
     })
   }
+  // T-09872: an armed `hrc restartme` fires only on its bound turn's terminal.
+  maybeExecuteSelfRestart(this, event)
   if (
     'hrcSeq' in event &&
     (event.eventKind === 'turn.completed' ||

@@ -1,16 +1,8 @@
 import { spawn } from 'node:child_process'
-import { openSync, readFileSync } from 'node:fs'
+import { openSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
-import {
-  HRC_LIFECYCLE_CREDENTIAL_HEADER,
-  HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE,
-  HRC_LIFECYCLE_RUNTIME_HEADER,
-  HRC_LIFECYCLE_SESSION_REF_HEADER,
-  HRC_SERVER_LAUNCHD_LABEL,
-  isLifecycleCredentialRuntimeId,
-  lifecycleCredentialPath,
-} from 'hrc-core'
+import { HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE, HRC_SERVER_LAUNCHD_LABEL } from 'hrc-core'
 import type {
   HrcServerLifecycleAction,
   HrcServerLifecycleGrant,
@@ -43,7 +35,7 @@ import { resolveSessionArg } from '../selector-resolve.js'
 import { parseSinceMs, renderPorcelain, renderSessions } from '../session-render.js'
 import { hasFlag, parseFlag, parseIntegerFlag, requireArg } from './argv.js'
 import { isHrcDomainErrorLike } from './errors.js'
-import { CliStatusExit, createClient, fatal } from './shared.js'
+import { CliStatusExit, createClient, fatal, lifecycleCredentialHeaders } from './shared.js'
 
 const DEFAULT_RESTART_PROOF_TIMEOUT_MS = 30_000
 /**
@@ -315,30 +307,6 @@ async function requireStopProof(
     `hrc: [stop_unproven] stop was granted, but pid ${before.pid ?? '(unknown)'} still answered after ${timeoutMs}ms\n`
   )
   throw new CliStatusExit(1)
-}
-
-/**
- * T-09861 §3: the credential rides in headers, read from the 0600 file the
- * daemon minted for this caller's runtime. `HRC_RUNTIME_ID` only LOCATES it;
- * `HRC_SESSION_REF` is attribution for the server's binding check. A caller
- * with neither simply presents nothing and is refused server-side.
- */
-function lifecycleCredentialHeaders(runtimeRoot: string): Record<string, string> {
-  const headers: Record<string, string> = {}
-  const sessionRef = process.env['HRC_SESSION_REF']?.trim()
-  if (sessionRef) headers[HRC_LIFECYCLE_SESSION_REF_HEADER] = sessionRef
-  const runtimeId = process.env['HRC_RUNTIME_ID']?.trim()
-  if (!runtimeId || !isLifecycleCredentialRuntimeId(runtimeId)) return headers
-  let value: string
-  try {
-    value = readFileSync(lifecycleCredentialPath(runtimeRoot, runtimeId), 'utf8').trim()
-  } catch {
-    return headers
-  }
-  if (value.length === 0) return headers
-  headers[HRC_LIFECYCLE_RUNTIME_HEADER] = runtimeId
-  headers[HRC_LIFECYCLE_CREDENTIAL_HEADER] = value
-  return headers
 }
 
 function formatInFlight(items: readonly HrcServerLifecycleInFlightItem[]): string {
