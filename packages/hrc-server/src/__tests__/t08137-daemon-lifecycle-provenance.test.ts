@@ -412,6 +412,17 @@ describe('T-08137 daemon lifecycle provenance', () => {
       await parked
       expect(kinds()).toEqual(['server.started', 'server.shutting_down'])
       expect(incompleteReasons()[0]).toContain('request_drain_timeout')
+      // Instrumented: the drain names every request it could not wait out.
+      const drainLine = stderr
+        .flatMap((chunk) => chunk.split('\n'))
+        .find((line) => line.includes(' server.stop.request_drain '))
+      const drain = JSON.parse(drainLine?.slice(drainLine.indexOf('{')) ?? '{}') as {
+        stillRunningRequests?: Array<{ method: string; route: string; ageMs: number }>
+      }
+      expect(drain.stillRunningRequests?.map((r) => `${r.method} ${r.route}`)).toEqual([
+        'GET /v1/sessions',
+      ])
+      expect(drain.stillRunningRequests?.[0]?.ageMs).toBeGreaterThan(3_000)
     }, 15_000)
 
     it('tmux sweep drain timeout withholds server.stopped', async () => {

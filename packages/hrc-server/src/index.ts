@@ -951,7 +951,11 @@ class HrcServerInstance implements HrcServer {
    * resumes afterwards and would otherwise run a statement against a store
    * `stop()` had already closed. Drained before `db.close()`.
    */
-  private readonly inFlightRequests = new Set<Promise<void>>()
+  /** Tracked handler settlement → what it is, so a drain timeout can name it (T-08137). */
+  private readonly inFlightRequests = new Map<
+    Promise<void>,
+    { method: string; route: string; startedAt: number }
+  >()
   readonly attachedRunOperations = new Map<string, PendingAttachedRunOperation>()
   readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
   readonly pendingBrokerLiteralInputs = new Map<string, PendingBrokerLiteralInput>()
@@ -1249,7 +1253,7 @@ class HrcServerInstance implements HrcServer {
       idleTimeout: 255,
       fetch: (request: Request, server: { timeout(request: Request, seconds: number): void }) => {
         server.timeout(request, 0)
-        return this.trackInFlightRequest(this.handleRequest(request))
+        return this.trackInFlightRequest(this.handleRequest(request), request)
       },
     } as unknown as Parameters<typeof Bun.serve>[0])
 
@@ -1655,7 +1659,7 @@ class HrcServerInstance implements HrcServer {
    * promise so response semantics are untouched; the tracked copy absorbs
    * rejection so tracking can never mint an unhandled rejection of its own.
    */
-  private trackInFlightRequest(response: Promise<Response>): Promise<Response> {
+  private trackInFlightRequest(response: Promise<Response>, request: Request): Promise<Response> {
     const settled: Promise<void> = response.then(
       () => {
         this.inFlightRequests.delete(settled)
@@ -1664,7 +1668,12 @@ class HrcServerInstance implements HrcServer {
         this.inFlightRequests.delete(settled)
       }
     )
-    this.inFlightRequests.add(settled)
+    this.inFlightRequests.set(settled, {
+      method: request.method,
+      // The pathname only: query strings can carry selectors and cursors.
+      route: new URL(request.url).pathname,
+      startedAt: performance.now(),
+    })
     return response
   }
 
@@ -1681,7 +1690,7 @@ class HrcServerInstance implements HrcServer {
    * awaiting one blocks shutdown on work that is not trying to finish.
    */
   private async drainInFlightRequests(): Promise<'drained' | 'timeout'> {
-    const pending = [...this.inFlightRequests]
+    const pending = [...this.inFlightRequests.keys()]
     if (pending.length === 0) {
       return 'drained'
     }
@@ -1706,6 +1715,15 @@ class HrcServerInstance implements HrcServer {
       outcome,
       drained: pending.length,
       stillRunning: this.inFlightRequests.size,
+      ...(outcome === 'timeout'
+        ? {
+            stillRunningRequests: [...this.inFlightRequests.values()].map((entry) => ({
+              method: entry.method,
+              route: entry.route,
+              ageMs: Math.round(performance.now() - entry.startedAt),
+            })),
+          }
+        : {}),
       durMs: performance.now() - startedAt,
       timeoutMs: SERVER_STOP_REQUEST_DRAIN_TIMEOUT_MS,
     })

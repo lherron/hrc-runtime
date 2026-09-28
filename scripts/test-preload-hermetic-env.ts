@@ -11,6 +11,17 @@
  */
 import { afterEach, beforeEach } from 'bun:test'
 
+/**
+ * T-08137: tests that spawn a real `hrc server serve` hand it this process's
+ * environment, and the daemon's production ledger client resolves wrkq from
+ * HRC_WRKQ_DB — which operator shells export as the fleet wrkqd. A fixture
+ * daemon then posted `server.*` facts onto the live hrc-runtime timeline. Every
+ * test process carries an unreachable locator instead (connection refused, no
+ * wait); HRC_WRKQ_DB also overrides any inherited WRKQ_DB_PATH. In-process
+ * servers already default to the unreachable ledger and are unaffected.
+ */
+process.env['HRC_WRKQ_DB'] = 'rpc://127.0.0.1:1'
+
 // Name mirrors ASP_DEFAULT_TASK_ENV in agent-spaces packages/agent-scope
 // (hardcoded here so the preload stays dependency-free for every package).
 const ASP_DEFAULT_TASK_ENV = 'ASP_DEFAULT_TASK'
