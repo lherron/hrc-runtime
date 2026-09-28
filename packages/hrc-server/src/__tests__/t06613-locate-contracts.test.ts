@@ -89,7 +89,14 @@ describe('v1.3 locate keeps placement truths separate', () => {
 
     expect(location.declared).toMatchObject({ source: 'default_home_node', nodeId: 'max3' })
     expect(location.ledger).toMatchObject({ state: 'active', record: { homeNodeId: 'lab' } })
-    expect(location.authority).toMatchObject({ state: 'bound', source: 'ledger', isLocal: true })
+    // An active row naming another node is that node's home, not this one's
+    // (T-09762): the kicker reads isLocal to decide whether to drive it here.
+    expect(location.authority).toMatchObject({
+      state: 'bound',
+      source: 'ledger',
+      record: { homeNodeId: 'lab' },
+      isLocal: false,
+    })
     expect(location.observed).toMatchObject({ nodeId: 'max3', runtimeCount: 1 })
     expect(JSON.stringify(location)).not.toContain('placementEpoch')
     expect(JSON.stringify(location)).not.toContain('birthClass')

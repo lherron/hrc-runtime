@@ -17,6 +17,7 @@ import {
   evictExternalParticipant,
   isExternalLifecycleOwner,
 } from '../external-participant-lifecycle.js'
+import { assertScopeNotRetired } from '../federation/summon-gate-server.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from '../local-persona-policy.js'
 import {
@@ -70,6 +71,9 @@ export async function maybeAutoRotateStaleSession(
 }> {
   assertLocalPersonaAllowed(this, session.scopeRef)
   assertAppIdentityOwner(session)
+  // T-09762: a stale generation of a scope this node retired is never rotated
+  // into a successor. That rotation is how svc minted gens 3-5 of a max3 scope.
+  await assertScopeNotRetired(this, { scopeRef: session.scopeRef, path: 'resolve-session' })
   const createdAtMs = Date.parse(session.createdAt)
   const ageSec = Number.isFinite(createdAtMs)
     ? Math.max(0, Math.floor((Date.now() - createdAtMs) / 1000))

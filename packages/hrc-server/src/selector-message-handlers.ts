@@ -11,6 +11,7 @@ import type {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import {
+  assertScopeNotRetired,
   persistSessionTaskClaimAuthority,
   withSummonAuthority,
 } from './federation/summon-gate-server.js'
@@ -303,6 +304,10 @@ export async function ensureTargetSession(
         }
       )
     }
+    // T-09762: an existing session is not authority. A scope this node retired
+    // is refused here exactly as a fresh summon of it would be, before the
+    // session is handed to any door to seat.
+    await assertScopeNotRetired(this, { scopeRef, path: 'ensure-target' })
     if (options.persistIntent !== false) {
       this.db.sessions.updateIntent(existing.hostSessionId, intent, now)
     }

@@ -32,10 +32,11 @@ export type {
   ScopeLocation,
 }
 
+import { resolveHomeAuthority } from './home-authority.js'
 import { isReservedNodeId } from './node-id.js'
 import type { PlacementPolicyResolution } from './placement-policy.js'
 import type { BindingRegistryClient } from './registry-client.js'
-import { RegistryRefusedError, RegistryUnreachableError } from './registry-client.js'
+import { RegistryUnreachableError } from './registry-client.js'
 import { placementHomeDeclaration, placementPinKey } from './summon-gate.js'
 import type { SummonGateMode } from './summon-gate.js'
 
@@ -176,24 +177,6 @@ function assessSkew(
   return { notes }
 }
 
-async function consultRegistry(scopeRef: string, deps: LocateDeps): Promise<LocateRegistryView> {
-  try {
-    const result = await deps.registry.consult(scopeRef)
-    return result.outcome === 'bound'
-      ? { outcome: 'bound', record: toRecord(result.binding) }
-      : { outcome: 'unbound' }
-  } catch (error) {
-    if (error instanceof RegistryRefusedError) {
-      return { outcome: 'unknown', detail: error.message, retryable: false }
-    }
-    return {
-      outcome: 'unknown',
-      detail: error instanceof Error ? error.message : String(error),
-      retryable: error instanceof RegistryUnreachableError,
-    }
-  }
-}
-
 async function readDesignation(scopeRef: string, deps: LocateDeps): Promise<LocateDesignationView> {
   if (!deps.federationConfigured) {
     return { outcome: 'not-consulted', detail: 'Federation is not configured.' }
@@ -219,37 +202,18 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
   const { deps } = request
   const scopeRef = formatCanonicalScopeRef({ scopeRef: request.scopeRef })
   const declared = describeDeclaredPolicy(scopeRef, await deps.policyFor(scopeRef))
-  const local = deps.ledger.get(scopeRef)
+  // The one home-authority resolution (T-09762): the kicker's drive decision,
+  // the shadow teardown and this report can never disagree about a scope.
+  const { local, registry, authority } = await resolveHomeAuthority(
+    {
+      localNodeId: deps.localNodeId,
+      registry: deps.federationConfigured ? deps.registry : undefined,
+      ledger: deps.ledger,
+    },
+    scopeRef
+  )
   const ledger: LocateLedgerView =
     local === undefined ? { state: 'absent' } : { state: local.state, record: toRecord(local) }
-  const registry: LocateRegistryView =
-    local?.state === 'active'
-      ? { outcome: 'not-consulted', detail: 'The active local ledger is authoritative.' }
-      : local?.state === 'retired'
-        ? {
-            outcome: 'not-consulted',
-            detail: 'The permanent local retirement fence is authoritative.',
-          }
-        : !deps.federationConfigured
-          ? { outcome: 'not-consulted', detail: 'Federation is not configured.' }
-          : await consultRegistry(scopeRef, deps)
-  let authority: LocateAuthority
-  if (local?.state === 'active') {
-    authority = { state: 'bound', source: 'ledger', record: toRecord(local), isLocal: true }
-  } else if (local?.state === 'retired') {
-    authority = { state: 'unbound' }
-  } else if (registry.outcome === 'bound') {
-    authority = {
-      state: 'bound',
-      source: 'registry',
-      record: registry.record,
-      isLocal: registry.record.homeNodeId === deps.localNodeId,
-    }
-  } else if (registry.outcome === 'unknown') {
-    authority = { state: 'unknown', detail: registry.detail, retryable: registry.retryable }
-  } else {
-    authority = { state: 'unbound' }
-  }
   const { skew, notes } = assessSkew(declared, authority)
   const retirement =
     local?.state === 'retired' &&

@@ -5,6 +5,7 @@ import type {
   HrcMessageRecord,
   HrcProvider,
   HrcRuntimeSnapshot,
+  LocateBindingRecord,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { TranscriptIndexer } from 'hrc-transcript-index'
@@ -32,7 +33,6 @@ import type {
   ExternalRegistrationRendezvousMethods,
 } from './external-registration-rendezvous.js'
 import type { CollectiveHistoryCoordinator } from './federation/collective-history.js'
-import type { ForeignHome } from './federation/home-authority.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { ParticipantRegistrationHandlersMethods } from './participant-registration-handlers.js'
@@ -157,7 +157,7 @@ type HrcServerInstanceDataForHandlers = {
    * It is never consulted ahead of the local placement ledger, so it can only
    * ever delay a scope's return to this node, never block it.
    */
-  readonly foreignHomeMemo: Map<string, ForeignHome>
+  readonly foreignHomeMemo: Map<string, LocateBindingRecord>
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Test/embedded seam for fixture-owned accepting-node placement inputs. */
   readonly runtimeIntentLocalizationOptions?: FederatedRuntimeIntentLocalizationOptions | undefined

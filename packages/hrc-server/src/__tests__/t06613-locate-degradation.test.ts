@@ -78,8 +78,12 @@ describe('locate degrades visibly and preserves permanent local retirement', () 
         }),
       }),
     })
-    expect(consulted).toBe(false)
+    // T-09762: retirement fences THIS node; only the registry says where the
+    // scope lives now, so it is consulted. A registry still naming the retired
+    // node is stale discovery and the fence wins: the scope is not local.
+    expect(consulted).toBe(true)
     expect(location.ledger.state).toBe('retired')
+    expect(location.registry).toMatchObject({ outcome: 'bound', record: { homeNodeId: 'max3' } })
     expect(location.authority.state).toBe('unbound')
     expect(location.retirement).toEqual({
       retiredNodeId: 'max3',

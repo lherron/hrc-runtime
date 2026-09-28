@@ -82,6 +82,7 @@ import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
+import { assertScopeNotRetired } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
@@ -646,6 +647,10 @@ export async function handleSubmission(
       door,
     })
   }
+  // T-09762: every door (invoke, enqueue, steer, preempt) refuses a scope this
+  // node retired, typed as the gate's scope-retired conflict, before rotation
+  // or dispatch can seat it.
+  await assertScopeNotRetired(this, { scopeRef: session.scopeRef, path: 'resolve-session' })
   admitSubmissionTarget(session, door)
   // R7.6: the participant target is resolved BEFORE generic rotation. Rotating
   // a participant's session would move the address off the incarnation that

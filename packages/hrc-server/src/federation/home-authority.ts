@@ -18,10 +18,12 @@
 
 import type { Database } from 'bun:sqlite'
 
+import type { LocateAuthority, LocateBindingRecord, LocateRegistryView } from 'hrc-core'
 import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import type { PlacementLedgerRecord } from 'hrc-store-sqlite'
 
-import type { BindingRegistryClient } from './registry-client.js'
+import type { BindingRegistryClient, RegistryConsultResult } from './registry-client.js'
+import { RegistryUnreachableError } from './registry-client.js'
 
 /**
  * A home this node believes a scope has, when that home is NOT this node.
@@ -45,7 +47,7 @@ export type HomeAuthorityDeps = Readonly<{
    * it exists to charge one consult per scope per process instead of one per
    * tick, and a restart must be able to re-ask.
    */
-  memo: Map<string, ForeignHome>
+  memo?: Map<string, LocateBindingRecord> | undefined
   onConsultFailure?: ((scopeRef: string, error: unknown) => void) | undefined
 }>
 
@@ -53,7 +55,14 @@ type HomeAuthorityServer = Readonly<{
   db: { sqlite: Database }
   federationNodeId: string
   federationRegistryClient: BindingRegistryClient | undefined
-  foreignHomeMemo: Map<string, ForeignHome>
+  foreignHomeMemo: Map<string, LocateBindingRecord>
+}>
+
+/** One resolution: what the ledger holds, what the registry said, and the verdict. */
+export type HomeAuthorityResolution = Readonly<{
+  local: PlacementLedgerRecord | undefined
+  registry: LocateRegistryView
+  authority: LocateAuthority
 }>
 
 /** The deps a running daemon supplies, gathered in one place so both callers agree. */
@@ -71,60 +80,126 @@ export function homeAuthorityDeps(
 }
 
 /**
- * Resolution order mirrors the summon gate's own (§5), because a verdict that
- * disagreed with the gate would either withhold work this node owes or keep
- * acting on work it does not:
+ * THE home-authority resolution. `locateScope` (and so every HTTP locate
+ * caller, the out-of-process mail kicker among them) and `resolveForeignHome`
+ * (the in-process drive check and the shadow teardown) both answer from this
+ * one function. T-09762 is what two resolvers cost: locate read a locally
+ * RETIRED row as unbound without asking the registry, the teardown asked the
+ * registry, and svc spent a month birthing seats for a max3 scope that its
+ * own teardown then killed.
  *
- *  1. NO FEDERATION — no registry client means no other node exists to home
- *     anything. A single-node daemon homes everything it can see and nothing is
- *     ever foreign; this is why the test is not "must have a local placement
- *     row", which would silence delivery on every unfederated install.
- *  2. LOCAL PLACEMENT LEDGER — this node's own record of the bindings it holds
- *     authority for, and the only answer that costs no network. An active row
- *     naming another node is definitive; an active row naming this node is
- *     definitive the other way and CLEARS any remembered registry answer, so a
- *     scope rebound back here resumes the moment activation installs the row.
- *  3. REMEMBERED REGISTRY ANSWER.
- *  4. REGISTRY CONSULT, only for a scope with no local row at all.
+ * Resolution order mirrors the summon gate's own (§5):
  *
- * Anything else — unbound, retired, bound here, or a registry we cannot reach —
- * is `undefined`, and the caller proceeds exactly as it would have. This never
- * invents a foreign home; it only reports one already on the record.
+ *  1. ACTIVE LOCAL PLACEMENT — this node's own record, authoritative and free.
+ *     It is local only when it names this node; an active row naming another
+ *     node is a foreign home, never "local because the row is here". A row
+ *     naming this node CLEARS any remembered registry answer, so a scope
+ *     rebound back here resumes the moment activation installs the row.
+ *  2. NO FEDERATION — no registry client means no other node exists. Nothing
+ *     is bound anywhere this node can learn about.
+ *  3. REMEMBERED REGISTRY ANSWER (only when the caller supplies a memo).
+ *  4. REGISTRY CONSULT — for a scope with no local row AND for a locally
+ *     retired one. Retirement fences THIS node permanently; it says nothing
+ *     about where the scope lives now, and only the registry does.
+ *
+ * A retired scope is never local. If the registry still names this node after
+ * retirement, that is stale shared discovery and the fence wins: `unbound`.
+ * A registry that cannot answer is `unknown`, never collapsed into unbound and
+ * never a guessed foreign home.
+ */
+export async function resolveHomeAuthority(
+  deps: HomeAuthorityDeps,
+  scopeRef: string
+): Promise<HomeAuthorityResolution> {
+  const local = deps.ledger.get(scopeRef)
+  if (local?.state === 'active') {
+    const isLocal = local.homeNodeId === deps.localNodeId
+    if (isLocal) deps.memo?.delete(scopeRef)
+    return {
+      local,
+      registry: { outcome: 'not-consulted', detail: 'The active local ledger is authoritative.' },
+      authority: { state: 'bound', source: 'ledger', record: bindingRecord(local), isLocal },
+    }
+  }
+  if (deps.registry === undefined) {
+    return {
+      local,
+      registry: { outcome: 'not-consulted', detail: 'Federation is not configured.' },
+      authority: { state: 'unbound' },
+    }
+  }
+
+  const remembered = deps.memo?.get(scopeRef)
+  if (remembered !== undefined) {
+    return {
+      local,
+      registry: { outcome: 'bound', record: remembered },
+      authority: { state: 'bound', source: 'registry', record: remembered, isLocal: false },
+    }
+  }
+
+  let consulted: RegistryConsultResult
+  try {
+    consulted = await deps.registry.consult(scopeRef)
+  } catch (error) {
+    deps.onConsultFailure?.(scopeRef, error)
+    const detail = error instanceof Error ? error.message : String(error)
+    const retryable = error instanceof RegistryUnreachableError
+    return {
+      local,
+      registry: { outcome: 'unknown', detail, retryable },
+      authority: { state: 'unknown', detail, retryable },
+    }
+  }
+  if (consulted.outcome !== 'bound') {
+    return { local, registry: { outcome: 'unbound' }, authority: { state: 'unbound' } }
+  }
+  const record = bindingRecord(consulted.binding)
+  const registry: LocateRegistryView = { outcome: 'bound', record }
+  if (record.homeNodeId === deps.localNodeId) {
+    return {
+      local,
+      registry,
+      authority:
+        local?.state === 'retired'
+          ? { state: 'unbound' }
+          : { state: 'bound', source: 'registry', record, isLocal: true },
+    }
+  }
+  deps.memo?.set(scopeRef, record)
+  return {
+    local,
+    registry,
+    authority: { state: 'bound', source: 'registry', record, isLocal: false },
+  }
+}
+
+/**
+ * "Is this scope homed on ANOTHER node?" — `resolveHomeAuthority` narrowed to
+ * the one answer a drive or teardown acts on. Anything that is not a positive
+ * foreign binding (unbound, unknown, bound here) is `undefined`: this never
+ * invents a foreign home, it only reports one already on the record.
  */
 export async function resolveForeignHome(
   deps: HomeAuthorityDeps,
   scopeRef: string
 ): Promise<ForeignHome | undefined> {
-  if (deps.registry === undefined) return undefined
-
-  const local = deps.ledger.get(scopeRef)
-  if (local?.state === 'active') {
-    if (local.homeNodeId === deps.localNodeId) {
-      deps.memo.delete(scopeRef)
-      return undefined
-    }
-    return {
-      homeNodeId: local.homeNodeId,
-      source: 'placement-ledger',
-    }
+  const { authority } = await resolveHomeAuthority(deps, scopeRef)
+  if (authority.state !== 'bound' || authority.isLocal) return undefined
+  return {
+    homeNodeId: authority.record.homeNodeId,
+    source: authority.source === 'ledger' ? 'placement-ledger' : 'registry',
   }
+}
 
-  const remembered = deps.memo.get(scopeRef)
-  if (remembered !== undefined) return remembered
-
-  try {
-    const consulted = await deps.registry.consult(scopeRef)
-    if (consulted.outcome !== 'bound') return undefined
-    if (consulted.binding.homeNodeId === deps.localNodeId) return undefined
-    const learned: ForeignHome = {
-      homeNodeId: consulted.binding.homeNodeId,
-      source: 'registry',
-    }
-    deps.memo.set(scopeRef, learned)
-    return learned
-  } catch (error) {
-    // An unreachable or refused registry is not evidence of a foreign home.
-    deps.onConsultFailure?.(scopeRef, error)
-    return undefined
+function bindingRecord(binding: {
+  homeNodeId: string
+  createdAt: string
+  updatedAt: string
+}): LocateBindingRecord {
+  return {
+    homeNodeId: binding.homeNodeId,
+    createdAt: binding.createdAt,
+    updatedAt: binding.updatedAt,
   }
 }

@@ -44,6 +44,7 @@ import type {
   HrcTurnAdmissionCloseRequest,
   HrcTurnAdmissionReopenRequest,
   LaunchCommandScopedRunResponse,
+  LocateBindingRecord,
   ReconcileActiveRunsResponse,
   ResolveSessionResponse,
   RestartStyle,
@@ -135,7 +136,6 @@ import {
   resolveFederationConfigPath,
   summarizeFederationConfig,
 } from './federation/federation-config.js'
-import type { ForeignHome } from './federation/home-authority.js'
 import { locateScopeOnServer, scanServerLedgerForSkew } from './federation/locate-server.js'
 import { locatePeerScope, probePeerHealth } from './federation/peer-observer.js'
 import {
@@ -978,7 +978,7 @@ class HrcServerInstance implements HrcServer {
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<FirstTurnEvalSummary> | undefined
   readonly transcriptIndexer: TranscriptIndexer
-  readonly foreignHomeMemo = new Map<string, ForeignHome>()
+  readonly foreignHomeMemo = new Map<string, LocateBindingRecord>()
   shadowTeardownTimer: ReturnType<typeof setInterval> | undefined
   shadowTeardownInFlight: Promise<void> | undefined
   // Stale-generation auto-rotation policy. Resolved once at construction
