@@ -316,8 +316,10 @@ deploy recipe (`just deploy-hrcdev`).
 Do not confuse it with the **`hrc-dev` lane** at
 `~/praesidium/var/install/hrc-dev/tree`, which is a different thing with a
 different repair procedure: a `git archive` export with no `.git` (so `git -C`
-there silently resolves to the praesidium **root** repo and lies), no
-`praesidium-release.json` (so it cannot state its own sourceCommit), and a
+there silently resolves to the praesidium **root** repo and lies), no release
+manifest (the praesidium-release.json an atomic release directory carries, per
+`docs/atomic-install.md` — not a repo file; so it cannot state its own
+sourceCommit), and a
 `KeepAlive` LaunchAgent `com.praesidium.hrc-dev` that must be stopped with
 `launchctl bootout`, never `kickstart` or a kill. It has no deploy recipe and is
 not a fleet node.
