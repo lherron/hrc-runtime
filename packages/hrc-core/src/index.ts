@@ -148,6 +148,7 @@ export type {
   HrcApprovedMutationRef,
   HrcRuntimeKind,
   HrcCapabilityStatus,
+  HrcLastRestart,
   HrcEventLoopStallView,
   HrcEventLoopStatus,
   HrcAspToolchainBinaryKind,

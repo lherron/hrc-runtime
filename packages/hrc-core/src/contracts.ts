@@ -74,6 +74,8 @@ export type HrcEventCategory =
   | 'app_session'
   /** The store itself, not any seat: `store.migrated` attribution rows (T-08118). */
   | 'store'
+  /** The daemon itself, not any seat: `server.*` lifecycle provenance rows (T-08137). */
+  | 'server'
 
 export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless'
 
@@ -1403,6 +1405,17 @@ export type HrcEventLoopStatus = {
   lastStall?: HrcEventLoopStallView | undefined
 }
 
+/**
+ * T-08137: `at` is the `server.started` timestamp. `requestedBy`/`reason` carry
+ * the attribution of the `server.stopped` that immediately preceded it, and are
+ * both null for an unattributed predecessor or a no-intent (external) signal.
+ */
+export type HrcLastRestart = {
+  at: string
+  requestedBy: string | null
+  reason: string | null
+}
+
 export type HrcCapabilityStatus = {
   ok: true
   uptime: number
@@ -1422,6 +1435,12 @@ export type HrcCapabilityStatus = {
   apiVersion: string
   /** Absent from daemons that predate the lag monitor. */
   eventLoop?: HrcEventLoopStatus | undefined
+  /**
+   * T-08137: the latest daemon start and the completed stop immediately before
+   * it, read solely from the local lifecycle ledger. `null` when this ledger has
+   * no `server.started`; absent from daemons that predate the projection.
+   */
+  lastRestart?: HrcLastRestart | null | undefined
   /**
    * Node identity and static peer table (federation spec §3/§6).
    *

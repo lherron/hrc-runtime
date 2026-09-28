@@ -13,8 +13,13 @@ predicate: >
   selected/running release may name a source commit not yet contained upstream;
   that identity is not canonical publication evidence. Only the later
   selected release canonical publication proves containment and the registry tuple.
-  Source and worktree daemons report unmanaged explicitly.
-authority: wrkq:T-06958; wrkq:T-08596 aspContracts amendment (Daedalus approval EN-14687, 2026-09-18); wrkq:T-08559 (Daedalus approval EN-18147, 2026-09-26)
+  Source and worktree daemons report unmanaged explicitly. The production daemon
+  records that captured identity (release, sourceCommit, storeSchema,
+  processStartedAt) durably in its server.started lifecycle fact, and every
+  status read reports lastRestart derived solely from the local lifecycle
+  ledger, never from logs or the project timeline
+  (hrc-runtime.daemon-lifecycle-provenance).
+authority: wrkq:T-06958; wrkq:T-08596 aspContracts amendment (Daedalus approval EN-14687, 2026-09-18); wrkq:T-08559 (Daedalus approval EN-18147, 2026-09-26); wrkq:T-08137 lastRestart amendment (Daedalus approval EN-19426, 2026-09-28)
 source:
   - packages/hrc-core/src/contracts.ts
   - packages/hrc-server/src/release-provenance.ts
@@ -23,12 +28,14 @@ source:
   - scripts/atomic-install-live-harness.test.ts
   - scripts/t08559-install-publish-split.test.ts
   - packages/hrc-cli/src/cli-runtime.ts
+  - packages/hrc-server/src/server-lifecycle.ts
 required_tests:
   - bun test packages/hrc-server/src/__tests__/t06958-release-provenance.test.ts
   - bun test scripts/atomic-install-live-harness.test.ts
   - bun test scripts/t08559-install-publish-split.test.ts
   - bun test packages/hrc-cli/src/__tests__/cli.test.ts
+  - bun test packages/hrc-cli/src/__tests__/t07646-server-status-json-parity.test.ts
 last_verified: 2026-09-26 focused regression and build; installed smoke pending
-reopen_when: Atomic release layout, package provenance, daemon startup, or status projection changes.
+reopen_when: Atomic release layout, package provenance, daemon startup, the server.started provenance payload, or status projection changes.
 supersedes: []
 superseded_by: []

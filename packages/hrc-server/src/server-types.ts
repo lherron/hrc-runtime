@@ -28,6 +28,7 @@ import type { ExternalParticipantClientFactory } from './external-registration-r
 import type { FederationConfig } from './federation/federation-config.js'
 import type { ParticipantAdapterRegistry } from './participant-adapter-registry.js'
 import type { RegistrationClassConfig } from './registration-classes-config.js'
+import type { ServerShutdownAttribution } from './server-lifecycle.js'
 import type { WrkqLedgerClient } from './wrkq/ledger-client.js'
 
 export type HrcEventsRouteFilters = Omit<
@@ -400,6 +401,13 @@ export type HrcServerOptions = {
    */
   wrkqLedger?: WrkqLedgerClient | undefined
   /**
+   * T-08137: this instance IS the node's installed daemon and records its own
+   * lifecycle (`server.*` ledger facts and the `hrc-runtime` timeline). Only
+   * `hrc server serve` passes true; embedded and test instances stay silent so
+   * fixture cleanup can never claim to be the installed daemon.
+   */
+  lifecycleProvenance?: boolean | undefined
+  /**
    * @deprecated Retired with the OTLP log listener (T-08566 stage 1). Accepted
    * and ignored so existing embedders compile; no listener is ever bound.
    */
@@ -514,6 +522,13 @@ export type HrcServerOptions = {
 
 export type HrcServer = {
   stop(): Promise<void>
+  /**
+   * T-08137: append `server.shutting_down` with the consumed shutdown intent,
+   * before stop(). A no-op unless `lifecycleProvenance` is set.
+   */
+  beginLifecycleShutdown(attribution: ServerShutdownAttribution): void
+  /** T-08137 rev 4: the foreground stop deadline fired; withhold server.stopped. */
+  markShutdownDeadlineExpired(): void
   /** F0's narrow authenticated registry URL, present only when federation.json declares registry.bind. */
   readonly federationRegistryEndpoint: string | undefined
   /** F1's narrow authenticated peer URL, present only when peerListener.bind is declared. */

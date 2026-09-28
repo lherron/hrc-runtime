@@ -1,7 +1,12 @@
 import { existsSync, openSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
-import type { FederationPeerHealthObservation, HrcReleaseStatus, HrcStatusResponse } from 'hrc-core'
+import type {
+  FederationPeerHealthObservation,
+  HrcLastRestart,
+  HrcReleaseStatus,
+  HrcStatusResponse,
+} from 'hrc-core'
 import { resolveDatabasePath } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 import { type StoreSchemaState, readStoreSchemaState, releaseSchemaVersion } from 'hrc-store-sqlite'
@@ -89,6 +94,12 @@ export type ServerRuntimeStatus = {
   peerHealth?: FederationPeerHealthObservation[] | undefined
   tmux: TmuxStatus
   serverStatus?: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
+  /**
+   * T-08137: the daemon's latest start and the completed stop before it, from
+   * its lifecycle ledger. `null` when the ledger has no start; absent when the
+   * daemon is unreachable or predates the projection.
+   */
+  lastRestart?: HrcLastRestart | null | undefined
   error?: string | undefined
 }
 
@@ -344,6 +355,7 @@ export async function collectServerRuntimeStatus(
     let node: ServerRuntimeStatus['node']
     let peerHealth: ServerRuntimeStatus['peerHealth']
     let serverStatus: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
+    let lastRestart: HrcLastRestart | null | undefined
 
     if (socketResponsive) {
       const client = new HrcClient(paths.socketPath)
@@ -379,6 +391,7 @@ export async function collectServerRuntimeStatus(
           startedAt: status.startedAt,
           apiVersion: status.apiVersion,
         }
+        lastRestart = status.lastRestart
       } catch (error) {
         if (apiHealth.ok) {
           apiHealth = {
@@ -439,6 +452,7 @@ export async function collectServerRuntimeStatus(
       ...(peerHealth ? { peerHealth } : {}),
       tmux,
       ...(serverStatus ? { serverStatus } : {}),
+      ...(lastRestart !== undefined ? { lastRestart } : {}),
     }
   } catch (error) {
     const message = formatError(error)
@@ -607,6 +621,15 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
   } else if (status.serverStatus) {
     lines.push(`  started:      ${status.serverStatus.startedAt}`)
     lines.push(`  apiVersion:   ${status.serverStatus.apiVersion}`)
+  }
+
+  if (status.lastRestart) {
+    const restart = status.lastRestart
+    lines.push(
+      `  last restart: ${restart.at} by ${restart.requestedBy ?? 'external'}${
+        restart.reason === null ? '' : ` (${restart.reason})`
+      }`
+    )
   }
 
   if (status.error) {

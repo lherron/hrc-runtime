@@ -53,7 +53,11 @@ import type {
 } from 'hrc-core'
 import type { TranscriptIndexer } from 'hrc-transcript-index'
 
-import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
+import {
+  createPlacementLedgerRepository,
+  openHrcDatabase,
+  storeSchemaVersion,
+} from 'hrc-store-sqlite'
 import type { HrcDatabase, SqliteSlowStatement } from 'hrc-store-sqlite'
 import {
   type AcceptedRunRecoveryHandlersMethods,
@@ -217,7 +221,11 @@ import {
   type RegistrationHandlersMethods,
   registrationHandlersMethods,
 } from './registration-handlers.js'
-import { captureServerRelease, projectServerRelease } from './release-provenance.js'
+import {
+  captureServerRelease,
+  projectHrcReleaseIdentity,
+  projectServerRelease,
+} from './release-provenance.js'
 import { replaySpool } from './replay-spool.js'
 import {
   ServerRequestMetricSampler,
@@ -270,6 +278,12 @@ import {
   COMMAND_RUNTIME_COMPAT_HARNESS,
   COMMAND_RUNTIME_COMPAT_PROVIDER,
 } from './server-instance-context.js'
+import {
+  type ServerShutdownAttribution,
+  appendServerLifecycleEvent,
+  projectLastRestart,
+  recordServerBoot,
+} from './server-lifecycle.js'
 import {
   acquireServerLock,
   cleanupFailedStartup,
@@ -367,6 +381,7 @@ import {
   turnDispatchHandlersMethods,
 } from './turn-dispatch-handlers.js'
 import { UnreachableWrkqLedger, type WrkqLedgerClient } from './wrkq/ledger-client.js'
+import { ServerProjectEventPublisher } from './wrkq/server-project-events.js'
 import { SessionProjectEventPublisher } from './wrkq/session-project-events.js'
 import {
   type WrkqStopGateHandlersMethods,
@@ -377,6 +392,7 @@ const HRC_SERVER_PACKAGE_PATH = realpathSync(resolve(import.meta.dir, '..'))
 const HRC_SERVER_BINARY_PATH = realpathSync(resolve(process.argv[1] ?? process.execPath))
 
 export type { HrcServer, HrcServerOptions } from './server-types.js'
+export type { ServerShutdownAttribution } from './server-lifecycle.js'
 export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
 export type { ServerMetricRecord } from './request-metrics.js'
 
@@ -990,6 +1006,14 @@ class HrcServerInstance implements HrcServer {
   readonly acpEventBridge: AcpEventBridge
   /** `session.*` project-event producer (T-08389). */
   readonly sessionProjectEvents: SessionProjectEventPublisher
+  /** T-08137: present only for the production lifecycle integration. */
+  readonly serverProjectEvents: ServerProjectEventPublisher | undefined
+  /** T-08137: the `server.shutting_down` this lifecycle's stop attests against. */
+  private lifecycleShutdown:
+    | { shuttingDownHrcSeq: number; attribution: ServerShutdownAttribution }
+    | undefined
+  /** T-08137 rev 4: set by the foreground when its stop deadline fires. */
+  private shutdownDeadlineExpired = false
   readonly ctx: ServerContext
   readonly requestMetricsEnabled = process.env['HRC_METRICS'] !== '0'
   private readonly requestMetricSampler = new ServerRequestMetricSampler()
@@ -1484,6 +1508,14 @@ class HrcServerInstance implements HrcServer {
       post: (params) => this.wrkqLedger.projectEventPost(params),
       node: this.federationNodeId,
     })
+    this.serverProjectEvents =
+      options.lifecycleProvenance === true
+        ? new ServerProjectEventPublisher({
+            db: this.db,
+            post: (params) => this.wrkqLedger.projectEventPost(params),
+            nodeId: this.federationNodeId,
+          })
+        : undefined
     for (const route of createRuntimeListAdoptRoutes({
       db: this.db,
       runtimeRoot: this.options.runtimeRoot,
@@ -1648,10 +1680,10 @@ class HrcServerInstance implements HrcServer {
    * attached start waits for an operator attach that may never come, so
    * awaiting one blocks shutdown on work that is not trying to finish.
    */
-  private async drainInFlightRequests(): Promise<void> {
+  private async drainInFlightRequests(): Promise<'drained' | 'timeout'> {
     const pending = [...this.inFlightRequests]
     if (pending.length === 0) {
-      return
+      return 'drained'
     }
 
     const startedAt = performance.now()
@@ -1677,12 +1709,13 @@ class HrcServerInstance implements HrcServer {
       durMs: performance.now() - startedAt,
       timeoutMs: SERVER_STOP_REQUEST_DRAIN_TIMEOUT_MS,
     })
+    return outcome
   }
 
   private async drainTmuxSweepForStop(
     sweep: Promise<unknown>,
     label: 'active_run_reconcile' | 'tmux_aging'
-  ): Promise<void> {
+  ): Promise<'settled' | 'failed' | 'timeout'> {
     let timer: ReturnType<typeof setTimeout> | undefined
     const startedAt = performance.now()
     const outcome = await Promise.race([
@@ -1701,13 +1734,80 @@ class HrcServerInstance implements HrcServer {
 
     if (outcome.kind === 'failed') {
       writeServerLog('WARN', `server.stop.${label}_wait_failed`, { error: outcome.error })
-      return
     }
     if (outcome.kind === 'timeout') {
       writeServerLog('WARN', `server.stop.${label}_wait_timeout`, {
         durMs: performance.now() - startedAt,
         timeoutMs: SERVER_STOP_TMUX_SWEEP_DRAIN_TIMEOUT_MS,
       })
+    }
+    return outcome.kind
+  }
+
+  /**
+   * T-08137: record this daemon's start, classifying an unconfirmed
+   * predecessor first. Production lifecycle integration only.
+   */
+  recordLifecycleStart(): void {
+    if (this.options.lifecycleProvenance !== true) return
+    const identity = projectHrcReleaseIdentity(this.capturedRelease)
+    recordServerBoot(this.db, {
+      pid: process.pid,
+      release: identity?.releaseId ?? null,
+      sourceCommit: identity?.sourceCommit ?? null,
+      storeSchema: storeSchemaVersion(this.db.sqlite) ?? null,
+      processStartedAt: this.startedAt,
+    })
+    this.serverProjectEvents?.kick()
+  }
+
+  /**
+   * T-08137: synchronously append `server.shutting_down` before any teardown.
+   * Initiation evidence only; it never asserts clean termination.
+   */
+  beginLifecycleShutdown(attribution: ServerShutdownAttribution): void {
+    if (this.options.lifecycleProvenance !== true) return
+    if (this.lifecycleShutdown !== undefined || this.stopping) return
+    const event = appendServerLifecycleEvent(this.db, 'server.shutting_down', {
+      pid: process.pid,
+      ...attribution,
+    })
+    this.lifecycleShutdown = { shuttingDownHrcSeq: event.hrcSeq, attribution }
+  }
+
+  /**
+   * T-08137 rev 4: the foreground's stop deadline fired. A stop() that still
+   * finishes afterwards must not claim a completed stop.
+   */
+  markShutdownDeadlineExpired(): void {
+    this.shutdownDeadlineExpired = true
+  }
+
+  /**
+   * Step 4 of the rev-4 stop order: only when every pre-close teardown step
+   * completed, and re-checking the deadline flag immediately before writing.
+   */
+  private appendServerStopped(teardownIncomplete: readonly string[]): void {
+    const shutdown = this.lifecycleShutdown
+    if (shutdown === undefined) return
+    if (teardownIncomplete.length > 0) {
+      writeServerLog('WARN', 'server.stop.incomplete', { reasons: [...teardownIncomplete] })
+      return
+    }
+    if (this.shutdownDeadlineExpired) {
+      writeServerLog('WARN', 'server.stop.stopped_withheld', {
+        reason: 'shutdown_deadline_expired',
+      })
+      return
+    }
+    try {
+      appendServerLifecycleEvent(this.db, 'server.stopped', {
+        pid: process.pid,
+        ...shutdown.attribution,
+        shuttingDownHrcSeq: shutdown.shuttingDownHrcSeq,
+      })
+    } catch (error) {
+      writeServerLog('WARN', 'server.stop.stopped_append_failed', { error })
     }
   }
 
@@ -1717,6 +1817,14 @@ class HrcServerInstance implements HrcServer {
     }
 
     this.stopping = true
+    // T-08137 rev 4: every continue-past-failure site before the store closes
+    // records a stable reason here, keeping its log line and continue behavior.
+    // server.stopped is appended only when this stays empty.
+    const teardownIncomplete: string[] = []
+    const incomplete = (reason: string, details?: Record<string, unknown>): void => {
+      teardownIncomplete.push(reason)
+      writeServerLog('WARN', `server.stop.${reason}`, details)
+    }
     this.runtimeStartPresentationAbortController.abort()
     writeServerLog('INFO', 'server.stop.begin', {
       socketPath: this.options.socketPath,
@@ -1731,18 +1839,19 @@ class HrcServerInstance implements HrcServer {
       try {
         this.peerProtocolEndpoint.stop()
       } catch (error) {
-        writeServerLog('WARN', 'server.stop.peer_protocol_listener_failed', { error })
+        incomplete('peer_protocol_listener_failed', { error })
       }
     }
     if (this.bindingRegistryEndpoint) {
       try {
         this.bindingRegistryEndpoint.stop()
       } catch (error) {
-        writeServerLog('WARN', 'server.stop.binding_registry_listener_failed', { error })
+        incomplete('binding_registry_listener_failed', { error })
       }
     }
     this.eventLoopLag?.stop()
     this.sessionProjectEvents.stop()
+    this.serverProjectEvents?.stop()
     if (this.zombieSweepTimer) {
       clearInterval(this.zombieSweepTimer)
       this.zombieSweepTimer = undefined
@@ -1751,7 +1860,7 @@ class HrcServerInstance implements HrcServer {
       try {
         await this.zombieSweepInFlight
       } catch (error) {
-        writeServerLog('WARN', 'server.stop.zombie_sweep_wait_failed', { error })
+        incomplete('zombie_sweep_wait_failed', { error })
       }
     }
     if (this.activeRunReconcileTimer) {
@@ -1759,7 +1868,11 @@ class HrcServerInstance implements HrcServer {
       this.activeRunReconcileTimer = undefined
     }
     if (this.activeRunReconcileInFlight) {
-      await this.drainTmuxSweepForStop(this.activeRunReconcileInFlight, 'active_run_reconcile')
+      const outcome = await this.drainTmuxSweepForStop(
+        this.activeRunReconcileInFlight,
+        'active_run_reconcile'
+      )
+      if (outcome !== 'settled') teardownIncomplete.push(`active_run_reconcile_wait_${outcome}`)
     }
     if (this.firstTurnEvalTimer) {
       clearInterval(this.firstTurnEvalTimer)
@@ -1769,7 +1882,7 @@ class HrcServerInstance implements HrcServer {
       try {
         await this.firstTurnEvalInFlight
       } catch (error) {
-        writeServerLog('WARN', 'server.stop.first_turn_eval_wait_failed', { error })
+        incomplete('first_turn_eval_wait_failed', { error })
       }
     }
     if (this.brokerLeaseGcTimer) {
@@ -1788,14 +1901,14 @@ class HrcServerInstance implements HrcServer {
       try {
         await this.retainedEvidencePassInFlight
       } catch (error) {
-        writeServerLog('WARN', 'server.stop.retained_evidence_pass_wait_failed', { error })
+        incomplete('retained_evidence_pass_wait_failed', { error })
       }
     }
     if (this.brokerLeaseGcInFlight) {
       try {
         await this.brokerLeaseGcInFlight
       } catch (error) {
-        writeServerLog('WARN', 'server.stop.broker_lease_gc_wait_failed', { error })
+        incomplete('broker_lease_gc_wait_failed', { error })
       }
     }
     if (this.tmuxAgingTimer) {
@@ -1803,7 +1916,8 @@ class HrcServerInstance implements HrcServer {
       this.tmuxAgingTimer = undefined
     }
     if (this.tmuxAgingInFlight) {
-      await this.drainTmuxSweepForStop(this.tmuxAgingInFlight, 'tmux_aging')
+      const outcome = await this.drainTmuxSweepForStop(this.tmuxAgingInFlight, 'tmux_aging')
+      if (outcome !== 'settled') teardownIncomplete.push(`tmux_aging_wait_${outcome}`)
     }
     if (this.sessionRetentionTimer) {
       clearInterval(this.sessionRetentionTimer)
@@ -1813,7 +1927,7 @@ class HrcServerInstance implements HrcServer {
       try {
         await this.sessionRetentionInFlight
       } catch (error) {
-        writeServerLog('WARN', 'server.stop.session_retention_wait_failed', { error })
+        incomplete('session_retention_wait_failed', { error })
       }
     }
     if (this.shadowTeardownTimer) {
@@ -1824,7 +1938,7 @@ class HrcServerInstance implements HrcServer {
       try {
         await this.shadowTeardownInFlight
       } catch (error) {
-        writeServerLog('WARN', 'server.stop.shadow_teardown_wait_failed', { error })
+        incomplete('shadow_teardown_wait_failed', { error })
       }
     }
     await this.transcriptIndexer.stop()
@@ -1832,31 +1946,35 @@ class HrcServerInstance implements HrcServer {
     // The ledger transport is a child process; leaving it behind would strand a
     // `wrkq rpc --stdio` per daemon restart.
     await this.wrkqLedger.close().catch((error: unknown) => {
-      writeServerLog('WARN', 'server.stop.wrkq_ledger_close_failed', { error })
+      incomplete('wrkq_ledger_close_failed', { error })
     })
-    for (const client of this.externalParticipantClients.values()) {
-      await client.close().catch(() => undefined)
+    for (const [id, client] of this.externalParticipantClients) {
+      await client.close().catch((error: unknown) => {
+        incomplete('external_participant_close_failed', { id, error })
+      })
     }
     this.externalParticipantClients.clear()
-    const externalRegistrationOperations = [...this.externalRegistrationOperations.values()]
-    if (externalRegistrationOperations.length > 0) {
-      await Promise.allSettled(externalRegistrationOperations)
-    }
-    const externalRegistrationEstablishmentOperations = [
-      ...this.externalRegistrationEstablishmentOperations.values(),
-    ]
-    if (externalRegistrationEstablishmentOperations.length > 0) {
-      await Promise.allSettled(externalRegistrationEstablishmentOperations)
-    }
-    const participantEstablishmentOperations = [...this.participantEstablishmentOperations.values()]
-    if (participantEstablishmentOperations.length > 0) {
-      await Promise.allSettled(participantEstablishmentOperations)
+    const participantOperationGroups = [
+      ['external_registration', [...this.externalRegistrationOperations.values()]],
+      [
+        'external_registration_establishment',
+        [...this.externalRegistrationEstablishmentOperations.values()],
+      ],
+      ['participant_establishment', [...this.participantEstablishmentOperations.values()]],
+    ] as const
+    for (const [group, operations] of participantOperationGroups) {
+      if (operations.length === 0) continue
+      for (const result of await Promise.allSettled(operations)) {
+        if (result.status === 'rejected') {
+          incomplete('participant_operation_failed', { group, error: result.reason })
+        }
+      }
     }
     for (const close of [...this.activeStreamClosers]) {
       try {
         close()
       } catch (error) {
-        writeServerLog('WARN', 'server.stop.stream_close_failed', { error })
+        incomplete('stream_close_failed', { error })
       }
     }
     this.activeStreamClosers.clear()
@@ -1868,27 +1986,37 @@ class HrcServerInstance implements HrcServer {
     // Handlers that were already running when the stop began keep executing
     // after the socket closes; let them finish (bounded) before the store goes
     // away underneath them.
-    await this.drainInFlightRequests()
+    if ((await this.drainInFlightRequests()) === 'timeout') {
+      teardownIncomplete.push('request_drain_timeout')
+    }
     // Stop in-flight broker event consumers from projecting before the backing
     // DB closes underneath them (avoids closed-DB teardown crashes).
     this.harnessBrokerController?.shutdown?.()
-    this.db.close()
     let cleanupError: unknown
 
+    // T-08137 rev 4: socket unlink and the metrics flush run BEFORE the store
+    // closes (the listener is already stopped), so server.stopped can attest
+    // every teardown step up to db.close().
     try {
       await unlinkIfExists(this.options.socketPath)
     } catch (error) {
       cleanupError ??= error
+      teardownIncomplete.push('socket_unlink_failed')
     }
 
+    // Clean stop loses no buffered metrics (T-08784). Never rejects.
+    await flushServerMetrics(this.options.stateRoot)
+
+    this.appendServerStopped(teardownIncomplete)
+    this.db.close()
+
+    // Outside the server.stopped attestation: it cannot be recorded durably
+    // after the store closes. Failure behavior is unchanged.
     try {
       await releaseServerLock(this.options.lockPath, this.lockHandle)
     } catch (error) {
       cleanupError ??= error
     }
-
-    // Clean stop loses no buffered metrics (T-08784).
-    await flushServerMetrics(this.options.stateRoot)
 
     if (cleanupError) {
       writeServerLog('ERROR', 'server.stop.cleanup_failed', {
@@ -3059,6 +3187,7 @@ class HrcServerInstance implements HrcServer {
       runtimeCount: this.db.runtimes.count(),
       apiVersion: HRC_API_VERSION,
       ...(this.eventLoopLag ? { eventLoop: this.eventLoopLag.snapshot() } : {}),
+      lastRestart: projectLastRestart(this.db),
       node: this.nodeStatus(),
       mailKicker: 'absent' as const,
       ...(peerHealth === undefined ? {} : { peerHealth }),
@@ -3303,6 +3432,8 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
         closedAt: prior.closedAt,
       })
     }
+    // T-08137: after the store and durable services are initialized.
+    server.recordLifecycleStart()
     writeServerLog('INFO', 'server.start.ready', logCtx)
     return server
   } catch (error) {

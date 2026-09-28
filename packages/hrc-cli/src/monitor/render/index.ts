@@ -627,7 +627,8 @@ function isHrcEventCategory(value: string | undefined): value is HrcEventCategor
     value === 'bridge' ||
     value === 'context' ||
     value === 'app_session' ||
-    value === 'store'
+    value === 'store' ||
+    value === 'server'
   )
 }
 

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
 import type { KillBrokerTmuxLeasesResponse } from 'hrc-core'
+import type { ServerShutdownAttribution } from 'hrc-server'
 
 import {
   type ServerLifecycleCallerKind,
@@ -56,16 +57,26 @@ export class ServerShutdownTimeoutError extends Error {
   }
 }
 
+/**
+ * `onDeadlineExpired` runs synchronously when the deadline fires, BEFORE the
+ * timeout rejection is observed (T-08137 rev 4): the server marks its lifecycle
+ * `shutdown_deadline_expired`, so a stop() that settles late can never append
+ * server.stopped.
+ */
 export async function stopServerWithinDeadline(
   stop: () => Promise<void>,
-  timeoutMs = DEFAULT_SERVER_SHUTDOWN_TIMEOUT_MS
+  timeoutMs = DEFAULT_SERVER_SHUTDOWN_TIMEOUT_MS,
+  onDeadlineExpired?: () => void
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     await Promise.race([
       stop(),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new ServerShutdownTimeoutError(timeoutMs)), timeoutMs)
+        timer = setTimeout(() => {
+          onDeadlineExpired?.()
+          reject(new ServerShutdownTimeoutError(timeoutMs))
+        }, timeoutMs)
       }),
     ])
   } finally {
@@ -137,6 +148,22 @@ function shutdownIntentLogDetails(intent: ShutdownIntent | undefined): Record<st
           requestedByPid: intent.byPid,
         }
       : {}),
+  }
+}
+
+/** T-08137: the `server.shutting_down` payload; every absent intent field is explicit null. */
+export function shutdownAttribution(
+  reason: string,
+  intent: ShutdownIntent | undefined
+): ServerShutdownAttribution {
+  return {
+    reason,
+    callerKind: intent?.callerKind ?? null,
+    requestedBy: intent?.requestedBy ?? null,
+    requestedAction: intent?.action ?? null,
+    requestedRunId: intent?.requestedRunId ?? null,
+    requestedReason: intent?.reason ?? null,
+    requestedByPid: intent?.byPid ?? null,
   }
 }
 
@@ -656,6 +683,8 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     // unreachable default, so an in-process server cannot drive mail or write
     // project events into shared state by inheriting the daemon's environment.
     wrkqLedger: new WrkqStdioLedgerClient(),
+    // T-08137: the ONE instance that records daemon lifecycle provenance.
+    lifecycleProvenance: true,
   })
 
   let shutdownStarted = false
@@ -678,12 +707,26 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
       reason,
       ...shutdownIntentLogDetails(shutdownIntent),
     })
+    // T-08137: the durable copy of the line above, appended synchronously before
+    // any teardown. Its failure must never block shutdown.
+    try {
+      server.beginLifecycleShutdown(shutdownAttribution(reason, shutdownIntent))
+    } catch (error) {
+      writeServerProcessLog('server.lifecycle_shutdown_record_failed', {
+        pid: process.pid,
+        causeChain: rejectionCauseChain(error),
+      })
+    }
 
     // This promise is deliberately caught locally. The process-level rejection
     // policy must not recursively handle a failure in its own graceful teardown.
     void (async () => {
       try {
-        await stopServerWithinDeadline(() => server.stop())
+        await stopServerWithinDeadline(
+          () => server.stop(),
+          undefined,
+          () => server.markShutdownDeadlineExpired()
+        )
       } catch (error) {
         shutdownExitCode = 1
         writeServerProcessLog('server.shutdown_failed', {

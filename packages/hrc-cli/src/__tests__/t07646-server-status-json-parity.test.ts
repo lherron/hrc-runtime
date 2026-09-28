@@ -87,6 +87,11 @@ const federatedAtomicStatus: ServerRuntimeStatus = {
   lockExists: true,
   tmuxSocketPath: '/var/run/hrc/tmux.sock',
   apiHealth: { ok: true },
+  lastRestart: {
+    at: '2026-08-28T00:01:36.901Z',
+    requestedBy: 'agent:clod:project:hrc-runtime:task:T-08137/lane:main',
+    reason: 'T-08137 smoke',
+  },
   api: {
     startedAt: '2026-08-28T00:01:36.622Z',
     uptime: 2758,

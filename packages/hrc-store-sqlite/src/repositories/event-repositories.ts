@@ -651,6 +651,36 @@ export class HrcLifecycleEventRepository {
     return row ? this.mapRow(row) : null
   }
 
+  /**
+   * The latest LOCAL, non-retained lifecycle fact in one scope, optionally
+   * strictly before a sequence. Served by `idx_hrc_events_scope_ref_seq`; used
+   * for the daemon's own `server:hrc` sentinel scope (T-08137).
+   */
+  findLatestLocalInScope(
+    scopeRef: string,
+    options: { beforeHrcSeq?: number | undefined; eventKind?: string | undefined } = {}
+  ): HrcLifecycleEvent | null {
+    const where = ['scope_ref = ?', 'source_ref IS NULL', 'evidence_origin IS NULL']
+    const values: Array<string | number> = [scopeRef]
+    if (options.beforeHrcSeq !== undefined) {
+      where.push('hrc_seq < ?')
+      values.push(options.beforeHrcSeq)
+    }
+    if (options.eventKind !== undefined) {
+      where.push('event_kind = ?')
+      values.push(options.eventKind)
+    }
+    const row = this.db
+      .query<HrcEventRow, Array<string | number>>(
+        `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
+          WHERE ${where.join(' AND ')}
+          ORDER BY hrc_seq DESC
+          LIMIT 1`
+      )
+      .get(...values)
+    return row ? this.mapRow(row) : null
+  }
+
   listByScope(
     scopeRef: string,
     filters: Omit<HrcLifecycleQueryFilters, 'scopeRef'> = {}

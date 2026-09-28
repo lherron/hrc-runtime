@@ -128,6 +128,13 @@ export const SERVER_STATUS_CONTRACT: readonly ServerStatusContractEntry[] = [
     optional: ['api.startedAt', 'serverStatus.startedAt'],
   },
   {
+    label: 'last restart',
+    paths: ['lastRestart.at', 'lastRestart.requestedBy', 'lastRestart.reason'],
+    // T-08137: absent when the daemon is unreachable; a null requester renders
+    // as `external` and a null reason is omitted from the line.
+    optional: ['lastRestart.at', 'lastRestart.requestedBy', 'lastRestart.reason'],
+  },
+  {
     label: 'apiVersion',
     paths: ['api.apiVersion', 'serverStatus.apiVersion'],
     optional: ['api.apiVersion', 'serverStatus.apiVersion'],

@@ -93,6 +93,12 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'bridge.delivered': 'bridge',
   'bridge.closed': 'bridge',
   'context.cleared': 'context',
+  // T-08137 daemon lifecycle provenance. Written only by the production daemon
+  // integration under the `server:hrc` sentinel envelope (server-lifecycle.ts).
+  'server.shutting_down': 'server',
+  'server.stopped': 'server',
+  'server.previous_exit_unattributed': 'server',
+  'server.started': 'server',
 }
 
 export function categoryForEventKind(eventKind: string): HrcEventCategory {
