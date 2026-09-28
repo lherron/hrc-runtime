@@ -18,7 +18,7 @@
  *
  * #5  Admin relocation.
  *     • NEW: `hrc admin runs sweep-zombies | reconcile-active` — works
- *     • OLD: `hrc run sweep-zombies | reconcile-active` — hard nonzero pointer
+ *     • OLD: `hrc run sweep-zombies | reconcile-active` — removed (T-07011 Phase 4)
  *
  * #6  Lifecycle additions.
  *     • NEW: `hrc run --attach-only` — present in --help; behaves like attach
@@ -32,7 +32,6 @@
  *  #4  `hrc ls runtimes` → exits 2, "unknown command: ls"
  *      `hrc list runtimes` → exits 2, "unknown command: list"
  *  #5  `hrc admin runs sweep-zombies --help` → exits 2, "unknown command: admin"
- *      `hrc run sweep-zombies --help` must fail with a replacement pointer
  *  #6  `hrc run --help` does not contain `--attach-only`
  *      `hrc resume` → exits 2, "unknown command: resume"
  *
@@ -301,7 +300,7 @@ async function seedSessionAndRuntime(
   const hostSessionId = resolved.hostSessionId
 
   // Seed the runtime row directly. These selector/list contracts only need the
-  // row to exist — `hrc runtime ensure` against a live broker-enabled server
+  // row to exist — `hrc admin runtime ensure` against a live broker-enabled server
   // would START a real interactive harness (per-runtime tmux server +
   // harness-broker + launch runner + claude TUI) per seed, which nothing in
   // this suite tears down.

@@ -28,7 +28,6 @@ import {
   cmdRuntimeStatus,
   cmdRuntimeSweep,
 } from './handlers-runtime.js'
-import { registerMovedCommandShim, throwMovedCommand } from './moved-command.js'
 
 function requireGroup(parent: Command, name: string): Command {
   const group = parent.commands.find((command) => command.name() === name)
@@ -270,29 +269,6 @@ function registerAdminRegistrations(admin: Command): void {
         })
       )
     })
-}
-
-function registerLegacyBrokerShim(program: Command): void {
-  const broker = program
-    .command('broker', { hidden: true })
-    .description('moved under monitor, runtime, and admin')
-    .helpOption(false)
-    .allowUnknownOption(true)
-    .allowExcessArguments(true)
-    .argument('[args...]')
-
-  broker.action((args: string[] | undefined) => {
-    const verb = args?.[0]
-    const replacement =
-      verb === 'inspect'
-        ? 'hrc runtime inspect'
-        : verb === 'verify'
-          ? 'hrc admin broker-verify'
-          : verb === 'events' || verb === 'transcript' || verb === 'stats'
-            ? `hrc monitor ${verb}`
-            : 'hrc monitor events|transcript|stats, hrc runtime inspect, or hrc admin broker-verify'
-    throwMovedCommand(`broker${verb ? ` ${verb}` : ''}`, replacement)
-  })
 }
 
 export function registerRuntimeCommands(program: Command): void {
@@ -565,12 +541,6 @@ export function registerRuntimeCommands(program: Command): void {
         })
       )
     })
-
-  registerMovedCommandShim(runtime, 'ensure', 'hrc admin runtime ensure')
-  registerMovedCommandShim(runtime, 'adopt', 'hrc admin runtime adopt')
-  registerLegacyBrokerShim(program)
-  registerMovedCommandShim(program, 'events', 'hrc admin events drain')
-  registerMovedCommandShim(program, 'launch', 'hrc ls launches')
 
   annotateCommand(runtime, { audience: 'human' })
   annotateCommand(index, { audience: 'agent' })

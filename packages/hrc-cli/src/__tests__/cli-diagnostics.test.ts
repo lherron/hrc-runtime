@@ -425,7 +425,7 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(Array.isArray(body)).toBe(true)
   })
 
-  it('hrc launch list with --runtime-id filter', async () => {
+  it('hrc ls launches with --runtime-id filter', async () => {
     // Seed a runtime to get launches
     const resolveResult = await runCli(
       [

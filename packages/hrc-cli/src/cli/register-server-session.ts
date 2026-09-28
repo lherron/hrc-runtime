@@ -22,7 +22,6 @@ import {
   cmdTmuxKill,
   cmdTmuxStatus,
 } from './handlers-server.js'
-import { registerMovedCommandShim } from './moved-command.js'
 import { cmdSessionReport } from './runtime-select.js'
 import { fatal } from './shared.js'
 
@@ -281,8 +280,6 @@ Exit codes:
       await cmdSessionRetitle(args)
     })
 
-  registerMovedCommandShim(session, 'clear-context', 'hrc session rotate')
-
   session
     .command('drop-continuation')
     .description('drop stored continuation')
@@ -322,8 +319,6 @@ Exit codes:
       })
       await cmdSessionReport(args)
     })
-
-  registerMovedCommandShim(program, 'session-report', 'hrc monitor session-report')
 
   monitor
     .command('show')

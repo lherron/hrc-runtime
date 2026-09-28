@@ -1125,7 +1125,7 @@ const METRICS_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
 const METRICS_FILE_PATTERN = /^script-\d{4}-\d{2}-\d{2}\.ndjson$/
 
 // Durable per-run record alongside the hrc CLI metrics (same `<stateRoot>/metrics`
-// directory, distinct `script-*` file so `hrc metrics report`'s cli-* reader is
+// directory, distinct `script-*` file so `hrc admin metrics report`'s cli-* reader is
 // unaffected). Best-effort: instrumentation must never fail the sweep.
 function emitTimingMetrics(
   options: Options,

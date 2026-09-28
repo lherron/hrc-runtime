@@ -376,15 +376,5 @@ describe('metrics report reader', () => {
       new Response(conflictProc.stderr).text(),
     ])
     expect(await conflictProc.exited).not.toBe(0)
-
-    const movedProc = Bun.spawn(['bun', HRC_ENTRY, 'metrics', 'report'], {
-      cwd: REPO_ROOT,
-      env,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    const movedError = await new Response(movedProc.stderr).text()
-    expect(await movedProc.exited).toBe(2)
-    expect(movedError).toContain('hrc admin metrics report')
   })
 })

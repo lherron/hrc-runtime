@@ -355,13 +355,14 @@ conversation are `/quit` (or `/clear`) inside the harness,
 `hrc session drop-continuation <hostSessionId>`, and
 `hrc run|start <scope> --new-session`.
 
-### Migration fences
+### Retired spellings
 
-Old spellings are hard error-with-pointer shims, not aliases: `broker`,
-`launch`, top-level `capture`, `inflight`, `surface`, `bridge`, `events`,
-`metrics`, `session-report`, `session clear-context`, `runtime ensure|adopt`,
-and `run sweep-zombies|reconcile-active`. They exit nonzero and name the new
-location so remaining callers are visible before shim deletion.
+The pre-consolidation spellings `broker`, `launch`, `inflight`, `surface`,
+`bridge`, `events`, `metrics`, `session-report`, `session clear-context`,
+`runtime ensure|adopt`, and `run sweep-zombies|reconcile-active` were removed
+after a fleet-wide quiet telemetry week (T-07011 Phase 4). They are no longer
+registered: the group spellings fail as unknown commands, and `hrc run <word>`
+treats the word as a scope like any other.
 
 ### Invocation post-mortem forensics
 

@@ -97,8 +97,7 @@ describe('consolidated hrc command graph', () => {
     expect(visibleChildren(child(child(program, 'admin'), 'registrations'))).toEqual(['gc'])
   })
 
-  test('removed groups and spellings are hidden migration fences', () => {
-    const visibleTop = visibleChildren(program)
+  test('removed groups and spellings are no longer registered', () => {
     for (const removed of [
       'broker',
       'launch',
@@ -109,11 +108,14 @@ describe('consolidated hrc command graph', () => {
       'metrics',
       'session-report',
     ]) {
-      expect(visibleTop).not.toContain(removed)
-      expect(program.commands.some((command) => command.name() === removed)).toBe(true)
+      expect(program.commands.some((command) => command.name() === removed)).toBe(false)
     }
-    expect(visibleChildren(child(program, 'runtime'))).not.toContain('ensure')
-    expect(visibleChildren(child(program, 'runtime'))).not.toContain('adopt')
-    expect(visibleChildren(child(program, 'session'))).not.toContain('clear-context')
+    const registered = (parent: Command, name: string) =>
+      parent.commands.some((command) => command.name() === name)
+    expect(registered(child(program, 'runtime'), 'ensure')).toBe(false)
+    expect(registered(child(program, 'runtime'), 'adopt')).toBe(false)
+    expect(registered(child(program, 'session'), 'clear-context')).toBe(false)
+    expect(registered(child(program, 'run'), 'sweep-zombies')).toBe(false)
+    expect(registered(child(program, 'run'), 'reconcile-active')).toBe(false)
   })
 })

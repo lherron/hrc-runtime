@@ -45,10 +45,10 @@ FULL adds:
 2. `hrc monitor show`, `watch`, `wait`
 3. `hrc runtime list --transport tmux`, `inspect`
 4. `hrc runtime sweep --dry-run`
-5. `hrc runtime adopt`
+5. `hrc admin runtime adopt`
 6. `hrc attach --dry-run`
-7. `hrc surface bind`, `unbind`, `list`
-8. `hrc bridge target`, `deliver-text`, `deliver`, `list`, `close`
+7. `hrc admin surface bind`, `unbind`, `list`
+8. `hrc admin bridge target`, `deliver-text`, `deliver`, `list`, `close`
 9. `hrc server tmux status`
 10. `hrc server tmux kill --yes` by code-read only on the shared daemon; execute only on an isolated daemon
 11. `RECONCILE-ACROSS-RESTART`
@@ -72,7 +72,7 @@ unless a row says otherwise. Each row still asserts the default-socket invariant
    must route to the INTERACTIVE lease runtime, NOT spawn a new headless one, and
    reuse the same interactive runtimeId. PASS requires the (b) ops land on the
    live lease pane with no headless-count increase.
-3. `CONTINUITY-SEMANTICS` — on one live broker runtime: (a) `hrc session clear-context
+3. `CONTINUITY-SEMANTICS` — on one live broker runtime: (a) `hrc session rotate
    <hostSessionId>` rotates the generation (new `generation` in monitor payload)
    and the next turn starts with no prior context; (b) `hrc session drop-continuation
    <hostSessionId>` removes stored continuation so a subsequent cold `hrc run`
@@ -279,7 +279,7 @@ Record these as accepted NOTE rows unless the observed behavior gets worse:
 - T-01738 F-V2: `hrc server tmux status` reports the default server only.
 - T-01738 F-V3: `hrc server tmux kill --yes` kills the default server only; do not execute on the shared daemon.
 - T-01738 F-V4: dead lease socket-file leak.
-- T-01738 F-V5: `hrc runtime adopt` does not verify dead-lease liveness.
+- T-01738 F-V5: `hrc admin runtime adopt` does not verify dead-lease liveness.
 - Bridge socket plumbing has deferred work on T-01737 if regressions reappear.
 - `hrcchat peek` resolver prefer-interactive behavior is a T-01737 follow-up if regressions reappear.
 

@@ -4,7 +4,6 @@ import type { Command } from 'commander'
 import { readMetricsReport } from '../metrics-report.js'
 import type { MetricsReport } from '../metrics-report.js'
 import { printJson } from '../print.js'
-import { registerMovedCommandShim } from './moved-command.js'
 
 type MetricsReportFlags = {
   since: string
@@ -132,6 +131,4 @@ export function registerMetricsCommands(program: Command): void {
       else if (options.ndjson) printNdjson(report)
       else printHuman(report)
     })
-
-  registerMovedCommandShim(program, 'metrics', 'hrc admin metrics report')
 }

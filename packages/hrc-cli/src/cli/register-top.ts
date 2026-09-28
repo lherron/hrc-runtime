@@ -33,7 +33,6 @@ import {
 } from './handlers-runtime.js'
 import { cmdAttach, cmdResumeContinuation, cmdRun, cmdStart } from './handlers-scope-cmd.js'
 import { cmdAdminStatus } from './handlers-server.js'
-import { registerMovedCommandShim, throwMovedCommand } from './moved-command.js'
 import { createClient } from './shared.js'
 
 function annotateTop(program: Command, name: string, metadata: CommandMetadataInput): void {
@@ -165,12 +164,6 @@ export function registerTopLevelCommands(program: Command): void {
         )
         return
       }
-      if (positionals[0] === 'sweep-zombies') {
-        throwMovedCommand('run sweep-zombies', 'hrc admin runs sweep-zombies')
-      }
-      if (positionals[0] === 'reconcile-active') {
-        throwMovedCommand('run reconcile-active', 'hrc admin runs reconcile-active')
-      }
       const opts = cmd.opts()
       const rawArgv = rawArgvForVerb(cmd, 'run', { offset: 1 })
       assertNoUnknownOptions(rawArgv, {
@@ -238,9 +231,6 @@ export function registerTopLevelCommands(program: Command): void {
       await cmdRunAnnotate(args)
     })
 
-  registerMovedCommandShim(run, 'sweep-zombies', 'hrc admin runs sweep-zombies')
-  registerMovedCommandShim(run, 'reconcile-active', 'hrc admin runs reconcile-active')
-
   // -- resume (T-04836 Part A) -------------------------------------------------
   // `resume` is its OWN verb — force-resume the latest stored continuation for a
   // target regardless of HRC status. It is NOT an alias of `run`: it never
@@ -296,7 +286,6 @@ Semantics:
     })
 
   // -- admin group (run-RECORD repair, distinct from runtime sweep) -----------
-  // Legacy spellings are registered below as hard moved-command shims.
   const admin = program.command('admin').description('administrative maintenance commands')
   admin
     .command('status')
@@ -576,8 +565,6 @@ The output always names the resolved kind and the concrete ID(s).
       await cmdPeek(createClient(), { ...opts, json: opts.json === true }, [target])
     })
 
-  registerMovedCommandShim(program, 'inflight', 'hrc runtime send')
-
   program
     .command('attach')
     .description('attach to a live runtime')
@@ -753,9 +740,6 @@ The output always names the resolved kind and the concrete ID(s).
       })
       await cmdBridgeClose(args)
     })
-
-  registerMovedCommandShim(program, 'surface', 'hrc admin surface')
-  registerMovedCommandShim(program, 'bridge', 'hrc admin bridge')
 
   annotateCommand(admin, { audience: 'human' })
   annotateTop(program, 'run', {

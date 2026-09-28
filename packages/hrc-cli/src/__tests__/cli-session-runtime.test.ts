@@ -205,7 +205,7 @@ describe('session retitle', () => {
 })
 
 // ===========================================================================
-// 4. hrc runtime ensure / capture / attach / runtime interrupt / runtime terminate
+// 4. hrc admin runtime ensure / runtime capture / attach / runtime interrupt / runtime terminate
 // ===========================================================================
 describe('runtime lifecycle commands', () => {
   beforeEach(async () => {

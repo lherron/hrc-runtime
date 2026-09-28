@@ -221,7 +221,22 @@ describe('legacy monitor command removal', () => {
   })
 
   it('removed legacy hrc commands exit as unknown commands', async () => {
-    for (const args of [['status'], ['server', 'health']]) {
+    // T-07011 Phase 4 deleted the migration pointer shims after a quiet fleet week.
+    for (const args of [
+      ['status'],
+      ['server', 'health'],
+      ['broker', 'transcript'],
+      ['launch', 'list'],
+      ['inflight', 'send'],
+      ['surface', 'list'],
+      ['bridge', 'list'],
+      ['events'],
+      ['metrics', 'report'],
+      ['session-report'],
+      ['session', 'clear-context'],
+      ['runtime', 'ensure'],
+      ['runtime', 'adopt'],
+    ]) {
       const result = await runCli(args, cliEnv())
       expect(result.exitCode).toBe(2)
       expect(result.stdout).toBe('')
@@ -310,31 +325,6 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(handlersSource).not.toContain('terminates live processes/tmux')
   })
 
-  it('hrc run sweep-zombies --help exits nonzero with the replacement pointer', async () => {
-    const result = await runCli(['run', 'sweep-zombies', '--help'])
-    expect(result.exitCode).toBe(2)
-    expect(result.stderr).toContain('hrc admin runs sweep-zombies')
-  })
-
-  it('hrc run reconcile-active --help exits nonzero with the replacement pointer', async () => {
-    const result = await runCli(['run', 'reconcile-active', '--help'])
-    expect(result.exitCode).toBe(2)
-    expect(result.stderr).toContain('hrc admin runs reconcile-active')
-  })
-
-  // -- launch migration fence --
-  it('hrc launch --help exits nonzero with the ls pointer', async () => {
-    const result = await runCli(['launch', '--help'])
-    expect(result.exitCode).toBe(2)
-    expect(result.stderr).toContain('hrc ls launches')
-  })
-
-  it('hrc launch list --help exits nonzero with the ls pointer', async () => {
-    const result = await runCli(['launch', 'list', '--help'])
-    expect(result.exitCode).toBe(2)
-    expect(result.stderr).toContain('hrc ls launches')
-  })
-
   // -- turn --
   it('hrc turn --help exposes the native turn surface and exits 0', async () => {
     const result = await runCli(['turn', '--help'])
@@ -358,18 +348,6 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('--run-id')
     expect(result.stdout).toContain('--input')
-  })
-
-  it('hrc inflight --help exits nonzero with the runtime send pointer', async () => {
-    const result = await runCli(['inflight', '--help'])
-    expect(result.exitCode).toBe(2)
-    expect(result.stderr).toContain('hrc runtime send')
-  })
-
-  it('hrc inflight send --help exits nonzero with the runtime send pointer', async () => {
-    const result = await runCli(['inflight', 'send', '--help'])
-    expect(result.exitCode).toBe(2)
-    expect(result.stderr).toContain('hrc runtime send')
   })
 
   // -- admin surface group --

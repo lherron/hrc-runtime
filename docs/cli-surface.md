@@ -298,12 +298,12 @@ writes one `wrkq.kicker.boot_reconcile` summary.
 creates generation+1, copying continuation forward. `hrc session
 drop-continuation` removes only the continuation key in place.
 
-## Migration fences
+## Retired spellings
 
-Old `broker`, `launch`, top-level `capture`, `inflight`, `surface`, `bridge`,
-`events`, `metrics`, `session-report`, `session clear-context`, `runtime
-ensure|adopt`, and `run sweep-zombies|reconcile-active` spellings are hidden
-error-with-pointer shims. They exit nonzero and do not execute the action.
+The old `broker`, `launch`, `inflight`, `surface`, `bridge`, `events`,
+`metrics`, `session-report`, `session clear-context`, `runtime ensure|adopt`,
+and `run sweep-zombies|reconcile-active` spellings were deleted after the
+T-07011 Phase 4 fleet quiet window; they are no longer registered.
 
 ## Exit codes
 
