@@ -36,7 +36,7 @@ required_tests:
   - T-09872 exact runtime invocation and turn identity gate, including an older terminal after arming
   - T-09872 credential, handoff, no-active-turn, participant, and cancel refusal gates
   - T-09872 installed Claude and Codex self-restart handoff acceptance
-last_verified: 2026-09-28 design approval by source review; implementation and installed acceptance pending
+last_verified: 2026-09-28 implemented at 5a30a9aa; t09872-self-restart suite (older terminal after arming, refusals, cancel) green in release-20260928214450088-17411; installed acceptance on claude-code (clod@hrc-runtime:restartme-cc, H-00507) and codex (cody@hrc-runtime:restartme-cx, H-00508) seats recorded on wrkq:T-09872
 reopen_when: Self-restart identity or authority, broker turn binding, terminal matching, continuation disposition, successor prompt delivery, participant exclusion, or Lance's scope exclusions change.
 supersedes: []
 superseded_by: []
