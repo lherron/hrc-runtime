@@ -271,15 +271,26 @@ export async function refineTaskWorktree(
   }
   if (matches.length === 1) return matches[0]
 
-  const suspicious = worktrees.find((worktree) => taskTokens(worktree.path).includes(taskId))
-  if (suspicious) {
-    const mismatch = suspicious.branch
-      ? `branch ${suspicious.branch} does not carry ${taskId}`
-      : 'is detached HEAD (no branch)'
+  // A detached worktree has no branch to vouch for it, so its path is the only
+  // association there is. That is the standard gate worktree (one fixed
+  // worktree per seat, moved by `checkout --detach`), and it is also a branch
+  // mid-rebase — in both cases the task-named worktree IS the right checkout.
+  const named = worktrees.filter((worktree) => taskTokens(worktree.path).includes(taskId))
+  const detached = named.filter((worktree) => !worktree.branch)
+  if (detached.length > 1) {
     throw new Error(
-      `worktree at ${suspicious.path} appears associated with ${taskId} but ${mismatch}`
+      `multiple worktrees match ${taskId}: ${detached
+        .map((worktree) => `${worktree.path} (detached)`)
+        .join(', ')}`
     )
   }
+  const mismatched = named.find((worktree) => worktree.branch)
+  if (mismatched) {
+    throw new Error(
+      `worktree at ${mismatched.path} appears associated with ${taskId} but branch ${mismatched.branch} does not carry ${taskId}`
+    )
+  }
+  if (detached.length === 1) return { path: detached[0]!.path }
   return undefined
 }
 

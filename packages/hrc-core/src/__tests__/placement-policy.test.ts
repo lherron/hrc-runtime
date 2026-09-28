@@ -268,15 +268,38 @@ describe('refineTaskWorktree', () => {
     )
   })
 
-  it('trips on a task-named detached worktree instead of silently selecting canonical', async () => {
+  it('binds a lone task-named detached worktree (a gate worktree moved by checkout --detach)', async () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')
-    const detached = join(root, 'taskboard-T-06369-detached')
+    const detached = join(root, 'taskboard-T-06369')
     const repo = committedRepo(projectRoot)
     git(repo, 'worktree', 'add', '--detach', detached)
 
+    const refined = await refineTaskWorktree(projectRoot, 'T-06369', repo.env)
+    expect(refined).toEqual({ path: realpathSync(detached) })
+  })
+
+  it('fails closed when more than one detached worktree is named for the task', async () => {
+    const root = temporaryRoot()
+    const projectRoot = join(root, 'taskboard')
+    const repo = committedRepo(projectRoot)
+    git(repo, 'worktree', 'add', '--detach', join(root, 'taskboard-T-06369-a'))
+    git(repo, 'worktree', 'add', '--detach', join(root, 'taskboard-T-06369-b'))
+
     await expect(refineTaskWorktree(projectRoot, 'T-06369', repo.env)).rejects.toThrow(
-      `worktree at ${realpathSync(detached)} appears associated with T-06369 but is detached HEAD (no branch)`
+      /multiple worktrees match T-06369.*T-06369-a.*T-06369-b/
+    )
+  })
+
+  it('trips on a task-named worktree whose branch names a different task', async () => {
+    const root = temporaryRoot()
+    const projectRoot = join(root, 'taskboard')
+    const named = join(root, 'taskboard-T-06369')
+    const repo = committedRepo(projectRoot)
+    git(repo, 'worktree', 'add', '-b', 'drain/T-07000', named)
+
+    await expect(refineTaskWorktree(projectRoot, 'T-06369', repo.env)).rejects.toThrow(
+      `worktree at ${realpathSync(named)} appears associated with T-06369 but branch drain/T-07000 does not carry T-06369`
     )
   })
 })

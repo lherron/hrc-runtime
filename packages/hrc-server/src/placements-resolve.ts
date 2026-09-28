@@ -419,8 +419,16 @@ export async function resolvePlacementInProcess(
           worktreeBranch = worktree.branch
         }
       } catch (error) {
-        if (body.taskWorktreeAssociation !== 'advisory') throw error
         const message = error instanceof Error ? error.message : String(error)
+        if (body.taskWorktreeAssociation !== 'advisory') {
+          // A caller-fixable placement fact, not a server fault: typed so a
+          // summoner can tell it from a transient failure and stop retrying.
+          throw new HrcUnprocessableEntityError(HrcErrorCode.DECLARATION_INVALID, message, {
+            source: 'task-worktree',
+            projectRoot: canonicalRoot,
+            ...(body.taskId !== undefined ? { taskId: body.taskId } : {}),
+          })
+        }
         worktreeWarning = `${message}; proceeding without task-worktree refinement`
       }
     }
