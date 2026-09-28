@@ -43,6 +43,7 @@ import { assertSummonAuthority } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
+  isBrokerRuntimeInputDispatchable,
   requireContinuity,
   requireManagedAppSession,
   requireSession,
@@ -113,6 +114,37 @@ export function handleListAppSessions(this: HrcServerInstanceForHandlers, url: U
   return json(
     this.db.appSessions.findByHostSession(hostSessionId).filter((record) => record.appId === appId)
   )
+}
+
+/** Upper bound for an ensure to await its own just-born runtime (T-09823). */
+const ENSURE_BORN_RUNTIME_READY_WAIT_MS = 60_000
+const ENSURE_BORN_RUNTIME_READY_POLL_MS = 100
+
+/**
+ * T-09823: a fresh birth can return while its broker invocation is still
+ * `starting`. The producer-selected reuse door refuses a transitioning seat and
+ * leaves the retry to the caller — but ensure IS the caller, and its first turn
+ * belongs on the runtime it just made. Await that runtime's readiness (bounded)
+ * before the auto-dispatch. This is not a retry: on a failed/unavailable runtime
+ * or at the bound it returns, and the dispatch reports the same typed refusal.
+ */
+async function awaitBornRuntimeDispatchable(
+  server: HrcServerInstanceForHandlers,
+  runtimeId: string
+): Promise<void> {
+  const deadline = Date.now() + ENSURE_BORN_RUNTIME_READY_WAIT_MS
+  while (Date.now() < deadline) {
+    const runtime = server.db.runtimes.getByRuntimeId(runtimeId)
+    if (
+      runtime === null ||
+      runtime.status === 'failed' ||
+      isRuntimeUnavailableStatus(runtime.status) ||
+      isBrokerRuntimeInputDispatchable(server.db, runtime)
+    ) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, ENSURE_BORN_RUNTIME_READY_POLL_MS))
+  }
 }
 
 export async function handleEnsureAppSession(
@@ -282,6 +314,7 @@ async function ensureAppSessionOwned(
     const restartStyle = body.restartStyle ?? 'reuse_pty'
     const runtime = await this.ensureRuntimeForSession(session, spec.runtimeIntent, restartStyle)
     runtimeId = runtime.runtimeId
+    await awaitBornRuntimeDispatchable(this, runtime.runtimeId)
 
     // Auto-dispatch harness turn — with or without prompt (T-01021 / T-01024).
     // Ensure materializes the session and admits its first turn; it never
@@ -397,6 +430,7 @@ async function ensureExistingAppSession(
         // avoid RUNTIME_BUSY conflicts on idempotent re-ensure.
         const runtimeIsNew = !priorRuntime || priorRuntime.runtimeId !== runtime.runtimeId
         if (runtimeIsNew || body.initialPrompt) {
+          if (runtimeIsNew) await awaitBornRuntimeDispatchable(this, runtime.runtimeId)
           const runId = `run-${randomUUID()}`
           const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
           await this.dispatchTurnForSession(session, intent, body.initialPrompt ?? '', {
