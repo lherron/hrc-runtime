@@ -279,6 +279,35 @@ describe('v2 compile request carrier', () => {
     expect(request.requested).toEqual({})
   })
 
+  it('carries the producer taskContext only as materialization.taskContext (T-09860)', () => {
+    const taskContext = {
+      taskId: 'T-09866',
+      phase: 'red',
+      role: 'implementer',
+      requiredEvidenceKinds: ['tdd_green_bundle'],
+      hintsText: 'Phase: red',
+    }
+    const request = buildV2CompileRequest({
+      intent: intent({ taskContext }),
+      scopeRef: 'agent:astra:project:hrc-runtime:task:T-09866',
+      identity,
+      dispatchEnv: { DISPATCH_ONLY_TOKEN: 'never-select' },
+    })
+
+    // ASP renders typed task prompt facts from this structured input; it must
+    // never travel as dispatch or placement environment.
+    expect(request.materialization.taskContext).toEqual(taskContext)
+    expect(request.placement.dispatchEnv).toEqual({ DISPATCH_ONLY_TOKEN: 'never-select' })
+    expect(JSON.stringify(request.placement)).not.toContain('HRC_TASK_')
+
+    const plain = buildV2CompileRequest({
+      intent: intent(),
+      scopeRef: 'agent:astra:project:hrc-runtime:task:T-09866',
+      identity,
+    })
+    expect(Object.hasOwn(plain.materialization, 'taskContext')).toBe(false)
+  })
+
   it('allocates and carries one identity before compile, including only a real initial user turn', async () => {
     const allocated = { ...identity, initialInputId: 'input-1', runId: 'run-1' }
     let captured: unknown
