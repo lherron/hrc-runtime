@@ -1,5 +1,9 @@
 # Agent Spaces v2 justfile
 
+# Each recipe run posts a run.settled fact to the foundry project timeline
+# through the wrkp `just` shim; `wrkp info` documents it.
+# wrkp: run.settled
+
 # Default recipe
 default:
     @just info
@@ -31,9 +35,11 @@ build:
 test:
     bun run test
 
+# Run unit tests
 test-unit:
     bun run test:unit
 
+# Run contract tests
 test-contract:
     bun run test:contract
 
@@ -43,6 +49,8 @@ release-test:
 
 # Report authored-test source pressure (>=800 lines). This becomes a hard
 # 1,000-line gate once the structural split campaign clears the baseline.
+
+# Report authored-test files over the size-pressure threshold
 test-size:
     bun run test:size
 
@@ -50,17 +58,22 @@ test-size:
 test-integration:
     bun run test:integration
 
+# Run live tests against the installed surface
 installed-live-test:
     bun run test:installed-live
 
 # Portable behavior rung: real HRC instances and stores over fixture-only
 # loopback transport. The runner mechanically selects the fixture-marked corpus
 # and fails if no marked case actually starts.
+
+# Run the federation corpus over fixture-only loopback transport
 test-federation-loopback:
     bun scripts/run-federation-corpus.ts loopback
 
 # Live-interface qualification rung. Absence of a tailnet interface is failure;
 # loopback mode is intentionally not in this command's environment.
+
+# Run the federation corpus over a live tailnet interface
 test-federation-live:
     bun scripts/run-federation-corpus.ts live
 
@@ -91,6 +104,8 @@ check:
 # root resolution. `bun install` writes but never tidies, so a copy an earlier
 # resolution wrote survives every install after the manifest is corrected — and
 # TypeScript keeps resolving to it. Pass --check to report without deleting.
+
+# Prune nested node_modules copies that shadow root-pinned dependencies
 doctor *args:
     bun scripts/workspace-doctor.ts {{args}}
 
@@ -168,7 +183,6 @@ clean:
 rebuild:
     bun run rebuild
 
-# Install dependencies
 # Dependency pulls are explicit via `just pull-deps`; install never advances bun.lock.
 # Options are name=value tokens in any order: no-sync=1, force-sync=1, force-link=1,
 # allow-dirty=1. `just` arguments are positional, so they are passed through opaquely
@@ -183,6 +197,8 @@ rebuild:
 # .md/.markdown/.html/.htm/.txt file -- cannot change what an install builds, so it
 # never gates one; scripts/lib/install-source-scope.ts owns that cut and fails
 # closed. Pass allow-dirty=1 to install uncommitted source deliberately.
+
+# Select and install a local committed release (no registry write)
 install *options:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -467,7 +483,7 @@ _max3-injector-version:
 # injectors against one HRC are two mail writers. Requires the injector state
 # store to already carry its one-time kicker-store import marker; a fresh node
 # needs that import before it can be supervised this way.
-#
+
 # Install/reload this node's launchd-supervised hrc-mail-injector at a pinned version
 install-mail-injector-launchd version:
     #!/usr/bin/env bash
@@ -918,6 +934,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       "$expected_node" "$target_sha" "$release_root" "$aspd_sha" "$aspd_release" "$injector_version"
     REMOTE
 
+# Pull ASP and wrkq from Verdaccio into bun.lock and commit the lock
 pull-deps:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -931,6 +948,7 @@ pull-deps:
     # cannot fix and which names the repo that can.
     bun scripts/report-residual-asp-skew.ts || true
 
+# Check bun.lock ASP and wrkq pins against Verdaccio without pulling
 check-deps:
     bun scripts/sync-asp-from-verdaccio.ts --check
     bun scripts/sync-wrkq-from-verdaccio.ts --check
@@ -979,6 +997,8 @@ cp-test prompt="List skills available. Use only what is in your context, no tool
 # over to it. It publishes only on the isolated worktree tag; it never advances
 # canonical latest and cannot satisfy `just publish` source proof. Run `hrc
 # server restart` afterwards to move the daemon onto it.
+
+# Build the working tree and cut the local CLI over to it
 install-dev:
     #!/usr/bin/env bash
     set -euo pipefail
