@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import { environmentWithoutGitOverrides } from 'hrc-core'
 
@@ -49,6 +49,10 @@ function resolveWorkspaceBinary(name: string): string {
 const lefthookBinary = resolveWorkspaceBinary('lefthook')
 const scopeScript = join(repoRoot, 'scripts', 'run-if-code-changed.ts')
 const scopeIgnoreLibrary = join(repoRoot, 'scripts', 'lib', 'hook-scope-ignore.ts')
+// The gate imports these; the fixture must carry every library it loads.
+const gateLibraries = ['hook-change-scope.ts', 'hook-timing.ts'].map((name) =>
+  join(repoRoot, 'scripts', 'lib', name)
+)
 // The fixture copies the REAL list rather than inventing one, so these
 // boundaries grade the allowance this repository actually ships.
 const scopeIgnoreList = join(repoRoot, '.hookignore')
@@ -160,6 +164,9 @@ printf '%s\\n' "$*" >> "$HOOK_INVOCATIONS"
     join(work, 'scripts', 'lib', 'hook-scope-ignore.ts'),
     await readFile(scopeIgnoreLibrary)
   )
+  for (const library of gateLibraries) {
+    await writeFile(join(work, 'scripts', 'lib', basename(library)), await readFile(library))
+  }
   await writeFile(join(work, '.hookignore'), await readFile(scopeIgnoreList))
   await writeFile(
     join(work, 'lefthook.yml'),

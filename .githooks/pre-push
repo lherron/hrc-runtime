@@ -41,4 +41,25 @@ if [ -z "$lefthook_bin" ]; then
   exit 127
 fi
 
-exec "$lefthook_bin" run pre-push --no-auto-install "$@"
+# Timed, not exec'd, so the run can post one hook.settled fact (T-09847).
+# Lefthook runs exactly as before, with stdin passed through untouched: the
+# shim never reads it (pre-push's code-validation is its only consumer). The
+# hook exits with lefthook's exact status; the recorder is best effort and
+# its status is ignored, so a missing bun or wrkp never changes the result.
+now_ms() {
+  perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000' 2>/dev/null || echo "$(date +%s)000"
+}
+HRC_HOOK_RUN_ID="$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z')" || HRC_HOOK_RUN_ID=""
+[ -n "$HRC_HOOK_RUN_ID" ] || HRC_HOOK_RUN_ID="$(date +%s)-$$-hook"
+export HRC_HOOK_RUN_ID
+started_ms="$(now_ms)"
+set +e
+"$lefthook_bin" run pre-push --no-auto-install "$@"
+rc=$?
+set -e
+finished_ms="$(now_ms)"
+if command -v bun >/dev/null 2>&1; then
+  bun "$repo_root/scripts/record-hook-timing.ts" pre-push "$HRC_HOOK_RUN_ID" \
+    "$started_ms" "$finished_ms" "$rc" "$lefthook_bin" </dev/null >/dev/null || :
+fi
+exit "$rc"
