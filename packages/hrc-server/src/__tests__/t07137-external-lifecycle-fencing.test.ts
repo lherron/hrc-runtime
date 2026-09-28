@@ -29,6 +29,7 @@ import {
 } from '../sweep-handlers.js'
 import { evaluatePruneDisposition } from '../sweep-helpers.js'
 import { reconcileActiveRunsOnce, sweepZombieRunsOnce } from '../sweep-reconcile.js'
+import { externalRegistrationServerDouble } from './external-registration-server.fixture.js'
 
 const REGISTRATION_ID = 'registration-t07137'
 const CREDENTIAL = 'credential-t07137'
@@ -66,16 +67,12 @@ describe('T-07137 lifecycleOwner fencing', () => {
     await mkdir(root, { recursive: true })
     db = openHrcDatabase(join(root, 'state.sqlite'))
     controller = new HarnessBrokerController({ db })
-    server = {
+    server = externalRegistrationServerDouble({
       db,
       options: { runtimeRoot: join(root, 'run') } as HrcServerOptions,
       harnessBrokerController: controller,
       generateBrokerAttachToken: () => 'attach-token-t07137',
-      externalParticipantClients: new Map(),
-      externalRegistrationOperations: new Map(),
-      stopping: false,
-      ctx: { notifyEvent: () => undefined },
-    } as unknown as HrcServerInstanceForHandlers
+    })
     const grant: ExternalRegistrationGrant = {
       registrationId: REGISTRATION_ID,
       classId: 'arris-agent',

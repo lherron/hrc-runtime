@@ -21,6 +21,7 @@ import type { BindingRegistryClient } from '../federation/registry-client.js'
 import { hashRegistrationCredential } from '../registration-handlers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import type { HrcServerOptions } from '../server-types.js'
+import { externalRegistrationServerDouble } from './external-registration-server.fixture.js'
 
 const REGISTRATION_ID = 'registration-t07138'
 const CREDENTIAL = 'credential-t07138'
@@ -73,16 +74,11 @@ describe('T-07138 post-mint collective establishment', () => {
     await mkdir(root, { recursive: true })
     db = openHrcDatabase(join(root, 'state.sqlite'))
     registry = openBindingRegistry(join(root, 'registry.sqlite'))
-    mintServer = {
+    mintServer = externalRegistrationServerDouble({
       db,
       options: { runtimeRoot: join(root, 'run') } as HrcServerOptions,
       generateBrokerAttachToken: () => 'attach-token-t07138',
-      externalParticipantClients: new Map(),
-      externalRegistrationOperations: new Map(),
-      externalRegistrationEstablishmentOperations: new Map(),
-      stopping: false,
-      ctx: { notifyEvent: () => undefined },
-    } as unknown as HrcServerInstanceForHandlers
+    })
     const createdAt = new Date().toISOString()
     expect(
       db.externalRegistrationGrants.issueWithinCapacity(

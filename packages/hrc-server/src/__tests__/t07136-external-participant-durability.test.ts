@@ -24,6 +24,7 @@ import type {
 } from '../index.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { isRuntimeUnavailableStatus } from '../server-util.js'
+import { externalRegistrationServerDouble } from './external-registration-server.fixture.js'
 
 const REGISTRATION_ID = 'registration-t07136'
 const CREDENTIAL = 'credential-t07136'
@@ -215,16 +216,12 @@ describe('T-07136 EPR durable event, reattach, and detached semantics', () => {
     await mkdir(root, { recursive: true })
     db = openHrcDatabase(join(root, 'state.sqlite'))
     const controller = new HarnessBrokerController({ db })
-    server = {
+    server = externalRegistrationServerDouble({
       db,
       options: { runtimeRoot: join(root, 'run') } as HrcServerOptions,
       harnessBrokerController: controller,
       generateBrokerAttachToken: () => 'attach-token-t07136',
-      externalParticipantClients: new Map(),
-      externalRegistrationOperations: new Map(),
-      stopping: false,
-      ctx: { notifyEvent: () => undefined },
-    } as unknown as HrcServerInstanceForHandlers
+    })
     const grant: ExternalRegistrationGrant = {
       registrationId: REGISTRATION_ID,
       classId: 'arris-agent',
