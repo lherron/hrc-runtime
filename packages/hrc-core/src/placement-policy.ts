@@ -290,8 +290,8 @@ export async function refineTaskWorktree(
       `worktree at ${mismatched.path} appears associated with ${taskId} but branch ${mismatched.branch} does not carry ${taskId}`
     )
   }
-  if (detached.length === 1) return { path: detached[0]!.path }
-  return undefined
+  const [lone] = detached
+  return lone === undefined ? undefined : { path: lone.path }
 }
 
 export function didYouMeanExplicitTaskProject(
