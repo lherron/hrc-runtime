@@ -305,7 +305,9 @@ Durations accept suffixed forms like `5s`, `10s`, `30m`, `5m`.
 hrc server status
 hrc server status --json
 
-# Restart the daemon (the daemon authorizes and restarts itself):
+# Restart the daemon (the daemon authorizes and restarts itself). Allowed callers:
+# mable@<project>:primary (any node), mable@<project>:minisvc (svc only),
+# mable@hrc-runtime:hrcdev (hrcdev only), or Lance. Everyone else is refused.
 hrc server restart --reason "<why>"
 hrc server restart --node svc --wait --reason "<why>"
 
