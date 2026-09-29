@@ -1,31 +1,53 @@
 import { readFileSync } from 'node:fs'
 
 import { CliUsageError, parseDuration } from 'cli-kit'
-import type {
-  HrcLifecycleEvent,
-  HrcSubmissionResponse,
-  HrcTurnResponseFormat,
-  SemanticTurnHandoffPendingResponse,
-  SemanticTurnHandoffResponse,
-} from 'hrc-core'
+import type { HrcLifecycleEvent, HrcTurnResponseFormat } from 'hrc-core'
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
-
-import type { ProfileAwareResolvedScopeInput as ScopeInput } from 'hrc-sdk'
-import { printJson, printJsonLine } from '../../print.js'
-import { writeDeliveryOutcome, writeDeliveryWarnings } from '../delivery-warning.js'
-import { resolveMessagingScope, resolveSenderAddress } from '../normalize.js'
+import { resolveMessagingScope } from '../normalize.js'
 import {
   type RenderFrameFormatInput,
   createTerminalFrameRenderer,
   resolveRenderFrameSinkFormat,
   writeRenderFrameAsNdjson,
 } from '../render-frame.js'
-import { resolveLaunchTarget } from '../resolve-intent.js'
+import type { resolveLaunchTarget } from '../resolve-intent.js'
 import { type StackedAggregator, createStackedAggregator } from '../stacked-aggregator.js'
-import { isCanonicalTurnCompletionFailure, isRecord } from '../stacked-shared.js'
+import { isRecord } from '../stacked-shared.js'
 import { type StackedSeatSummarizer, createStackedSummarizer } from '../stacked-summary.js'
-import { FlushReason, Phase, Result, type StackedHandoff } from '../stacked-types.js'
+import type { StackedHandoff } from '../stacked-types.js'
+import {
+  type PreparedTurnObservation,
+  assertProjectResolved,
+  bindWaitDeadline,
+  prepareDispatchedTurn,
+  waitTimeoutExit,
+} from './turn-dispatch.js'
+import {
+  TURN_EXIT_INFRA,
+  TURN_EXIT_NOTHING_TO_ATTACH,
+  TURN_EXIT_SIGINT,
+  TURN_EXIT_STALL,
+  TurnExitError,
+  deriveStackedPhase,
+  enrichFinalEvent,
+  failTurn,
+  finalizeTurn,
+  isRuntimeDead,
+  isWatchLoopTurnTerminal,
+  turnFailureOf,
+} from './turn-terminals.js'
+
+export { writeDoorDowngrade } from './turn-dispatch.js'
+export {
+  TURN_EXIT_INFRA,
+  TURN_EXIT_NOTHING_TO_ATTACH,
+  TURN_EXIT_PERMISSION_BLOCKED,
+  TURN_EXIT_RUNTIME_DEAD,
+  TURN_EXIT_SIGINT,
+  TURN_EXIT_STALL,
+  TurnExitError,
+} from './turn-terminals.js'
 
 export type TurnOptions = {
   /** Observe an admitted run without dispatching input. */
@@ -78,44 +100,14 @@ export type TurnCommandDependencies = {
 const TURN_WAIT_DEFAULT_TIMEOUT = '45m'
 export const ATTACH_CATCH_UP_DEADLINE_MS = 30_000
 
-function isPendingSemanticTurnHandoff(
-  response: SemanticTurnHandoffResponse
-): response is SemanticTurnHandoffPendingResponse {
-  return 'status' in response && response.status === 'pending'
-}
-
-/** A steer can acknowledge format-2 admission before its execution exists. */
-function isAdmittedRunSubmission(
-  response: HrcSubmissionResponse
-): response is HrcSubmissionResponse & {
-  admission: 'admitted'
-  runId: string
-  runtimeId?: string | undefined
-  hostSessionId: string
-  generation: number
-  observation: { lifecycle: { fromSeq: number } }
-} {
-  return (
-    response.admission === 'admitted' &&
-    'runId' in response &&
-    typeof response.runId === 'string' &&
-    'hostSessionId' in response &&
-    typeof response.hostSessionId === 'string' &&
-    'generation' in response &&
-    typeof response.generation === 'number' &&
-    'observation' in response &&
-    response.observation.lifecycle !== undefined
-  )
-}
-
-type TurnBodyInput = {
+export type TurnBodyInput = {
   targetInput: string
   body: string
   bodyFromFile: boolean
   bodyFromStdin: boolean
 }
 
-type TurnOutputOptions = {
+export type TurnOutputOptions = {
   waitMode: string | undefined
   waitTimeoutMs: number | undefined
   /** Fires at --timeout, measured from command start; bounds every --wait door. */
@@ -140,119 +132,6 @@ function parseResponseFormatOption(opts: TurnOptions): HrcTurnResponseFormat | u
     throw new CliUsageError('--response-format-json-schema must be a JSON object')
   }
   return { kind: 'json_schema', schema: parsed }
-}
-
-/**
- * Typed exit error for the turn command.
- * Thrown instead of calling process.exit() directly so that main.ts
- * can map it to the correct exit code, and tests can assert on it.
- *
- * Exit codes:
- *   0 — turn completed (success, no error thrown)
- *   1 — stall-after fired
- *   2 — usage error (handled by CliUsageError)
- *   3 — infra failure (socket, daemon)
- *   4 — runtime dead before turn completed
- *   5 — permission-blocked
- *   6 — no admitted run to attach to
- * 130 — SIGINT
- */
-export class TurnExitError extends Error {
-  readonly exitCode: number
-  constructor(exitCode: number, message: string) {
-    super(message)
-    this.name = 'TurnExitError'
-    this.exitCode = exitCode
-  }
-}
-
-export const TURN_EXIT_STALL = 1
-export const TURN_EXIT_INFRA = 3
-export const TURN_EXIT_RUNTIME_DEAD = 4
-export const TURN_EXIT_PERMISSION_BLOCKED = 5
-export const TURN_EXIT_NOTHING_TO_ATTACH = 6
-export const TURN_EXIT_SIGINT = 130
-
-/**
- * The four terminal outcomes of the turn watch loop, reified as a table so the
- * (phase, flush, exitCode, result, message) tuple for each is declared in one
- * place rather than hand-aligned across four `aggregator.finish(...) ; throw`
- * blocks. Every triple is preserved byte-for-byte from the original blocks —
- * exit codes (0/4/5) are the user-facing CLI contract and must not shift.
- *
- *   runtimeDead — runtime exited before the turn completed (exit 4)
- *   permission  — turn blocked on a permission request (exit 5)
- *   error       — turn ended with an error (exit 4, reusing RUNTIME_DEAD)
- *   success     — turn completed normally (exit 0, no throw)
- *
- * Note `runtimeDead` and `error` share TURN_EXIT_RUNTIME_DEAD but carry
- * different Result values (RuntimeDead vs TurnError) and messages.
- */
-type TerminalKind = 'runtimeDead' | 'permission' | 'error' | 'success'
-
-type TerminalOutcome = {
-  phase: Phase
-  flush: FlushReason
-  exitCode: number
-  result: Result
-  /** aggregator-finish error payload; omitted when the arm carries no error */
-  errorMessage?: string
-  /** TurnExitError message; omitted for the non-throwing success arm */
-  throwMessage?: string
-}
-
-const TERMINALS: Record<TerminalKind, TerminalOutcome> = {
-  runtimeDead: {
-    phase: Phase.Error,
-    flush: FlushReason.Error,
-    exitCode: TURN_EXIT_RUNTIME_DEAD,
-    result: Result.RuntimeDead,
-    errorMessage: 'runtime exited before turn completed',
-    throwMessage: 'runtime exited before turn completed',
-  },
-  permission: {
-    phase: Phase.Permission,
-    flush: FlushReason.Permission,
-    exitCode: TURN_EXIT_PERMISSION_BLOCKED,
-    result: Result.PermissionBlocked,
-    throwMessage: 'turn blocked on permission request (no interactive approval in MVP)',
-  },
-  error: {
-    phase: Phase.Error,
-    flush: FlushReason.Error,
-    exitCode: TURN_EXIT_RUNTIME_DEAD,
-    result: Result.TurnError,
-    errorMessage: 'turn ended with error',
-    throwMessage: 'turn ended with error',
-  },
-  success: {
-    phase: Phase.Final,
-    flush: FlushReason.Final,
-    exitCode: 0,
-    result: Result.Success,
-  },
-}
-
-/**
- * Finalize the stacked aggregator for a terminal outcome, then (for every arm
- * except success) throw the matching TurnExitError. Preserves the exact
- * finish(...) payload and exit-code/message of the original inline blocks.
- */
-async function finalizeTurn(
-  aggregator: StackedAggregator | undefined,
-  kind: TerminalKind
-): Promise<void> {
-  const outcome = TERMINALS[kind]
-  await aggregator?.finish({
-    phase: outcome.phase,
-    flush: outcome.flush,
-    exitCode: outcome.exitCode,
-    result: outcome.result,
-    ...(outcome.errorMessage !== undefined ? { error: { message: outcome.errorMessage } } : {}),
-  })
-  if (outcome.throwMessage !== undefined) {
-    throw new TurnExitError(outcome.exitCode, outcome.throwMessage)
-  }
 }
 
 function readTurnBodyInput(opts: TurnOptions, positionals: string[]): TurnBodyInput {
@@ -491,274 +370,6 @@ function resolveTurnOutputOptions(opts: TurnOptions): TurnOutputOptions {
 
   const waitDeadline = waitTimeoutMs !== undefined ? AbortSignal.timeout(waitTimeoutMs) : undefined
   return { waitMode, waitTimeoutMs, waitDeadline, stackedWindowMs }
-}
-
-/**
- * `--timeout` is a hard bound on `--wait` whatever the server does (T-08865):
- * print the timeout as the command's JSON result and exit non-zero.
- */
-function waitTimeoutExit(
-  timeoutMs: number,
-  fields: { runId?: string | undefined; door?: string | undefined } = {}
-): TurnExitError {
-  printJsonLine({
-    result: 'wait_timeout',
-    timeoutMs,
-    ...(fields.runId !== undefined ? { runId: fields.runId } : {}),
-    ...(fields.door !== undefined ? { door: fields.door } : {}),
-  })
-  return new TurnExitError(TURN_EXIT_STALL, `--wait timeout reached after ${timeoutMs}ms`)
-}
-
-/** Call `onDeadline` when (or if already) the wait deadline fires; returns the unbind. */
-function bindWaitDeadline(deadline: AbortSignal | undefined, onDeadline: () => void): () => void {
-  if (deadline === undefined) return () => {}
-  if (deadline.aborted) {
-    onDeadline()
-    return () => {}
-  }
-  deadline.addEventListener('abort', onDeadline, { once: true })
-  return () => deadline.removeEventListener('abort', onDeadline)
-}
-
-/**
- * A waited door whose turn ended failed (e.g. its broker never started) exits
- * like a watched failed turn, after its response line is printed (T-08865).
- */
-function exitIfWaitedTurnFailed(response: HrcSubmissionResponse): void {
-  const body = response as Record<string, unknown>
-  const terminal = isRecord(body['terminal']) ? body['terminal'] : {}
-  if (body['status'] !== 'failed' && terminal['status'] !== 'failed') return
-  const error = isRecord(body['error']) ? body['error'] : {}
-  const code = typeof error['code'] === 'string' ? error['code'] : 'failed'
-  const message = typeof error['message'] === 'string' ? `: ${error['message']}` : ''
-  throw new TurnExitError(TERMINALS.error.exitCode, `turn failed: ${code}${message}`)
-}
-
-/** Run a server-side waiting door; the client deadline ends it if the server does not. */
-async function withWaitDeadline<T>(
-  output: TurnOutputOptions,
-  door: string,
-  call: (signal: AbortSignal | undefined) => Promise<T>
-): Promise<T> {
-  try {
-    return await call(output.waitDeadline)
-  } catch (error) {
-    if (output.waitDeadline?.aborted === true && output.waitTimeoutMs !== undefined) {
-      throw waitTimeoutExit(output.waitTimeoutMs, { door })
-    }
-    throw error
-  }
-}
-
-function assertProjectResolved(targetInput: string, resolved: ScopeInput): void {
-  if (resolved.parsed.projectId) {
-    return
-  }
-
-  throw new CliUsageError(
-    [
-      `cannot resolve a project for target "${targetInput}".`,
-      'A turn must target an agent within a project, but none was found: the',
-      'target has no @<project> qualifier, ASP_PROJECT is unset, and the current',
-      'directory maps to no known project. Fix one of:',
-      `  • qualify the target:  hrc turn ${targetInput}@<project> "…"`,
-      `  • set the env:         ASP_PROJECT=<project> hrc turn ${targetInput} "…"`,
-      `  • run from a project:  cd ~/praesidium/<project> && hrc turn ${targetInput} "…"`,
-    ].join('\n')
-  )
-}
-
-type PreparedTurnObservation = {
-  resolved: ScopeInput
-  handoff: StackedHandoff
-  catchUpThroughSeq?: number | undefined
-  /**
-   * Follow the seat rather than one run. A steer that joins a running turn is
-   * settled into the run that owns that turn, so its own run carries none of
-   * the turn's events; the first turn terminal on the seat after admission is
-   * the turn it joined or started.
-   */
-  followSeat?: boolean | undefined
-}
-
-/**
- * A steer the server downgraded (T-08536) was asked for "now" and delivered
- * "after". Say so on stderr for every output mode; the JSON response line carries the fields.
- */
-export function writeDoorDowngrade(
-  response: Pick<HrcSubmissionResponse, 'effectiveDoor' | 'requestedDoor' | 'downgradeReason'>,
-  write: (text: string) => void = (text) => process.stderr.write(text)
-): void {
-  if (response.requestedDoor === undefined || response.effectiveDoor === undefined) return
-  write(
-    `notice: ${response.requestedDoor} downgraded to ${response.effectiveDoor} (${response.downgradeReason ?? 'unknown'}): the message runs after the current turn\n`
-  )
-}
-
-async function prepareDispatchedTurn(
-  client: HrcClient,
-  opts: TurnOptions,
-  input: TurnBodyInput,
-  output: TurnOutputOptions,
-  stallAfterMs: number,
-  responseFormat: HrcTurnResponseFormat | undefined,
-  dependencies: TurnCommandDependencies
-): Promise<PreparedTurnObservation | undefined> {
-  const { targetInput, body, bodyFromFile, bodyFromStdin } = input
-  const { waitMode, stackedWindowMs } = output
-  const resolveLaunch = dependencies.resolveLaunchTarget ?? resolveLaunchTarget
-  const { resolved, sessionRef, runtimeIntent } = await resolveLaunch(targetInput)
-
-  if (opts.dryRun) {
-    printJson({
-      command: 'turn',
-      dryRun: true,
-      note: 'local plan preview — no server state consulted, nothing dispatched',
-      target: targetInput,
-      sessionRef,
-      scopeRef: resolved.scopeRef,
-      laneRef: resolved.laneRef,
-      projectId: resolved.parsed.projectId ?? null,
-      placementResolution: resolved.placement.resolution,
-      bodySource: bodyFromFile ? 'file' : bodyFromStdin ? 'stdin' : 'positional',
-      bodyLength: body.length,
-      clearContextFirst: opts.new === true,
-      replyToMessageId: opts.replyTo ?? null,
-      responseFormat: responseFormat ?? null,
-      output: {
-        format: opts.format ?? null,
-        pretty: opts.pretty === true,
-        stackedWindowMs: stackedWindowMs ?? null,
-        stallAfterMs,
-      },
-      runtimeIntent,
-    })
-    return undefined
-  }
-
-  assertProjectResolved(targetInput, resolved)
-  const sender = await resolveSenderAddress(opts.as)
-  if (sender.source === 'human-fallback') {
-    if (!process.stdout.isTTY) {
-      throw new CliUsageError(
-        'no session envelope and no interactive terminal: name the sender with --as <principal> ("human" or an agent handle) — scripted sends must not default to the human seat'
-      )
-    }
-    process.stderr.write('notice: dispatching as human (no session envelope)\n')
-  }
-  const from = sender.address
-  const to = { kind: 'session' as const, sessionRef }
-  const principalRef =
-    from.kind === 'session'
-      ? (from.sessionRef.split('/lane:')[0] ?? from.sessionRef)
-      : from.entity === 'human'
-        ? 'human:lance'
-        : `system:${from.entity}`
-  const ttlMs = opts.ttl === undefined ? undefined : parseDuration(opts.ttl)
-  if (ttlMs !== undefined && ttlMs <= 0) {
-    throw new CliUsageError(`invalid duration: ${opts.ttl} (must be > 0)`)
-  }
-  const submissionRequest = {
-    target: sessionRef,
-    body,
-    origin: { principalRef, ...(from.kind === 'session' ? { scopeRef: principalRef } : {}) },
-    ...(opts.new === true ? { freshContext: true } : {}),
-    ...(responseFormat !== undefined ? { responseFormat } : {}),
-  }
-  const queue = opts.queue === true
-  if (opts.preempt === true) {
-    const preempted = await withWaitDeadline(output, 'preempt', (signal) =>
-      client.preempt(
-        {
-          ...submissionRequest,
-          ...(ttlMs !== undefined ? { ttlMs } : {}),
-          ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
-        },
-        { signal: waitMode === 'final' ? signal : undefined }
-      )
-    )
-    printJsonLine(preempted)
-    exitIfWaitedTurnFailed(preempted)
-    return undefined
-  }
-  if (!queue) {
-    // Steer = send now (T-08533): join the running turn, or start one. A target
-    // with no session row has no seat to steer yet; its birth turn is the turn
-    // the steer would start, and the handoff below is the door that births it.
-    const existing = await client.resolveSession({ sessionRef, create: false })
-    if (existing.found) {
-      if (waitMode === 'final') {
-        const waited = await withWaitDeadline(output, 'steer', (signal) =>
-          client.steer({ ...submissionRequest, wait: true }, { signal })
-        )
-        writeDoorDowngrade(waited)
-        printJsonLine(waited)
-        exitIfWaitedTurnFailed(waited)
-        return undefined
-      }
-      const steered = await client.steer(submissionRequest)
-      writeDoorDowngrade(steered)
-      // Format-2 admission has no execution run or lifecycle cursor yet; its
-      // receipt is input-based and cannot be followed as a legacy run.
-      if (!isAdmittedRunSubmission(steered)) {
-        printJsonLine(steered)
-        return undefined
-      }
-      return {
-        resolved,
-        // A steer downgraded to enqueue (T-08536) waits BEHIND the running turn,
-        // so the seat's next terminal may not be its turn: follow its own run.
-        followSeat: steered.effectiveDoor !== 'enqueue',
-        handoff: {
-          sessionRef,
-          scopeRef: resolved.scopeRef,
-          laneRef: resolved.laneRef,
-          hostSessionId: steered.hostSessionId,
-          runtimeId: steered.runtimeId ?? '',
-          runId: steered.runId,
-          generation: steered.generation,
-          fromSeq: steered.observation?.lifecycle.fromSeq ?? 0,
-        },
-      }
-    }
-  }
-  if (queue && (waitMode === 'final' || ttlMs !== undefined)) {
-    const enqueued = await withWaitDeadline(output, 'enqueue', (signal) =>
-      client.enqueue(
-        {
-          ...submissionRequest,
-          ...(ttlMs !== undefined ? { ttlMs } : {}),
-          ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
-        },
-        { signal: waitMode === 'final' ? signal : undefined }
-      )
-    )
-    printJsonLine(enqueued)
-    exitIfWaitedTurnFailed(enqueued)
-    return undefined
-  }
-  const dispatch = await client.semanticTurnHandoff({
-    from,
-    to,
-    body,
-    runtimeIntent,
-    createIfMissing: true,
-    ...(opts.new === true ? { freshContext: true } : {}),
-    replyToMessageId: opts.replyTo,
-    allowCrossScopeReply: opts.crossScopeReply,
-    responseFormat,
-  })
-  if (isPendingSemanticTurnHandoff(dispatch)) {
-    printJsonLine(dispatch)
-    return undefined
-  }
-  const quiet = waitMode !== undefined ? opts.quiet !== false : opts.quiet === true
-  if (!quiet) {
-    writeDeliveryWarnings(dispatch.warnings)
-    writeDeliveryOutcome(dispatch.delivery)
-  }
-  return { resolved, handoff: dispatch }
 }
 
 export async function cmdTurn(
@@ -1058,108 +669,4 @@ export async function cmdTurn(
   }
 
   // exit 0 — success (implicit return)
-}
-
-/**
- * Watch-loop terminal predicate: which events end the turn for the watch loop
- * (both the stacked and non-stacked paths). Deliberately BROADER than the
- * stacked aggregator's own `isStackedAggregatorFinal` (turn.completed only) —
- * the two are intentionally distinct, NOT a duplicate. Do not unify the bodies;
- * see T-04733 (daedalus-gated) for why widening/narrowing either is a behavior
- * change.
- */
-function isWatchLoopTurnTerminal(event: HrcLifecycleEvent): boolean {
-  return event.eventKind === 'turn_end' || event.eventKind === 'turn.completed'
-}
-
-type TurnFailure = {
-  result: 'turn_failed'
-  runId: string | undefined
-  eventKind: string
-  hrcSeq: number
-  errorCode: string | undefined
-  code: string
-  message: string | undefined
-  diagnosticsSeq?: number | undefined
-  retrieval?: string | undefined
-}
-
-/**
- * Events after which the watched run can never complete: `turn.failed` (e.g.
- * broker_start_failed) and a `first_turn_missing` trip, which makes the run
- * terminal server-side (a late turn.started never resurrects it).
- */
-function turnFailureOf(event: HrcLifecycleEvent): TurnFailure | undefined {
-  if (event.eventKind !== 'turn.failed' && event.eventKind !== 'first_turn_missing') {
-    return undefined
-  }
-  const payload = isRecord(event.payload) ? event.payload : {}
-  const payloadCode = typeof payload['code'] === 'string' ? payload['code'] : undefined
-  const message = typeof payload['message'] === 'string' ? payload['message'] : undefined
-  const firstTurnMissing = event.eventKind === 'first_turn_missing'
-  return {
-    result: 'turn_failed',
-    runId: event.runId,
-    eventKind: event.eventKind,
-    hrcSeq: event.hrcSeq,
-    errorCode: event.errorCode,
-    code: payloadCode ?? event.errorCode ?? event.eventKind,
-    message,
-    ...(firstTurnMissing
-      ? { diagnosticsSeq: event.hrcSeq, retrieval: `hrc runtime diagnostics ${event.hrcSeq}` }
-      : {}),
-  }
-}
-
-/** Report a failed turn on the active sink and exit with the error terminal's code. */
-async function failTurn(
-  failure: TurnFailure,
-  aggregator: StackedAggregator | undefined,
-  printFailureLine: boolean
-): Promise<never> {
-  const detail = `${failure.code}${failure.message !== undefined ? `: ${failure.message}` : ''}`
-  const outcome = TERMINALS.error
-  if (aggregator) {
-    await aggregator.finish({
-      phase: outcome.phase,
-      flush: outcome.flush,
-      exitCode: outcome.exitCode,
-      result: outcome.result,
-      error: { message: detail },
-    })
-  } else if (printFailureLine) {
-    printJsonLine(failure)
-  }
-  throw new TurnExitError(outcome.exitCode, `turn failed: ${detail}`)
-}
-
-function isRuntimeDead(event: HrcLifecycleEvent): boolean {
-  return (
-    event.eventKind === 'runtime_exited' ||
-    event.eventKind === 'runtime_crashed' ||
-    event.eventKind === 'runtime_killed'
-  )
-}
-
-function deriveStackedPhase(
-  event: HrcLifecycleEvent,
-  prior: RenderFrame['phase'] | undefined
-): RenderFrame['phase'] | undefined {
-  if (event.eventKind === 'permission_request') {
-    return 'permission'
-  }
-  if (event.eventKind === 'turn.completed') {
-    return isCanonicalTurnCompletionFailure(event) ? 'error' : 'final'
-  }
-  if (event.eventKind === 'run_failed' || event.eventKind === 'turn.error') {
-    return 'error'
-  }
-  if (event.eventKind === 'run_queued') {
-    return prior ?? 'queued'
-  }
-  return prior === 'permission' || prior === 'error' ? prior : 'progress'
-}
-
-async function enrichFinalEvent(event: HrcLifecycleEvent): Promise<HrcLifecycleEvent> {
-  return event
 }
