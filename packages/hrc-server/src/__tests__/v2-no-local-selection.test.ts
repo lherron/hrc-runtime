@@ -9,9 +9,17 @@ import { omitPersistedSelectionForReuse } from '../selector-message-handlers/sel
 
 const source = (path: string) => readFileSync(resolve(import.meta.dir, '..', path), 'utf8')
 
+const ASPD_HEADLESS_START_FILES = [
+  'aspd-headless-start.ts',
+  'aspd-headless-start-record.ts',
+  'aspd-headless-start-launch.ts',
+]
+
 test('birth and presentation consumers do not import the retired v1 profile selector', () => {
   for (const path of [
     'aspd-headless-start.ts',
+    'aspd-headless-start-record.ts',
+    'aspd-headless-start-launch.ts',
     'broker-headless-handlers.ts',
     'presentation-operator.ts',
   ]) {
@@ -20,14 +28,14 @@ test('birth and presentation consumers do not import the retired v1 profile sele
 })
 
 test('ASPD hosting has no driver-list or named-driver route authority', () => {
-  const text = source('aspd-headless-start.ts')
+  const text = ASPD_HEADLESS_START_FILES.map(source).join('\n')
   expect(text).not.toContain('hostedDrivers')
   expect(text).not.toContain('ASPD_BROKER_DRIVER')
   expect(text).not.toContain('ASPD_MUSE_BROKER_DRIVER')
 })
 
 test('ASPD accepts every admitted hosting process form rather than rejecting native-worker', () => {
-  const text = source('aspd-headless-start.ts')
+  const text = ASPD_HEADLESS_START_FILES.map(source).join('\n')
   expect(text).not.toContain("processExecution === 'broker-process'")
   expect(text).not.toContain("processExecution !== 'broker-process'")
   expect(text).not.toContain('aspd_execution_hosting_mismatch')

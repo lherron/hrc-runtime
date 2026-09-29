@@ -19,35 +19,20 @@
  * and frozen release but never reselects a named driver route.
  */
 import { randomUUID } from 'node:crypto'
-
-import { HrcRuntimeUnavailableError } from 'hrc-core'
 import type {
   HrcExecutionFormat,
   HrcRuntimeIntent,
-  HrcRuntimeSnapshot,
   HrcSessionRecord,
   HrcTurnResponseFormat,
   PhaseRecorder,
 } from 'hrc-core'
 import { getAspHome } from 'hrc-core'
-import type {
-  AspcCompileHarnessInvocationResponse,
-  AspcExecutionRelease,
-} from 'spaces-aspc-protocol'
-import type { BrokerLifecyclePolicyOverlay } from 'spaces-harness-broker-protocol'
-import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
+import type { RuntimeCompileRequest } from 'spaces-runtime-contracts'
 import type { BirthTimeline } from './birth-timeline.js'
-import type { BrokerControllerStartInput } from './broker/controller/types.js'
 
 import { actuatorSplitRuntimeAuthority, assertActuatorSplitAdmission } from './actuator-split.js'
 import {
-  ExecutionReleaseRefusal,
-  buildAspdWorkerArgv,
-  validateFrozenExecutionRelease,
-} from './agent-spaces-adapter/aspd-execution-release.js'
-import {
   type AspdPreparationResult,
-  type AspdServiceIdentity,
   configuredAspdEndpoint,
   connectAspdUnix,
   prepareThroughAspd,
@@ -55,18 +40,22 @@ import {
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import {
+  ASPD_PREPARATION_SCHEMA,
+  type AspdPreparationRecord,
+  type AspdPreparationRoute,
+  aspdStartError,
+  aspdWorkerArgv,
+  describeAspdHostingPaths,
+  presentationForExecution,
+} from './aspd-headless-start-record.js'
+import {
   type InteractiveTmuxBrokerDriver,
   extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
-import {
-  type BrokerSubstratePaths,
-  describeBrokerSubstratePaths,
-} from './broker-interactive-handlers/substrate-allocator.js'
 import { projectBrokerRunExecution } from './broker-run-preview.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
-import type { SelectedExecution, SelectedExecutionPlan } from './broker/selected-execution.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import {
   type PrecompileLaunchTimingContext,
@@ -74,113 +63,21 @@ import {
 } from './precompile-launch-timing.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import {
-  type AttachedRunObservation,
-  type DispatchRunPersistenceOptions,
-  dispatchRunPersistence,
-} from './server-types.js'
+import type { AttachedRunObservation } from './server-types.js'
 import { timestamp } from './server-util.js'
-import {
-  automaticContinuationForSession,
-  dropUnconfirmedResumeContinuation,
-} from './session-continuation-reuse.js'
-import { getBrokerObserverSocketPath } from './tmux-socket.js'
+import { automaticContinuationForSession } from './session-continuation-reuse.js'
 import { toBrokerResponseFormat } from './turn-response-format.js'
 
-export const ASPD_PREPARATION_SCHEMA = 'hrc-aspd-preparation/v1'
-type OkCompileResponse = Extract<AspcCompileHarnessInvocationResponse, { ok: true }>
-
-/**
- * The routes a frozen aspd preparation launches on (T-08556 adds the interactive
- * Codex TUI; T-08562 adds the non-Codex interactive tmux broker route; the
- * headless muse-serve route admits that driver with presentation none or the
- * observer viewer).
- */
-export type AspdPreparationRoute = 'producer-selected-execution'
-
-/** The frozen preparation persisted in `runtime_operations.preparation_json`. */
-export type AspdPreparationRecord = {
-  schemaVersion: typeof ASPD_PREPARATION_SCHEMA
-  route: AspdPreparationRoute
-  preparedAt: string
-  hostSessionId: string
-  generation: number
-  runtimeId: string
-  /** Format 2 has no admission-time run; it mints a carrier on turn.started. */
-  runId?: string | undefined
-  operationId: string
-  dispatchIdempotencyKey?: string | undefined
-  aspd: AspdServiceIdentity
-  /** The complete, unchanged successful compileHarnessInvocation response. */
-  response: OkCompileResponse
-  executionRelease: AspcExecutionRelease
-  admission: {
-    execution: SelectedExecution
-    plan: SelectedExecutionPlan
-    hrcPolicy: RuntimeCompileRequest['hrcPolicy']
-    identity: RuntimeIdentityAllocation
-    /** HRC admission format frozen before this preparation crosses P. */
-    executionFormat: HrcExecutionFormat
-  }
-  hosting: {
-    /** Producer-selected diagnostic key used only to name per-runtime paths. */
-    driverKind: string
-    /** A resource projection derived solely from the admitted execution. */
-    presentation: AspdHostingPresentation
-    executable: string
-    argv: string[]
-    paths: AspdHostingPaths
-  }
-  dispatch: {
-    dispatchEnv?: Record<string, string> | undefined
-    /** Stable format-2 admission body identity, retained across a preparation retry. */
-    format2RequestHash?: string | undefined
-    lifecyclePolicy?: BrokerLifecyclePolicyOverlay | undefined
-    routeDecision: Record<string, unknown>
-    runtimeAuthority?: Record<string, unknown> | undefined
-    requestedResponseFormat?: ReturnType<typeof toBrokerResponseFormat>
-  }
-  intent: HrcRuntimeIntent
-  startOutcome?: 'rejected' | 'uncertain' | undefined
-}
-
-type AspdHostingPresentation = 'none' | 'terminal' | 'attachable'
-
-/** HRC's deterministic hosting paths; a viewer adds its observer socket. */
-type AspdHostingPaths = BrokerSubstratePaths & { observerSocketPath?: string | undefined }
-
-function describeAspdHostingPaths(
-  options: HrcServerInstanceForHandlers['options'],
-  driverKind: string,
-  runtimeId: string,
-  presentation: AspdHostingPresentation
-): AspdHostingPaths {
-  const paths = describeBrokerSubstratePaths(options, driverKind, runtimeId)
-  return presentation === 'attachable'
-    ? {
-        ...paths,
-        observerSocketPath: getBrokerObserverSocketPath(options, driverKind, runtimeId),
-      }
-    : paths
-}
-
-function aspdWorkerArgv(
-  release: AspcExecutionRelease,
-  record: Pick<AspdPreparationRecord, 'runtimeId' | 'hostSessionId' | 'generation'>,
-  paths: AspdHostingPaths
-): string[] {
-  return buildAspdWorkerArgv(release, {
-    socketPath: paths.brokerIpcSocketPath,
-    eventLedgerPath: paths.eventLedgerPath,
-    runtimeId: record.runtimeId,
-    hostSessionId: record.hostSessionId,
-    generation: record.generation,
-    attachTokenPath: paths.attachTokenPath,
-    ...(paths.observerSocketPath !== undefined
-      ? { observerSocketPath: paths.observerSocketPath }
-      : {}),
-  })
-}
+export { launchAspdPreparedAttempt } from './aspd-headless-start-launch.js'
+export type { AspdLaunchOptions } from './aspd-headless-start-launch.js'
+export {
+  ASPD_PREPARATION_SCHEMA,
+  readAspdPreparation,
+} from './aspd-headless-start-record.js'
+export type {
+  AspdPreparationRecord,
+  AspdPreparationRoute,
+} from './aspd-headless-start-record.js'
 
 /**
  * T-08556 (§1.4), T-08560 (§1.5.1), T-08562 (§1.6.2) — the interactive route:
@@ -201,11 +98,6 @@ export function aspdInteractiveRouteFor(_brokerDriver: string): AspdPreparationR
   return 'producer-selected-execution'
 }
 
-function presentationForExecution(execution: SelectedExecution): AspdHostingPresentation {
-  if (execution.presentationSurface?.transport === 'websocket-unix') return 'attachable'
-  return execution.hosting.terminalRequired ? 'terminal' : 'none'
-}
-
 /**
  * The route this module owns: the node declares an aspd endpoint and the intent
  * is ordinary headless codex-app-server, with operator presentation `none` or
@@ -220,14 +112,6 @@ export function aspdHeadlessBrokerEndpoint(
   // The endpoint decides only service availability. Driver, terminal, and
   // presentation arrive after compile in the producer-selected execution.
   return configuredAspdEndpoint(env)
-}
-
-function aspdStartError(
-  code: string,
-  message: string,
-  detail: Record<string, unknown>
-): HrcRuntimeUnavailableError {
-  return new HrcRuntimeUnavailableError(message, { code, route: 'aspd', ...detail })
 }
 
 /**
@@ -738,27 +622,6 @@ export async function prepareAspdHeadlessAttempt(
   return operationId
 }
 
-/** Read and parse a prepared operation's frozen record from the database. */
-export function readAspdPreparation(
-  server: Pick<HrcServerInstanceForHandlers, 'db'>,
-  operationId: string
-): { status: string; record: AspdPreparationRecord } {
-  const operation = server.db.runtimeOperations.getByOperationId(operationId)
-  if (operation?.preparationJson === undefined) {
-    throw aspdStartError('aspd_preparation_missing', `no aspd preparation ${operationId}`, {
-      operationId,
-    })
-  }
-  const record = JSON.parse(operation.preparationJson) as AspdPreparationRecord
-  if (record.schemaVersion !== ASPD_PREPARATION_SCHEMA || record.operationId !== operationId) {
-    throw aspdStartError('aspd_preparation_invalid', `aspd preparation ${operationId} is invalid`, {
-      operationId,
-      schemaVersion: record.schemaVersion,
-    })
-  }
-  return { status: operation.status, record }
-}
-
 /**
  * T-08560 D2 route fence: a resume branch launches only a preparation frozen on
  * its own route. A same-key retry whose session routing now selects the other
@@ -884,209 +747,4 @@ export function findPreparedAspdAttemptForRetry(
     route: record.route,
     driverKind: record.driverKind,
   }
-}
-
-function recordPrelaunchRefusal(
-  server: Pick<HrcServerInstanceForHandlers, 'db'>,
-  operationId: string,
-  code: string,
-  message: string
-): void {
-  const current = server.db.runtimeOperations.getByOperationId(operationId)
-  if (current?.status !== 'prepared') return
-  server.db.runtimeOperations.update(operationId, {
-    errorCode: code,
-    errorMessage: message,
-    updatedAt: timestamp(),
-  })
-}
-
-export type AspdLaunchOptions = DispatchRunPersistenceOptions & {
-  onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
-  /**
-   * T-08556: the attached-run door's live attach handshake. Not frozen: it names
-   * this process's pending attach, which a preparation cannot outlive.
-   */
-  attachBeforeInvocationStart?: BrokerControllerStartInput['attachBeforeInvocationStart']
-  birthTimeline?: BirthTimeline | undefined
-  settleFailure: (error: {
-    code: string
-    message: string
-    detail: Record<string, unknown>
-  }) => never
-}
-
-/**
- * Launch a frozen aspd preparation. Input is only the operation id: every fact
- * is reread from the database. Pre-start refusals leave the row `prepared`
- * with the refusal recorded; nothing is re-prepared or rebound.
- */
-export async function launchAspdPreparedAttempt(
-  server: HrcServerInstanceForHandlers,
-  operationId: string,
-  options: AspdLaunchOptions
-): Promise<{ runtime: HrcRuntimeSnapshot; intent: HrcRuntimeIntent }> {
-  const { status, record } = readAspdPreparation(server, operationId)
-  // Records written before rev11 are durable format-1 preparations. New records
-  // always carry this field, but the fallback preserves a safe rollback path.
-  const executionFormat = record.admission.executionFormat ?? 'format1'
-  options.birthTimeline?.enrich({
-    runtimeId: record.runtimeId,
-    operationId,
-    invocationId: String(record.admission.identity.invocationId),
-    compileId: String(record.admission.plan.compileId),
-    releaseId: record.aspd.release.releaseId,
-    executionReleaseId: record.executionRelease.releaseId,
-    presentation: record.hosting.presentation,
-  })
-  options.birthTimeline?.mark('aspd-prepared-attempt-read', { operationId })
-  const detail = {
-    operationId,
-    runtimeId: record.runtimeId,
-    runId: record.runId,
-    hostSessionId: record.hostSessionId,
-    executionReleaseId: record.executionRelease.releaseId,
-  }
-  if (status !== 'prepared') {
-    throw aspdStartError(
-      'aspd_preparation_not_prepared',
-      `aspd preparation ${operationId} is ${status}, not a never-submitted prepared attempt`,
-      { ...detail, status }
-    )
-  }
-  const refuse = (code: string, message: string, extra: Record<string, unknown> = {}): never => {
-    recordPrelaunchRefusal(server, operationId, code, message)
-    writeServerLog('WARN', 'aspd.launch.refused', { code, ...detail, ...extra })
-    throw aspdStartError(code, message, { ...detail, ...extra })
-  }
-
-  const session = server.db.sessions.getByHostSessionId(record.hostSessionId)
-  if (session === null || session.generation !== record.generation) {
-    refuse(
-      'preparation_generation_superseded',
-      'the host session generation moved past this frozen preparation',
-      { frozenGeneration: record.generation, currentGeneration: session?.generation }
-    )
-  }
-
-  if (
-    executionFormat === 'format2' &&
-    (record.runId !== undefined || record.admission.identity.runId !== undefined)
-  ) {
-    refuse(
-      'execution_format_mismatch',
-      'format-2 preparation carries an admission-time run identity',
-      {
-        executionFormat,
-        recordRunId: record.runId,
-        identityRunId: record.admission.identity.runId,
-      }
-    )
-  }
-
-  let executable: string
-  try {
-    executable = validateFrozenExecutionRelease(record.executionRelease).executable
-  } catch (error) {
-    if (error instanceof ExecutionReleaseRefusal) {
-      return refuse(error.code, error.message, error.detail)
-    }
-    throw error
-  }
-  const currentPaths = describeAspdHostingPaths(
-    server.options,
-    record.hosting.driverKind,
-    record.runtimeId,
-    record.hosting.presentation
-  )
-  const expectedArgv = aspdWorkerArgv(record.executionRelease, record, currentPaths)
-  const launchMatchesAdmission =
-    record.route === 'producer-selected-execution' &&
-    record.hosting.driverKind === record.admission.execution.driver &&
-    record.hosting.presentation === presentationForExecution(record.admission.execution)
-  if (
-    JSON.stringify(expectedArgv) !== JSON.stringify(record.hosting.argv) ||
-    JSON.stringify(currentPaths) !== JSON.stringify(record.hosting.paths) ||
-    !launchMatchesAdmission
-  ) {
-    refuse('launch_description_mismatch', 'frozen worker launch description no longer matches', {
-      frozenArgv: record.hosting.argv,
-    })
-  }
-
-  writeServerLog('INFO', 'aspd.launch.begin', { ...detail, executable })
-  options.birthTimeline?.mark('aspd-launch-authority-validated', detail)
-  const controller = server.getHarnessBrokerController()
-  const admission = record.admission
-  const result = await controller.start({
-    execution: admission.execution,
-    plan: admission.plan,
-    hrcPolicy: admission.hrcPolicy,
-    executionFormat,
-    identity: admission.identity,
-    ...(options.birthTimeline !== undefined ? { birthTimeline: options.birthTimeline } : {}),
-    ...(record.dispatch.runtimeAuthority !== undefined
-      ? { runtimeAuthority: record.dispatch.runtimeAuthority }
-      : {}),
-    ...(record.dispatch.requestedResponseFormat !== undefined
-      ? { requestedResponseFormat: record.dispatch.requestedResponseFormat }
-      : {}),
-    ...dispatchRunPersistence(options),
-    ...(record.dispatch.format2RequestHash !== undefined
-      ? { format2RequestHash: record.dispatch.format2RequestHash }
-      : {}),
-    dispatchEnv: record.dispatch.dispatchEnv,
-    routeDecision: record.dispatch.routeDecision,
-    ...(record.dispatch.lifecyclePolicy !== undefined
-      ? { lifecyclePolicy: record.dispatch.lifecyclePolicy }
-      : {}),
-    ...(options.attachBeforeInvocationStart !== undefined
-      ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
-      : {}),
-    aspdExecution: {
-      operationId,
-      release: record.executionRelease,
-      executable,
-      argv: record.hosting.argv,
-    },
-    ...(options.onAccepted
-      ? {
-          onAccepted: async (graph) => {
-            await options.onAccepted?.(graph.runtime)
-          },
-        }
-      : {}),
-  })
-  if (!result.ok) {
-    recordPrelaunchRefusal(server, operationId, result.error.code, result.error.message)
-    writeServerLog('WARN', 'aspd.launch.failed', { code: result.error.code, ...detail })
-    const resumeFailure = dropUnconfirmedResumeContinuation(server.db, {
-      invocationId: String(record.admission.identity.invocationId),
-      stage: 'start',
-      failure: result.error.message,
-    })
-    if (resumeFailure?.event !== undefined) server.notifyEvent(resumeFailure.event)
-    options.settleFailure(
-      resumeFailure === undefined
-        ? result.error
-        : {
-            ...result.error,
-            message: `${resumeFailure.message} (${result.error.message})`,
-            detail: {
-              ...result.error.detail,
-              resumeFailedAtLaunch: {
-                provider: resumeFailure.provider,
-                continuationKey: resumeFailure.key,
-                dropped: resumeFailure.dropped,
-              },
-            },
-          }
-    )
-  }
-  writeServerLog('INFO', 'aspd.launch.started', {
-    ...detail,
-    invocationId: result.invocation.invocationId,
-    workerRelease: result.hello.release?.releaseId,
-  })
-  return { runtime: result.runtime, intent: record.intent }
 }
