@@ -16,7 +16,7 @@ const readRepo = (name: string) => readFileSync(join(repoRoot, name), 'utf8')
 describe('hrc-runtime.harness-broker-admission-client required tests', () => {
   it('the public HRC submission surface exposes exactly one method per admission class and all broker traffic routes through one of the four', () => {
     const controller = readServer('broker/controller.ts')
-    const routes = readServer('index.ts')
+    const routes = readServer('server-exact-routes.ts')
     const doors = ['steer', 'enqueue', 'invoke', 'preempt'] as const
     for (const door of doors) {
       expect(controller.match(new RegExp(`async ${door}\\(`, 'g'))).toHaveLength(1)

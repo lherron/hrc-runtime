@@ -59,7 +59,7 @@ describe('T-07155 delivery claims in the four-door vocabulary', () => {
   })
 
   it('single-actuation authority moved from the HRC idempotency ledger to broker submission identity', () => {
-    const contracts = source('packages/hrc-core/src/http-contracts.ts')
+    const contracts = source('packages/hrc-core/src/http-contracts-dispatch.ts')
     const controller = source('packages/hrc-server/src/broker/controller.ts')
     expect(contracts).toContain('submissionId: string')
     expect(controller).not.toContain('steerDeliveryAttempts')
