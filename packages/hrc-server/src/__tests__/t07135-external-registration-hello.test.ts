@@ -488,7 +488,7 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
       const source = await readFile(join(sourceRoot, relative), 'utf8')
       if (source.includes("'epr-external'")) references.push(relative)
     }
-    expect(references.sort()).toEqual(['external-registration-rendezvous.ts'])
+    expect(references.sort()).toEqual(['external-registration-hello.ts'])
   })
 
   test('keeps external substrates out of harness-broker restart attach and stale paths', async () => {
