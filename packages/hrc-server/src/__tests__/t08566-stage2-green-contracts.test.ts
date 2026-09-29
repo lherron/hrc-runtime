@@ -6,7 +6,7 @@ import { Database } from 'bun:sqlite'
  * O2 (terminal) and startup triggers.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { chmod, readFile, writeFile } from 'node:fs/promises'
+import { chmod, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { persistedEventLedgerPath, validateOfflineEvidencePage } from '../broker/offline-evidence'
 import { type HrcServer, createHrcServer } from '../index'
@@ -111,10 +111,14 @@ async function waitFor<T>(read: () => T | null | undefined, timeoutMs: number): 
 
 describe('T-08566 stage-2 green contracts', () => {
   test('A1-2: the offline module holds no ACK, attach, control or provider parsing', async () => {
-    const source = await readFile(
-      join(import.meta.dir, '..', 'broker', 'offline-evidence.ts'),
-      'utf8'
+    // The module is split into offline-evidence-*.ts siblings; the closure covers all of them.
+    const brokerDir = join(import.meta.dir, '..', 'broker')
+    const files = (await readdir(brokerDir)).filter(
+      (name) => name === 'offline-evidence.ts' || /^offline-evidence-.*\.ts$/.test(name)
     )
+    const source = (
+      await Promise.all(files.map((name) => readFile(join(brokerDir, name), 'utf8')))
+    ).join('\n')
     for (const forbidden of [
       /\.ackEvents\s*\(/,
       /\.attach\s*\(/,
