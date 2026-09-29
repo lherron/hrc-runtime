@@ -12,6 +12,16 @@ const serverSrc = join(import.meta.dir, '..')
 const repoRoot = join(import.meta.dir, '..', '..', '..', '..')
 const readServer = (name: string) => readFileSync(join(serverSrc, name), 'utf8')
 const readRepo = (name: string) => readFileSync(join(repoRoot, name), 'utf8')
+// turn-dispatch-handlers.ts is split by responsibility; guards read the whole family in source order.
+const turnDispatchSources = [
+  'turn-dispatch-submission-support.ts',
+  'turn-dispatch-submission-handlers.ts',
+  'turn-dispatch-runtime-handlers.ts',
+  'turn-dispatch-attached-run-handlers.ts',
+  'turn-dispatch-session-dispatch.ts',
+  'turn-dispatch-admitted-turn.ts',
+]
+const readTurnDispatch = () => turnDispatchSources.map(readServer).join('\n')
 
 describe('hrc-runtime.harness-broker-admission-client required tests', () => {
   it('the public HRC submission surface exposes exactly one method per admission class and all broker traffic routes through one of the four', () => {
@@ -77,7 +87,12 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
       'packages/hrc-core/src/http-contracts.ts',
       'packages/hrc-core/src/hrcchat-contracts.ts',
       'packages/hrc-server/src/messages.ts',
-      'packages/hrc-server/src/turn-dispatch-handlers.ts',
+      'packages/hrc-server/src/turn-dispatch-submission-support.ts',
+      'packages/hrc-server/src/turn-dispatch-submission-handlers.ts',
+      'packages/hrc-server/src/turn-dispatch-runtime-handlers.ts',
+      'packages/hrc-server/src/turn-dispatch-attached-run-handlers.ts',
+      'packages/hrc-server/src/turn-dispatch-session-dispatch.ts',
+      'packages/hrc-server/src/turn-dispatch-admitted-turn.ts',
       'packages/hrc-cli/src/cli/register-top.ts',
       'packages/hrc-cli/src/turn/commands/turn.ts',
       'packages/hrc-cli/src/turn/commands/turn-dispatch.ts',
@@ -91,7 +106,7 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
   })
 
   it('obligation-bearing enqueue invoke and preempt calls correlate disposition to their originating turn terminal', () => {
-    const handlers = readServer('turn-dispatch-handlers.ts')
+    const handlers = readTurnDispatch()
     expect(handlers).toContain("case 'submission.executed'")
     expect(handlers).toContain("case 'submission.rejected'")
     expect(handlers).toContain("case 'submission.expired'")
@@ -102,7 +117,7 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
   })
 
   it('preempt authority and guarded-turn policy reject unauthorized or silently upgraded interrupts', () => {
-    const handlers = readServer('turn-dispatch-handlers.ts')
+    const handlers = readTurnDispatch()
     expect(handlers).toContain('preemptAdmission')
     expect(handlers).toContain("'authority-denied'")
     expect(handlers).toContain('.seatProbe(')
@@ -123,7 +138,7 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
     expect(isOperatorPrincipal('human:lance')).toBe(true)
     expect(isOperatorPrincipal('agent:cody')).toBe(false)
 
-    const handlers = readServer('turn-dispatch-handlers.ts')
+    const handlers = readTurnDispatch()
     expect(handlers).toContain('const kind = isOperatorPrincipal(origin.principalRef)')
     expect(handlers).toContain(
       "if (isOperatorPrincipal(request.origin.principalRef)) return 'authorized'"
@@ -145,7 +160,7 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
 
   it('HRC policy loops consume broker capability probe queue disposition manifest and decision events without harness-internal reads', () => {
     const capabilities = readServer('broker/capabilities.ts')
-    const handlers = readServer('turn-dispatch-handlers.ts')
+    const handlers = readTurnDispatch()
     const mapper = readServer('broker/event-mapper.ts')
     expect(capabilities).toContain('admission?: { classes?: unknown }')
     expect(handlers).toContain('.seatProbe(')
