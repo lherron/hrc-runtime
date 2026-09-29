@@ -7,6 +7,10 @@ describe('package boundaries', () => {
       'src/index.ts',
       'src/provider-transcript.ts',
       'src/verifier.ts',
+      'src/verifier-analytics.ts',
+      'src/verifier-checks.ts',
+      'src/verifier-normalize.ts',
+      'src/verifier-transcript.ts',
       'src/types.ts',
     ]
     for (const relativePath of rootSources) {
