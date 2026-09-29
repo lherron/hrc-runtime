@@ -610,8 +610,8 @@ describe('T-08137 daemon lifecycle provenance', () => {
  */
 describe('T-08137 stop() site coverage', () => {
   it('every catch, allSettled, and drain outcome before db.close() records a reason', async () => {
-    const source = await readFile(join(import.meta.dir, '..', 'index.ts'), 'utf8')
-    const start = source.indexOf('  async stop(): Promise<void> {')
+    const source = await readFile(join(import.meta.dir, '..', 'server-stop-methods.ts'), 'utf8')
+    const start = source.indexOf('  async stop(this: HrcServerInstance): Promise<void> {')
     expect(start).toBeGreaterThan(0)
     const end = source.indexOf('this.db.close()', start)
     expect(end).toBeGreaterThan(start)
@@ -701,8 +701,8 @@ describe('T-08137 stop() site coverage', () => {
   })
 
   it('socket unlink and metrics flush run before db.close(); lock release after', async () => {
-    const source = await readFile(join(import.meta.dir, '..', 'index.ts'), 'utf8')
-    const start = source.indexOf('  async stop(): Promise<void> {')
+    const source = await readFile(join(import.meta.dir, '..', 'server-stop-methods.ts'), 'utf8')
+    const start = source.indexOf('  async stop(this: HrcServerInstance): Promise<void> {')
     const stop = source.slice(start, source.indexOf('\n  }\n', start))
     const close = stop.indexOf('this.db.close()')
     expect(stop.indexOf('unlinkIfExists(this.options.socketPath)')).toBeLessThan(close)

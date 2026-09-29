@@ -36,6 +36,7 @@ type BaselineFile = {
 
 const ignoredDirectories = new Set([
   '.cache',
+  '.claude',
   '.git',
   '.next',
   '.turbo',
