@@ -59,7 +59,9 @@ describe('T-05095 admission findings after the broker owns admission', () => {
 describe('T-05095 repair and correlation regression guards', () => {
   it('repair metadata remains write-time envelope authority', () => {
     const handlers = source('packages/hrc-server/src/turn-dispatch-handlers.ts')
-    const repository = source('packages/hrc-store-sqlite/src/repositories/broker-repositories.ts')
+    const repository = source(
+      'packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts'
+    )
     expect(handlers).toContain('repairRunId')
     expect(repository).toContain('enrichEnvelopeJsonWithRepairCorrelation')
     expect(repository).toContain('broker_envelope_json')
