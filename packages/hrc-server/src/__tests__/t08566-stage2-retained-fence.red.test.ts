@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { BrokerEventMapper } from '../broker/event-mapper'
 import { notifyEvent } from '../event-notification-handlers'
+import { SelfRestartIntents } from '../self-restart'
 import {
   HOST_SESSION_ID,
   LANE_REF,
@@ -221,6 +222,7 @@ describe('T-08566 retained projection fence', () => {
         sessionProjectEvents: { observe: project },
         drainDurableHeadlessTurnInputs: drain,
         finalizeSemanticTurnResponse: finalize,
+        selfRestartIntents: new SelfRestartIntents(),
       } as never,
       {
         hrcSeq: 1,
