@@ -234,7 +234,11 @@ export function buildV2CompileRequest(input: {
   // while `correlation` below becomes the broker event lineage.  HRC owns the
   // allocated execution facts in both channels; never inherit caller-provided
   // identity values into either one.
+  // T-09885: hostSessionId/generation (ASP's HRC_HOST_SESSION_ID/HRC_GENERATION)
+  // come from the allocation too; callers omit them or carry a prior generation.
   const {
+    hostSessionId: _callerHostSessionId,
+    generation: _callerGeneration,
     runtimeId: _callerRuntimeId,
     invocationId: _callerInvocationId,
     initialInputId: _callerInitialInputId,
@@ -245,6 +249,8 @@ export function buildV2CompileRequest(input: {
     ...intent.placement,
     correlation: {
       ...callerPlacementCorrelation,
+      hostSessionId: input.identity.hostSessionId,
+      generation: input.identity.generation,
       runtimeId: input.identity.runtimeId,
       ...(input.identity.invocationId !== undefined
         ? { invocationId: input.identity.invocationId }

@@ -429,6 +429,11 @@ export async function prepareAspdHeadlessAttempt(
   // after caller launch overrides have been applied, so these process facts
   // remain HRC-owned and agree with the admitted start request.
   const launchIdentityEnv = {
+    // T-09885: host session + generation are allocation facts, like the runtime.
+    AGENT_HOST_SESSION_ID: String(compiled.identity.hostSessionId),
+    HRC_HOST_SESSION_ID: String(compiled.identity.hostSessionId),
+    AGENT_GENERATION: String(compiled.identity.generation),
+    HRC_GENERATION: String(compiled.identity.generation),
     HRC_RUNTIME_ID: String(compiled.identity.runtimeId),
     HRC_INVOCATION_ID: String(compiled.identity.invocationId),
     ...(compiled.identity.initialInputId !== undefined

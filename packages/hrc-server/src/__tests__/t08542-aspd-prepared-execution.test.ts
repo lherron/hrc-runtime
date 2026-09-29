@@ -344,6 +344,8 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
           HRC_INITIAL_INPUT_ID: 'caller-input-id',
           HRC_RUN_ID: 'caller-run-id',
           AGENT_RUN_ID: 'caller-agent-run-id',
+          HRC_HOST_SESSION_ID: 'caller-prior-host-session',
+          HRC_GENERATION: '999',
         },
         unsetEnv: [
           'HRC_RUNTIME_ID',
@@ -387,6 +389,11 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
       HRC_RUNTIME_ID: String(record.admission.identity.runtimeId),
       HRC_INVOCATION_ID: String(record.admission.identity.invocationId),
       HRC_INITIAL_INPUT_ID: String(record.admission.identity.initialInputId),
+      // T-09885: the session's own host session + generation, never the caller's.
+      HRC_HOST_SESSION_ID: s.hostSessionId,
+      AGENT_HOST_SESSION_ID: s.hostSessionId,
+      HRC_GENERATION: String(s.generation),
+      AGENT_GENERATION: String(s.generation),
     })
     expect(dispatch?.dispatchEnv).not.toHaveProperty('HRC_RUN_ID')
     expect(dispatch?.dispatchEnv).not.toHaveProperty('AGENT_RUN_ID')

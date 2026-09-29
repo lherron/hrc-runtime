@@ -348,6 +348,38 @@ describe('v2 compile request carrier', () => {
     expect(promptless.identity.runId).toBeUndefined()
   })
 
+  // T-09885: ASP exports HRC_HOST_SESSION_ID / HRC_GENERATION from placement
+  // correlation. The allocation is the only authority for both: a caller that
+  // omits them (CLI `hrc start`, auto-rotated attached runs) or carries the
+  // prior generation's values must still launch with the session's own.
+  it('stamps the allocated host session and generation onto placement correlation', () => {
+    for (const callerCorrelation of [
+      undefined,
+      {
+        hostSessionId: 'prior-host',
+        generation: 46,
+        sessionRef: { scopeRef: 's', laneRef: 'main' },
+      },
+    ]) {
+      const request = buildV2CompileRequest({
+        intent: intent({
+          placement: {
+            ...intent().placement,
+            ...(callerCorrelation ? { correlation: callerCorrelation } : {}),
+          } as HrcRuntimeIntent['placement'],
+        }),
+        scopeRef: 'agent:astra:project:hrc-runtime',
+        identity: { ...identity, hostSessionId: 'host-47', generation: 47 } as never,
+      })
+      const placementCorrelation = (request.placement as { correlation?: Record<string, unknown> })
+        .correlation
+      expect(placementCorrelation).toMatchObject({ hostSessionId: 'host-47', generation: 47 })
+      if (callerCorrelation) {
+        expect(placementCorrelation?.['sessionRef']).toEqual(callerCorrelation.sessionRef)
+      }
+    }
+  })
+
   it('format 2 allocates an initial input but never an admission run for a prompted birth', async () => {
     let captured: Record<string, unknown> | undefined
     const result = await compileBrokerRuntimePlan(
