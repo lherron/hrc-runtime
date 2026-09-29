@@ -15,7 +15,18 @@ const readRepo = (name: string) => readFileSync(join(repoRoot, name), 'utf8')
 
 describe('hrc-runtime.harness-broker-admission-client required tests', () => {
   it('the public HRC submission surface exposes exactly one method per admission class and all broker traffic routes through one of the four', () => {
-    const controller = readServer('broker/controller.ts')
+    // The controller's methods are split across broker/controller.ts and broker/controller/bc-*.ts.
+    const controller = [
+      'broker/controller.ts',
+      'broker/controller/bc-submission.ts',
+      'broker/controller/bc-attach.ts',
+      'broker/controller/bc-rpc.ts',
+      'broker/controller/bc-events.ts',
+      'broker/controller/bc-projection.ts',
+      'broker/controller/bc-close.ts',
+    ]
+      .map(readServer)
+      .join('\n')
     const routes = readServer('server-exact-routes.ts')
     const doors = ['steer', 'enqueue', 'invoke', 'preempt'] as const
     for (const door of doors) {

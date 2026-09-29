@@ -64,7 +64,17 @@ ${source('packages/hrc-cli/src/turn/commands/turn-dispatch.ts')}`
 
   it('single-actuation authority moved from the HRC idempotency ledger to broker submission identity', () => {
     const contracts = source('packages/hrc-core/src/http-contracts-dispatch.ts')
-    const controller = source('packages/hrc-server/src/broker/controller.ts')
+    const controller = [
+      'controller.ts',
+      'controller/bc-submission.ts',
+      'controller/bc-attach.ts',
+      'controller/bc-rpc.ts',
+      'controller/bc-events.ts',
+      'controller/bc-projection.ts',
+      'controller/bc-close.ts',
+    ]
+      .map((name) => source(`packages/hrc-server/src/broker/${name}`))
+      .join('\n')
     expect(contracts).toContain('submissionId: string')
     expect(controller).not.toContain('steerDeliveryAttempts')
   })
