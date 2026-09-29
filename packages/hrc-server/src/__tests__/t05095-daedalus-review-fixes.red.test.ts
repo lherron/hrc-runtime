@@ -10,6 +10,16 @@ import { parseDispatchTurnRequest } from '../parsers/runtime.js'
 
 const repoRoot = join(import.meta.dir, '..', '..', '..', '..')
 const source = (name: string) => readFileSync(join(repoRoot, name), 'utf8')
+// turn-dispatch-handlers.ts is split by responsibility; guards read the whole family in source order.
+const turnDispatchSources = [
+  'packages/hrc-server/src/turn-dispatch-submission-support.ts',
+  'packages/hrc-server/src/turn-dispatch-submission-handlers.ts',
+  'packages/hrc-server/src/turn-dispatch-runtime-handlers.ts',
+  'packages/hrc-server/src/turn-dispatch-attached-run-handlers.ts',
+  'packages/hrc-server/src/turn-dispatch-session-dispatch.ts',
+  'packages/hrc-server/src/turn-dispatch-admitted-turn.ts',
+]
+const turnDispatchSource = () => turnDispatchSources.map(source).join('\n')
 
 const dispatch = {
   hostSessionId: 'hsid-t05095',
@@ -50,7 +60,7 @@ describe('T-05095 admission findings after the broker owns admission', () => {
   })
 
   it('the old regex reject probe is absent because typed dispositions are authoritative', () => {
-    const handlers = source('packages/hrc-server/src/turn-dispatch-handlers.ts')
+    const handlers = turnDispatchSource()
     expect(handlers).not.toContain('PROBE_BUSY_' + 'REJECTED_PATTERN')
     expect(handlers).toContain("case 'submission.rejected'")
   })
@@ -58,7 +68,7 @@ describe('T-05095 admission findings after the broker owns admission', () => {
 
 describe('T-05095 repair and correlation regression guards', () => {
   it('repair metadata remains write-time envelope authority', () => {
-    const handlers = source('packages/hrc-server/src/turn-dispatch-handlers.ts')
+    const handlers = turnDispatchSource()
     const repository = source('packages/hrc-store-sqlite/src/repositories/broker-repositories.ts')
     expect(handlers).toContain('repairRunId')
     expect(repository).toContain('enrichEnvelopeJsonWithRepairCorrelation')

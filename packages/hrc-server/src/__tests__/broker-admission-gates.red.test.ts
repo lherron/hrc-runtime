@@ -8,6 +8,16 @@ import { HrcErrorCode } from 'hrc-core'
 import { brokerCapabilitiesSupportAdmissionClass } from '../broker/capabilities.js'
 
 const source = (name: string) => readFileSync(join(import.meta.dir, '..', name), 'utf8')
+// turn-dispatch-handlers.ts is split by responsibility; guards read the whole family in source order.
+const turnDispatchSources = [
+  'turn-dispatch-submission-support.ts',
+  'turn-dispatch-submission-handlers.ts',
+  'turn-dispatch-runtime-handlers.ts',
+  'turn-dispatch-attached-run-handlers.ts',
+  'turn-dispatch-session-dispatch.ts',
+  'turn-dispatch-admitted-turn.ts',
+]
+const turnDispatchSource = () => turnDispatchSources.map(source).join('\n')
 
 describe('broker admission gates after the class-specific ABI', () => {
   it('preserves descriptor-absent and ask-client fail-closed machine codes', () => {
@@ -29,7 +39,7 @@ describe('broker admission gates after the class-specific ABI', () => {
   })
 
   it('preempt authority is checked before the broker syscall and cannot upgrade another door', () => {
-    const handlers = source('turn-dispatch-handlers.ts')
+    const handlers = turnDispatchSource()
     const authority = handlers.indexOf('async function preemptAdmission')
     const syscall = handlers.indexOf("door === 'preempt'", authority)
     expect(authority).toBeGreaterThan(-1)
