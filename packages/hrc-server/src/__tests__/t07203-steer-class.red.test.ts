@@ -47,7 +47,10 @@ describe('T-07203 steer-class behavior after broker admission adoption', () => {
   })
 
   it('ordinary semantic delivery keeps the old durable-delivery claim by selecting enqueue', () => {
-    const handlers = source('target-message-handlers.ts')
+    const handlers = [
+      source('target-message-dm-handlers.ts'),
+      source('target-message-handoff-handlers.ts'),
+    ].join('\n')
     expect(handlers).toContain("submissionDoor: 'enqueue'")
     expect(handlers).not.toContain("submissionDoor: 'steer'")
   })
