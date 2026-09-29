@@ -313,10 +313,10 @@ describe('nested group commander help (Phase 6 T2)', () => {
   it('describes runtime sweep as ready/busy aging and directs stale-row GC to prune', async () => {
     const help = await runCli(['runtime', 'sweep', '--help'])
     const helpText = help.stdout.toLowerCase()
-    const handlersSource = await readFile(
+    const handlersSource = `${await readFile(
       join(import.meta.dir, '..', 'cli', 'handlers-runtime.ts'),
       'utf8'
-    )
+    )}${await readFile(join(import.meta.dir, '..', 'cli', 'handlers-runtime-sweep.ts'), 'utf8')}`
 
     expect(help.exitCode).toBe(0)
     for (const token of ['ready', 'busy', 'stale', 'prune']) {
