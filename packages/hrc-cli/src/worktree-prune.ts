@@ -3,7 +3,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { CliUsageError } from 'cli-kit'
-import { resolveDatabasePath } from 'hrc-core'
+import { ownerTaskTokens, resolveDatabasePath, taskOwnerId } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 type CommandResult = {
@@ -195,8 +195,9 @@ function parseWorktreePorcelain(output: string): GitWorktree[] {
   return worktrees
 }
 
+/** Owner task ids in a branch or path, deduplicated; see hrc-core `ownerTaskTokens`. */
 export function taskTokens(value: string): string[] {
-  return [...new Set([...value.matchAll(/(?<!\d)T-\d+(?!\d)/g)].map((match) => match[0]))]
+  return [...new Set(ownerTaskTokens(value))]
 }
 
 function makeResult(
@@ -311,8 +312,15 @@ function scopeProject(scopeRef: string): string | undefined {
   return /(?:^|:)project:([^:]+)/.exec(scopeRef)?.[1]
 }
 
+/**
+ * The task a scope holds for occupancy: a seat on subtask `T-12345.slug` holds
+ * its owner `T-12345`, whose worktree it works in.
+ */
 function scopeTask(scopeRef: string): string | undefined {
-  return /(?:^|:)task:(T-\d+)(?::|$)/.exec(scopeRef)?.[1]
+  const selector = /(?:^|:)task:([^:/]+)(?:[:/]|$)/.exec(scopeRef)?.[1]
+  if (selector === undefined) return undefined
+  // Never narrower than the pre-grammar matcher: a legacy `T-<n>` scope still holds.
+  return taskOwnerId(selector) ?? /^T-\d+$/.exec(selector)?.[0]
 }
 
 function occupyingRuntime(

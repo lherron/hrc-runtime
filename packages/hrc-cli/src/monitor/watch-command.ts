@@ -45,6 +45,7 @@ import {
 import {
   type MonitorSelectorSpec,
   eventMatchesSelectorSet,
+  isTaskSelector,
   parseMonitorSelectors,
   selectorSetLabel,
 } from './selector-shape.js'
@@ -919,7 +920,7 @@ function applyFanInDefaults(args: MonitorWatchArgs): MonitorWatchArgs {
   const rawSelectors = selectorArgs(args)
   const fanIn =
     rawSelectors.length > 1 ||
-    rawSelectors.some((selector) => /^T-\d+$/.test(selector) || selector.endsWith(':*'))
+    rawSelectors.some((selector) => isTaskSelector(selector) || selector.endsWith(':*'))
   const explicitFilter =
     args.kind !== undefined ||
     args.tool !== undefined ||

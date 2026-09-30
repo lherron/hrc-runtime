@@ -212,6 +212,19 @@ describe('refineTaskWorktree', () => {
     expect(refined?.branch).toBe('drain/T-06369-placement')
   })
 
+  it("places a subtask token in its owner's worktree", async () => {
+    const root = temporaryRoot()
+    const projectRoot = join(root, 'taskboard')
+    const worktree = join(root, 'taskboard-T-06369')
+    const repo = committedRepo(projectRoot)
+    git(repo, 'worktree', 'add', '-b', 'drain/T-06369-placement', worktree)
+
+    const refined = await refineTaskWorktree(projectRoot, 'T-06369.render-preview', repo.env)
+
+    expect(refined?.path).toBe(realpathSync(worktree))
+    expect(await refineTaskWorktree(projectRoot, 'T-06369.2', repo.env)).toBeUndefined()
+  })
+
   it('ignores hostile ambient Git context while preserving deliberate Git env overrides', async () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')

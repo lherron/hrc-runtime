@@ -8,15 +8,22 @@
  *    (lane suffix stripped first).
  *
  * They accept different input shapes by design; collapsing them into a single
- * parser would be wrong. Each preserves its prior call-site behavior exactly.
+ * parser would be wrong.
  */
 
+import { parseTaskId } from 'hrc-core'
+
 /**
- * Extract a `T-<n>` task id from a scope/handle string by regex.
- * Matches the id at the start of the string or after a `:` separator.
+ * Extract a task id from a scope/handle string by regex, at the start of the
+ * string or after a `:` separator. A subtask scope (`…:T-12345.slug`) reports
+ * the subtask id, never its owner; a legacy `T-<n>` outside the grammar still
+ * matches as before.
  */
 export function taskIdFromScope(scope: string): string | undefined {
-  return scope.match(/(?:^|:)T-\d+\b/)?.[0].replace(/^:/, '')
+  const token = scope.match(/(?:^|:)(T-\d+)(\.[^:/@\s]*)?/)
+  if (!token) return undefined
+  const [, ownerToken, suffix = ''] = token
+  return parseTaskId(`${ownerToken}${suffix}`)?.id ?? ownerToken
 }
 
 /**

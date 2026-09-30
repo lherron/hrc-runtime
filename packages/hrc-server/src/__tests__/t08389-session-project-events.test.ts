@@ -168,6 +168,8 @@ describe('T-08389 — affiliation', () => {
     expect(taskSelectorFrom('T-08199:role:parallel-alpha')).toBeUndefined()
     expect(taskSelectorFrom('T-08199-e2e')).toBeUndefined()
     expect(taskSelectorFrom('T-8151')).toBeUndefined()
+    expect(taskSelectorFrom('T-08389.render-preview')).toBe('T-08389.render-preview')
+    expect(taskSelectorFrom('T-08389.2')).toBeUndefined()
     // The further ~46%: non-T selectors.
     expect(taskSelectorFrom('primary')).toBeUndefined()
     expect(taskSelectorFrom('minisvc')).toBeUndefined()

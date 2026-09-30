@@ -1,4 +1,4 @@
-import type { HrcLifecycleEvent, HrcSessionRecord } from 'hrc-core'
+import { type HrcLifecycleEvent, type HrcSessionRecord, isTaskId } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
@@ -54,7 +54,7 @@ export type SessionProjectEventFact = {
   type: SessionProjectEventType
   /** Project name from the scope ref. Affiliation target when `task` is absent. */
   project: string
-  /** Canonical `T-\d{5}` selector only; see `taskSelectorFrom`. */
+  /** A task or subtask id (`T-12345`, `T-12345.slug`) only; see `taskSelectorFrom`. */
   task: string | undefined
   summary: string
   /** Insertion order is the render order. Never sort this. */
@@ -68,8 +68,6 @@ export type SessionProjectEventFact = {
 /** wrkq refuses any value over 1024 bytes; clamp rather than lose the row. */
 const MAX_ATTRIBUTE_VALUE = 1024
 const MAX_SUMMARY = 512
-
-const CANONICAL_TASK_ID = /^T-\d{5}$/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -110,8 +108,8 @@ export function parseSeat(scopeRef: string): ParsedSeat {
 }
 
 /**
- * The affiliation rule (T-08389). `--task` is attempted ONLY for a canonical
- * `T-\d{5}` with no suffix, because ~7% of live scope selectors are T-shaped
+ * The affiliation rule (T-08389). `--task` is attempted ONLY for a task-id
+ * grammar match (`T-\d{5}`, or a subtask `T-\d{5}.<slug>`) with no other suffix, because ~7% of live scope selectors are T-shaped
  * but unresolvable (`T-08199:role:parallel-alpha`, `-e2e` variants, `T-8151`,
  * ids purged from the ledger) and wrkq answers an unresolvable task with
  * `NotFoundError` — the INSERT never happens. A naive producer would silently
@@ -121,7 +119,7 @@ export function parseSeat(scopeRef: string): ParsedSeat {
  */
 export function taskSelectorFrom(selector: string | undefined): string | undefined {
   if (selector === undefined) return undefined
-  return CANONICAL_TASK_ID.test(selector) ? selector : undefined
+  return isTaskId(selector) ? selector : undefined
 }
 
 function causeFor(session: HrcSessionRecord, payload: Record<string, unknown>): SessionBirthCause {

@@ -2,6 +2,7 @@ import {
   type HrcMonitorEvent,
   type HrcMonitorState,
   type HrcSelector,
+  isTaskId,
   monitorEventMatchesSelector,
 } from 'hrc-core'
 import { parseProfileAwareSelector } from '../profile-aware-selector.js'
@@ -11,14 +12,17 @@ export type MonitorSelectorSpec =
   | { kind: 'scope-prefix'; raw: string; prefix: string }
   | { kind: 'task'; raw: string; taskId: string }
 
-const TASK_ID_PATTERN = /^T-\d+$/
+/** A task or subtask id (`T-12345.slug`), plus the legacy `T-<n>` shape. */
+export function isTaskSelector(raw: string): boolean {
+  return isTaskId(raw) || /^T-\d+$/.test(raw)
+}
 
 export async function parseMonitorSelectors(
   rawSelectors: readonly string[]
 ): Promise<MonitorSelectorSpec[]> {
   return Promise.all(
     rawSelectors.map(async (raw) => {
-      if (TASK_ID_PATTERN.test(raw)) {
+      if (isTaskSelector(raw)) {
         return { kind: 'task', raw, taskId: raw } as MonitorSelectorSpec
       }
       if (raw.startsWith('scope:') && raw.endsWith(':*')) {

@@ -169,7 +169,7 @@
       "package": "hrc-core",
       "symbol": "ActiveRunContributionCapability",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ActiveRunContributionCapability|type",
       "count": 1
     },
@@ -177,7 +177,7 @@
       "package": "hrc-core",
       "symbol": "ActiveRunContributionCapabilityReason",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ActiveRunContributionCapabilityReason|type",
       "count": 1
     },
@@ -209,7 +209,7 @@
       "package": "hrc-core",
       "symbol": "ApplyAppManagedSessionInput",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|ApplyAppManagedSessionInput|type",
       "count": 1
     },
@@ -217,7 +217,7 @@
       "package": "hrc-core",
       "symbol": "ApplyAppManagedSessionsRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|ApplyAppManagedSessionsRequest|type",
       "count": 1
     },
@@ -225,7 +225,7 @@
       "package": "hrc-core",
       "symbol": "ApplyAppManagedSessionsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|ApplyAppManagedSessionsResponse|type",
       "count": 1
     },
@@ -233,7 +233,7 @@
       "package": "hrc-core",
       "symbol": "ApplyAppSessionInput",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|ApplyAppSessionInput|type",
       "count": 1
     },
@@ -241,7 +241,7 @@
       "package": "hrc-core",
       "symbol": "ApplyAppSessionsRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|ApplyAppSessionsRequest|type",
       "count": 1
     },
@@ -249,7 +249,7 @@
       "package": "hrc-core",
       "symbol": "ApplyAppSessionsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|ApplyAppSessionsResponse|type",
       "count": 1
     },
@@ -265,7 +265,7 @@
       "package": "hrc-core",
       "symbol": "AppSessionFreshnessFence",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|AppSessionFreshnessFence|type",
       "count": 1
     },
@@ -289,7 +289,7 @@
       "package": "hrc-core",
       "symbol": "AspContractPackage",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|AspContractPackage|type",
       "count": 1
     },
@@ -305,7 +305,7 @@
       "package": "hrc-core",
       "symbol": "AttachRuntimeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|AttachRuntimeRequest|type",
       "count": 1
     },
@@ -313,7 +313,7 @@
       "package": "hrc-core",
       "symbol": "AttachRuntimeResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|AttachRuntimeResponse|type",
       "count": 1
     },
@@ -321,7 +321,7 @@
       "package": "hrc-core",
       "symbol": "BindSurfaceRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|BindSurfaceRequest|type",
       "count": 1
     },
@@ -409,7 +409,7 @@
       "package": "hrc-core",
       "symbol": "BrokerDispatchInspectView",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|BrokerDispatchInspectView|type",
       "count": 1
     },
@@ -417,7 +417,7 @@
       "package": "hrc-core",
       "symbol": "BrokerDispatchSeatObservation",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|BrokerDispatchSeatObservation|type",
       "count": 1
     },
@@ -425,7 +425,7 @@
       "package": "hrc-core",
       "symbol": "BrokerEventsFollowRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|BrokerEventsFollowRequest|type",
       "count": 1
     },
@@ -433,7 +433,7 @@
       "package": "hrc-core",
       "symbol": "BrokerEventsFollowResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|BrokerEventsFollowResponse|type",
       "count": 1
     },
@@ -441,7 +441,7 @@
       "package": "hrc-core",
       "symbol": "BrokerEventsQueryOp",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|BrokerEventsQueryOp|type",
       "count": 1
     },
@@ -449,7 +449,7 @@
       "package": "hrc-core",
       "symbol": "BrokerEventsQueryResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|BrokerEventsQueryResponse|type",
       "count": 1
     },
@@ -457,7 +457,7 @@
       "package": "hrc-core",
       "symbol": "BrokerEventsQueryResult",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|BrokerEventsQueryResult|type",
       "count": 1
     },
@@ -465,7 +465,7 @@
       "package": "hrc-core",
       "symbol": "BrokerEventWireRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|BrokerEventWireRecord|type",
       "count": 1
     },
@@ -473,7 +473,7 @@
       "package": "hrc-core",
       "symbol": "BrokerForensicsEvent",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|BrokerForensicsEvent|type",
       "count": 1
     },
@@ -481,7 +481,7 @@
       "package": "hrc-core",
       "symbol": "BrokerForensicsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|BrokerForensicsResponse|type",
       "count": 1
     },
@@ -489,7 +489,7 @@
       "package": "hrc-core",
       "symbol": "BrokerInspectRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|BrokerInspectRequest|type",
       "count": 1
     },
@@ -497,7 +497,7 @@
       "package": "hrc-core",
       "symbol": "BrokerInspectResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|BrokerInspectResponse|type",
       "count": 1
     },
@@ -617,7 +617,7 @@
       "package": "hrc-core",
       "symbol": "CaptureRecoverRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|CaptureRecoverRequest|type",
       "count": 1
     },
@@ -625,7 +625,7 @@
       "package": "hrc-core",
       "symbol": "CaptureRecoverResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|CaptureRecoverResponse|type",
       "count": 1
     },
@@ -633,7 +633,7 @@
       "package": "hrc-core",
       "symbol": "CaptureResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|CaptureResponse|type",
       "count": 1
     },
@@ -641,7 +641,7 @@
       "package": "hrc-core",
       "symbol": "ClearAppSessionContextRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|ClearAppSessionContextRequest|type",
       "count": 1
     },
@@ -649,7 +649,7 @@
       "package": "hrc-core",
       "symbol": "ClearAppSessionContextResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|ClearAppSessionContextResponse|type",
       "count": 1
     },
@@ -657,7 +657,7 @@
       "package": "hrc-core",
       "symbol": "ClearContextRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ClearContextRequest|type",
       "count": 1
     },
@@ -665,7 +665,7 @@
       "package": "hrc-core",
       "symbol": "ClearContextResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ClearContextResponse|type",
       "count": 1
     },
@@ -697,7 +697,7 @@
       "package": "hrc-core",
       "symbol": "CloseBridgeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|CloseBridgeRequest|type",
       "count": 1
     },
@@ -705,7 +705,7 @@
       "package": "hrc-core",
       "symbol": "ColdBirthPromptMode",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|ColdBirthPromptMode|type",
       "count": 1
     },
@@ -809,7 +809,7 @@
       "package": "hrc-core",
       "symbol": "DeliverBridgeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|DeliverBridgeRequest|type",
       "count": 1
     },
@@ -817,7 +817,7 @@
       "package": "hrc-core",
       "symbol": "DeliverBridgeResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|DeliverBridgeResponse|type",
       "count": 1
     },
@@ -841,7 +841,7 @@
       "package": "hrc-core",
       "symbol": "DispatchAppHarnessTurnRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|DispatchAppHarnessTurnRequest|type",
       "count": 1
     },
@@ -849,7 +849,7 @@
       "package": "hrc-core",
       "symbol": "DispatchAppHarnessTurnResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|DispatchAppHarnessTurnResponse|type",
       "count": 1
     },
@@ -873,7 +873,7 @@
       "package": "hrc-core",
       "symbol": "DispatchTurnRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|DispatchTurnRequest|type",
       "count": 1
     },
@@ -881,7 +881,7 @@
       "package": "hrc-core",
       "symbol": "DispatchTurnResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|DispatchTurnResponse|type",
       "count": 1
     },
@@ -889,7 +889,7 @@
       "package": "hrc-core",
       "symbol": "DispatchTurnTerminalOutcome",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|DispatchTurnTerminalOutcome|type",
       "count": 1
     },
@@ -897,7 +897,7 @@
       "package": "hrc-core",
       "symbol": "DropContinuationRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|DropContinuationRequest|type",
       "count": 1
     },
@@ -905,7 +905,7 @@
       "package": "hrc-core",
       "symbol": "DropContinuationResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|DropContinuationResponse|type",
       "count": 1
     },
@@ -913,7 +913,7 @@
       "package": "hrc-core",
       "symbol": "EnqueueSubmissionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|EnqueueSubmissionRequest|type",
       "count": 1
     },
@@ -921,7 +921,7 @@
       "package": "hrc-core",
       "symbol": "EnsureAppSessionDryRunPlan",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|EnsureAppSessionDryRunPlan|type",
       "count": 1
     },
@@ -929,7 +929,7 @@
       "package": "hrc-core",
       "symbol": "EnsureAppSessionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|EnsureAppSessionRequest|type",
       "count": 1
     },
@@ -937,7 +937,7 @@
       "package": "hrc-core",
       "symbol": "EnsureAppSessionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|EnsureAppSessionResponse|type",
       "count": 1
     },
@@ -945,7 +945,7 @@
       "package": "hrc-core",
       "symbol": "EnsureRuntimeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|EnsureRuntimeRequest|type",
       "count": 1
     },
@@ -953,7 +953,7 @@
       "package": "hrc-core",
       "symbol": "EnsureRuntimeResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|EnsureRuntimeResponse|type",
       "count": 1
     },
@@ -977,7 +977,7 @@
       "package": "hrc-core",
       "symbol": "EnsureWindowRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|EnsureWindowRequest|type",
       "count": 1
     },
@@ -985,7 +985,7 @@
       "package": "hrc-core",
       "symbol": "EnsureWindowResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|EnsureWindowResponse|type",
       "count": 1
     },
@@ -1001,7 +1001,7 @@
       "package": "hrc-core",
       "symbol": "EventsHeadResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|EventsHeadResponse|type",
       "count": 1
     },
@@ -1009,7 +1009,7 @@
       "package": "hrc-core",
       "symbol": "ExactStartRuntimeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|ExactStartRuntimeRequest|type",
       "count": 1
     },
@@ -1017,7 +1017,7 @@
       "package": "hrc-core",
       "symbol": "ExecutionFormatSelector",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|ExecutionFormatSelector|type",
       "count": 1
     },
@@ -1225,7 +1225,7 @@
       "package": "hrc-core",
       "symbol": "FinalSummaryRecoveryResult",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|FinalSummaryRecoveryResult|type",
       "count": 1
     },
@@ -1233,7 +1233,7 @@
       "package": "hrc-core",
       "symbol": "FinalSummaryRecoveryState",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|FinalSummaryRecoveryState|type",
       "count": 1
     },
@@ -1251,6 +1251,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/placement-conventions.ts",
       "hash": "hrc-core|findProjectMarker|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "findTaskIds",
+      "kind": "value",
+      "file": "packages/hrc-core/src/task-id.ts",
+      "hash": "hrc-core|findTaskIds|value",
       "count": 1
     },
     {
@@ -1337,7 +1345,7 @@
       "package": "hrc-core",
       "symbol": "GetFirstTurnDiagnosticsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|GetFirstTurnDiagnosticsResponse|type",
       "count": 1
     },
@@ -1353,7 +1361,7 @@
       "package": "hrc-core",
       "symbol": "GetInputResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|GetInputResponse|type",
       "count": 1
     },
@@ -1393,7 +1401,7 @@
       "package": "hrc-core",
       "symbol": "HealthResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HealthResponse|type",
       "count": 1
     },
@@ -1409,7 +1417,7 @@
       "package": "hrc-core",
       "symbol": "HRC_ARTIFACT_REPORTED_EVENT",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_ARTIFACT_REPORTED_EVENT|value",
       "count": 1
     },
@@ -1417,7 +1425,7 @@
       "package": "hrc-core",
       "symbol": "HRC_FIRST_TURN_MISSING_BUNDLE_ARTIFACT_KIND",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_FIRST_TURN_MISSING_BUNDLE_ARTIFACT_KIND|value",
       "count": 1
     },
@@ -1425,7 +1433,7 @@
       "package": "hrc-core",
       "symbol": "HRC_FIRST_TURN_MISSING_BUNDLE_SCHEMA",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_FIRST_TURN_MISSING_BUNDLE_SCHEMA|value",
       "count": 1
     },
@@ -1433,7 +1441,7 @@
       "package": "hrc-core",
       "symbol": "HRC_FIRST_TURN_MISSING_DIAGNOSTICS_EVENT",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_FIRST_TURN_MISSING_DIAGNOSTICS_EVENT|value",
       "count": 1
     },
@@ -1441,7 +1449,7 @@
       "package": "hrc-core",
       "symbol": "HRC_FIRST_TURN_MISSING_EVENT",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_FIRST_TURN_MISSING_EVENT|value",
       "count": 1
     },
@@ -1449,7 +1457,7 @@
       "package": "hrc-core",
       "symbol": "HRC_FIRST_TURN_MISSING_LATE_START_EVENT",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_FIRST_TURN_MISSING_LATE_START_EVENT|value",
       "count": 1
     },
@@ -1513,7 +1521,7 @@
       "package": "hrc-core",
       "symbol": "HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND|value",
       "count": 1
     },
@@ -1521,7 +1529,7 @@
       "package": "hrc-core",
       "symbol": "HRC_PROVIDER_TRANSCRIPT_ARTIFACT_MEDIA_TYPE",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_ARTIFACT_MEDIA_TYPE|value",
       "count": 1
     },
@@ -1529,7 +1537,7 @@
       "package": "hrc-core",
       "symbol": "HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA|value",
       "count": 1
     },
@@ -1537,7 +1545,7 @@
       "package": "hrc-core",
       "symbol": "HRC_PROVIDER_TRANSCRIPT_ARTIFACT_STORAGE_KIND",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_ARTIFACT_STORAGE_KIND|value",
       "count": 1
     },
@@ -1545,7 +1553,7 @@
       "package": "hrc-core",
       "symbol": "HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT|value",
       "count": 1
     },
@@ -1577,7 +1585,7 @@
       "package": "hrc-core",
       "symbol": "HRC_RUNTIME_PRESENTATION_EVENT",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_RUNTIME_PRESENTATION_EVENT|value",
       "count": 1
     },
@@ -1593,7 +1601,7 @@
       "package": "hrc-core",
       "symbol": "HRC_SESSION_RETITLED_EVENT",
       "kind": "value",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HRC_SESSION_RETITLED_EVENT|value",
       "count": 1
     },
@@ -1617,7 +1625,7 @@
       "package": "hrc-core",
       "symbol": "HrcActiveRunContributionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcActiveRunContributionRequest|type",
       "count": 1
     },
@@ -1625,7 +1633,7 @@
       "package": "hrc-core",
       "symbol": "HrcActiveRunContributionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcActiveRunContributionResponse|type",
       "count": 1
     },
@@ -1641,7 +1649,7 @@
       "package": "hrc-core",
       "symbol": "HrcActuatorSplitAuthorityView",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcActuatorSplitAuthorityView|type",
       "count": 1
     },
@@ -1649,7 +1657,7 @@
       "package": "hrc-core",
       "symbol": "HrcActuatorSplitPolicy",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcActuatorSplitPolicy|type",
       "count": 1
     },
@@ -1665,7 +1673,7 @@
       "package": "hrc-core",
       "symbol": "HrcAppCommandSessionSpec",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcAppCommandSessionSpec|type",
       "count": 1
     },
@@ -1673,7 +1681,7 @@
       "package": "hrc-core",
       "symbol": "HrcAppHarnessSessionSpec",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcAppHarnessSessionSpec|type",
       "count": 1
     },
@@ -1681,7 +1689,7 @@
       "package": "hrc-core",
       "symbol": "HrcApprovedMutationRef",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcApprovedMutationRef|type",
       "count": 1
     },
@@ -1689,7 +1697,7 @@
       "package": "hrc-core",
       "symbol": "HrcAppSessionFilter",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcAppSessionFilter|type",
       "count": 1
     },
@@ -1697,7 +1705,7 @@
       "package": "hrc-core",
       "symbol": "HrcAppSessionRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcAppSessionRecord|type",
       "count": 1
     },
@@ -1705,7 +1713,7 @@
       "package": "hrc-core",
       "symbol": "HrcAppSessionRef",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcAppSessionRef|type",
       "count": 1
     },
@@ -1713,7 +1721,7 @@
       "package": "hrc-core",
       "symbol": "HrcAppSessionSpec",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcAppSessionSpec|type",
       "count": 1
     },
@@ -1721,7 +1729,7 @@
       "package": "hrc-core",
       "symbol": "HrcAspdServiceStatus",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcAspdServiceStatus|type",
       "count": 1
     },
@@ -1729,7 +1737,7 @@
       "package": "hrc-core",
       "symbol": "HrcAspToolchainBinaryKind",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcAspToolchainBinaryKind|type",
       "count": 1
     },
@@ -1737,7 +1745,7 @@
       "package": "hrc-core",
       "symbol": "HrcAspToolchainHelloObservation",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcAspToolchainHelloObservation|type",
       "count": 1
     },
@@ -1745,7 +1753,7 @@
       "package": "hrc-core",
       "symbol": "HrcAspToolchainStatus",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcAspToolchainStatus|type",
       "count": 1
     },
@@ -1753,7 +1761,7 @@
       "package": "hrc-core",
       "symbol": "HrcAttachDescriptor",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcAttachDescriptor|type",
       "count": 1
     },
@@ -1777,7 +1785,7 @@
       "package": "hrc-core",
       "symbol": "HrcBoundedEventStreamRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcBoundedEventStreamRecord|type",
       "count": 1
     },
@@ -1785,7 +1793,7 @@
       "package": "hrc-core",
       "symbol": "HrcBridgeDeliverTextRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcBridgeDeliverTextRequest|type",
       "count": 1
     },
@@ -1793,7 +1801,7 @@
       "package": "hrc-core",
       "symbol": "HrcBridgeDeliverTextResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcBridgeDeliverTextResponse|type",
       "count": 1
     },
@@ -1801,7 +1809,7 @@
       "package": "hrc-core",
       "symbol": "HrcBridgeTargetRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcBridgeTargetRequest|type",
       "count": 1
     },
@@ -1809,7 +1817,7 @@
       "package": "hrc-core",
       "symbol": "HrcBridgeTargetResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcBridgeTargetResponse|type",
       "count": 1
     },
@@ -1817,7 +1825,7 @@
       "package": "hrc-core",
       "symbol": "HrcBridgeTargetSelector",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcBridgeTargetSelector|type",
       "count": 1
     },
@@ -1825,7 +1833,7 @@
       "package": "hrc-core",
       "symbol": "HrcBrokerEventProjectionStatus",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcBrokerEventProjectionStatus|type",
       "count": 1
     },
@@ -1833,7 +1841,7 @@
       "package": "hrc-core",
       "symbol": "HrcBrokerIngestItem",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcBrokerIngestItem|type",
       "count": 1
     },
@@ -1841,7 +1849,7 @@
       "package": "hrc-core",
       "symbol": "HrcBrokerInvocationEventRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcBrokerInvocationEventRecord|type",
       "count": 1
     },
@@ -1849,7 +1857,7 @@
       "package": "hrc-core",
       "symbol": "HrcBrokerInvocationRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcBrokerInvocationRecord|type",
       "count": 1
     },
@@ -1857,7 +1865,7 @@
       "package": "hrc-core",
       "symbol": "HrcBrokerInvocationState",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcBrokerInvocationState|type",
       "count": 1
     },
@@ -1865,7 +1873,7 @@
       "package": "hrc-core",
       "symbol": "HrcCapabilityStatus",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcCapabilityStatus|type",
       "count": 1
     },
@@ -1905,7 +1913,7 @@
       "package": "hrc-core",
       "symbol": "HrcCommandLaunchSpec",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcCommandLaunchSpec|type",
       "count": 1
     },
@@ -1913,7 +1921,7 @@
       "package": "hrc-core",
       "symbol": "HrcCompiledRuntimePlanRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcCompiledRuntimePlanRecord|type",
       "count": 1
     },
@@ -1937,7 +1945,7 @@
       "package": "hrc-core",
       "symbol": "HrcContinuationProvider",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcContinuationProvider|type",
       "count": 1
     },
@@ -1945,7 +1953,7 @@
       "package": "hrc-core",
       "symbol": "HrcContinuationRef",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcContinuationRef|type",
       "count": 1
     },
@@ -1953,7 +1961,7 @@
       "package": "hrc-core",
       "symbol": "HrcContinuityRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcContinuityRecord|type",
       "count": 1
     },
@@ -1985,7 +1993,7 @@
       "package": "hrc-core",
       "symbol": "HrcDispatchOrigin",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcDispatchOrigin|type",
       "count": 1
     },
@@ -1993,7 +2001,7 @@
       "package": "hrc-core",
       "symbol": "HrcDispatchOriginKind",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcDispatchOriginKind|type",
       "count": 1
     },
@@ -2025,7 +2033,7 @@
       "package": "hrc-core",
       "symbol": "HrcEventCategory",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcEventCategory|type",
       "count": 1
     },
@@ -2033,7 +2041,7 @@
       "package": "hrc-core",
       "symbol": "HrcEventEnvelope",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcEventEnvelope|type",
       "count": 1
     },
@@ -2041,7 +2049,7 @@
       "package": "hrc-core",
       "symbol": "HrcEventIngestAck",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcEventIngestAck|type",
       "count": 1
     },
@@ -2049,7 +2057,7 @@
       "package": "hrc-core",
       "symbol": "HrcEventIngestBatch",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcEventIngestBatch|type",
       "count": 1
     },
@@ -2057,7 +2065,7 @@
       "package": "hrc-core",
       "symbol": "HrcEventIngestFeed",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcEventIngestFeed|type",
       "count": 1
     },
@@ -2065,7 +2073,7 @@
       "package": "hrc-core",
       "symbol": "HrcEventLoopStallView",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcEventLoopStallView|type",
       "count": 1
     },
@@ -2073,7 +2081,7 @@
       "package": "hrc-core",
       "symbol": "HrcEventLoopStatus",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcEventLoopStatus|type",
       "count": 1
     },
@@ -2081,7 +2089,7 @@
       "package": "hrc-core",
       "symbol": "HrcEventSource",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcEventSource|type",
       "count": 1
     },
@@ -2089,7 +2097,7 @@
       "package": "hrc-core",
       "symbol": "HrcEventTail",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcEventTail|type",
       "count": 1
     },
@@ -2097,7 +2105,7 @@
       "package": "hrc-core",
       "symbol": "HrcExecutionFormat",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcExecutionFormat|type",
       "count": 1
     },
@@ -2105,7 +2113,7 @@
       "package": "hrc-core",
       "symbol": "HrcExecutionIntent",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcExecutionIntent|type",
       "count": 1
     },
@@ -2113,7 +2121,7 @@
       "package": "hrc-core",
       "symbol": "HrcExecutionMode",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcExecutionMode|type",
       "count": 1
     },
@@ -2153,7 +2161,7 @@
       "package": "hrc-core",
       "symbol": "HrcFirstTurnDiagnosticsTrip",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcFirstTurnDiagnosticsTrip|type",
       "count": 1
     },
@@ -2161,7 +2169,7 @@
       "package": "hrc-core",
       "symbol": "HrcFirstTurnMissingBundle",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcFirstTurnMissingBundle|type",
       "count": 1
     },
@@ -2169,7 +2177,7 @@
       "package": "hrc-core",
       "symbol": "HrcFirstTurnWatchRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcFirstTurnWatchRecord|type",
       "count": 1
     },
@@ -2177,7 +2185,7 @@
       "package": "hrc-core",
       "symbol": "HrcHarness",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcHarness|type",
       "count": 1
     },
@@ -2185,7 +2193,7 @@
       "package": "hrc-core",
       "symbol": "HrcHarnessIntent",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcHarnessIntent|type",
       "count": 1
     },
@@ -2193,7 +2201,7 @@
       "package": "hrc-core",
       "symbol": "HrcHookBridgeConfig",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcHookBridgeConfig|type",
       "count": 1
     },
@@ -2233,7 +2241,7 @@
       "package": "hrc-core",
       "symbol": "HrcInputCleanupProtection",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcInputCleanupProtection|type",
       "count": 1
     },
@@ -2241,7 +2249,7 @@
       "package": "hrc-core",
       "symbol": "HrcInputCorrelationFact",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcInputCorrelationFact|type",
       "count": 1
     },
@@ -2249,7 +2257,7 @@
       "package": "hrc-core",
       "symbol": "HrcInputLandingKind",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcInputLandingKind|type",
       "count": 1
     },
@@ -2257,7 +2265,7 @@
       "package": "hrc-core",
       "symbol": "HrcInputRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcInputRecord|type",
       "count": 1
     },
@@ -2265,7 +2273,7 @@
       "package": "hrc-core",
       "symbol": "HrcInputStatus",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcInputStatus|type",
       "count": 1
     },
@@ -2273,7 +2281,7 @@
       "package": "hrc-core",
       "symbol": "HrcInputTerminal",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcInputTerminal|type",
       "count": 1
     },
@@ -2297,7 +2305,7 @@
       "package": "hrc-core",
       "symbol": "HrcIoMode",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcIoMode|type",
       "count": 1
     },
@@ -2305,7 +2313,7 @@
       "package": "hrc-core",
       "symbol": "HrcLastRestart",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcLastRestart|type",
       "count": 1
     },
@@ -2313,7 +2321,7 @@
       "package": "hrc-core",
       "symbol": "HrcLaunchArtifact",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcLaunchArtifact|type",
       "count": 1
     },
@@ -2321,7 +2329,7 @@
       "package": "hrc-core",
       "symbol": "HrcLaunchEnvConfig",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcLaunchEnvConfig|type",
       "count": 1
     },
@@ -2329,7 +2337,7 @@
       "package": "hrc-core",
       "symbol": "HrcLaunchPromptMaterial",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcLaunchPromptMaterial|type",
       "count": 1
     },
@@ -2337,7 +2345,7 @@
       "package": "hrc-core",
       "symbol": "HrcLaunchRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcLaunchRecord|type",
       "count": 1
     },
@@ -2345,7 +2353,7 @@
       "package": "hrc-core",
       "symbol": "HrcLifecycleEvent",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcLifecycleEvent|type",
       "count": 1
     },
@@ -2353,7 +2361,7 @@
       "package": "hrc-core",
       "symbol": "HrcLifecycleIngestItem",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcLifecycleIngestItem|type",
       "count": 1
     },
@@ -2361,7 +2369,7 @@
       "package": "hrc-core",
       "symbol": "HrcLifecyclePolicyRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcLifecyclePolicyRecord|type",
       "count": 1
     },
@@ -2369,7 +2377,7 @@
       "package": "hrc-core",
       "symbol": "HrcLifecycleTransport",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcLifecycleTransport|type",
       "count": 1
     },
@@ -2377,7 +2385,7 @@
       "package": "hrc-core",
       "symbol": "HrcLocalBridgeRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcLocalBridgeRecord|type",
       "count": 1
     },
@@ -2561,7 +2569,7 @@
       "package": "hrc-core",
       "symbol": "HrcManagedSessionKind",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcManagedSessionKind|type",
       "count": 1
     },
@@ -2569,7 +2577,7 @@
       "package": "hrc-core",
       "symbol": "HrcManagedSessionRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcManagedSessionRecord|type",
       "count": 1
     },
@@ -2881,7 +2889,7 @@
       "package": "hrc-core",
       "symbol": "HrcPermissionDecisionRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcPermissionDecisionRecord|type",
       "count": 1
     },
@@ -2889,7 +2897,7 @@
       "package": "hrc-core",
       "symbol": "HrcPresentationIntent",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcPresentationIntent|type",
       "count": 1
     },
@@ -2897,7 +2905,7 @@
       "package": "hrc-core",
       "symbol": "HrcPresentationRuntimeRow",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcPresentationRuntimeRow|type",
       "count": 1
     },
@@ -2905,7 +2913,7 @@
       "package": "hrc-core",
       "symbol": "HrcPresentationTmuxTarget",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcPresentationTmuxTarget|type",
       "count": 1
     },
@@ -2921,7 +2929,7 @@
       "package": "hrc-core",
       "symbol": "HrcProvider",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcProvider|type",
       "count": 1
     },
@@ -2929,7 +2937,7 @@
       "package": "hrc-core",
       "symbol": "HrcProviderTranscriptArtifactMetadata",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcProviderTranscriptArtifactMetadata|type",
       "count": 1
     },
@@ -2937,7 +2945,7 @@
       "package": "hrc-core",
       "symbol": "HrcProviderTranscriptReportedPayload",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcProviderTranscriptReportedPayload|type",
       "count": 1
     },
@@ -2945,7 +2953,7 @@
       "package": "hrc-core",
       "symbol": "HrcReleaseStatus",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcReleaseStatus|type",
       "count": 1
     },
@@ -2953,7 +2961,7 @@
       "package": "hrc-core",
       "symbol": "HrcReportedModelIdentity",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcReportedModelIdentity|type",
       "count": 1
     },
@@ -2961,7 +2969,7 @@
       "package": "hrc-core",
       "symbol": "HrcRequestedHarnessSelection",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcRequestedHarnessSelection|type",
       "count": 1
     },
@@ -3025,7 +3033,7 @@
       "package": "hrc-core",
       "symbol": "HrcRunRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcRunRecord|type",
       "count": 1
     },
@@ -3041,7 +3049,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimeArtifactRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcRuntimeArtifactRecord|type",
       "count": 1
     },
@@ -3057,7 +3065,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimeControllerKind",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcRuntimeControllerKind|type",
       "count": 1
     },
@@ -3065,7 +3073,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimeHealthDetail",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcRuntimeHealthDetail|type",
       "count": 1
     },
@@ -3073,7 +3081,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimeIntent",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcRuntimeIntent|type",
       "count": 1
     },
@@ -3081,7 +3089,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimeKind",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcRuntimeKind|type",
       "count": 1
     },
@@ -3089,7 +3097,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimeOperationKind",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcRuntimeOperationKind|type",
       "count": 1
     },
@@ -3097,7 +3105,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimeOperationRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcRuntimeOperationRecord|type",
       "count": 1
     },
@@ -3105,7 +3113,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimeOperationStatus",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcRuntimeOperationStatus|type",
       "count": 1
     },
@@ -3121,7 +3129,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimePresentationEventPayload",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcRuntimePresentationEventPayload|type",
       "count": 1
     },
@@ -3129,7 +3137,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimePresentationRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcRuntimePresentationRecord|type",
       "count": 1
     },
@@ -3145,7 +3153,7 @@
       "package": "hrc-core",
       "symbol": "HrcRuntimeSnapshot",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcRuntimeSnapshot|type",
       "count": 1
     },
@@ -3249,7 +3257,7 @@
       "package": "hrc-core",
       "symbol": "HrcSessionRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcSessionRecord|type",
       "count": 1
     },
@@ -3265,7 +3273,7 @@
       "package": "hrc-core",
       "symbol": "HrcSessionRetitledEventPayload",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcSessionRetitledEventPayload|type",
       "count": 1
     },
@@ -3289,7 +3297,7 @@
       "package": "hrc-core",
       "symbol": "HrcStatusActiveRuntimeView",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcStatusActiveRuntimeView|type",
       "count": 1
     },
@@ -3297,7 +3305,7 @@
       "package": "hrc-core",
       "symbol": "HrcStatusResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcStatusResponse|type",
       "count": 1
     },
@@ -3305,7 +3313,7 @@
       "package": "hrc-core",
       "symbol": "HrcStatusSessionView",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcStatusSessionView|type",
       "count": 1
     },
@@ -3313,7 +3321,7 @@
       "package": "hrc-core",
       "symbol": "HrcStatusSummaryResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcStatusSummaryResponse|type",
       "count": 1
     },
@@ -3321,7 +3329,7 @@
       "package": "hrc-core",
       "symbol": "HrcStatusTmuxView",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|HrcStatusTmuxView|type",
       "count": 1
     },
@@ -3345,7 +3353,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubmissionDisposition",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcSubmissionDisposition|type",
       "count": 1
     },
@@ -3353,7 +3361,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubmissionDoor",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcSubmissionDoor|type",
       "count": 1
     },
@@ -3361,7 +3369,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubmissionDoorDowngradeReason",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcSubmissionDoorDowngradeReason|type",
       "count": 1
     },
@@ -3369,7 +3377,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubmissionDoorReport",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcSubmissionDoorReport|type",
       "count": 1
     },
@@ -3377,7 +3385,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubmissionOrigin",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcSubmissionOrigin|type",
       "count": 1
     },
@@ -3385,7 +3393,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubmissionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcSubmissionResponse|type",
       "count": 1
     },
@@ -3393,7 +3401,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubmissionTarget",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcSubmissionTarget|type",
       "count": 1
     },
@@ -3401,7 +3409,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubmissionTurnTerminal",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcSubmissionTurnTerminal|type",
       "count": 1
     },
@@ -3409,7 +3417,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubscriberAdmissionEntry",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcSubscriberAdmissionEntry|type",
       "count": 1
     },
@@ -3417,7 +3425,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubscriberAdmissionRoute",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcSubscriberAdmissionRoute|type",
       "count": 1
     },
@@ -3425,7 +3433,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubscriberAdmissionSnapshot",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcSubscriberAdmissionSnapshot|type",
       "count": 1
     },
@@ -3433,7 +3441,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubscriberReceiptAckRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcSubscriberReceiptAckRequest|type",
       "count": 1
     },
@@ -3441,7 +3449,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubscriberReceiptAckResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcSubscriberReceiptAckResponse|type",
       "count": 1
     },
@@ -3449,7 +3457,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubscriberReceiptMode",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcSubscriberReceiptMode|type",
       "count": 1
     },
@@ -3457,7 +3465,7 @@
       "package": "hrc-core",
       "symbol": "HrcSubscriberReceiptState",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HrcSubscriberReceiptState|type",
       "count": 1
     },
@@ -3465,7 +3473,7 @@
       "package": "hrc-core",
       "symbol": "HrcSummonHarnessDirectives",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcSummonHarnessDirectives|type",
       "count": 1
     },
@@ -3473,7 +3481,7 @@
       "package": "hrc-core",
       "symbol": "HrcSurfaceBindingRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcSurfaceBindingRecord|type",
       "count": 1
     },
@@ -3521,7 +3529,7 @@
       "package": "hrc-core",
       "symbol": "HrcTaskContext",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-intents.ts",
       "hash": "hrc-core|HrcTaskContext|type",
       "count": 1
     },
@@ -3529,7 +3537,7 @@
       "package": "hrc-core",
       "symbol": "HrcToolResultBlobPart",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcToolResultBlobPart|type",
       "count": 1
     },
@@ -3537,7 +3545,7 @@
       "package": "hrc-core",
       "symbol": "HrcTurnAdmissionCloseRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcTurnAdmissionCloseRequest|type",
       "count": 1
     },
@@ -3545,7 +3553,7 @@
       "package": "hrc-core",
       "symbol": "HrcTurnAdmissionReopenRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcTurnAdmissionReopenRequest|type",
       "count": 1
     },
@@ -3553,7 +3561,7 @@
       "package": "hrc-core",
       "symbol": "HrcTurnAdmissionState",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|HrcTurnAdmissionState|type",
       "count": 1
     },
@@ -3561,7 +3569,7 @@
       "package": "hrc-core",
       "symbol": "HrcTurnResponseFormat",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcTurnResponseFormat|type",
       "count": 1
     },
@@ -3593,7 +3601,7 @@
       "package": "hrc-core",
       "symbol": "InjectorAdmissionClass",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|InjectorAdmissionClass|type",
       "count": 1
     },
@@ -3601,7 +3609,7 @@
       "package": "hrc-core",
       "symbol": "InjectorSeatProbe",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|InjectorSeatProbe|type",
       "count": 1
     },
@@ -3609,7 +3617,7 @@
       "package": "hrc-core",
       "symbol": "InjectorSeatProbeState",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|InjectorSeatProbeState|type",
       "count": 1
     },
@@ -3617,7 +3625,7 @@
       "package": "hrc-core",
       "symbol": "InspectRuntimeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|InspectRuntimeRequest|type",
       "count": 1
     },
@@ -3625,7 +3633,7 @@
       "package": "hrc-core",
       "symbol": "InspectRuntimeResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|InspectRuntimeResponse|type",
       "count": 1
     },
@@ -3641,7 +3649,7 @@
       "package": "hrc-core",
       "symbol": "InterruptAppSessionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|InterruptAppSessionRequest|type",
       "count": 1
     },
@@ -3649,7 +3657,7 @@
       "package": "hrc-core",
       "symbol": "InvokeSubmissionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|InvokeSubmissionRequest|type",
       "count": 1
     },
@@ -3689,7 +3697,7 @@
       "package": "hrc-core",
       "symbol": "isExactStartRuntimeRequest",
       "kind": "value",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|isExactStartRuntimeRequest|value",
       "count": 1
     },
@@ -3737,8 +3745,16 @@
       "package": "hrc-core",
       "symbol": "isSuffixStartRuntimeRequest",
       "kind": "value",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|isSuffixStartRuntimeRequest|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isTaskId",
+      "kind": "value",
+      "file": "packages/hrc-core/src/task-id.ts",
+      "hash": "hrc-core|isTaskId|value",
       "count": 1
     },
     {
@@ -3753,7 +3769,7 @@
       "package": "hrc-core",
       "symbol": "KillBrokerTmuxLeasesResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|KillBrokerTmuxLeasesResponse|type",
       "count": 1
     },
@@ -3761,7 +3777,7 @@
       "package": "hrc-core",
       "symbol": "LaunchCommandScopedRunBinding",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|LaunchCommandScopedRunBinding|type",
       "count": 1
     },
@@ -3769,7 +3785,7 @@
       "package": "hrc-core",
       "symbol": "LaunchCommandScopedRunRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|LaunchCommandScopedRunRequest|type",
       "count": 1
     },
@@ -3777,7 +3793,7 @@
       "package": "hrc-core",
       "symbol": "LaunchCommandScopedRunResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|LaunchCommandScopedRunResponse|type",
       "count": 1
     },
@@ -3825,7 +3841,7 @@
       "package": "hrc-core",
       "symbol": "ListAppSessionsRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|ListAppSessionsRequest|type",
       "count": 1
     },
@@ -3833,7 +3849,7 @@
       "package": "hrc-core",
       "symbol": "ListFirstTurnDiagnosticsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|ListFirstTurnDiagnosticsResponse|type",
       "count": 1
     },
@@ -3841,7 +3857,7 @@
       "package": "hrc-core",
       "symbol": "ListLiveSeatRefsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|ListLiveSeatRefsResponse|type",
       "count": 1
     },
@@ -3865,7 +3881,7 @@
       "package": "hrc-core",
       "symbol": "ListPlacementBindingsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|ListPlacementBindingsResponse|type",
       "count": 1
     },
@@ -3873,7 +3889,7 @@
       "package": "hrc-core",
       "symbol": "ListPresentationRuntimesResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|ListPresentationRuntimesResponse|type",
       "count": 1
     },
@@ -3881,7 +3897,7 @@
       "package": "hrc-core",
       "symbol": "ListRegistrationGcCandidatesResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|ListRegistrationGcCandidatesResponse|type",
       "count": 1
     },
@@ -3897,7 +3913,7 @@
       "package": "hrc-core",
       "symbol": "ListUnbornDesignationsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|ListUnbornDesignationsResponse|type",
       "count": 1
     },
@@ -3905,7 +3921,7 @@
       "package": "hrc-core",
       "symbol": "LiveSeatRef",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|LiveSeatRef|type",
       "count": 1
     },
@@ -4113,7 +4129,7 @@
       "package": "hrc-core",
       "symbol": "OpenBrokerSessionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|OpenBrokerSessionRequest|type",
       "count": 1
     },
@@ -4121,7 +4137,7 @@
       "package": "hrc-core",
       "symbol": "OpenBrokerSessionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|OpenBrokerSessionResponse|type",
       "count": 1
     },
@@ -4129,7 +4145,7 @@
       "package": "hrc-core",
       "symbol": "OPERATOR_REAP_REASON",
       "kind": "value",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|OPERATOR_REAP_REASON|value",
       "count": 1
     },
@@ -4137,7 +4153,7 @@
       "package": "hrc-core",
       "symbol": "OperatorAttachDescriptor",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|OperatorAttachDescriptor|type",
       "count": 1
     },
@@ -4145,8 +4161,16 @@
       "package": "hrc-core",
       "symbol": "OperatorInspectSource",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|OperatorInspectSource|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ownerTaskTokens",
+      "kind": "value",
+      "file": "packages/hrc-core/src/task-id.ts",
+      "hash": "hrc-core|ownerTaskTokens|value",
       "count": 1
     },
     {
@@ -4155,6 +4179,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/app-session-scope.ts",
       "hash": "hrc-core|parseAppSessionScopeRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ParsedTaskId",
+      "kind": "type",
+      "file": "packages/hrc-core/src/task-id.ts",
+      "hash": "hrc-core|ParsedTaskId|type",
       "count": 1
     },
     {
@@ -4179,6 +4211,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|ParseSelectorOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "parseTaskId",
+      "kind": "value",
+      "file": "packages/hrc-core/src/task-id.ts",
+      "hash": "hrc-core|parseTaskId|value",
       "count": 1
     },
     {
@@ -4225,7 +4265,7 @@
       "package": "hrc-core",
       "symbol": "PlacementBindingView",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|PlacementBindingView|type",
       "count": 1
     },
@@ -4233,7 +4273,7 @@
       "package": "hrc-core",
       "symbol": "PraesidiumBuild",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|PraesidiumBuild|type",
       "count": 1
     },
@@ -4241,7 +4281,7 @@
       "package": "hrc-core",
       "symbol": "PraesidiumReleaseManifest",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-status.ts",
       "hash": "hrc-core|PraesidiumReleaseManifest|type",
       "count": 1
     },
@@ -4249,7 +4289,7 @@
       "package": "hrc-core",
       "symbol": "PreemptAdmission",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|PreemptAdmission|type",
       "count": 1
     },
@@ -4257,7 +4297,7 @@
       "package": "hrc-core",
       "symbol": "PreemptAdmissionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|PreemptAdmissionResponse|type",
       "count": 1
     },
@@ -4265,7 +4305,7 @@
       "package": "hrc-core",
       "symbol": "PreemptSubmissionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|PreemptSubmissionRequest|type",
       "count": 1
     },
@@ -4273,7 +4313,7 @@
       "package": "hrc-core",
       "symbol": "PrepareAttachedRunRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|PrepareAttachedRunRequest|type",
       "count": 1
     },
@@ -4281,7 +4321,7 @@
       "package": "hrc-core",
       "symbol": "PrepareAttachedRunResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|PrepareAttachedRunResponse|type",
       "count": 1
     },
@@ -4305,7 +4345,7 @@
       "package": "hrc-core",
       "symbol": "PruneRuntimeResult",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|PruneRuntimeResult|type",
       "count": 1
     },
@@ -4313,7 +4353,7 @@
       "package": "hrc-core",
       "symbol": "PruneRuntimesRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|PruneRuntimesRequest|type",
       "count": 1
     },
@@ -4321,7 +4361,7 @@
       "package": "hrc-core",
       "symbol": "PruneRuntimesResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|PruneRuntimesResponse|type",
       "count": 1
     },
@@ -4329,7 +4369,7 @@
       "package": "hrc-core",
       "symbol": "PruneRuntimesSummary",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|PruneRuntimesSummary|type",
       "count": 1
     },
@@ -4345,7 +4385,7 @@
       "package": "hrc-core",
       "symbol": "ReconcileActiveRunReason",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ReconcileActiveRunReason|type",
       "count": 1
     },
@@ -4353,7 +4393,7 @@
       "package": "hrc-core",
       "symbol": "ReconcileActiveRunResult",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ReconcileActiveRunResult|type",
       "count": 1
     },
@@ -4361,7 +4401,7 @@
       "package": "hrc-core",
       "symbol": "ReconcileActiveRunsRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ReconcileActiveRunsRequest|type",
       "count": 1
     },
@@ -4369,7 +4409,7 @@
       "package": "hrc-core",
       "symbol": "ReconcileActiveRunsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ReconcileActiveRunsResponse|type",
       "count": 1
     },
@@ -4377,7 +4417,7 @@
       "package": "hrc-core",
       "symbol": "ReconcileActiveRunsSummary",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ReconcileActiveRunsSummary|type",
       "count": 1
     },
@@ -4393,7 +4433,7 @@
       "package": "hrc-core",
       "symbol": "RecoverUnstartedRunRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|RecoverUnstartedRunRequest|type",
       "count": 1
     },
@@ -4401,7 +4441,7 @@
       "package": "hrc-core",
       "symbol": "RecoverUnstartedRunResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|RecoverUnstartedRunResponse|type",
       "count": 1
     },
@@ -4409,7 +4449,7 @@
       "package": "hrc-core",
       "symbol": "RecoverUnstartedRunStatus",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|RecoverUnstartedRunStatus|type",
       "count": 1
     },
@@ -4425,7 +4465,7 @@
       "package": "hrc-core",
       "symbol": "RegisterBridgeTargetRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RegisterBridgeTargetRequest|type",
       "count": 1
     },
@@ -4433,7 +4473,7 @@
       "package": "hrc-core",
       "symbol": "RegisterBridgeTargetResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RegisterBridgeTargetResponse|type",
       "count": 1
     },
@@ -4441,7 +4481,7 @@
       "package": "hrc-core",
       "symbol": "RegistrationGcCandidate",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RegistrationGcCandidate|type",
       "count": 1
     },
@@ -4449,7 +4489,7 @@
       "package": "hrc-core",
       "symbol": "RegistrationGcResult",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RegistrationGcResult|type",
       "count": 1
     },
@@ -4457,7 +4497,7 @@
       "package": "hrc-core",
       "symbol": "RemoveAppSessionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RemoveAppSessionRequest|type",
       "count": 1
     },
@@ -4465,7 +4505,7 @@
       "package": "hrc-core",
       "symbol": "RemoveAppSessionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RemoveAppSessionResponse|type",
       "count": 1
     },
@@ -4577,7 +4617,7 @@
       "package": "hrc-core",
       "symbol": "ResolveSessionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|ResolveSessionRequest|type",
       "count": 1
     },
@@ -4585,7 +4625,7 @@
       "package": "hrc-core",
       "symbol": "ResolveSessionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|ResolveSessionResponse|type",
       "count": 1
     },
@@ -4625,7 +4665,7 @@
       "package": "hrc-core",
       "symbol": "RestartStyle",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|RestartStyle|type",
       "count": 1
     },
@@ -4633,7 +4673,7 @@
       "package": "hrc-core",
       "symbol": "ResumeAttachedRunRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ResumeAttachedRunRequest|type",
       "count": 1
     },
@@ -4641,7 +4681,7 @@
       "package": "hrc-core",
       "symbol": "ResumeAttachedRunResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ResumeAttachedRunResponse|type",
       "count": 1
     },
@@ -4649,7 +4689,7 @@
       "package": "hrc-core",
       "symbol": "ResumeContinuationRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ResumeContinuationRequest|type",
       "count": 1
     },
@@ -4657,7 +4697,7 @@
       "package": "hrc-core",
       "symbol": "ResumeContinuationResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|ResumeContinuationResponse|type",
       "count": 1
     },
@@ -4665,7 +4705,7 @@
       "package": "hrc-core",
       "symbol": "RetainedEvidenceOutcomeClass",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RetainedEvidenceOutcomeClass|type",
       "count": 1
     },
@@ -4673,7 +4713,7 @@
       "package": "hrc-core",
       "symbol": "RetainedEvidenceTrigger",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RetainedEvidenceTrigger|type",
       "count": 1
     },
@@ -4681,7 +4721,7 @@
       "package": "hrc-core",
       "symbol": "RetireRegistrationScopesRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RetireRegistrationScopesRequest|type",
       "count": 1
     },
@@ -4689,7 +4729,7 @@
       "package": "hrc-core",
       "symbol": "RetireRegistrationScopesResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RetireRegistrationScopesResponse|type",
       "count": 1
     },
@@ -4737,7 +4777,7 @@
       "package": "hrc-core",
       "symbol": "RuntimeActionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|RuntimeActionResponse|type",
       "count": 1
     },
@@ -4745,7 +4785,7 @@
       "package": "hrc-core",
       "symbol": "RuntimePruneDeleteCounts",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|RuntimePruneDeleteCounts|type",
       "count": 1
     },
@@ -4753,7 +4793,7 @@
       "package": "hrc-core",
       "symbol": "RuntimeSeatResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RuntimeSeatResponse|type",
       "count": 1
     },
@@ -4841,7 +4881,7 @@
       "package": "hrc-core",
       "symbol": "SendAppHarnessInFlightInputRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|SendAppHarnessInFlightInputRequest|type",
       "count": 1
     },
@@ -4849,7 +4889,7 @@
       "package": "hrc-core",
       "symbol": "SendAppHarnessInFlightInputResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|SendAppHarnessInFlightInputResponse|type",
       "count": 1
     },
@@ -4857,7 +4897,7 @@
       "package": "hrc-core",
       "symbol": "SendLiteralInputRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|SendLiteralInputRequest|type",
       "count": 1
     },
@@ -4865,7 +4905,7 @@
       "package": "hrc-core",
       "symbol": "SendLiteralInputResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|SendLiteralInputResponse|type",
       "count": 1
     },
@@ -4873,7 +4913,7 @@
       "package": "hrc-core",
       "symbol": "SendWindowLiteralInputRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|SendWindowLiteralInputRequest|type",
       "count": 1
     },
@@ -4905,7 +4945,7 @@
       "package": "hrc-core",
       "symbol": "StartRuntimeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|StartRuntimeRequest|type",
       "count": 1
     },
@@ -4913,7 +4953,7 @@
       "package": "hrc-core",
       "symbol": "StartRuntimeResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|StartRuntimeResponse|type",
       "count": 1
     },
@@ -4921,7 +4961,7 @@
       "package": "hrc-core",
       "symbol": "StartRuntimeRosterClaim",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|StartRuntimeRosterClaim|type",
       "count": 1
     },
@@ -4929,7 +4969,7 @@
       "package": "hrc-core",
       "symbol": "StatusResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|StatusResponse|type",
       "count": 1
     },
@@ -4937,7 +4977,7 @@
       "package": "hrc-core",
       "symbol": "StatusSummaryResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|StatusSummaryResponse|type",
       "count": 1
     },
@@ -4945,7 +4985,7 @@
       "package": "hrc-core",
       "symbol": "SteerSubmissionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|SteerSubmissionRequest|type",
       "count": 1
     },
@@ -4953,7 +4993,7 @@
       "package": "hrc-core",
       "symbol": "SubscriberDeclareRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|SubscriberDeclareRequest|type",
       "count": 1
     },
@@ -4961,7 +5001,7 @@
       "package": "hrc-core",
       "symbol": "SubscriberDeclareResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|SubscriberDeclareResponse|type",
       "count": 1
     },
@@ -4969,7 +5009,7 @@
       "package": "hrc-core",
       "symbol": "SuffixStartRuntimeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|SuffixStartRuntimeRequest|type",
       "count": 1
     },
@@ -4977,7 +5017,7 @@
       "package": "hrc-core",
       "symbol": "SummonIntent",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|SummonIntent|type",
       "count": 1
     },
@@ -4985,7 +5025,7 @@
       "package": "hrc-core",
       "symbol": "SweepRuntimeResult",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|SweepRuntimeResult|type",
       "count": 1
     },
@@ -4993,7 +5033,7 @@
       "package": "hrc-core",
       "symbol": "SweepRuntimesRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|SweepRuntimesRequest|type",
       "count": 1
     },
@@ -5001,7 +5041,7 @@
       "package": "hrc-core",
       "symbol": "SweepRuntimesResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|SweepRuntimesResponse|type",
       "count": 1
     },
@@ -5009,7 +5049,7 @@
       "package": "hrc-core",
       "symbol": "SweepRuntimesSummary",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|SweepRuntimesSummary|type",
       "count": 1
     },
@@ -5017,7 +5057,7 @@
       "package": "hrc-core",
       "symbol": "SweepRuntimeTransport",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|SweepRuntimeTransport|type",
       "count": 1
     },
@@ -5025,7 +5065,7 @@
       "package": "hrc-core",
       "symbol": "SweepZombieRunResult",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|SweepZombieRunResult|type",
       "count": 1
     },
@@ -5033,7 +5073,7 @@
       "package": "hrc-core",
       "symbol": "SweepZombieRunsRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|SweepZombieRunsRequest|type",
       "count": 1
     },
@@ -5041,7 +5081,7 @@
       "package": "hrc-core",
       "symbol": "SweepZombieRunsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|SweepZombieRunsResponse|type",
       "count": 1
     },
@@ -5049,7 +5089,7 @@
       "package": "hrc-core",
       "symbol": "SweepZombieRunsSummary",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|SweepZombieRunsSummary|type",
       "count": 1
     },
@@ -5059,6 +5099,30 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|TargetCapabilityView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TASK_ID_MAX_LENGTH",
+      "kind": "value",
+      "file": "packages/hrc-core/src/task-id.ts",
+      "hash": "hrc-core|TASK_ID_MAX_LENGTH|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TASK_ID_PROSE_PATTERN_SOURCE",
+      "kind": "value",
+      "file": "packages/hrc-core/src/task-id.ts",
+      "hash": "hrc-core|TASK_ID_PROSE_PATTERN_SOURCE|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "taskOwnerId",
+      "kind": "value",
+      "file": "packages/hrc-core/src/task-id.ts",
+      "hash": "hrc-core|taskOwnerId|value",
       "count": 1
     },
     {
@@ -5081,7 +5145,7 @@
       "package": "hrc-core",
       "symbol": "TerminateAppSessionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|TerminateAppSessionRequest|type",
       "count": 1
     },
@@ -5089,7 +5153,7 @@
       "package": "hrc-core",
       "symbol": "TerminateRuntimeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|TerminateRuntimeRequest|type",
       "count": 1
     },
@@ -5097,7 +5161,7 @@
       "package": "hrc-core",
       "symbol": "TerminateRuntimeResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|TerminateRuntimeResponse|type",
       "count": 1
     },
@@ -5177,7 +5241,7 @@
       "package": "hrc-core",
       "symbol": "UnbindSurfaceRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|UnbindSurfaceRequest|type",
       "count": 1
     },
@@ -5217,7 +5281,7 @@
       "package": "hrc-core",
       "symbol": "WatchInputCorrelation",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|WatchInputCorrelation|type",
       "count": 1
     },
@@ -5225,7 +5289,7 @@
       "package": "hrc-core",
       "symbol": "WatchInputEvent",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|WatchInputEvent|type",
       "count": 1
     },
@@ -5233,7 +5297,7 @@
       "package": "hrc-core",
       "symbol": "WatchInputLanding",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|WatchInputLanding|type",
       "count": 1
     },
@@ -5241,7 +5305,7 @@
       "package": "hrc-core",
       "symbol": "WatchInputTerminal",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|WatchInputTerminal|type",
       "count": 1
     },
@@ -5257,7 +5321,7 @@
       "package": "hrc-core",
       "symbol": "WithdrawSubmissionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|WithdrawSubmissionRequest|type",
       "count": 1
     },
@@ -5265,7 +5329,7 @@
       "package": "hrc-core",
       "symbol": "WithdrawSubmissionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|WithdrawSubmissionResponse|type",
       "count": 1
     },
@@ -5289,7 +5353,7 @@
       "package": "hrc-frame-render",
       "symbol": "AssistantSegment",
       "kind": "type",
-      "file": "packages/hrc-frame-render/src/session-events-manager.ts",
+      "file": "packages/hrc-frame-render/src/session-events-types.ts",
       "hash": "hrc-frame-render|AssistantSegment|type",
       "count": 1
     },
@@ -5481,7 +5545,7 @@
       "package": "hrc-frame-render",
       "symbol": "RunState",
       "kind": "type",
-      "file": "packages/hrc-frame-render/src/session-events-manager.ts",
+      "file": "packages/hrc-frame-render/src/session-events-types.ts",
       "hash": "hrc-frame-render|RunState|type",
       "count": 1
     },
@@ -5489,7 +5553,7 @@
       "package": "hrc-frame-render",
       "symbol": "runStateToFrame",
       "kind": "value",
-      "file": "packages/hrc-frame-render/src/session-events-manager.ts",
+      "file": "packages/hrc-frame-render/src/session-events-render.ts",
       "hash": "hrc-frame-render|runStateToFrame|value",
       "count": 1
     },
@@ -5545,7 +5609,7 @@
       "package": "hrc-sdk",
       "symbol": "AttachRuntimeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-sdk|AttachRuntimeRequest|type",
       "count": 1
     },
@@ -5553,7 +5617,7 @@
       "package": "hrc-sdk",
       "symbol": "AttachRuntimeResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-sdk|AttachRuntimeResponse|type",
       "count": 1
     },
@@ -5561,7 +5625,7 @@
       "package": "hrc-sdk",
       "symbol": "BindSurfaceRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|BindSurfaceRequest|type",
       "count": 1
     },
@@ -5585,7 +5649,7 @@
       "package": "hrc-sdk",
       "symbol": "BrokerForensicsResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-sdk|BrokerForensicsResponse|type",
       "count": 1
     },
@@ -5633,7 +5697,7 @@
       "package": "hrc-sdk",
       "symbol": "CaptureResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-sdk|CaptureResponse|type",
       "count": 1
     },
@@ -5641,7 +5705,7 @@
       "package": "hrc-sdk",
       "symbol": "ClearContextRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-sdk|ClearContextRequest|type",
       "count": 1
     },
@@ -5649,7 +5713,7 @@
       "package": "hrc-sdk",
       "symbol": "ClearContextResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-sdk|ClearContextResponse|type",
       "count": 1
     },
@@ -5657,7 +5721,7 @@
       "package": "hrc-sdk",
       "symbol": "CloseBridgeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|CloseBridgeRequest|type",
       "count": 1
     },
@@ -5689,7 +5753,7 @@
       "package": "hrc-sdk",
       "symbol": "DeliverBridgeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|DeliverBridgeRequest|type",
       "count": 1
     },
@@ -5697,7 +5761,7 @@
       "package": "hrc-sdk",
       "symbol": "DeliverBridgeResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|DeliverBridgeResponse|type",
       "count": 1
     },
@@ -5745,7 +5809,7 @@
       "package": "hrc-sdk",
       "symbol": "DispatchTurnRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|DispatchTurnRequest|type",
       "count": 1
     },
@@ -5753,7 +5817,7 @@
       "package": "hrc-sdk",
       "symbol": "DispatchTurnResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|DispatchTurnResponse|type",
       "count": 1
     },
@@ -5761,7 +5825,7 @@
       "package": "hrc-sdk",
       "symbol": "EnsureRuntimeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|EnsureRuntimeRequest|type",
       "count": 1
     },
@@ -5769,7 +5833,7 @@
       "package": "hrc-sdk",
       "symbol": "EnsureRuntimeResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|EnsureRuntimeResponse|type",
       "count": 1
     },
@@ -5793,7 +5857,7 @@
       "package": "hrc-sdk",
       "symbol": "ExecutionFormatSelector",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|ExecutionFormatSelector|type",
       "count": 1
     },
@@ -5809,7 +5873,7 @@
       "package": "hrc-sdk",
       "symbol": "GetInputResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|GetInputResponse|type",
       "count": 1
     },
@@ -5825,7 +5889,7 @@
       "package": "hrc-sdk",
       "symbol": "HealthResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|HealthResponse|type",
       "count": 1
     },
@@ -5833,7 +5897,7 @@
       "package": "hrc-sdk",
       "symbol": "HrcBoundedEventStreamRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-sdk|HrcBoundedEventStreamRecord|type",
       "count": 1
     },
@@ -5849,7 +5913,7 @@
       "package": "hrc-sdk",
       "symbol": "HrcEventTail",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-sdk|HrcEventTail|type",
       "count": 1
     },
@@ -6025,7 +6089,7 @@
       "package": "hrc-sdk",
       "symbol": "HrcSubscriberAdmissionSnapshot",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|HrcSubscriberAdmissionSnapshot|type",
       "count": 1
     },
@@ -6057,7 +6121,7 @@
       "package": "hrc-sdk",
       "symbol": "KillBrokerTmuxLeasesResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-sdk|KillBrokerTmuxLeasesResponse|type",
       "count": 1
     },
@@ -6081,7 +6145,7 @@
       "package": "hrc-sdk",
       "symbol": "LaunchRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-sdk|LaunchRecord|type",
       "count": 1
     },
@@ -6113,7 +6177,7 @@
       "package": "hrc-sdk",
       "symbol": "LocalBridgeRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-sdk|LocalBridgeRecord|type",
       "count": 1
     },
@@ -6121,7 +6185,7 @@
       "package": "hrc-sdk",
       "symbol": "OpenBrokerSessionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|OpenBrokerSessionRequest|type",
       "count": 1
     },
@@ -6129,7 +6193,7 @@
       "package": "hrc-sdk",
       "symbol": "OpenBrokerSessionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|OpenBrokerSessionResponse|type",
       "count": 1
     },
@@ -6193,7 +6257,7 @@
       "package": "hrc-sdk",
       "symbol": "RegisterBridgeTargetRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|RegisterBridgeTargetRequest|type",
       "count": 1
     },
@@ -6201,7 +6265,7 @@
       "package": "hrc-sdk",
       "symbol": "RegisterBridgeTargetResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|RegisterBridgeTargetResponse|type",
       "count": 1
     },
@@ -6273,7 +6337,7 @@
       "package": "hrc-sdk",
       "symbol": "ResolveSessionRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|ResolveSessionRequest|type",
       "count": 1
     },
@@ -6281,7 +6345,7 @@
       "package": "hrc-sdk",
       "symbol": "ResolveSessionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|ResolveSessionResponse|type",
       "count": 1
     },
@@ -6289,7 +6353,7 @@
       "package": "hrc-sdk",
       "symbol": "RestartStyle",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|RestartStyle|type",
       "count": 1
     },
@@ -6305,7 +6369,7 @@
       "package": "hrc-sdk",
       "symbol": "RunRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-sdk|RunRecord|type",
       "count": 1
     },
@@ -6313,7 +6377,7 @@
       "package": "hrc-sdk",
       "symbol": "RuntimeActionResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-sdk|RuntimeActionResponse|type",
       "count": 1
     },
@@ -6337,7 +6401,7 @@
       "package": "hrc-sdk",
       "symbol": "RuntimeRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-sdk|RuntimeRecord|type",
       "count": 1
     },
@@ -6489,7 +6553,7 @@
       "package": "hrc-sdk",
       "symbol": "StartRuntimeRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|StartRuntimeRequest|type",
       "count": 1
     },
@@ -6497,7 +6561,7 @@
       "package": "hrc-sdk",
       "symbol": "StartRuntimeResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|StartRuntimeResponse|type",
       "count": 1
     },
@@ -6505,7 +6569,7 @@
       "package": "hrc-sdk",
       "symbol": "StatusResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|StatusResponse|type",
       "count": 1
     },
@@ -6513,7 +6577,7 @@
       "package": "hrc-sdk",
       "symbol": "StatusSummaryResponse",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|StatusSummaryResponse|type",
       "count": 1
     },
@@ -6521,7 +6585,7 @@
       "package": "hrc-sdk",
       "symbol": "SurfaceBindingRecord",
       "kind": "type",
-      "file": "packages/hrc-core/src/contracts.ts",
+      "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-sdk|SurfaceBindingRecord|type",
       "count": 1
     },
@@ -6609,7 +6673,7 @@
       "package": "hrc-sdk",
       "symbol": "UnbindSurfaceRequest",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-sdk|UnbindSurfaceRequest|type",
       "count": 1
     },
@@ -6657,7 +6721,7 @@
       "package": "hrc-sdk",
       "symbol": "WatchInputEvent",
       "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts.ts",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-sdk|WatchInputEvent|type",
       "count": 1
     },

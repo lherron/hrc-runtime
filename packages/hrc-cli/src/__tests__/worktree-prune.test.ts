@@ -104,6 +104,7 @@ describe('completed-task worktree pruning', () => {
     expect(taskTokens('work/T-12345-and-T-123456')).toEqual(['T-12345', 'T-123456'])
     expect(taskTokens('work/XT-12345Z')).toEqual(['T-12345'])
     expect(taskTokens('work/T-1234567')).not.toContain('T-12345')
+    expect(taskTokens('work/T-12345.render-preview')).toEqual(['T-12345'])
   })
 
   it('defaults to dry-run and preserves an eligible worktree and branch', () => {
@@ -338,6 +339,24 @@ describe('completed-task worktree pruning', () => {
     expect(report.results[0]).toMatchObject({
       disposition: 'skipped',
       reason: 'live runtime rt-legacy (busy) occupies the worktree',
+    })
+    expect(existsSync(worktree)).toBe(true)
+  })
+
+  it("holds the owner's worktree for a live subtask seat with no owner seat", () => {
+    const { root, worktree } = fixture()
+
+    const report = run(root, { 'T-12345': 'completed' }, true, () => [
+      {
+        runtimeId: 'rt-subtask',
+        status: 'ready',
+        scopeRef: 'agent:cody:project:fixture:task:T-12345.render-preview',
+      },
+    ])
+
+    expect(report.results[0]).toMatchObject({
+      disposition: 'skipped',
+      reason: 'live runtime rt-subtask (ready) occupies the worktree',
     })
     expect(existsSync(worktree)).toBe(true)
   })

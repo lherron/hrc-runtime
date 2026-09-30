@@ -727,6 +727,16 @@ export {
   taskTokens,
 } from './placement-policy.js'
 export type { GitWorktree, CanonicalProjectRoot } from './placement-policy.js'
+export {
+  TASK_ID_MAX_LENGTH,
+  TASK_ID_PROSE_PATTERN_SOURCE,
+  findTaskIds,
+  isTaskId,
+  ownerTaskTokens,
+  parseTaskId,
+  taskOwnerId,
+} from './task-id.js'
+export type { ParsedTaskId } from './task-id.js'
 export type {
   HarnessTransport,
   ResolvePlacementRequest,

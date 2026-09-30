@@ -1,0 +1,38 @@
+{
+  "$comment": "Shared task-id grammar fixtures (wrkq named-subtasks rev 5, acceptance 2). hrc-core parseTaskId/findTaskIds is the reference; ACP and taskboard mirror against this file.",
+  "valid": [
+    { "id": "T-12345", "ownerId": "T-12345" },
+    { "id": "T-00001", "ownerId": "T-00001" },
+    { "id": "T-12345.slug", "ownerId": "T-12345", "slug": "slug" },
+    { "id": "T-12345.a", "ownerId": "T-12345", "slug": "a" },
+    { "id": "T-12345.render-preview", "ownerId": "T-12345", "slug": "render-preview" },
+    { "id": "T-12345.architecture-diagram", "ownerId": "T-12345", "slug": "architecture-diagram" },
+    { "id": "T-12345.v2", "ownerId": "T-12345", "slug": "v2" },
+    { "id": "T-12345.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ownerId": "T-12345", "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "$comment": "64 characters: the limit" }
+  ],
+  "invalid": [
+    "T-12345.2",
+    "T-12345.a.b",
+    "T-12345.slug-",
+    "T-12345.-slug",
+    "T-12345.Slug",
+    "T-12345.",
+    "T-12345.slug_x",
+    "T-1234",
+    "T-123456",
+    "t-12345",
+    "T-12345 ",
+    "T-12345/reviewer",
+    "T-12345.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ""
+  ],
+  "prose": [
+    { "text": "see T-12345.", "ids": ["T-12345"] },
+    { "text": "T-12345.Next step", "ids": ["T-12345"] },
+    { "text": "working on T-12345.render-preview now", "ids": ["T-12345.render-preview"] },
+    { "text": "bump to T-12345.2", "ids": ["T-12345"] },
+    { "text": "T-12345 and T-54321.slug", "ids": ["T-12345", "T-54321.slug"] },
+    { "text": "T-12345.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ids": ["T-12345"] },
+    { "text": "no id here, XT-12345 or T-123456", "ids": [] }
+  ]
+}

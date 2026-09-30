@@ -61,7 +61,7 @@ the contract. **Do not sort it.**
 | `node` | yes | the daemon's federation node id |
 | `seat` | yes | the **full** scope ref, suffixes and all |
 | `agent` | when the scope names one | agent id |
-| `task` | when the selector is a canonical `T-\d{5}` | the assignment (T-08928) |
+| `task` | when the selector is a task id, `T-\d{5}` or subtask `T-\d{5}.<slug>` | the assignment (T-08928) |
 | `cause` | born/rotated | see below |
 | `harness` | when the birth intent is known | `claude-code` \| `codex-cli` \| `pi-cli` \| `pi-sdk` \| `pi` \| `agent-sdk` \| `agent-harness` |
 | `provider` | when the birth intent is known | `anthropic` \| `openai` |
@@ -132,7 +132,8 @@ selectors, **15 unresolvable** (~7%) — `:role:` probe suffixes
 (`T-8151`), and ids purged from the ledger. Non-T selectors (`primary`,
 `minisvc`, named lanes) are a further ~46% of births.
 
-**The rule.** Attempt `--task` only for a canonical `T-\d{5}` with no suffix. On
+**The rule.** Attempt `--task` only for a task id — `T-\d{5}`, or a subtask
+`T-\d{5}.<slug>` per the hrc-core grammar — with no other suffix. On
 *any* refusal, fall back to project-only. The full selector always survives in
 `seat`. **A birth is never dropped because its scope names a task wrkq cannot
 resolve.**

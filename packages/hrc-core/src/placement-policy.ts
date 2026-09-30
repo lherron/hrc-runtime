@@ -20,6 +20,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { environmentWithoutGitOverrides } from './git-environment.js'
 import { findProjectMarker } from './placement-conventions.js'
 import { type WrkqProjectRegistryEntry, findWrkqProjectEntry } from './project-registry.js'
+import { ownerTaskTokens, taskOwnerId } from './task-id.js'
 
 export type GitWorktree = {
   path: string
@@ -132,8 +133,9 @@ export function resolveSiblingProjectRoot(
   return undefined
 }
 
+/** Owner task ids in a branch name or worktree path; see `ownerTaskTokens`. */
 export function taskTokens(value: string): string[] {
-  return [...value.matchAll(/(?<!\d)T-\d+(?!\d)/g)].map((match) => match[0])
+  return ownerTaskTokens(value)
 }
 
 export function parseWorktreePorcelain(output: string): GitWorktree[] {
@@ -256,15 +258,18 @@ export async function refineTaskWorktree(
   taskId: string | undefined,
   explicitEnv: Record<string, string | undefined>
 ): Promise<{ path: string; branch?: string | undefined } | undefined> {
-  if (!taskId || !/^T-\d+$/.test(taskId)) return undefined
+  // A subtask works in its owner's worktree (never its own in v1), so the
+  // matching below only ever sees the owner id, never the composite token.
+  const ownerId = taskId === undefined ? undefined : taskOwnerId(taskId)
+  if (ownerId === undefined) return undefined
 
   const worktrees = await listGitWorktrees(canonicalRoot, explicitEnv)
   const matches = worktrees.filter(
-    (worktree) => worktree.branch && taskTokens(worktree.branch).includes(taskId)
+    (worktree) => worktree.branch && taskTokens(worktree.branch).includes(ownerId)
   )
   if (matches.length > 1) {
     throw new Error(
-      `multiple worktrees match ${taskId}: ${matches
+      `multiple worktrees match ${ownerId}: ${matches
         .map((worktree) => `${worktree.path} (${worktree.branch})`)
         .join(', ')}`
     )
@@ -275,11 +280,11 @@ export async function refineTaskWorktree(
   // association there is. That is the standard gate worktree (one fixed
   // worktree per seat, moved by `checkout --detach`), and it is also a branch
   // mid-rebase — in both cases the task-named worktree IS the right checkout.
-  const named = worktrees.filter((worktree) => taskTokens(worktree.path).includes(taskId))
+  const named = worktrees.filter((worktree) => taskTokens(worktree.path).includes(ownerId))
   const detached = named.filter((worktree) => !worktree.branch)
   if (detached.length > 1) {
     throw new Error(
-      `multiple worktrees match ${taskId}: ${detached
+      `multiple worktrees match ${ownerId}: ${detached
         .map((worktree) => `${worktree.path} (detached)`)
         .join(', ')}`
     )
@@ -287,7 +292,7 @@ export async function refineTaskWorktree(
   const mismatched = named.find((worktree) => worktree.branch)
   if (mismatched) {
     throw new Error(
-      `worktree at ${mismatched.path} appears associated with ${taskId} but branch ${mismatched.branch} does not carry ${taskId}`
+      `worktree at ${mismatched.path} appears associated with ${ownerId} but branch ${mismatched.branch} does not carry ${ownerId}`
     )
   }
   const [lone] = detached
