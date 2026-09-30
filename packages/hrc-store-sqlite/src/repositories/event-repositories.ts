@@ -7,6 +7,7 @@ import {
   brokerToolResultBlobId,
   createToolResultSpillStub,
   lifecycleToolResultBlobId,
+  parseTaskId,
   readToolResultSpillDescriptor,
   toolResultExceedsSpillThreshold,
 } from 'hrc-core'
@@ -46,6 +47,29 @@ const MILESTONE_KINDS = [
 
 function escapeLike(value: string): string {
   return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
+}
+
+/**
+ * Scope predicate for a task selector: a complete `:task:<id>` segment, plus,
+ * for an ordinary id with `includeSubtasks`, its subtasks' `:task:<id>.<slug>`
+ * segments. A subtask id always matches only itself.
+ */
+function taskScopePredicate(
+  taskId: string,
+  options: { includeSubtasks: boolean }
+): { sql: string; values: string[] } {
+  const segment = escapeLike(`:task:${taskId}`)
+  const parsed = parseTaskId(taskId)
+  if (options.includeSubtasks && parsed !== undefined && parsed.slug === undefined) {
+    return {
+      sql: "(scope_ref LIKE ? ESCAPE '\\' OR scope_ref LIKE ? ESCAPE '\\' OR scope_ref LIKE ? ESCAPE '\\')",
+      values: [`%${segment}:%`, `%${segment}`, `%${segment}.%`],
+    }
+  }
+  return {
+    sql: "(scope_ref LIKE ? ESCAPE '\\' OR scope_ref LIKE ? ESCAPE '\\')",
+    values: [`%${segment}:%`, `%${segment}`],
+  }
 }
 
 /**
@@ -771,12 +795,15 @@ export class HrcLifecycleEventRepository {
       scopeSetPredicates.push(...filters.scopeRefPrefixes.map(() => "scope_ref LIKE ? ESCAPE '\\'"))
       values.push(...filters.scopeRefPrefixes.map((prefix) => `${escapeLike(prefix)}%`))
     }
-    if (filters.taskIds && filters.taskIds.length > 0) {
-      for (const taskId of filters.taskIds) {
-        scopeSetPredicates.push("(scope_ref LIKE ? ESCAPE '\\' OR scope_ref LIKE ? ESCAPE '\\')")
-        const segment = escapeLike(`:task:${taskId}`)
-        values.push(`%${segment}:%`, `%${segment}`)
-      }
+    for (const taskId of filters.taskIds ?? []) {
+      const predicate = taskScopePredicate(taskId, { includeSubtasks: true })
+      scopeSetPredicates.push(predicate.sql)
+      values.push(...predicate.values)
+    }
+    for (const taskId of filters.exactTaskIds ?? []) {
+      const predicate = taskScopePredicate(taskId, { includeSubtasks: false })
+      scopeSetPredicates.push(predicate.sql)
+      values.push(...predicate.values)
     }
     if (scopeSetPredicates.length > 0) {
       where.push(`(${scopeSetPredicates.join(' OR ')})`)

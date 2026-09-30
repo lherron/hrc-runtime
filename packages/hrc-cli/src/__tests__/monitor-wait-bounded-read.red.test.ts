@@ -336,7 +336,7 @@ describe('Bundle 1 — monitor wait bounded live reads', () => {
     expect(maxHrcSeq).toHaveBeenCalled()
     expect(filtered).toHaveBeenCalledWith(
       expect.any(Number),
-      expect.objectContaining({ taskIds: [TASK_ID] })
+      expect.objectContaining({ exactTaskIds: [TASK_ID] })
     )
   })
 

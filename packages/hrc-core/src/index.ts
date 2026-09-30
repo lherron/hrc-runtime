@@ -734,6 +734,7 @@ export {
   isTaskId,
   ownerTaskTokens,
   parseTaskId,
+  scopeRefMatchesTask,
   taskOwnerId,
 } from './task-id.js'
 export type { ParsedTaskId } from './task-id.js'

@@ -432,7 +432,11 @@ function matchEdgeAtOrAfter(
     }
   | undefined {
   for (const event of state.events) {
-    if (event.seq < fromSeq || !eventMatchesSelectorSet(state, event, specs)) continue
+    if (
+      event.seq < fromSeq ||
+      !eventMatchesSelectorSet(state, event, specs, { includeSubtasks: false })
+    )
+      continue
     // T-08566 X5: retained-origin rows are history, never wait authority.
     if (hasEvidenceOrigin(event)) continue
     const name = event['eventKind'] ?? event.event

@@ -4,6 +4,7 @@ import {
   type HrcSelector,
   isTaskId,
   monitorEventMatchesSelector,
+  scopeRefMatchesTask,
 } from 'hrc-core'
 import { parseProfileAwareSelector } from '../profile-aware-selector.js'
 
@@ -47,12 +48,20 @@ export function selectorSetLabel(specs: readonly MonitorSelectorSpec[]): string 
   return specs.map((spec) => spec.raw).join(',')
 }
 
-export function scopeMatchesSelectorSpec(scopeRef: string, spec: MonitorSelectorSpec): boolean {
+/**
+ * `includeSubtasks`: an ordinary task selector also covers its subtasks' seats.
+ * Event views pass true; wait/state predicates pass false so a subtask never
+ * satisfies its owner's condition (named subtasks, *Events*).
+ */
+export type TaskSelectorMatch = { includeSubtasks: boolean }
+
+export function scopeMatchesSelectorSpec(
+  scopeRef: string,
+  spec: MonitorSelectorSpec,
+  match: TaskSelectorMatch
+): boolean {
   if (spec.kind === 'scope-prefix') return scopeRef.startsWith(spec.prefix)
-  if (spec.kind === 'task') {
-    const segment = `:task:${spec.taskId}`
-    return scopeRef.includes(`${segment}:`) || scopeRef.endsWith(segment)
-  }
+  if (spec.kind === 'task') return scopeRefMatchesTask(scopeRef, spec.taskId, match)
   return spec.selector.kind === 'scope' && scopeRef === spec.selector.scopeRef
 }
 
@@ -108,7 +117,7 @@ export function selectorConditionCandidates(
       continue
     }
     for (const session of state.sessions) {
-      if (!scopeMatchesSelectorSpec(session.scopeRef, spec)) continue
+      if (!scopeMatchesSelectorSpec(session.scopeRef, spec, { includeSubtasks: false })) continue
       const selector = session.runtimeId
         ? runtimeSelector(session.runtimeId)
         : hostSelector(session.hostSessionId)
@@ -163,12 +172,13 @@ function exactEventMatch(
 export function eventMatchesSelectorSet(
   state: HrcMonitorState,
   event: HrcMonitorEvent,
-  specs: readonly MonitorSelectorSpec[]
+  specs: readonly MonitorSelectorSpec[],
+  match: TaskSelectorMatch
 ): boolean {
   if (specs.length === 0) return true
   return specs.some((spec) =>
     spec.kind === 'exact'
       ? exactEventMatch(state, event, spec.selector)
-      : scopeMatchesSelectorSpec(event.scopeRef ?? '', spec)
+      : scopeMatchesSelectorSpec(event.scopeRef ?? '', spec, match)
   )
 }

@@ -126,7 +126,7 @@ export function selectorEventFilters(
 ): HrcLifecycleMonitorFilters[] {
   if (specs.length === 0) return [{}]
   return specs.flatMap((spec): HrcLifecycleMonitorFilters[] => {
-    if (spec.kind === 'task') return [{ taskIds: [spec.taskId] }]
+    if (spec.kind === 'task') return [{ exactTaskIds: [spec.taskId] }]
     if (spec.kind === 'scope-prefix') return [{ scopeRefPrefixes: [spec.prefix] }]
 
     const selector = spec.selector

@@ -1,6 +1,36 @@
 import { describe, expect, test } from 'bun:test'
+import type { HrcMonitorEvent, HrcMonitorState } from 'hrc-core'
 
-import { parseMonitorSelectors, scopeMatchesSelectorSpec } from '../selector-shape.js'
+import {
+  eventMatchesSelectorSet,
+  parseMonitorSelectors,
+  scopeMatchesSelectorSpec,
+  selectorConditionCandidates,
+} from '../selector-shape.js'
+
+const EVENTS = { includeSubtasks: true }
+const STATE = { includeSubtasks: false }
+
+const OWNER = 'agent:a:project:p:task:T-12345'
+const SUBTASK = 'agent:a:project:p:task:T-12345.render-preview'
+const LONGER = 'agent:a:project:p:task:T-123456'
+
+const state: HrcMonitorState = {
+  sessions: [OWNER, SUBTASK, LONGER].map((scopeRef, index) => ({
+    sessionRef: `${scopeRef}/lane:main`,
+    scopeRef,
+    laneRef: 'main',
+    hostSessionId: `host-${index}`,
+    generation: 1,
+    runtimeId: `rt-${index}`,
+  })) as HrcMonitorState['sessions'],
+  runtimes: [],
+  events: [],
+}
+
+function event(scopeRef: string): HrcMonitorEvent {
+  return { seq: 1, event: 'turn.finished', scopeRef }
+}
 
 describe('monitor task selectors', () => {
   test('a subtask id is a task selector that watches only the subtask seat', async () => {
@@ -11,18 +41,31 @@ describe('monitor task selectors', () => {
       taskId: 'T-12345.render-preview',
     })
     if (spec === undefined) throw new Error('no spec')
-    expect(scopeMatchesSelectorSpec('agent:a:project:p:task:T-12345.render-preview', spec)).toBe(
-      true
-    )
-    expect(scopeMatchesSelectorSpec('agent:a:project:p:task:T-12345', spec)).toBe(false)
+    expect(scopeMatchesSelectorSpec(SUBTASK, spec, EVENTS)).toBe(true)
+    expect(scopeMatchesSelectorSpec(`${SUBTASK}:role:tester`, spec, EVENTS)).toBe(true)
+    expect(scopeMatchesSelectorSpec(OWNER, spec, EVENTS)).toBe(false)
+    expect(scopeMatchesSelectorSpec(`${OWNER}.render`, spec, EVENTS)).toBe(false)
   })
 
-  test('the owner selector does not silently match a subtask seat', async () => {
-    const [spec] = await parseMonitorSelectors(['T-12345'])
-    if (spec === undefined) throw new Error('no spec')
-    expect(spec.kind).toBe('task')
-    expect(scopeMatchesSelectorSpec('agent:a:project:p:task:T-12345.render-preview', spec)).toBe(
-      false
+  // T-09902, named subtasks *Events*: a task selector covers its subtasks.
+  test('the owner selector shows its subtask seats in event views', async () => {
+    const specs = await parseMonitorSelectors(['T-12345'])
+    const shown = [OWNER, SUBTASK, `${SUBTASK}:role:tester`, LONGER].filter((scopeRef) =>
+      eventMatchesSelectorSet(state, event(scopeRef), specs, EVENTS)
     )
+    expect(shown).toEqual([OWNER, SUBTASK, `${SUBTASK}:role:tester`])
+  })
+
+  test('T-1234 does not match T-12345 or its subtasks', async () => {
+    const [spec] = await parseMonitorSelectors(['T-1234'])
+    if (spec === undefined) throw new Error('no spec')
+    expect(scopeMatchesSelectorSpec(OWNER, spec, EVENTS)).toBe(false)
+    expect(scopeMatchesSelectorSpec(SUBTASK, spec, EVENTS)).toBe(false)
+  })
+
+  test('an owner wait never sees a subtask edge or subtask state', async () => {
+    const specs = await parseMonitorSelectors(['T-12345'])
+    expect(eventMatchesSelectorSet(state, event(SUBTASK), specs, STATE)).toBe(false)
+    expect(selectorConditionCandidates(state, specs).map((c) => c.scopeRef)).toEqual([OWNER])
   })
 })

@@ -67,8 +67,13 @@ export type HrcLifecycleMonitorFilters = {
   scopeRefs?: string[] | undefined
   /** Match any event whose scopeRef begins with one of these values. */
   scopeRefPrefixes?: string[] | undefined
-  /** Match complete `:task:<id>:` scopeRef segments. */
+  /**
+   * Match complete `:task:<id>` scopeRef segments; an ordinary task id also
+   * matches its subtasks' `:task:<id>.<slug>` segments (named subtasks, *Events*).
+   */
   taskIds?: string[] | undefined
+  /** Match complete `:task:<id>` segments only — state predicates stay exact. */
+  exactTaskIds?: string[] | undefined
   laneRef?: string | undefined
   hostSessionId?: string | undefined
   generation?: number | undefined

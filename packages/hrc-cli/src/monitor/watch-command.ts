@@ -907,7 +907,7 @@ function wrapWithMonitorFilters(
         ...state,
         events: state.events.filter(
           (event) =>
-            eventMatchesSelectorSet(state, event, specs) &&
+            eventMatchesSelectorSet(state, event, specs, { includeSubtasks: true }) &&
             (eventPredicate === null || eventPredicate(event))
         ),
         eventGlobalHighWaterSeq: globalHighWater,

@@ -49,6 +49,27 @@ export function isTaskId(value: string): boolean {
   return parseTaskId(value) !== undefined
 }
 
+/**
+ * Whether `scopeRef` carries a complete `:task:<taskId>` segment. With
+ * `includeSubtasks`, an ordinary task id also matches its subtasks'
+ * `:task:<taskId>.<slug>` segments (named subtasks, *Events*); a subtask id
+ * always matches only itself.
+ */
+export function scopeRefMatchesTask(
+  scopeRef: string,
+  taskId: string,
+  options: { includeSubtasks: boolean }
+): boolean {
+  const segment = `:task:${taskId}`
+  if (scopeRef.includes(`${segment}:`) || scopeRef.endsWith(segment)) return true
+  const parsed = parseTaskId(taskId)
+  if (!options.includeSubtasks || parsed === undefined || parsed.slug !== undefined) return false
+  const at = scopeRef.indexOf(`${segment}.`)
+  if (at < 0) return false
+  const token = scopeRef.slice(at + ':task:'.length).split(':')[0] as string
+  return parseTaskId(token)?.ownerId === taskId
+}
+
 /** The owner of an exact task or subtask id; `undefined` when `value` is neither. */
 export function taskOwnerId(value: string): string | undefined {
   return parseTaskId(value)?.ownerId
