@@ -62,7 +62,8 @@ type Inspectable = HrcServer & {
   externalRegistrationOperations: Map<string, Promise<void>>
   exactRouteHandlers: Record<string, (request: Request, url: URL) => Promise<Response> | Response>
   serverProjectEvents: { drain(): Promise<void> } | undefined
-  beginLifecycleShutdown(attribution: ServerShutdownAttribution): void
+  // Widened so a test can replay what a pre-contract predecessor wrote.
+  beginLifecycleShutdown(attribution: ServerShutdownAttribution | PreContractAttribution): void
   markShutdownDeadlineExpired(): void
 }
 
@@ -87,7 +88,17 @@ const NO_INTENT: ServerShutdownAttribution = {
 }
 
 /** What a pre-contract predecessor wrote (flat, caller-intent attribution). */
-const LEGACY_ATTRIBUTION = {
+type PreContractAttribution = {
+  reason: string
+  callerKind: string
+  requestedBy: string
+  requestedAction: string
+  requestedRunId: string
+  requestedReason: string
+  requestedByPid: number
+}
+
+const LEGACY_ATTRIBUTION: PreContractAttribution = {
   reason: 'SIGTERM',
   callerKind: 'seat',
   requestedBy: 'agent:clod:project:hrc-runtime:task:T-08137/lane:main',
@@ -95,7 +106,7 @@ const LEGACY_ATTRIBUTION = {
   requestedRunId: 'run-t08137',
   requestedReason: 'legacy smoke',
   requestedByPid: 4242,
-} as unknown as ServerShutdownAttribution
+}
 
 function rejected(message: string): Promise<never> {
   const promise = Promise.reject(new Error(message))

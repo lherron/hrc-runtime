@@ -73,7 +73,7 @@ function parseInvocationSnapshot(value: unknown, invocationId: string): Invocati
   ) {
     throw new Error('invocation.snapshot has invalid durable read-model fields')
   }
-  return value as unknown as InvocationSnapshot
+  return value as InvocationSnapshot
 }
 
 function parseEventsSinceResponse(value: unknown): {
