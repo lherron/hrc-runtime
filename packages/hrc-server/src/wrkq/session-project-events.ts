@@ -48,7 +48,13 @@ const END_KINDS: Record<string, SessionEndKind> = {
  * what the birth site can actually observe. See the doc for why `mail` and
  * `dispatch` are not separable here.
  */
-export type SessionBirthCause = 'rotation' | 'summon' | 'dispatch' | 'command_run' | 'resolve'
+export type SessionBirthCause =
+  | 'rotation'
+  | 'summon'
+  | 'assignment'
+  | 'dispatch'
+  | 'command_run'
+  | 'resolve'
 
 export type SessionProjectEventFact = {
   type: SessionProjectEventType
@@ -125,6 +131,8 @@ export function taskSelectorFrom(selector: string | undefined): string | undefin
 function causeFor(session: HrcSessionRecord, payload: Record<string, unknown>): SessionBirthCause {
   if (session.priorHostSessionId !== undefined || session.generation > 1) return 'rotation'
   if (payload['commandRun'] === true) return 'command_run'
+  // T-09979: a summon whose caller declared it an assignment start.
+  if (payload['birthCause'] === 'assignment') return 'assignment'
   if (payload['summon'] === true) return 'summon'
   const reason = typeof payload['reason'] === 'string' ? payload['reason'] : undefined
   if (reason === 'exact-scope-claim' || reason === 'roster-suffix-claim') return 'dispatch'

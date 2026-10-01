@@ -959,6 +959,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "EnsureTargetBirthCause",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|EnsureTargetBirthCause|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "EnsureTargetRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",

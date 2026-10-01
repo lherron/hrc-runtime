@@ -518,6 +518,7 @@ export type {
   HrcMessageFilter,
   HrcDirectiveOnlyIntent,
   HrcDmRuntimeIntent,
+  EnsureTargetBirthCause,
   EnsureTargetRequest,
   EnsureTargetResponse,
   ListTargetsRequest,

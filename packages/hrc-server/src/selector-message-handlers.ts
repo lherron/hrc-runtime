@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type {
   CreateMessageResponse,
+  EnsureTargetBirthCause,
   EnsureTargetResponse,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
@@ -235,6 +236,8 @@ export async function ensureTargetSession(
     persistIntent?: boolean | undefined
     /** Ephemeral semantic-turn birth trace; never affects summon authority. */
     birthTimeline?: BirthTimeline | undefined
+    /** T-09979: recorded on a fresh birth only; see `EnsureTargetRequest.birthCause`. */
+    birthCause?: EnsureTargetBirthCause | undefined
   } = {}
 ): Promise<HrcSessionRecord> {
   const birthTimeline = options.birthTimeline
@@ -371,7 +374,11 @@ export async function ensureTargetSession(
         return inserted
       })()
 
-      const event = this.appendEvent(created, 'session.created', { created: true, summon: true })
+      const event = this.appendEvent(created, 'session.created', {
+        created: true,
+        summon: true,
+        ...(options.birthCause === undefined ? {} : { birthCause: options.birthCause }),
+      })
       this.notifyEvent(event)
       birthTimeline?.enrich({
         hostSessionId: created.hostSessionId,
@@ -419,12 +426,23 @@ export async function handleEnsureTarget(
       }
     )
   }
+  const birthCause = body['birthCause']
+  if (birthCause !== undefined && birthCause !== 'assignment') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      "birthCause must be 'assignment' when present",
+      { field: 'birthCause' }
+    )
+  }
   const session = await this.ensureTargetSession(
     sessionRef,
     runtimeIntent as HrcRuntimeIntent,
     parsedScopeJson,
     'local',
-    ...(persistIntent !== undefined ? [{ persistIntent } as const] : [])
+    {
+      ...(persistIntent !== undefined ? { persistIntent } : {}),
+      ...(birthCause !== undefined ? { birthCause } : {}),
+    }
   )
   return json(toTargetView(this.db, session) satisfies EnsureTargetResponse)
 }

@@ -245,7 +245,16 @@ export type EnsureTargetRequest = {
   runtimeIntent: HrcRuntimeIntent
   parsedScopeJson?: Record<string, unknown> | undefined
   persistIntent?: boolean | undefined
+  /**
+   * T-09979 — the door this call is, recorded only when it actually births a
+   * session: `session.born` then reports `cause=assignment` instead of
+   * `summon`. A target that already has a session births nothing, so this is
+   * inert there. Any other value is refused.
+   */
+  birthCause?: EnsureTargetBirthCause | undefined
 }
+
+export type EnsureTargetBirthCause = 'assignment'
 
 export type EnsureTargetResponse = HrcTargetView
 

@@ -102,10 +102,17 @@ birth site can actually observe:
 | --- | --- |
 | `rotation` | a successor of an existing session |
 | `summon` | the summon / ensure-target door |
+| `assignment` | the ensure-target door, when the caller passes `birthCause: 'assignment'` (the ACP reconciler starting delegated work, T-09979) |
 | `dispatch` | a scope claim (`exact-scope-claim`, `roster-suffix-claim`) |
 | `desktop` | Codex desktop registration |
 | `command_run` | a command-scoped run |
 | `resolve` | a bare `resolve-session` create |
+
+`assignment` is written only when that call actually births the session. A
+start into a seat that already has a session births nothing and posts nothing;
+a successor of an archived session stays `rotation`. The cause is carried only
+by a local birth: a scope homed on another node is born there through
+federation and reports `summon`, by design, not as a bug.
 
 Mail-driven and hand-driven summons are **both** `summon`: they are the same
 door, and the birth site holds nothing that separates them. Likewise there is no
