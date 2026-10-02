@@ -48,6 +48,11 @@ type TmuxExecResult = {
 
 export const DEFAULT_TMUX_COMMAND_TIMEOUT_MS = 5_000
 
+const SERVER_OPTIONS: ReadonlyArray<readonly [string, string]> = [
+  ['extended-keys', 'on'],
+  ['extended-keys-format', 'csi-u'],
+]
+
 export class TmuxCommandTimeoutError extends Error {
   constructor(
     readonly command: string,
@@ -518,6 +523,9 @@ export class TmuxManager {
       args.push(command)
     }
     const result = await this.exec(args)
+    if (!exists) {
+      await this.applyServerOptions()
+    }
     const base = parsePaneState(result.stdout, this.socketPath)
     return { ...base, windowName }
   }
@@ -763,8 +771,25 @@ export class TmuxManager {
     )
 
     const result = await this.exec(args)
+    await this.applyServerOptions()
 
     return parsePaneState(result.stdout, this.socketPath)
+  }
+
+  /**
+   * Server options HRC's TUIs depend on, set explicitly so they hold without the
+   * operator's ~/.tmux.conf. Extended keys let modified Enter (Shift/Ctrl+Enter)
+   * reach Claude Code and Codex. Applied after a session exists because
+   * `start-server` alone exits immediately on an empty server.
+   */
+  private async applyServerOptions(): Promise<void> {
+    for (const [option, value] of SERVER_OPTIONS) {
+      try {
+        await this.exec(['set-option', '-s', option, value])
+      } catch {
+        // Best effort: an older tmux may not know the option.
+      }
+    }
   }
 
   private async scrubServerEnvironment(): Promise<void> {
