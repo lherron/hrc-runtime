@@ -314,16 +314,10 @@ is a full logical node: roster id `hrcdev`, its own checkout at
 `~/praesidium/hrc-runtime`, its own atomic releases, its own daemon, and its own
 deploy recipe (`just deploy-hrcdev`).
 
-Do not confuse it with the **`hrc-dev` lane** at
-`~/praesidium/var/install/hrc-dev/tree`, which is a different thing with a
-different repair procedure: a `git archive` export with no `.git` (so `git -C`
-there silently resolves to the praesidium **root** repo and lies), no release
-manifest (the praesidium-release.json an atomic release directory carries, per
-`docs/atomic-install.md` — not a repo file; so it cannot state its own
-sourceCommit), and a
-`KeepAlive` LaunchAgent `com.praesidium.hrc-dev` that must be stopped with
-`launchctl bootout`, never `kickstart` or a kill. It has no deploy recipe and is
-not a fleet node.
+The old **`hrc-dev` lane** (a `git archive` export at
+`~/praesidium/var/install/hrc-dev/tree` run by LaunchAgent `com.praesidium.hrc-dev`)
+was retired 2026-10-02 (T-10025 follow-up, Lance). Nothing should run HRC from it;
+"hrcdev" only ever means the VM.
 
 Tart macOS guest, `ssh hrcdev` (or `ssh lherron@192.168.50.45`). ssh timing out
 while `tart list` says **running** means the vmnet bridge lost its uplink —

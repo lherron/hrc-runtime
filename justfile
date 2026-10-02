@@ -246,9 +246,8 @@ deploy-max3 ref="origin/main" aspd="origin/main" injector="latest" restart="wait
 deploy-svc ref="@max3" aspd="@max3" injector="@max3" restart="wait":
     @just _deploy-node "mini" "svc" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}" "no-publish"
 
-# `hrcdev` here is the Tart macOS guest VM hosted on max3 (`ssh hrcdev`), NOT the
-# ~/praesidium/var/install/hrc-dev lane, which is a git-archive export with its
-# own LaunchAgent and no release manifest. See AGENTS.md.
+# `hrcdev` here is the Tart macOS guest VM hosted on max3 (`ssh hrcdev`), not the
+# retired ~/praesidium/var/install/hrc-dev lane. See AGENTS.md.
 
 # Deploy to the hrcdev logical node (the Tart guest VM on max3)
 deploy-hrcdev ref="@max3" aspd="@max3" injector="@max3" restart="wait":
