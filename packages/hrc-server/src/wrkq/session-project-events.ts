@@ -28,6 +28,8 @@ export type SessionProjectEventType =
   | 'session.rotated'
   | 'session.started'
   | 'session.ended'
+  | 'turn.started'
+  | 'turn.ended'
 
 /**
  * T-08928 — how a runtime of the session stopped being live. Each value is an
@@ -36,12 +38,22 @@ export type SessionProjectEventType =
  */
 export type SessionEndKind = 'terminated' | 'crashed' | 'dead' | 'stale'
 
+type TurnEndKind = 'completed' | 'failed' | 'reaped' | 'superseded' | 'runtime_ended'
+
+const TURN_END_KINDS: Record<string, TurnEndKind> = {
+  'turn.completed': 'completed',
+  'turn.failed': 'failed',
+  'turn.reaped': 'reaped',
+}
+
 const END_KINDS: Record<string, SessionEndKind> = {
   'runtime.terminated': 'terminated',
   'runtime.crashed': 'crashed',
   'runtime.dead': 'dead',
   'runtime.stale': 'stale',
 }
+
+const TURN_KINDS = ['turn.started', ...Object.keys(TURN_END_KINDS), ...Object.keys(END_KINDS)]
 
 /**
  * The declared `cause` vocabulary: the DOOR a session came through, which is
@@ -346,11 +358,11 @@ export type SessionProjectEventPublisherDeps = {
  */
 export const SESSION_PROJECT_EVENTS_STREAM = 'session-project-events'
 
-/** Every HRC ledger kind this producer turns into a `session.*` fact. */
+/** Every HRC ledger kind this producer turns into a session or turn fact. */
 export const SESSION_PROJECT_EVENT_SOURCE_KINDS = [
   'session.created',
   'broker.seat.transition',
-  ...Object.keys(END_KINDS),
+  ...TURN_KINDS,
 ]
 
 const TAIL_BATCH = 200
@@ -376,6 +388,7 @@ const DEFAULT_POLL_INTERVAL_MS = 1000
  * a fact that is already durable, and never reaches it.
  */
 export class SessionProjectEventPublisher {
+  private readonly openTurns = new Map<string, HrcLifecycleEvent>()
   private readonly tails = new Map<string, Promise<void>>()
   private pumping: Promise<void> | undefined
   private rerun = false
@@ -450,10 +463,101 @@ export class SessionProjectEventPublisher {
             ? this.birthFact(event)
             : deriveSessionRuntimeEvent({ event, node: this.deps.node })
         if (fact !== undefined) posts.push(this.enqueue(event.hostSessionId, fact))
+        for (const turnFact of this.turnFacts(event)) {
+          posts.push(this.enqueue(event.hostSessionId, turnFact))
+        }
       }
       await Promise.all(posts)
       cursors.advance(last.hrcSeq, SESSION_PROJECT_EVENTS_STREAM)
       if (events.length < TAIL_BATCH) return
+    }
+  }
+
+  private turnFacts(event: HrcLifecycleEvent): SessionProjectEventFact[] {
+    const runtimeId = event.runtimeId
+    if (runtimeId === undefined || !TURN_KINDS.includes(event.eventKind)) return []
+    const seat = parseSeat(event.scopeRef)
+    if (seat.project === undefined || seat.project.length === 0) return []
+
+    // Lazy rebuild at the cut immediately BEFORE this event, never at the head.
+    // Only open turns are retained; closed runtimes leave the map.
+    let start = this.openTurns.get(runtimeId)
+    if (start === undefined) {
+      const row = this.deps.db.sqlite
+        .query<{ hrc_seq: number }, Array<string | number>>(
+          `SELECT hrc_seq FROM hrc_events
+         WHERE runtime_id = ? AND hrc_seq < ?
+           AND source_ref IS NULL AND evidence_origin IS NULL
+           AND event_kind IN (${TURN_KINDS.map(() => '?').join(', ')})
+         ORDER BY hrc_seq DESC LIMIT 1`
+        )
+        .get(runtimeId, event.hrcSeq, ...TURN_KINDS)
+      if (row !== null) {
+        const prior = this.deps.db.hrcEvents.listFromHrcSeq(row.hrc_seq, { limit: 1 })[0]
+        if (prior?.eventKind === 'turn.started') start = prior
+      }
+    }
+
+    const facts: SessionProjectEventFact[] = []
+    if (start !== undefined) {
+      const end =
+        event.eventKind === 'turn.started'
+          ? 'superseded'
+          : END_KINDS[event.eventKind] === undefined
+            ? TURN_END_KINDS[event.eventKind]
+            : 'runtime_ended'
+      if (end !== undefined) facts.push(this.turnFact(start, event, runtimeId, seat.project, end))
+      this.openTurns.delete(runtimeId)
+    }
+    if (event.eventKind === 'turn.started') {
+      this.openTurns.set(runtimeId, event)
+      facts.push(this.turnFact(event, event, runtimeId, seat.project))
+    }
+    return facts
+  }
+
+  private turnFact(
+    start: HrcLifecycleEvent,
+    event: HrcLifecycleEvent,
+    runtimeId: string,
+    project: string,
+    end?: TurnEndKind
+  ): SessionProjectEventFact {
+    const seat = parseSeat(start.scopeRef)
+    const turn = `${runtimeId}:${start.hrcSeq}`
+    const runId = end === 'superseded' ? start.runId : (event.runId ?? start.runId)
+    const duration = Date.parse(event.ts) - Date.parse(start.ts)
+    const type = end === undefined ? 'turn.started' : 'turn.ended'
+    const attributes: Record<string, string> = {
+      source: 'hrc-server',
+      node: clampValue(this.deps.node),
+      seat: clampValue(start.scopeRef),
+      ...(seat.agent === undefined ? {} : { agent: clampValue(seat.agent) }),
+      ...taskAttribute(seat),
+      session: clampValue(start.hostSessionId),
+      generation: String(start.generation),
+      runtime_id: clampValue(runtimeId),
+      turn: clampValue(turn),
+      ...(runId === undefined ? {} : { run_id: clampValue(runId) }),
+      ...(end === undefined ? {} : { end, duration_ms: String(duration) }),
+    }
+    const who = seat.agent ?? start.scopeRef
+    const where = seat.selector === undefined ? seat.project : `${seat.project}:${seat.selector}`
+    const seconds = Math.floor(duration / 1000)
+    const elapsed = `${Math.floor(seconds / 60)}m${seconds % 60}s`
+    return {
+      type,
+      project,
+      task: taskSelectorFrom(seat.selector),
+      summary: clampSummary(
+        end === undefined
+          ? `${who} turn started at ${where} on ${this.deps.node}`
+          : `${who} turn ended (${end}, ${elapsed}) at ${where} on ${this.deps.node}`
+      ),
+      attributes,
+      idempotencyKey: `turn:${turn}:${end === undefined ? 'started' : 'ended'}`,
+      scopeRef: fullSessionRef(start.scopeRef, start.laneRef),
+      occurredAt: event.ts,
     }
   }
 

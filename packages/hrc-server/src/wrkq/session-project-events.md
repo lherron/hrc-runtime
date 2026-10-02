@@ -1,4 +1,4 @@
-# `session.*` project events
+# `session.*` and `turn.*` project events
 
 **Owner:** hrc-runtime. **Producer:** `session-project-events.ts` (hrc-server daemon).
 **Envelope:** wrkq `wrkq.projectEvent.post` (wrkq T-08388, migration 000061).
@@ -31,8 +31,8 @@ A session outlives its runtimes (91 of 472 sessions in one week had more than
 one), so `started`/`ended` can repeat for one session. A consumer's current
 state for a session is the latest of the four, upserted on the `session`
 attribute. No new runtime state is invented: each type is one HRC ledger kind
-that already exists. Busy/idle is **not** published — it is ~1400 seat
-transitions a day, and assignment does not depend on it.
+that already exists. Turn starts and ends publish activity separately; consumers
+combine them with session lifecycle facts to project busy/idle/offline status.
 
 **Assignment** is the seat. A session's scope ref (and so its task) is fixed at
 birth and never changes; every fact carries it as `seat` and, when canonical,
@@ -165,19 +165,80 @@ wrkq idempotency key is per fact:
 
 | type | key |
 | --- | --- |
-| born / rotated | `<hostSessionId>` (unchanged from T-08389) |
-| started | `<hostSessionId>:started:<runtimeId>` |
-| ended | `<hostSessionId>:ended:<runtimeId>` — the first terminal fact of a runtime wins; a later `stale` → `dead` for the same runtime collapses onto it |
+| session.born / session.rotated | `<hostSessionId>` (unchanged from T-08389) |
+| session.started | `<hostSessionId>:started:<runtimeId>` |
+| session.ended | `<hostSessionId>:ended:<runtimeId>` — the first terminal fact of a runtime wins; a later `stale` → `dead` for the same runtime collapses onto it |
+| turn.started | `turn:<runtimeId>:<start hrc_seq>:started` |
+| turn.ended | `turn:<runtimeId>:<start hrc_seq>:ended` |
 
 For births: the key is the **host session id**, which is unique per birth. Retries of the
 same birth collapse onto one row; a rotation is a different host session id and
 never collapses onto its prior. Replay returns the same uuid with
 `created: false` and does **not** overwrite the stored attributes.
 
+## `turn.*` activity (T-10086)
+
+| type | meaning |
+| --- | --- |
+| `turn.started` | A runtime began a turn. |
+| `turn.ended` | That turn stopped. |
+
+The publisher pairs in `hrc_seq` order per `runtime_id`, using
+`<runtimeId>:<start hrc_seq>` as the turn key. `run_id` is optional and never
+participates in pairing. A start closes any open turn with `end=superseded`
+before publishing the next start. A terminal closes the open turn; orphan and
+duplicate terminals post nothing. Runtime ends publish `session.ended` and
+close an open turn with `end=runtime_ended`.
+
+The observed terminal kinds are `turn.completed`, `turn.failed` and
+`turn.reaped`, copied as `end=completed|failed|reaped`. `interrupted` is reserved
+by the vocabulary but is not tailed until that kind appears in HRC's ledger.
+No prompt, message or tool text is published.
+
+Attributes appear in this order: `source=hrc-server`, `node`, `seat`, `agent`
+(when named), `task` (when task-scoped), `session`, `generation`, `runtime_id`,
+`turn`, `run_id` (when known on either event), then on ended only `end` and
+`duration_ms`. The envelope uses the same affiliation rule and full session ref
+as `session.*`. `occurredAt` is the source event's `ts`; `duration_ms` is the
+end's `ts` minus the start's `ts`. Summaries are one line, for example
+`cody turn ended (completed, 3m12s) at hrc-runtime:T-10086 on max3`.
+
+Open turns are rebuilt lazily from the latest local, non-retained start,
+terminal or runtime end strictly before the event being processed. This cut
+keeps a terminal beyond the saved cursor from hiding the start it must close.
+Only open turns remain in memory; there is no separate store. Replays retain
+the same turn key and idempotency keys. All facts use the per-session posting
+chain, including superseded closes before new starts.
+
+### Status projection (consumer-side)
+
+| status | meaning |
+| --- | --- |
+| offline | The latest `session.*` fact is `ended`. |
+| busy since t | A live runtime with an open `turn.started`. |
+| idle | A live runtime with no open turn. |
+| unknown | An open turn but no live runtime, or busy longer than 6 h. Never shown as busy. |
+
+"Busy on what" is a join, not a producer field. wrkq records envelope delivery
+as `presentedTo` (`runtimeId`, `presentedAt`). The trigger is the envelope
+delivered to that runtime whose `presentedAt` is closest to `turn.started`
+within **±5 s**. Delivery can follow the start because launch-carried mail is
+receipted after the injector observes it. With none, the trigger is unattributed
+(an operator prompt, scheduled turn or continuation).
+
+Idle while owing a reply (an idle seat with a reply-required envelope still
+pending) is the signal this activity makes visible. A lost ended post leaves
+the turn open until a superseding start, runtime end or unknown after 6 h. A
+lost started post makes the turn invisible, which is acceptable.
+
+`wrkp log` hides `turn.*` by default (owned by wrkq, T-10087); read activity with
+`wrkp log hrc-runtime --type 'turn.*'` or `--all-types`. `wrkp types` still lists
+these types. Awaiting-input and input-resumed activity is outside v1.
+
 ## Stability promise
 
-- The two type names are stable. A new `session.*` type may be added; an
-  existing one is never repurposed or renamed.
+- The declared `session.*` and `turn.*` type names are stable. New types
+  may be added; an existing one is never repurposed or renamed.
 - A listed attribute key is never renamed or given a different meaning. A key
   may be added — consumers must tolerate unknown keys — and a key marked
   "when …" may be absent.
