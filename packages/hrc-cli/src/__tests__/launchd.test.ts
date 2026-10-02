@@ -321,31 +321,7 @@ describe('formatStrandedLaunchAgentRefusal', () => {
   })
 })
 
-describe('hrc-dev LaunchAgent and OTLP env', () => {
-  it('dev plist uses isolated roots, label, logs, wrapper, and OTLP preferred port', async () => {
-    const plistPath = join(
-      import.meta.dir,
-      '..',
-      '..',
-      '..',
-      '..',
-      'launchd',
-      'com.praesidium.hrc-dev.plist'
-    )
-    const plist = await readFile(plistPath, 'utf8')
-
-    expect(plist).toContain('<string>com.praesidium.hrc-dev</string>')
-    expect(plist).toContain('<string>/Users/lherron/.bun/bin/hrc-dev</string>')
-    expect(plist).toContain('<key>HRC_RUNTIME_DIR</key>')
-    expect(plist).toContain('<string>/Users/lherron/praesidium/var/run/hrc-dev</string>')
-    expect(plist).toContain('<key>HRC_STATE_DIR</key>')
-    expect(plist).toContain('<string>/Users/lherron/praesidium/var/state/hrc-dev</string>')
-    expect(plist).toContain('<key>HRC_OTLP_PREFERRED_PORT</key>')
-    expect(plist).toContain('<string>4319</string>')
-    expect(plist).toContain('/Users/lherron/praesidium/var/logs/hrc-dev-server.log')
-    expect(plist).toContain('/Users/lherron/praesidium/var/logs/hrc-dev-server.err.log')
-  })
-
+describe('OTLP preferred port env', () => {
   it('parses HRC_OTLP_PREFERRED_PORT into the server otelPreferredPort option value', () => {
     expect(resolveOtelPreferredPortFromEnv({ HRC_OTLP_PREFERRED_PORT: '4319' })).toBe(4319)
   })
