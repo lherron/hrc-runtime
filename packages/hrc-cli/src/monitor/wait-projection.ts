@@ -3,6 +3,7 @@ import type {
   HrcMonitorEvent,
   HrcMonitorMessageState,
   HrcMonitorState,
+  SessionIdentity,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import {} from './selector-shape.js'
@@ -11,6 +12,7 @@ import { mergeByKey } from './wait-selector-state.js'
 export type SelectorState = Pick<HrcMonitorState, 'sessions' | 'runtimes' | 'messages'>
 
 export type MonitorRuntimeSource = {
+  identity?: SessionIdentity | undefined
   runtimeId: string
   hostSessionId: string
   scopeRef?: string | undefined
@@ -130,6 +132,7 @@ export function escapeLike(value: string): string {
 }
 
 export function toMonitorEvent(event: {
+  identity?: SessionIdentity | undefined
   hrcSeq: number
   ts: string
   eventKind: string
@@ -150,8 +153,9 @@ export function toMonitorEvent(event: {
     seq: event.hrcSeq,
     ts: event.ts,
     event: monitorEvent,
-    sessionRef: `${event.scopeRef}/lane:${event.laneRef}`,
+    sessionRef: `${event.scopeRef}/lane:${event.laneRef.replace(/^lane:/, '')}`,
     scopeRef: event.scopeRef,
+    identity: event.identity,
     laneRef: event.laneRef,
     hostSessionId: event.hostSessionId,
     generation: event.generation,

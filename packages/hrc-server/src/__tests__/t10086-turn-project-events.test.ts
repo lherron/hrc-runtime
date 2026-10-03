@@ -41,6 +41,22 @@ describe('T-10086 — turn facts from the durable ledger', () => {
 
   beforeEach(() => {
     db = openHrcDatabase(':memory:')
+    const now = '2026-10-02T20:00:00.000Z'
+    db.sessions.insert({
+      hostSessionId: 'hs-turns',
+      scopeRef: seat,
+      laneRef: 'default',
+      generation: 1,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    })
+    db.continuities.upsert({
+      scopeRef: seat,
+      laneRef: 'default',
+      activeHostSessionId: 'hs-turns',
+      updatedAt: now,
+    })
     posts = []
     publisher = startPublisher()
   })

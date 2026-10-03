@@ -38,6 +38,7 @@ export type AttachParticipantResponse =
       attachEpoch: number
       /** True when this exact call performed the preparation, not a retry. */
       prepared: boolean
+      rejectedMetadata?: import('hrc-core').SessionMetadataRejection[] | undefined
       observation: { state: 'attached'; detail: string }
     }
   | {
@@ -313,6 +314,17 @@ export async function handleAttachParticipant(
   const located = locateAttachTarget(this, body)
   if (!located.ok) return json(located.response, located.response.status === 'rejected' ? 409 : 200)
   const { registration, attempt } = located
+  const writeMetadata = () =>
+    rawBody !== null && typeof rawBody === 'object' && Object.hasOwn(rawBody, 'metadata')
+      ? this.db.sessionMetadata.write({
+          scopeRef: registration.scopeRef,
+          laneRef: registration.laneRef,
+          source: 'launch',
+          replace: true,
+          set: (rawBody as Record<string, unknown>)['metadata'],
+          updatedBy: registration.registrationId,
+        }).rejected
+      : []
 
   if (body.kind === 'resume-unsupported') {
     // Persist the outcome, retain the selection, leave addressed input pending.
@@ -443,6 +455,7 @@ export async function handleAttachParticipant(
       if (notLive !== null) return json(notLive, notLive.status === 'rejected' ? 409 : 200)
       return json({
         status: 'attached',
+        rejectedMetadata: writeMetadata(),
         registrationId: registration.registrationId,
         attemptId: attempt.attemptId,
         attachEpoch: attempt.attachEpoch,
@@ -493,6 +506,7 @@ export async function handleAttachParticipant(
   }
   return json({
     status: 'attached',
+    rejectedMetadata: writeMetadata(),
     registrationId: registration.registrationId,
     attemptId: attempt.attemptId,
     attachEpoch: attempt.attachEpoch,

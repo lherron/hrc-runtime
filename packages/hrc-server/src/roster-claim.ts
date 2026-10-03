@@ -10,6 +10,7 @@ import {
   type SuffixStartRuntimeRequest,
 } from 'hrc-core'
 import { ROSTER_SLOT_TOKENS } from 'hrc-core'
+import { formatSessionRef } from './messages.js'
 
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 
@@ -210,7 +211,8 @@ export async function startSuffixRosterRuntime(
     claim: {
       slot: outcome.slot,
       scopeRef: outcome.session.scopeRef,
-      sessionRef: `${outcome.session.scopeRef}/lane:${outcome.session.laneRef}`,
+      identity: outcome.session.identity,
+      sessionRef: formatSessionRef(outcome.session.scopeRef, outcome.session.laneRef),
       hostSessionId: outcome.session.hostSessionId,
       idempotencyKey: request.idempotencyKey,
       replayed: outcome.replayed,

@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { parseScopeRef as parseFixtureScope } from 'agent-scope'
+import type { SessionIdentity } from 'hrc-core'
 
 import { cmdMonitorWatch } from '../monitor-watch'
 
@@ -9,6 +11,7 @@ const WORKER_SCOPE = `agent:worker:project:hrc-runtime:task:${TASK_ID}:role:test
 const OTHER_SCOPE = `agent:intruder:project:hrc-runtime:task:${OTHER_TASK_ID}:role:tester`
 
 type FixtureEvent = {
+  identity: SessionIdentity
   seq: number
   hrcSeq: number
   streamSeq: number
@@ -89,6 +92,7 @@ function fixtureEvent(
     category: eventKind.split('.')[0] ?? 'turn',
     sessionRef: `${scopeRef}/lane:main`,
     scopeRef,
+    identity: parseFixtureScope(scopeRef),
     laneRef: 'main',
     hostSessionId: identity.hostSessionId,
     generation: 1,
@@ -113,6 +117,7 @@ function fixtureState(
       return {
         sessionRef: `${scopeRef}/lane:main`,
         scopeRef,
+        identity: parseFixtureScope(scopeRef),
         laneRef: 'main',
         hostSessionId: identity.hostSessionId,
         generation: 1,

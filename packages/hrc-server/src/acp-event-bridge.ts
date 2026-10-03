@@ -19,8 +19,7 @@
  * `hrc runtime diagnostics <trip-event-id>`, so the secret boundary stays inside
  * HRC and the bridge cannot become an exfiltration seam.
  */
-import { parseScopeRef } from 'agent-scope'
-import type { HrcDispatchOrigin, HrcLifecycleEvent, HrcRunRecord } from 'hrc-core'
+import type { HrcDispatchOrigin, HrcLifecycleEvent, HrcRunRecord, SessionIdentity } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { writeServerLog } from './server-log.js'
@@ -235,19 +234,15 @@ export function resolveBridgedOrigin(
  * then leaves the run unattributed rather than inventing an actor.
  */
 export function dispatchOriginFromMessageAddress(
-  from: { kind: 'session'; sessionRef: string } | { kind: 'entity'; entity: 'human' | 'system' }
+  from: { kind: 'session'; sessionRef: string } | { kind: 'entity'; entity: 'human' | 'system' },
+  identity?: SessionIdentity
 ): HrcDispatchOrigin | undefined {
   if (from.kind === 'entity') {
     return from.entity === 'human'
       ? { actor: 'human', kind: 'human' }
       : { ...ACP_BRIDGE_SYSTEM_ORIGIN }
   }
-  let agentId: string
-  try {
-    agentId = parseScopeRef(from.sessionRef).agentId
-  } catch {
-    return undefined
-  }
+  const agentId = identity?.agentId
   if (typeof agentId !== 'string' || agentId.length === 0) return undefined
   return { actor: `agent:${agentId}`, kind: 'agent' }
 }

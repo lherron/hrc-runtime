@@ -1,3 +1,4 @@
+import type { SessionIdentity } from './session-metadata.js'
 export type SessionEffectiveStatus = 'active' | 'detached' | 'inactive' | 'stale'
 export type SessionExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
 
@@ -45,6 +46,7 @@ export type SessionPageRequest = SessionPageFilters & {
 export type SessionFacetsRequest = SessionPageFilters
 
 export type SessionPageItem = {
+  identity?: SessionIdentity | undefined
   nodeId: string
   hostSessionId: string
   title?: string | undefined

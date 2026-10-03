@@ -3,6 +3,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { CliUsageError } from 'cli-kit'
+import type { SessionIdentity } from 'hrc-core'
 import { ownerTaskTokens, resolveDatabasePath, taskOwnerId } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
@@ -34,6 +35,7 @@ export interface LiveRuntimeOccupancy {
   runtimeId: string
   status: string
   scopeRef: string
+  identity?: SessionIdentity | undefined
   cwd?: string
 }
 
@@ -287,6 +289,7 @@ function defaultLiveRuntimeOccupancies(): LiveRuntimeOccupancy[] {
           runtimeId: runtime.runtimeId,
           status: runtime.status,
           scopeRef: runtime.scopeRef,
+          identity: runtime.identity,
           ...(cwd ? { cwd } : {}),
         }
       })
@@ -308,21 +311,6 @@ function pathContains(root: string, candidate: string): boolean {
   return suffix === '' || (!suffix.startsWith('..') && !isAbsolute(suffix))
 }
 
-function scopeProject(scopeRef: string): string | undefined {
-  return /(?:^|:)project:([^:]+)/.exec(scopeRef)?.[1]
-}
-
-/**
- * The task a scope holds for occupancy: a seat on subtask `T-12345.slug` holds
- * its owner `T-12345`, whose worktree it works in.
- */
-function scopeTask(scopeRef: string): string | undefined {
-  const selector = /(?:^|:)task:([^:/]+)(?:[:/]|$)/.exec(scopeRef)?.[1]
-  if (selector === undefined) return undefined
-  // Never narrower than the pre-grammar matcher: a legacy `T-<n>` scope still holds.
-  return taskOwnerId(selector) ?? /^T-\d+$/.exec(selector)?.[0]
-}
-
 function occupyingRuntime(
   occupancies: LiveRuntimeOccupancy[],
   projectId: string,
@@ -334,11 +322,10 @@ function occupyingRuntime(
 
     // Older runtime rows may lack a persisted spec projection. A live exact
     // project/task binding is enough to refuse conservatively.
-    const taskId = scopeTask(runtime.scopeRef)
+    const selector = runtime.identity?.taskId
+    const taskId = selector ? (taskOwnerId(selector) ?? /^T-\d+$/.exec(selector)?.[0]) : undefined
     return (
-      scopeProject(runtime.scopeRef) === projectId &&
-      taskId !== undefined &&
-      taskIds.includes(taskId)
+      runtime.identity?.projectId === projectId && taskId !== undefined && taskIds.includes(taskId)
     )
   })
 }

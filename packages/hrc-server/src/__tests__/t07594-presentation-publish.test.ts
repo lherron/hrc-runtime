@@ -113,6 +113,12 @@ function seedSession(
   options: { viewerWindow?: string; operator?: 'none' | 'tmux-tui' } = {}
 ): void {
   const { viewerWindow, operator } = options
+  fixture.db.continuities.upsert({
+    scopeRef: SCOPE_REF,
+    laneRef: LANE_REF,
+    activeHostSessionId: HOST_SESSION_ID,
+    updatedAt: PAST,
+  })
   fixture.db.sessions.insert({
     hostSessionId: HOST_SESSION_ID,
     scopeRef: SCOPE_REF,

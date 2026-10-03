@@ -490,7 +490,7 @@ export async function executeSemanticTurn(
       submissionDoor: 'enqueue',
       responseFormat: body.responseFormat,
       // T-07236: see above — provenance from the durable DM sender.
-      ...originDispatchOption(body.from),
+      ...originDispatchOption(body.from, this.db),
       // T-07202: a semantic DM can cross another DM while an interactive
       // broker is still cold-provisioning. Join that host-session boot and
       // deliver this DM through its winning runtime instead of minting a

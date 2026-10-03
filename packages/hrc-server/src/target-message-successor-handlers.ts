@@ -16,7 +16,7 @@ import type {
 } from 'hrc-core'
 import { resolveNodeLocalPlacement } from './federation/summon-capability.js'
 import { withSummonAuthority } from './federation/summon-gate-server.js'
-import { extractProjectId, formatSessionRef, normalizeTargetLane } from './messages.js'
+import { formatSessionRef, normalizeTargetLane } from './messages.js'
 import { assertReservedAddressAllowsBirth } from './participant-address-provisioning.js'
 import { requireSession } from './require-helpers.js'
 import { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
@@ -57,7 +57,7 @@ export function handleListTargets(this: HrcServerInstanceForHandlers, url: URL):
     ) {
       continue
     }
-    if (projectId && extractProjectId(session.scopeRef) !== projectId) {
+    if (projectId && session.identity?.projectId !== projectId) {
       continue
     }
     if (laneRef && normalizeTargetLane(session.laneRef) !== laneRef) {
@@ -351,7 +351,7 @@ export function archiveIdleSessions(
       skippedApp += 1
       continue
     }
-    if (isPrimaryScopeRef(session.scopeRef)) {
+    if (session.identity?.taskId === undefined || session.identity.taskId === 'primary') {
       skippedPrimary += 1
       continue
     }
@@ -375,20 +375,13 @@ export function archiveIdleSessions(
   return { archived, skippedPrimary, skippedNotIdle, skippedNoContinuation, skippedApp }
 }
 
-function isPrimaryScopeRef(scopeRef: string): boolean {
-  return scopeRef.endsWith(':task:primary') || !scopeRef.includes(':task:')
-}
-
 async function normalizeLocalProjectSuccessorIntent(
   scopeRef: string,
+  projectId: string | undefined,
   intent: HrcRuntimeIntent | undefined,
   origin: 'local' | 'federated-ingress'
 ): Promise<HrcRuntimeIntent | undefined> {
-  if (
-    intent === undefined ||
-    origin === 'federated-ingress' ||
-    extractProjectId(scopeRef) === undefined
-  ) {
+  if (intent === undefined || origin === 'federated-ingress' || projectId === undefined) {
     return intent
   }
 
@@ -435,6 +428,7 @@ export async function createNotifiedSessionSuccessor(
   assertReservedAddressAllowsBirth(server, session.scopeRef, session.laneRef)
   const capabilityIntent = await normalizeLocalProjectSuccessorIntent(
     session.scopeRef,
+    session.identity?.projectId,
     intent ??
       (session.lastAppliedIntentJson === undefined
         ? undefined

@@ -319,6 +319,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "boundedText",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|boundedText|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "BROKER_TO_HRC_LIFECYCLE_KIND",
       "kind": "value",
       "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
@@ -1151,6 +1159,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "flattenSessionMetadata",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|flattenSessionMetadata|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "formatAppSessionScopeRef",
       "kind": "value",
       "file": "packages/hrc-core/src/app-session-scope.ts",
@@ -1195,6 +1211,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|formatSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "formatSessionIdentityHandle",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|formatSessionIdentityHandle|value",
       "count": 1
     },
     {
@@ -1283,6 +1307,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|HealthResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "hexColor",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|hexColor|value",
       "count": 1
     },
     {
@@ -1475,6 +1507,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/server-lifecycle.ts",
       "hash": "hrc-core|HRC_SERVER_LAUNCHD_LABEL|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_SESSION_METADATA_CHANGED_EVENT",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|HRC_SESSION_METADATA_CHANGED_EVENT|value",
       "count": 1
     },
     {
@@ -3047,6 +3087,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcSessionMetadataChangedEventPayload",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|HrcSessionMetadataChangedEventPayload|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcSessionRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-records.ts",
@@ -3871,6 +3919,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "nestSessionMetadata",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|nestSessionMetadata|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "normalizeCorrelation",
       "kind": "value",
       "file": "packages/hrc-core/src/invocation-exposure.ts",
@@ -4003,6 +4059,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/placement-policy.ts",
       "hash": "hrc-core|parseWorktreePorcelain|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PatchSessionMetadataRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|PatchSessionMetadataRequest|type",
       "count": 1
     },
     {
@@ -4251,6 +4315,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RegisterBridgeTargetResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "REGISTERED_SESSION_METADATA",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|REGISTERED_SESSION_METADATA|value",
       "count": 1
     },
     {
@@ -4655,6 +4727,134 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "SESSION_METADATA_KEY_MAX_BYTES",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SESSION_METADATA_KEY_MAX_BYTES|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SESSION_METADATA_MAX_KEYS",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SESSION_METADATA_MAX_KEYS|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SESSION_METADATA_VALUE_MAX_BYTES",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SESSION_METADATA_VALUE_MAX_BYTES|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SESSION_TITLE_MAX_LENGTH",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SESSION_TITLE_MAX_LENGTH|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionGetResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionGetResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionIdentity",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionIdentity|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionMetadata",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionMetadata|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionMetadataRejection",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionMetadataRejection|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionMetadataResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionMetadataResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionMetadataScalar",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionMetadataScalar|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionMetadataSource",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionMetadataSource|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionMetadataSourceRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionMetadataSourceRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionMetadataSources",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionMetadataSources|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionMetadataTarget",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionMetadataTarget|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionMetadataValidation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionMetadataValidation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionMetadataValue",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|SessionMetadataValue|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "sessionRefFor",
       "kind": "value",
       "file": "packages/hrc-core/src/invocation-exposure.ts",
@@ -4967,6 +5167,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "truncateMetadataUpdatedBy",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|truncateMetadataUpdatedBy|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "UnbindSurfaceRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
@@ -4987,6 +5195,22 @@
       "kind": "value",
       "file": "packages/hrc-core/src/fences.ts",
       "hash": "hrc-core|validateFence|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "validateSessionMetadata",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|validateSessionMetadata|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "validateSessionMetadataEntry",
+      "kind": "value",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-core|validateSessionMetadataEntry|value",
       "count": 1
     },
     {
@@ -5919,6 +6143,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "PatchSessionMetadataRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-sdk|PatchSessionMetadataRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "ProfileAwareResolvedScopeInput",
       "kind": "type",
       "file": "packages/hrc-sdk/src/resolve-scope.ts",
@@ -6187,6 +6419,62 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|SessionFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionGetResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-sdk|SessionGetResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionIdentity",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-sdk|SessionIdentity|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionMetadata",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-sdk|SessionMetadata|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionMetadataResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-sdk|SessionMetadataResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionMetadataSources",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-sdk|SessionMetadataSources|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionMetadataTarget",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-sdk|SessionMetadataTarget|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionMetadataValue",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-metadata.ts",
+      "hash": "hrc-sdk|SessionMetadataValue|type",
       "count": 1
     },
     {

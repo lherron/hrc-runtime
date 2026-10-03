@@ -3,13 +3,14 @@ import {
   HrcErrorCode,
   type HrcSessionRecord,
   HrcUnprocessableEntityError,
+  validateSessionMetadataEntry,
 } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import { type HrcDatabase, canonicalLaneRef } from 'hrc-store-sqlite'
 import { writeServerLog } from './server-log.js'
 import { isRecord } from './server-parsers.js'
 import { json } from './server-util.js'
 
-export const SESSION_TITLE_MAX_LENGTH = 200
+export { SESSION_TITLE_MAX_LENGTH } from 'hrc-core'
 
 /** The selector is admitted only by the six rev11 execution-creating doors. */
 export const FORMAT2_CAPABLE_INGRESS_PATHS = new Set([
@@ -68,52 +69,15 @@ export function parseSessionTitleWriteInput(value: unknown): SessionTitleWriteIn
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
   const title = value['title']
-  const source = value['source']
-  const model = value['model']
   const force = value['force']
-  if (typeof title !== 'string' || title.trim().length === 0) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'title is required', {
+  const validated = validateSessionMetadataEntry('title', title)
+  if (validated.reason)
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, validated.reason, {
       field: 'title',
     })
-  }
-  // Titles are rendered unescaped into a terminal and are destined to be
-  // model-generated, so the write boundary is the only place to bound them.
-  const normalizedTitle = title.trim()
-  if (normalizedTitle.length > SESSION_TITLE_MAX_LENGTH) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      `title must be at most ${SESSION_TITLE_MAX_LENGTH} characters`,
-      { field: 'title', maxLength: SESSION_TITLE_MAX_LENGTH, length: normalizedTitle.length }
-    )
-  }
-  if (hasControlCharacters(normalizedTitle)) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'title must not contain control characters',
-      { field: 'title' }
-    )
-  }
-  if (source !== 'generated' && source !== 'manual') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'source must be generated or manual',
-      { field: 'source' }
-    )
-  }
-  if (model !== undefined && typeof model !== 'string') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'model must be a string', {
-      field: 'model',
-    })
-  }
-  if (force !== undefined && typeof force !== 'boolean') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'force must be a boolean', {
-      field: 'force',
-    })
-  }
   return {
-    title: normalizedTitle,
-    source,
-    ...(model === undefined ? {} : { model }),
+    title: validated.value as string,
+    source: 'manual',
     force: force === true,
   }
 }
@@ -148,6 +112,10 @@ export function decorateSessionTitles(
   )
   return sessions.map((session) => {
     const title = titles.get(session.hostSessionId)
-    return title === undefined ? session : { ...session, title }
+    return {
+      ...session,
+      laneRef: canonicalLaneRef(session.laneRef),
+      ...(title === undefined ? {} : { title }),
+    }
   })
 }

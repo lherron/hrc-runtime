@@ -1,5 +1,4 @@
 import { admissionLabel } from 'agent-action-render'
-import { parseScopeRef, validateScopeRef } from 'agent-scope'
 import { createLogger } from './logger.js'
 import type {
   RuntimeContentBlock,
@@ -14,6 +13,7 @@ export type HrcLifecycleEventPayload = {
   hrcSeq: number
   eventKind: string
   scopeRef: string
+  identity?: { projectId?: string | undefined } | undefined
   laneRef?: string | undefined
   runId?: string | undefined
   payload: unknown
@@ -39,21 +39,6 @@ function getString(record: Record<string, unknown>, key: string): string | undef
 function getBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
   const value = record[key]
   return typeof value === 'boolean' ? value : undefined
-}
-
-/**
- * Derives a project ID from a scope ref. Returns undefined for project-less
- * scopes, which causes the adapter to drop the event. This is correct for
- * consumers that require project-qualified targets (e.g. Discord bindings,
- * hrcchat turn). The `hrcchat turn` command always supplies project-qualified
- * targets, so this contract assumption is safe.
- */
-function deriveProjectId(scopeRef: string): string | undefined {
-  const validation = validateScopeRef(scopeRef)
-  if (!validation.ok) {
-    return undefined
-  }
-  return parseScopeRef(scopeRef).projectId
 }
 
 function laneIdFromRef(laneRef: string): string {
@@ -297,7 +282,7 @@ function adaptEventByKind(
 export function adaptHrcLifecycleEvent(
   event: HrcLifecycleEventPayload
 ): SessionEventEnvelope | undefined {
-  const projectId = deriveProjectId(event.scopeRef)
+  const projectId = event.identity?.projectId
   const sessionRef = canonicalSessionRefFromEvent(event)
   const runId = event.runId?.trim()
 

@@ -43,19 +43,19 @@ type Parsed = {
   scopeLabel: string
 }
 
-/** Pull the agent/project/task out of `agent:<a>:project:<p>:task:<t>`. */
-export function parseScopeRef(scopeRef: string): Parsed {
-  const agent = scopeRef.match(/agent:([^:]+)/)?.[1] ?? scopeRef
-  const project = scopeRef.match(/:project:([^:]+)/)?.[1]
-  const task = scopeRef.match(/:task:([^:]+)/)?.[1]
-  let scopeLabel: string
-  if (project) {
-    scopeLabel = task ? `${project}:${task}` : project
-  } else {
-    // No project segment (e.g. `agent:foo`): show whatever trails the agent.
-    const tail = scopeRef.replace(/^agent:[^:]+:?/, '')
-    scopeLabel = tail || '(agent root)'
-  }
+/** Historical sessions have no identity; preserve their raw address as the label. */
+export function sessionIdentity(session: HrcSessionRecord): Parsed {
+  const identity = session.identity
+  const agent = identity?.agentId ?? '(historical)'
+  const project = identity?.projectId
+  const task = identity?.taskId
+  const scopeLabel = project
+    ? task
+      ? `${project}:${task}`
+      : project
+    : identity
+      ? '(agent root)'
+      : session.scopeRef
   return { agent, project, task, scopeLabel }
 }
 
@@ -239,7 +239,7 @@ export function renderSessions(sessions: HrcSessionRecord[], opts: SessionRender
   // Group visible heads by the active key, groups ordered by most-recent activity.
   const groups = new Map<string, HrcSessionRecord[]>()
   for (const s of visible) {
-    const key = groupKeyFor(parseScopeRef(s.scopeRef), groupBy)
+    const key = groupKeyFor(sessionIdentity(s), groupBy)
     const list = groups.get(key) ?? []
     list.push(s)
     groups.set(key, list)
@@ -251,7 +251,7 @@ export function renderSessions(sessions: HrcSessionRecord[], opts: SessionRender
       ...visible.map(
         (s) =>
           (s.title === undefined
-            ? rowLabel(c, parseScopeRef(s.scopeRef), groupBy).width
+            ? rowLabel(c, sessionIdentity(s), groupBy).width
             : s.title.length) + laneSuffix(s).length
       )
     )
@@ -262,7 +262,7 @@ export function renderSessions(sessions: HrcSessionRecord[], opts: SessionRender
     lines.push(groupBy === 'project' ? c.magenta(groupName) : c.cyan(groupName))
     for (const s of rows) {
       const lane = laneSuffix(s)
-      const fallback = rowLabel(c, parseScopeRef(s.scopeRef), groupBy)
+      const fallback = rowLabel(c, sessionIdentity(s), groupBy)
       const colored = s.title === undefined ? fallback.colored : c.bold(s.title)
       const width = s.title === undefined ? fallback.width : s.title.length
       const label = colored + (lane ? c.yellow.bold(lane) : '')

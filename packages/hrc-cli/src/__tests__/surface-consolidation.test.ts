@@ -60,6 +60,7 @@ describe('consolidated hrc command graph', () => {
       'list',
       'get',
       'rotate',
+      'meta',
       'retitle',
       'drop-continuation',
     ])

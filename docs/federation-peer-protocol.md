@@ -21,6 +21,8 @@ availability is discovered from health capabilities and route presence.
 | `POST` | `/v1/federation/exact-start` | Provision one exact scope on its authoritative home. |
 | `GET` | `/v1/sessions/page` | Read a bounded node-local session page. |
 | `GET` | `/v1/sessions/facets` | Read node-local session facets. |
+| `GET` | `/v1/sessions/get` | Read the home-node continuity, identity, facts and resolved metadata without creating a session. |
+| `GET` / `PATCH` | `/v1/sessions/metadata` | Read or patch API metadata on the continuity home; cosmetic writes need no additional authority check. |
 | `POST` | `/v1/federation/history/replicate` | Replicate one collective-history record. |
 | `POST` | `/v1/federation/history/query` | Query collective history. |
 | `POST` | `/v1/federation/history/checkpoint` | Record a history checkpoint. |

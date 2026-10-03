@@ -373,6 +373,7 @@ export function toMonitorSessionState(
   return {
     sessionRef: sessionRefFor(session.scopeRef, session.laneRef),
     scopeRef: session.scopeRef,
+    identity: session.identity,
     laneRef: normalizeLaneRef(session.laneRef),
     hostSessionId: session.hostSessionId,
     generation: session.generation,
@@ -388,6 +389,7 @@ export function toMonitorSessionFromRuntime(
   return {
     sessionRef: sessionRefFor(runtime.scopeRef, runtime.laneRef),
     scopeRef: runtime.scopeRef,
+    identity: runtime.identity,
     laneRef: normalizeLaneRef(runtime.laneRef),
     hostSessionId: runtime.hostSessionId,
     generation: runtime.generation,
@@ -400,6 +402,7 @@ export function toMonitorSessionFromRuntime(
 export function toMonitorRuntimeState(runtime: MonitorRuntimeSource): HrcMonitorRuntimeState {
   return {
     runtimeId: runtime.runtimeId,
+    identity: runtime.identity,
     hostSessionId: runtime.hostSessionId,
     ...(runtime.scopeRef !== undefined ? { scopeRef: runtime.scopeRef } : {}),
     ...(runtime.laneRef !== undefined ? { laneRef: runtime.laneRef } : {}),

@@ -121,6 +121,9 @@ export type PeerProtocolRequestHandlerOptions = {
   readonly health: (
     request: PeerProtocolHealthRequest
   ) => Promise<PeerProtocolHealth> | PeerProtocolHealth
+  readonly sessionMetadata?:
+    | ((request: { readonly request: Request; readonly url: URL }) => Promise<Response>)
+    | undefined
   readonly sessionPage?: ((request: { readonly url: URL }) => Promise<Response>) | undefined
   readonly sessionFacets?: ((request: { readonly url: URL }) => Promise<Response>) | undefined
   readonly establish?: PeerEstablishHandler | undefined
@@ -285,6 +288,15 @@ async function handleSessionIndexRequest(input: {
   url: URL
   options: PeerProtocolRequestHandlerOptions
 }): Promise<Response | undefined> {
+  if (
+    (input.url.pathname === '/v1/sessions/metadata' &&
+      ['GET', 'PATCH'].includes(input.request.method)) ||
+    (input.url.pathname === '/v1/sessions/get' && input.request.method === 'GET')
+  ) {
+    if (!input.options.sessionMetadata)
+      return refusal(404, 'peer_upgrade_required', { retryable: false })
+    return input.options.sessionMetadata({ request: input.request, url: input.url })
+  }
   if (input.request.method !== 'GET') return undefined
   if (input.url.pathname === '/v1/sessions/page') {
     if (input.options.sessionPage === undefined) {

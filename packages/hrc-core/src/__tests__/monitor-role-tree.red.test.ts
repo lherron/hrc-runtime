@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { parseScopeRef as parseFixtureScope } from 'agent-scope'
 
 import {
   type HrcMonitorEvent,
@@ -20,6 +21,7 @@ function session(
   return {
     sessionRef: `${scopeRef}/lane:${laneRef}`,
     scopeRef,
+    identity: parseFixtureScope(scopeRef),
     laneRef,
     hostSessionId: `host-${runtimeId}`,
     generation: options.generation ?? 1,
@@ -49,6 +51,7 @@ function event(
     seq,
     event: 'assistant.message.completed',
     scopeRef,
+    identity: parseFixtureScope(scopeRef),
     sessionRef: `${scopeRef}/lane:${laneRef}`,
     laneRef,
     hostSessionId: `host-${runtimeId}`,

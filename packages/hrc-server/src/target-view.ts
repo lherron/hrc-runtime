@@ -17,12 +17,7 @@ import type {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { canOperatorAttach, parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
-import {
-  formatSessionRef,
-  normalizeTargetLane,
-  normalizeTargetSessionRef,
-  targetLaneCandidates,
-} from './messages.js'
+import { formatSessionRef, normalizeTargetSessionRef, targetLaneCandidates } from './messages.js'
 import { isRuntimeUnavailableStatus, requireSession } from './require-helpers.js'
 import { findBoundSessionRuntime } from './runtime-select.js'
 import { type BridgeTargetRequest, parseSessionRef } from './server-parsers.js'
@@ -210,11 +205,13 @@ export function toTargetRuntimeView(
 export function toTargetView(db: HrcDatabase, session: HrcSessionRecord): HrcTargetView {
   const runtime = toTargetRuntimeView(findBoundSessionRuntime(db, session.hostSessionId))
   const state = toTargetState(session, runtime)
-  const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+  const laneId = session.laneRef.startsWith('lane:') ? session.laneRef.slice(5) : session.laneRef
+  const laneRef = laneId === 'main' || laneId === 'default' ? 'main' : `lane:${laneId}`
 
   return {
     sessionRef: formatSessionRef(session.scopeRef, session.laneRef),
     scopeRef: session.scopeRef,
+    identity: session.identity,
     laneRef,
     state,
     lastAppliedIntentJson: session.lastAppliedIntentJson,
@@ -234,11 +231,13 @@ export async function toTargetViewWithArtifactProbe(
   const runtime = toTargetRuntimeView(findBoundSessionRuntime(db, session.hostSessionId))
   const artifact = await probeContinuationArtifact(session, mode)
   const state = toTargetState(session, runtime, artifact)
-  const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+  const laneId = session.laneRef.startsWith('lane:') ? session.laneRef.slice(5) : session.laneRef
+  const laneRef = laneId === 'main' || laneId === 'default' ? 'main' : `lane:${laneId}`
 
   return {
     sessionRef: formatSessionRef(session.scopeRef, session.laneRef),
     scopeRef: session.scopeRef,
+    identity: session.identity,
     laneRef,
     state,
     lastAppliedIntentJson: session.lastAppliedIntentJson,

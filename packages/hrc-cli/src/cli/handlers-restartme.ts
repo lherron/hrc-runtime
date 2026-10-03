@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process'
 
-import { parseScopeRef } from 'agent-scope'
 import { HrcErrorCode, splitSessionRef } from 'hrc-core'
 
 import { isHrcDomainErrorLike } from './errors.js'
@@ -15,11 +14,12 @@ import { CliStatusExit, createClient, fatal, lifecycleCredentialHeaders } from '
 
 type CallerScope = { agentId: string; projectId: string }
 
-function callerScope(): CallerScope | undefined {
+async function callerScope(): Promise<CallerScope | undefined> {
   const sessionRef = process.env['HRC_SESSION_REF']?.trim()
   if (!sessionRef) return undefined
   try {
-    const parsed = parseScopeRef(splitSessionRef(sessionRef).scopeRef)
+    const parsed = (await createClient().getSessionByContinuity(splitSessionRef(sessionRef)))
+      .identity
     if (parsed.projectId === undefined) return undefined
     return { agentId: parsed.agentId, projectId: parsed.projectId }
   } catch {
@@ -102,7 +102,7 @@ export async function cmdRestartMe(opts: { handoff?: string; cancel?: boolean })
   const handoffId = opts.handoff?.trim()
   const cancel = opts.cancel === true
   if (cancel && handoffId !== undefined) fatal('--handoff and --cancel are mutually exclusive')
-  const scope = callerScope()
+  const scope = await callerScope()
   if (!cancel && !handoffId) {
     refuse(
       'handoff_required',

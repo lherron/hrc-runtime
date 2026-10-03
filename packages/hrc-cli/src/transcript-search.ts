@@ -53,11 +53,9 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-function scopeHandle(scopeRef: string | undefined): string {
-  if (!scopeRef) return '(unknown scope)'
-  const match = scopeRef.match(/^agent:([^:]+)(?::project:([^:]+))?(?::task:([^:]+))?/)
-  if (!match?.[1]) return scopeRef
-  return `${match[1]}${match[2] ? `@${match[2]}` : ''}${match[3] ? `:${match[3]}` : ''}`
+function scopeHandle(hit: TranscriptSearchHit): string {
+  if (!hit.agent) return hit.scopeRef ?? '(historical)'
+  return `${hit.agent}${hit.project ? `@${hit.project}` : ''}${hit.task ? `:${hit.task}` : ''}`
 }
 
 function stamp(iso: string): string {
@@ -100,9 +98,7 @@ export function renderTranscriptSearch(result: TranscriptSearchResponse): string
     const first = runtimes[0]?.hits[0]
     if (!first) continue
     const generations = first.scopeGenerationCount
-    lines.push(
-      `${scopeHandle(first.scopeRef)}${generations > 1 ? `   (${generations} generations)` : ''}`
-    )
+    lines.push(`${scopeHandle(first)}${generations > 1 ? `   (${generations} generations)` : ''}`)
     for (const runtime of runtimes) {
       const best = runtime.hits[0]
       if (!best) continue

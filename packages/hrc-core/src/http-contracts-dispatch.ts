@@ -1,4 +1,5 @@
 import type { HrcAttachmentRef as AttachmentRef } from './placement-conventions.js'
+import type { SessionIdentity } from './session-metadata.js'
 
 /**
  * Shared HTTP wire request/response DTOs consumed by both hrc-server and hrc-sdk.
@@ -74,6 +75,7 @@ export type ResolveSessionRequest = {
 }
 
 export type ResolveSessionFoundResponse = {
+  identity?: SessionIdentity | undefined
   found: true
   hostSessionId: string
   generation: number
@@ -110,6 +112,7 @@ export type EnsureRuntimeRequest = {
 }
 
 export type EnsureRuntimeResponse = {
+  identity?: SessionIdentity | undefined
   runtimeId: string
   hostSessionId: string
   transport: 'tmux'
@@ -202,6 +205,7 @@ export function isExactStartRuntimeRequest(
 
 /** The scope a claim-and-start request actually claimed. */
 export type StartRuntimeRosterClaim = {
+  identity?: SessionIdentity | undefined
   /**
    * Task token of the claimed scope. For `suffix` it is the slot that replaced
    * the base task token (e.g. `primary-nova`); for `reject` it is the exact
@@ -231,6 +235,7 @@ export type StartRuntimeResponse = (
       supportsInFlightInput: boolean
     }
 ) & {
+  identity?: SessionIdentity | undefined
   /** Present only for claim-and-start requests: `suffix` (T-07118) or `reject` (T-07302). */
   claim?: StartRuntimeRosterClaim | undefined
 }

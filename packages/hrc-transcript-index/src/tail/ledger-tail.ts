@@ -23,19 +23,6 @@ function isProse(type: string): boolean {
   return (TRANSCRIPT_PROSE as readonly string[]).includes(type)
 }
 
-function parseScopeFacets(scopeRef: string): {
-  agent?: string | undefined
-  project?: string | undefined
-  task?: string | undefined
-} {
-  const match = scopeRef.match(/^agent:([^:]+)(?::project:([^:]+))?(?::task:([^:]+))?/)
-  return {
-    ...(match?.[1] ? { agent: match[1] } : {}),
-    ...(match?.[2] ? { project: match[2] } : {}),
-    ...(match?.[3] ? { task: match[3] } : {}),
-  }
-}
-
 function emitSegment(
   context: TranscriptIndexerContext,
   invocationId: string,
@@ -55,7 +42,14 @@ function emitSegment(
   const scopeRef = runtime?.scopeRef
   return context.db.transcriptIndex.upsertTurn({
     ...document,
-    ...(scopeRef ? { scopeRef, ...parseScopeFacets(scopeRef) } : {}),
+    ...(scopeRef ? { scopeRef } : {}),
+    ...(runtime?.identity
+      ? {
+          agent: runtime.identity.agentId,
+          project: runtime.identity.projectId,
+          task: runtime.identity.taskId,
+        }
+      : {}),
     ...(runtime ? { generation: runtime.generation } : {}),
   })
 }

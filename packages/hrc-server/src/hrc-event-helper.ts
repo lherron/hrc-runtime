@@ -14,6 +14,8 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   // session-title write/clear becomes a ledger fact so a presentation consumer
   // can retitle from the stream instead of polling.
   'session.retitled': 'session',
+  'session.metadata.changed': 'session',
+  'session.metadata.rejected': 'session',
   'target.literal-input': 'app_session',
   'runtime.created': 'runtime',
   'runtime.ensured': 'runtime',

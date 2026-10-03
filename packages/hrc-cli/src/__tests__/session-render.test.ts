@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'bun:test'
+import { parseScopeRef as parseFixtureScope } from 'agent-scope'
 
 import type { HrcSessionRecord } from 'hrc-core'
 
 import { toLegacyArgv } from '../cli/argv'
 import { buildProgram } from '../cli/build-program'
 import {
-  parseScopeRef,
   parseSinceMs,
   relativeTime,
   renderPorcelain,
   renderSessions,
+  sessionIdentity,
   shortSessionId,
 } from '../session-render'
 
@@ -18,6 +19,7 @@ const NOW = new Date('2026-06-15T12:00:00.000Z')
 function session(over: Partial<HrcSessionRecord>): HrcSessionRecord {
   return {
     hostSessionId: 'hsid-ff6c1c65-4116-449c-a2df-547345fe1f4f',
+    identity: parseFixtureScope(over.scopeRef ?? 'agent:clod:project:hrc-runtime:task:primary'),
     scopeRef: 'agent:clod:project:hrc-runtime:task:primary',
     laneRef: 'main',
     generation: 1,
@@ -41,9 +43,11 @@ function dormantSession(over: Partial<HrcSessionRecord> = {}): HrcSessionRecord 
   })
 }
 
-describe('parseScopeRef', () => {
+describe('sessionIdentity', () => {
   it('splits agent and project:task label', () => {
-    expect(parseScopeRef('agent:clod:project:hrc-runtime:task:primary')).toEqual({
+    expect(
+      sessionIdentity(session({ scopeRef: 'agent:clod:project:hrc-runtime:task:primary' }))
+    ).toEqual({
       agent: 'clod',
       project: 'hrc-runtime',
       task: 'primary',
@@ -51,7 +55,7 @@ describe('parseScopeRef', () => {
     })
   })
   it('handles project without task', () => {
-    expect(parseScopeRef('agent:cody:project:agent-spaces')).toEqual({
+    expect(sessionIdentity(session({ scopeRef: 'agent:cody:project:agent-spaces' }))).toEqual({
       agent: 'cody',
       project: 'agent-spaces',
       task: undefined,
@@ -59,7 +63,7 @@ describe('parseScopeRef', () => {
     })
   })
   it('handles an agent-root scope', () => {
-    expect(parseScopeRef('agent:agent-minder')).toEqual({
+    expect(sessionIdentity(session({ scopeRef: 'agent:agent-minder' }))).toEqual({
       agent: 'agent-minder',
       project: undefined,
       task: undefined,

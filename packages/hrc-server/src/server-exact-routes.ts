@@ -11,6 +11,11 @@ import { handleListPresentationRuntimes } from './presentation-read-model.js'
 import { handleRestartSelf } from './self-restart.js'
 import { exactRouteKey } from './server-routing.js'
 import type { ExactRouteHandler } from './server-types.js'
+import {
+  handleGetSessionContinuity,
+  handleGetSessionMetadata,
+  handlePatchSessionMetadata,
+} from './session-metadata-handlers.js'
 import { legacyLaunchIngestRetired } from './session-title-helpers.js'
 import {
   handleTranscriptIndexRebuild,
@@ -34,6 +39,12 @@ export function buildExactRouteHandlers(
       server.handleRegisterParticipant(request),
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
       server.handleResolveSession(request),
+    [exactRouteKey('GET', '/v1/sessions/get')]: (_request, url) =>
+      handleGetSessionContinuity(server, url),
+    [exactRouteKey('GET', '/v1/sessions/metadata')]: (_request, url) =>
+      handleGetSessionMetadata(server, url),
+    [exactRouteKey('PATCH', '/v1/sessions/metadata')]: (request) =>
+      handlePatchSessionMetadata(server, request),
     [exactRouteKey('GET', '/v1/sessions')]: (_request, url) => server.handleListSessions(url),
     [exactRouteKey('GET', '/v1/sessions/page')]: (_request, url) => server.handleSessionPage(url),
     [exactRouteKey('GET', '/v1/sessions/facets')]: (_request, url) =>

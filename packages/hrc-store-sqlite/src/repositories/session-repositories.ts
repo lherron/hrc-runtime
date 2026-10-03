@@ -7,6 +7,7 @@ import type {
   HrcRuntimeIntent,
   HrcSessionRecord,
 } from 'hrc-core'
+import { deriveSessionIdentity, readSessionIdentity } from '../session-identity.js'
 import type { ContinuityChainRow, ContinuityRow, SessionRow } from './rows.js'
 import {
   type ContinuityUpsertInput,
@@ -16,7 +17,6 @@ import {
   mapSessionRow,
   requireRecord,
   serializeJson,
-  toSessionRef,
 } from './shared.js'
 
 type SessionWriteTimingContext = {
@@ -130,6 +130,9 @@ export class ContinuityRepository {
   }
 
   upsert(record: ContinuityUpsertInput): HrcContinuityRecord {
+    const identity =
+      readSessionIdentity(this.db, record.scopeRef, record.laneRef) ??
+      deriveSessionIdentity(record.scopeRef)
     execute(
       this.db,
       `
@@ -137,8 +140,8 @@ export class ContinuityRepository {
           scope_ref,
           lane_ref,
           active_host_session_id,
-          updated_at
-        ) VALUES (?, ?, ?, ?)
+          updated_at, scope_kind, agent_id, project_id, task_id, role_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(scope_ref, lane_ref) DO UPDATE SET
           active_host_session_id = excluded.active_host_session_id,
           updated_at = excluded.updated_at
@@ -146,7 +149,12 @@ export class ContinuityRepository {
       record.scopeRef,
       record.laneRef,
       record.activeHostSessionId,
-      record.updatedAt
+      record.updatedAt,
+      identity.kind,
+      identity.agentId,
+      identity.projectId ?? null,
+      identity.taskId ?? null,
+      identity.roleName ?? null
     )
 
     return requireRecord(
@@ -171,9 +179,10 @@ export class ContinuityRepository {
     }
 
     return {
-      sessionRef: toSessionRef(row.scope_ref, row.lane_ref),
+      sessionRef: `${row.scope_ref}/lane:${row.lane_ref.replace(/^lane:/, '')}`,
       scopeRef: row.scope_ref,
       laneRef: row.lane_ref,
+      identity: readSessionIdentity(this.db, row.scope_ref, row.lane_ref)!,
       activeHostSessionId: row.active_host_session_id,
       updatedAt: row.updated_at,
       priorHostSessionIds: this.derivePriorHostSessionIds(
@@ -227,6 +236,11 @@ export class ContinuityRepository {
 export class SessionRepository {
   constructor(private readonly db: Database) {}
 
+  private decorate(record: HrcSessionRecord): HrcSessionRecord {
+    const identity = readSessionIdentity(this.db, record.scopeRef, record.laneRef)
+    return { ...record, laneRef: record.laneRef, ...(identity ? { identity } : {}) }
+  }
+
   count(): number {
     const row = this.db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM sessions').get()
     return row?.count ?? 0
@@ -274,7 +288,7 @@ export class SessionRepository {
       )
       .get(hostSessionId)
 
-    return row ? mapSessionRow(row) : null
+    return row ? this.decorate(mapSessionRow(row)) : null
   }
 
   listByScopeRef(scopeRef: string, laneRef?: string | undefined): HrcSessionRecord[] {
@@ -458,7 +472,7 @@ export class SessionRepository {
         )
         .all(filters.scopeRef, filters.laneRef)
 
-      return rows.map(mapSessionRow)
+      return rows.map((row) => this.decorate(mapSessionRow(row)))
     }
 
     const rows = this.db
@@ -469,6 +483,6 @@ export class SessionRepository {
       )
       .all(filters.scopeRef)
 
-    return rows.map(mapSessionRow)
+    return rows.map((row) => this.decorate(mapSessionRow(row)))
   }
 }

@@ -32,6 +32,7 @@ import {
   type HrcExecutionFormat,
   type HrcRuntimeIntent,
   type HrcTurnResponseFormat,
+  type SessionIdentity,
   parseAppSessionScopeRef,
 } from 'hrc-core'
 import type {
@@ -110,8 +111,10 @@ export type BrokerCompileAdapterDeps = {
 
 export type BrokerCompileAdapterInput = {
   intent: HrcRuntimeIntent
-  /** The authoritative scope identity from which v2 derives agent.id. */
+  /** Incoming scope address for preview, or established continuity address. */
   scopeRef: string
+  /** Stored identity for an established session; previews parse their input address. */
+  sessionIdentity?: SessionIdentity | undefined
   hostSessionId: string
   generation: number
   /** Dispatch-time only channel; never hashed. Passed to startInvocationFromRequest at dispatch. */
@@ -138,6 +141,7 @@ export type BrokerCompileAdapterResult =
       /** Exact HRC-owned policy submitted in the v2 compile request. */
       hrcPolicy: RuntimeCompileRequest['hrcPolicy']
       /** Immutable worker release returned alongside the selected execution. */
+      sessionMetadata?: Record<string, unknown> | undefined
       executionRelease?: AspcExecutionRelease | undefined
       startRequest: InvocationStartRequest
       specHash: string
@@ -199,15 +203,15 @@ function toCompileAttachments(
 }
 
 /**
- * Project the already-established HRC scope into ASP's v2 agent identity.
+ * Project stored continuity identity into ASP's v2 agent identity.
  * App sessions are HRC-owned `app:<appId>` scopes and deliberately do not
  * satisfy agent-scope's `agent:<agentId>` grammar; their validated app id is
- * the v2 agent id. Every agent scope retains agent-scope's canonical parsing.
+ * the v2 agent id. Only a preview's incoming address needs agent-scope parsing.
  * This is identity projection only, never selection authority.
  */
-function v2AgentIdForScope(scopeRef: string): string {
+function v2AgentIdForScope(scopeRef: string, identity?: SessionIdentity): string {
   const app = parseAppSessionScopeRef(scopeRef)
-  return app?.appId ?? parseScopeRef(scopeRef).agentId
+  return app?.appId ?? identity?.agentId ?? parseScopeRef(scopeRef).agentId
 }
 
 function hasOwnKeys(value: Record<string, unknown>): boolean {
@@ -223,6 +227,7 @@ function hasOwnKeys(value: Record<string, unknown>): boolean {
 export function buildV2CompileRequest(input: {
   intent: HrcRuntimeIntent
   scopeRef: string
+  sessionIdentity?: SessionIdentity | undefined
   identity: RuntimeIdentityAllocation
   dispatchEnv?: Record<string, string> | undefined
   continuation?: RuntimeCompileRequest['continuation'] | undefined
@@ -279,7 +284,7 @@ export function buildV2CompileRequest(input: {
 
   return {
     schemaVersion: 'agent-runtime-compile-request/v2',
-    agent: { id: v2AgentIdForScope(input.scopeRef) },
+    agent: { id: v2AgentIdForScope(input.scopeRef, input.sessionIdentity) },
     identity: input.identity,
     placement,
     ...(hasOwnKeys(summonDirectives) ? { selectionContext: { summonDirectives } } : {}),
@@ -349,6 +354,7 @@ export async function compileBrokerRuntimePlan(
   const request = buildV2CompileRequest({
     intent,
     scopeRef: input.scopeRef,
+    sessionIdentity: input.sessionIdentity,
     identity,
     ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
     ...(input.continuation ? { continuation: input.continuation } : {}),
@@ -395,7 +401,7 @@ export async function compileBrokerRuntimePlan(
   const selection = admitV2Execution(
     response,
     identity,
-    v2AgentIdForScope(input.scopeRef),
+    v2AgentIdForScope(input.scopeRef, input.sessionIdentity),
     executionFormat,
     intent.presentation?.operator === 'tmux-tui' &&
       (intent.harness.provider !== undefined ||
@@ -436,6 +442,13 @@ export async function compileBrokerRuntimePlan(
 
   return {
     admitted: true,
+    ...((response as unknown as { sessionMetadata?: Record<string, unknown> }).sessionMetadata !==
+    undefined
+      ? {
+          sessionMetadata: (response as unknown as { sessionMetadata: Record<string, unknown> })
+            .sessionMetadata,
+        }
+      : {}),
     execution: selection.execution,
     hrcPolicy: deepFreeze(request.hrcPolicy),
     ...(responseRelease !== undefined ? { executionRelease: deepFreeze(responseRelease) } : {}),

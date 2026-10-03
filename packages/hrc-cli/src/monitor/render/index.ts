@@ -1,6 +1,10 @@
-import { parseScopeRef } from 'agent-scope'
 import chalk from 'chalk'
-import type { HrcEventCategory, HrcLifecycleEvent } from 'hrc-core'
+import {
+  type HrcEventCategory,
+  type HrcLifecycleEvent,
+  type SessionIdentity,
+  formatSessionIdentityHandle,
+} from 'hrc-core'
 import { booleanField, numberField, stringField } from '../../monitor-fields.js'
 import {
   type ParsedToolResult,
@@ -240,7 +244,7 @@ class CompactMonitorRenderer implements MonitorRenderer {
       lifecycle.launchId ? shortId(lifecycle.launchId, 'launch') : undefined,
     ].filter((part): part is string => part !== undefined)
     const suffix = ids.length > 0 ? ` ${chalk.dim(ids.join(' '))}` : ''
-    return `${chalk.dim(formatShortTime(lifecycle.ts))} ${chalk.cyan(formatCompactBadgeHandle(lifecycle.scopeRef))} ${lifecycle.eventKind}${suffix}\n`
+    return `${chalk.dim(formatShortTime(lifecycle.ts))} ${chalk.cyan(formatCompactBadgeHandle(lifecycle.scopeRef, lifecycle.identity))} ${lifecycle.eventKind}${suffix}\n`
   }
 
   flush(): string {
@@ -252,7 +256,9 @@ class VerboseMonitorRenderer implements MonitorRenderer {
   push(event: MonitorRenderableEvent): string {
     const lifecycle = toLifecycleEvent(event)
     const header = [
-      chalk.bgWhite.black.bold(` ${formatAgentHandle(lifecycle.scopeRef) ?? lifecycle.scopeRef} `),
+      chalk.bgWhite.black.bold(
+        ` ${formatAgentHandle(lifecycle.scopeRef, lifecycle.identity) ?? lifecycle.scopeRef} `
+      ),
       chalk.magenta(` ${lifecycle.category} `),
       chalk.bold(lifecycle.eventKind),
       chalk.dim(`#${lifecycle.hrcSeq} @${lifecycle.streamSeq} ${formatLongTime(lifecycle.ts)}`),
@@ -361,7 +367,7 @@ class TreeMonitorRenderer implements MonitorRenderer {
   }
 
   private scopeRule(event: HrcLifecycleEvent): string {
-    const handle = formatAgentHandle(event.scopeRef) ?? event.scopeRef
+    const handle = formatAgentHandle(event.scopeRef, event.identity) ?? event.scopeRef
     return this.hrule(
       `-- ${chalk.bgWhite.black.bold(` ${handle} `)} ${chalk.dim(`g:${event.generation}`)} `
     )
@@ -547,7 +553,7 @@ class TreeMonitorRenderer implements MonitorRenderer {
   }
 
   private prefix(event: HrcLifecycleEvent, glyph: string, label: string): string {
-    return `  ${chalk.dim(formatShortTime(event.ts))}  ${this.formatBadge(event.scopeRef)}  ${glyph} ${label}${this.eventMeta(event)}`
+    return `  ${chalk.dim(formatShortTime(event.ts))}  ${this.formatBadge(event.scopeRef, event.identity)}  ${glyph} ${label}${this.eventMeta(event)}`
   }
 
   private eventMeta(event: HrcLifecycleEvent): string {
@@ -557,8 +563,8 @@ class TreeMonitorRenderer implements MonitorRenderer {
     return parts.length > 0 ? `  ${chalk.dim(parts.join(' '))}` : ''
   }
 
-  private formatBadge(scopeRef: string): string {
-    const handle = formatCompactBadgeHandle(scopeRef)
+  private formatBadge(scopeRef: string, identity?: SessionIdentity): string {
+    const handle = formatCompactBadgeHandle(scopeRef, identity)
     const display =
       handle.length > this.scopeWidth
         ? `${handle.slice(0, this.scopeWidth - 1)}.`
@@ -591,6 +597,7 @@ function toLifecycleEvent(event: MonitorRenderableEvent): HrcLifecycleEvent {
     hostSessionId: stringField(event, 'hostSessionId') ?? '',
     scopeRef: stringField(event, 'scopeRef') ?? stringField(event, 'selector') ?? '',
     laneRef,
+    ...(event['identity'] ? { identity: event['identity'] as SessionIdentity } : {}),
     generation: numberField(event, 'generation') ?? 0,
     ...(stringField(event, 'runtimeId') ? { runtimeId: stringField(event, 'runtimeId') } : {}),
     ...((stringField(event, 'runId') ?? stringField(event, 'turnId'))
@@ -725,25 +732,17 @@ function glyphFor(event: HrcLifecycleEvent): string {
   return chalk.blue('*')
 }
 
-function formatAgentHandle(scopeRef: string): string | undefined {
-  try {
-    const parsed = parseScopeRef(scopeRef)
-    const base = parsed.projectId ? `${parsed.agentId}@${parsed.projectId}` : parsed.agentId
-    return parsed.taskId ? `${base}:${parsed.taskId}` : base
-  } catch {
-    return undefined
-  }
+function formatAgentHandle(scopeRef: string, identity?: SessionIdentity): string {
+  return identity ? formatSessionIdentityHandle(identity) : scopeRef
 }
-
-function formatCompactBadgeHandle(scopeRef: string): string {
-  try {
-    const parsed = parseScopeRef(scopeRef)
-    if (parsed.taskId !== undefined) return `${parsed.agentId}:${parsed.taskId}`
-    if (parsed.projectId !== undefined) return `${parsed.agentId}@${parsed.projectId}`
-    return parsed.agentId
-  } catch {
-    return scopeRef
-  }
+function formatCompactBadgeHandle(scopeRef: string, identity?: SessionIdentity): string {
+  return identity
+    ? identity.taskId
+      ? `${identity.agentId}:${identity.taskId}`
+      : identity.projectId
+        ? `${identity.agentId}@${identity.projectId}`
+        : identity.agentId
+    : scopeRef
 }
 
 function shortId(id: string, _prefix: string): string {

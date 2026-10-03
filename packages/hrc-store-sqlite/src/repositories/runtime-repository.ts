@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite'
 import type { HrcRuntimeSnapshot, RuntimePruneDeleteCounts } from 'hrc-core'
+import { readSessionIdentity } from '../session-identity.js'
 import type { RuntimeRow } from './rows.js'
 import { RunIdOwnershipRegistry } from './runtime-run-id-ownership.js'
 import {
@@ -68,6 +69,11 @@ export class RuntimeRepository {
     private readonly db: Database,
     private readonly runIdOwnership: RunIdOwnershipRegistry = new RunIdOwnershipRegistry(db)
   ) {}
+
+  private decorate(record: HrcRuntimeSnapshot): HrcRuntimeSnapshot {
+    const identity = readSessionIdentity(this.db, record.scopeRef, record.laneRef)
+    return { ...record, laneRef: record.laneRef, ...(identity ? { identity } : {}) }
+  }
 
   setChangeObserver(observer: RuntimeChangeObserver | undefined): void {
     this.changeObserver = observer
@@ -165,7 +171,7 @@ export class RuntimeRepository {
       .query<RuntimeRow, [string]>(`SELECT ${RUNTIME_COLUMNS} FROM runtimes WHERE runtime_id = ?`)
       .get(runtimeId)
 
-    return row ? mapRuntimeRow(row) : null
+    return row ? this.decorate(mapRuntimeRow(row)) : null
   }
 
   getLatestByHostSessionId(hostSessionId: string): HrcRuntimeSnapshot | null {
@@ -178,7 +184,7 @@ export class RuntimeRepository {
       )
       .get(hostSessionId)
 
-    return row ? mapRuntimeRow(row) : null
+    return row ? this.decorate(mapRuntimeRow(row)) : null
   }
 
   listByHostSessionId(hostSessionId: string): HrcRuntimeSnapshot[] {
@@ -190,7 +196,7 @@ export class RuntimeRepository {
       )
       .all(hostSessionId)
 
-    return rows.map(mapRuntimeRow)
+    return rows.map((row) => this.decorate(mapRuntimeRow(row)))
   }
 
   /**
@@ -255,7 +261,7 @@ export class RuntimeRepository {
           ORDER BY created_at ASC, runtime_id ASC`
       )
       .all()
-      .map(mapRuntimeRow)
+      .map((row) => this.decorate(mapRuntimeRow(row)))
   }
 
   listByStatus(statuses: readonly string[]): HrcRuntimeSnapshot[] {
@@ -268,7 +274,7 @@ export class RuntimeRepository {
           ORDER BY created_at ASC, runtime_id ASC`
       )
       .all(...(statuses as string[]))
-      .map(mapRuntimeRow)
+      .map((row) => this.decorate(mapRuntimeRow(row)))
   }
 
   /**
@@ -285,7 +291,7 @@ export class RuntimeRepository {
           ORDER BY created_at ASC, runtime_id ASC`
       )
       .all(scopeRef)
-      .map(mapRuntimeRow)
+      .map((row) => this.decorate(mapRuntimeRow(row)))
   }
 
   /**
@@ -301,7 +307,7 @@ export class RuntimeRepository {
       )
       .all()
 
-    return rows.map(mapRuntimeRow)
+    return rows.map((row) => this.decorate(mapRuntimeRow(row)))
   }
 
   update(runtimeId: string, patch: RuntimeUpdatePatch): HrcRuntimeSnapshot | null {

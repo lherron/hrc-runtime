@@ -228,6 +228,12 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     const state = createFixtureState({
       events: [
         event(100, 'turn.message', {
+          identity: {
+            kind: 'project-task',
+            agentId: 'cody',
+            projectId: 'agent-spaces',
+            taskId: 'T-01290',
+          },
           turnId: TURN_ID,
           runId: TURN_ID,
           payload: {

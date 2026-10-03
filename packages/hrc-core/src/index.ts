@@ -727,3 +727,5 @@ export { HRC_SESSION_RETITLED_EVENT } from './contracts-diagnostics.js'
 export type { HrcSessionRetitledEventPayload } from './contracts-diagnostics.js'
 
 export type { HrcCommandLaunchSpec } from './contracts-records.js'
+
+export * from './session-metadata.js'

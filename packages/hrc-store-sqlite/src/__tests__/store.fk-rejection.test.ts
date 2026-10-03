@@ -270,6 +270,12 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
 
   it('cascades a session title when its session is deleted (T-07512)', () => {
     const session = db.sessions.insert(makeSession('hsid-cascade'))
+    db.continuities.upsert({
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      activeHostSessionId: session.hostSessionId,
+      updatedAt: session.updatedAt,
+    })
     db.sessionTitles.upsert({
       hostSessionId: session.hostSessionId,
       title: 'Goes with its session',
@@ -282,6 +288,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
     // No repository exposes a session delete yet; retention work (T-07024) adds
     // one. Without ON DELETE CASCADE this raises FOREIGN KEY constraint failed
     // rather than removing the title.
+    db.continuities.disassociateScope(session.scopeRef)
     db.sqlite.query('DELETE FROM sessions WHERE host_session_id = ?').run(session.hostSessionId)
 
     expect(db.sessionTitles.getByHostSessionId(session.hostSessionId)).toBeNull()
@@ -293,15 +300,15 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
     const triggers = db.sqlite
       .query<{ name: string }, []>(
         `SELECT name FROM sqlite_master
-          WHERE type = 'trigger' AND name LIKE 'session_index_title_%'
+          WHERE type = 'trigger' AND name LIKE 'session_index_metadata_%'
           ORDER BY name`
       )
       .all()
       .map((row) => row.name)
     expect(triggers).toEqual([
-      'session_index_title_delete',
-      'session_index_title_insert',
-      'session_index_title_update',
+      'session_index_metadata_delete',
+      'session_index_metadata_insert',
+      'session_index_metadata_update',
     ])
   })
 })

@@ -19,6 +19,7 @@ import {
   HrcErrorCode,
   type HrcErrorCode as HrcErrorCodeValue,
   HrcRuntimeUnavailableError,
+  type SessionIdentity,
   type StartRuntimeResponse,
 } from 'hrc-core'
 
@@ -90,11 +91,13 @@ export function parsePeerClaimStartResult(body: Record<string, unknown>): StartR
     throw new Error('peer claim-start response contains an invalid result')
   }
   const common = {
+    ...(body['identity'] ? { identity: body['identity'] as SessionIdentity } : {}),
     runtimeId: body['runtimeId'],
     hostSessionId: body['hostSessionId'],
     status: body['status'],
     supportsInFlightInput: body['supportsInFlightInput'],
     claim: {
+      ...(claim['identity'] ? { identity: claim['identity'] as SessionIdentity } : {}),
       slot: claim['slot'],
       scopeRef: claim['scopeRef'],
       sessionRef: claim['sessionRef'],

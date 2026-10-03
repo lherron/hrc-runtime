@@ -1,3 +1,4 @@
+import type { SessionIdentity } from './session-metadata.js'
 export type HrcProvider = 'anthropic' | 'openai' | 'meta'
 /**
  * Producer-owned label recorded with a durable continuation. This is distinct
@@ -70,6 +71,7 @@ export type HrcEventCategory =
 export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless'
 
 export type HrcLifecycleEvent = {
+  identity?: SessionIdentity | undefined
   hrcSeq: number
   streamSeq: number
   /** Claimed origin label for observational rows imported from another HRC ledger. */

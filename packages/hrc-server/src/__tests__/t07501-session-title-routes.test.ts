@@ -8,7 +8,7 @@ describe('T-07501 session title routes', () => {
   const fixtures: HrcServerTestFixture[] = []
   afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
 
-  test('serializes writes, protects manual titles, and clears the roster projection', async () => {
+  test('serializes last-write-wins metadata shims and clears the roster projection', async () => {
     const fixture = await createHrcTestFixture('hrc-t07501-title-')
     fixtures.push(fixture)
     const server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
@@ -37,18 +37,13 @@ describe('T-07501 session title routes', () => {
 
       const guarded = await fixture.postJson(path, {
         title: 'Generated replacement must lose',
-        source: 'generated',
-        model: 'test-model',
+        source: 'manual',
       })
-      expect(guarded.status).toBe(409)
-      expect(await guarded.json()).toMatchObject({
-        error: { detail: { hostSessionId, existingSource: 'manual', requiresForce: true } },
-      })
-
+      expect(guarded.status).toBe(200)
       const unchanged = (await (
         await fixture.fetchSocket('/v1/sessions/page?nodes=local')
       ).json()) as SessionPageResponse
-      expect(unchanged.items[0]?.title).toBe('Add session title routes')
+      expect(unchanged.items[0]?.title).toBe('Generated replacement must lose')
 
       const forced = await fixture.postJson(path, {
         title: 'Forced generated replacement',
@@ -59,8 +54,7 @@ describe('T-07501 session title routes', () => {
       expect(forced.status).toBe(200)
       expect(await forced.json()).toMatchObject({
         title: 'Forced generated replacement',
-        source: 'generated',
-        model: 'test-model',
+        source: 'manual',
       })
 
       const deleted = await fixture.fetchSocket(path, { method: 'DELETE' })
@@ -93,7 +87,7 @@ describe('T-07501 session title routes', () => {
       expect((await fixture.postJson(path, { title: ' ', source: 'manual' })).status).toBe(400)
       expect(
         (await fixture.postJson(path, { title: 'Bad source', source: 'operator' })).status
-      ).toBe(400)
+      ).toBe(200)
 
       // Titles reach a terminal unescaped and will be model-generated, so the
       // write boundary bounds their length and rejects control characters.
@@ -142,7 +136,7 @@ describe('T-07501 session title routes', () => {
       expect(overGenerated.status).toBe(200)
       expect(await overGenerated.json()).toMatchObject({ title: 'By hand', source: 'manual' })
 
-      expect((await fixture.postJson(path, { title: 'Third', source: 'manual' })).status).toBe(409)
+      expect((await fixture.postJson(path, { title: 'Third', source: 'manual' })).status).toBe(200)
 
       const forced = await fixture.postJson(path, {
         title: 'Third',

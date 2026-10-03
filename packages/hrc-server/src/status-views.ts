@@ -7,7 +7,7 @@ import type {
   HrcStatusTmuxView,
   StartRuntimeResponse,
 } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import { type HrcDatabase, canonicalLaneRef } from 'hrc-store-sqlite'
 import { requireTmuxPane } from './require-helpers.js'
 import { findLatestSessionRuntime } from './runtime-select.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
@@ -68,7 +68,7 @@ export function toStatusActiveRuntimeView(
   const tmux = runtime.transport === 'tmux' ? toStatusTmuxView(runtime.tmuxJson) : undefined
 
   return {
-    runtime,
+    runtime: { ...runtime, laneRef: canonicalLaneRef(runtime.laneRef) },
     surfaceBindings: db.surfaceBindings.findByRuntime(runtime.runtimeId),
     ...(tmux !== undefined ? { tmux } : {}),
   }
@@ -81,11 +81,11 @@ export function toStatusSessionView(
   const latestRuntime = findLatestSessionRuntime(db, session.hostSessionId)
 
   if (!latestRuntime || isRuntimeUnavailableStatus(latestRuntime.status)) {
-    return { session }
+    return { session: { ...session, laneRef: canonicalLaneRef(session.laneRef) } }
   }
 
   return {
-    session,
+    session: { ...session, laneRef: canonicalLaneRef(session.laneRef) },
     activeRuntime: toStatusActiveRuntimeView(db, latestRuntime),
   }
 }
@@ -93,6 +93,7 @@ export function toStatusSessionView(
 export function toEnsureRuntimeResponse(runtime: HrcRuntimeSnapshot): EnsureRuntimeResponse {
   if (runtime.controllerKind === 'harness-broker' && runtime.transport === 'tmux') {
     return {
+      identity: runtime.identity,
       runtimeId: runtime.runtimeId,
       hostSessionId: runtime.hostSessionId,
       transport: 'tmux',
@@ -103,6 +104,7 @@ export function toEnsureRuntimeResponse(runtime: HrcRuntimeSnapshot): EnsureRunt
 
   const tmux = requireTmuxPane(runtime)
   return {
+    identity: runtime.identity,
     runtimeId: runtime.runtimeId,
     hostSessionId: runtime.hostSessionId,
     transport: 'tmux',
@@ -119,6 +121,7 @@ export function toEnsureRuntimeResponse(runtime: HrcRuntimeSnapshot): EnsureRunt
 export function toStartRuntimeResponse(runtime: HrcRuntimeSnapshot): StartRuntimeResponse {
   if (runtime.transport === 'headless') {
     return {
+      identity: runtime.identity,
       runtimeId: runtime.runtimeId,
       hostSessionId: runtime.hostSessionId,
       transport: 'headless',

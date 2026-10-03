@@ -308,10 +308,13 @@ describe('T-07236 origin resolution table', () => {
 
   it('derives the hrcchat sender from the durable message address', () => {
     expect(
-      dispatchOriginFromMessageAddress({
-        kind: 'session',
-        sessionRef: 'agent:mable:project:hrc-runtime:task:primary',
-      })
+      dispatchOriginFromMessageAddress(
+        {
+          kind: 'session',
+          sessionRef: 'agent:mable:project:hrc-runtime:task:primary',
+        },
+        { kind: 'project-task', agentId: 'mable', projectId: 'hrc-runtime', taskId: 'primary' }
+      )
     ).toEqual({ actor: 'agent:mable', kind: 'agent' })
     expect(dispatchOriginFromMessageAddress({ kind: 'entity', entity: 'human' })).toEqual({
       actor: 'human',

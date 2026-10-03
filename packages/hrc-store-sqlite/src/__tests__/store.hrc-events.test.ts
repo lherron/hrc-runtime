@@ -300,7 +300,7 @@ describe('HrcLifecycleEventRepository', () => {
     }
   })
 
-  it('finds the latest event by kind with one reverse-limit query', () => {
+  it('finds the latest event by kind with one reverse-limit query plus stored identity', () => {
     const statements: string[] = []
     const db = openHrcDatabase(dbPath, {
       slowStatementThresholdMs: 0,
@@ -331,7 +331,8 @@ describe('HrcLifecycleEventRepository', () => {
         })?.hrcSeq
       ).toBe(second.hrcSeq)
       expect(second.hrcSeq).toBeGreaterThan(first.hrcSeq)
-      expect(statements).toHaveLength(1)
+      expect(statements).toHaveLength(2)
+      expect(statements[1]).toContain('FROM continuities')
       expect(statements[0]).toContain('ORDER BY hrc_seq DESC')
       expect(statements[0]).toContain('LIMIT 1')
     } finally {

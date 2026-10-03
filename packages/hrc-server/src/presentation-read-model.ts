@@ -4,7 +4,7 @@
  *
  * A projection over the STORE ONLY. It reads runtime rows, the persisted §5.1
  * presentation record, the hosting/tmux state already on the row, and
- * `session_titles`, and returns. It deliberately does NOT call
+ * `session_metadata`, and returns. It deliberately does NOT call
  * `reconcileTmuxRuntimeLiveness`, probe tmux, attach, or append events — a
  * presentation consumer polls this on every reconcile, and a read that can mark
  * a runtime dead would let a cosmetic process change runtime state (§7
@@ -19,7 +19,7 @@ import type {
   HrcRuntimeSnapshot,
   ListPresentationRuntimesResponse,
 } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import { type HrcDatabase, canonicalLaneRef } from 'hrc-store-sqlite'
 
 import {
   getBrokerRuntimeTmuxAttachTarget,
@@ -50,7 +50,9 @@ export function projectPresentationRuntime(
     runtimeId: runtime.runtimeId,
     hostSessionId: runtime.hostSessionId,
     scopeRef: runtime.scopeRef,
-    laneRef: runtime.laneRef,
+    ...(runtime.identity ? { identity: runtime.identity } : {}),
+    metadata: db.sessionMetadata.get(runtime.scopeRef, runtime.laneRef).metadata,
+    laneRef: canonicalLaneRef(runtime.laneRef),
     generation: runtime.generation,
     status: runtime.status,
     // Absent — not defaulted — for generations that predate the record (§5.5).

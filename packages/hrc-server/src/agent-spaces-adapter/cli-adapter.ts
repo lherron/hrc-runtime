@@ -9,8 +9,9 @@
  * References: T-00960, T-00946, T-08584
  */
 
-import { type LaneRef, formatSessionHandle, normalizeLaneRef, parseScopeRef } from 'agent-scope'
-import type { HrcLaunchEnvConfig, HrcRuntimeIntent } from 'hrc-core'
+import { type LaneRef, normalizeLaneRef } from 'agent-scope'
+import { formatSessionIdentityHandle } from 'hrc-core'
+import type { HrcLaunchEnvConfig, HrcRuntimeIntent, SessionIdentity } from 'hrc-core'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -63,7 +64,10 @@ export function mergeEnv(
 // Internal: build HRC correlation env vars from placement
 // ---------------------------------------------------------------------------
 
-export function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string, string> {
+export function buildHrcCorrelationEnv(
+  intent: HrcRuntimeIntent,
+  identity?: SessionIdentity
+): Record<string, string> {
   const env: Record<string, string> = {}
   const correlation = intent.placement?.correlation
   const taskContext = intent.taskContext
@@ -79,22 +83,24 @@ export function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string,
     env['AGENT_SESSION_REF'] = sessionRef
     env['HRC_SESSION_REF'] = sessionRef
     env['ASP_SCOPE_REF'] = scopeRef
-    const parsed = parseScopeRef(scopeRef)
-    if (parsed.agentId) {
+    const parsed = identity
+    if (parsed?.agentId) {
       env['AGENT_ID'] = parsed.agentId
       env['AGENT_ACTOR'] = parsed.agentId
       env['WRKQ_ACTOR'] = parsed.agentId
       env['ASP_AGENT_ID'] = parsed.agentId
     }
-    if (parsed.projectId) {
+    if (parsed?.projectId) {
       env['AGENT_PROJECT'] = parsed.projectId
       env['ASP_PROJECT'] = parsed.projectId
     }
-    if (parsed.taskId) {
+    if (parsed?.taskId) {
       env['AGENT_TASK'] = parsed.taskId
       env['ASP_TASK_ID'] = parsed.taskId
     }
-    env['ASP_HANDLE'] = formatSessionHandle({ scopeRef, laneRef: normalizedLaneRef })
+    env['ASP_HANDLE'] = identity
+      ? `${formatSessionIdentityHandle(identity)}${laneId === 'main' ? '' : `~${laneId}`}`
+      : sessionRef
   }
 
   if (correlation?.hostSessionId) {

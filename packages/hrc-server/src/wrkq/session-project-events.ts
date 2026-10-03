@@ -1,4 +1,9 @@
-import { type HrcLifecycleEvent, type HrcSessionRecord, isTaskId } from 'hrc-core'
+import {
+  type HrcLifecycleEvent,
+  type HrcSessionRecord,
+  type SessionIdentity,
+  isTaskId,
+} from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
@@ -116,13 +121,9 @@ export type ParsedSeat = {
   selector: string | undefined
 }
 
-/** `agent:<a>:project:<p>:task:<selector>`. Every segment is optional in the wild. */
-export function parseSeat(scopeRef: string): ParsedSeat {
-  return {
-    agent: scopeRef.match(/^agent:([^:]+)/)?.[1],
-    project: scopeRef.match(/:project:([^:]+)/)?.[1],
-    selector: scopeRef.match(/:task:(.+)$/)?.[1],
-  }
+/** Use the identity captured once on the continuity. Historical rows have none. */
+export function parseSeat(identity: SessionIdentity | undefined): ParsedSeat {
+  return { agent: identity?.agentId, project: identity?.projectId, selector: identity?.taskId }
 }
 
 /**
@@ -168,7 +169,7 @@ export function deriveSessionProjectEvent(input: {
 }): SessionProjectEventFact | undefined {
   const { session, node, occurredAt } = input
   const payload = isRecord(input.payload) ? input.payload : {}
-  const seat = parseSeat(session.scopeRef)
+  const seat = parseSeat(session.identity)
   if (seat.project === undefined || seat.project.length === 0) return undefined
 
   const cause = causeFor(session, payload)
@@ -233,6 +234,7 @@ function taskAttribute(seat: ParsedSeat): Record<string, string> {
 
 type RuntimeLifecycleEvent = Pick<
   HrcLifecycleEvent,
+  | 'identity'
   | 'eventKind'
   | 'hostSessionId'
   | 'scopeRef'
@@ -278,7 +280,7 @@ export function deriveSessionRuntimeEvent(input: {
   const started = end === undefined && isRuntimeStart(event, payload)
   if (end === undefined && !started) return undefined
 
-  const seat = parseSeat(event.scopeRef)
+  const seat = parseSeat(event.identity)
   if (seat.project === undefined || seat.project.length === 0) return undefined
 
   const runtimeId =
@@ -476,7 +478,7 @@ export class SessionProjectEventPublisher {
   private turnFacts(event: HrcLifecycleEvent): SessionProjectEventFact[] {
     const runtimeId = event.runtimeId
     if (runtimeId === undefined || !TURN_KINDS.includes(event.eventKind)) return []
-    const seat = parseSeat(event.scopeRef)
+    const seat = parseSeat(event.identity)
     if (seat.project === undefined || seat.project.length === 0) return []
 
     // Lazy rebuild at the cut immediately BEFORE this event, never at the head.
@@ -523,7 +525,7 @@ export class SessionProjectEventPublisher {
     project: string,
     end?: TurnEndKind
   ): SessionProjectEventFact {
-    const seat = parseSeat(start.scopeRef)
+    const seat = parseSeat(start.identity)
     const turn = `${runtimeId}:${start.hrcSeq}`
     const runId = end === 'superseded' ? start.runId : (event.runId ?? start.runId)
     const duration = Date.parse(event.ts) - Date.parse(start.ts)

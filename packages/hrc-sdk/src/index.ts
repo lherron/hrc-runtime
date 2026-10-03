@@ -162,3 +162,14 @@ export type {
   HrcRuntimeSnapshot as RuntimeRecord,
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
 } from 'hrc-core'
+
+export type {
+  SessionIdentity,
+  SessionMetadata,
+  SessionMetadataValue,
+  SessionMetadataSources,
+  SessionMetadataResponse,
+  SessionMetadataTarget,
+  PatchSessionMetadataRequest,
+  SessionGetResponse,
+} from 'hrc-core'

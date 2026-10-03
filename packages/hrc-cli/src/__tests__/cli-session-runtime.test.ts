@@ -105,7 +105,7 @@ describe('session retitle', () => {
     expect(conflicting.stderr).toContain('mutually exclusive')
   })
 
-  it('sets a manual title, preserves script outputs, and clears it for regeneration', async () => {
+  it('sets api title metadata, preserves list outputs, and clears it for regeneration', async () => {
     const hostSessionId = await resolveHostSessionId(testProjectScope('retitlecli'))
     const set = await runCli(
       ['session', 'retitle', hostSessionId, '--title', 'Implement title routes'],
@@ -113,10 +113,11 @@ describe('session retitle', () => {
     )
     expect(set.exitCode).toBe(0)
     expect(JSON.parse(set.stdout.trim())).toMatchObject({
-      hostSessionId,
-      title: 'Implement title routes',
-      source: 'manual',
+      metadata: { title: 'Implement title routes' },
+      metadataSources: { title: { source: 'api' } },
     })
+
+    expect(set.stderr).toContain('deprecated')
 
     const jsonList = await runCli(['session', 'list', '--json'], cliEnv())
     expect(jsonList.exitCode).toBe(0)
@@ -134,35 +135,35 @@ describe('session retitle', () => {
 
     const cleared = await runCli(['session', 'retitle', hostSessionId, '--regenerate'], cliEnv())
     expect(cleared.exitCode).toBe(0)
-    expect(JSON.parse(cleared.stdout.trim())).toEqual({ hostSessionId, deleted: true })
+    expect(JSON.parse(cleared.stdout.trim())).toEqual({ metadata: {}, metadataSources: {} })
     const after = JSON.parse(
       (await runCli(['session', 'list', '--json'], cliEnv())).stdout.trim()
     ) as Array<{ hostSessionId: string; title?: string }>
     expect(after.find((session) => session.hostSessionId === hostSessionId)?.title).toBeUndefined()
   })
 
-  it('renames an already-titled session only with --force', async () => {
+  it('uses last api title write and accepts force as an ignored compatibility option', async () => {
     const hostSessionId = await resolveHostSessionId(testProjectScope('retitleforce'))
     const first = await runCli(['session', 'retitle', hostSessionId, '--title', 'First'], cliEnv())
     expect(first.exitCode).toBe(0)
 
-    // Without --force the server refuses rather than discarding the operator's
-    // own title, and the CLI must name the flag that unblocks it.
-    const refused = await runCli(
+    const replaced = await runCli(
       ['session', 'retitle', hostSessionId, '--title', 'Second'],
       cliEnv()
     )
-    expect(refused.exitCode).not.toBe(0)
-    expect(refused.stderr).toContain('--force')
-    const unchanged = await runCli(['session', 'get', hostSessionId], cliEnv())
-    expect(JSON.parse(unchanged.stdout.trim())).toMatchObject({ title: 'First' })
+    expect(replaced.exitCode).toBe(0)
+    const current = await runCli(['session', 'get', hostSessionId], cliEnv())
+    expect(JSON.parse(current.stdout.trim())).toMatchObject({ metadata: { title: 'Second' } })
 
     const forced = await runCli(
       ['session', 'retitle', hostSessionId, '--title', 'Second', '--force'],
       cliEnv()
     )
     expect(forced.exitCode).toBe(0)
-    expect(JSON.parse(forced.stdout.trim())).toMatchObject({ title: 'Second', source: 'manual' })
+    expect(JSON.parse(forced.stdout.trim())).toMatchObject({
+      metadata: { title: 'Second' },
+      metadataSources: { title: { source: 'api' } },
+    })
 
     // Exercises session_index_title_update — the projection path that has no
     // other reachable caller.
@@ -175,8 +176,8 @@ describe('session retitle', () => {
       ['session', 'retitle', hostSessionId, '--regenerate', '--force'],
       cliEnv()
     )
-    expect(misused.exitCode).toBe(2)
-    expect(misused.stderr).toContain('--force applies to --title only')
+    expect(misused.exitCode).toBe(0)
+    expect(JSON.parse(misused.stdout.trim()).metadata.title).toBeUndefined()
   })
 
   it('rejects titles that are oversized or carry control characters', async () => {
@@ -200,7 +201,7 @@ describe('session retitle', () => {
       cliEnv()
     )
     expect(trimmed.exitCode).toBe(0)
-    expect(JSON.parse(trimmed.stdout.trim())).toMatchObject({ title: 'Padded title' })
+    expect(JSON.parse(trimmed.stdout.trim())).toMatchObject({ metadata: { title: 'Padded title' } })
   })
 })
 

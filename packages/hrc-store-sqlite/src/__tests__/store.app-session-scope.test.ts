@@ -126,7 +126,7 @@ describe('T-08576 app-session store scope', () => {
     })
   })
 
-  it('R-S1 control keeps agent continuity unchanged and system scope rejected', () => {
+  it('R-S1 keeps agent identity and records unparsed system scope without guessing', () => {
     seedSession('hsid-agent', 'agent:smokey:project:hrc-runtime', 'main')
     expect(
       db.continuities.upsert({
@@ -138,14 +138,14 @@ describe('T-08576 app-session store scope', () => {
     ).toBe('agent:smokey:project:hrc-runtime/lane:main')
 
     seedSession('hsid-system', 'system:hrc', 'sweep')
-    expect(() =>
+    expect(
       db.continuities.upsert({
         scopeRef: 'system:hrc',
         laneRef: 'sweep',
         activeHostSessionId: 'hsid-system',
         updatedAt: NOW,
-      })
-    ).toThrow()
+      }).identity
+    ).toEqual({ kind: 'unparsed', agentId: 'system:hrc' })
   })
 
   it('R-S2 exposes only agent-addressable live runtime refs', () => {

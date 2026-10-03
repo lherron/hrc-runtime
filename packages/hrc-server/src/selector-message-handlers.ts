@@ -98,7 +98,7 @@ export function listAllSessions(
     ? this.db.sqlite.query<SessionRow, [string]>(sql).all(laneRef)
     : this.db.sqlite.query<SessionRow, []>(sql).all()
 
-  return rows.map(mapSessionRow)
+  return rows.map((row) => mapSessionRow(row, this.db))
 }
 
 /**
@@ -146,7 +146,7 @@ export function listRecentSessions(
     ? this.db.sqlite.query<SessionRow, [string, string]>(sql).all(activeSince, laneRef)
     : this.db.sqlite.query<SessionRow, [string]>(sql).all(activeSince)
 
-  return rows.map(mapSessionRow)
+  return rows.map((row) => mapSessionRow(row, this.db))
 }
 
 /**

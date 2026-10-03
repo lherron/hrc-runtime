@@ -11,6 +11,7 @@ import {
   readToolResultSpillDescriptor,
   toolResultExceedsSpillThreshold,
 } from 'hrc-core'
+import { canonicalLaneRef, readSessionIdentity } from '../session-identity.js'
 import type { EventRow, HrcEventRow } from './rows.js'
 import {
   EVENT_COLUMNS,
@@ -362,12 +363,14 @@ export class HrcLifecycleEventRepository {
   }
 
   private mapRow(row: HrcEventRow, options: { hydrate?: boolean } = {}): HrcLifecycleEvent {
-    return mapHrcEventRow(
+    const event = mapHrcEventRow(
       row,
       options.hydrate === false
         ? (value) => value
         : (value) => this.toolResultBlobs.hydrateLifecyclePayload(value)
     )
+    const identity = readSessionIdentity(this.db, event.scopeRef, event.laneRef)
+    return { ...event, laneRef: canonicalLaneRef(event.laneRef), ...(identity ? { identity } : {}) }
   }
 
   private spillPersistedResult(

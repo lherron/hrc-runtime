@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type {
   DeleteSessionTitleResponse,
+  PatchSessionMetadataRequest,
+  SessionGetResponse,
+  SessionMetadataResponse,
+  SessionMetadataTarget,
   SessionTitleRecord,
   SetSessionTitleRequest,
 } from 'hrc-core'
@@ -746,6 +750,41 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
     )
   }
 
+  async getSessionByContinuity(target: SessionMetadataTarget): Promise<SessionGetResponse> {
+    return this.getJson<SessionGetResponse>(buildPath('/v1/sessions/get', target))
+  }
+
+  async getSessionMetadata(target: SessionMetadataTarget): Promise<SessionMetadataResponse> {
+    return this.getJson<SessionMetadataResponse>(buildPath('/v1/sessions/metadata', target))
+  }
+
+  async patchSessionMetadata(
+    request: PatchSessionMetadataRequest
+  ): Promise<SessionMetadataResponse> {
+    const response = await this.unixFetch('/v1/sessions/metadata', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    })
+    if (!response.ok) await this.throwTypedError(response)
+    return (await response.json()) as SessionMetadataResponse
+  }
+
+  async setSessionMetadata(
+    target: SessionMetadataTarget,
+    set: Record<string, unknown>
+  ): Promise<SessionMetadataResponse> {
+    return this.patchSessionMetadata({ ...target, set })
+  }
+
+  async clearSessionMetadata(
+    target: SessionMetadataTarget,
+    clear: string[]
+  ): Promise<SessionMetadataResponse> {
+    return this.patchSessionMetadata({ ...target, clear })
+  }
+
+  /** @deprecated Use setSessionMetadata. The server maps this compatibility route to api metadata. */
   async setSessionTitle(
     hostSessionId: string,
     request: SetSessionTitleRequest
@@ -756,6 +795,7 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
     )
   }
 
+  /** @deprecated Use clearSessionMetadata. */
   async deleteSessionTitle(hostSessionId: string): Promise<DeleteSessionTitleResponse> {
     return this.deleteJson<DeleteSessionTitleResponse>(
       `/v1/sessions/${encodeURIComponent(hostSessionId)}/title`

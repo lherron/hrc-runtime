@@ -1,4 +1,6 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
+import type { SessionIdentity } from 'hrc-core'
+import { canonicalLaneRef, readSessionIdentity } from './session-identity.js'
 
 export type SessionIndexEffectiveStatus = 'active' | 'detached' | 'inactive' | 'stale'
 export type SessionIndexExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
@@ -9,6 +11,8 @@ export type SessionIndexRecord = {
   scopeRef: string
   laneRef: string
   generation: number
+  identity: SessionIdentity
+  taskId?: string | undefined
   agentId: string
   projectId?: string | undefined
   createdAt: string
@@ -111,13 +115,15 @@ function buildWhere(
   }
 }
 
-function mapRow(row: SessionIndexRow): SessionIndexRecord {
+function mapRow(row: SessionIndexRow, db: Database): SessionIndexRecord {
   return {
     hostSessionId: row.host_session_id,
     ...(row.title === null ? {} : { title: row.title }),
     scopeRef: row.scope_ref,
-    laneRef: row.lane_ref,
+    laneRef: canonicalLaneRef(row.lane_ref),
     generation: row.generation,
+    identity: readSessionIdentity(db, row.scope_ref, row.lane_ref)!,
+    taskId: readSessionIdentity(db, row.scope_ref, row.lane_ref)?.taskId,
     agentId: row.agent_id,
     ...(row.project_id === null ? {} : { projectId: row.project_id }),
     createdAt: row.created_at,
@@ -176,7 +182,7 @@ export class SessionIndexRepository {
       .all(...values)
 
     return {
-      items: rows.slice(0, input.limit).map(mapRow),
+      items: rows.slice(0, input.limit).map((row) => mapRow(row, this.db)),
       hasMore: rows.length > input.limit,
     }
   }

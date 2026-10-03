@@ -13,6 +13,7 @@ function hrcEvent(overrides: Partial<HrcLifecycleEventPayload> = {}): HrcLifecyc
     hrcSeq: 41,
     eventKind: 'turn.message',
     scopeRef: 'agent:larry:project:agent-spaces:task:T-01372',
+    identity: { projectId: 'agent-spaces' },
     laneRef: 'main',
     runId: 'hrc-run-ignored',
     payload: {
@@ -123,6 +124,7 @@ describe('adaptHrcLifecycleEvent', () => {
       adaptHrcLifecycleEvent(
         hrcEvent({
           scopeRef: 'agent:larry',
+          identity: undefined,
         })
       )
     ).toBeUndefined()
@@ -271,4 +273,8 @@ describe('adaptHrcLifecycleEvent', () => {
     )
     expect(source).not.toMatch(/scheduled removal|will be removed|remove in/i)
   })
+})
+
+test('historical lifecycle rows never derive identity from scope', () => {
+  expect(adaptHrcLifecycleEvent(hrcEvent({ identity: undefined }))).toBeUndefined()
 })

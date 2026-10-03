@@ -1,4 +1,4 @@
-import { type LaneRef, formatScopeHandle, formatSessionHandle, parseScopeRef } from 'agent-scope'
+import { parseScopeRef } from 'agent-scope'
 import { CliUsageError } from 'cli-kit'
 import {
   type HrcMessageRecord,
@@ -14,7 +14,9 @@ import {
   type HrcStatusResponse,
   type HrcStatusSummaryResponse,
   type InspectRuntimeResponse,
+  type SessionIdentity,
   createMonitorReader,
+  formatSessionIdentityHandle,
   monitorSessionMatchKind,
   parseAppSessionScopeRef,
 } from 'hrc-core'
@@ -64,6 +66,7 @@ type MonitorShowJson = {
     scopeHandle?: string
   }
   session?: {
+    identity?: SessionIdentity | undefined
     scopeRef: string
     scopeHandle?: string
     sessionRef: string
@@ -91,6 +94,7 @@ type MonitorRuntimeSource = {
 }
 
 type MonitorRuntimeIdentitySource = MonitorRuntimeSource & {
+  identity?: SessionIdentity | undefined
   scopeRef: string
   laneRef: string
   generation: number
@@ -388,6 +392,7 @@ function toMonitorSession(
   return {
     sessionRef: sessionRefFor(session.scopeRef, session.laneRef),
     scopeRef: session.scopeRef,
+    identity: session.identity,
     laneRef: laneIdForSessionRef(session.laneRef),
     hostSessionId: session.hostSessionId,
     generation: session.generation,
@@ -403,6 +408,7 @@ function toMonitorSessionFromRuntime(
   return {
     sessionRef: sessionRefFor(runtime.scopeRef, runtime.laneRef),
     scopeRef: runtime.scopeRef,
+    identity: runtime.identity,
     laneRef: laneIdForSessionRef(runtime.laneRef),
     hostSessionId: runtime.hostSessionId,
     generation: runtime.generation,
@@ -449,14 +455,11 @@ function toMonitorShowJson(
   // T-08576: an app-owned session has no agent handle; report its refs only.
   const isAppScope = scopeRef !== undefined && parseAppSessionScopeRef(scopeRef) !== null
   const scopeHandle =
-    scopeRef && !isAppScope ? formatScopeHandle(parseScopeRef(scopeRef)) : undefined
+    session?.identity && !isAppScope ? formatSessionIdentityHandle(session.identity) : undefined
   const sessionRef = session ? sessionRefFor(session.scopeRef, session.laneRef) : undefined
   const sessionHandle =
-    session && !isAppScope
-      ? formatSessionHandle({
-          scopeRef: session.scopeRef,
-          laneRef: laneRefForHandle(session.laneRef),
-        })
+    session?.identity && !isAppScope
+      ? `${formatSessionIdentityHandle(session.identity)}${laneIdForSessionRef(session.laneRef) === 'main' ? '' : `~${laneIdForSessionRef(session.laneRef)}`}`
       : undefined
   const daemon = snapshot.daemon as MonitorShowJson['daemon']
   const socket = snapshot.socket as MonitorShowJson['socket']
@@ -573,11 +576,6 @@ function sessionRefFor(scopeRef: string, laneRef: string): string {
 function laneIdForSessionRef(laneRef: string): string {
   const laneId = laneRef.startsWith('lane:') ? laneRef.slice('lane:'.length) : laneRef
   return laneId === 'default' ? 'main' : laneId
-}
-
-function laneRefForHandle(laneRef: string): LaneRef {
-  const laneId = laneIdForSessionRef(laneRef)
-  return laneId === 'main' ? 'main' : `lane:${laneId}`
 }
 
 function escapeLike(value: string): string {

@@ -101,18 +101,14 @@ export function targetLaneCandidates(laneRef: string): string[] {
  * scope/lane fields, applying the target lane normalization (default → main).
  */
 export function formatSessionRef(scopeRef: string, laneRef: string): string {
-  return `${scopeRef}/lane:${normalizeTargetLane(laneRef) ?? laneRef}`
+  const laneId = laneRef.startsWith('lane:') ? laneRef.slice('lane:'.length) : laneRef
+  return `${scopeRef}/lane:${laneId === 'default' ? 'main' : laneId}`
 }
 
 export function normalizeTargetSessionRef(sessionRef: string): string {
   const normalized = normalizeSessionRef(sessionRef)
   const { scopeRef, laneRef } = parseSessionRef(normalized)
   return formatSessionRef(scopeRef, laneRef)
-}
-
-export function extractProjectId(scopeRef: string): string | undefined {
-  const match = scopeRef.match(/:project:([^:]+)/)
-  return match?.[1]
 }
 
 export function parseMessageAddress(input: unknown, field: string): HrcMessageAddress {

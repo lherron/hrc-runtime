@@ -3,6 +3,7 @@ import type { HrcContinuationRef, HrcHarness, HrcIoMode, HrcProvider } from './c
 import type { HrcLaunchEnvConfig, HrcRuntimeIntent } from './contracts-intents.js'
 import type { HrcErrorCode } from './errors.js'
 import type { HrcSessionRef } from './selectors.js'
+import type { SessionIdentity, SessionMetadata } from './session-metadata.js'
 
 export type HrcHookBridgeConfig = {
   kind: string
@@ -82,6 +83,7 @@ export type HrcLaunchArtifact = {
 }
 
 export type HrcContinuityRecord = {
+  identity: SessionIdentity
   sessionRef: HrcSessionRef
   scopeRef: string
   laneRef: string
@@ -91,6 +93,8 @@ export type HrcContinuityRecord = {
 }
 
 export type HrcSessionRecord = {
+  metadata?: SessionMetadata | undefined
+  identity?: SessionIdentity | undefined
   hostSessionId: string
   /** Optional display-only label; never participates in session selection or recency. */
   title?: string | undefined
@@ -131,6 +135,7 @@ export type HrcRuntimePresentationRecord = {
 }
 
 export type HrcRuntimeSnapshot = {
+  identity?: SessionIdentity | undefined
   runtimeId: string
   hostSessionId: string
   scopeRef: string

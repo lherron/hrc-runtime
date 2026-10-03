@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { parseScopeRef as parseFixtureScope } from 'agent-scope'
 import { CliUsageError } from 'cli-kit'
 
 import {
@@ -75,7 +76,11 @@ function run(
     { projectId: 'fixture', projectRoot: root, apply },
     {
       readTask: (taskId) => ({ id: taskId, state: states[taskId] }),
-      listLiveRuntimeOccupancies,
+      listLiveRuntimeOccupancies: () =>
+        listLiveRuntimeOccupancies().map((runtime) => ({
+          ...runtime,
+          identity: parseFixtureScope(runtime.scopeRef),
+        })),
     }
   )
 }

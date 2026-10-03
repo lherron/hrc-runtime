@@ -230,3 +230,6 @@ export {
 
 export { SessionTitleRepository } from './session-title-repository.js'
 export type { SessionTitleRecord, SessionTitleSource } from './session-title-repository.js'
+
+export { SessionMetadataRepository } from './session-metadata-repository.js'
+export { readSessionIdentity, canonicalLaneRef } from './session-identity.js'

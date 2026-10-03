@@ -287,7 +287,7 @@ describe('session_index maintained projection', () => {
           lastActivityAt: '2026-08-11T09:00:00.000Z',
         }),
       ])
-      expect(rotated[0]?.title).toBeUndefined()
+      expect(rotated[0]?.title).toBe('Title belongs to generation one')
     } finally {
       db.close()
     }

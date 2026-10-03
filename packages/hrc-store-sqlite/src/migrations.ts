@@ -3,6 +3,7 @@ import type { Database } from 'bun:sqlite'
 import { brokerMigrations } from './migrations/broker-migrations.js'
 import { runtimeLegacyIdentityNullableMigration } from './migrations/runtime-legacy-identity-nullability.js'
 import { schemaMigrations } from './migrations/schema-migrations.js'
+import { sessionIdentityMetadata } from './migrations/session-identity-metadata.js'
 import { sessionStateDeadFieldRemoval } from './migrations/session-state-dead-field-removal.js'
 import { sessionTitleCascadeMigrations } from './migrations/session-title-cascade-migrations.js'
 import { sessionTitleMigrations } from './migrations/session-title-migrations.js'
@@ -19,6 +20,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   // nullable-identity rebuild preserves.
   runtimeLegacyIdentityNullableMigration,
   sessionStateDeadFieldRemoval,
+  sessionIdentityMetadata,
 ]
 
 /**

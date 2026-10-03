@@ -1,4 +1,3 @@
-import { parseScopeRef } from 'agent-scope'
 import { HrcBadRequestError, HrcErrorCode, TERMINAL_RUNTIME_STATUSES } from 'hrc-core'
 import type {
   HrcRunRecord,
@@ -387,12 +386,8 @@ export function filterRuntimes(
       return false
     }
     if (filter.agent !== undefined || filter.task !== undefined) {
-      let parsed: ReturnType<typeof parseScopeRef>
-      try {
-        parsed = parseScopeRef(runtime.scopeRef)
-      } catch {
-        return false
-      }
+      const parsed = runtime.identity
+      if (!parsed) return false
       if (filter.agent !== undefined && parsed.agentId !== filter.agent) {
         return false
       }

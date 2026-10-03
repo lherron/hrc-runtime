@@ -2,9 +2,10 @@ import {
   type HrcMonitorEvent,
   type HrcMonitorState,
   type HrcSelector,
+  type SessionIdentity,
   isTaskId,
   monitorEventMatchesSelector,
-  scopeRefMatchesTask,
+  parseTaskId,
 } from 'hrc-core'
 import { parseProfileAwareSelector } from '../profile-aware-selector.js'
 
@@ -58,10 +59,20 @@ export type TaskSelectorMatch = { includeSubtasks: boolean }
 export function scopeMatchesSelectorSpec(
   scopeRef: string,
   spec: MonitorSelectorSpec,
-  match: TaskSelectorMatch
+  match: TaskSelectorMatch,
+  identity?: SessionIdentity
 ): boolean {
   if (spec.kind === 'scope-prefix') return scopeRef.startsWith(spec.prefix)
-  if (spec.kind === 'task') return scopeRefMatchesTask(scopeRef, spec.taskId, match)
+  if (spec.kind === 'task') {
+    const taskId = identity?.taskId
+    return (
+      taskId !== undefined &&
+      (taskId === spec.taskId ||
+        (match.includeSubtasks &&
+          parseTaskId(spec.taskId)?.slug === undefined &&
+          parseTaskId(taskId)?.ownerId === spec.taskId))
+    )
+  }
   return spec.selector.kind === 'scope' && scopeRef === spec.selector.scopeRef
 }
 
@@ -117,7 +128,15 @@ export function selectorConditionCandidates(
       continue
     }
     for (const session of state.sessions) {
-      if (!scopeMatchesSelectorSpec(session.scopeRef, spec, { includeSubtasks: false })) continue
+      if (
+        !scopeMatchesSelectorSpec(
+          session.scopeRef,
+          spec,
+          { includeSubtasks: false },
+          session.identity
+        )
+      )
+        continue
       const selector = session.runtimeId
         ? runtimeSelector(session.runtimeId)
         : hostSelector(session.hostSessionId)
@@ -179,6 +198,6 @@ export function eventMatchesSelectorSet(
   return specs.some((spec) =>
     spec.kind === 'exact'
       ? exactEventMatch(state, event, spec.selector)
-      : scopeMatchesSelectorSpec(event.scopeRef ?? '', spec, match)
+      : scopeMatchesSelectorSpec(event.scopeRef ?? '', spec, match, event.identity)
   )
 }

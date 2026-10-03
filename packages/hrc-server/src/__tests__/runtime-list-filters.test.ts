@@ -60,6 +60,14 @@ function seedRuntime(options: SeedRuntimeOptions): void {
   const createdAt = options.createdAt ?? now
 
   try {
+    db.continuities.upsert({
+      scopeRef: options.scopeRef.startsWith('agent:')
+        ? options.scopeRef
+        : `agent:${options.scopeRef}`,
+      laneRef: 'default',
+      activeHostSessionId: options.hostSessionId,
+      updatedAt: now,
+    })
     db.runtimes.insert({
       runtimeId: options.runtimeId,
       hostSessionId: options.hostSessionId,

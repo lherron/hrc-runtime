@@ -1,5 +1,6 @@
 import type { HrcRuntimePresentationRecord } from './contracts-records.js'
 import type { AspContractPackage } from './contracts-status.js'
+import type { SessionIdentity, SessionMetadata } from './session-metadata.js'
 
 export const HRC_FIRST_TURN_MISSING_EVENT = 'first_turn_missing'
 export const HRC_FIRST_TURN_MISSING_DIAGNOSTICS_EVENT = 'first_turn_missing.diagnostics'
@@ -146,6 +147,8 @@ export type HrcRuntimePresentationEventPayload = {
  * attaches, or appends events.
  */
 export type HrcPresentationRuntimeRow = {
+  metadata?: SessionMetadata | undefined
+  identity?: SessionIdentity | undefined
   runtimeId: string
   hostSessionId: string
   scopeRef: string

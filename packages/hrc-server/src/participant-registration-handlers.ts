@@ -346,7 +346,26 @@ export async function handleRegisterParticipant(
   } catch {
     malformed('request body must be valid JSON')
   }
-  return await handleDirectRegistration(this, parseRegisterParticipantRequest(rawBody))
+  const response = await handleDirectRegistration(this, parseRegisterParticipantRequest(rawBody))
+  if (rawBody !== null && typeof rawBody === 'object' && Object.hasOwn(rawBody, 'metadata')) {
+    const result = (await response.clone().json()) as {
+      status: string
+      scopeRef?: string
+      identity?: { laneRef: string; registrationId: string }
+    }
+    if (result.status === 'registered' && result.scopeRef && result.identity) {
+      const written = this.db.sessionMetadata.write({
+        scopeRef: result.scopeRef,
+        laneRef: result.identity.laneRef,
+        source: 'launch',
+        replace: true,
+        set: (rawBody as Record<string, unknown>)['metadata'],
+        updatedBy: result.identity.registrationId,
+      })
+      return json({ ...result, rejectedMetadata: written.rejected }, response.status)
+    }
+  }
+  return response
 }
 
 export const participantRegistrationHandlersMethods = {

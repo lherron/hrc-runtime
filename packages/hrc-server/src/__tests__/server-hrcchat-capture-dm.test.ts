@@ -89,7 +89,7 @@ describe('hrcchat minimal server routes', () => {
     expect(targets[0]?.state).toBe('summoned')
   })
 
-  it('preserves same-session concrete candidates through target-list dedupe', async () => {
+  it('lists only the continuity current generation for a session', async () => {
     const scopeRef = 'agent:cody:project:hrc-runtime:task:T-05460'
     const timestamp = ctx.fixture.now()
     const db = openHrcDatabase(ctx.fixture.dbPath)
@@ -104,6 +104,12 @@ describe('hrcchat minimal server routes', () => {
           generation,
           status: 'active',
           createdAt: timestamp,
+          updatedAt: timestamp,
+        })
+        db.continuities.upsert({
+          scopeRef,
+          laneRef: 'main',
+          activeHostSessionId: hostSessionId,
           updatedAt: timestamp,
         })
         db.runtimes.insert({
@@ -134,9 +140,13 @@ describe('hrcchat minimal server routes', () => {
     expect(targets[0]?.sessionRef).toBe(`${scopeRef}/lane:main`)
     expect(targets[0]?.activeHostSessionId).toBe('hsid-ambiguity-2')
     expect(targets[0]?.runtime?.runtimeId).toBe('rt-ambiguity-2')
-    expect(
-      targets[0]?.ambiguityCandidates?.map((candidate) => candidate.runtime?.runtimeId)
-    ).toEqual(['rt-ambiguity-1', 'rt-ambiguity-2'])
+    expect(targets[0]?.ambiguityCandidates).toBeUndefined()
+    expect(targets[0]?.identity).toEqual({
+      kind: 'project-task',
+      agentId: 'cody',
+      projectId: 'hrc-runtime',
+      taskId: 'T-05460',
+    })
   })
 
   it('looks up a single target by sessionRef with main/default aliasing', async () => {

@@ -477,6 +477,7 @@ export type ProductionHarnessBrokerControllerDeps = Omit<
 }
 
 export type BrokerControllerStartInput = {
+  sessionMetadata?: Record<string, unknown> | undefined
   /** Immutable producer realization. HRC does not reconstruct a profile from it. */
   execution: SelectedExecution
   /** Immutable v2 plan/audit metadata, including resolved selection/provenance. */

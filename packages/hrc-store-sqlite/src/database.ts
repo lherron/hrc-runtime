@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { SessionMetadataRepository } from './session-metadata-repository.js'
 import { SessionTitleRepository } from './session-title-repository.js'
 
 import {
@@ -85,6 +86,7 @@ export type HrcDatabase = {
   }
   continuities: ContinuityRepository
   sessions: SessionRepository
+  sessionMetadata: SessionMetadataRepository
   sessionTitles: SessionTitleRepository
   sessionIndex: SessionIndexRepository
   rosterClaims: RosterClaimRepository
@@ -205,6 +207,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     },
     continuities: new ContinuityRepository(sqlite),
     sessions: new SessionRepository(sqlite),
+    sessionMetadata: new SessionMetadataRepository(sqlite),
     sessionTitles: new SessionTitleRepository(sqlite),
     sessionIndex: new SessionIndexRepository(sqlite),
     rosterClaims: new RosterClaimRepository(sqlite),

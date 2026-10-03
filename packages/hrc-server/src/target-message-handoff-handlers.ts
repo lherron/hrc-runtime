@@ -503,7 +503,7 @@ export async function deliverPersistedSemanticTurnHandoff(
       // here rather than asked for on the wire — the identity is already
       // durable on the message — so an agent-caused trip reaches ACP labelled
       // `agent` instead of falling to the unattributed residue.
-      ...originDispatchOption(body.from),
+      ...originDispatchOption(body.from, this.db),
     })
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
     assertDispatchRunId(turnBody)

@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
   type DropContinuationResponse,
-  HrcConflictError,
   HrcErrorCode,
   HrcNotFoundError,
   type HrcSessionRecord,
@@ -9,6 +8,7 @@ import {
   type LaunchCommandScopedRunResponse,
   type ResolveSessionResponse,
 } from 'hrc-core'
+import { canonicalLaneRef } from 'hrc-store-sqlite'
 import {
   commandRunId,
   commandRunOperationId,
@@ -78,7 +78,8 @@ export const serverSessionMethods = {
         hostSessionId: existing.hostSessionId,
         generation: existing.generation,
         created: false,
-        session: existing,
+        session: { ...existing, laneRef: canonicalLaneRef(existing.laneRef) },
+        identity: existing.identity,
       } satisfies ResolveSessionResponse)
     }
 
@@ -125,7 +126,8 @@ export const serverSessionMethods = {
             hostSessionId: raced.hostSessionId,
             generation: raced.generation,
             created: false,
-            session: raced,
+            identity: raced.identity,
+            session: { ...raced, laneRef: canonicalLaneRef(raced.laneRef) },
           } satisfies ResolveSessionResponse)
         }
         const now = timestamp()
@@ -148,7 +150,7 @@ export const serverSessionMethods = {
             activeHostSessionId: hostSessionId,
             updatedAt: now,
           })
-          return inserted
+          return this.db.sessions.getByHostSessionId(inserted.hostSessionId)!
         })()
 
         const event = this.appendEvent(createdSession, 'session.created', {
@@ -161,7 +163,8 @@ export const serverSessionMethods = {
           hostSessionId,
           generation: createdSession.generation,
           created: true,
-          session: createdSession,
+          identity: createdSession.identity,
+          session: { ...createdSession, laneRef: canonicalLaneRef(createdSession.laneRef) },
         } satisfies ResolveSessionResponse)
       }
     )
@@ -327,7 +330,7 @@ export const serverSessionMethods = {
             activeHostSessionId: hostSessionId,
             updatedAt: now,
           })
-          return inserted
+          return this.db.sessions.getByHostSessionId(inserted.hostSessionId)!
         })()
         const event = this.appendEvent(createdSession, 'session.created', {
           created: true,
@@ -428,7 +431,13 @@ export const serverSessionMethods = {
     }
 
     const title = this.db.sessionTitles.getByHostSessionId(hostSessionId)?.title
-    return json(title === undefined ? session : { ...session, title })
+    const metadata = this.db.sessionMetadata.get(session.scopeRef, session.laneRef).metadata
+    return json({
+      ...session,
+      laneRef: canonicalLaneRef(session.laneRef),
+      metadata,
+      ...(title === undefined ? {} : { title }),
+    })
   },
 
   async handleSetSessionTitle(
@@ -445,29 +454,16 @@ export const serverSessionMethods = {
     }
     const input = parseSessionTitleWriteInput(await parseJsonBody(request))
     const now = timestamp()
-    const stored = this.db.sqlite.transaction(() => {
-      const existing = this.db.sessionTitles.getByHostSessionId(hostSessionId)
-      if (existing?.source === 'manual' && !input.force) {
-        throw new HrcConflictError(
-          HrcErrorCode.STALE_CONTEXT,
-          'manual session title requires force to overwrite',
-          {
-            hostSessionId,
-            existingSource: existing.source,
-            requestedSource: input.source,
-            requiresForce: true,
-          }
-        )
-      }
-      return this.db.sessionTitles.upsert({
-        hostSessionId,
-        title: input.title,
-        source: input.source,
-        ...(input.model === undefined ? {} : { model: input.model }),
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      })
-    })()
+    const session = this.db.sessions.getByHostSessionId(hostSessionId)!
+    this.db.sessionMetadata.write({
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      source: 'api',
+      set: { title: input.title },
+      updatedBy: request.headers.get('x-hrc-principal-ref') ?? 'unknown',
+      updatedAt: now,
+    })
+    const stored = this.db.sessionTitles.getByHostSessionId(hostSessionId)!
     this.appendSessionRetitled(hostSessionId, stored.title, now)
     return json(stored)
   },

@@ -188,7 +188,7 @@ describe('hrc session get', () => {
     const result = await runCli(['session', 'get', resolved.hostSessionId], cliEnv())
     expect(result.exitCode).toBe(0)
     const session = JSON.parse(result.stdout.trim())
-    expect(session.hostSessionId).toBe(resolved.hostSessionId)
+    expect(session.generation.hostSessionId).toBe(resolved.hostSessionId)
   })
 
   it('exits 2 for unknown hostSessionId', async () => {

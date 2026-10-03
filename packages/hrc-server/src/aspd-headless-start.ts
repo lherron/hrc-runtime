@@ -224,7 +224,13 @@ export async function prepareAspdHeadlessAttempt(
       server.options.stateRoot
     )
   const hrcDispatchEnv = buildManagedBrokerDispatchEnv({
-    baseEnv: mergeEnv(buildHrcCorrelationEnv(intent), intent.launch),
+    baseEnv: mergeEnv(
+      buildHrcCorrelationEnv(
+        intent,
+        server.db.continuities.getByKey(session.scopeRef, session.laneRef)?.identity
+      ),
+      intent.launch
+    ),
     mailStopSocket: server.options.socketPath,
   })
 
@@ -260,6 +266,8 @@ export async function prepareAspdHeadlessAttempt(
       {
         intent: compileIntent,
         scopeRef: session.scopeRef,
+        sessionIdentity: server.db.continuities.getByKey(session.scopeRef, session.laneRef)
+          ?.identity,
         hostSessionId: session.hostSessionId,
         generation: session.generation,
         dispatchEnv: hrcDispatchEnv,
@@ -578,6 +586,16 @@ export async function prepareAspdHeadlessAttempt(
 
   // Boundary P: one transaction, before any hosting effect.
   server.db.sqlite.transaction(() => {
+    if (compiled.sessionMetadata !== undefined)
+      server.db.sessionMetadata.write({
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        source: 'launch',
+        replace: true,
+        set: compiled.sessionMetadata,
+        updatedBy: 'aspc',
+        updatedAt: preparedAt,
+      })
     server.db.compiledRuntimePlans.insert({
       planHash: String(compiled.plan.planHash),
       compileId: String(compiled.plan.compileId),

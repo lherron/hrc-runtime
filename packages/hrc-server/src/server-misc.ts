@@ -1,6 +1,6 @@
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type { HrcLifecycleEvent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import { type HrcDatabase, readSessionIdentity } from 'hrc-store-sqlite'
 
 import { runtimeActivityPatch } from './runtime-activity.js'
 import { normalizeOptionalQuery } from './server-parsers.js'
@@ -37,10 +37,12 @@ export function finalizeRuntimeTermination(
   })
 }
 
-export function mapSessionRow(row: SessionRow): HrcSessionRecord {
+export function mapSessionRow(row: SessionRow, db?: HrcDatabase): HrcSessionRecord {
+  const identity = db ? readSessionIdentity(db.sqlite, row.scope_ref, row.lane_ref) : undefined
   return {
     hostSessionId: row.host_session_id,
     scopeRef: row.scope_ref,
+    ...(identity ? { identity } : {}),
     laneRef: row.lane_ref,
     generation: row.generation,
     status: row.status,

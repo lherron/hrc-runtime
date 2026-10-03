@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { parseScopeRef as parseFixtureScope } from 'agent-scope'
 
 import type { HrcSessionRecord } from 'hrc-core'
 
@@ -34,6 +35,9 @@ const OCCURRED = '2026-09-11T18:00:00.000Z'
 
 function sessionRecord(overrides: Partial<HrcSessionRecord> = {}): HrcSessionRecord {
   return {
+    identity: parseFixtureScope(
+      overrides.scopeRef ?? 'agent:clod:project:hrc-runtime:task:T-08389'
+    ),
     hostSessionId: 'hsid-born-1',
     scopeRef: 'agent:clod:project:hrc-runtime:task:T-08389',
     laneRef: 'lane:main',
@@ -185,7 +189,7 @@ describe('T-08389 — affiliation', () => {
       node: NODE,
       occurredAt: OCCURRED,
     })
-    expect(probe?.task).toBeUndefined()
+    expect(probe?.task).toBe('T-08199')
     expect(probe?.attributes['seat']).toBe(
       'agent:clod:project:hrc-runtime:task:T-08199:role:parallel-alpha'
     )

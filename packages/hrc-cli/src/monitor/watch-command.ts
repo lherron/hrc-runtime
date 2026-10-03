@@ -421,8 +421,9 @@ async function buildLiveMonitorState(
 
   // Build sessions from status
   const sessions = status.sessions.map((view) => ({
-    sessionRef: `${view.session.scopeRef}/lane:${view.session.laneRef}`,
+    sessionRef: `${view.session.scopeRef}/lane:${normalizeMonitorLane(view.session.laneRef)}`,
     scopeRef: view.session.scopeRef,
+    identity: view.session.identity,
     laneRef: view.session.laneRef,
     hostSessionId: view.session.hostSessionId,
     generation: view.session.generation,
@@ -440,6 +441,7 @@ async function buildLiveMonitorState(
         runtimeId: rt.runtimeId,
         hostSessionId: rt.hostSessionId,
         scopeRef: rt.scopeRef,
+        identity: rt.identity,
         laneRef: rt.laneRef,
         status: rt.status,
         statusChangedAt: rt.statusChangedAt,
@@ -475,6 +477,7 @@ async function buildLiveMonitorState(
         eventKind: e.eventKind,
         sessionRef: `${e.scopeRef}/lane:${normalizeMonitorLane(e.laneRef ?? 'main')}`,
         scopeRef: e.scopeRef,
+        identity: e.identity,
         laneRef: e.laneRef,
         hostSessionId: e.hostSessionId,
         generation: e.generation,

@@ -153,6 +153,14 @@ export async function launchAspdPreparedAttempt(
   const result = await controller.start({
     execution: admission.execution,
     plan: admission.plan,
+    ...((record.response as unknown as { sessionMetadata?: Record<string, unknown> })
+      .sessionMetadata !== undefined
+      ? {
+          sessionMetadata: (
+            record.response as unknown as { sessionMetadata: Record<string, unknown> }
+          ).sessionMetadata,
+        }
+      : {}),
     hrcPolicy: admission.hrcPolicy,
     executionFormat,
     identity: admission.identity,

@@ -2,21 +2,25 @@
  * Turn address normalization; overlaps with cli/scope.ts intentionally until a later refactor.
  */
 import type { HrcMessageAddress } from 'hrc-core'
-import { inferProjectIdFromCwd } from 'hrc-core'
+import { inferProjectIdFromCwd, splitSessionRef } from 'hrc-core'
 import { resolveProfileAwareScopeInput, writePlacementWarnings } from 'hrc-sdk'
 import type { ProfileAwareResolvedScopeInput } from 'hrc-sdk'
 
-import { taskIdFromSessionRef } from './taskId.js'
+import { createClient } from '../cli/shared.js'
 
 /**
  * Extract a taskId from HRC_SESSION_REF, when the caller is already running
  * inside a task-scoped session. Returns undefined when the env var is unset
  * or does not carry a `task:<id>` segment.
  */
-function inferTaskIdFromCallerSession(): string | undefined {
+async function inferTaskIdFromCallerSession(): Promise<string | undefined> {
   const raw = process.env['HRC_SESSION_REF']
   if (!raw) return undefined
-  return taskIdFromSessionRef(raw)
+  try {
+    return (await createClient().getSessionByContinuity(splitSessionRef(raw))).identity.taskId
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -33,7 +37,9 @@ export async function resolveScope(
   options?: { withCallerTaskId?: boolean; worktreeAssociation?: 'strict' | 'advisory' }
 ): Promise<ProfileAwareResolvedScopeInput> {
   const fallbackProjectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
-  const fallbackTaskId = options?.withCallerTaskId ? inferTaskIdFromCallerSession() : undefined
+  const fallbackTaskId = options?.withCallerTaskId
+    ? await inferTaskIdFromCallerSession()
+    : undefined
   const scope = {
     defaultLaneId: 'main',
     ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),

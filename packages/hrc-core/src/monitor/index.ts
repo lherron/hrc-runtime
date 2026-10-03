@@ -1,4 +1,5 @@
-import { type LaneRef, formatScopeHandle, formatSessionHandle, parseScopeRef } from 'agent-scope'
+import { parseScopeRef } from 'agent-scope'
+import { type SessionIdentity, formatSessionIdentityHandle } from '../session-metadata.js'
 
 import { HrcErrorCode, createHrcError } from '../errors.js'
 import { type HrcSelector, formatSelector, splitSessionRef } from '../selectors.js'
@@ -10,6 +11,7 @@ import { type HrcSelector, formatSelector, splitSessionRef } from '../selectors.
 const DEFAULT_REPLAY_TAIL = 100
 
 export type HrcMonitorSessionState = {
+  identity?: SessionIdentity | undefined
   sessionRef: string
   scopeRef: string
   laneRef: string
@@ -21,6 +23,7 @@ export type HrcMonitorSessionState = {
 }
 
 export type HrcMonitorRuntimeState = {
+  identity?: SessionIdentity | undefined
   runtimeId: string
   hostSessionId: string
   scopeRef?: string | undefined
@@ -43,6 +46,7 @@ export type HrcMonitorMessageState = {
 }
 
 export type HrcMonitorEvent = {
+  identity?: SessionIdentity | undefined
   seq: number
   ts?: string | undefined
   event: string
@@ -329,7 +333,7 @@ function roleTreeParts(
     if (!parts) continue
     candidates.push({
       matchKind,
-      roleName: safeRoleName(session.scopeRef),
+      roleName: session.identity?.roleName,
       parts,
     })
   }
@@ -364,11 +368,12 @@ function toMatchedRuntime(candidate: RoleTreeParts): HrcMonitorMatchedRuntime {
   return {
     matchKind: candidate.matchKind,
     ...(candidate.roleName !== undefined ? { roleName: candidate.roleName } : {}),
-    scopeHandle: formatScopeHandle(parseScopeRef(session.scopeRef)),
-    sessionHandle: formatSessionHandle({
-      scopeRef: session.scopeRef,
-      laneRef: laneRefForHandle(session.laneRef),
-    }),
+    scopeHandle: session.identity
+      ? formatSessionIdentityHandle(session.identity)
+      : session.scopeRef,
+    sessionHandle: session.identity
+      ? `${formatSessionIdentityHandle(session.identity)}${normalizeLaneId(session.laneRef) === 'main' ? '' : `~${normalizeLaneId(session.laneRef)}`}`
+      : session.sessionRef,
     scopeRef: session.scopeRef,
     sessionRef: session.sessionRef,
     hostSessionId: session.hostSessionId,
@@ -378,11 +383,6 @@ function toMatchedRuntime(candidate: RoleTreeParts): HrcMonitorMatchedRuntime {
     laneRef: normalizeLaneId(session.laneRef),
     activeTurnId: session.activeTurnId ?? runtime.activeTurnId ?? null,
   }
-}
-
-function laneRefForHandle(laneRef: string): LaneRef {
-  const laneId = normalizeLaneId(laneRef)
-  return laneId === 'main' ? 'main' : `lane:${laneId}`
 }
 
 function ambiguousRoleTreeSelector(
@@ -415,40 +415,35 @@ function ambiguousRoleTreeSelector(
 }
 
 export function monitorSessionMatchKind(
-  session: Pick<HrcMonitorSessionState, 'scopeRef' | 'sessionRef' | 'laneRef'>,
+  session: Pick<HrcMonitorSessionState, 'scopeRef' | 'sessionRef' | 'laneRef' | 'identity'>,
   selector: HrcSelector
 ): 'exact' | 'role-child' | null {
   if (selector.kind === 'target') {
     if (sessionRefsEqual(session.sessionRef, selector.sessionRef)) return 'exact'
-    if (!isImmediateRoleChildScopeRef(selector.scopeRef, session.scopeRef)) return null
+    if (!isImmediateRoleChildScopeRef(selector.scopeRef, session.scopeRef, session.identity))
+      return null
     return laneIdsEqual(session.laneRef, splitSessionRef(selector.sessionRef).laneRef)
       ? 'role-child'
       : null
   }
   if (selector.kind === 'scope') {
     if (session.scopeRef === selector.scopeRef) return 'exact'
-    return isImmediateRoleChildScopeRef(selector.scopeRef, session.scopeRef) ? 'role-child' : null
+    return isImmediateRoleChildScopeRef(selector.scopeRef, session.scopeRef, session.identity)
+      ? 'role-child'
+      : null
   }
   return null
 }
 
 export function isImmediateRoleChildScopeRef(
   baseScopeRef: string,
-  candidateScopeRef: string
+  candidateScopeRef: string,
+  identity?: SessionIdentity
 ): boolean {
-  try {
-    const base = parseScopeRef(baseScopeRef)
-    const candidate = parseScopeRef(candidateScopeRef)
-    return (
-      base.roleName === undefined &&
-      candidate.roleName !== undefined &&
-      base.agentId === candidate.agentId &&
-      base.projectId === candidate.projectId &&
-      base.taskId === candidate.taskId
-    )
-  } catch {
-    return false
-  }
+  return (
+    identity?.roleName !== undefined &&
+    candidateScopeRef === `${baseScopeRef}:role:${identity.roleName}`
+  )
 }
 
 function isRoleTreeAwareSelector(
@@ -650,7 +645,10 @@ export function monitorEventMatchesSelector(
       return event.sessionRef === selector.sessionRef
     case 'target': {
       if (event.sessionRef && sessionRefsEqual(event.sessionRef, selector.sessionRef)) return true
-      if (!event.scopeRef || !isImmediateRoleChildScopeRef(selector.scopeRef, event.scopeRef)) {
+      if (
+        !event.scopeRef ||
+        !isImmediateRoleChildScopeRef(selector.scopeRef, event.scopeRef, event.identity)
+      ) {
         return false
       }
       const selectorLane = splitSessionRef(selector.sessionRef).laneRef
@@ -662,7 +660,7 @@ export function monitorEventMatchesSelector(
       return (
         event.scopeRef === selector.scopeRef ||
         (event.scopeRef !== undefined &&
-          isImmediateRoleChildScopeRef(selector.scopeRef, event.scopeRef))
+          isImmediateRoleChildScopeRef(selector.scopeRef, event.scopeRef, event.identity))
       )
     case 'concrete':
     case 'host':

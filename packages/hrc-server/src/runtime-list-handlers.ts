@@ -1,5 +1,6 @@
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
+import { canonicalLaneRef } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { parseListRunsFilter, parseListRuntimesFilter } from './server-parsers.js'
 import type { ExactRouteHandler } from './server-types.js'
@@ -236,7 +237,9 @@ async function handleListRuntimes(deps: RuntimeListDependencies, url: URL): Prom
     paginate: true,
     includeTerminalByDefault: false,
   })
-  const response = json(page.runtimes)
+  const response = json(
+    page.runtimes.map((runtime) => ({ ...runtime, laneRef: canonicalLaneRef(runtime.laneRef) }))
+  )
   if (page.nextCursor !== undefined) {
     response.headers.set(NEXT_CURSOR_HEADER, page.nextCursor)
   }

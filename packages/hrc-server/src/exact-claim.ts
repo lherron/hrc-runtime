@@ -1,3 +1,4 @@
+import { formatSessionRef } from './messages.js'
 /**
  * Exact-scope claim-and-start (T-07302).
  *
@@ -170,7 +171,8 @@ export async function startExactScopeRuntime(
     claim: {
       slot: scope.taskId,
       scopeRef: session.scopeRef,
-      sessionRef: `${session.scopeRef}/lane:${session.laneRef}`,
+      identity: session.identity,
+      sessionRef: formatSessionRef(session.scopeRef, session.laneRef),
       hostSessionId: session.hostSessionId,
       idempotencyKey: request.idempotencyKey,
       replayed,

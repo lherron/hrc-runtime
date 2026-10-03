@@ -168,6 +168,13 @@ describe('§5.3 read model shape', () => {
           viewerWindow: 'headless-sessions',
         },
       })
+      const titled = db.sessions.getByHostSessionId('hsid-07594-sef')!
+      db.continuities.upsert({
+        scopeRef: titled.scopeRef,
+        laneRef: titled.laneRef,
+        activeHostSessionId: titled.hostSessionId,
+        updatedAt: titled.updatedAt,
+      })
       db.sessionTitles.upsert({
         hostSessionId: HOST_SESSION_ID,
         title: 'sidecar reads',

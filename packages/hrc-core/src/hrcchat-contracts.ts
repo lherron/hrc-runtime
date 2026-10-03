@@ -12,6 +12,7 @@ import type {
  * server routes.
  */
 import type { HrcFence } from './fences.js'
+import type { SessionIdentity } from './session-metadata.js'
 
 /**
  * The provision-only wire fragment hrcchat sends for a directive-bearing DM
@@ -92,6 +93,7 @@ export type HrcTargetRuntimeView = {
 }
 
 export type HrcTargetAmbiguityCandidateView = {
+  identity?: SessionIdentity | undefined
   sessionRef: string
   scopeRef: string
   laneRef: string
@@ -102,6 +104,7 @@ export type HrcTargetAmbiguityCandidateView = {
 }
 
 export type HrcTargetView = {
+  identity?: SessionIdentity | undefined
   sessionRef: string
   scopeRef: string
   laneRef: string

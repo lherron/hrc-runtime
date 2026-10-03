@@ -15,10 +15,20 @@ const OWNER = 'agent:a:project:p:task:T-12345'
 const SUBTASK = 'agent:a:project:p:task:T-12345.render-preview'
 const LONGER = 'agent:a:project:p:task:T-123456'
 
+function fixtureIdentity(scopeRef: string) {
+  return {
+    kind: 'project-task' as const,
+    agentId: 'a',
+    projectId: 'p',
+    taskId: scopeRef.split(':task:')[1]?.split(':')[0],
+  }
+}
+
 const state: HrcMonitorState = {
   sessions: [OWNER, SUBTASK, LONGER].map((scopeRef, index) => ({
     sessionRef: `${scopeRef}/lane:main`,
     scopeRef,
+    identity: fixtureIdentity(scopeRef),
     laneRef: 'main',
     hostSessionId: `host-${index}`,
     generation: 1,
@@ -29,7 +39,7 @@ const state: HrcMonitorState = {
 }
 
 function event(scopeRef: string): HrcMonitorEvent {
-  return { seq: 1, event: 'turn.finished', scopeRef }
+  return { seq: 1, event: 'turn.finished', scopeRef, identity: fixtureIdentity(scopeRef) }
 }
 
 describe('monitor task selectors', () => {
@@ -41,10 +51,19 @@ describe('monitor task selectors', () => {
       taskId: 'T-12345.render-preview',
     })
     if (spec === undefined) throw new Error('no spec')
-    expect(scopeMatchesSelectorSpec(SUBTASK, spec, EVENTS)).toBe(true)
-    expect(scopeMatchesSelectorSpec(`${SUBTASK}:role:tester`, spec, EVENTS)).toBe(true)
-    expect(scopeMatchesSelectorSpec(OWNER, spec, EVENTS)).toBe(false)
-    expect(scopeMatchesSelectorSpec(`${OWNER}.render`, spec, EVENTS)).toBe(false)
+    expect(scopeMatchesSelectorSpec(SUBTASK, spec, EVENTS, fixtureIdentity(SUBTASK))).toBe(true)
+    expect(
+      scopeMatchesSelectorSpec(
+        `${SUBTASK}:role:tester`,
+        spec,
+        EVENTS,
+        fixtureIdentity(`${SUBTASK}:role:tester`)
+      )
+    ).toBe(true)
+    expect(scopeMatchesSelectorSpec(OWNER, spec, EVENTS, fixtureIdentity(OWNER))).toBe(false)
+    expect(
+      scopeMatchesSelectorSpec(`${OWNER}.render`, spec, EVENTS, fixtureIdentity(`${OWNER}.render`))
+    ).toBe(false)
   })
 
   // T-09902, named subtasks *Events*: a task selector covers its subtasks.
@@ -59,8 +78,8 @@ describe('monitor task selectors', () => {
   test('T-1234 does not match T-12345 or its subtasks', async () => {
     const [spec] = await parseMonitorSelectors(['T-1234'])
     if (spec === undefined) throw new Error('no spec')
-    expect(scopeMatchesSelectorSpec(OWNER, spec, EVENTS)).toBe(false)
-    expect(scopeMatchesSelectorSpec(SUBTASK, spec, EVENTS)).toBe(false)
+    expect(scopeMatchesSelectorSpec(OWNER, spec, EVENTS, fixtureIdentity(OWNER))).toBe(false)
+    expect(scopeMatchesSelectorSpec(SUBTASK, spec, EVENTS, fixtureIdentity(SUBTASK))).toBe(false)
   })
 
   test('an owner wait never sees a subtask edge or subtask state', async () => {

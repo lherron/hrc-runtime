@@ -31,6 +31,11 @@ import { listRuntimesForProjection } from './runtime-list-handlers.js'
 import { writeServerLog } from './server-log.js'
 import { parseStartRuntimeRequest } from './server-parsers.js'
 import type { HrcServerOptions } from './server-types.js'
+import {
+  handleGetSessionContinuity,
+  handleGetSessionMetadata,
+  handlePatchSessionMetadata,
+} from './session-metadata-handlers.js'
 import { toStartRuntimeResponse } from './status-views.js'
 
 export type FederationServices = {
@@ -217,6 +222,12 @@ export function startFederationServices(
             })
             return { ...toStartRuntimeResponse(runtime), claim }
           },
+          sessionMetadata: ({ request, url }) =>
+            url.pathname === '/v1/sessions/get'
+              ? handleGetSessionContinuity(server, url, true)
+              : request.method === 'GET'
+                ? handleGetSessionMetadata(server, url, true)
+                : handlePatchSessionMetadata(server, request, true),
           sessionPage: ({ url }) => {
             const localUrl = new URL(url)
             localUrl.searchParams.set('nodes', 'local')

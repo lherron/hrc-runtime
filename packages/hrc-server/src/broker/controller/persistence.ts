@@ -137,6 +137,16 @@ function persistStartGraphInTransaction(
       `host session not found: ${String(identity.hostSessionId)}`
     )
   }
+  if (input.sessionMetadata !== undefined)
+    ctx.db.sessionMetadata.write({
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      source: 'launch',
+      replace: true,
+      set: input.sessionMetadata,
+      updatedBy: 'aspc',
+      updatedAt: now,
+    })
   ctx.db.compiledRuntimePlans.insert({
     planHash: String(input.plan.planHash),
     compileId: String(input.plan.compileId),

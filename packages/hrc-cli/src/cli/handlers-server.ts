@@ -2,7 +2,12 @@ import { spawn } from 'node:child_process'
 import { openSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
-import { HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE, HRC_SERVER_LAUNCHD_LABEL } from 'hrc-core'
+import {
+  HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE,
+  HRC_SERVER_LAUNCHD_LABEL,
+  HrcErrorCode,
+  splitSessionRef,
+} from 'hrc-core'
 import type {
   HrcServerLifecycleAction,
   HrcServerLifecycleGrant,
@@ -30,6 +35,7 @@ import {
 } from '../cli-runtime.js'
 import { agentHarnessGuardMessage } from '../harness-guard.js'
 import { printJson } from '../print.js'
+import { parseProfileAwareSelector } from '../profile-aware-selector.js'
 import { assertNoMaintenanceSweep } from '../release-gc-sweep.js'
 import { resolveSessionArg } from '../selector-resolve.js'
 import { parseSinceMs, renderPorcelain, renderSessions } from '../session-render.js'
@@ -833,13 +839,46 @@ export async function cmdSessionGet(args: string[]): Promise<void> {
   const probe = hasFlag(args, '--probe')
 
   const client = createClient()
-  const hostSessionId = await resolveSessionArg(hostSessionArg, client)
-  const session = await client.getSession(hostSessionId)
-
   if (!live) {
-    printJson(session)
+    try {
+      if (
+        hostSessionArg.startsWith('hsid-') ||
+        hostSessionArg.startsWith('hsid_') ||
+        hostSessionArg.startsWith('host:') ||
+        !/[:@~]/.test(hostSessionArg)
+      ) {
+        const hostId =
+          hostSessionArg.startsWith('hsid-') ||
+          hostSessionArg.startsWith('hsid_') ||
+          hostSessionArg.startsWith('host:')
+            ? hostSessionArg.replace(/^host:/, '')
+            : await resolveSessionArg(hostSessionArg, client)
+        const session = await client.getSession(hostId)
+        // Historical host rows have no continuity and honestly carry no identity.
+        if (!session.identity) {
+          printJson(session)
+          return
+        }
+        printJson(
+          await client.getSessionByContinuity({
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+          })
+        )
+      } else {
+        printJson(
+          await client.getSessionByContinuity(await sessionMetadataTarget(hostSessionArg, client))
+        )
+      }
+    } catch (error) {
+      if (isHrcDomainErrorLike(error) && error.code === HrcErrorCode.UNKNOWN_HOST_SESSION)
+        fatal(error.message)
+      throw error
+    }
     return
   }
+  const hostSessionId = await resolveSessionArg(hostSessionArg, client)
+  const session = await client.getSession(hostSessionId)
 
   // --live: join the backing runtime generation(s). Broker-backed runtimes get
   // the broker read model (InvocationInspectionSummary); non-broker runtimes get
@@ -866,43 +905,68 @@ export async function cmdSessionGet(args: string[]): Promise<void> {
   printJson({ session, runtimes: inspections })
 }
 
-export async function cmdSessionRetitle(args: string[]): Promise<void> {
-  const hostSessionArg = requireArg(args, 0, '<hostSessionId>')
-  const title = parseFlag(args, '--title')
-  const regenerate = hasFlag(args, '--regenerate')
-  const force = hasFlag(args, '--force')
-  if (title === undefined && !regenerate) {
-    fatal('session retitle requires exactly one of --title or --regenerate')
+async function sessionMetadataTarget(target: string, client: ReturnType<typeof createClient>) {
+  if (!target.startsWith('hsid-') && !target.startsWith('hsid_')) {
+    const raw = target.startsWith('agent:')
+      ? `${target.includes('/lane:') ? 'session' : 'scope'}:${target}`
+      : target
+    const selector = await parseProfileAwareSelector(raw)
+    if (selector.kind === 'scope') return { scopeRef: selector.scopeRef, laneRef: 'main' }
+    if (selector.kind === 'target' || selector.kind === 'session' || selector.kind === 'stable')
+      return splitSessionRef(selector.sessionRef)
+    if (selector.kind === 'host' || selector.kind === 'concrete') {
+      const session = await client.getSession(selector.hostSessionId)
+      return { scopeRef: session.scopeRef, laneRef: session.laneRef }
+    }
   }
-  if (title !== undefined && regenerate) {
-    fatal('--title and --regenerate are mutually exclusive')
-  }
-  if (force && regenerate) {
-    fatal('--force applies to --title only; --regenerate always clears')
-  }
+  const hostSessionId =
+    target.startsWith('hsid-') || target.startsWith('hsid_')
+      ? target
+      : await resolveSessionArg(target, client)
+  const session = await client.getSession(hostSessionId)
+  return { scopeRef: session.scopeRef, laneRef: session.laneRef }
+}
 
+export async function cmdSessionMeta(args: string[]): Promise<void> {
+  const operation = requireArg(args, 0, '<set|clear|get>')
+  const target = requireArg(args, 1, '<target>')
   const client = createClient()
-  const hostSessionId = await resolveSessionArg(hostSessionArg, client)
-  if (regenerate) {
-    printJson(await client.deleteSessionTitle(hostSessionId))
+  const continuity = await sessionMetadataTarget(target, client)
+  if (operation === 'get') {
+    printJson(await client.getSessionMetadata(continuity))
     return
   }
-  try {
-    printJson(
-      await client.setSessionTitle(hostSessionId, {
-        title: title as string,
-        source: 'manual',
-        force,
-      })
-    )
-  } catch (err) {
-    // The server refuses to silently discard an operator's own title. Name the
-    // flag that unblocks it — the bare conflict code reads like version skew.
-    if (isHrcDomainErrorLike(err) && (err.detail as { requiresForce?: boolean })?.requiresForce) {
-      fatal(`${err.message}; re-run with --force to replace it`)
-    }
-    throw err
+  const key = requireArg(args, 2, '<key>')
+  if (operation === 'clear') {
+    printJson(await client.clearSessionMetadata(continuity, args.slice(2)))
+    return
   }
+  if (operation !== 'set') fatal(`unknown session meta operation: ${operation}`)
+  const raw = requireArg(args, 3, '<value>')
+  let value: unknown = raw
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    /* Plain strings are valid metadata. */
+  }
+  printJson(await client.setSessionMetadata(continuity, { [key]: value }))
+}
+
+export async function cmdSessionRetitle(args: string[]): Promise<void> {
+  const target = requireArg(args, 0, '<target>')
+  const title = parseFlag(args, '--title')
+  const regenerate = hasFlag(args, '--regenerate')
+  if (title === undefined && !regenerate)
+    fatal('session retitle requires exactly one of --title or --regenerate')
+  if (title !== undefined && regenerate) fatal('--title and --regenerate are mutually exclusive')
+  process.stderr.write('hrc: session retitle is deprecated; use session meta set/clear title\n')
+  const client = createClient()
+  const continuity = await sessionMetadataTarget(target, client)
+  printJson(
+    regenerate
+      ? await client.clearSessionMetadata(continuity, ['title'])
+      : await client.setSessionMetadata(continuity, { title })
+  )
 }
 
 export async function cmdSessionDropContinuation(args: string[]): Promise<void> {

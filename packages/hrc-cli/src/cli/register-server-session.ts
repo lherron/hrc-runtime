@@ -17,6 +17,7 @@ import {
   cmdSessionDropContinuation,
   cmdSessionGet,
   cmdSessionList,
+  cmdSessionMeta,
   cmdSessionResolve,
   cmdSessionRetitle,
   cmdTmuxKill,
@@ -276,9 +277,27 @@ Exit codes:
       await cmdSessionClearContext(args)
     })
 
+  const meta = session.command('meta').description('get, set, or clear continuity metadata')
+  meta
+    .command('get')
+    .argument('<target>')
+    .option('--json', 'output as JSON')
+    .action(async (target) => cmdSessionMeta(['get', target]))
+  meta
+    .command('set')
+    .argument('<target>')
+    .argument('<key>')
+    .argument('<value>')
+    .action(async (target, key, value) => cmdSessionMeta(['set', target, key, value]))
+  meta
+    .command('clear')
+    .argument('<target>')
+    .argument('<keys...>')
+    .action(async (target, keys: string[]) => cmdSessionMeta(['clear', target, ...keys]))
+
   session
     .command('retitle')
-    .description('set a manual title or clear it for regeneration')
+    .description('deprecated alias for session meta set/clear title')
     .argument('<hostSessionId>', 'host session ID')
     .option('--title <title>', 'set a manual session title')
     .option('--force', 'replace an existing manual title')

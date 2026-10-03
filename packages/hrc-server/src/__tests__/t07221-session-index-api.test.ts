@@ -264,10 +264,9 @@ describe('T-07221 federated session traversal', () => {
           `/v1/sessions/page?limit=1&cursor=${encodeURIComponent(cursor)}`
         )
         expect(response.complete).toBe(true)
-        // lab is at 1, not 0: since T-07594 the session-title write appends a
-        // `session.retitled` ledger row on the owning node, so the retitle above
-        // moves lab's high-water mark. svc wrote nothing and stays at 0.
-        expect(response.eventHighWater).toEqual({ lab: 1, svc: 0 })
+        // The title shim appends metadata.changed and session.retitled on the
+        // owning node. svc wrote nothing and stays at 0.
+        expect(response.eventHighWater).toEqual({ lab: 2, svc: 0 })
         recovered.push(...response.items)
         cursor = response.nextCursor
       }
