@@ -124,6 +124,6 @@ exact single selectors use plain `--until`.
 
 Identity stays node-free by design: a scope's home node is never encoded in
 `scopeRef`/`sessionRef`. Federation v1.3 never moves an established scope;
-see [Federation ordered retirement](federation-registry-retirement.md). Placement, routing, and the
+see [Federation ordered retirement](https://github.com/lherron/hrc-runtime/blob/main/docs/federation-registry-retirement.md). Placement, routing, and the
 binding registry are a federation-layer concern layered on top of this
 identity grammar, not encoded inside it.
