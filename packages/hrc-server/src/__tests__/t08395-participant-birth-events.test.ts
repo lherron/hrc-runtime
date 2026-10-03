@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { createHrcServer } from '../index.js'
-import type { HrcServer, RegistrationClassConfig } from '../index.js'
+import type { HrcServer } from '../index.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
@@ -12,18 +12,7 @@ import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-
  */
 
 const DIRECT_SCOPE = 'agent:arris:project:hrc-runtime:task:T-08395-direct'
-const PARTICIPANT_CLASS = {
-  classId: 't08395-legacy-class',
-  adapterId: 't08395-noop-adapter',
-  join: 'participant-served',
-  address: 'permanent-keyed',
-  continuity: 'key-scoped',
-  replaySemantics: 'full-source-replay',
-  scopeTemplate: { agent: 'arris', project: 'hrc-runtime' },
-  maxInstances: 4,
-  defaultTtl: 60,
-} as const
-
+const SECOND_SCOPE = 'agent:arris:project:hrc-runtime:task:T-08395-second'
 type RegistrationResponse = {
   status: string
   created: boolean
@@ -42,7 +31,6 @@ describe('T-08395 participant registrations produce project-visible births', () 
       fixture.serverOpts({
         otelListenerEnabled: false,
         wrkqLedger: ledger,
-        registrationClasses: [PARTICIPANT_CLASS] as unknown as readonly RegistrationClassConfig[],
       })
     )
   })
@@ -59,36 +47,36 @@ describe('T-08395 participant registrations produce project-visible births', () 
     return (await response.json()) as RegistrationResponse
   }
 
-  test('publishes one durable birth per true legacy/direct registration and none on retries', async () => {
+  test('publishes one durable birth per true direct registration and none on retries', async () => {
     const directRequest = {
       registrationMode: 'direct',
       requestedSessionRef: DIRECT_SCOPE,
       hostIncarnationId: 't08395-direct-incarnation',
     }
-    const legacyRequest = {
-      classId: PARTICIPANT_CLASS.classId,
-      participantKey: 't08395-legacy-key',
-      socketPath: `${fixture.tmpDir}/t08395-legacy.sock`,
+    const secondRequest = {
+      registrationMode: 'direct',
+      requestedSessionRef: SECOND_SCOPE,
+      hostIncarnationId: 't08395-second-incarnation',
     }
 
     const direct = await register(directRequest)
     const directRetry = await register(directRequest)
-    const legacy = await register(legacyRequest)
-    const legacyRetry = await register(legacyRequest)
+    const second = await register(secondRequest)
+    const secondRetry = await register(secondRequest)
 
     expect(direct).toMatchObject({ status: 'registered', created: true })
     expect(directRetry).toMatchObject({ status: 'registered', created: false })
     expect(directRetry.hostSessionId).toBe(direct.hostSessionId)
-    expect(legacy).toMatchObject({ status: 'registered', created: true })
-    expect(legacyRetry).toMatchObject({ status: 'registered', created: false })
-    expect(legacyRetry.hostSessionId).toBe(legacy.hostSessionId)
+    expect(second).toMatchObject({ status: 'registered', created: true })
+    expect(secondRetry).toMatchObject({ status: 'registered', created: false })
+    expect(secondRetry.hostSessionId).toBe(second.hostSessionId)
 
     const births = server!.db.hrcEvents
       .listFromHrcSeq(1)
       .filter((event) => event.eventKind === 'session.created')
     expect(births).toHaveLength(2)
     expect(births.map((event) => event.hostSessionId)).toEqual(
-      expect.arrayContaining([direct.hostSessionId, legacy.hostSessionId])
+      expect.arrayContaining([direct.hostSessionId, second.hostSessionId])
     )
     for (const birth of births) {
       expect(birth).toMatchObject({ laneRef: 'main', generation: 1, payload: { created: true } })
@@ -101,7 +89,7 @@ describe('T-08395 participant registrations produce project-visible births', () 
       'session.born',
     ])
     expect(ledger.projectEventPosts.map((post) => post.attributes['session'])).toEqual(
-      expect.arrayContaining([direct.hostSessionId, legacy.hostSessionId])
+      expect.arrayContaining([direct.hostSessionId, second.hostSessionId])
     )
     expect(ledger.projectEventPosts.every((post) => post.attributes['cause'] === 'resolve')).toBe(
       true

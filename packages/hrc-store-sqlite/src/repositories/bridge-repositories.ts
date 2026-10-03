@@ -131,19 +131,17 @@ export class SurfaceBindingRepository {
           runtime_id,
           generation,
           window_id,
-          tab_id,
           pane_id,
           bound_at,
           unbound_at,
           reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
         ON CONFLICT(surface_kind, surface_id) DO UPDATE SET
           client_tty = excluded.client_tty,
           host_session_id = excluded.host_session_id,
           runtime_id = excluded.runtime_id,
           generation = excluded.generation,
           window_id = excluded.window_id,
-          tab_id = excluded.tab_id,
           pane_id = excluded.pane_id,
           bound_at = excluded.bound_at,
           unbound_at = NULL,
@@ -156,7 +154,6 @@ export class SurfaceBindingRepository {
       record.runtimeId,
       record.generation,
       record.windowId ?? null,
-      record.tabId ?? null,
       record.paneId ?? null,
       record.boundAt
     )

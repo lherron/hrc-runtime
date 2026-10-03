@@ -9,10 +9,7 @@ import type { WriterEvidence } from 'spaces-runtime-contracts'
 
 import type { DirectJoinRequest, DirectJoinResult } from './participant-host-registration.js'
 import { observeParticipantTransportEvidence } from './participant-transport-evidence.js'
-import {
-  isAbsorbingParticipantAttempt,
-  observeParticipantWriterEvidence,
-} from './participant-writer-evidence.js'
+import { isAbsorbingParticipantAttempt } from './participant-writer-evidence.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { timestamp } from './server-util.js'
 import { detectResumeInvalidationBarrier } from './session-resume-continuation.js'
@@ -230,7 +227,7 @@ function dispositionReason(
   kind: ReplacementKind,
   evidence: WriterEvidence,
   attempt: ParticipantAttempt,
-  evidenceSource: 'producer' | 'transport' | 'pre-attach'
+  evidenceSource: 'transport' | 'pre-attach'
 ): string {
   if (evidenceSource === 'pre-attach') return `pre_attach_superseded:${attempt.attemptId}`
   if (evidenceSource === 'transport' && evidence.liveness.state === 'dead') {
@@ -348,7 +345,6 @@ export async function driveParticipantReplacement(
       : server.db.participantHostBindings.getBindingById(initialAttempt.hostBindingId)
   const currentIntent = parseIntent(initialAttempt.replacementIntentJson)
   const preAttachSupersession =
-    registration.registrationMode === 'direct' &&
     (request.hostIncarnationId !== binding?.hostIncarnationId ||
       hasLegacyArrisHostIncarnationSelection(initialAttempt.continuation)) &&
     (isNeverAttachedDirectAttempt(server, initialAttempt) ||
@@ -394,18 +390,6 @@ export async function driveParticipantReplacement(
       'a different durable replacement intent already owns this predecessor'
     )
   }
-  const adapter =
-    registration.adapterId === undefined
-      ? undefined
-      : server.options.participantAdapterRegistry?.get(registration.adapterId)
-  const evidenceMethodAvailable = isAbsorbingParticipantAttempt(initialAttempt)
-    ? adapter?.inspectWriter !== undefined
-    : adapter?.retireWriter !== undefined
-  const producerEvidenceAvailable =
-    adapter !== undefined &&
-    registration.classId !== undefined &&
-    registration.participantKey !== undefined &&
-    evidenceMethodAvailable
   const now = timestamp()
   const freshIntent: ReplacementIntent = {
     schemaVersion: 'participant-replacement-intent/v1',
@@ -461,56 +445,12 @@ export async function driveParticipantReplacement(
     return refusal('pending', 'participant_successor_gate_changed', 'replacement intent changed')
   }
 
-  const observedEvidence = preAttachSupersession
-    ? {
-        outcome: 'evidence' as const,
-        evidence: preAttachRetirementReceipt(registration, attempt, binding.hostIncarnationId),
-      }
-    : producerEvidenceAvailable
-      ? await observeParticipantWriterEvidence(server, adapter, registration, attempt, kind)
-      : {
-          outcome: 'evidence' as const,
-          evidence: (await observeParticipantTransportEvidence(server, registration, attempt, kind))
-            .evidence,
-        }
-  if (observedEvidence.outcome === 'invalid') {
-    if (attempt.replacementIntentJson !== undefined) {
-      pauseOrCancelReplacement(
-        server,
-        attempt,
-        intent,
-        attempt.replacementIntentJson,
-        'participant_host_evidence_invalid'
-      )
-    }
-    return refusal(
-      'rejected',
-      'participant_host_evidence_invalid',
-      `producer writer evidence did not match the exact ${kind} writer requested`
-    )
-  }
-  if (observedEvidence.outcome === 'unavailable') {
-    if (attempt.replacementIntentJson !== undefined) {
-      pauseOrCancelReplacement(
-        server,
-        attempt,
-        intent,
-        attempt.replacementIntentJson,
-        'host_retirement_unproven: producer evidence unavailable'
-      )
-    }
-    return refusal(
-      'pending',
-      'host_retirement_unproven',
-      'producer evidence unavailable for the exact predecessor writer'
-    )
-  }
-  const evidence = observedEvidence.evidence
-  const evidenceSource = preAttachSupersession
+  const evidenceSource: 'transport' | 'pre-attach' = preAttachSupersession
     ? 'pre-attach'
-    : producerEvidenceAvailable
-      ? 'producer'
-      : 'transport'
+    : 'transport'
+  const evidence = preAttachSupersession
+    ? preAttachRetirementReceipt(registration, attempt, binding.hostIncarnationId)
+    : (await observeParticipantTransportEvidence(server, registration, attempt, kind)).evidence
   const persistedAttempt = attempt
   const priorIntentJson = persistedAttempt.replacementIntentJson
   if (priorIntentJson === undefined) {

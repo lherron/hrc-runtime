@@ -70,7 +70,6 @@ function seedRuntime(runtimeId: string, scopeRef: string, status: string): void 
       provider: 'anthropic',
       status,
       supportsInflightInput: false,
-      adopted: false,
       createdAt: now,
       updatedAt: now,
     })

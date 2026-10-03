@@ -25,7 +25,6 @@ describe('RuntimeRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
 
       const runtime: HrcRuntimeSnapshot = {
@@ -39,7 +38,6 @@ describe('RuntimeRepository', () => {
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         createdAt: now,
         updatedAt: now,
       }
@@ -66,7 +64,6 @@ describe('RuntimeRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId: 'rt-002',
@@ -79,7 +76,6 @@ describe('RuntimeRepository', () => {
         provider: 'anthropic',
         status: 'starting',
         supportsInflightInput: false,
-        adopted: false,
         createdAt: now,
         updatedAt: now,
       })
@@ -87,49 +83,6 @@ describe('RuntimeRepository', () => {
       const updated = db.runtimes.updateStatus('rt-002', 'ready', ts())
       expect(updated).not.toBeNull()
       expect(updated!.status).toBe('ready')
-    } finally {
-      db.close()
-    }
-  })
-
-  it('updates PIDs on runtime', () => {
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const now = ts()
-      db.sessions.insert({
-        hostSessionId: 'hsid-rt-3',
-        scopeRef: testScopeRef('scope-rt3'),
-        laneRef: 'default',
-        generation: 1,
-        status: 'active',
-        createdAt: now,
-        updatedAt: now,
-        ancestorScopeRefs: [],
-      })
-      db.runtimes.insert({
-        runtimeId: 'rt-003',
-        hostSessionId: 'hsid-rt-3',
-        scopeRef: testScopeRef('scope-rt3'),
-        laneRef: 'default',
-        generation: 1,
-        transport: 'tmux',
-        harness: 'claude-code',
-        provider: 'anthropic',
-        status: 'ready',
-        supportsInflightInput: false,
-        adopted: false,
-        createdAt: now,
-        updatedAt: now,
-      })
-
-      const updated = db.runtimes.updatePids('rt-003', {
-        wrapperPid: 12345,
-        childPid: 12346,
-        updatedAt: ts(),
-      })
-      expect(updated).not.toBeNull()
-      expect(updated!.wrapperPid).toBe(12345)
-      expect(updated!.childPid).toBe(12346)
     } finally {
       db.close()
     }
@@ -148,7 +101,6 @@ describe('RuntimeRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       const tmuxJson = { sessionId: '%1', windowId: '@0', paneId: '%0' }
       const created = db.runtimes.insert({
@@ -163,7 +115,6 @@ describe('RuntimeRepository', () => {
         status: 'ready',
         tmuxJson,
         supportsInflightInput: false,
-        adopted: false,
         createdAt: now,
         updatedAt: now,
       })
@@ -171,51 +122,6 @@ describe('RuntimeRepository', () => {
 
       const found = db.runtimes.getByRuntimeId('rt-tmux-1')
       expect(found!.tmuxJson).toEqual(tmuxJson)
-    } finally {
-      db.close()
-    }
-  })
-
-  it('round-trips surfaceJson through create', () => {
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const now = ts()
-      db.sessions.insert({
-        hostSessionId: 'hsid-rt-surface',
-        scopeRef: testScopeRef('scope-rt-surface'),
-        laneRef: 'default',
-        generation: 1,
-        status: 'active',
-        createdAt: now,
-        updatedAt: now,
-        ancestorScopeRefs: [],
-      })
-      const surfaceJson = {
-        kind: 'tmux-pane',
-        surfaceId: 'surface-1',
-        title: 'claude-code: cody@hrc-runtime:T-01588',
-        createdBy: 'ghostmux',
-      }
-      const created = db.runtimes.insert({
-        runtimeId: 'rt-surface-1',
-        hostSessionId: 'hsid-rt-surface',
-        scopeRef: testScopeRef('scope-rt-surface'),
-        laneRef: 'default',
-        generation: 1,
-        transport: 'tmux',
-        harness: 'claude-code',
-        provider: 'anthropic',
-        status: 'ready',
-        surfaceJson,
-        supportsInflightInput: false,
-        adopted: false,
-        createdAt: now,
-        updatedAt: now,
-      })
-      expect(created.surfaceJson).toEqual(surfaceJson)
-
-      const found = db.runtimes.getByRuntimeId('rt-surface-1')
-      expect(found!.surfaceJson).toEqual(surfaceJson)
     } finally {
       db.close()
     }
@@ -246,7 +152,6 @@ describe('RunRepository', () => {
       ...(input.priorHostSessionId ? { priorHostSessionId: input.priorHostSessionId } : {}),
       createdAt: updatedAt,
       updatedAt,
-      ancestorScopeRefs: [],
     })
   }
 
@@ -272,7 +177,6 @@ describe('RunRepository', () => {
       provider: 'anthropic',
       status: input.status,
       supportsInflightInput: false,
-      adopted: false,
       ...(input.activeRunId ? { activeRunId: input.activeRunId } : {}),
       createdAt: updatedAt,
       updatedAt,
@@ -324,7 +228,6 @@ describe('RunRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
 
       const run: HrcRunRecord = {
@@ -361,7 +264,6 @@ describe('RunRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runs.insert({
         runId: 'run-002',
@@ -410,7 +312,6 @@ describe('RunRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runs.insert({
         runId: 'run-steer-1',
@@ -766,7 +667,6 @@ describe('RunRepository.update — run-terminal monotonicity (T-07656)', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runs.insert({
         runId: 'run-t07656',

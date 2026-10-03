@@ -237,8 +237,6 @@ export function transitionRuntimeForAging(
             AND active_run_id IS ?
             AND active_operation_id IS ?
             AND active_invocation_id IS ?
-            AND wrapper_pid IS ?
-            AND child_pid IS ?
             AND last_activity_at IS ?
             AND runtime_state_json IS ?
             AND (
@@ -266,8 +264,6 @@ export function transitionRuntimeForAging(
         runtime.activeRunId ?? null,
         runtime.activeOperationId ?? null,
         runtime.activeInvocationId ?? null,
-        runtime.wrapperPid ?? null,
-        runtime.childPid ?? null,
         runtime.lastActivityAt ?? null,
         runtime.runtimeStateJson === undefined ? null : JSON.stringify(runtime.runtimeStateJson),
         evidence.invocationId,
@@ -922,7 +918,6 @@ export function resolveSweepSummarySession(
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 

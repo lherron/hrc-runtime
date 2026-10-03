@@ -20,7 +20,6 @@ import {
 } from './handlers-control.js'
 import { cmdRegistrationsGc } from './handlers-registration-gc.js'
 import {
-  cmdAdopt,
   cmdRuntimeDiagnostics,
   cmdRuntimeInspect,
   cmdRuntimeList,
@@ -170,14 +169,6 @@ function registerAdminRuntimeCommands(admin: Command): void {
           booleans: [],
         })
       )
-    })
-
-  adminRuntime
-    .command('adopt')
-    .description('adopt a dead or stale runtime')
-    .argument('<runtimeId>', 'runtime ID')
-    .action(async (runtimeId) => {
-      await cmdAdopt([runtimeId])
     })
 
   adminRuntime

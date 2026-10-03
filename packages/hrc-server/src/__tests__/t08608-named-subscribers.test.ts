@@ -59,7 +59,6 @@ function seedBase(): void {
       provider: 'codex',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       createdAt: now,
       updatedAt: now,
     })

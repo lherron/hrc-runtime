@@ -39,7 +39,6 @@ function seedRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): HrcRuntimeSna
   const now = fixture.now()
   const runtime: HrcRuntimeSnapshot = {
     runtimeId: 'rt-t08012-owner-cleanup',
-    runtimeKind: 'harness',
     hostSessionId: session.hostSessionId,
     scopeRef: session.scopeRef,
     laneRef: session.laneRef,
@@ -49,7 +48,6 @@ function seedRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): HrcRuntimeSna
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     createdAt: now,
     updatedAt: now,

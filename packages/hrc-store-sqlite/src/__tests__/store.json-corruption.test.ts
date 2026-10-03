@@ -47,7 +47,6 @@ function insertSession(hostSessionId: string): void {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 
@@ -56,7 +55,7 @@ function corruptColumn(table: string, column: string, pk: string, pkColumn: stri
 }
 
 // ---------------------------------------------------------------------------
-// Session: corrupted parsed_scope_json
+// Session: corrupted last_applied_intent_json
 // ---------------------------------------------------------------------------
 describe('C-2: corrupted JSON does not crash reads', () => {
   it('session with corrupted last_applied_intent_json returns undefined', () => {
@@ -79,7 +78,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
   // ---------------------------------------------------------------------------
   it('logs table hint, column name, and raw value snippet on corruption', () => {
     insertSession('hsid-log-ctx')
-    corruptColumn('sessions', 'parsed_scope_json', 'hsid-log-ctx', 'host_session_id')
+    corruptColumn('sessions', 'last_applied_intent_json', 'hsid-log-ctx', 'host_session_id')
 
     const logged: string[] = []
     const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
@@ -88,8 +87,6 @@ describe('C-2: corrupted JSON does not crash reads', () => {
     try {
       db.sessions.getByHostSessionId('hsid-log-ctx')
       expect(logged.length).toBeGreaterThan(0)
-      // Must contain column name
-      expect(logged[0]).toContain('parsed_scope_json')
       // Must contain a snippet of the corrupted value
       expect(logged[0]).toContain('not-valid-json')
     } finally {
@@ -114,19 +111,18 @@ describe('C-2: corrupted JSON does not crash reads', () => {
       priorHostSessionId: 'hsid-ok-1',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
 
     // Corrupt JSON on the first session only
-    corruptColumn('sessions', 'parsed_scope_json', 'hsid-ok-1', 'host_session_id')
+    corruptColumn('sessions', 'last_applied_intent_json', 'hsid-ok-1', 'host_session_id')
 
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
     try {
       const sessions = db.sessions.listByScopeRef(testScopeRef('corrupt'), 'default')
       expect(sessions.length).toBe(2)
-      // One has undefined parsedScopeJson, the other doesn't
+      // One has undefined lastAppliedIntentJson, the other doesn't
       const corrupted = sessions.find((s) => s.hostSessionId === 'hsid-ok-1')
-      expect(corrupted!.parsedScopeJson).toBeUndefined()
+      expect(corrupted!.lastAppliedIntentJson).toBeUndefined()
     } finally {
       errorSpy.mockRestore()
     }

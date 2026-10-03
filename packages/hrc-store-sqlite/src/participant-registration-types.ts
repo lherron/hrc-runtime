@@ -56,13 +56,6 @@ export function allowsParticipantAttemptTransition(
   return true
 }
 
-/**
- * How this registration came to exist. `legacy` is the key-scoped request
- * shape that predates protocol join and keeps every one of its identity
- * columns; `direct` is a participant declaring its own address (R7.1).
- */
-export type ParticipantRegistrationMode = 'legacy' | 'direct'
-
 export type ParticipantAddressPolicy = 'permanent-keyed' | 'selected-scope'
 export type ParticipantContinuityPolicy = 'key-scoped' | 'host-incarnation'
 export type ParticipantLifecycleOwner = 'hrc-managed' | 'externally-owned'
@@ -72,8 +65,7 @@ export type ParticipantReplaySemantics = 'none' | 'full-source-replay'
  * The resolved policy a direct join answers for itself.
  *
  * R7.1 stores it on the registration so a direct lookup never needs a class or
- * an adapter to say what an address is. A legacy registration leaves it absent:
- * its class is still the authority, and no such value was ever recorded for it.
+ * a class to say what an address is.
  */
 export type ParticipantRegistrationPolicy = {
   addressPolicy: ParticipantAddressPolicy
@@ -84,16 +76,13 @@ export type ParticipantRegistrationPolicy = {
 
 export type ParticipantRegistration = {
   registrationId: string
-  registrationMode: ParticipantRegistrationMode
   /**
    * Every optional field below is optional because a direct join may genuinely
    * have no value for it. R7.1 forbids a fabricated adapter, an empty
    * workspace or a pretend preparation, so absent stays absent through the
-   * repository, the API and post-join preparation. A legacy row still has all
-   * five, and the database CHECK keeps it that way.
+   * repository, the API and post-join preparation.
    */
   classId?: string | undefined
-  adapterId?: string | undefined
   join: 'hrc-hosted' | 'participant-served'
   participantKey?: string | undefined
   scopeRef: string
@@ -103,11 +92,7 @@ export type ParticipantRegistration = {
   workspaceCwd?: string | undefined
   /** Participant-owned broker endpoint; absent for HRC-hosted participants. */
   socketPath?: string | undefined
-  /** Opaque, JSON-serialized adapter admission output. */
-  preparationJson?: string | undefined
-  /** Opaque, JSON-serialized continuity evidence, when the adapter supplied it. */
-  continuityEvidenceJson?: string | undefined
-  /** Present exactly when `registrationMode` is `direct`. */
+  /** Resolved policy for this direct registration. */
   policy?: ParticipantRegistrationPolicy | undefined
   /**
    * The participant's declared current host identity. HRC records the
@@ -165,8 +150,6 @@ export type ParticipantAttempt = {
   dispatchJson?: string | undefined
   /** Immutable broker acknowledgement after INSTALL -> HELLO succeeds. */
   brokerIdentityJson?: string | undefined
-  /** Opaque admission evidence for this exact attempt. */
-  continuityEvidenceJson?: string | undefined
   /** Classification frozen when this attempt identity is allocated. */
   activationClassification?: ParticipantActivationClassification | undefined
   /** Exact validated producer receipt for the prior writer. */

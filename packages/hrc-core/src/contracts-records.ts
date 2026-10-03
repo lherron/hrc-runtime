@@ -4,56 +4,6 @@ import type { HrcLaunchEnvConfig, HrcRuntimeIntent } from './contracts-intents.j
 import type { HrcErrorCode } from './errors.js'
 import type { HrcSessionRef } from './selectors.js'
 
-export type HrcAppSessionRef = {
-  appId: string
-  appSessionKey: string
-}
-
-export type HrcManagedSessionKind = 'harness' | 'command'
-export type HrcRuntimeKind = 'harness' | 'command'
-
-export type HrcCommandLaunchSpec = {
-  launchMode?: 'shell' | 'exec' | 'app-server' | undefined
-  argv?: string[] | undefined
-  cwd?: string | undefined
-  env?: Record<string, string> | undefined
-  unsetEnv?: string[] | undefined
-  pathPrepend?: string[] | undefined
-  shell?:
-    | {
-        executable?: string | undefined
-        login?: boolean | undefined
-        interactive?: boolean | undefined
-      }
-    | undefined
-}
-
-export type HrcAppHarnessSessionSpec = {
-  kind: 'harness'
-  runtimeIntent: HrcRuntimeIntent
-}
-
-export type HrcAppCommandSessionSpec = {
-  kind: 'command'
-  command: HrcCommandLaunchSpec
-}
-
-export type HrcAppSessionSpec = HrcAppHarnessSessionSpec | HrcAppCommandSessionSpec
-
-export type HrcManagedSessionRecord = {
-  appId: string
-  appSessionKey: string
-  kind: HrcManagedSessionKind
-  label?: string | undefined
-  metadata?: Record<string, unknown> | undefined
-  activeHostSessionId: string
-  generation: number
-  status: 'active' | 'removed'
-  createdAt: string
-  updatedAt: string
-  removedAt?: string | undefined
-}
-
 export type HrcHookBridgeConfig = {
   kind: string
   /**
@@ -151,9 +101,6 @@ export type HrcSessionRecord = {
   priorHostSessionId?: string | undefined
   createdAt: string
   updatedAt: string
-  /** Opaque JSON from scope resolution. Validated at session creation by the server, not by consumers. */
-  parsedScopeJson?: Record<string, unknown> | undefined
-  ancestorScopeRefs: string[]
   lastAppliedIntentJson?: HrcRuntimeIntent | undefined
   continuation?: HrcContinuationRef | undefined
 }
@@ -185,12 +132,10 @@ export type HrcRuntimePresentationRecord = {
 
 export type HrcRuntimeSnapshot = {
   runtimeId: string
-  runtimeKind?: HrcRuntimeKind | undefined
   hostSessionId: string
   scopeRef: string
   laneRef: string
   generation: number
-  launchId?: string | undefined
   transport: string
   /** Legacy adapter identity. Producer-selected v2 executions leave this absent. */
   harness?: HrcHarness | undefined
@@ -201,17 +146,7 @@ export type HrcRuntimeSnapshot = {
   statusChangedAt?: string | undefined
   /** Opaque tmux session metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */
   tmuxJson?: Record<string, unknown> | undefined
-  /** Opaque interactive surface metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */
-  surfaceJson?: Record<string, unknown> | undefined
-  wrapperPid?: number | undefined
-  childPid?: number | undefined
-  /** Opaque harness session state. Written by the harness callback, trusted at the hrc-server boundary. */
-  harnessSessionJson?: Record<string, unknown> | undefined
-  /** Opaque command launch spec persisted for command runtimes. Validated at the hrc-server boundary. */
-  commandSpec?: HrcCommandLaunchSpec | undefined
-  continuation?: HrcContinuationRef | undefined
   supportsInflightInput: boolean
-  adopted: boolean
   activeRunId?: string | undefined
   lastActivityAt?: string | undefined
   // ── Harness-broker runtime state (T-01690 W1B). Nullable/additive; set only
@@ -220,16 +155,11 @@ export type HrcRuntimeSnapshot = {
   controllerKind?: HrcRuntimeControllerKind | undefined
   activeOperationId?: string | undefined
   activeInvocationId?: string | undefined
-  compileId?: string | undefined
   planHash?: string | undefined
   selectedProfileHash?: string | undefined
   /** Opaque RuntimeState blob (runtime-state/v1). Validated at the hrc-server boundary. */
   runtimeStateJson?: Record<string, unknown> | undefined
-  lifecyclePolicyHash?: string | undefined
-  currentHarnessGeneration?: number | undefined
-  currentTurnAttempt?: number | undefined
   lifecycleTerminalReason?: string | undefined
-  lastLifecycleEscalationJson?: string | undefined
   /**
    * Durable viewer-presentation record (T-07594). Absent for generations that
    * predate the record; never carries invocation-local state.
@@ -408,33 +338,6 @@ export type HrcRunRecord = {
   originCausationRef?: string | undefined
 }
 
-export type HrcLaunchRecord = {
-  launchId: string
-  hostSessionId: string
-  generation: number
-  runtimeId?: string | undefined
-  harness: HrcHarness
-  provider: HrcProvider
-  launchArtifactPath: string
-  /** Opaque tmux session metadata. Validated by hrc-server at launch creation, not by SDK consumers. */
-  tmuxJson?: Record<string, unknown> | undefined
-  /** Opaque interactive surface metadata. Validated by hrc-server at launch creation, not by SDK consumers. */
-  surfaceJson?: Record<string, unknown> | undefined
-  wrapperPid?: number | undefined
-  childPid?: number | undefined
-  /** Opaque harness session state. Written by the harness callback, trusted at the hrc-server boundary. */
-  harnessSessionJson?: Record<string, unknown> | undefined
-  continuation?: HrcContinuationRef | undefined
-  wrapperStartedAt?: string | undefined
-  childStartedAt?: string | undefined
-  exitedAt?: string | undefined
-  exitCode?: number | undefined
-  signal?: string | undefined
-  status: string
-  createdAt: string
-  updatedAt: string
-}
-
 export type HrcSurfaceBindingRecord = {
   surfaceKind: string
   surfaceId: string
@@ -444,22 +347,10 @@ export type HrcSurfaceBindingRecord = {
   runtimeId: string
   generation: number
   windowId?: string | undefined
-  tabId?: string | undefined
   paneId?: string | undefined
   boundAt: string
   unboundAt?: string | undefined
   reason?: string | undefined
-}
-
-export type HrcAppSessionRecord = {
-  appId: string
-  appSessionKey: string
-  hostSessionId: string
-  label?: string | undefined
-  metadata?: Record<string, unknown> | undefined
-  createdAt: string
-  updatedAt: string
-  removedAt?: string | undefined
 }
 
 export type HrcLocalBridgeRecord = {
@@ -549,7 +440,6 @@ export type HrcCompiledRuntimePlanRecord = {
   compilerName: string
   compilerVersion: string
   planProjectionJson: string
-  diagnosticsJson?: string | undefined
   createdAt: string
 }
 
@@ -712,4 +602,20 @@ export type HrcFirstTurnWatchRecord = {
   bundleDir?: string | undefined
   createdAt: string
   updatedAt: string
+}
+
+export type HrcCommandLaunchSpec = {
+  launchMode?: 'shell' | 'exec' | 'app-server' | undefined
+  argv?: string[] | undefined
+  cwd?: string | undefined
+  env?: Record<string, string> | undefined
+  unsetEnv?: string[] | undefined
+  pathPrepend?: string[] | undefined
+  shell?:
+    | {
+        executable?: string | undefined
+        login?: boolean | undefined
+        interactive?: boolean | undefined
+      }
+    | undefined
 }

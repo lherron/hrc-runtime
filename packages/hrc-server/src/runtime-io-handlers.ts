@@ -15,7 +15,6 @@ import {
   normalizeActuatorSplitPolicy,
 } from './actuator-split.js'
 import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
-import { assertAppIdentityOwner, issueAppBirthRunGrantForCompile } from './app-session-identity.js'
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveTmuxBrokerStartRoute,
@@ -73,7 +72,7 @@ import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import type { AttachBeforeInvocationStartOption, AttachDescriptorResponse } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
-import { automaticContinuationForRuntime } from './session-continuation-reuse.js'
+import { automaticContinuationForSession } from './session-continuation-reuse.js'
 import {
   findPersistedLifecycleTerminalReason,
   findUserInitiatedContinuationClearReason,
@@ -337,7 +336,6 @@ export async function startRuntimeForSession(
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
   assertLocalPersonaAllowed(this, session.scopeRef)
-  assertAppIdentityOwner(session)
   // An attached run is a generic door.  It cannot inspect the request to
   // predict a driver or a surface: ASP admits the execution first, and the
   // controller exposes the attach gate only when that execution allocated a
@@ -495,7 +493,6 @@ export async function startRuntimeForSession(
       }
 
       const startRunId = `run-${randomUUID()}`
-      issueAppBirthRunGrantForCompile(this.db, session, intent, startRunId)
       if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
         this.markRuntimeStaleForBrokerReprovision(session, existingRuntime, {
           reason: 'producer-selected-ordinary-start-reprovision',
@@ -597,7 +594,7 @@ export async function startRuntimeForSession(
           reusableBrokerRuntime &&
           reusableBrokerRuntime.controllerKind === 'harness-broker' &&
           !isRuntimeUnavailableStatus(reusableBrokerRuntime.status) &&
-          automaticContinuationForRuntime(this.db, session, reusableBrokerRuntime)?.key
+          automaticContinuationForSession(this.db, session)?.key
         ) {
           assertActuatorSplitRuntimeReuse(startIntent, reusableBrokerRuntime)
           await this.publishPresentation(reusableBrokerRuntime, presentationOptions)
@@ -617,9 +614,6 @@ export async function startRuntimeForSession(
           return resolvedRuntime
         }
         const startRunId = `run-${randomUUID()}`
-        // T-08576 D5: an app birth that compiles an initial turn reserves its run
-        // id under the owner before any stale-mark, run, handle or launch effect.
-        issueAppBirthRunGrantForCompile(this.db, session, startIntent, startRunId)
         if (reusableBrokerRuntime && !isRuntimeUnavailableStatus(reusableBrokerRuntime.status)) {
           this.markRuntimeStaleForBrokerReprovision(session, reusableBrokerRuntime, {
             reason: 'headless-broker-start-reprovision',
@@ -659,10 +653,7 @@ export async function startRuntimeForSession(
 
       // SDK (anthropic) start hard-fails; legacy-exec start fails closed.
       const reusableRuntime = getReusableHeadlessRuntimeForSession(this.db, session.hostSessionId)
-      if (
-        reusableRuntime &&
-        automaticContinuationForRuntime(this.db, session, reusableRuntime)?.key
-      ) {
+      if (reusableRuntime && automaticContinuationForSession(this.db, session)?.key) {
         assertActuatorSplitRuntimeReuse(startIntent, reusableRuntime)
         this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, timestamp())
         return reusableRuntime
@@ -711,8 +702,6 @@ export async function startRuntimeForSession(
         return existingRuntime
       }
       const startRunId = `run-${randomUUID()}`
-      // T-08576 D5: reserve before any stale-mark, run, handle or launch effect.
-      issueAppBirthRunGrantForCompile(this.db, session, normalizedIntent, startRunId)
       if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
         this.markRuntimeStaleForBrokerReprovision(session, existingRuntime, {
           reason: 'interactive-broker-start-reprovision',

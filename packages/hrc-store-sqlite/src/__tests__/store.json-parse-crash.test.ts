@@ -56,7 +56,6 @@ function insertSession(db: ReturnType<typeof openHrcDatabase>, hostSessionId: st
     laneRef: 'default',
     generation: 1,
     status: 'active',
-    ancestorScopeRefs: [],
     createdAt: now,
     updatedAt: now,
   })
@@ -66,31 +65,6 @@ function insertSession(db: ReturnType<typeof openHrcDatabase>, hostSessionId: st
 // C-2: Corrupted JSON in repository rows must not crash
 // ---------------------------------------------------------------------------
 describe('C-2: parseJson crash guard', () => {
-  it('survives corrupted parsed_scope_json in a session row', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      insertSession(db, 'hsid-corrupt-1')
-
-      // Corrupt the JSON column directly via raw SQL
-      db.sqlite.run(
-        `UPDATE sessions SET parsed_scope_json = '{not valid json!!!' WHERE host_session_id = ?`,
-        ['hsid-corrupt-1']
-      )
-
-      // This should NOT throw — currently it does (RED)
-      const session = db.sessions.getByHostSessionId('hsid-corrupt-1')
-      expect(session).not.toBeNull()
-      expect(session!.hostSessionId).toBe('hsid-corrupt-1')
-      // Corrupted JSON field should fall back to undefined, not crash
-      expect(session!.parsedScopeJson).toBeUndefined()
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Corrupt JSON in column parsed_scope_json')
-      )
-    } finally {
-      db.close()
-    }
-  })
-
   it('survives corrupted continuation_json in a session row', () => {
     const db = openHrcDatabase(dbPath)
     try {
@@ -128,7 +102,6 @@ describe('C-2: parseJson crash guard', () => {
         provider: 'anthropic',
         status: 'pending',
         supportsInflightInput: false,
-        adopted: false,
         createdAt: ts(),
         updatedAt: ts(),
       })
@@ -180,38 +153,6 @@ describe('C-2: parseJson crash guard', () => {
       expect(events[0].eventJson).toBeUndefined()
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining('Corrupt JSON in column event_json')
-      )
-    } finally {
-      db.close()
-    }
-  })
-
-  it('survives corrupted metadata_json in an app_session row', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      insertSession(db, 'hsid-app-corrupt')
-
-      // Insert an app session with valid metadata via raw SQL since apply()
-      // may not expose the crash path the same way
-      db.sqlite.run(
-        `INSERT INTO app_sessions (app_id, app_session_key, host_session_id, label, metadata_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        ['test-app', 'key-1', 'hsid-app-corrupt', 'Test', '{"foo":"bar"}', ts(), ts()]
-      )
-
-      // Corrupt the metadata_json
-      db.sqlite.run(
-        `UPDATE app_sessions SET metadata_json = '\\x00\\xff invalid' WHERE app_session_key = ?`,
-        ['key-1']
-      )
-
-      // Should not throw
-      const found = db.appSessions.findByKey('test-app', 'key-1')
-      expect(found).not.toBeNull()
-      expect(found!.appSessionKey).toBe('key-1')
-      expect(found!.metadata).toBeUndefined()
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Corrupt JSON in column metadata_json')
       )
     } finally {
       db.close()

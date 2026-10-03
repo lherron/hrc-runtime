@@ -69,7 +69,6 @@ describe('SDK fallback transport selection', () => {
     fixture.seedTmuxRuntime(hsid, scope, 'rt-starting-tmux', {
       status: 'starting',
       activeRunId: 'run-existing',
-      launchId: 'launch-existing',
     })
 
     const res = await fixture.postJson('/v1/turns', {

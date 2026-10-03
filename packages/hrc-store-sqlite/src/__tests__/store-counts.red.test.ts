@@ -17,7 +17,6 @@ describe('durable repository scalar counts', () => {
           status: 'active',
           createdAt: now,
           updatedAt: now,
-          ancestorScopeRefs: [],
         })
       }
 
@@ -34,7 +33,6 @@ describe('durable repository scalar counts', () => {
           provider: 'openai',
           status: 'ready',
           supportsInflightInput: true,
-          adopted: false,
           createdAt: now,
           updatedAt: now,
         })

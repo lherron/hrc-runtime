@@ -1,6 +1,5 @@
 import type {
   GetInputResponse,
-  HrcLaunchRecord as LaunchRecord,
   HrcLocalBridgeRecord as LocalBridgeRecord,
   HrcRunRecord as RunRecord,
   HrcRuntimeSnapshot as RuntimeRecord,
@@ -30,7 +29,6 @@ import type {
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
   HrcSubscriberAdmissionSnapshot,
-  LaunchListFilter,
   ListFirstTurnDiagnosticsResponse,
   ListPresentationRuntimesResponse,
   RegisterBridgeTargetRequest,
@@ -348,17 +346,5 @@ export class HrcClientDiagnosticsMethods extends HrcClientRuntimeMethods {
       limit: 1,
     })
     return runs[0] ?? null
-  }
-
-  async listLaunches(filter?: LaunchListFilter): Promise<LaunchRecord[]> {
-    const path = buildPath('/v1/launches', {
-      hostSessionId: emptyToUndefined(filter?.hostSessionId),
-      runtimeId: emptyToUndefined(filter?.runtimeId),
-    })
-    return this.getJson<LaunchRecord[]>(path)
-  }
-
-  async adoptRuntime(runtimeId: string): Promise<RuntimeRecord> {
-    return this.postJson<RuntimeRecord>('/v1/runtimes/adopt', { runtimeId })
   }
 }

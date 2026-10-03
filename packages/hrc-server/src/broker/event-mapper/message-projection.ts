@@ -152,7 +152,7 @@ export const messageProjectionMethods = {
   },
 
   // ── Continuation history + automatic-reuse intent (T-07899) ─────────────
-  // Provider keys are durable history on BOTH runtime and session rows.
+  // Provider keys are durable history on the session row.
   // continuation.cleared records that ordinary run/start must be fresh by
   // disabling automatic reuse on the session; explicit `hrc resume` remains
   // able to select the retained key.
@@ -177,7 +177,6 @@ export const messageProjectionMethods = {
           key: payload.key,
         }
         db.runtimes.update(ctx.runtimeId, {
-          continuation,
           ...runtimeActivityPatch(db, ctx.runtimeId, {
             source: 'broker-event',
             occurredAt: envelope.time ?? now,
@@ -269,7 +268,6 @@ export const messageProjectionMethods = {
     }
   ): void {
     this.db.runtimes.update(runtimeId, {
-      ...patch,
       ...runtimeActivityPatch(this.db, runtimeId, {
         source: 'broker-event',
         occurredAt,
@@ -285,14 +283,9 @@ export const messageProjectionMethods = {
     invocation: {
       currentHarnessGeneration?: number | undefined
       currentTurnAttempt?: number | undefined
-    },
-    runtime: {
-      currentHarnessGeneration?: number | undefined
-      currentTurnAttempt?: number | undefined
     }
   ): boolean {
-    const currentHarnessGeneration =
-      invocation.currentHarnessGeneration ?? runtime.currentHarnessGeneration
+    const currentHarnessGeneration = invocation.currentHarnessGeneration
     if (
       currentHarnessGeneration !== undefined &&
       envelope.harnessGeneration !== undefined &&
@@ -301,7 +294,7 @@ export const messageProjectionMethods = {
       return true
     }
 
-    const currentTurnAttempt = invocation.currentTurnAttempt ?? runtime.currentTurnAttempt
+    const currentTurnAttempt = invocation.currentTurnAttempt
     if (
       currentTurnAttempt !== undefined &&
       envelope.turnAttempt !== undefined &&

@@ -53,7 +53,6 @@ function insertObservedCarrier(
     status: 'active',
     createdAt: AT,
     updatedAt: AT,
-    ancestorScopeRefs: [],
   })
   db.runtimes.insert({
     runtimeId,
@@ -66,7 +65,6 @@ function insertObservedCarrier(
     provider: 'openai',
     status: 'busy',
     supportsInflightInput: true,
-    adopted: false,
     createdAt: AT,
     updatedAt: AT,
   })

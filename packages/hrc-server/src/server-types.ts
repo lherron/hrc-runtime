@@ -5,11 +5,9 @@ import type {
   HrcDispatchOrigin,
   HrcErrorCode,
   HrcEventEnvelope,
-  HrcLaunchRecord,
   HrcLifecycleEvent,
   HrcMessageAddress,
   HrcMessageRecord,
-  HrcProvider,
   HrcRunRecord,
   HrcRuntimeSnapshot,
   PhaseRecorder,
@@ -26,7 +24,6 @@ import type {
 import type { BirthTimeline } from './birth-timeline.js'
 import type { ExternalParticipantClientFactory } from './external-registration-rendezvous.js'
 import type { FederationConfig } from './federation/federation-config.js'
-import type { ParticipantAdapterRegistry } from './participant-adapter-registry.js'
 import type { RegistrationClassConfig } from './registration-classes-config.js'
 import type { ServerLifecycleExecutor } from './server-lifecycle-controller.js'
 import type { ServerShutdownAttribution } from './server-lifecycle.js'
@@ -52,7 +49,6 @@ export type AttachDescriptorResponse = {
     runtimeId: string
     generation: number
     windowId?: string | undefined
-    tabId?: string | undefined
     paneId?: string | undefined
   }
 }
@@ -249,29 +245,6 @@ export type PendingAttachedRunOperation = {
 
 export type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
 
-export type LaunchLifecyclePayload = {
-  hostSessionId: string
-  timestamp?: string | undefined
-  wrapperPid?: number | undefined
-  childPid?: number | undefined
-  exitCode?: number | undefined
-  signal?: string | undefined
-}
-
-export type LaunchContinuationPayload = {
-  hostSessionId: string
-  continuation: {
-    provider: HrcProvider
-    key?: string | undefined
-  }
-  harnessSessionJson?: Record<string, unknown> | undefined
-  timestamp?: string | undefined
-}
-
-export type LaunchEventPayload = Record<string, unknown> & {
-  type: string
-}
-
 export type HookEnvelope = {
   launchId: string
   hostSessionId: string
@@ -289,8 +262,6 @@ export type SessionRow = {
   prior_host_session_id: string | null
   created_at: string
   updated_at: string
-  parsed_scope_json: string | null
-  ancestor_scope_refs_json: string
   last_applied_intent_json: string | null
   continuation_json: string | null
 }
@@ -327,7 +298,6 @@ export type ZombieRunCandidate = {
 export type ActiveRunReconcileCandidate = {
   run: HrcRunRecord
   runtime: HrcRuntimeSnapshot
-  launch?: HrcLaunchRecord | undefined
 } & ObservedRunActivity
 
 export type ActiveRunReconcilePlan = {
@@ -509,8 +479,6 @@ export type HrcServerOptions = {
   commandRunTargets?: Record<string, HrcCommandLaunchSpec> | undefined
   /** Operator-ratified external-participant birth templates. No API mutates these. */
   registrationClasses?: readonly RegistrationClassConfig[] | undefined
-  /** Static, trusted participant adapters supplied by server composition. */
-  participantAdapterRegistry?: ParticipantAdapterRegistry | undefined
   /** Test/embedded seam for the daemon-owned EPR Unix client. */
   externalParticipantClientFactory?: ExternalParticipantClientFactory | undefined
   /** Test/embedded EPR retry overrides; production backs off from 100ms to a 2s cap. */

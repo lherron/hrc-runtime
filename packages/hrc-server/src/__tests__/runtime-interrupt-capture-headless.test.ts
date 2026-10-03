@@ -208,7 +208,6 @@ function seedHeadlessRuntime(options: SeedRuntimeOptions): void {
       provider: 'anthropic',
       status: options.status ?? (options.activeRunId ? 'busy' : 'ready'),
       supportsInflightInput: false,
-      adopted: false,
       ...(options.activeRunId ? { activeRunId: options.activeRunId } : {}),
       lastActivityAt: now,
       createdAt: now,
@@ -252,10 +251,6 @@ async function interrupt(runtimeId: string): Promise<Response> {
 
 async function capture(runtimeId: string): Promise<Response> {
   return await fixture.fetchSocket(`/v1/capture?runtimeId=${encodeURIComponent(runtimeId)}`)
-}
-
-async function adopt(runtimeId: string): Promise<Response> {
-  return await fixture.postJson('/v1/runtimes/adopt', { runtimeId })
 }
 
 describe('runtime interrupt transport branching', () => {
@@ -466,62 +461,5 @@ describe('runtime capture transport branching', () => {
     expect(res.status).toBe(503)
     const body = (await res.json()) as HrcHttpError
     expect(body.error.message).toContain('presentation pane is unavailable or changed')
-  })
-})
-
-describe('runtime adopt transport branching', () => {
-  it('keeps the tmux adopt path working', async () => {
-    fixture.seedSession('hsid-adopt-tmux', 'adopt-tmux')
-    fixture.seedTmuxRuntime('hsid-adopt-tmux', 'adopt-tmux', 'rt-adopt-tmux', { status: 'dead' })
-
-    const res = await adopt('rt-adopt-tmux')
-    expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({
-      runtimeId: 'rt-adopt-tmux',
-      status: 'adopted',
-      adopted: true,
-    })
-  })
-
-  it('refuses headless adopt', async () => {
-    seedHeadlessRuntime({
-      runtimeId: 'rt-adopt-headless',
-      hostSessionId: 'hsid-adopt-headless',
-      scopeRef: 'adopt-headless',
-      transport: 'headless',
-      status: 'dead',
-    })
-
-    const res = await adopt('rt-adopt-headless')
-    expect(res.status).toBe(400)
-    const body = (await res.json()) as HrcHttpError
-    expect(body.error.message).toBe(
-      'cannot adopt a non-tmux runtime: no attachable pane/process exists'
-    )
-    expect(body.error.detail).toMatchObject({
-      runtimeId: 'rt-adopt-headless',
-      transport: 'headless',
-    })
-  })
-
-  it('refuses sdk adopt', async () => {
-    seedHeadlessRuntime({
-      runtimeId: 'rt-adopt-sdk',
-      hostSessionId: 'hsid-adopt-sdk',
-      scopeRef: 'adopt-sdk',
-      transport: 'sdk',
-      status: 'dead',
-    })
-
-    const res = await adopt('rt-adopt-sdk')
-    expect(res.status).toBe(400)
-    const body = (await res.json()) as HrcHttpError
-    expect(body.error.message).toBe(
-      'cannot adopt a non-tmux runtime: no attachable pane/process exists'
-    )
-    expect(body.error.detail).toMatchObject({
-      runtimeId: 'rt-adopt-sdk',
-      transport: 'sdk',
-    })
   })
 })

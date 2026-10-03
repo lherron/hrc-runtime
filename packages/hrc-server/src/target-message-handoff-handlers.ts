@@ -358,13 +358,9 @@ export async function deliverPersistedSemanticTurnHandoff(
     !isCodexAppOwnedScopeRef(body.to.sessionRef)
   ) {
     birthTimeline.mark('session-lookup-miss')
-    session = await this.ensureTargetSession(
-      body.to.sessionRef,
-      body.runtimeIntent,
-      body.parsedScopeJson,
-      summonOrigin,
-      { birthTimeline }
-    )
+    session = await this.ensureTargetSession(body.to.sessionRef, body.runtimeIntent, summonOrigin, {
+      birthTimeline,
+    })
   }
 
   if (!session) {
@@ -381,13 +377,7 @@ export async function deliverPersistedSemanticTurnHandoff(
   }
 
   if (session.status === 'archived' && session.continuation?.key) {
-    session = await createNotifiedSessionSuccessor(
-      this,
-      session,
-      body.runtimeIntent,
-      body.parsedScopeJson,
-      summonOrigin
-    )
+    session = await createNotifiedSessionSuccessor(this, session, body.runtimeIntent, summonOrigin)
   }
 
   if (body.freshContext === true) {

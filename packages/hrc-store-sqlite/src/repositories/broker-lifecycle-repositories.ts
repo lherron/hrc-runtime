@@ -86,9 +86,8 @@ export class CompiledRuntimePlanRepository {
           compiler_name,
           compiler_version,
           plan_projection_json,
-          diagnostics_json,
           created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(plan_hash) DO NOTHING
       `,
       record.planHash,
@@ -97,7 +96,6 @@ export class CompiledRuntimePlanRepository {
       record.compilerName,
       record.compilerVersion,
       record.planProjectionJson,
-      record.diagnosticsJson ?? null,
       record.createdAt
     )
 

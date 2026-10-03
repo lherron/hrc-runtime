@@ -110,7 +110,6 @@ function seedDurableBrokerRuntime(opts: SeedOptions): void {
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
     // Headless: transport='headless'; interactive: transport='tmux'.
     // Both use controllerKind='harness-broker'.
@@ -137,7 +136,6 @@ function seedDurableBrokerRuntime(opts: SeedOptions): void {
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       ...(tmuxJson ? { tmuxJson } : {}),
       runtimeStateJson: {
@@ -182,7 +180,6 @@ function makeRawRuntime(opts: {
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',
@@ -314,7 +311,6 @@ describe('RED: Ph5 — inspect projection exposes endpoint/substrate/presentatio
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId: 'rt_ph5_plain',
@@ -327,7 +323,6 @@ describe('RED: Ph5 — inspect projection exposes endpoint/substrate/presentatio
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         createdAt: now,
         updatedAt: now,
         lastActivityAt: now,
@@ -402,7 +397,6 @@ describe('RED: Ph5 — public status (HrcTargetRuntimeView) adds brokerEndpoint 
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: undefined,
       runtimeStateJson: null,
       createdAt: fixture.now(),

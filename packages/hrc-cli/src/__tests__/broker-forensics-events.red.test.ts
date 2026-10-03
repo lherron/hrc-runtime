@@ -136,7 +136,6 @@ function seedRuntimeGraph(fixture: HrcServerTestFixture, options: SeedRuntimeGra
         status: 'terminated',
         createdAt,
         updatedAt: createdAt,
-        ancestorScopeRefs: [],
       })
     }
 
@@ -151,7 +150,6 @@ function seedRuntimeGraph(fixture: HrcServerTestFixture, options: SeedRuntimeGra
       provider: 'openai',
       status: options.status ?? 'terminated',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: `op-${options.runtimeId}`,
       lastActivityAt: createdAt,

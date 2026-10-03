@@ -99,7 +99,6 @@ export type FederationExpectedPlacement = {
 export type FederationMessageDelivery = {
   readonly runtimeIntent?: HrcRuntimeIntent | undefined
   readonly createIfMissing?: boolean | undefined
-  readonly parsedScopeJson?: Readonly<Record<string, unknown>> | undefined
   readonly respondTo?: HrcMessageAddress | undefined
   readonly responseFormat?: HrcTurnResponseFormat | undefined
   readonly allowStaleGeneration?: boolean | undefined

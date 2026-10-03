@@ -2,7 +2,6 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import { parseScopeRef } from 'agent-scope'
 import type { HrcHarness, HrcProvider } from 'hrc-core'
 import type { ExternalRegistrationGrant, HrcDatabase } from 'hrc-store-sqlite'
 import { scheduleExternalRegistrationCollectiveEstablishment } from './external-registration-establishment.js'
@@ -156,10 +155,6 @@ async function mintExternalRegistration(
         if (!server.db.externalRegistrationGrants.consumeIfAvailable(grant.registrationId, now)) {
           return undefined
         }
-        const parsedScopeJson = parseScopeRef(grant.derivedScope) as unknown as Record<
-          string,
-          unknown
-        >
         server.db.sessions.insert({
           hostSessionId,
           scopeRef: grant.derivedScope,
@@ -168,8 +163,6 @@ async function mintExternalRegistration(
           status: 'active',
           createdAt: now,
           updatedAt: now,
-          parsedScopeJson,
-          ancestorScopeRefs: [],
         })
         server.db.continuities.upsert({
           scopeRef: grant.derivedScope,
@@ -203,7 +196,6 @@ async function mintExternalRegistration(
         })
         server.db.runtimes.insert({
           runtimeId,
-          runtimeKind: 'harness',
           hostSessionId,
           scopeRef: grant.derivedScope,
           laneRef: 'main',
@@ -217,7 +209,6 @@ async function mintExternalRegistration(
           status: 'ready',
           statusChangedAt: now,
           supportsInflightInput: false,
-          adopted: false,
           controllerKind: 'harness-broker',
           activeOperationId: operationId,
           activeInvocationId: invocationId,

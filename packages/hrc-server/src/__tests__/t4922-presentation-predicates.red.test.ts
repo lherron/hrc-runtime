@@ -45,7 +45,6 @@ function makeHeadlessTuiRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): Hr
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     // tmuxJson carries the TUI window identity used by reconcileTmuxRuntimeLiveness
     // to probe pane liveness (getBrokerRuntimeTmuxSocketPath reads socketPath here).
@@ -112,7 +111,6 @@ function makeHeadlessNoneRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): H
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',
@@ -163,7 +161,6 @@ function seedHeadlessTuiRuntimeInFixture(
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId: 'rt-4922-http-tui',
@@ -176,7 +173,6 @@ function seedHeadlessTuiRuntimeInFixture(
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       tmuxJson: {
         socketPath: BTMUX_SOCKET,
@@ -263,7 +259,6 @@ describe('RED test 5b: toTargetCapabilities — headless+tmux-tui POSITIVE miscl
     status: 'active' as const,
     createdAt: '2026-06-18T10:00:00.000Z',
     updatedAt: '2026-06-18T10:00:00.000Z',
-    ancestorScopeRefs: [],
     continuation: null,
   }
 
@@ -303,7 +298,6 @@ describe('[CHARACTERIZATION] test 5f: headless+none NEGATIVE — not attachable 
     status: 'active' as const,
     createdAt: '2026-06-18T10:00:00.000Z',
     updatedAt: '2026-06-18T10:00:00.000Z',
-    ancestorScopeRefs: [],
     continuation: null,
   }
 
@@ -336,49 +330,12 @@ describe('[CHARACTERIZATION] test 5f: headless+none NEGATIVE — not attachable 
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// HTTP-level tests: 5c (adopt), 5d (inspect), 5e (reconcile), 6a (/quit)
+// HTTP-level tests: 5d (inspect), 5e (reconcile), 6a (/quit)
 //
 // Each describe block owns its own fixture + server with its own unique temp path.
 // beforeEach creates a fresh fixture, afterEach stops the server and cleans up.
 // There is NO shared beforeEach/afterEach at the module level.
 // ═══════════════════════════════════════════════════════════════════════════════
-
-describe('RED test 5c: POST /v1/runtimes/adopt — headless+tmux-tui rejected by transport gate (T-04922)', () => {
-  let fixture: HrcServerTestFixture
-  let server: HrcServer
-
-  beforeEach(async () => {
-    fixture = await createHrcTestFixture('hrc-t4922-adopt-')
-    server = await createHrcServer(fixture.serverOpts())
-  })
-
-  afterEach(async () => {
-    if (server) await server.stop()
-    await fixture.cleanup()
-  })
-
-  it('adopt of headless+tmux-tui should succeed (RED — transport gate 400s it today)', async () => {
-    seedHeadlessTuiRuntimeInFixture(fixture, 'dead')
-
-    const res = await fixture.postJson('/v1/runtimes/adopt', { runtimeId: 'rt-4922-http-tui' })
-    // AT HEAD: runtime-list-adopt-handlers.ts ~83
-    //   `if (runtime.transport !== 'tmux')` → throw HrcBadRequestError → 400
-    // AFTER FIX: gate on canOperatorAttach(runtime) → has tmux-tui presentation → 200
-
-    const body = (await res.json()) as Record<string, unknown>
-
-    // If 400, verify the error message confirms the transport gate is the cause
-    // (not an unrelated bug). Error shape: { error: { code, message, detail } }
-    if (res.status === 400) {
-      const errObj = body['error'] as Record<string, unknown> | undefined
-      const msg = String(errObj?.['message'] ?? '')
-      expect(msg).toContain('non-tmux')
-    }
-
-    // RED assertion: after fix the status should be 200 (adopted)
-    expect(res.status).toBe(200)
-  })
-})
 
 describe('RED test 5d: POST /v1/runtimes/inspect — tmux view absent for headless+tmux-tui (T-04922)', () => {
   let fixture: HrcServerTestFixture
@@ -450,7 +407,6 @@ describe('RED test 5e: reconcileTmuxRuntimeLiveness — headless+tmux-tui not ad
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId,
@@ -463,7 +419,6 @@ describe('RED test 5e: reconcileTmuxRuntimeLiveness — headless+tmux-tui not ad
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         controllerKind: 'harness-broker',
         tmuxJson: {
           socketPath: BTMUX_SOCKET,
@@ -543,7 +498,6 @@ describe('RED test 5e: reconcileTmuxRuntimeLiveness — headless+tmux-tui not ad
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert(
         makeHeadlessTuiRuntime({

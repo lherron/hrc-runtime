@@ -3,21 +3,15 @@ import {
   HrcErrorCode,
   HrcNotFoundError,
   HrcRuntimeUnavailableError,
-  HrcUnprocessableEntityError,
-  parseAppSessionScopeRef,
 } from 'hrc-core'
 import type {
-  AppSessionFreshnessFence,
-  HrcAppSessionRef,
-  HrcAppSessionSpec,
   HrcLifecycleEvent,
   HrcLocalBridgeRecord,
   HrcRunRecord,
-  HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from 'hrc-core'
-import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 import { isAskUserTool, isCorruptAwaitingRuntime } from './ask-bracket.js'
 import {
   type BrokerAdmissionClass,
@@ -41,137 +35,6 @@ export function requireSession(db: HrcDatabase, hostSessionId: string): HrcSessi
   }
 
   return session
-}
-
-export function requireManagedAppSession(
-  db: HrcDatabase,
-  selector: HrcAppSessionRef
-): AppManagedSessionRecord {
-  const managed = db.appManagedSessions.findByKey(selector.appId, selector.appSessionKey)
-  if (!managed) {
-    throw new HrcNotFoundError(
-      HrcErrorCode.UNKNOWN_APP_SESSION,
-      `unknown app session "${selector.appId}/${selector.appSessionKey}"`,
-      selector
-    )
-  }
-
-  if (managed.status === 'removed') {
-    throw new HrcConflictError(
-      HrcErrorCode.APP_SESSION_REMOVED,
-      `app session "${selector.appId}/${selector.appSessionKey}" has been removed`,
-      selector
-    )
-  }
-
-  return managed
-}
-
-export function findManagedAppSessionForSession(
-  db: HrcDatabase,
-  session: HrcSessionRecord
-): AppManagedSessionRecord | null {
-  const app = parseAppSessionScopeRef(session.scopeRef)
-  if (app === null) {
-    return null
-  }
-
-  return db.appManagedSessions.findByKey(app.appId, session.laneRef)
-}
-
-export function resolveManagedHarnessIntent(
-  managed: AppManagedSessionRecord,
-  session: HrcSessionRecord
-): HrcRuntimeIntent | undefined {
-  if (session.lastAppliedIntentJson) {
-    return session.lastAppliedIntentJson
-  }
-
-  if (managed.lastAppliedSpec?.kind === 'harness') {
-    return managed.lastAppliedSpec.runtimeIntent
-  }
-
-  return undefined
-}
-
-export function resolveClearContextSpec(
-  managed: AppManagedSessionRecord | undefined,
-  relaunchSpec: HrcAppSessionSpec | undefined,
-  relaunch: boolean
-): HrcAppSessionSpec | undefined {
-  if (!managed) {
-    return undefined
-  }
-
-  if (relaunchSpec && relaunchSpec.kind !== managed.kind) {
-    throw new HrcUnprocessableEntityError(
-      HrcErrorCode.SESSION_KIND_MISMATCH,
-      `app session "${managed.appId}/${managed.appSessionKey}" is kind "${managed.kind}", cannot relaunch as "${relaunchSpec.kind}"`,
-      {
-        appId: managed.appId,
-        appSessionKey: managed.appSessionKey,
-        existingKind: managed.kind,
-        requestedKind: relaunchSpec.kind,
-      }
-    )
-  }
-
-  if (!relaunch) {
-    return relaunchSpec
-  }
-
-  const effectiveSpec = relaunchSpec ?? managed.lastAppliedSpec
-  if (effectiveSpec) {
-    return effectiveSpec
-  }
-
-  throw new HrcUnprocessableEntityError(
-    managed.kind === 'command'
-      ? HrcErrorCode.MISSING_SESSION_SPEC
-      : HrcErrorCode.MISSING_RUNTIME_INTENT,
-    managed.kind === 'command'
-      ? 'cannot relaunch without a prior session spec'
-      : 'cannot relaunch without a prior runtime intent',
-    {
-      appId: managed.appId,
-      appSessionKey: managed.appSessionKey,
-      kind: managed.kind,
-    }
-  )
-}
-
-export function validateAppSessionFence(
-  fence: AppSessionFreshnessFence | undefined,
-  session: HrcSessionRecord
-): void {
-  if (!fence) {
-    return
-  }
-
-  if (
-    fence.expectedHostSessionId !== undefined &&
-    fence.expectedHostSessionId !== session.hostSessionId
-  ) {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      'app session fence no longer matches host session',
-      {
-        expectedHostSessionId: fence.expectedHostSessionId,
-        actualHostSessionId: session.hostSessionId,
-      }
-    )
-  }
-
-  if (fence.expectedGeneration !== undefined && fence.expectedGeneration !== session.generation) {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      'app session fence no longer matches generation',
-      {
-        expectedGeneration: fence.expectedGeneration,
-        actualGeneration: session.generation,
-      }
-    )
-  }
 }
 
 export function requireContinuity(db: HrcDatabase, session: HrcSessionRecord) {

@@ -86,7 +86,6 @@ describe('replay (end-to-end idempotency)', () => {
       brokerRows: db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).length,
       bufferChunks: db.runtimeBuffers.listByRunId(RUN_ID).length,
       runStatus: db.runs.getByRunId(RUN_ID)!.status,
-      runtimeContinuation: db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation,
       sessionContinuation: db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation,
       invocationState: db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.invocationState,
     }
@@ -104,9 +103,6 @@ describe('replay (end-to-end idempotency)', () => {
     )
     expect(db.runtimeBuffers.listByRunId(RUN_ID).length).toBe(snapshot.bufferChunks)
     expect(db.runs.getByRunId(RUN_ID)!.status).toBe(snapshot.runStatus)
-    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual(
-      snapshot.runtimeContinuation
-    )
     expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual(
       snapshot.sessionContinuation
     )

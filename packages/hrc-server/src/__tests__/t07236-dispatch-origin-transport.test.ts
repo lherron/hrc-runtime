@@ -105,7 +105,6 @@ describe('T-07236 durable round trip', () => {
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
   })
 

@@ -45,7 +45,6 @@ export type {
   ParticipantContinuityPolicy,
   ParticipantLifecycleOwner,
   ParticipantRegistration,
-  ParticipantRegistrationMode,
   ParticipantRegistrationPolicy,
   ParticipantReplaySemantics,
   ParticipantResumeState,
@@ -60,14 +59,8 @@ export type {
   CollectiveHistorySourceRole,
   RecordCollectiveHistoryObservationInput,
 } from './collective-history-repository.js'
-export {
-  DesktopThreadRegistrationRepository,
-  type DesktopThreadRegistration,
-} from './desktop-thread-registration-repository.js'
 export { RosterClaimRepository } from './roster-claim-repository.js'
 export type { RosterClaim } from './roster-claim-repository.js'
-export { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
-export type { SessionTaskClaimAuthority } from './session-task-claim-repository.js'
 export { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 export type {
   FederationAcceptedRequestRecord,
@@ -123,8 +116,6 @@ export type {
 } from './federation-repositories.js'
 export type { OpenBindingRegistryOptions } from './federation-repositories.js'
 export type {
-  AppManagedSessionFindOptions,
-  AppManagedSessionRecord,
   HrcActiveInputDeliveryRecord,
   HrcLifecycleMonitorFilters,
   HrcLifecycleQueryFilters,
@@ -162,11 +153,6 @@ export type {
   SessionIndexPage,
   SessionIndexRecord,
 } from './session-index-repository.js'
-export { SessionTitleRepository } from './session-title-repository.js'
-export type {
-  SessionTitleRecord,
-  SessionTitleSource,
-} from './session-title-repository.js'
 export type {
   BrokerInvocationEventAppendInput,
   BrokerInvocationEventAppendResult,
@@ -241,3 +227,6 @@ export {
   type RetainedEvidenceOutcomeRecord,
   type RetainedEvidenceOutcomeTrigger,
 } from './repositories/retained-evidence-outcome-repository.js'
+
+export { SessionTitleRepository } from './session-title-repository.js'
+export type { SessionTitleRecord, SessionTitleSource } from './session-title-repository.js'

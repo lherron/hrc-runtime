@@ -17,7 +17,6 @@ describe('SurfaceBindingRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.sessions.insert({
         hostSessionId: 'hsid-surface-3',
@@ -27,7 +26,6 @@ describe('SurfaceBindingRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId: 'rt-surface-2',
@@ -40,7 +38,6 @@ describe('SurfaceBindingRepository', () => {
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         createdAt: now,
         updatedAt: now,
       })
@@ -55,7 +52,6 @@ describe('SurfaceBindingRepository', () => {
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         createdAt: now,
         updatedAt: now,
       })
@@ -99,7 +95,6 @@ describe('SurfaceBindingRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId: 'rt-surface-4',
@@ -112,7 +107,6 @@ describe('SurfaceBindingRepository', () => {
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         createdAt: now,
         updatedAt: now,
       })
@@ -154,7 +148,6 @@ describe('RuntimeBufferRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId: 'rt-buf-1',
@@ -167,7 +160,6 @@ describe('RuntimeBufferRepository', () => {
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         createdAt: now,
         updatedAt: now,
       })
@@ -263,7 +255,6 @@ describe('WAL concurrent reads', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
 
       // Open a second reader connection

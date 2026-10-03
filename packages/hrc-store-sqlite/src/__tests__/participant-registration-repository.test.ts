@@ -11,11 +11,7 @@ import { schemaMigrations } from '../migrations/schema-migrations.js'
 
 const registration = (): ParticipantRegistration => ({
   registrationId: 'preg-1',
-  // Every pre-protocol-join registration is `legacy`, and keeps every one of
-  // its identity columns (R7.1).
-  registrationMode: 'legacy',
   classId: 'controlled-participant',
-  adapterId: 'controlled-participant',
   join: 'participant-served',
   participantKey: 'opaque-permanent-key',
   scopeRef: 'agent:smokey:project:hrc-runtime:task:participant-1',
@@ -24,8 +20,13 @@ const registration = (): ParticipantRegistration => ({
   generation: 1,
   workspaceCwd: '/tmp/workspace',
   socketPath: '/tmp/participant.sock',
-  preparationJson: '{"opaque":true}',
-  continuityEvidenceJson: '{"continuity":"known"}',
+  policy: {
+    addressPolicy: 'selected-scope',
+    continuityPolicy: 'host-incarnation',
+    lifecycleOwner: 'externally-owned',
+    replaySemantics: 'full-source-replay',
+  },
+  hostIncarnationId: 'host-incarnation:participant-1',
   createdAt: '2026-09-09T21:10:00.000Z',
   updatedAt: '2026-09-09T21:10:00.000Z',
 })
@@ -162,52 +163,7 @@ describe('T-08516 reconnect arming (R7.6 durable bounded retry)', () => {
   })
 })
 
-describe('T-08349 generic participant persistence boundaries', () => {
-  test('reserves the permanent key and atomically freezes the prepared boundary', () => {
-    const db = openHrcDatabase(':memory:')
-    try {
-      expect(db.migrations.applied).toContain('0064_participant_registration_lifecycle')
-      expect(db.migrations.applied).toContain('0065_participant_broker_identity')
-      expect(db.migrations.applied).toContain('0066_participant_recovery_and_work')
-      expect(db.migrations.applied).toContain('0067_participant_activation_work_repair')
-      expect(db.migrations.applied).toContain('0068_participant_successor_evidence')
-      expect(db.migrations.applied).toContain('0056_participant_runtime_ownership_repair')
-      db.sqlite.transaction(() => {
-        db.participantRegistrations.insertRegistration(registration())
-        db.participantRegistrations.insertAttempt(attempt())
-      })()
-
-      expect(
-        db.participantRegistrations.getRegistrationByClassAndKey(
-          'controlled-participant',
-          'opaque-permanent-key'
-        )
-      ).toEqual(registration())
-      expect(
-        db.participantRegistrations.freezePreparedDescriptorIfAbsent(
-          'patt-1',
-          '{"profile":"opaque"}',
-          '{"adapter":"env"}',
-          '2026-09-09T21:10:01.000Z'
-        )
-      ).toBe(true)
-      expect(
-        db.participantRegistrations.freezePreparedDescriptorIfAbsent(
-          'patt-1',
-          '{"profile":"replacement"}',
-          '{"adapter":"replacement"}',
-          '2026-09-09T21:10:02.000Z'
-        )
-      ).toBe(false)
-      expect(db.participantRegistrations.getAttempt('patt-1')).toMatchObject({
-        preparedDescriptorJson: '{"profile":"opaque"}',
-        adapterDispatchEnvJson: '{"adapter":"env"}',
-      })
-    } finally {
-      db.close()
-    }
-  })
-
+describe('T-08349 participant persistence boundaries', () => {
   test('requires attach-confirmed first activation but reconnects without reactivating', () => {
     const db = openHrcDatabase(':memory:')
     try {
@@ -294,7 +250,6 @@ describe('T-08349 generic participant persistence boundaries', () => {
         status: 'active',
         createdAt: '2026-09-09T21:10:00.000Z',
         updatedAt: '2026-09-09T21:10:00.000Z',
-        ancestorScopeRefs: [],
       })
       db.sessions.insert({
         hostSessionId: 'hsid-unrelated',
@@ -304,7 +259,6 @@ describe('T-08349 generic participant persistence boundaries', () => {
         status: 'active',
         createdAt: '2026-09-09T21:10:00.000Z',
         updatedAt: '2026-09-09T21:10:00.000Z',
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId: 'rt-participant-1',
@@ -317,7 +271,6 @@ describe('T-08349 generic participant persistence boundaries', () => {
         provider: 'openai',
         status: 'ready',
         supportsInflightInput: true,
-        adopted: false,
         runtimeStateJson: { kind: 'harness-broker' },
         createdAt: '2026-09-09T21:10:00.000Z',
         updatedAt: '2026-09-09T21:10:00.000Z',
@@ -333,7 +286,6 @@ describe('T-08349 generic participant persistence boundaries', () => {
         provider: 'openai',
         status: 'ready',
         supportsInflightInput: true,
-        adopted: false,
         runtimeStateJson: { kind: 'harness-broker' },
         createdAt: '2026-09-09T21:10:00.000Z',
         updatedAt: '2026-09-09T21:10:00.000Z',

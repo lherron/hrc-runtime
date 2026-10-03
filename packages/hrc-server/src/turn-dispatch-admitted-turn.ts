@@ -12,12 +12,6 @@ import {
   normalizeActuatorSplitPolicy,
 } from './actuator-split.js'
 import {
-  assertAppIdentityOwner,
-  assertAppRunIdUnused,
-  isAppScopedSession,
-  issueAppBirthRunGrant,
-} from './app-session-identity.js'
-import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
   isProducerSelectedOrdinaryBirth,
@@ -84,11 +78,11 @@ export async function dispatchAdmittedTurnForSession(
   if (executionFormat === 'format2') {
     // App and participant surfaces are F1-sealed: an F2 request must never
     // inherit their run/participant identity or fall through to a second birth.
-    if (isAppScopedSession(session) || resolveParticipantDelivery(this, session) !== null) {
+    if (resolveParticipantDelivery(this, session) !== null) {
       throw new HrcRuntimeUnavailableError('format2 is unsupported for this dispatch target', {
         code: 'execution_format_unsupported_door',
         hostSessionId: session.hostSessionId,
-        targetKind: isAppScopedSession(session) ? 'app-session' : 'participant',
+        targetKind: 'participant',
       })
     }
     if (
@@ -130,17 +124,7 @@ export async function dispatchAdmittedTurnForSession(
   }
 
   // Format1 keeps its admission-time run identity and all existing routes.
-  if (isAppScopedSession(session)) {
-    // T-08576 D5 backstop: an app run id that is already named cannot identify a
-    // new turn. Then the app dispatch must hold the selector owner, and its run
-    // is reserved under a single-use birth grant before any effect.
-    assertAppRunIdUnused(this.db, options.runId)
-    assertAppIdentityOwner(session)
-  }
   const runId = options.runId ?? `run-${randomUUID()}`
-  if (isAppScopedSession(session)) {
-    issueAppBirthRunGrant(this.db, session, runId)
-  }
   // Built before the participant branch so its response is enriched the same
   // way every other route's is. Without the observation block a caller's
   // explicit `wait: true` cannot find the broker selector and fails with

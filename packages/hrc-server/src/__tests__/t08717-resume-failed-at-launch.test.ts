@@ -49,7 +49,6 @@ beforeEach(async () => {
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
   })
   db.sessions.updateContinuation(HSID, { provider: 'muse', kind: 'session', key: STALE_KEY }, NOW)
 })
@@ -79,7 +78,6 @@ function seedLaunch(
     provider: 'muse',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeInvocationId: invocationId,
     lastActivityAt: NOW,

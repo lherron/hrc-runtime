@@ -88,7 +88,6 @@ function seedReadyRun(options: SeedReadyRunOptions): void {
       provider: 'anthropic',
       status: options.runtimeStatus ?? 'ready',
       supportsInflightInput: true,
-      adopted: false,
       activeInvocationId: `inv-${options.runtimeId}`,
       activeRunId: options.runId,
       tmuxJson: {
@@ -151,7 +150,6 @@ function seedHeadlessRun(options: {
       provider: 'anthropic',
       status: 'busy',
       supportsInflightInput: false,
-      adopted: false,
       activeInvocationId: `inv-${options.runtimeId}`,
       activeRunId: options.runId,
       lastActivityAt: stale,
@@ -416,7 +414,6 @@ describe('T-01946: ask-bracket reaper / zombie-sweep / corrupt-state', () => {
           provider: 'anthropic',
           status: 'awaiting_input',
           supportsInflightInput: true,
-          adopted: false,
           activeInvocationId: 'inv-rt-corrupt-awaiting',
           // Deliberately NO activeRunId — this is the corrupt state.
           lastActivityAt: stale,
@@ -472,7 +469,6 @@ describe('T-01946: ask-bracket reaper / zombie-sweep / corrupt-state', () => {
           provider: 'anthropic',
           status: 'awaiting_input',
           supportsInflightInput: true,
-          adopted: false,
           activeInvocationId: 'inv-rt-corrupt-bracket',
           // Deliberately NO activeRunId — corrupt state.
           lastActivityAt: stale,

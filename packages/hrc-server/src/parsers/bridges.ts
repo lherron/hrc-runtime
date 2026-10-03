@@ -16,10 +16,7 @@ import {
   requireTrimmedStringField,
 } from './common.js'
 
-export type BridgeSelector =
-  | { sessionRef: string }
-  | { hostSessionId: string }
-  | { appSession: { appId: string; appSessionKey: string } }
+export type BridgeSelector = { sessionRef: string } | { hostSessionId: string }
 
 export type BridgeTargetRequest = {
   hostSessionId?: string | undefined
@@ -66,7 +63,6 @@ export function parseBindSurfaceRequest(input: unknown): BindSurfaceRequest {
     hostSessionId,
     generation,
     ...readOptionalStringField(input, 'windowId'),
-    ...readOptionalStringField(input, 'tabId'),
     ...readOptionalStringField(input, 'paneId'),
   }
 }
@@ -172,13 +168,12 @@ export function parseBridgeSelector(input: unknown): BridgeSelector {
 
   const hasSessionRef = Object.hasOwn(input, 'sessionRef')
   const hasHostSessionId = Object.hasOwn(input, 'hostSessionId')
-  const hasAppSession = Object.hasOwn(input, 'appSession')
-  const variantCount = Number(hasSessionRef) + Number(hasHostSessionId) + Number(hasAppSession)
+  const variantCount = Number(hasSessionRef) + Number(hasHostSessionId)
 
   if (variantCount !== 1) {
     throw new HrcBadRequestError(
       HrcErrorCode.INVALID_SELECTOR,
-      'selector must include exactly one of sessionRef, hostSessionId, or appSession'
+      'selector must include exactly one of sessionRef or hostSessionId'
     )
   }
 
@@ -188,21 +183,7 @@ export function parseBridgeSelector(input: unknown): BridgeSelector {
     }
   }
 
-  if (hasHostSessionId) {
-    return {
-      hostSessionId: requireTrimmedStringField(input, 'hostSessionId'),
-    }
-  }
-
-  const appSession = input['appSession']
-  if (!isRecord(appSession)) {
-    throw new HrcBadRequestError(HrcErrorCode.INVALID_SELECTOR, 'appSession must be an object')
-  }
-
   return {
-    appSession: {
-      appId: requireTrimmedStringField(appSession, 'appId'),
-      appSessionKey: requireTrimmedStringField(appSession, 'appSessionKey'),
-    },
+    hostSessionId: requireTrimmedStringField(input, 'hostSessionId'),
   }
 }

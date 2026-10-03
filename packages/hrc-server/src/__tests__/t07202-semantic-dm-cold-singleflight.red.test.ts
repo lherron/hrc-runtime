@@ -105,7 +105,6 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
           provider: 'anthropic',
           status: 'ready',
           supportsInflightInput: true,
-          adopted: false,
           controllerKind: 'harness-broker',
           activeOperationId: `op-t07202-${call}`,
           activeInvocationId: `inv-t07202-${call}`,

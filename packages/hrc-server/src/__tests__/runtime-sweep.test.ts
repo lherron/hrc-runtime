@@ -91,7 +91,6 @@ function seedRuntime(options: SeedRuntimeOptions): void {
           }
         : {}),
       supportsInflightInput: false,
-      adopted: false,
       ...(options.activeRunId ? { activeRunId: options.activeRunId } : {}),
       lastActivityAt: createdAt,
       createdAt,

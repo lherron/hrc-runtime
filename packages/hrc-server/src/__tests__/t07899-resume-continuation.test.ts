@@ -46,7 +46,6 @@ function seedDropContextSuccessor(
       status: 'archived',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
       continuation: CONTINUATION,
     })
     db.sessions.insert({
@@ -58,7 +57,6 @@ function seedDropContextSuccessor(
       priorHostSessionId: 'hsid-t07899-prior',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
       ...(options.successorContinuation ? { continuation: options.successorContinuation } : {}),
     })
     db.continuities.upsert({
@@ -79,7 +77,6 @@ function seedDropContextSuccessor(
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         createdAt: now,
         updatedAt: now,
       })

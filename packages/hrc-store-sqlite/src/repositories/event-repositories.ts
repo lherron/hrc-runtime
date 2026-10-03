@@ -39,8 +39,6 @@ const MILESTONE_KINDS = [
   'turn.started',
   'turn.completed',
   'turn.failed',
-  'session.started',
-  'session.cleared',
   'runtime.idle',
   'runtime.dead',
 ] as const

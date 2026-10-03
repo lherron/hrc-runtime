@@ -176,7 +176,6 @@ describe('T-06875 container-local persona allowlist', () => {
         localPersonaAllowlist: ALLOWED,
       })
     )
-    const claimCalls: string[] = []
     Object.assign(server, {
       policyFor: async () => ({
         provisioning: { node: 'room-test' },
@@ -184,15 +183,6 @@ describe('T-06875 container-local persona allowlist', () => {
         claimsTask: true,
       }),
       capabilityFor: async () => ({ outcome: 'capable' }),
-      taskClaimClient: {
-        async claim() {
-          claimCalls.push('claim')
-          throw new Error('claim must not be reached')
-        },
-        async release() {
-          claimCalls.push('release')
-        },
-      },
     })
 
     const response = await fixture.postJson('/v1/sessions/resolve', {
@@ -207,7 +197,6 @@ describe('T-06875 container-local persona allowlist', () => {
       scopeRef: OUTSIDE_SCOPE,
       reason: 'local-persona-not-allowed',
     })
-    expect(claimCalls).toEqual([])
     const db = (server as HrcServer & { db: { sessions: { count(): number } } }).db
     expect(db.sessions.count()).toBe(0)
   })

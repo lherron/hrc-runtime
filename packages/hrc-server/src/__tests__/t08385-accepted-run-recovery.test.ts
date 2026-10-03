@@ -70,6 +70,11 @@ function seedCandidate(options: { identity?: boolean } = {}): void {
   const db = openHrcDatabase(fixture.dbPath)
   const old = new Date(Date.now() - 15 * 60_000).toISOString()
   try {
+    db.sessions.updateContinuation(
+      HOST_SESSION_ID,
+      { provider: 'codex', kind: 'session', key: 'cont-t08385' },
+      old
+    )
     db.runtimes.insert({
       runtimeId: RUNTIME_ID,
       hostSessionId: HOST_SESSION_ID,
@@ -84,10 +89,8 @@ function seedCandidate(options: { identity?: boolean } = {}): void {
       activeRunId: RUN_ID,
       activeOperationId: OPERATION_ID,
       activeInvocationId: INVOCATION_ID,
-      continuation: { provider: 'codex', kind: 'session', key: 'cont-t08385' },
       lastActivityAt: old,
       supportsInflightInput: false,
-      adopted: false,
       createdAt: old,
       updatedAt: old,
     })
@@ -198,7 +201,11 @@ describe('POST /v1/runs/recover-unstarted', () => {
         status: 'ready',
         activeRunId: undefined,
         activeInvocationId: INVOCATION_ID,
-        continuation: { provider: 'codex', kind: 'session', key: 'cont-t08385' },
+      })
+      expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)?.continuation).toEqual({
+        provider: 'codex',
+        kind: 'session',
+        key: 'cont-t08385',
       })
       expect(db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.reaped' })).toHaveLength(1)
     } finally {

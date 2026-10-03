@@ -114,7 +114,6 @@ function seedBrokerRun(options: SeedBrokerRunOptions): void {
       provider: 'anthropic',
       status: options.runtimeStatus ?? 'busy',
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeInvocationId: `inv-${options.runtimeId}`,
       activeRunId: options.runId,

@@ -339,7 +339,6 @@ function seedSession(db: HrcDatabase): void {
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
   })
 }
 

@@ -59,7 +59,6 @@ function seedSession(): void {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 
@@ -82,7 +81,6 @@ function seedViewerRuntime(runtimeId: string): HrcRuntimeSnapshot {
     provider: 'codex',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',
@@ -126,7 +124,6 @@ function seedDaemonChildHeadlessRuntime(runtimeId: string): HrcRuntimeSnapshot {
     provider: 'codex',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',

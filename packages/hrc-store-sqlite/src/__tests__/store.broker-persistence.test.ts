@@ -130,7 +130,6 @@ describe('broker persistence migration (0016/0017)', () => {
         'controller_kind',
         'active_operation_id',
         'active_invocation_id',
-        'compile_id',
         'plan_hash',
         'selected_profile_hash',
         'runtime_state_json',
@@ -204,26 +203,6 @@ describe('broker persistence migration (0016/0017)', () => {
           'completed',
           now
         )
-
-      sqlite
-        .prepare(
-          `INSERT INTO launches (
-             launch_id, host_session_id, generation, runtime_id, harness, provider,
-             launch_artifact_path, status, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          'lch-legacy',
-          'hsid-legacy',
-          1,
-          'rt-legacy',
-          'codex-cli',
-          'openai',
-          '/tmp/launch.json',
-          'exited',
-          now,
-          now
-        )
     } finally {
       sqlite.close()
     }
@@ -247,10 +226,6 @@ describe('broker persistence migration (0016/0017)', () => {
       expect(run?.status).toBe('completed')
       expect(run?.operationId).toBeUndefined()
       expect(run?.invocationId).toBeUndefined()
-
-      const launch = db.launches.getByLaunchId('lch-legacy')
-      expect(launch).not.toBeNull()
-      expect(launch?.status).toBe('exited')
 
       for (const table of BROKER_TABLES) {
         expect(tableExists(db, table)).toBe(true)
@@ -635,7 +610,6 @@ describe('broker record repositories round-trip', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       const runtime = db.runtimes.insert({
         runtimeId: 'rt-broker',
@@ -648,11 +622,9 @@ describe('broker record repositories round-trip', () => {
         provider: 'openai',
         status: 'ready',
         supportsInflightInput: true,
-        adopted: false,
         controllerKind: 'harness-broker',
         activeOperationId: 'op-1',
         activeInvocationId: 'inv-1',
-        compileId: 'compile-1',
         planHash: 'plan-hash-1',
         selectedProfileHash: 'pf-1',
         runtimeStateJson: { kind: 'harness-broker', status: 'ready' },
@@ -664,7 +636,6 @@ describe('broker record repositories round-trip', () => {
       expect(runtime.runtimeStateJson).toEqual({ kind: 'harness-broker', status: 'ready' })
 
       const reloaded = db.runtimes.getByRuntimeId('rt-broker')
-      expect(reloaded?.compileId).toBe('compile-1')
       expect(reloaded?.planHash).toBe('plan-hash-1')
     } finally {
       db.close()

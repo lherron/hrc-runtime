@@ -59,7 +59,6 @@ function makeArchivedSession(withContinuation: boolean): HrcSessionRecord {
     priorHostSessionId: 'hsid-prior-01',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
     ...(withContinuation
       ? { continuation: { provider: 'anthropic', key: 'sess-key-abc123' } }
       : {}),
@@ -75,7 +74,6 @@ function makeActiveSession(): HrcSessionRecord {
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
   }
 }
 

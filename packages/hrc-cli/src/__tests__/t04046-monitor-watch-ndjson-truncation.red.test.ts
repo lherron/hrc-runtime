@@ -151,7 +151,6 @@ function seedSession(): void {
       status: 'active',
       createdAt: ts(),
       updatedAt: ts(),
-      ancestorScopeRefs: [],
     })
   } finally {
     db.close()

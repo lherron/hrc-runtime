@@ -39,7 +39,6 @@ function seedCandidate(): void {
       status: 'active',
       createdAt: old,
       updatedAt: old,
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId: RUNTIME_ID,
@@ -57,7 +56,6 @@ function seedCandidate(): void {
       activeInvocationId: INVOCATION_ID,
       lastActivityAt: old,
       supportsInflightInput: false,
-      adopted: false,
       createdAt: old,
       updatedAt: old,
     })

@@ -164,7 +164,6 @@ describe('T-05439 direct actuator-split admission', () => {
     const runtimeIntent = intent('/tmp/t05439', verifierPolicy())
     const runtime = {
       runtimeId: 'rt-t05439-old',
-      runtimeKind: 'harness',
       hostSessionId: 'hsid-t05439',
       scopeRef: 'agent:cody:project:hrc-runtime:task:T-05439',
       laneRef: 'main',
@@ -174,7 +173,6 @@ describe('T-05439 direct actuator-split admission', () => {
       provider: 'openai',
       status: 'ready',
       supportsInflightInput: true,
-      adopted: false,
       createdAt: '2026-07-25T00:00:00.000Z',
       updatedAt: '2026-07-25T00:00:00.000Z',
     } as const

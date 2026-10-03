@@ -9,7 +9,7 @@
  *   - findBySurface() returns binding by (surfaceKind, surfaceId)
  *   - findByRuntime() returns only active bindings for a runtime
  *   - listActive() returns all active (unbound_at IS NULL) bindings
- *   - Optional fields (windowId, tabId, paneId) round-trip correctly
+ *   - Optional fields (windowId, paneId) round-trip correctly
  *
  * Pass conditions for Larry (T-00970):
  *   1. openHrcDatabase(path).surfaceBindings is defined
@@ -82,7 +82,6 @@ function seedSessionAndRuntime(
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 
   db.runtimes.insert({
@@ -96,7 +95,6 @@ function seedSessionAndRuntime(
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     createdAt: now,
     updatedAt: now,
   })
@@ -148,7 +146,7 @@ describe('SurfaceBindingRepository.bind', () => {
     }
   })
 
-  it('round-trips optional windowId, tabId, paneId', () => {
+  it('round-trips optional windowId, paneId', () => {
     const db = openHrcDatabase(dbPath)
     try {
       seedSessionAndRuntime(db, { hostSessionId: 'hsid-1', runtimeId: 'rt-1' })
@@ -160,13 +158,11 @@ describe('SurfaceBindingRepository.bind', () => {
         runtimeId: 'rt-1',
         generation: 1,
         windowId: 'win-1',
-        tabId: 'tab-1',
         paneId: 'pane-1',
         boundAt: ts(),
       })
 
       expect(result.windowId).toBe('win-1')
-      expect(result.tabId).toBe('tab-1')
       expect(result.paneId).toBe('pane-1')
     } finally {
       db.close()
@@ -188,7 +184,6 @@ describe('SurfaceBindingRepository.bind', () => {
       })
 
       expect(result.windowId).toBeUndefined()
-      expect(result.tabId).toBeUndefined()
       expect(result.paneId).toBeUndefined()
     } finally {
       db.close()

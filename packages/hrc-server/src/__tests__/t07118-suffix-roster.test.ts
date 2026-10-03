@@ -138,7 +138,6 @@ function makeHarness(db: HrcDatabase): Harness {
           provider: 'anthropic',
           status: 'ready',
           supportsInflightInput: true,
-          adopted: false,
           createdAt: NOW,
           updatedAt: NOW,
         })
@@ -166,7 +165,6 @@ function seedLiveSession(db: HrcDatabase, scopeRef: string, suffix: string): Hrc
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
     continuation: { key: `cont-${suffix}`, provider: 'anthropic' },
   })
   db.continuities.upsert({
@@ -186,7 +184,6 @@ function seedLiveSession(db: HrcDatabase, scopeRef: string, suffix: string): Hrc
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     createdAt: NOW,
     updatedAt: NOW,
   })

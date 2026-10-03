@@ -41,7 +41,6 @@ function sessionRecord(overrides: Partial<HrcSessionRecord> = {}): HrcSessionRec
     status: 'active',
     createdAt: OCCURRED,
     updatedAt: OCCURRED,
-    ancestorScopeRefs: [],
     lastAppliedIntentJson: {
       placement: {
         agentRoot: '/agents/clod',

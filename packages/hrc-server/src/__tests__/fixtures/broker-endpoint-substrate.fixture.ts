@@ -115,7 +115,6 @@ export function seedSession(
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 
@@ -143,7 +142,6 @@ export function seedHeadlessDurableRuntime(
     provider: 'anthropic',
     status: overrides.status ?? 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: HEADLESS_OPERATION_ID,
     activeInvocationId: HEADLESS_INVOCATION_ID,
@@ -228,7 +226,6 @@ export function seedInteractiveNormalizedRuntime(db: HrcDatabase): void {
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: INTERACTIVE_OPERATION_ID,
     activeInvocationId: INTERACTIVE_INVOCATION_ID,
@@ -339,7 +336,6 @@ export function seedLegacyDaemonChildRuntime(db: HrcDatabase): void {
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     // No endpoint in runtimeStateJson → parseBrokerRuntimeHostingState returns undefined
     // → !hasDurableBrokerEndpoint → classify-once → broker_legacy_no_durable_endpoint_on_restart
@@ -376,7 +372,6 @@ export function seedV01Row(db: HrcDatabase): void {
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',

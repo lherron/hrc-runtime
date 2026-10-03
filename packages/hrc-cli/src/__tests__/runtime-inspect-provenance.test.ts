@@ -39,8 +39,6 @@ const hrcView = {
   lastActivityAt: null,
   lastActivityAgeSec: null,
   activeRunId: null,
-  wrapperPid: null,
-  childPid: null,
   continuation: null,
   continuationKey: null,
   continuationStale: false,

@@ -115,7 +115,6 @@ async function ensureRuntime(scopeRef: string): Promise<{
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     createdAt: now,
     updatedAt: now,
   })
@@ -163,7 +162,6 @@ async function ensureInteractiveRuntime(
       status: 'ready',
       tmuxJson: pane,
       supportsInflightInput: false,
-      adopted: false,
       ...(options.controllerKind ? { controllerKind: options.controllerKind } : {}),
       lastActivityAt: now,
       createdAt: now,

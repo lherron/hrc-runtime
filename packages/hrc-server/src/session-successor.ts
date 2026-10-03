@@ -9,7 +9,6 @@ export function createSessionSuccessorFromContinuation(
   overrides: {
     generation?: number | undefined
     lastAppliedIntentJson?: HrcSessionRecord['lastAppliedIntentJson'] | undefined
-    parsedScopeJson?: HrcSessionRecord['parsedScopeJson'] | undefined
   } = {}
 ): HrcSessionRecord {
   const now = timestamp()
@@ -22,16 +21,13 @@ export function createSessionSuccessorFromContinuation(
     priorHostSessionId: prior.hostSessionId,
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: prior.ancestorScopeRefs,
-    ...((overrides.parsedScopeJson ?? prior.parsedScopeJson)
-      ? { parsedScopeJson: overrides.parsedScopeJson ?? prior.parsedScopeJson }
-      : {}),
     ...((overrides.lastAppliedIntentJson ?? prior.lastAppliedIntentJson)
       ? { lastAppliedIntentJson: overrides.lastAppliedIntentJson ?? prior.lastAppliedIntentJson }
       : {}),
     ...(prior.continuation ? { continuation: prior.continuation } : {}),
   }
 
+  db.sessions.updateStatus(prior.hostSessionId, 'archived', now)
   const created = db.sessions.insert(next)
   db.continuities.upsert({
     scopeRef: prior.scopeRef,

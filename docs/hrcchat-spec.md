@@ -150,7 +150,7 @@ When the server dispatches a real SDK turn, the agent-spaces adapter (`hrc-serve
 ## 9. Known Limits / Operational Notes
 
 - **Daemon staleness on ASP sync:** HRC-side validation of any ASP/store change is invalid unless `hrc server restart` runs *after* the sync — the daemon holds ASP libs and store resident (MEMORY: "ASP-merge e2e daemon staleness").
-- **`runtime_unavailable` for dormant targets:** `send`/`peek` against a target with no live runtime correctly returns `runtime_unavailable`; use `summon` (idempotent; persists intent + parsedScopeJson) first, or use `dm` which can auto-summon discoverable targets when a `runtimeIntent` is resolvable.
+- **`runtime_unavailable` for dormant targets:** `send`/`peek` against a target with no live runtime correctly returns `runtime_unavailable`; use `summon` (idempotent; persists intent) first, or use `dm` which can auto-summon discoverable targets when a `runtimeIntent` is resolvable.
 - **SDK turns are synchronous:** they return `status:'completed'` (awaited inline). The `'started'` status is reserved for async paths.
 - **Pi SDK finalOutput repetition:** a historical Pi-harness streaming-delta quirk could triple-repeat `finalOutput`; this is a harness-layer concern, not an hrcchat bug.
 - **Shared-worktree blast radius:** a failed install in the shared `hrc-runtime` worktree breaks hrcchat for all agents (MEMORY). CLI edits run live from source; `hrc-server` route/handler edits require a daemon restart to take effect.

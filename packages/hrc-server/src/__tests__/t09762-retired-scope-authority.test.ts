@@ -298,7 +298,6 @@ describe('T-09762 B: every door refuses a retired scope with a typed conflict', 
         status: 'active',
         createdAt,
         updatedAt: createdAt,
-        ancestorScopeRefs: [],
       })
       db.continuities.upsert({
         scopeRef: SCOPE,

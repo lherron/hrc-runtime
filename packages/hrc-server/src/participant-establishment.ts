@@ -271,7 +271,6 @@ function materializeParticipantBrokerBookkeeping(
     } else {
       server.db.runtimes.insert({
         runtimeId: attempt.runtimeId,
-        runtimeKind: 'harness',
         hostSessionId: registration.hostSessionId,
         scopeRef: registration.scopeRef,
         laneRef: registration.laneRef,
@@ -285,12 +284,10 @@ function materializeParticipantBrokerBookkeeping(
         status: 'starting',
         statusChangedAt: now,
         supportsInflightInput: true,
-        adopted: false,
         controllerKind: 'harness-broker',
         activeOperationId: attempt.operationId,
         activeInvocationId: attempt.invocationId,
         selectedProfileHash: descriptor.descriptorHash,
-        lifecyclePolicyHash: intent.lifecyclePolicy.policyHash,
         runtimeStateJson: {
           schemaVersion: 'runtime-state/v1',
           kind: 'harness-broker',
@@ -589,20 +586,6 @@ export async function activateStagedParticipant(
       const now = timestamp()
       if (!server.db.participantRegistrations.confirmInitialActivation(current.attemptId, now)) {
         throw new Error('participant activation compare-and-set lost')
-      }
-      // C.8: known evidence is accepted here and nowhere else. Allocation only
-      // snapshots a candidate on the attempt, so an attempt that never reaches
-      // this transaction leaves the retained baseline exactly as it was. An
-      // unknown candidate advances nothing and emits no resume.
-      if (
-        current.continuityEvidenceJson !== undefined &&
-        !server.db.participantRegistrations.acceptContinuityEvidence({
-          registrationId: current.registrationId,
-          continuityEvidenceJson: current.continuityEvidenceJson,
-          updatedAt: now,
-        })
-      ) {
-        throw new Error('participant activation could not accept its known continuity evidence')
       }
       const runtime = server.db.runtimes.getByRuntimeId(current.runtimeId)
       if (runtime === null)

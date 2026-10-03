@@ -46,7 +46,6 @@ function seedSession(): void {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 
@@ -77,7 +76,6 @@ function seedRuntime(opts: SeedOpts): void {
     provider: opts.provider ?? 'openai',
     status,
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeInvocationId: invocationId,
     runtimeStateJson: {

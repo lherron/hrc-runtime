@@ -109,7 +109,6 @@ function launchSeat(
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
     continuation: { provider: 'anthropic', key: 'claude-session-prior' },
   })
   node.server.db.continuities.upsert({
@@ -132,7 +131,6 @@ function launchSeat(
     activeInvocationId: INVOCATION,
     ...(options.external ? { runtimeStateJson: { lifecycleOwner: 'external' } } : {}),
     supportsInflightInput: true,
-    adopted: false,
     createdAt: NOW,
     updatedAt: NOW,
   })

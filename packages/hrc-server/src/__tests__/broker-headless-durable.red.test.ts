@@ -32,7 +32,6 @@ describe('T-01874 — profile-era durable headless input is refused before subst
       status: 'active',
       createdAt: NOW,
       updatedAt: NOW,
-      ancestorScopeRefs: [],
     })
   })
 

@@ -19,7 +19,6 @@ export const RUNTIME_STATUS_LEVEL_BY_STATUS = {
   exited: 'runtime-dead',
   starting: null,
   stopping: null,
-  adopted: null,
   detached: null,
 } as const satisfies Record<string, HrcRuntimeStatusLevel | null>
 

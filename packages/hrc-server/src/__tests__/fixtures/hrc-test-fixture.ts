@@ -19,9 +19,7 @@ export type SeedRuntimeResult = ResolveSessionResult & {
 
 export type SeedTmuxRuntimePatch = {
   status: string
-  launchId?: string | undefined
   activeRunId?: string | undefined
-  adopted?: boolean | undefined
 }
 
 export type HrcServerTestFixture = {
@@ -205,7 +203,6 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         createdAt: timestamp,
         updatedAt: timestamp,
       })
@@ -230,7 +227,6 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
         status: 'active',
         createdAt: timestamp,
         updatedAt: timestamp,
-        ancestorScopeRefs: [],
       })
     } finally {
       db.close()
@@ -266,8 +262,6 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
           paneId: '%dead',
         },
         supportsInflightInput: false,
-        adopted: patch.adopted ?? false,
-        ...(patch.launchId ? { launchId: patch.launchId } : {}),
         ...(patch.activeRunId ? { activeRunId: patch.activeRunId } : {}),
         lastActivityAt: timestamp,
         createdAt: timestamp,

@@ -155,7 +155,6 @@ function seedDurableBrokerRuntime(
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
   db.runtimes.insert({
     runtimeId: RUNTIME_ID,
@@ -168,7 +167,6 @@ function seedDurableBrokerRuntime(
     provider: 'anthropic',
     status: overrides.status ?? 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: OPERATION_ID,
     activeInvocationId: INVOCATION_ID,

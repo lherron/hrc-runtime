@@ -38,7 +38,6 @@ type SeedRuntimeOptions = {
   status?: string | undefined
   createdAt?: string | undefined
   activeRunId?: string | undefined
-  childPid?: number | undefined
 }
 
 function isoMinutesAgo(minutes: number): string {
@@ -83,9 +82,7 @@ function seedRuntime(options: SeedRuntimeOptions): void {
           }
         : {}),
       supportsInflightInput: false,
-      adopted: false,
       ...(options.activeRunId ? { activeRunId: options.activeRunId } : {}),
-      ...(options.childPid !== undefined ? { childPid: options.childPid } : {}),
       lastActivityAt: createdAt,
       createdAt,
       updatedAt: createdAt,
@@ -308,28 +305,6 @@ describe('POST /v1/runtimes/prune', () => {
     expect(body.results[0]).toMatchObject({ runtimeId: 'rt-ready', status: 'skipped' })
     expect(body.results[0]?.reason).toContain('status_not_prunable')
     expect(getRuntime('rt-ready')).not.toBeNull()
-  })
-
-  it('preserves a record whose tracked process is still alive', async () => {
-    seedRuntime({
-      runtimeId: 'rt-livepid',
-      hostSessionId: 'hsid-livepid',
-      scopeRef: 'prune-livepid',
-      transport: 'headless',
-      status: 'stale',
-      childPid: process.pid,
-      createdAt: isoMinutesAgo(180),
-    })
-
-    const body = await prune({ transport: 'headless', olderThan: '1h', yes: true })
-
-    expect(body.summary).toMatchObject({ matched: 1, pruned: 0, skipped: 1, errors: 0 })
-    expect(body.results[0]).toMatchObject({
-      runtimeId: 'rt-livepid',
-      status: 'skipped',
-      reason: 'live_process',
-    })
-    expect(getRuntime('rt-livepid')).not.toBeNull()
   })
 
   it('dry-run reports would-prune dispositions but mutates nothing', async () => {

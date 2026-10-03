@@ -30,15 +30,6 @@ export function finalizeRuntimeTermination(
     })
   }
 
-  if (runtime.launchId !== undefined) {
-    db.launches.update(runtime.launchId, {
-      status: 'terminated',
-      exitedAt: now,
-      signal: 'SIGTERM',
-      updatedAt: now,
-    })
-  }
-
   db.runtimes.update(runtime.runtimeId, {
     status: 'terminated',
     statusChangedAt: now,
@@ -56,8 +47,6 @@ export function mapSessionRow(row: SessionRow): HrcSessionRecord {
     priorHostSessionId: row.prior_host_session_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    parsedScopeJson: parseJsonValue<Record<string, unknown>>(row.parsed_scope_json),
-    ancestorScopeRefs: parseJsonValue<string[]>(row.ancestor_scope_refs_json) ?? [],
     lastAppliedIntentJson: parseJsonValue(row.last_applied_intent_json),
     continuation: parseJsonValue(row.continuation_json),
   }

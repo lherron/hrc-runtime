@@ -32,7 +32,6 @@ describe('T-07609 admin runtime manifest prune parse path', () => {
         status: 'inactive',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId: 'rt-cli-manifest',
@@ -45,7 +44,6 @@ describe('T-07609 admin runtime manifest prune parse path', () => {
         provider: 'anthropic',
         status: 'terminated',
         supportsInflightInput: false,
-        adopted: false,
         lastActivityAt: now,
         createdAt: now,
         updatedAt: now,

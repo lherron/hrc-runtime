@@ -108,7 +108,6 @@ export async function makeSeededFixture(): Promise<SeededFixture> {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 
   db.runtimes.insert({
@@ -122,7 +121,6 @@ export async function makeSeededFixture(): Promise<SeededFixture> {
     provider: 'openai',
     status: 'starting',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: OPERATION_ID,
     createdAt: now,
@@ -209,7 +207,6 @@ export async function makeTmuxSeededFixture(priorPromptContent?: string): Promis
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 
   db.runtimes.insert({
@@ -223,7 +220,6 @@ export async function makeTmuxSeededFixture(priorPromptContent?: string): Promis
     provider: 'anthropic',
     status: 'busy',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: TMUX_OPERATION_ID,
     createdAt: now,
@@ -386,7 +382,6 @@ export async function makeOwnedNoBracketFixture(): Promise<SeededFixture> {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 
   db.runtimes.insert({
@@ -400,7 +395,6 @@ export async function makeOwnedNoBracketFixture(): Promise<SeededFixture> {
     provider: 'anthropic',
     status: 'starting',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: O_OPERATION_ID,
     activeInvocationId: O_INVOCATION_ID,
@@ -565,7 +559,6 @@ export async function makeQueuedFixture(): Promise<SeededFixture> {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 
   db.runtimes.insert({
@@ -579,7 +572,6 @@ export async function makeQueuedFixture(): Promise<SeededFixture> {
     provider: 'anthropic',
     status: 'starting',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: Q_OPERATION_ID,
     createdAt: now,

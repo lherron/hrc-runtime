@@ -70,8 +70,6 @@ function exactCandidate(
     runtime.activeRunId !== run.runId ||
     runtime.activeInvocationId !== run.invocationId ||
     runtime.activeOperationId !== run.operationId ||
-    runtime.wrapperPid !== undefined ||
-    runtime.childPid !== undefined ||
     isExternalLifecycleOwner(runtime)
   ) {
     return { reason: 'runtime_not_exact_stale_owner', runtimeId: run.runtimeId }
@@ -134,8 +132,6 @@ function retryCandidate(
     runtime.activeRunId !== undefined ||
     runtime.activeOperationId !== run.operationId ||
     runtime.activeInvocationId !== run.invocationId ||
-    runtime.wrapperPid !== undefined ||
-    runtime.childPid !== undefined ||
     invocation.runtimeId !== runtime.runtimeId ||
     invocation.operationId !== run.operationId ||
     invocation.invocationState !== 'ready' ||
@@ -201,8 +197,6 @@ async function normalizeReadyAfterRecovery(
     runtime.activeRunId !== undefined ||
     runtime.activeInvocationId !== candidate.invocationId ||
     runtime.activeOperationId !== candidate.operationId ||
-    runtime.wrapperPid !== undefined ||
-    runtime.childPid !== undefined ||
     runtime.controllerKind !== 'harness-broker' ||
     invocation.runtimeId !== candidate.runtimeId ||
     invocation.operationId !== candidate.operationId ||
@@ -229,8 +223,6 @@ async function normalizeReadyAfterRecovery(
           AND active_invocation_id = ?
           AND active_operation_id = ?
           AND controller_kind = 'harness-broker'
-          AND wrapper_pid IS NULL
-          AND child_pid IS NULL
           AND EXISTS (
             SELECT 1 FROM broker_invocations
              WHERE invocation_id = ?

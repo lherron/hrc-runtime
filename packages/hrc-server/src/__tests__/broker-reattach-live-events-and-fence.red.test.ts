@@ -78,7 +78,6 @@ function seed(): void {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
   db.runtimes.insert({
     runtimeId: RUNTIME_ID,
@@ -91,7 +90,6 @@ function seed(): void {
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: OPERATION_ID,
     activeInvocationId: INVOCATION_ID,

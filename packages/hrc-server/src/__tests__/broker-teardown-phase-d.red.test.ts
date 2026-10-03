@@ -50,7 +50,6 @@ function seedSession(): void {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 
@@ -73,7 +72,6 @@ function seedBrokerRuntime(input: {
     provider: 'codex',
     status: 'busy',
     supportsInflightInput: false,
-    adopted: false,
     activeRunId: input.runId,
     controllerKind: 'harness-broker',
     activeInvocationId: input.invocationId,

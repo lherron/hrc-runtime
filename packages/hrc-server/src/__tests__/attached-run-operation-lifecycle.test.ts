@@ -12,7 +12,6 @@ const session: HrcSessionRecord = {
   status: 'active',
   createdAt: '2026-08-17T00:00:00.000Z',
   updatedAt: '2026-08-17T00:00:00.000Z',
-  ancestorScopeRefs: [],
 }
 
 const runtime = {
@@ -26,7 +25,6 @@ const runtime = {
   provider: 'openai',
   status: 'starting',
   supportsInflightInput: true,
-  adopted: false,
   controllerKind: 'harness-broker',
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,

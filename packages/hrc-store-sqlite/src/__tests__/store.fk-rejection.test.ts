@@ -8,7 +8,7 @@
  * Coverage: runtimes→sessions, runs→sessions, runs→runtimes,
  *           launches→sessions, events→sessions, events→runs,
  *           events→runtimes, surface_bindings→sessions,
- *           surface_bindings→runtimes, app_sessions→sessions,
+ *           surface_bindings→runtimes,
  *           local_bridges→sessions, local_bridges→runtimes
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
@@ -16,7 +16,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcLaunchRecord, HrcRunRecord, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
+import type { HrcRunRecord, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 
 import type { HrcDatabase } from '../database'
 import { openHrcDatabase } from '../index'
@@ -42,7 +42,6 @@ function makeSession(id: string): HrcSessionRecord {
     status: 'active',
     createdAt: ts(),
     updatedAt: ts(),
-    ancestorScopeRefs: [],
   }
 }
 
@@ -58,7 +57,6 @@ function makeRuntime(id: string, hostSessionId: string): HrcRuntimeSnapshot {
     provider: 'anthropic',
     status: 'idle',
     supportsInflightInput: false,
-    adopted: false,
     createdAt: ts(),
     updatedAt: ts(),
   }
@@ -114,22 +112,6 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
         status: 'accepted',
         updatedAt: ts(),
       })
-    }).toThrow()
-  })
-
-  it('rejects launch with non-existent host_session_id', () => {
-    expect(() => {
-      db.launches.insert({
-        launchId: 'launch-orphan',
-        hostSessionId: 'hsid-does-not-exist',
-        generation: 1,
-        harness: 'claude-code',
-        provider: 'anthropic',
-        launchArtifactPath: '/tmp/artifact.json',
-        status: 'pending',
-        createdAt: ts(),
-        updatedAt: ts(),
-      } as HrcLaunchRecord)
     }).toThrow()
   })
 
@@ -210,18 +192,6 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
         runtimeId: 'rt-does-not-exist',
         generation: 1,
         boundAt: ts(),
-      })
-    }).toThrow()
-  })
-
-  it('rejects app_session with non-existent host_session_id', () => {
-    expect(() => {
-      db.appSessions.create({
-        appId: 'app-test',
-        appSessionKey: 'key-1',
-        hostSessionId: 'hsid-does-not-exist',
-        createdAt: ts(),
-        updatedAt: ts(),
       })
     }).toThrow()
   })

@@ -127,7 +127,6 @@ function seedSession(hostSessionId: string, scopeRef: string, laneRef: string): 
       status: 'active',
       createdAt: '2026-09-17T06:45:00.000Z',
       updatedAt: '2026-09-17T06:45:00.000Z',
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId: `rt-${hostSessionId}`,
@@ -140,7 +139,6 @@ function seedSession(hostSessionId: string, scopeRef: string, laneRef: string): 
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: true,
-      adopted: false,
       createdAt: '2026-09-17T06:45:00.000Z',
       updatedAt: '2026-09-17T06:45:00.000Z',
     })

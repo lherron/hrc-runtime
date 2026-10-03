@@ -42,7 +42,7 @@ function terminalExternalRegistrationCandidate(
     return undefined
   }
   const session = server.db.sessions.getByHostSessionId(grant.hostSessionId)
-  if (runtime.continuation !== undefined || session?.continuation !== undefined) return undefined
+  if (session?.continuation !== undefined) return undefined
 
   const state = runtime.runtimeStateJson?.['externalRegistration']
   const external = isRecord(state) ? state : undefined

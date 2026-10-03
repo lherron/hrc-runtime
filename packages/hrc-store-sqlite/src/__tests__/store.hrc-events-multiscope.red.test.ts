@@ -36,7 +36,6 @@ function seed(scopeRefs: string[], databasePath: string): ReturnType<typeof open
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
     db.hrcEvents.append({
       ts: now,

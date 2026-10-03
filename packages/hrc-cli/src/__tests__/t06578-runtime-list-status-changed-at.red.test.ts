@@ -36,7 +36,6 @@ describe('T-06578 hrc runtime list statusChangedAt exposure', () => {
       provider: 'openai',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       createdAt: '2026-07-18T10:00:00.000Z',
       updatedAt: '2026-07-18T10:02:00.000Z',
       lastActivityAt: '2026-07-18T10:01:00.000Z',

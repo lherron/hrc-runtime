@@ -94,7 +94,6 @@ function seedRuntime(presentationKind: 'tmux-tui' | 'none'): HrcRuntimeSnapshot 
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     tmuxJson: {
       socketPath: TMUX_SOCKET,
@@ -122,7 +121,6 @@ function seedSession(
     status: 'active',
     createdAt: PAST,
     updatedAt: PAST,
-    ancestorScopeRefs: [],
     ...(viewerWindow === undefined && operator === undefined
       ? {}
       : {
@@ -394,7 +392,6 @@ describe('publishPresentation — Phase 4 daemon boundary', () => {
       status: 'active',
       createdAt: PAST,
       updatedAt: PAST,
-      ancestorScopeRefs: [],
     })
     const second = fixture.db.runtimes.insert({
       ...first,

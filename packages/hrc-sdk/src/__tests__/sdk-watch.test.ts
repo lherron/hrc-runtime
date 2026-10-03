@@ -83,7 +83,7 @@ describe('watch NDJSON parsing', () => {
         laneRef: 'default',
         generation: 1,
         category: 'session',
-        eventKind: 'session.resolved',
+        eventKind: 'session.created',
         replayed: false,
         payload: {},
       },
@@ -110,7 +110,7 @@ describe('watch NDJSON parsing', () => {
     expect(collected[0]!.hrcSeq).toBe(1)
     expect(collected[0]!.eventKind).toBe('session.created')
     expect(collected[1]!.hrcSeq).toBe(2)
-    expect(collected[1]!.eventKind).toBe('session.resolved')
+    expect(collected[1]!.eventKind).toBe('session.created')
   })
 
   it('passes fromSeq as query parameter', async () => {
@@ -248,17 +248,10 @@ describe('watch NDJSON parsing', () => {
 // 5. Phase 6 diagnostics round-trip (T-00973 / T-00974)
 //
 // RED GATE: These tests call SDK methods that do not exist yet:
-//   getHealth(), getStatus(), listRuntimes(), listLaunches(), adoptRuntime()
 //
 // Pass conditions for Curly (T-00973):
 //   1. getHealth() → GET /v1/health → { ok: true }
 //   2. getStatus() → GET /v1/status → capability-discovery status payload
 //   3. listRuntimes() → GET /v1/runtimes → HrcRuntimeSnapshot[] (empty when none)
 //   4. listRuntimes({ hostSessionId }) → GET /v1/runtimes?hostSessionId=... → filtered array
-//   5. listLaunches() → GET /v1/launches → HrcLaunchRecord[] (empty when none)
-//   6. listLaunches({ hostSessionId }) → filtered by hostSessionId
-//   7. listLaunches({ runtimeId }) → filtered by runtimeId
-//   8. adoptRuntime(runtimeId) on dead runtime → POST /v1/runtimes/adopt → { status: 'adopted', adopted: true }
-//   9. adoptRuntime(runtimeId) on active runtime → throws HrcDomainError(CONFLICT/409)
-//  10. adoptRuntime(unknownId) → throws HrcDomainError(UNKNOWN_RUNTIME/404)
 // ---------------------------------------------------------------------------

@@ -55,7 +55,6 @@ describe('RED: inspect surfaces direct-tmux-degraded control state (T-01809)', (
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId,
@@ -69,7 +68,6 @@ describe('RED: inspect surfaces direct-tmux-degraded control state (T-01809)', (
         // Degraded but NOT healthy-ready, with the turn's run still active.
         status: 'busy',
         supportsInflightInput: true,
-        adopted: false,
         controllerKind: 'harness-broker',
         activeRunId: runId,
         tmuxJson: {

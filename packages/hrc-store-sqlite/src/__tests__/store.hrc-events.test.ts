@@ -39,7 +39,6 @@ function seedSession(db: ReturnType<typeof openHrcDatabase>, hostSessionId: stri
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 
@@ -519,7 +518,7 @@ describe('0009_backfill_legacy_hrc_events', () => {
           'default',
           1,
           'hrc',
-          'app-session.literal-input',
+          'runtime.created',
           JSON.stringify({
             appId: 'app-1',
             appSessionKey: 'session-1',
@@ -549,7 +548,7 @@ describe('0009_backfill_legacy_hrc_events', () => {
       expect(allEvents.filter((event) => event.eventKind === 'store.migrated')).toHaveLength(1)
       expect(typedEvents.map((event) => event.eventKind)).toEqual([
         'turn.completed',
-        'app-session.literal-input',
+        'runtime.created',
       ])
       expect(typedEvents.map((event) => event.streamSeq)).toEqual([2, 3])
 
@@ -735,7 +734,6 @@ describe('appendHrcEvent helper', () => {
     expect(categoryForEventKind('turn.message')).toBe('turn')
     expect(categoryForEventKind('runtime.restarted')).toBe('runtime')
     expect(categoryForEventKind('launch.orphaned')).toBe('launch')
-    expect(categoryForEventKind('app-session.literal-input')).toBe('app_session')
     expect(() => categoryForEventKind('no.such.kind')).toThrow(/unknown hrc event kind/)
 
     const db = openHrcDatabase(dbPath)

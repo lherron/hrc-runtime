@@ -24,7 +24,6 @@ function session(over: Partial<HrcSessionRecord>): HrcSessionRecord {
     status: 'active',
     createdAt: '2026-06-15T11:00:00.000Z',
     updatedAt: '2026-06-15T11:58:00.000Z',
-    ancestorScopeRefs: [],
     ...over,
   }
 }

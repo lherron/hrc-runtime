@@ -14,13 +14,8 @@ import type {
   HrcTargetAmbiguityCandidateView,
   HrcTargetView,
 } from 'hrc-core'
-import { refuseAppScopedSession } from './app-session-identity.js'
 import { resolveNodeLocalPlacement } from './federation/summon-capability.js'
-import {
-  persistSessionTaskClaimAuthority,
-  withSummonAuthority,
-} from './federation/summon-gate-server.js'
-import type { TaskClaimAuthority } from './federation/task-claim-client.js'
+import { withSummonAuthority } from './federation/summon-gate-server.js'
 import { extractProjectId, formatSessionRef, normalizeTargetLane } from './messages.js'
 import { assertReservedAddressAllowsBirth } from './participant-address-provisioning.js'
 import { requireSession } from './require-helpers.js'
@@ -45,7 +40,7 @@ export function handleListTargets(this: HrcServerInstanceForHandlers, url: URL):
   const views: HrcTargetView[] = []
 
   for (const session of this.listAllSessions()) {
-    // T-08576 D6: app sessions are not addressable targets; /v1/app-sessions lists them.
+    // T-08576 D6: app-scope sessions are not addressable targets.
     if (parseAppSessionScopeRef(session.scopeRef) !== null) {
       continue
     }
@@ -169,7 +164,6 @@ export async function handleCreateSessionSuccessor(
       sessionRef,
     })
   }
-  refuseAppScopedSession(prior, 'create-successor')
   if (!prior.continuation?.key) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
@@ -180,7 +174,7 @@ export async function handleCreateSessionSuccessor(
 
   // Raw successor mint (POST /v1/sessions/create-successor) — a summon path in
   // its own right, not reachable through ensureTargetSession.
-  const successor = await createNotifiedSessionSuccessor(this, prior, undefined, undefined)
+  const successor = await createNotifiedSessionSuccessor(this, prior, undefined)
 
   return json({
     hostSessionId: successor.hostSessionId,
@@ -233,9 +227,6 @@ export async function handleResumeContinuation(
   }
 
   const intent = body['intent'] as HrcRuntimeIntent | undefined
-  const parsedScopeJson = isObjectRecord(body['parsedScope'])
-    ? (body['parsedScope'] as Record<string, unknown>)
-    : undefined
   const selection = selectResumeContinuationCandidate(this.db, {
     sessionRef,
     ...(priorHostSessionId !== undefined ? { priorHostSessionId } : {}),
@@ -273,7 +264,6 @@ export async function handleResumeContinuation(
     this,
     prior,
     intent,
-    parsedScopeJson,
     'local',
     prior.continuation
   )
@@ -431,7 +421,6 @@ export async function createNotifiedSessionSuccessor(
   server: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent | undefined,
-  parsedScopeJson: Record<string, unknown> | undefined,
   origin: 'local' | 'federated-ingress' = 'local',
   requiredContinuation?: HrcContinuationRef | undefined
 ): Promise<HrcSessionRecord> {
@@ -473,7 +462,7 @@ export async function createNotifiedSessionSuccessor(
               : { provision: capabilityIntent.provision }),
           }),
     },
-    (claimAuthority) => {
+    () => {
       const raced = findTargetSession(
         server.db,
         formatSessionRef(session.scopeRef, session.laneRef)
@@ -489,9 +478,7 @@ export async function createNotifiedSessionSuccessor(
             session,
             raced,
             requiredContinuation,
-            capabilityIntent,
-            parsedScopeJson,
-            claimAuthority
+            capabilityIntent
           )
         }
         return bindResumeContinuationToSuccessor(server, raced, requiredContinuation)
@@ -499,22 +486,7 @@ export async function createNotifiedSessionSuccessor(
       const successor = server.db.sqlite.transaction(() => {
         const created = createSessionSuccessorFromContinuation(server.db, session, {
           ...(capabilityIntent ? { lastAppliedIntentJson: capabilityIntent } : {}),
-          ...(parsedScopeJson ? { parsedScopeJson } : {}),
         })
-        if (claimAuthority !== undefined) {
-          persistSessionTaskClaimAuthority(
-            server,
-            created.hostSessionId,
-            claimAuthority,
-            created.createdAt
-          )
-        } else {
-          server.db.sessionTaskClaimAuthorities.copy(
-            session.hostSessionId,
-            created.hostSessionId,
-            created.createdAt
-          )
-        }
         return created
       })()
       server.notifyEvent(
@@ -539,9 +511,7 @@ function createHistoricalResumeSuccessor(
   selected: HrcSessionRecord,
   current: HrcSessionRecord,
   requiredContinuation: HrcContinuationRef,
-  capabilityIntent: HrcRuntimeIntent | undefined,
-  parsedScopeJson: Record<string, unknown> | undefined,
-  claimAuthority: TaskClaimAuthority | undefined
+  capabilityIntent: HrcRuntimeIntent | undefined
 ): HrcSessionRecord {
   // R-4.3.2, the historical-resume door.
   assertReservedAddressAllowsBirth(server, current.scopeRef, current.laneRef)
@@ -567,23 +537,8 @@ function createHistoricalResumeSuccessor(
       {
         generation: Math.max(selected.generation, current.generation) + 1,
         ...(capabilityIntent ? { lastAppliedIntentJson: capabilityIntent } : {}),
-        ...(parsedScopeJson ? { parsedScopeJson } : {}),
       }
     )
-    if (claimAuthority !== undefined) {
-      persistSessionTaskClaimAuthority(
-        server,
-        created.hostSessionId,
-        claimAuthority,
-        created.createdAt
-      )
-    } else {
-      server.db.sessionTaskClaimAuthorities.copy(
-        selected.hostSessionId,
-        created.hostSessionId,
-        created.createdAt
-      )
-    }
     return created
   })()
   server.notifyEvent(

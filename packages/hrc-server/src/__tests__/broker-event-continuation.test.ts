@@ -35,7 +35,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 
-import { HOST_SESSION_ID, RUNTIME_ID, envelope } from './broker-event-mapper-fixtures'
+import { HOST_SESSION_ID, envelope } from './broker-event-mapper-fixtures'
 
 import { createBrokerEventMapperTestFixture } from './broker-event-mapper.test.fixture.js'
 
@@ -56,12 +56,7 @@ describe('T-04836 continuation kind persistence', () => {
 
     // T-04836: Codex tmux resume is safe only for explicit session UUID resume.
     // Dropping `kind` makes HRC unable to distinguish session ids from other
-    // continuation keys, so both persisted refs must retain it.
-    expect(harness.fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual({
-      provider: 'openai',
-      kind: 'session',
-      key: codexSessionUuid,
-    })
+    // continuation keys, so the persisted session ref must retain it.
     expect(harness.fixture.db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual({
       provider: 'openai',
       kind: 'session',

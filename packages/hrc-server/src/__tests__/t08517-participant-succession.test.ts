@@ -5,40 +5,17 @@ import {
   neutralSpecHash,
   neutralStartRequestHash,
 } from 'spaces-runtime-contracts'
-
 import { BrokerEventMapper } from '../broker/event-mapper.js'
-import {
-  createHrcServer,
-  recordParticipantRecoveryDisposition,
-  renewParticipantReplacementRecovery,
-} from '../index.js'
-import type { HrcServer, RegistrationClassConfig } from '../index.js'
-import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
+import { createHrcServer } from '../index.js'
+import type { HrcServer } from '../index.js'
 import { registerDirectParticipant } from '../participant-host-registration.js'
+import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import { makeParticipantBrokerDescriptor } from './fixtures/participant-broker-descriptor.fixture.js'
-import {
-  type T08517EvidenceMode,
-  createT08517EvidenceAdapter,
-  storeT08517CrashBoundaryIntent,
-} from './fixtures/t08517-evidence-adapter.fixture.js'
 
 const SCOPE = 'agent:arris:project:hrc-runtime:task:T-08517'
-const ADAPTER_ID = 't08517-controlled'
 const CLASS_ID = 't08517-class'
 const PARTICIPANT_KEY = 'participant-a'
-
-const participantClass = {
-  classId: CLASS_ID,
-  adapterId: ADAPTER_ID,
-  join: 'participant-served',
-  address: 'permanent-keyed',
-  continuity: 'key-scoped',
-  replaySemantics: 'full-source-replay',
-  scopeTemplate: { agent: 'arris', project: 'hrc-runtime' },
-  maxInstances: 4,
-  defaultTtl: 60,
-}
 
 async function json(response: Response): Promise<Record<string, unknown>> {
   return (await response.json()) as Record<string, unknown>
@@ -47,13 +24,9 @@ async function json(response: Response): Promise<Record<string, unknown>> {
 describe('T-08517 host participant succession', () => {
   let fixture: HrcServerTestFixture
   let server: HrcServer | undefined
-  let evidenceMode: T08517EvidenceMode
-  let evidenceAnswerHook: (() => void) | undefined
 
   beforeEach(async () => {
     fixture = await createHrcTestFixture('t08517-succession-')
-    evidenceMode = 'retired-recovered'
-    evidenceAnswerHook = undefined
   })
 
   afterEach(async () => {
@@ -62,20 +35,13 @@ describe('T-08517 host participant succession', () => {
   })
 
   async function start(): Promise<void> {
-    server = await createHrcServer(
-      fixture.serverOpts({
-        otelListenerEnabled: false,
-        registrationClasses: [participantClass] as unknown as readonly RegistrationClassConfig[],
-        participantAdapterRegistry: new ParticipantAdapterRegistry([
-          createT08517EvidenceAdapter(
-            ADAPTER_ID,
-            fixture.tmpDir,
-            () => evidenceMode,
-            () => evidenceAnswerHook?.()
-          ),
-        ]),
-      })
-    )
+    server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+    // The predecessor's broker endpoint is gone, so HRC's own transport probe
+    // is what proves the exact prior writer dead.
+    ;(server as unknown as HrcServerInstanceForHandlers).brokerUnixClientFactory = async () => {
+      const causeError = Object.assign(new Error('connect refused'), { code: 'ECONNREFUSED' })
+      throw Object.assign(new Error('Failed to connect to broker unix socket'), { causeError })
+    }
   }
 
   async function register(
@@ -114,16 +80,6 @@ describe('T-08517 host participant succession', () => {
     })
   }
 
-  async function waitForAttemptCount(registrationId: string, count: number) {
-    const deadline = Date.now() + 2_000
-    let attempts = server!.db.participantRegistrations.listAttemptsByRegistrationId(registrationId)
-    while (attempts.length < count && Date.now() < deadline) {
-      await Bun.sleep(20)
-      attempts = server!.db.participantRegistrations.listAttemptsByRegistrationId(registrationId)
-    }
-    return attempts
-  }
-
   async function activePredecessor(scope = SCOPE): Promise<{
     first: Record<string, unknown>
     expected: { hostIncarnationId: string; runtimeId: string; generation: number }
@@ -139,11 +95,16 @@ describe('T-08517 host participant succession', () => {
     server!.db.sqlite
       .query(
         `UPDATE participant_registration_attempts
-            SET state = 'ACTIVE', broker_identity_json = ?,
+            SET state = 'ACTIVE', broker_identity_json = ?, attach_socket_path = ?,
                 initial_activation_confirmed_at = ?, establishment_work_state = 'completed'
           WHERE attempt_id = ?`
       )
-      .run(JSON.stringify({ brokerInstanceId: 'broker-a' }), '2026-09-16T04:01:00.000Z', attemptId)
+      .run(
+        JSON.stringify({ brokerInstanceId: 'broker-a' }),
+        `${fixture.tmpDir}/${hostIncarnationId}.sock`,
+        '2026-09-16T04:01:00.000Z',
+        attemptId
+      )
     expect(attempt.hostBindingId).toBeString()
     expect(
       server!.db.participantHostBindings.transitionBinding({
@@ -216,8 +177,8 @@ describe('T-08517 host participant succession', () => {
     )
     expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
       state: 'ABANDONED',
-      recoveryDisposition: 'reconciled',
-      dispositionReason: expect.stringContaining('bridge_write_path_retired'),
+      recoveryDisposition: 'abandoned',
+      dispositionReason: expect.stringContaining('transport_dead'),
     })
     expect(server!.db.participantHostBindings.getBindingById(prior.bindingId)).toMatchObject({
       state: 'BOUND',
@@ -255,7 +216,7 @@ describe('T-08517 host participant succession', () => {
     expect(next['runtimeId']).not.toBe(prior.expected.runtimeId)
     expect(server!.db.participantHostBindings.getBindingById(prior.bindingId)).toMatchObject({
       state: 'RETIRED',
-      dispositionReason: 'host_replaced',
+      dispositionReason: 'transport_dead',
     })
     expect(
       server!.db.participantHostBindings.getBindingByHostIncarnationId('host-b')
@@ -326,7 +287,6 @@ describe('T-08517 host participant succession', () => {
       provider: 'openai',
       status: 'idle',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: nextIdentity['operationId'] as string,
       activeInvocationId: nextIdentity['invocationId'] as string,
@@ -478,181 +438,6 @@ describe('T-08517 host participant succession', () => {
     expect(
       server!.db.participantRegistrations.getAttempt(identity['attemptId'] as string)
     ).toMatchObject({ resumeState: 'requested', preparedDescriptorJson: expect.any(String) })
-  })
-
-  test('live conflict refuses and unknown evidence holds without disposing the predecessor', async () => {
-    await start()
-    const prior = await activePredecessor()
-    evidenceMode = 'live'
-    const live = await register('host-b', prior.expected)
-    expect(live).toMatchObject({ status: 'rejected', reason: 'host_binding_conflict' })
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)?.state).toBe('ACTIVE')
-
-    evidenceMode = 'unknown'
-    const unknown = await register('host-b', prior.expected)
-    expect(unknown).toMatchObject({ status: 'pending', reason: 'host_retirement_unproven' })
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)?.state).toBe('ACTIVE')
-  })
-
-  test('bridge-subject evidence cannot authorize host succession', async () => {
-    await start()
-    const prior = await activePredecessor()
-    evidenceMode = 'wrong-subject'
-    const refused = await register('host-b', prior.expected)
-    expect(refused).toMatchObject({
-      status: 'rejected',
-      reason: 'participant_host_evidence_invalid',
-    })
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)?.state).toBe('ACTIVE')
-    expect(server!.db.participantHostBindings.getBindingById(prior.bindingId)?.state).toBe('BOUND')
-  })
-
-  test('all nine retirement truth-table cells satisfy, hold, or refuse independently', async () => {
-    await start()
-    const cases: Array<{
-      mode: EvidenceMode
-      branch: 'satisfied' | 'hold' | 'refuse'
-    }> = [
-      { mode: 'retired-dead', branch: 'satisfied' },
-      { mode: 'retired-live', branch: 'satisfied' },
-      { mode: 'retired-unknown', branch: 'satisfied' },
-      { mode: 'unknown-dead', branch: 'satisfied' },
-      { mode: 'writable-dead', branch: 'satisfied' },
-      { mode: 'unknown', branch: 'hold' },
-      { mode: 'writable-unknown', branch: 'hold' },
-      { mode: 'unknown-live', branch: 'hold' },
-      { mode: 'live', branch: 'refuse' },
-    ]
-
-    for (const [index, item] of cases.entries()) {
-      const scope = `${SCOPE}-truth-${index}`
-      const prior = await activePredecessor(scope)
-      evidenceMode = item.mode
-      const candidate = `host-b-${index}`
-      const observed = await register(candidate, prior.expected, scope)
-      if (item.branch === 'satisfied') {
-        expect(observed).toMatchObject({
-          status: 'pending',
-          reason: 'participant_prior_recovery_unresolved',
-        })
-        expect(
-          recordParticipantRecoveryDisposition(
-            server!,
-            prior.attemptId,
-            'abandoned',
-            `operator:cody truth-table-${index}`
-          )
-        ).toBe(true)
-        expect(await register(candidate, prior.expected, scope)).toMatchObject({
-          status: 'registered',
-          generation: 2,
-        })
-      } else if (item.branch === 'hold') {
-        expect(observed).toMatchObject({
-          status: 'pending',
-          reason: 'host_retirement_unproven',
-        })
-        expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)?.state).toBe(
-          'ACTIVE'
-        )
-        server!.db.participantRegistrations.markEstablishmentCompleted(
-          prior.attemptId,
-          1,
-          '2026-09-16T04:06:00.000Z'
-        )
-      } else {
-        expect(observed).toMatchObject({
-          status: 'rejected',
-          reason: 'host_binding_conflict',
-        })
-        expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)?.state).toBe(
-          'ACTIVE'
-        )
-      }
-    }
-  })
-
-  test('receipt freshness is per-axis and a voided uncommitted succession returns to pending', async () => {
-    await start()
-    const retainedScope = `${SCOPE}-fresh-retained`
-    const retained = await activePredecessor(retainedScope)
-    evidenceMode = 'retired-unknown'
-    expect(await register('host-b-retained', retained.expected, retainedScope)).toMatchObject({
-      reason: 'participant_prior_recovery_unresolved',
-    })
-    expect(
-      recordParticipantRecoveryDisposition(
-        server!,
-        retained.attemptId,
-        'abandoned',
-        'operator:cody freshness retained'
-      )
-    ).toBe(true)
-    evidenceMode = 'unknown-live'
-    expect(await register('host-b-retained', retained.expected, retainedScope)).toMatchObject({
-      status: 'registered',
-      generation: 2,
-    })
-
-    const voidedScope = `${SCOPE}-fresh-voided`
-    const voided = await activePredecessor(voidedScope)
-    evidenceMode = 'retired-unknown'
-    expect(await register('host-b-voided', voided.expected, voidedScope)).toMatchObject({
-      reason: 'participant_prior_recovery_unresolved',
-    })
-    expect(
-      recordParticipantRecoveryDisposition(
-        server!,
-        voided.attemptId,
-        'abandoned',
-        'operator:cody freshness voided'
-      )
-    ).toBe(true)
-    evidenceMode = 'live'
-    expect(await register('host-b-voided', voided.expected, voidedScope)).toMatchObject({
-      status: 'pending',
-      reason: 'host_retirement_unproven',
-      detail: expect.stringContaining('voided'),
-    })
-    expect(
-      server!.db.participantRegistrations.listAttemptsByRegistrationId(
-        (voided.first['identity'] as Record<string, unknown>)['registrationId'] as string
-      )
-    ).toHaveLength(1)
-  })
-
-  test('recovery remains an independent hold until an explicit attributed abandonment', async () => {
-    await start()
-    const prior = await activePredecessor()
-    evidenceMode = 'retired-unknown'
-
-    const held = await register('host-b', prior.expected)
-    expect(held).toMatchObject({
-      status: 'pending',
-      reason: 'participant_prior_recovery_unresolved',
-    })
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
-      state: 'ABANDONED',
-      recoveryDisposition: 'unresolved',
-    })
-    expect(server!.db.participantHostBindings.getBindingById(prior.bindingId)?.state).toBe(
-      'RETIRING'
-    )
-
-    expect(
-      recordParticipantRecoveryDisposition(
-        server!,
-        prior.attemptId,
-        'abandoned',
-        'operator:cody accepted unrecoverable historical tail for T-08517'
-      )
-    ).toBe(true)
-    const admitted = await register('host-b', prior.expected)
-    expect(admitted).toMatchObject({ status: 'registered', generation: 2 })
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
-      recoveryDisposition: 'abandoned',
-      recoveryReason: expect.stringContaining('operator:cody'),
-    })
   })
 
   test('clear/reuse barrier prevents continuation carry, and classless Arris-shaped succession holds', async () => {
@@ -809,100 +594,6 @@ describe('T-08517 host participant succession', () => {
     })
   })
 
-  test('only explicit renewed recovery resets an exhausted replacement budget', async () => {
-    await start()
-    const prior = await activePredecessor()
-    evidenceMode = 'retired-unknown'
-    expect(await register('host-b', prior.expected)).toMatchObject({
-      status: 'pending',
-      reason: 'participant_prior_recovery_unresolved',
-    })
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
-      establishmentWorkState: 'completed',
-      establishmentAttemptCount: 0,
-    })
-    expect(await register('host-b', prior.expected)).toMatchObject({
-      status: 'pending',
-      reason: 'participant_prior_recovery_unresolved',
-    })
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
-      establishmentWorkState: 'completed',
-      establishmentAttemptCount: 0,
-    })
-    server!.db.sqlite
-      .query(
-        `UPDATE participant_registration_attempts
-            SET establishment_work_state = 'exhausted', establishment_attempt_count = 5
-          WHERE attempt_id = ?`
-      )
-      .run(prior.attemptId)
-
-    expect(
-      renewParticipantReplacementRecovery(
-        server!,
-        prior.attemptId,
-        'operator:cody producer evidence source restored'
-      )
-    ).toBe(true)
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
-      establishmentWorkState: 'pending',
-      establishmentAttemptCount: 0,
-      replacementIntentJson: expect.stringContaining('producer evidence source restored'),
-    })
-  })
-
-  test('restart after intent commit but before A0 redrives without another registration', async () => {
-    await start()
-    const prior = await activePredecessor()
-    storeT08517CrashBoundaryIntent(server!, prior, fixture.tmpDir, CLASS_ID, PARTICIPANT_KEY)
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
-      state: 'ACTIVE',
-      establishmentWorkState: 'pending',
-      replacementIntentJson: expect.stringContaining('participant-replacement-intent/v1'),
-    })
-    await server!.stop()
-    server = undefined
-
-    evidenceMode = 'retired-recovered'
-    await start()
-    const registrationId = (prior.first['identity'] as Record<string, unknown>)[
-      'registrationId'
-    ] as string
-    expect(await waitForAttemptCount(registrationId, 2)).toHaveLength(2)
-    expect(
-      server!.db.participantHostBindings.getBindingByHostIncarnationId('host-b')
-    ).toMatchObject({
-      state: 'BINDING',
-      generation: 2,
-    })
-  })
-
-  test('restart after producer retirement but before receipt persistence recovers by inspection', async () => {
-    await start()
-    const prior = await activePredecessor()
-    storeT08517CrashBoundaryIntent(server!, prior, fixture.tmpDir, CLASS_ID, PARTICIPANT_KEY)
-    evidenceMode = 'retired-recovered'
-    const effectBoundary = server!.db.participantRegistrations.getAttempt(prior.attemptId)
-    expect(effectBoundary).toMatchObject({
-      state: 'ACTIVE',
-      replacementIntentJson: expect.stringContaining('participant-replacement-intent/v1'),
-    })
-    expect(effectBoundary?.writerEvidenceJson).toBeUndefined()
-    await server!.stop()
-    server = undefined
-
-    await start()
-    const registrationId = (prior.first['identity'] as Record<string, unknown>)[
-      'registrationId'
-    ] as string
-    expect(await waitForAttemptCount(registrationId, 2)).toHaveLength(2)
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
-      state: 'ABANDONED',
-      recoveryDisposition: 'reconciled',
-      writerEvidenceJson: expect.stringContaining('retired-recovered'),
-    })
-  })
-
   test('restart after successor commit converges a lost response on the same identity', async () => {
     await start()
     const prior = await activePredecessor()
@@ -922,52 +613,5 @@ describe('T-08517 host participant succession', () => {
         committed.identity.registrationId
       )
     ).toHaveLength(2)
-  })
-
-  test('daemon restart redrives durable intent and the post-TX-D recovery hold', async () => {
-    await start()
-    const prior = await activePredecessor()
-    evidenceMode = 'retired-unknown'
-    const held = await register('host-b', prior.expected)
-    expect(held).toMatchObject({ reason: 'participant_prior_recovery_unresolved' })
-    expect(server!.db.participantHostBindings.getBindingById(prior.bindingId)?.state).toBe(
-      'RETIRING'
-    )
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
-      establishmentWorkState: 'completed',
-      establishmentAttemptCount: 0,
-    })
-    await server!.stop()
-    server = undefined
-
-    evidenceMode = 'retired-recovered'
-    await start()
-    await Bun.sleep(100)
-    let attempts = server!.db.participantRegistrations.listAttemptsByRegistrationId(
-      (prior.first['identity'] as Record<string, unknown>)['registrationId'] as string
-    )
-    expect(attempts).toHaveLength(1)
-    expect(attempts[0]).toMatchObject({
-      establishmentWorkState: 'completed',
-      establishmentAttemptCount: 0,
-    })
-    expect(await register('host-b', prior.expected)).toMatchObject({
-      status: 'registered',
-      generation: 2,
-    })
-    attempts = server!.db.participantRegistrations.listAttemptsByRegistrationId(
-      (prior.first['identity'] as Record<string, unknown>)['registrationId'] as string
-    )
-    expect(attempts).toHaveLength(2)
-    expect(attempts[0]).toMatchObject({
-      state: 'ABANDONED',
-      recoveryDisposition: 'reconciled',
-    })
-    expect(server!.db.participantHostBindings.getBindingById(prior.bindingId)?.state).toBe(
-      'RETIRED'
-    )
-    expect(
-      server!.db.participantHostBindings.getBindingByHostIncarnationId('host-b')
-    ).toMatchObject({ state: 'BINDING', generation: 2 })
   })
 })

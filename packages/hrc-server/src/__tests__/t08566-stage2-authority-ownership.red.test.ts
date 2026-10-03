@@ -221,9 +221,6 @@ async function operatorOwnershipRequests(
     fixture
       .postJson('/v1/runtimes/attach', { runtimeId: seeded.runtimeId })
       .then((r) => ['attach', r] as [string, Response]),
-    fixture
-      .postJson('/v1/runtimes/adopt', { runtimeId: seeded.runtimeId })
-      .then((r) => ['adopt', r] as [string, Response]),
   ])
 }
 
@@ -664,13 +661,12 @@ describe('T-08566 stage 2 authority and ownership', () => {
         const directDeps = scriptedReattachDeps(server, serverFixture.runtimeRoot, directRuntime)
         const responsePromises = [
           serverFixture.postJson('/v1/runtimes/attach', { runtimeId: seeded.runtimeId }),
-          serverFixture.postJson('/v1/runtimes/adopt', { runtimeId: seeded.runtimeId }),
         ]
         const directPromise = rejectionCode(
           reattachDurableBrokerForDispatch(db!, directRuntime, directDeps.deps)
         )
         const pending = [...responsePromises, directPromise]
-        const settled = [false, false, false]
+        const settled = [false, false]
         pending.forEach(
           (request, index) =>
             void request.finally(() => {
@@ -693,8 +689,8 @@ describe('T-08566 stage 2 authority and ownership', () => {
         }
       })
       expect(crossing.value.readerSpawned).toBe(true)
-      expect(crossing.value.settledBeforeUnblock).toEqual([false, false, false])
-      expect(crossing.value.settledAfterCompletion).toEqual([true, true, true])
+      expect(crossing.value.settledBeforeUnblock).toEqual([false, false])
+      expect(crossing.value.settledAfterCompletion).toEqual([true, true])
       expect(crossing.value.recoveryStatus).toBe(200)
       for (const response of crossing.value.responses) {
         expect(response.status).toBe(409)

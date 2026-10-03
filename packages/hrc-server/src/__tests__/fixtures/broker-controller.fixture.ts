@@ -327,7 +327,6 @@ export async function makeFixture(): Promise<TestFixture> {
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
   })
   return {
     db,

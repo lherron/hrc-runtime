@@ -66,7 +66,6 @@ function seedReadRuntime(): void {
       status: 'active',
       createdAt: CREATED_AT,
       updatedAt: CREATED_AT,
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId: RUNTIME_ID,
@@ -79,7 +78,6 @@ function seedReadRuntime(): void {
       provider: 'openai',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: `op-${RUNTIME_ID}`,
       lastActivityAt: CREATED_AT,

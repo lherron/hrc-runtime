@@ -23,7 +23,6 @@ describe('openHrcDatabase', () => {
       expect(db.sessions).toBeDefined()
       expect(db.runtimes).toBeDefined()
       expect(db.runs).toBeDefined()
-      expect(db.launches).toBeDefined()
       expect(db.events).toBeDefined()
       expect(db.surfaceBindings).toBeDefined()
       expect(db.runtimeBuffers).toBeDefined()
@@ -167,7 +166,6 @@ describe('SessionRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       }
       const created = db.sessions.insert(session)
       expect(created.hostSessionId).toBe('hsid-100')
@@ -193,7 +191,6 @@ describe('SessionRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.sessions.insert({
         hostSessionId: 'hsid-201',
@@ -204,7 +201,6 @@ describe('SessionRepository', () => {
         priorHostSessionId: 'hsid-200',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       const list = db.sessions.listByScopeRef(testScopeRef('scope-b'), 'default')
       expect(list.length).toBe(2)
@@ -225,7 +221,6 @@ describe('SessionRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       const updated = db.sessions.updateStatus('hsid-300', 'archived', ts())
       expect(updated).not.toBeNull()
@@ -248,7 +243,6 @@ describe('SessionRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
 
       const intent: HrcRuntimeIntent = {
@@ -284,7 +278,6 @@ describe('SessionRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
 
       const continuation: HrcContinuationRef = {
@@ -312,7 +305,6 @@ describe('SessionRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.sessions.updateContinuation(
         'hsid-reuse-state',

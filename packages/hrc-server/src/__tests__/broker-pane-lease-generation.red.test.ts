@@ -36,7 +36,6 @@ describe('T-01733 — profile-era pane lease requests are refused before allocat
       status: 'active',
       createdAt: NOW,
       updatedAt: NOW,
-      ancestorScopeRefs: [],
     })
   })
 

@@ -257,8 +257,7 @@ export const projectEnvelopeMethods = {
       participantAttempt !== null &&
       (currentParticipantAttempt?.attemptId !== participantAttempt.attemptId ||
         ['SUPERSEDED', 'ABANDONED', 'TERMINAL'].includes(participantAttempt.state))
-    const stale =
-      participantFenced || this.isStaleLifecycleEnvelope(persistedEnvelope, invocation, runtime)
+    const stale = participantFenced || this.isStaleLifecycleEnvelope(persistedEnvelope, invocation)
     this.persistProviderTranscriptArtifact(persistedEnvelope, invocation, runtime, ctx, now)
     if (ctx.evidenceOrigin !== undefined) {
       this.projectRetainedState(persistedEnvelope, ctx, now, stale || participantFenced)

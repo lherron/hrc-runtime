@@ -69,21 +69,13 @@ type PartialRuntime = Pick<
   | 'provider'
   | 'status'
   | 'supportsInflightInput'
-  | 'adopted'
   | 'createdAt'
   | 'updatedAt'
 >
 
 type PartialSession = Pick<
   HrcSessionRecord,
-  | 'hostSessionId'
-  | 'scopeRef'
-  | 'laneRef'
-  | 'generation'
-  | 'status'
-  | 'createdAt'
-  | 'updatedAt'
-  | 'ancestorScopeRefs'
+  'hostSessionId' | 'scopeRef' | 'laneRef' | 'generation' | 'status' | 'createdAt' | 'updatedAt'
 >
 
 function makeRuntime(overrides: Partial<PartialRuntime> & { runtimeId: string }): PartialRuntime {
@@ -98,7 +90,6 @@ function makeRuntime(overrides: Partial<PartialRuntime> & { runtimeId: string })
     provider: overrides.provider ?? 'anthropic',
     status: overrides.status ?? 'idle',
     supportsInflightInput: overrides.supportsInflightInput ?? false,
-    adopted: overrides.adopted ?? false,
     createdAt: overrides.createdAt ?? '2026-06-01T00:00:00Z',
     updatedAt: overrides.updatedAt ?? '2026-06-01T00:00:00Z',
   }
@@ -115,7 +106,6 @@ function makeSession(
     status: overrides.status ?? 'active',
     createdAt: overrides.createdAt ?? '2026-06-01T00:00:00Z',
     updatedAt: overrides.updatedAt ?? '2026-06-01T00:00:00Z',
-    ancestorScopeRefs: overrides.ancestorScopeRefs ?? [],
   }
 }
 

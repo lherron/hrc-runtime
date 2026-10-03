@@ -446,7 +446,6 @@ export const stateProjectionMethods = {
           )
         }
         db.runtimes.update(ctx.runtimeId, {
-          lifecyclePolicyHash: payload.policyHash,
           ...runtimeActivityPatch(db, ctx.runtimeId, {
             source: 'broker-event',
             occurredAt: envelope.time ?? now,

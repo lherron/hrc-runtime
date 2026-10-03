@@ -363,7 +363,6 @@ export function seedBrokerClaimingRuntime(
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId,
@@ -376,7 +375,6 @@ export function seedBrokerClaimingRuntime(
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       tmuxJson: {
         socketPath,

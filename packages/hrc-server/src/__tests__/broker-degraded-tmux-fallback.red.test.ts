@@ -135,7 +135,6 @@ async function seed(): Promise<Seeded> {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 
   const lease = createTmuxManager({ socketPath: fixture.leaseSocket })
@@ -153,7 +152,6 @@ async function seed(): Promise<Seeded> {
     provider: 'anthropic',
     status: 'busy',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeRunId: runId,
     activeInvocationId: invocationId,

@@ -99,11 +99,9 @@ function seedReusableBrokerRuntime(
       provider: PROVIDER,
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: OPERATION_ID,
       activeInvocationId: invocationId,
-      continuation: { provider: PROVIDER, key: 'thread-t05087' },
       createdAt: now,
       updatedAt: now,
     })
@@ -420,11 +418,9 @@ describe('T-05078/14 between-turn reap and reprovision', () => {
           provider: PROVIDER,
           status: 'ready',
           supportsInflightInput: false,
-          adopted: false,
           controllerKind: 'harness-broker',
           activeOperationId: OPERATION_ID,
           activeInvocationId: REPROVISIONED_INVOCATION_ID,
-          continuation: { provider: PROVIDER, key: 'thread-t05087' },
           createdAt: now,
           updatedAt: now,
         })

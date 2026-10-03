@@ -3,144 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { createStoreTestFixture, openHrcDatabase, testScopeRef, ts } from './store.fixture'
 
 const fixture = createStoreTestFixture()
-import type { HrcEventEnvelope, HrcLaunchRecord } from './store.fixture'
-
-describe('LaunchRepository', () => {
-  it('creates and retrieves a launch record', () => {
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const now = ts()
-      db.sessions.insert({
-        hostSessionId: 'hsid-launch-1',
-        scopeRef: testScopeRef('scope-launch'),
-        laneRef: 'default',
-        generation: 1,
-        status: 'active',
-        createdAt: now,
-        updatedAt: now,
-        ancestorScopeRefs: [],
-      })
-
-      const launch: HrcLaunchRecord = {
-        launchId: 'launch-001',
-        hostSessionId: 'hsid-launch-1',
-        generation: 1,
-        harness: 'claude-code',
-        provider: 'anthropic',
-        launchArtifactPath: '/tmp/launches/launch-001.json',
-        status: 'pending',
-        createdAt: now,
-        updatedAt: now,
-      }
-      const created = db.launches.insert(launch)
-      expect(created.launchId).toBe('launch-001')
-
-      const found = db.launches.getByLaunchId('launch-001')
-      expect(found).not.toBeNull()
-      expect(found!.status).toBe('pending')
-    } finally {
-      db.close()
-    }
-  })
-
-  it('round-trips surfaceJson through create', () => {
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const now = ts()
-      db.sessions.insert({
-        hostSessionId: 'hsid-launch-surface',
-        scopeRef: testScopeRef('scope-launch-surface'),
-        laneRef: 'default',
-        generation: 1,
-        status: 'active',
-        createdAt: now,
-        updatedAt: now,
-        ancestorScopeRefs: [],
-      })
-
-      const surfaceJson = {
-        kind: 'ghostty',
-        surfaceId: 'surface-launch-1',
-        createdBy: 'ghostmux',
-      }
-      const created = db.launches.insert({
-        launchId: 'launch-surface-001',
-        hostSessionId: 'hsid-launch-surface',
-        generation: 1,
-        harness: 'claude-code',
-        provider: 'anthropic',
-        launchArtifactPath: '/tmp/launches/launch-surface-001.json',
-        surfaceJson,
-        status: 'pending',
-        createdAt: now,
-        updatedAt: now,
-      })
-      expect(created.surfaceJson).toEqual(surfaceJson)
-
-      const found = db.launches.getByLaunchId('launch-surface-001')
-      expect(found!.surfaceJson).toEqual(surfaceJson)
-    } finally {
-      db.close()
-    }
-  })
-
-  it('tracks wrapper lifecycle: started → child started → exited', () => {
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const now = ts()
-      db.sessions.insert({
-        hostSessionId: 'hsid-launch-2',
-        scopeRef: testScopeRef('scope-launch2'),
-        laneRef: 'default',
-        generation: 1,
-        status: 'active',
-        createdAt: now,
-        updatedAt: now,
-        ancestorScopeRefs: [],
-      })
-      db.launches.insert({
-        launchId: 'launch-002',
-        hostSessionId: 'hsid-launch-2',
-        generation: 1,
-        harness: 'claude-code',
-        provider: 'anthropic',
-        launchArtifactPath: '/tmp/launches/launch-002.json',
-        status: 'pending',
-        createdAt: now,
-        updatedAt: now,
-      })
-
-      // Wrapper started
-      const ws = db.launches.updateWrapperStarted('launch-002', {
-        wrapperPid: 9001,
-        wrapperStartedAt: ts(),
-        updatedAt: ts(),
-      })
-      expect(ws!.wrapperPid).toBe(9001)
-      expect(ws!.wrapperStartedAt).toBeDefined()
-
-      // Child started
-      const cs = db.launches.updateChildStarted('launch-002', {
-        childPid: 9002,
-        childStartedAt: ts(),
-        updatedAt: ts(),
-      })
-      expect(cs!.childPid).toBe(9002)
-
-      // Exited
-      const ex = db.launches.updateExited('launch-002', {
-        exitedAt: ts(),
-        updatedAt: ts(),
-        status: 'exited',
-        exitCode: 0,
-      })
-      expect(ex!.status).toBe('exited')
-      expect(ex!.exitCode).toBe(0)
-    } finally {
-      db.close()
-    }
-  })
-})
+import type { HrcEventEnvelope } from './store.fixture'
 
 // ---------------------------------------------------------------------------
 // 7. EventRepository — monotonic seq ordering
@@ -158,7 +21,6 @@ describe('EventRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
 
       const base: Omit<HrcEventEnvelope, 'seq'> = {
@@ -196,7 +58,6 @@ describe('EventRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
 
       const base: Omit<HrcEventEnvelope, 'seq'> = {
@@ -233,7 +94,6 @@ describe('EventRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
 
       const base: Omit<HrcEventEnvelope, 'seq'> = {
@@ -271,7 +131,6 @@ describe('EventRepository', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
 
       const complexPayload = {

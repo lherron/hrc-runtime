@@ -61,7 +61,7 @@ export type PrepareAttachedRunResponse =
  * T-07899 — `hrc resume` resume-continuation request. The server selects the
  * latest recorded continuation for the normalized target and mints or binds an
  * active successor inheriting it. Clear/drop/end audit events do not invalidate
- * explicit resume. `intent`/`parsedScope` (when supplied) are
+ * explicit resume. `intent` (when supplied) is
  * recorded on the successor so a subsequent start/prepare/dispatch has the
  * managed runtime intent. `priorHostSessionId` optionally pins a specific prior;
  * it must belong to the normalized target and carry a recorded key.
@@ -70,7 +70,6 @@ export type ResumeContinuationRequest = {
   sessionRef: string
   priorHostSessionId?: string | undefined
   intent?: HrcRuntimeIntent | undefined
-  parsedScope?: Record<string, unknown> | undefined
 }
 
 export type ResumeContinuationResponse = {
@@ -296,8 +295,6 @@ export type InspectRuntimeResponse = {
   controllerKind?: HrcRuntimeControllerKind | null | undefined
   activeOperationId?: string | null | undefined
   activeInvocationId?: string | null | undefined
-  wrapperPid: number | null
-  childPid: number | null
   continuation: HrcContinuationRef | null
   continuationKey: string | null
   continuationStale: boolean
@@ -589,7 +586,7 @@ export type BrokerInspectResponse = {
   /** Present only when `recoverFinalSummary` was explicitly requested. */
   finalSummaryRecovery?: FinalSummaryRecoveryResult | undefined
   /**
-   * HRC-derived lifecycle view (non-broker fallback only). Pre-broker/adopted
+   * HRC-derived lifecycle view (non-broker fallback only). Pre-broker
    * runtimes report `retention.mode:'db-only'` (no synthesized TTL). The
    * `'hrc-idle-cleanup'` mode belonged to the legacy in-Ghostty claude-code path
    * and has had no producer since that path was deleted; readers must still
@@ -716,7 +713,6 @@ export type RuntimePruneDeleteCounts = {
   runtime_buffers: number
   surface_bindings: number
   local_bridges: number
-  launches: number
   runs: number
   runtimes: number
 }

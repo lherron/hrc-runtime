@@ -49,7 +49,7 @@ import {
   dispatchOriginRunFields,
 } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
-import { automaticContinuationForRuntime } from './session-continuation-reuse.js'
+import { automaticContinuationForSession } from './session-continuation-reuse.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 
 type RuntimeStartOwnership = {
@@ -117,7 +117,7 @@ export async function handleHeadlessDispatchTurn(
     this.createHeadlessRuntimeForSession(session, intent)
   assertRuntimeNotBusy(this.db, runtime)
 
-  const continuation = automaticContinuationForRuntime(this.db, session, runtime)
+  const continuation = automaticContinuationForSession(this.db, session)
   const now = timestamp()
   this.db.sessions.updateIntent(session.hostSessionId, intent, now)
 
@@ -140,7 +140,6 @@ export async function handleHeadlessDispatchTurn(
     activeRunId: run.runId,
     status: 'busy',
     statusChangedAt: now,
-    continuation,
     ...runtimeActivityPatch(this.db, runtime.runtimeId, {
       source: 'turn',
       occurredAt: now,

@@ -49,7 +49,6 @@ function seed(db: HrcDatabase, input: SeedInput): { hostSessionId: string; scope
     status: input.status ?? 'active',
     createdAt: input.ts,
     updatedAt: input.ts,
-    ancestorScopeRefs: [],
     ...(input.continuationKey !== undefined
       ? { continuation: { provider: 'claude', key: input.continuationKey } }
       : {}),
@@ -68,8 +67,8 @@ function seed(db: HrcDatabase, input: SeedInput): { hostSessionId: string; scope
     db.sqlite.run(
       `INSERT INTO runtimes (
          runtime_id, host_session_id, scope_ref, lane_ref, generation, transport, harness,
-         provider, status, supports_inflight_input, adopted, last_activity_at, created_at, updated_at
-       ) VALUES (?, ?, ?, 'main', 1, 'tmux', 'claude-code', 'anthropic', ?, 0, 0, ?, ?, ?)`,
+         provider, status, supports_inflight_input, last_activity_at, created_at, updated_at
+       ) VALUES (?, ?, ?, 'main', 1, 'tmux', 'claude-code', 'anthropic', ?, 0, ?, ?, ?)`,
       [
         `rt-${input.id}`,
         hostSessionId,

@@ -70,7 +70,6 @@ export async function seedLiveTmuxRuntime(
   }
 
   const now = new Date().toISOString()
-  const launchId = `launch-seed-${tag}`
   const db = openHrcDatabase(dbPath)
   try {
     const session = db.sessions.getByHostSessionId(hostSessionId)
@@ -86,7 +85,6 @@ export async function seedLiveTmuxRuntime(
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       tmuxJson: {
         sessionName,
@@ -97,18 +95,6 @@ export async function seedLiveTmuxRuntime(
         brokerDriver: 'claude-code-tmux',
         windowName: 'main',
       },
-      createdAt: now,
-      updatedAt: now,
-    })
-    db.launches.insert({
-      launchId,
-      hostSessionId,
-      runtimeId,
-      generation: session.generation,
-      harness: 'claude-code',
-      provider: 'anthropic',
-      launchArtifactPath: join(tmpdir(), `hrc-cli-seed-${tag}.artifact.json`),
-      status: 'running',
       createdAt: now,
       updatedAt: now,
     })

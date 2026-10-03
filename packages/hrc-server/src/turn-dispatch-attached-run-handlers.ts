@@ -8,7 +8,6 @@ import type {
   ResumeAttachedRunResponse,
   StartRuntimeResponse,
 } from 'hrc-core'
-import { refuseAppScopedSession } from './app-session-identity.js'
 import { isAttachedRunAspdCodexIntent } from './presentation-operator.js'
 import { projectHrcReleaseIdentity } from './release-provenance.js'
 import { requireKnownRuntime, requireSession } from './require-helpers.js'
@@ -153,7 +152,6 @@ export async function handlePrepareAttachedRun(
 ): Promise<Response> {
   const body = parsePrepareAttachedRunRequest(await parseJsonBody(request))
   const requested = requireSession(this.db, body.hostSessionId)
-  refuseAppScopedSession(requested, 'prepare-attached-run')
   const { session } = await this.maybeAutoRotateStaleSession(requested, {
     allowStaleGeneration: body.allowStaleGeneration,
     trigger: 'prepare-attached-run',

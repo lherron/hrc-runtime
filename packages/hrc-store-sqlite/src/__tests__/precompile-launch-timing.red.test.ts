@@ -35,7 +35,6 @@ describe('pre-compile session write timing (T-06402)', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
 
       // A separately opened SQLite handle would retain its own default. Seeing 0

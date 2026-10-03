@@ -28,10 +28,7 @@ import {
 
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 
-import {
-  persistSessionTaskClaimAuthority,
-  withSummonAuthority,
-} from './federation/summon-gate-server.js'
+import { withSummonAuthority } from './federation/summon-gate-server.js'
 import { parseSessionRef } from './parsers/messages.js'
 import { createHostSessionId, isRuntimeUnavailableStatus, timestamp } from './server-util.js'
 
@@ -341,7 +338,7 @@ export async function mintClaimedSession(
       intent: 'explicit_local',
       capabilityHint: input.capabilityHint,
     },
-    (claimAuthority) => {
+    () => {
       const now = timestamp()
       const hostSessionId = createHostSessionId()
       const session: HrcSessionRecord = {
@@ -352,13 +349,9 @@ export async function mintClaimedSession(
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       }
       const created = server.db.sqlite.transaction(() => {
         const inserted = server.db.sessions.insert(session)
-        if (claimAuthority !== undefined) {
-          persistSessionTaskClaimAuthority(server, hostSessionId, claimAuthority, now)
-        }
         server.db.continuities.upsert({
           scopeRef: input.scopeRef,
           laneRef: input.laneRef,

@@ -93,7 +93,6 @@ function seedSession(db: ReturnType<typeof openHrcDatabase>, hostSessionId: stri
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 

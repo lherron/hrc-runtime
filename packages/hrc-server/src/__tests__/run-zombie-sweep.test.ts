@@ -84,7 +84,6 @@ function seedRun(options: SeedRunOptions): void {
             }
           : {}),
         supportsInflightInput: false,
-        adopted: false,
         ...(options.activeRunOwner ? { activeRunId: options.runId } : {}),
         lastActivityAt: timestamp,
         createdAt: timestamp,

@@ -7,8 +7,6 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
-import { bindAppHarnessBirthIntent } from './app-session-identity.js'
 import { aspdHeadlessBrokerEndpoint } from './aspd-headless-start.js'
 import { createBirthTimeline } from './birth-timeline.js'
 import { waitForInteractiveBrokerRunCompletion } from './broker-headless-completion.js'
@@ -80,20 +78,8 @@ export async function startHeadlessBrokerRuntime(
   // address. Delivery routes into the participant's own runtime before this
   // point; this is the backstop at the place a runtime is actually born.
   assertParticipantAddressNotSubstituted(this, session)
-  // T-08576 D5: an app birth carries only HRC-owned identity; it consumes its
-  // run grant exactly when its compile identity allocates the run id.
-  const boundIntent =
-    runId === undefined
-      ? intent
-      : bindAppHarnessBirthIntent(
-          this.db,
-          session,
-          intent,
-          runId,
-          hasInitialUserTurn(prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent)
-        )
   const requestedTurnIntent: HrcRuntimeIntent =
-    prompt.length > 0 ? { ...boundIntent, initialPrompt: prompt } : boundIntent
+    prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
   // Presentation is producer-resolved at compilation. Before that boundary we
   // record only an opaque/default timeline marker; no intent-to-driver choice.
   const presentation = requestedTurnIntent.presentation?.operator ?? 'default'

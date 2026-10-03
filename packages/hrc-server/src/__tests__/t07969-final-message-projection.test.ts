@@ -60,7 +60,6 @@ function seedRun(runId: string): void {
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
   }
   if (db.runtimes.getByRuntimeId(RUNTIME_ID) == null) {
@@ -75,7 +74,6 @@ function seedRun(runId: string): void {
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: true,
-      adopted: false,
       lastActivityAt: now,
       createdAt: now,
       updatedAt: now,

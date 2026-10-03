@@ -1,4 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import type {
+  DeleteSessionTitleResponse,
+  SessionTitleRecord,
+  SetSessionTitleRequest,
+} from 'hrc-core'
 
 import type { HrcSessionRecord, HrcSurfaceBindingRecord as SurfaceBindingRecord } from 'hrc-core'
 import { HRC_RESTART_SELF_PATH, HrcDomainError, HrcErrorCode } from 'hrc-core'
@@ -43,7 +48,6 @@ import type {
   CaptureResponse,
   ClearContextRequest,
   ClearContextResponse,
-  DeleteSessionTitleResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
   DropContinuationRequest,
@@ -93,8 +97,6 @@ import type {
   SessionPageRequest,
   SessionPageResponse,
   SessionProjectionResult,
-  SessionTitleRecord,
-  SetSessionTitleRequest,
   StartRuntimeRequest,
   StartRuntimeResponse,
   SteerSubmissionRequest,
@@ -350,22 +352,6 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
   async getSession(hostSessionId: string): Promise<HrcSessionRecord> {
     return this.getJson<HrcSessionRecord>(
       `/v1/sessions/by-host/${encodeURIComponent(hostSessionId)}`
-    )
-  }
-
-  async setSessionTitle(
-    hostSessionId: string,
-    request: SetSessionTitleRequest
-  ): Promise<SessionTitleRecord> {
-    return this.postJson<SessionTitleRecord>(
-      `/v1/sessions/${encodeURIComponent(hostSessionId)}/title`,
-      request
-    )
-  }
-
-  async deleteSessionTitle(hostSessionId: string): Promise<DeleteSessionTitleResponse> {
-    return this.deleteJson<DeleteSessionTitleResponse>(
-      `/v1/sessions/${encodeURIComponent(hostSessionId)}/title`
     )
   }
 
@@ -757,6 +743,22 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
   async listSurfaces(filter: SurfaceListFilter): Promise<SurfaceBindingRecord[]> {
     return this.getJson<SurfaceBindingRecord[]>(
       `/v1/surfaces?runtimeId=${encodeURIComponent(filter.runtimeId)}`
+    )
+  }
+
+  async setSessionTitle(
+    hostSessionId: string,
+    request: SetSessionTitleRequest
+  ): Promise<SessionTitleRecord> {
+    return this.postJson<SessionTitleRecord>(
+      `/v1/sessions/${encodeURIComponent(hostSessionId)}/title`,
+      request
+    )
+  }
+
+  async deleteSessionTitle(hostSessionId: string): Promise<DeleteSessionTitleResponse> {
+    return this.deleteJson<DeleteSessionTitleResponse>(
+      `/v1/sessions/${encodeURIComponent(hostSessionId)}/title`
     )
   }
 }

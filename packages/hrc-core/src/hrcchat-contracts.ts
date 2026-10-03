@@ -106,7 +106,6 @@ export type HrcTargetView = {
   scopeRef: string
   laneRef: string
   state: HrcTargetState
-  parsedScopeJson?: Record<string, unknown> | undefined
   lastAppliedIntentJson?: HrcRuntimeIntent | undefined
   continuation?: { provider: string; key?: string | undefined } | undefined
   activeHostSessionId?: string | undefined
@@ -243,7 +242,6 @@ export type HrcMessageFilter = {
 export type EnsureTargetRequest = {
   sessionRef: string
   runtimeIntent: HrcRuntimeIntent
-  parsedScopeJson?: Record<string, unknown> | undefined
   persistIntent?: boolean | undefined
   /**
    * T-09979 — the door this call is, recorded only when it actually births a
@@ -279,7 +277,6 @@ export type DispatchTurnBySelectorRequest = {
   mode?: 'auto' | 'headless' | 'nonInteractive' | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
-  parsedScopeJson?: Record<string, unknown> | undefined
   fences?: HrcFence | undefined
 }
 
@@ -440,7 +437,6 @@ export type SemanticDmRequest = {
   replyToMessageId?: string | undefined
   runtimeIntent?: HrcDmRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
-  parsedScopeJson?: Record<string, unknown> | undefined
   wait?:
     | {
         enabled: boolean

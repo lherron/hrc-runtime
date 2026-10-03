@@ -221,7 +221,7 @@ only after the old-home fence is durable, and expiring that fence could restore
 authority on the old home.
 
 The controlling reason is resume-path integrity. Terminated rows anchor the
-`scope_ref` → `host_session_id` → `harness_session_json` chain used by
+`scope_ref` → `host_session_id` → `continuation_json` chain used by
 `--resume`; deleting them could orphan resumable state. The table is tiny, so
 there is no scale pressure that outweighs that risk.
 
@@ -317,8 +317,6 @@ matters at this row count:
   the live-runtime read near line 887 issues `SELECT runtime_id, status FROM runtimes`
   and filters on `host_session_id`, covered by
   `idx_runtimes_host_session_id`, before applying the transport and tmux filters
-  to that host session's small result set. The lookup near line 340 in the
-  current checkout is actually against `launches`, not `runtimes`; it filters
-  `host_session_id` and `runtime_id`, covered by the corresponding
-  `idx_launches_host_session_id` and `idx_launches_runtime_id` indexes. Thus the
-  current ACP read paths do not justify a new `runtimes` index.
+  to that host session's small result set. The obsolete launch-record lookup
+  was removed in T-10146; current ACP read paths do not justify a new
+  `runtimes` index.

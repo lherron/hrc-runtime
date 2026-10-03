@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import type { HrcContinuationRef } from 'hrc-core'
 
 import { toRuntimeContinuationRef } from '../broker-decisions'
-import { HOST_SESSION_ID, RUNTIME_ID, envelope } from './broker-event-mapper-fixtures'
+import { HOST_SESSION_ID, envelope } from './broker-event-mapper-fixtures'
 
 import { createBrokerEventMapperTestFixture } from './broker-event-mapper.test.fixture'
 
@@ -29,15 +29,12 @@ const persistedProducerContinuations = [
 const harness = createBrokerEventMapperTestFixture()
 
 describe('T-08438 persisted continuation provider projection', () => {
-  it('persists producer-owned provider labels unchanged on runtime and session rows', () => {
+  it('persists producer-owned provider labels unchanged on the session row', () => {
     const mapper = harness.makeMapper()
 
     for (const [offset, { continuation }] of persistedProducerContinuations.entries()) {
       mapper.apply(envelope('continuation.updated', 8 + offset, continuation))
 
-      expect(harness.fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.continuation).toEqual(
-        continuation
-      )
       expect(harness.fixture.db.sessions.getByHostSessionId(HOST_SESSION_ID)?.continuation).toEqual(
         continuation
       )

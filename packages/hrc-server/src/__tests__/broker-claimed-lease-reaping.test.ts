@@ -123,7 +123,6 @@ function seedRuntime(
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
   return db.runtimes.insert({
     runtimeId,
@@ -137,7 +136,6 @@ function seedRuntime(
     status: options.status ?? 'ready',
     statusChangedAt: now,
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',

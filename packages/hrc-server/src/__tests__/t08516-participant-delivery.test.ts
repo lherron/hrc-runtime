@@ -9,7 +9,6 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { parseScopeRef } from 'agent-scope'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -36,7 +35,6 @@ function world(
     binding?: Record<string, unknown>
     runtime?: Record<string, unknown>
     registration?: Record<string, unknown>
-    omitBinding?: boolean
     omitRuntime?: boolean
   } = {}
 ): World {
@@ -53,8 +51,6 @@ function world(
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    parsedScopeJson: parseScopeRef(SCOPE) as unknown as Record<string, unknown>,
-    ancestorScopeRefs: [],
   })
   db.participantHostBindings.insertReservation({
     reservationId: 'resv-delivery',
@@ -67,7 +63,6 @@ function world(
   })
   db.participantRegistrations.insertRegistration({
     registrationId: 'preg-delivery',
-    registrationMode: 'direct',
     join: 'participant-served',
     scopeRef: SCOPE,
     laneRef: 'main',
@@ -84,21 +79,19 @@ function world(
     updatedAt: NOW,
     ...patch.registration,
   } as never)
-  if (patch.omitBinding !== true) {
-    db.participantHostBindings.insertBinding({
-      bindingId: 'bind-delivery',
-      reservationId: 'resv-delivery',
-      registrationId: 'preg-delivery',
-      hostIncarnationId: 'host-incarnation:delivery',
-      hostSessionId,
-      generation: 1,
-      runtimeId,
-      state: 'BOUND',
-      admittedAt: NOW,
-      updatedAt: NOW,
-      ...patch.binding,
-    } as never)
-  }
+  db.participantHostBindings.insertBinding({
+    bindingId: 'bind-delivery',
+    reservationId: 'resv-delivery',
+    registrationId: 'preg-delivery',
+    hostIncarnationId: 'host-incarnation:delivery',
+    hostSessionId,
+    generation: 1,
+    runtimeId,
+    state: 'BOUND',
+    admittedAt: NOW,
+    updatedAt: NOW,
+    ...patch.binding,
+  } as never)
   db.participantRegistrations.insertAttempt({
     attemptId: 'patt-delivery',
     registrationId: 'preg-delivery',
@@ -107,7 +100,7 @@ function world(
     operationId: 'op-delivery',
     invocationId,
     runtimeId,
-    ...(patch.omitBinding === true ? {} : { hostBindingId: 'bind-delivery' }),
+    hostBindingId: 'bind-delivery',
     state: 'ACTIVE',
     preparedDescriptorJson: '{"kind":"participant-broker-descriptor/v1"}',
     adapterDispatchEnvJson: '{}',
@@ -198,13 +191,6 @@ describe('T-08516 participant delivery linkage (R7.6)', () => {
     if (delivery?.outcome !== 'attached') return
     expect(delivery.runtime.runtimeId).toBe('rt-delivery')
     expect(delivery.attempt.attemptId).toBe('patt-delivery')
-  })
-
-  test('a legacy keyed attempt with no host binding is still valid', () => {
-    // R7.6 keeps the legacy path working: it has no binding by construction,
-    // so the binding checks must be keyed on presence, not on mode.
-    const delivery = resolve({ omitBinding: true })
-    expect(delivery?.outcome).toBe('attached')
   })
 
   describe('controller reconnect (section 6.2)', () => {

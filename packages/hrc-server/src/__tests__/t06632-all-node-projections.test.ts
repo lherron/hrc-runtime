@@ -71,7 +71,6 @@ function seedSdkRuntime(fixture: HrcServerTestFixture, scopeRef: string, runtime
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       createdAt: timestamp,
       updatedAt: timestamp,
     })

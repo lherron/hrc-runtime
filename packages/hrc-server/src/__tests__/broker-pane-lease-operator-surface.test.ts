@@ -1,12 +1,9 @@
 /**
- * T-01738 operator-surface remainder (F-V1 + F-V5) for broker-tmux pane leases.
+ * T-01738 operator-surface remainder (F-V1) for broker-tmux pane leases.
  *
  * F-V1: `hrc runtime inspect <rt> --json` must surface the per-runtime lease
  *   allocation (socketPath / sessionName / paneId) for a broker-tmux runtime,
  *   instead of dropping it (the response previously omitted tmux entirely).
- * F-V5: `hrc runtime adopt <rt>` on a broker-tmux runtime whose lease server is
- *   DEAD must be rejected (CONFLICT) rather than returning ok/adopted and later
- *   dispatching a turn at a pane that no longer exists. A live lease still adopts.
  *
  * Uses real tmux lease servers on per-runtime sockets under `<runtimeRoot>/btmux/`,
  * mirroring broker-pane-lease-orphan-sweep.red.test.ts.
@@ -17,7 +14,7 @@ import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
-import { createHrcServer, createTmuxManager } from '../index'
+import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
@@ -71,7 +68,7 @@ async function createLeaseSession(
 
 /**
  * Seed a broker-tmux (harness-broker / tmux) runtime claiming the given lease.
- * `status` lets callers seed an adoptable ('dead'/'stale') or live runtime.
+ * `status` lets callers seed a dead/stale or live runtime.
  */
 function seedBrokerTmuxRuntime(args: {
   driver: string
@@ -93,7 +90,6 @@ function seedBrokerTmuxRuntime(args: {
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId: args.runtimeId,
@@ -106,7 +102,6 @@ function seedBrokerTmuxRuntime(args: {
       provider: 'anthropic',
       status: args.status,
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       tmuxJson: {
         socketPath: args.socketPath,
@@ -160,43 +155,5 @@ describe('T-01738 F-V1: runtime inspect surfaces broker-tmux lease allocation', 
     const body = (await response.json()) as { transport: string; tmux?: unknown }
     expect(body.transport).not.toBe('tmux')
     expect(body.tmux).toBeUndefined()
-  })
-})
-
-describe('T-01738 F-V5: adopt verifies broker-tmux lease liveness', () => {
-  it('rejects adopting a broker-tmux runtime whose lease server is dead', async () => {
-    const driver = 'cc'
-    const runtimeId = 'adoptDead'
-    // Point at a btmux socket with no live server.
-    await mkdir(btmuxDir(), { recursive: true })
-    const socketPath = join(btmuxDir(), `${driver}-${runtimeId}.sock`)
-    seedBrokerTmuxRuntime({ driver, runtimeId, socketPath, status: 'dead' })
-
-    const server = await createHrcServer(fixture.serverOpts())
-    servers.push(server)
-
-    const response = await fixture.postJson('/v1/runtimes/adopt', { runtimeId })
-    expect(response.status).toBe(409)
-    const body = (await response.json()) as { error?: { code?: string } }
-    expect(body.error?.code).toBe('stale_context')
-  })
-
-  it('adopts a broker-tmux runtime whose lease server is live', async () => {
-    const driver = 'cx'
-    const runtimeId = 'adoptLive'
-    const { socketPath, sessionName } = await createLeaseSession(driver, runtimeId)
-    expect((await createTmuxManager({ socketPath }).inspectSession(sessionName)) !== null).toBe(
-      true
-    )
-    seedBrokerTmuxRuntime({ driver, runtimeId, socketPath, status: 'dead' })
-
-    const server = await createHrcServer(fixture.serverOpts())
-    servers.push(server)
-
-    const response = await fixture.postJson('/v1/runtimes/adopt', { runtimeId })
-    expect(response.status).toBe(200)
-    const body = (await response.json()) as { status: string; adopted: boolean }
-    expect(body.adopted).toBe(true)
-    expect(body.status).toBe('adopted')
   })
 })

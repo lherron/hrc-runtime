@@ -50,7 +50,6 @@ function seedSession(db: HrcDatabase, hostSessionId: string, scopeRef: string): 
     status: 'active',
     createdAt: OLD_ACTIVITY,
     updatedAt: OLD_ACTIVITY,
-    ancestorScopeRefs: [],
   })
 }
 
@@ -65,7 +64,6 @@ function seedRuntime(
     activeRunId?: string | undefined
     controllerKind?: 'harness-broker' | undefined
     tmuxJson?: Record<string, unknown> | undefined
-    surfaceJson?: Record<string, unknown> | undefined
     runtimeStateJson?: Record<string, unknown> | undefined
     updatedAt?: string | undefined
   }
@@ -81,11 +79,9 @@ function seedRuntime(
     provider: 'anthropic',
     status: input.status ?? 'ready',
     supportsInflightInput: input.transport === 'tmux',
-    adopted: false,
     activeRunId: input.activeRunId,
     controllerKind: input.controllerKind,
     tmuxJson: input.tmuxJson,
-    surfaceJson: input.surfaceJson,
     runtimeStateJson: input.runtimeStateJson,
     lastActivityAt: OLD_ACTIVITY,
     createdAt: OLD_ACTIVITY,
@@ -386,7 +382,6 @@ describe('lastActivityAt is qualifying agent/turn activity, not row mutation tim
           'activeInvocationId',
           'activeOperationId',
           'activeRunId',
-          'childPid',
           'continuation',
           'continuationKey',
           'continuationStale',
@@ -405,7 +400,6 @@ describe('lastActivityAt is qualifying agent/turn activity, not row mutation tim
           'scopeRef',
           'status',
           'transport',
-          'wrapperPid',
         ].sort()
       )
     })

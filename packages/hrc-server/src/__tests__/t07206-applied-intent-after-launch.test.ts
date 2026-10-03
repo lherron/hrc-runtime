@@ -208,12 +208,11 @@ describe('T-07206 applied intent authority', () => {
         ensureTargetSession(
           sessionRef: string,
           intent: HrcRuntimeIntent,
-          parsedScopeJson: undefined,
           origin: 'local',
           options: { persistIntent: false }
         ): Promise<Awaited<ReturnType<typeof seededSession>>['session']>
       }
-    ).ensureTargetSession(coldScope, intent, undefined, 'local', {
+    ).ensureTargetSession(coldScope, intent, 'local', {
       persistIntent: false,
     })
 

@@ -7,7 +7,6 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import { trackAppIdentityOperation } from './app-session-identity.js'
 import { CALLER_SURFACE_REUSE_REFUSAL } from './broker-decisions.js'
 import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
 import { appendHrcEventWithinExistingTransaction } from './hrc-event-helper.js'
@@ -344,7 +343,6 @@ export async function executeHeadlessBrokerFormat2DispatchTurn(
       })
     },
   })
-  trackAppIdentityOperation(session, bootOperation)
   recordStartBirth(bootOperation, startBirthOfIntent('headless', intent))
   this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
   void bootOperation

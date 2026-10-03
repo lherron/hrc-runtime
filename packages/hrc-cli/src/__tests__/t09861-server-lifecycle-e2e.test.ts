@@ -112,7 +112,6 @@ async function makeScratch(nodeId: string): Promise<Scratch> {
         status: 'active',
         createdAt: NOW,
         updatedAt: NOW,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId,
@@ -126,7 +125,6 @@ async function makeScratch(nodeId: string): Promise<Scratch> {
         // that outlives a daemon restart.
         runtimeStateJson: { lifecycleOwner: 'external' },
         supportsInflightInput: false,
-        adopted: false,
         createdAt: NOW,
         updatedAt: NOW,
       })

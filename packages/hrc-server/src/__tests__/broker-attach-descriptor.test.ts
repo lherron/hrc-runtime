@@ -19,7 +19,6 @@ describe('broker tmux attach descriptors', () => {
       provider: 'openai',
       status: 'starting',
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       tmuxJson: {
         socketPath: '/tmp/hrc-btmux/codex-cli-tmux-rt-broker-attach.sock',

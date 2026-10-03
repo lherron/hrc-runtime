@@ -136,7 +136,6 @@ function summaryOptions(
         sessionRef: `${scopeRef}/lane:main`,
         scopeRef,
         runtimeIntent,
-        parsedScopeJson: { agentId: 'summarizer', projectId: 'hrc-runtime' },
       }
     },
     ...overrides,

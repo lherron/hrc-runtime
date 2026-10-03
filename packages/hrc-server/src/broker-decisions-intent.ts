@@ -381,7 +381,7 @@ export function toLatestRuntimeAdmissionView(
  * Minimal view of the session's latest runtime needed to decide whether a
  * headless-preferred turn should be delivered into a live interactive broker
  * runtime instead of spawning a competing headless run. `hasLiveSurface` mirrors
- * the (tmuxJson || surfaceJson) liveness check. Admission state is deliberately
+ * the tmuxJson liveness check. Admission state is deliberately
  * absent; the selected broker door owns that decision.
  */
 export type LiveInteractiveRuntimeReuseView = {
@@ -404,7 +404,7 @@ export function toLiveInteractiveRuntimeReuseView(
     transport: runtime.transport,
     provider: runtime.provider,
     status: runtime.status,
-    hasLiveSurface: runtime.tmuxJson !== undefined || runtime.surfaceJson !== undefined,
+    hasLiveSurface: runtime.tmuxJson !== undefined,
   }
 }
 

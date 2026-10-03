@@ -1,18 +1,5 @@
 import { HrcConflictError, HrcErrorCode, HrcUnprocessableEntityError } from 'hrc-core'
-import type {
-  ClearContextResponse,
-  HrcAppSessionRef,
-  HrcAppSessionSpec,
-  HrcRuntimeIntent,
-  HrcRuntimeSnapshot,
-  HrcSessionRecord,
-} from 'hrc-core'
-import type { AppManagedSessionRecord } from 'hrc-store-sqlite'
-import {
-  assertAppIdentityCurrent,
-  assertAppIdentityOwner,
-  isAppScopedSession,
-} from '../app-session-identity.js'
+import type { ClearContextResponse, HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
 import {
   evictExternalParticipant,
   isExternalLifecycleOwner,
@@ -20,15 +7,8 @@ import {
 import { assertScopeNotRetired } from '../federation/summon-gate-server.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from '../local-persona-policy.js'
-import {
-  findManagedAppSessionForSession,
-  requireContinuity,
-  requireManagedAppSession,
-  requireSession,
-  requireTmuxPane,
-  resolveClearContextSpec,
-} from '../require-helpers.js'
-import { findLatestRuntime, requireLatestRuntime } from '../runtime-select.js'
+import { requireContinuity, requireSession, requireTmuxPane } from '../require-helpers.js'
+import { findLatestRuntime } from '../runtime-select.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
 import { finalizeRuntimeTermination } from '../server-misc.js'
@@ -39,20 +19,6 @@ import {
   teardownBrokerLeasedTmux,
 } from './broker-dispose.js'
 import { sessionEventBase } from './session-event-base.js'
-
-export function resolveManagedSessionRuntime(
-  this: HrcServerInstanceForHandlers,
-  selector: HrcAppSessionRef
-): {
-  managed: AppManagedSessionRecord
-  session: HrcSessionRecord
-  runtime: HrcRuntimeSnapshot
-} {
-  const managed = requireManagedAppSession(this.db, selector)
-  const session = requireSession(this.db, managed.activeHostSessionId)
-  const runtime = requireLatestRuntime(this.db, session.hostSessionId)
-  return { managed, session, runtime }
-}
 
 export async function maybeAutoRotateStaleSession(
   this: HrcServerInstanceForHandlers,
@@ -70,7 +36,6 @@ export async function maybeAutoRotateStaleSession(
   priorHostSessionId?: string | undefined
 }> {
   assertLocalPersonaAllowed(this, session.scopeRef)
-  assertAppIdentityOwner(session)
   // T-09762: a stale generation of a scope this node retired is never rotated
   // into a successor. That rotation is how svc minted gens 3-5 of a max3 scope.
   await assertScopeNotRetired(this, { scopeRef: session.scopeRef, path: 'resolve-session' })
@@ -159,8 +124,6 @@ export async function rotateSessionContext(
   options: {
     relaunch: boolean
     dropContinuation?: boolean | undefined
-    managed?: AppManagedSessionRecord | undefined
-    relaunchSpec?: HrcAppSessionSpec | undefined
     runtimeIntent?: HrcRuntimeIntent | undefined
     reason?: string | undefined
     /**
@@ -174,13 +137,6 @@ export async function rotateSessionContext(
   }
 ): Promise<ClearContextResponse> {
   assertLocalPersonaAllowed(this, session.scopeRef)
-  // T-08576 D4: app rotation runs under the selector owner, fences the current
-  // incarnation, and resolves the managed row from the store, never the caller.
-  assertAppIdentityOwner(session)
-  assertAppIdentityCurrent(this.db, session)
-  const managed = isAppScopedSession(session)
-    ? (findManagedAppSessionForSession(this.db, session) ?? undefined)
-    : options.managed
   const continuity = requireContinuity(this.db, session)
   if (continuity.activeHostSessionId !== session.hostSessionId) {
     throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, 'host session is no longer active', {
@@ -189,7 +145,6 @@ export async function rotateSessionContext(
     })
   }
 
-  const effectiveSpec = resolveClearContextSpec(managed, options.relaunchSpec, options.relaunch)
   const reason = options.reason ?? 'clear-context'
   const now = timestamp()
   const inheritedIntent = session.lastAppliedIntentJson
@@ -207,7 +162,6 @@ export async function rotateSessionContext(
     priorHostSessionId: session.hostSessionId,
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: session.ancestorScopeRefs,
     ...(successorIntent ? { lastAppliedIntentJson: successorIntent } : {}),
     ...(!options.dropContinuation && session.continuation
       ? { continuation: session.continuation }
@@ -218,32 +172,17 @@ export async function rotateSessionContext(
   this.db.sqlite.transaction(() => {
     this.db.sessions.updateStatus(session.hostSessionId, 'archived', now)
     this.db.sessions.insert(nextSession)
-    this.db.sessionTaskClaimAuthorities.copy(session.hostSessionId, nextSession.hostSessionId, now)
     this.db.continuities.upsert({
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       activeHostSessionId: nextSession.hostSessionId,
       updatedAt: now,
     })
-    if (managed) {
-      this.db.appManagedSessions.update(managed.appId, managed.appSessionKey, {
-        activeHostSessionId: nextSession.hostSessionId,
-        generation: nextSession.generation,
-        ...(effectiveSpec ? { lastAppliedSpec: effectiveSpec } : {}),
-        updatedAt: now,
-      })
-    }
     options.withinTransaction?.(nextSession)
   })()
 
   const clearedEvent = appendHrcEvent(this.db, 'context.cleared', {
     ...sessionEventBase(session, now),
-    ...(managed
-      ? {
-          appId: managed.appId,
-          appSessionKey: managed.appSessionKey,
-        }
-      : {}),
     payload: {
       nextHostSessionId: nextSession.hostSessionId,
       relaunch: options.relaunch,
@@ -266,40 +205,16 @@ export async function rotateSessionContext(
   this.notifyEvent(createdEvent)
 
   if (options.relaunch) {
-    if (effectiveSpec) {
-      if (effectiveSpec.kind === 'harness') {
-        if (effectiveSpec.runtimeIntent.harness.interactive) {
-          // T-01759 (Wave C): route relaunch through the same broker-only start
-          // path as `hrc start` so it always produces a harness-broker runtime,
-          // never a legacy tmux runtime.
-          await this.startRuntimeForSession(nextSession, effectiveSpec.runtimeIntent, 'fresh_pty')
-        } else {
-          this.db.sessions.updateIntent(
-            nextSession.hostSessionId,
-            effectiveSpec.runtimeIntent,
-            timestamp()
-          )
-        }
-      } else {
-        await this.ensureCommandRuntimeForSession(
-          nextSession,
-          effectiveSpec.command,
-          'fresh_pty',
-          true
-        )
-      }
-    } else {
-      const relaunchIntent = nextSession.lastAppliedIntentJson
-      if (!relaunchIntent) {
-        throw new HrcUnprocessableEntityError(
-          HrcErrorCode.MISSING_RUNTIME_INTENT,
-          'cannot relaunch without a prior runtime intent'
-        )
-      }
-      // T-01759 (Wave C): relaunch through the broker-only start path used by
-      // `hrc start` so the rematerialized runtime is always harness-broker.
-      await this.startRuntimeForSession(nextSession, relaunchIntent, 'fresh_pty')
+    const relaunchIntent = nextSession.lastAppliedIntentJson
+    if (!relaunchIntent) {
+      throw new HrcUnprocessableEntityError(
+        HrcErrorCode.MISSING_RUNTIME_INTENT,
+        'cannot relaunch without a prior runtime intent'
+      )
     }
+    // T-01759 (Wave C): relaunch through the broker-only start path used by
+    // `hrc start` so the rematerialized runtime is always harness-broker.
+    await this.startRuntimeForSession(nextSession, relaunchIntent, 'fresh_pty')
   }
 
   return {

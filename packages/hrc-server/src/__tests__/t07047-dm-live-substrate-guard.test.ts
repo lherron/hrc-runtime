@@ -73,7 +73,6 @@ describe('T-07047 semantic DM duplicate-mint guard', () => {
         controllerKind: 'harness-broker',
         status: 'crashed',
         supportsInflightInput: true,
-        adopted: false,
         runtimeStateJson: {
           schemaVersion: 'runtime-state/v1',
           kind: 'harness-broker',
@@ -136,7 +135,6 @@ describe('T-07047 semantic DM duplicate-mint guard', () => {
           controllerKind: 'harness-broker',
           status: 'ready',
           supportsInflightInput: true,
-          adopted: false,
           lastActivityAt: now,
           createdAt: now,
           updatedAt: now,

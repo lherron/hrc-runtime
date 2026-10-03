@@ -128,12 +128,13 @@ describe('projection mapping (ordered sequence)', () => {
     expect(toolEvents.length).toBeGreaterThan(0)
     expect(JSON.stringify(toolEvents[0]!.payload)).toContain(TOOL_NAME)
 
-    // continuation.updated -> BOTH runtime AND session continuation.
+    // continuation.updated -> the session continuation; the runtime row only
+    // carries the producer's activity, never a second copy of the key.
     const expectedContinuation = { provider: 'openai', key: CONTINUATION_KEY }
-    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual(expectedContinuation)
     expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual(
       expectedContinuation
     )
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)).not.toHaveProperty('continuation')
 
     // every broker event row was projected.
     const rows = db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID)
@@ -340,17 +341,18 @@ describe('projection mapping (ordered sequence)', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
 
-    // Seed a captured continuation on both runtime and session.
+    // Seed a captured continuation on the session.
     mapper.apply(
       envelope('continuation.updated', 8, { provider: 'anthropic', key: CONTINUATION_KEY })
     )
-    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toBeDefined()
-    expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toBeDefined()
+    expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual({
+      provider: 'anthropic',
+      key: CONTINUATION_KEY,
+    })
 
     // A user-initiated SessionEnd (Claude /quit) preserves durable history but
     // makes ordinary launch resolution start fresh.
     mapper.apply(envelope('continuation.cleared', 9, { reason: 'prompt_input_exit' }))
-    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation?.key).toBe(CONTINUATION_KEY)
     expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation?.key).toBe(
       CONTINUATION_KEY
     )
@@ -363,9 +365,7 @@ describe('projection mapping (ordered sequence)', () => {
 
     db.participantRegistrations.insertRegistration({
       registrationId: 'preg-projection',
-      registrationMode: 'legacy',
       classId: 'controlled-participant',
-      adapterId: 'controlled-participant',
       join: 'participant-served',
       socketPath: '/tmp/projection.sock',
       participantKey: 'projection-key',
@@ -374,7 +374,13 @@ describe('projection mapping (ordered sequence)', () => {
       hostSessionId: HOST_SESSION_ID,
       generation: 1,
       workspaceCwd: '/tmp',
-      preparationJson: '{}',
+      policy: {
+        addressPolicy: 'selected-scope',
+        continuityPolicy: 'host-incarnation',
+        lifecycleOwner: 'externally-owned',
+        replaySemantics: 'full-source-replay',
+      },
+      hostIncarnationId: 'host-incarnation:projection',
       createdAt: ts(0),
       updatedAt: ts(0),
     })

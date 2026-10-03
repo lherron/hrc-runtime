@@ -74,7 +74,6 @@ async function seedLiveInteractive(): Promise<{ hostSessionId: string }> {
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: 'op-t07398-live',
       activeInvocationId: 'inv-t07398-live',

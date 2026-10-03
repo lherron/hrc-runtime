@@ -30,7 +30,6 @@ export type CompiledRuntimePlanRow = {
   compiler_name: string
   compiler_version: string
   plan_projection_json: string
-  diagnostics_json: string | null
   created_at: string
 }
 
@@ -157,7 +156,6 @@ export const COMPILED_RUNTIME_PLAN_COLUMNS = `
   compiler_name,
   compiler_version,
   plan_projection_json,
-  diagnostics_json,
   created_at`
 
 export const RUNTIME_OPERATION_COLUMNS = `
@@ -317,7 +315,6 @@ export function mapCompiledRuntimePlanRow(
     compilerName: row.compiler_name,
     compilerVersion: row.compiler_version,
     planProjectionJson: row.plan_projection_json,
-    ...(row.diagnostics_json !== null ? { diagnosticsJson: row.diagnostics_json } : {}),
     createdAt: row.created_at,
   }
 }

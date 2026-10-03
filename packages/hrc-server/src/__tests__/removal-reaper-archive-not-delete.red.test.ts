@@ -4,24 +4,6 @@
  *
  * Architecture: daedalus-cleared (T-04827).
  *
- * [RED 3a] app-session removal: archived host session returns 'dormant' target
- *   After `POST /v1/app-sessions/remove` the host session is archived but
- *   its continuation is intact.  GET /v1/targets/by-session-ref must return
- *   state:'dormant' (not 'broken').  Currently returns 'broken' because
- *   toTargetState maps every non-active session to 'broken'.
- *
- * [RED 3b] app-session removal: continuation MUST NOT be dropped by the removal
- *   path.  Regression fence — currently passes (removal does not touch
- *   continuation_json).  Kept here as a GREEN guard so a future refactor cannot
- *   accidentally add continuation-clearing to the removal path.
- *
- * [RED 3c] app-session selector stays 'removed' after a successor is minted
- *   After removal the app-session record shows status:'removed'.  Minting a
- *   successor (resume) must NOT flip the app-session back to 'active' — the app
- *   session stays 'removed' until explicitly re-created.
- *   Currently RED because POST /v1/sessions/create-successor (the successor
- *   endpoint) does not exist.
- *
  * [RED 3d] GC reaper: archives abandoned-active sessions (no live runtime, idle)
  *   POST /v1/sessions/archive-abandoned must archive host sessions whose
  *   runtime is terminal and idle >= threshold, skipping primary-scope sessions.
@@ -38,15 +20,13 @@
  *   Currently RED because the endpoint does not exist AND toTargetState bug.
  *
  * RED at HEAD:
- *   3a — GET returns state:'broken' instead of 'dormant' after removal
- *   3c — POST /v1/sessions/create-successor → 404
  *   3d — POST /v1/sessions/archive-abandoned → 404
  *   3e — endpoint missing, would fail if it existed (no reaper yet)
  *   3f — endpoint missing + toTargetState bug
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
-import { type AppManagedSessionRecord, openHrcDatabase } from 'hrc-store-sqlite'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import type { HrcTargetView } from 'hrc-core'
 
@@ -118,41 +98,6 @@ function ageSession(hostSessionId: string, isoTimestamp: string): void {
   }
 }
 
-function seedAppManagedSession(
-  appId: string,
-  appSessionKey: string,
-  hostSessionId: string,
-  generation: number
-): void {
-  const db = openHrcDatabase(fixture.dbPath)
-  const now = new Date().toISOString()
-  try {
-    db.appManagedSessions.create({
-      appId,
-      appSessionKey,
-      kind: 'harness',
-      activeHostSessionId: hostSessionId,
-      generation,
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-    } as AppManagedSessionRecord)
-  } finally {
-    db.close()
-  }
-}
-
-async function removeAppSession(
-  appId: string,
-  appSessionKey: string
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const res = await fixture.postJson('/v1/app-sessions/remove', {
-    selector: { appId, appSessionKey },
-    terminateRuntime: false,
-  })
-  return { status: res.status, body: (await res.json()) as Record<string, unknown> }
-}
-
 async function getTargetByRef(sessionRef: string): Promise<{ status: number; body: unknown }> {
   const url = `/v1/targets/by-session-ref?sessionRef=${encodeURIComponent(sessionRef)}`
   const res = await fixture.fetchSocket(url)
@@ -177,163 +122,12 @@ async function safePostJson(
   return { status: res.status, body: parsed }
 }
 
-async function postCreateSuccessor(
-  sessionRef: string
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  return safePostJson('/v1/sessions/create-successor', { sessionRef })
-}
-
 async function postArchiveAbandoned(body: Record<string, unknown> = {}): Promise<{
   status: number
   body: Record<string, unknown>
 }> {
   return safePostJson('/v1/sessions/archive-abandoned', body)
 }
-
-// ── RED 3a: after removal, target view returns 'dormant' ─────────────────────
-
-describe('[RED 3a] app-session removal: archived host session returns dormant target', () => {
-  const appId = 'test-app-t04831-3a'
-  const appSessionKey = 'sess-3a'
-  const scopeRef = `${SCOPE_PREFIX}:task:removal-dormant`
-  let resolved: ResolveSessionResult
-
-  beforeEach(async () => {
-    resolved = await seedSessionWithContinuation(scopeRef)
-    seedAppManagedSession(appId, appSessionKey, resolved.hostSessionId, resolved.generation)
-  })
-
-  it('removal succeeds (HTTP 200)', async () => {
-    const { status } = await removeAppSession(appId, appSessionKey)
-    expect(status).toBe(200)
-  })
-
-  it('host session is archived after removal', async () => {
-    await removeAppSession(appId, appSessionKey)
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const session = db.sessions.getByHostSessionId(resolved.hostSessionId)
-      expect(session?.status).toBe('archived')
-    } finally {
-      db.close()
-    }
-  })
-
-  it('archived host session returns dormant from target view (not broken)', async () => {
-    await removeAppSession(appId, appSessionKey)
-    const { status, body } = await getTargetByRef(`${scopeRef}/lane:default`)
-    expect(status).toBe(200)
-    const view = body as HrcTargetView
-    // RED: currently 'broken' because toTargetState maps status !== 'active' → 'broken'
-    expect(view.state).toBe('dormant')
-  })
-})
-
-// ── GREEN guard 3b: removal must NOT drop continuation ───────────────────────
-
-describe('[GREEN guard 3b] app-session removal: continuation is NOT dropped (regression fence)', () => {
-  const appId = 'test-app-t04831-3b'
-  const appSessionKey = 'sess-3b'
-  const scopeRef = `${SCOPE_PREFIX}:task:removal-no-drop`
-  let resolved: ResolveSessionResult
-
-  beforeEach(async () => {
-    resolved = await seedSessionWithContinuation(scopeRef)
-    seedAppManagedSession(appId, appSessionKey, resolved.hostSessionId, resolved.generation)
-  })
-
-  it('host session continuation_json is intact after removal', async () => {
-    await removeAppSession(appId, appSessionKey)
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const session = db.sessions.getByHostSessionId(resolved.hostSessionId)
-      // GREEN: removal does not touch continuation_json
-      expect(session?.continuation).toBeDefined()
-      expect(session?.continuation?.key).toBe(CONTINUATION_KEY)
-      expect(session?.continuation?.provider).toBe('anthropic')
-    } finally {
-      db.close()
-    }
-  })
-
-  it('continuation key is preserved after removal so resume is possible', async () => {
-    await removeAppSession(appId, appSessionKey)
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const session = db.sessions.getByHostSessionId(resolved.hostSessionId)
-      // GREEN: key survives archiving
-      expect(session?.continuation?.key).toBe(CONTINUATION_KEY)
-    } finally {
-      db.close()
-    }
-  })
-})
-
-// ── RED 3c: app-session selector stays 'removed' after successor mint ─────────
-
-describe('[RED 3c] app-session stays removed after resume via successor', () => {
-  const appId = 'test-app-t04831-3c'
-  const appSessionKey = 'sess-3c'
-  const scopeRef = `${SCOPE_PREFIX}:task:selector-removed`
-  const sessionRef = `${scopeRef}/lane:default`
-  let resolved: ResolveSessionResult
-
-  beforeEach(async () => {
-    resolved = await seedSessionWithContinuation(scopeRef)
-    seedAppManagedSession(appId, appSessionKey, resolved.hostSessionId, resolved.generation)
-    await removeAppSession(appId, appSessionKey)
-  })
-
-  it('app-session record shows removed after removal', async () => {
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const managed = db.appManagedSessions.findByKey(appId, appSessionKey)
-      expect(managed?.status).toBe('removed')
-    } finally {
-      db.close()
-    }
-  })
-
-  it('create-successor endpoint returns 200 (not 404)', async () => {
-    const { status } = await postCreateSuccessor(sessionRef)
-    // RED: currently 404 (endpoint doesn't exist)
-    expect(status).toBe(200)
-  })
-
-  it('app-session stays removed after successor is minted (no reactivation-in-place)', async () => {
-    await postCreateSuccessor(sessionRef)
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const managed = db.appManagedSessions.findByKey(appId, appSessionKey)
-      // RED: app session must stay removed — resuming via sessionRef/host is allowed
-      // but the app-session selector must NOT be flipped back to active
-      expect(managed?.status).toBe('removed')
-    } finally {
-      db.close()
-    }
-  })
-
-  it('a new active host session is created but the app managed session is NOT updated', async () => {
-    const { body } = await postCreateSuccessor(sessionRef)
-    const result = body as Record<string, unknown>
-
-    // RED: endpoint doesn't exist, so these assertions fail
-    const newHostSessionId = result['hostSessionId'] as string | undefined
-    expect(newHostSessionId).toBeDefined()
-    expect(newHostSessionId).not.toBe(resolved.hostSessionId)
-
-    // The app managed session must NOT have been updated to the new hostSessionId
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const managed = db.appManagedSessions.findByKey(appId, appSessionKey)
-      expect(managed?.activeHostSessionId).toBe(resolved.hostSessionId) // unchanged
-    } finally {
-      db.close()
-    }
-  })
-})
-
-// ── RED 3d: GC reaper archives abandoned sessions ─────────────────────────────
 
 describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary sessions', () => {
   const scopeRef = `${SCOPE_PREFIX}:task:reap-target`
@@ -358,7 +152,6 @@ describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary
         provider: 'anthropic',
         status: 'terminated',
         supportsInflightInput: false,
-        adopted: false,
         lastActivityAt: pastDate,
         createdAt: pastDate,
         updatedAt: pastDate,
@@ -417,7 +210,6 @@ describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary
         provider: 'anthropic',
         status: 'terminated',
         supportsInflightInput: false,
-        adopted: false,
         lastActivityAt: pastDate,
         createdAt: pastDate,
         updatedAt: pastDate,
@@ -433,7 +225,6 @@ describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary
         provider: 'anthropic',
         status: 'terminated',
         supportsInflightInput: false,
-        adopted: false,
         lastActivityAt: pastDate,
         createdAt: pastDate,
         updatedAt: pastDate,
@@ -490,7 +281,6 @@ describe('[RED 3e] archive-abandoned must not delete/null continuation', () => {
         provider: 'anthropic',
         status: 'terminated',
         supportsInflightInput: false,
-        adopted: false,
         lastActivityAt: pastDate,
         createdAt: pastDate,
         updatedAt: pastDate,
@@ -539,7 +329,6 @@ describe('[RED 3f] reaped session returns dormant from target view', () => {
         provider: 'anthropic',
         status: 'terminated',
         supportsInflightInput: false,
-        adopted: false,
         lastActivityAt: pastDate,
         createdAt: pastDate,
         updatedAt: pastDate,

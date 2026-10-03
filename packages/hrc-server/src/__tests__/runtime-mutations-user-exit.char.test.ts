@@ -105,7 +105,6 @@ function seedSession(): HrcSessionRecord {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
   return {
     hostSessionId: HOST_SESSION_ID,
@@ -115,7 +114,6 @@ function seedSession(): HrcSessionRecord {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   }
 }
 
@@ -141,7 +139,6 @@ function seedRuntime(opts: SeedRuntimeOpts): HrcRuntimeSnapshot {
     provider: 'anthropic',
     status: opts.status ?? 'busy',
     supportsInflightInput: false,
-    adopted: false,
     activeRunId: opts.activeRunId,
     controllerKind: opts.controllerKind,
     activeInvocationId: opts.activeInvocationId,

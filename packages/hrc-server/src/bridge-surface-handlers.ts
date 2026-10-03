@@ -16,7 +16,6 @@ import type {
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
 } from 'hrc-core'
-import { isAppScopedSession, refuseAppScopedSession } from './app-session-identity.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   findActiveBridgesByTarget,
@@ -60,10 +59,6 @@ export async function handleAttachRuntime(
   const runtime = await this.reconcileTmuxRuntimeLiveness(
     requireKnownRuntime(this.db, body.runtimeId)
   )
-  // T-08576 D8.2 G9: an app runtime attaches strictly; never reprovisions or births.
-  if (isAppScopedSession(runtime)) {
-    return await this.attachRuntimeEffectfully(runtime, { strictRuntimeId: true })
-  }
   return await this.attachRuntimeEffectfully(runtime)
 }
 
@@ -144,7 +139,6 @@ export async function handleBindSurface(
       runtimeId: runtime.runtimeId,
       generation: runtime.generation,
       windowId: body.windowId ?? tmuxPane?.windowId,
-      tabId: body.tabId,
       paneId: body.paneId ?? tmuxPane?.paneId,
       boundAt: now,
     })
@@ -160,7 +154,6 @@ export async function handleBindSurface(
       boundAt: binding.boundAt,
       ...(binding.clientTty ? { clientTty: binding.clientTty } : {}),
       ...(binding.windowId ? { windowId: binding.windowId } : {}),
-      ...(binding.tabId ? { tabId: binding.tabId } : {}),
       ...(binding.paneId ? { paneId: binding.paneId } : {}),
     }
 
@@ -255,7 +248,6 @@ export async function handleRegisterBridgeTarget(
 ): Promise<Response> {
   const body = parseBridgeTargetRequest(await parseJsonBody(request))
   const session = resolveBridgeTargetSession(this.db, body)
-  refuseAppScopedSession(session, 'bridge-target')
   const continuity = requireContinuity(this.db, session)
   const activeSession = requireSession(this.db, continuity.activeHostSessionId)
   validateBridgeFence(
@@ -356,7 +348,6 @@ export async function deliverBridgeText(
   }
 
   const session = requireSession(this.db, bridge.hostSessionId)
-  refuseAppScopedSession(session, 'bridge-deliver')
   const continuity = requireContinuity(this.db, session)
   const activeSession = requireSession(this.db, continuity.activeHostSessionId)
 

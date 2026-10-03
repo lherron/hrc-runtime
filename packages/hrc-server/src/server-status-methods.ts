@@ -29,7 +29,7 @@ import { peerRuntimeProjectionCacheKey } from './federation/peer-runtime-project
 import { retireFederationScope } from './federation/retirement.js'
 import type { HrcServerInstance } from './index.js'
 import { projectServerRelease } from './release-provenance.js'
-import { listRuntimesForProjection } from './runtime-list-adopt-handlers.js'
+import { listRuntimesForProjection } from './runtime-list-handlers.js'
 import { projectLastRestart } from './server-lifecycle.js'
 import { writeServerLog } from './server-log.js'
 import { isRecord, parseJsonBody } from './server-parsers.js'
@@ -326,9 +326,9 @@ export const serverStatusMethods = {
           clearContext: true,
         },
         platform: {
-          // T-08576 D7: a persona allowlist refuses every app entry.
-          appOwnedSessions: this.options.localPersonaAllowlist === undefined,
-          appHarnessSessions: this.options.localPersonaAllowlist === undefined,
+          // The app-session routes are retired (T-10146).
+          appOwnedSessions: false,
+          appHarnessSessions: false,
           commandSessions: this.options.localPersonaAllowlist === undefined,
           literalInput: this.options.localPersonaAllowlist === undefined,
           surfaceBindings: true,

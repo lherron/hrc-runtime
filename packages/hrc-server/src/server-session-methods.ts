@@ -10,11 +10,6 @@ import {
   type ResolveSessionResponse,
 } from 'hrc-core'
 import {
-  appSelectorForSession,
-  refuseAppScopedSession,
-  withAppIdentityOwner,
-} from './app-session-identity.js'
-import {
   commandRunId,
   commandRunOperationId,
   commandRunResponseFromRun,
@@ -23,17 +18,12 @@ import {
 } from './command-run-helpers.js'
 import { validateConfiguredCommandRunTarget } from './command-run-targets-config.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
-import {
-  assertScopeNotRetired,
-  persistSessionTaskClaimAuthority,
-  withSummonAuthority,
-} from './federation/summon-gate-server.js'
+import { assertScopeNotRetired, withSummonAuthority } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import type { HrcServerInstance } from './index.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import { resolveSessionProjectionDays } from './option-resolvers.js'
 import {
-  findManagedAppSessionForSession,
   isRunActive,
   requireKnownRuntime,
   requireRuntime,
@@ -72,8 +62,6 @@ export const serverSessionMethods = {
     const parsed = parseResolveSessionRequest(body)
     const { scopeRef, laneRef } = parseSessionRef(parsed.sessionRef)
     if (parsed.create === true) {
-      // T-08576 G8: resolve-create never mints app identity.
-      refuseAppScopedSession({ scopeRef, laneRef }, 'resolve-create')
       assertLocalPersonaAllowed(this, scopeRef)
     }
     const existing = findContinuitySession(this.db, parsed.sessionRef)
@@ -129,7 +117,7 @@ export const serverSessionMethods = {
                 : { provision: parsed.runtimeIntent.provision }),
             }),
       },
-      (claimAuthority) => {
+      () => {
         const raced = findContinuitySession(this.db, parsed.sessionRef)
         if (raced !== null) {
           return json({
@@ -150,14 +138,10 @@ export const serverSessionMethods = {
           status: 'active',
           createdAt: now,
           updatedAt: now,
-          ancestorScopeRefs: [],
         }
 
         const createdSession = this.db.sqlite.transaction(() => {
           const inserted = this.db.sessions.insert(session)
-          if (claimAuthority !== undefined) {
-            persistSessionTaskClaimAuthority(this, hostSessionId, claimAuthority, now)
-          }
           this.db.continuities.upsert({
             scopeRef,
             laneRef,
@@ -187,20 +171,11 @@ export const serverSessionMethods = {
     const body = parseLaunchCommandScopedRunRequest(await parseJsonBody(request))
     const operationId = commandRunOperationId(body.idempotencyKey)
     const runId = commandRunId(body.idempotencyKey)
-    // T-08576 G7: a command run never mints or acts on app identity.
-    const requestedScope = parseCommandRunSessionRef(body.sessionRef)
-    refuseAppScopedSession(requestedScope, 'command-run-launch')
+    // Validate the session ref before the replay lookup.
+    parseCommandRunSessionRef(body.sessionRef)
     const replay = this.db.runs.getByRunId(runId)
     if (replay) {
       return json(commandRunResponseFromRun(replay, true))
-    }
-    // T-08576 D5: a run id reserved by an app birth cannot be claimed here.
-    if (this.db.runIdOwnership.reservationFor(runId) !== undefined) {
-      throw new HrcConflictError(
-        HrcErrorCode.RUN_MISMATCH,
-        `command run id "${runId}" is reserved by an app session birth`,
-        { reason: 'run-id-reserved', runId }
-      )
     }
 
     const command = this.options.commandRunTargets?.[body.configuredTargetId]
@@ -214,13 +189,11 @@ export const serverSessionMethods = {
     validateConfiguredCommandRunTarget(body.configuredTargetId, command)
 
     const session = await this.resolveOrCreateCommandRunSession(body.sessionRef)
-    refuseAppScopedSession(session, 'command-run-launch')
     const runtimeId = `rt-${randomUUID()}`
     const now = timestamp()
 
     this.db.runtimes.insert({
       runtimeId,
-      runtimeKind: 'command',
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
@@ -230,9 +203,7 @@ export const serverSessionMethods = {
       provider: COMMAND_RUNTIME_COMPAT_PROVIDER,
       status: 'busy',
       statusChangedAt: now,
-      commandSpec: command,
       supportsInflightInput: false,
-      adopted: false,
       activeRunId: runId,
       ...runtimeActivityPatch(this.db, runtimeId, {
         source: 'turn',
@@ -310,7 +281,6 @@ export const serverSessionMethods = {
     sessionRef: string
   ): Promise<HrcSessionRecord> {
     const { scopeRef, laneRef } = parseCommandRunSessionRef(sessionRef)
-    refuseAppScopedSession({ scopeRef, laneRef }, 'command-run-launch')
     assertLocalPersonaAllowed(this, scopeRef)
     const continuity = this.db.continuities.getByKey(scopeRef, laneRef)
     if (continuity) {
@@ -329,7 +299,7 @@ export const serverSessionMethods = {
         path: 'command-run',
         intent: 'implicit',
       },
-      (claimAuthority) => {
+      () => {
         const racedContinuity = this.db.continuities.getByKey(scopeRef, laneRef)
         if (racedContinuity !== null) {
           const racedSession = this.db.sessions.getByHostSessionId(
@@ -347,14 +317,10 @@ export const serverSessionMethods = {
           status: 'active',
           createdAt: now,
           updatedAt: now,
-          ancestorScopeRefs: [],
         }
 
         const createdSession = this.db.sqlite.transaction(() => {
           const inserted = this.db.sessions.insert(session)
-          if (claimAuthority !== undefined) {
-            persistSessionTaskClaimAuthority(this, hostSessionId, claimAuthority, now)
-          }
           this.db.continuities.upsert({
             scopeRef,
             laneRef,
@@ -560,30 +526,11 @@ export const serverSessionMethods = {
     // T-09762: an operator rotate mints generation+1 through rotateSessionContext
     // directly, so it gets the same retired-scope fence as auto-rotate and the doors.
     await assertScopeNotRetired(this, { scopeRef: requested.scopeRef, path: 'resolve-session' })
-    const appSelector = appSelectorForSession(requested)
-    if (appSelector !== null) {
-      // T-08576 D8.1: generic clear-context stays supported for app sessions, under
-      // the selector owner, with the session re-read after the owner is held.
-      assertLocalPersonaAllowed(this, requested.scopeRef)
-      return await withAppIdentityOwner(this.db, appSelector, async () => {
-        const session = requireSession(this.db, body.hostSessionId)
-        return json(
-          await this.rotateSessionContext(session, {
-            relaunch: body.relaunch === true,
-            dropContinuation: body.dropContinuation === true,
-            ...(body.runtimeIntent !== undefined ? { runtimeIntent: body.runtimeIntent } : {}),
-          })
-        )
-      })
-    }
-    const session = requested
-    const managed = findManagedAppSessionForSession(this.db, session)
     return json(
-      await this.rotateSessionContext(session, {
+      await this.rotateSessionContext(requested, {
         relaunch: body.relaunch === true,
         dropContinuation: body.dropContinuation === true,
         ...(body.runtimeIntent !== undefined ? { runtimeIntent: body.runtimeIntent } : {}),
-        ...(managed ? { managed } : {}),
       })
     )
   },
@@ -686,7 +633,6 @@ export const serverSessionMethods = {
   async handleDropContinuation(this: HrcServerInstance, request: Request): Promise<Response> {
     const body = parseDropContinuationRequest(await parseJsonBody(request))
     const session = requireSession(this.db, body.hostSessionId)
-    refuseAppScopedSession(session, 'drop-continuation')
     const drop = dropSessionContinuation(this.db, session, body.reason)
     if (drop.event !== undefined) this.notifyEvent(drop.event)
 

@@ -33,7 +33,6 @@ import {
   type PublicDispatchWaitStage,
   type SubmissionDoor,
   type SubmissionDoorRequest,
-  admitSubmissionTarget,
   assertIdempotencyExecutionFormat,
   format2RequestHash,
   idempotentDispatches,
@@ -72,7 +71,6 @@ export async function handleSubmission(
   // node retired, typed as the gate's scope-retired conflict, before rotation
   // or dispatch can seat it.
   await assertScopeNotRetired(this, { scopeRef: session.scopeRef, path: 'resolve-session' })
-  admitSubmissionTarget(session, door)
   // R7.6: the participant target is resolved BEFORE generic rotation. Rotating
   // a participant's session would move the address off the incarnation that
   // holds it, so an external participant is exempt from the stale sweep and a

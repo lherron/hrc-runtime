@@ -44,7 +44,6 @@ function makeSession(
     priorHostSessionId,
     createdAt: ts(),
     updatedAt: ts(),
-    ancestorScopeRefs: [],
   }
 }
 
@@ -156,7 +155,6 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
       status: 'active',
       createdAt: ts(),
       updatedAt: ts(),
-      ancestorScopeRefs: [],
     })
 
     // Session B points to other-scope session
@@ -193,7 +191,6 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
       status: 'active',
       createdAt: ts(),
       updatedAt: ts(),
-      ancestorScopeRefs: [],
     })
 
     db.sessions.insert(makeSession('hsid-lane-A', 1))

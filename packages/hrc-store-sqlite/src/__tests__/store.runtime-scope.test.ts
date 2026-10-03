@@ -28,7 +28,6 @@ describe('runtime scope-local lookup', () => {
         status: 'active',
         createdAt: '2026-09-20T06:00:00.000Z',
         updatedAt: '2026-09-20T06:00:02.000Z',
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId,
@@ -41,7 +40,6 @@ describe('runtime scope-local lookup', () => {
         provider: 'openai',
         status: 'ready',
         supportsInflightInput: true,
-        adopted: false,
         createdAt: runtimeId.endsWith('new')
           ? '2026-09-20T06:00:01.000Z'
           : '2026-09-20T06:00:00.000Z',

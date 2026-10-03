@@ -1,3 +1,10 @@
+import type {
+  SessionFacetsResponse,
+  SessionPageItem,
+  SessionPageResponse,
+  SessionPeerStatus,
+} from 'hrc-core'
+export type { SessionPageResponse, SessionFacetsResponse } from 'hrc-core'
 import { createHash } from 'node:crypto'
 
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
@@ -5,7 +12,6 @@ import type {
   SessionIndexCursor,
   SessionIndexFacetCounts,
   SessionIndexFilters,
-  SessionIndexRecord,
 } from 'hrc-store-sqlite'
 import type { PeerEntry } from './federation/federation-config.js'
 import { buildPeerProtocolHeaders } from './federation/peer-request.js'
@@ -23,31 +29,6 @@ type SessionCompositeCursor = {
   v: 5
   f: string
   n: Record<string, SessionNodeCursor>
-}
-
-type SessionPeerStatus = {
-  state: 'healthy' | 'invalid-response' | 'refused' | 'unreachable'
-  checkedAt: string
-  detail?: string | undefined
-}
-
-export type SessionPageItem = SessionIndexRecord & { nodeId: string }
-export type SessionPageResponse = {
-  items: SessionPageItem[]
-  nextCursor?: string | undefined
-  eventHighWater: Record<string, number>
-  complete: boolean
-  peerStatus: Record<string, SessionPeerStatus>
-}
-
-export type SessionFacetsResponse = {
-  total: number
-  byEffectiveStatus: Record<string, number>
-  byExecutionMode: Record<string, number>
-  byAgentId: Record<string, number>
-  byNodeId: Record<string, number>
-  complete: boolean
-  peerStatus: Record<string, SessionPeerStatus>
 }
 
 type ParsedSessionQuery = {

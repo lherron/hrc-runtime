@@ -203,7 +203,6 @@ function seed(s: HrcSessionRecord, runtimeId: string, harness = 'codex-cli'): Hr
     status: 'ready',
     controllerKind: 'harness-broker',
     supportsInflightInput: true,
-    adopted: false,
     activeInvocationId: `inv-${runtimeId}`,
     runtimeStateJson: {
       broker: {

@@ -2,8 +2,6 @@ import packageJson from '../package.json' with { type: 'json' }
 
 export const HRC_API_VERSION = packageJson.version
 
-export { HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV } from './federation.js'
-
 export {
   HRC_LIFECYCLE_BREAK_GLASS,
   HRC_LIFECYCLE_CREDENTIAL_HEADER,
@@ -169,15 +167,9 @@ export type {
 } from './tool-result-storage.js'
 
 export type {
-  HrcAppCommandSessionSpec,
-  HrcAppHarnessSessionSpec,
-  HrcAppSessionRecord,
-  HrcAppSessionRef,
-  HrcAppSessionSpec,
   HrcActuatorSplitAuthorityView,
   HrcActuatorSplitPolicy,
   HrcApprovedMutationRef,
-  HrcRuntimeKind,
   HrcCapabilityStatus,
   HrcLastRestart,
   HrcEventLoopStallView,
@@ -185,7 +177,6 @@ export type {
   HrcAspToolchainBinaryKind,
   HrcAspToolchainHelloObservation,
   HrcAspToolchainStatus,
-  HrcCommandLaunchSpec,
   HrcContinuityRecord,
   HrcContinuationRef,
   HrcDispatchOrigin,
@@ -214,10 +205,7 @@ export type {
   HrcLaunchArtifact,
   HrcLaunchPromptMaterial,
   HrcLaunchEnvConfig,
-  HrcLaunchRecord,
   HrcLocalBridgeRecord,
-  HrcManagedSessionKind,
-  HrcManagedSessionRecord,
   HrcContinuationProvider,
   HrcProvider,
   HrcRuntimeControllerKind,
@@ -280,27 +268,16 @@ export type {
   ListFirstTurnDiagnosticsResponse,
 } from './contracts.js'
 
-export {
-  HRC_RUNTIME_PRESENTATION_EVENT,
-  HRC_SESSION_RETITLED_EVENT,
-} from './contracts.js'
+export { HRC_RUNTIME_PRESENTATION_EVENT } from './contracts.js'
 export type {
   HrcPresentationRuntimeRow,
   HrcPresentationTmuxTarget,
   HrcRuntimePresentationEventPayload,
   HrcRuntimePresentationRecord,
-  HrcSessionRetitledEventPayload,
   ListPresentationRuntimesResponse,
 } from './contracts.js'
 
 export type {
-  ApplyAppManagedSessionInput,
-  ApplyAppManagedSessionsRequest,
-  ApplyAppManagedSessionsResponse,
-  ApplyAppSessionInput,
-  ApplyAppSessionsRequest,
-  ApplyAppSessionsResponse,
-  AppSessionFreshnessFence,
   AttachRuntimeRequest,
   AttachRuntimeResponse,
   BindSurfaceRequest,
@@ -339,11 +316,7 @@ export type {
   GetInputResponse,
   DropContinuationRequest,
   DropContinuationResponse,
-  EnsureAppSessionDryRunPlan,
-  EnsureAppSessionRequest,
-  EnsureAppSessionResponse,
   EnsureRuntimeRequest,
-  HrcAppSessionFilter,
   EnsureRuntimeResponse,
   LaunchCommandScopedRunBinding,
   LaunchCommandScopedRunRequest,
@@ -353,8 +326,6 @@ export type {
   ExactStartRuntimeRequest,
   StartRuntimeRosterClaim,
   SuffixStartRuntimeRequest,
-  EnsureWindowRequest,
-  EnsureWindowResponse,
   HealthResponse,
   HrcAttachDescriptor,
   HrcActiveRunContributionRequest,
@@ -378,18 +349,14 @@ export type {
   HrcBridgeTargetSelector,
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
-  InterruptAppSessionRequest,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
   HrcReportedModelIdentity,
   KillBrokerTmuxLeasesResponse,
-  ListAppSessionsRequest,
   OpenBrokerSessionRequest,
   OpenBrokerSessionResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
-  RemoveAppSessionRequest,
-  RemoveAppSessionResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RestartStyle,
@@ -408,8 +375,6 @@ export type {
   ResumeAttachedRunResponse,
   ResumeContinuationRequest,
   ResumeContinuationResponse,
-  SendLiteralInputRequest,
-  SendLiteralInputResponse,
   SendWindowLiteralInputRequest,
   StatusResponse,
   StatusSummaryResponse,
@@ -430,11 +395,8 @@ export type {
   SweepRuntimeTransport,
   TerminateRuntimeRequest,
   TerminateRuntimeResponse,
-  TerminateAppSessionRequest,
   RuntimeActionResponse,
   UnbindSurfaceRequest,
-  DispatchAppHarnessTurnRequest,
-  DispatchAppHarnessTurnResponse,
   EnqueueSubmissionRequest,
   HrcSubmissionDisposition,
   HrcSubmissionDoor,
@@ -449,10 +411,6 @@ export type {
   PreemptAdmissionResponse,
   PreemptSubmissionRequest,
   SteerSubmissionRequest,
-  SendAppHarnessInFlightInputRequest,
-  SendAppHarnessInFlightInputResponse,
-  ClearAppSessionContextRequest,
-  ClearAppSessionContextResponse,
   CaptureRecoverRequest,
   CaptureRecoverResponse,
   RetainedEvidenceOutcomeClass,
@@ -762,3 +720,10 @@ export type {
   HrcRuntimePlacement,
   ProjectMarker,
 } from './placement-conventions.js'
+
+export type * from './session-read-contracts.js'
+
+export { HRC_SESSION_RETITLED_EVENT } from './contracts-diagnostics.js'
+export type { HrcSessionRetitledEventPayload } from './contracts-diagnostics.js'
+
+export type { HrcCommandLaunchSpec } from './contracts-records.js'

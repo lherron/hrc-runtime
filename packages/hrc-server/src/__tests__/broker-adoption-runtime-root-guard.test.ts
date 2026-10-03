@@ -38,7 +38,6 @@ function seedSession(): void {
     laneRef: 'main',
     generation: 1,
     status: 'active',
-    ancestorScopeRefs: [],
     createdAt: now,
     updatedAt: now,
   })
@@ -59,7 +58,6 @@ function seedDurableRuntime(adoptionRoot: string): HrcRuntimeSnapshot {
     provider: 'openai',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',
@@ -131,7 +129,6 @@ function seedLegacyRuntime(
     provider: 'openai',
     status: 'stale',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     tmuxJson: {
       socketPath,

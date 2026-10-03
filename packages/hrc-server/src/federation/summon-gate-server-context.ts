@@ -23,7 +23,6 @@ import type {
   SummonGateDeps,
   SummonGatePolicy,
 } from './summon-gate.js'
-import type { TaskClaimClient } from './task-claim-client.js'
 
 export type SummonGateServerContext = {
   readonly db: HrcDatabase
@@ -52,8 +51,6 @@ export type SummonGateServerContext = {
         hint?: SummonCapabilityHint | undefined
       ) => Promise<SummonCapabilityObservation>)
     | undefined
-  /** Injected by tests; production crosses the wrkq CLI/RPC boundary. */
-  readonly taskClaimClient?: TaskClaimClient | undefined
 }
 
 const gateDepsCache = new WeakMap<object, SummonGateDeps | undefined>()

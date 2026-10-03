@@ -49,7 +49,6 @@ export async function makeFixture(): Promise<{
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
   db.runtimes.insert({
     runtimeId: RUNTIME_ID,
@@ -62,7 +61,6 @@ export async function makeFixture(): Promise<{
     provider: 'openai',
     status: 'busy',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: OPERATION_ID,
     createdAt: now,

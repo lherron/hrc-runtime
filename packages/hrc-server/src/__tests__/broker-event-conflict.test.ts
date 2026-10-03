@@ -37,7 +37,12 @@ import { describe, expect, it } from 'bun:test'
 
 import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
 
-import { INVOCATION_ID, RUNTIME_ID, envelope } from './broker-event-mapper-fixtures'
+import {
+  HOST_SESSION_ID,
+  INVOCATION_ID,
+  RUNTIME_ID,
+  envelope,
+} from './broker-event-mapper-fixtures'
 
 import { createBrokerEventMapperTestFixture } from './broker-event-mapper.test.fixture.js'
 
@@ -52,7 +57,7 @@ describe('conflict (divergent payload, same key)', () => {
       key: 'key_ORIGINAL',
     })
     mapper.apply(original)
-    expect(harness.fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual({
+    expect(harness.fixture.db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual({
       provider: 'openai',
       key: 'key_ORIGINAL',
     })
@@ -68,7 +73,7 @@ describe('conflict (divergent payload, same key)', () => {
 
     // No projection from the divergent event: continuation unchanged, no new
     // HRC events, stored broker payload still the original.
-    expect(harness.fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual({
+    expect(harness.fixture.db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual({
       provider: 'openai',
       key: 'key_ORIGINAL',
     })

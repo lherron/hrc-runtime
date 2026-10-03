@@ -711,7 +711,7 @@ export function buildBrokerCloseDiagnostic(input: {
     brokerPid:
       invocation?.brokerPid ??
       (typeof brokerRecord?.['brokerPid'] === 'number' ? brokerRecord['brokerPid'] : null),
-    childPid: invocation?.childPid ?? runtime?.childPid ?? null,
+    childPid: invocation?.childPid ?? null,
     exitCode: termination.exitCode,
     signal: termination.signal,
     error: input.error.message.split('\n')[0] ?? input.error.message,

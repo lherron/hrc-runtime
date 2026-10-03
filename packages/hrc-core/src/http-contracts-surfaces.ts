@@ -3,17 +3,12 @@
  * Canonical source for R-3 deduplication (T-00990).
  */
 import type {
-  HrcAppSessionRef,
-  HrcAppSessionSpec,
   HrcBrokerInvocationEventRecord,
   HrcLocalBridgeRecord,
-  HrcManagedSessionRecord,
   HrcStatusResponse,
   HrcStatusSummaryResponse,
 } from './contracts.js'
 import type { BirthDesignationRecord } from './federation-contracts.js'
-import type { HrcFence } from './fences.js'
-import type { EnsureRuntimeResponse, RestartStyle } from './http-contracts-dispatch.js'
 import type { HrcSessionRef } from './selectors.js'
 
 export type HealthResponse = {
@@ -113,7 +108,6 @@ export type BindSurfaceRequest = {
   hostSessionId: string
   generation: number
   windowId?: string | undefined
-  tabId?: string | undefined
   paneId?: string | undefined
 }
 
@@ -154,10 +148,7 @@ export type CloseBridgeRequest = {
 
 // -- Canonical bridge DTOs (Phase 2) ------------------------------------------
 
-export type HrcBridgeTargetSelector =
-  | { hostSessionId: string }
-  | { sessionRef: HrcSessionRef }
-  | { appSession: HrcAppSessionRef }
+export type HrcBridgeTargetSelector = { hostSessionId: string } | { sessionRef: HrcSessionRef }
 
 export type HrcBridgeTargetRequest = {
   selector: HrcBridgeTargetSelector
@@ -184,161 +175,6 @@ export type HrcBridgeDeliverTextRequest = {
 export type HrcBridgeDeliverTextResponse = {
   delivered: true
   bridgeId: string
-}
-
-export type EnsureAppSessionRequest = {
-  selector: HrcAppSessionRef
-  sessionRef?: HrcSessionRef | undefined
-  spec: HrcAppSessionSpec
-  label?: string | undefined
-  metadata?: Record<string, unknown> | undefined
-  restartStyle?: RestartStyle | undefined
-  forceRestart?: boolean | undefined
-  initialPrompt?: string | undefined
-  dryRun?: boolean | undefined
-}
-
-export type EnsureAppSessionDryRunPlan = {
-  action: 'reattach' | 'create'
-  sessionExists: boolean
-  runtimeId?: string | undefined
-  runtimeStatus?: string | undefined
-  runtimePid?: number | undefined
-  tmuxSession?: string | undefined
-}
-
-export type EnsureAppSessionResponse = {
-  session: HrcManagedSessionRecord
-  created: boolean
-  restarted: boolean
-  status: 'created' | 'ensured' | 'restarted'
-  runtimeId?: string | undefined
-  runtime?: EnsureRuntimeResponse | undefined
-  dryRun?: EnsureAppSessionDryRunPlan | undefined
-}
-
-export type ListAppSessionsRequest = {
-  appId?: string | undefined
-  kind?: 'harness' | 'command' | undefined
-  includeRemoved?: boolean | undefined
-}
-
-export type HrcAppSessionFilter = ListAppSessionsRequest
-
-export type RemoveAppSessionRequest = {
-  selector: HrcAppSessionRef
-  terminateRuntime?: boolean | undefined
-}
-
-export type RemoveAppSessionResponse = {
-  removed: boolean
-  runtimeTerminated: boolean
-  bridgesClosed: number
-  surfacesUnbound: number
-}
-
-export type ApplyAppManagedSessionInput = {
-  appSessionKey: string
-  sessionRef?: HrcSessionRef | undefined
-  spec: HrcAppSessionSpec
-  label?: string | undefined
-  metadata?: Record<string, unknown> | undefined
-}
-
-export type ApplyAppManagedSessionsRequest = {
-  appId: string
-  pruneMissing?: boolean | undefined
-  sessions: ApplyAppManagedSessionInput[]
-}
-
-export type ApplyAppManagedSessionsResponse = {
-  ensured: number
-  removed: number
-  results: EnsureAppSessionResponse[]
-}
-
-export type AppSessionFreshnessFence = {
-  expectedHostSessionId?: string | undefined
-  expectedGeneration?: number | undefined
-}
-
-export type SendLiteralInputRequest = {
-  selector: HrcAppSessionRef
-  text: string
-  enter?: boolean | undefined
-  fence?: AppSessionFreshnessFence | undefined
-}
-
-export type SendLiteralInputResponse = {
-  delivered: true
-  hostSessionId: string
-  generation: number
-  runtimeId?: string | undefined
-}
-
-export type InterruptAppSessionRequest = {
-  selector: HrcAppSessionRef
-  hard?: boolean | undefined
-}
-
-export type TerminateAppSessionRequest = {
-  selector: HrcAppSessionRef
-  hard?: boolean | undefined
-}
-
-export type DispatchAppHarnessTurnRequest = {
-  selector: HrcAppSessionRef
-  prompt?: string | undefined
-  input?:
-    | {
-        text: string
-      }
-    | undefined
-  runId?: string | undefined
-  fence?: HrcFence | undefined
-  fences?: HrcFence | undefined
-}
-
-export type DispatchAppHarnessTurnResponse = {
-  runId: string
-  hostSessionId: string
-  generation: number
-  runtimeId: string
-  transport: 'sdk' | 'tmux' | 'headless'
-  status: 'completed' | 'started'
-  supportsInFlightInput: boolean
-}
-
-export type SendAppHarnessInFlightInputRequest = {
-  selector: HrcAppSessionRef
-  prompt?: string | undefined
-  input?:
-    | {
-        text: string
-      }
-    | undefined
-  runId?: string | undefined
-  inputType?: string | undefined
-  fence?: AppSessionFreshnessFence | undefined
-}
-
-export type SendAppHarnessInFlightInputResponse = {
-  accepted: boolean
-  hostSessionId: string
-  runtimeId: string
-  runId: string
-  pendingTurns?: number | undefined
-}
-
-export type ClearAppSessionContextRequest = {
-  selector: HrcAppSessionRef
-  relaunch?: boolean | undefined
-}
-
-export type ClearAppSessionContextResponse = {
-  hostSessionId: string
-  generation: number
-  priorHostSessionId: string
 }
 
 /** Read-only operator projection for one externally registered scope eligible for retirement. */

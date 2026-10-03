@@ -38,10 +38,6 @@ export function buildExactRouteHandlers(
     [exactRouteKey('GET', '/v1/sessions/page')]: (_request, url) => server.handleSessionPage(url),
     [exactRouteKey('GET', '/v1/sessions/facets')]: (_request, url) =>
       server.handleSessionFacets(url),
-    [exactRouteKey('POST', '/v1/sessions/apply')]: (request) =>
-      server.handleApplyAppSessions(request),
-    [exactRouteKey('GET', '/v1/sessions/app')]: (_request, url) =>
-      server.handleListAppSessions(url),
     [exactRouteKey('GET', '/v1/events')]: (request, url) => server.handleEvents(url, request),
     [exactRouteKey('GET', '/v1/events/tail')]: (_request, url) => server.handleEventsTail(url),
     [exactRouteKey('GET', '/v1/events/bounded-stream')]: (request, url) =>
@@ -220,31 +216,5 @@ export function buildExactRouteHandlers(
     [exactRouteKey('POST', '/v1/placements/resolve')]: (request) => handleResolvePlacement(request),
     [exactRouteKey('POST', '/v1/previews/run')]: (request) =>
       handleRunPreview.call(server, request),
-    [exactRouteKey('POST', '/v1/app-sessions/ensure')]: (request) =>
-      server.handleEnsureAppSession(request),
-    [exactRouteKey('GET', '/v1/app-sessions')]: (_request, url) =>
-      server.handleListManagedAppSessions(url),
-    [exactRouteKey('GET', '/v1/app-sessions/by-key')]: (_request, url) =>
-      server.handleGetManagedAppSessionByKey(url),
-    [exactRouteKey('POST', '/v1/app-sessions/remove')]: (request) =>
-      server.handleRemoveAppSession(request),
-    [exactRouteKey('POST', '/v1/app-sessions/apply')]: (request) =>
-      server.handleApplyManagedAppSessions(request),
-    [exactRouteKey('POST', '/v1/app-sessions/turns')]: (request) =>
-      server.handleAppSessionDispatchTurn(request),
-    [exactRouteKey('POST', '/v1/app-sessions/in-flight-input')]: (request) =>
-      server.handleAppSessionInFlightInput(request),
-    [exactRouteKey('POST', '/v1/app-sessions/clear-context')]: (request) =>
-      server.handleAppSessionClearContext(request),
-    [exactRouteKey('POST', '/v1/app-sessions/literal-input')]: (request) =>
-      server.handleAppSessionLiteralInput(request),
-    [exactRouteKey('GET', '/v1/app-sessions/capture')]: (_request, url) =>
-      server.handleAppSessionCapture(url),
-    [exactRouteKey('GET', '/v1/app-sessions/attach')]: (_request, url) =>
-      server.handleAppSessionAttach(url),
-    [exactRouteKey('POST', '/v1/app-sessions/interrupt')]: (request) =>
-      server.handleAppSessionInterrupt(request),
-    [exactRouteKey('POST', '/v1/app-sessions/terminate')]: (request) =>
-      server.handleAppSessionTerminate(request),
   }
 }

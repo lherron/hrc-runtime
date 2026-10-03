@@ -82,7 +82,6 @@ function seedArchivedSession(opts: SeedArchivedOpts): void {
       status: 'archived',
       createdAt: NOW,
       updatedAt: ts,
-      ancestorScopeRefs: [],
       ...(opts.withContinuation
         ? { continuation: { provider: 'anthropic', key: 'sess-key-t04831-g2' } }
         : {}),

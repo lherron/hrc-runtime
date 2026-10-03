@@ -554,7 +554,6 @@ function liveRuntime(
     status: 'ready',
     controllerKind: 'harness-broker',
     supportsInflightInput: true,
-    adopted: false,
     runtimeStateJson: {
       broker: {
         endpoint: {

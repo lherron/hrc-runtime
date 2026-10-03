@@ -33,7 +33,6 @@ describe('hrcchat minimal server routes', () => {
         provider: 'openai',
         status: 'ready',
         supportsInflightInput: true,
-        adopted: false,
         controllerKind: 'harness-broker',
         activeOperationId: operationId,
         activeInvocationId: invocationId,
@@ -244,7 +243,6 @@ describe('hrcchat minimal server routes', () => {
         status: 'ready',
         tmuxJson: pane,
         supportsInflightInput: false,
-        adopted: false,
         lastActivityAt: timestamp,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -309,7 +307,6 @@ describe('hrcchat minimal server routes', () => {
         status: 'ready',
         tmuxJson: pane,
         supportsInflightInput: false,
-        adopted: false,
         lastActivityAt: timestamp,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -361,7 +358,6 @@ describe('hrcchat minimal server routes', () => {
     const pane = await tmux.ensurePane(hostSessionId, 'fresh_pty')
     await setTmuxPanePrompt(tmux, pane.paneId, 'hrc-test> ', 'HRC_CODEX_LITERAL_PROMPT_READY')
     const runtimeId = `rt-codex-literal-${Date.now()}`
-    const launchId = `launch-codex-literal-${Date.now()}`
     const timestamp = ctx.fixture.now()
 
     const db = openHrcDatabase(ctx.fixture.dbPath)
@@ -378,8 +374,6 @@ describe('hrcchat minimal server routes', () => {
         status: 'ready',
         tmuxJson: pane,
         supportsInflightInput: false,
-        adopted: false,
-        launchId,
         lastActivityAt: timestamp,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -411,7 +405,7 @@ describe('hrcchat minimal server routes', () => {
         eventKind: 'turn.user_prompt',
       })
       expect(turnPrompts).toHaveLength(1)
-      expect(turnPrompts[0]?.launchId).toBe(launchId)
+      expect(turnPrompts[0]?.launchId).toBeUndefined()
       expect(turnPrompts[0]?.transport).toBe('tmux')
       expect(turnPrompts[0]?.payload).toEqual({
         type: 'message_end',
@@ -447,7 +441,6 @@ describe('hrcchat minimal server routes', () => {
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: true,
-        adopted: false,
         controllerKind: 'harness-broker',
         activeOperationId: operationId,
         activeInvocationId: invocationId,

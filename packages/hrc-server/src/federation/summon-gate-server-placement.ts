@@ -22,7 +22,6 @@ import {
   resolveDeclaredPlacementHome,
   resolvePlacementDisposition,
 } from './summon-gate.js'
-import type { TaskClaimAuthority } from './task-claim-client.js'
 
 /**
  * The gate request, shaped so `explicit_local` is UNREACHABLE from any path but
@@ -65,10 +64,7 @@ export type SummonAuthorityRequest = (
   provision?: Partial<ProvisioningScalars> | undefined
 }
 
-export type SummonAuthorityResult = SummonGateResult & {
-  /** Fresh authority exists only on the invocation that won wrkq claim. */
-  claimAuthority?: TaskClaimAuthority | undefined
-}
+export type SummonAuthorityResult = SummonGateResult
 
 export type ExternalRegistrationPlacementResult =
   | { outcome: 'pending'; reason: string; detail: string }

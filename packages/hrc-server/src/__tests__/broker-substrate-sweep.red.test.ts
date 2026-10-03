@@ -204,7 +204,6 @@ describe('Scenario 6: orphan sweeper PRESERVES headless leased substrate', () =>
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       swDb.runtimes.insert({
         runtimeId,
@@ -217,7 +216,6 @@ describe('Scenario 6: orphan sweeper PRESERVES headless leased substrate', () =>
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: true,
-        adopted: false,
         controllerKind: 'harness-broker',
         // Flat-shape broker block with brokerWindow pointing to the real lease socket.
         // parseBrokerRuntimeHostingState reads this as substrate.kind=leased-tmux.

@@ -38,8 +38,6 @@ type SeedRuntimeOptions = {
   controllerKind?: 'harness-broker' | undefined
   activeOperationId?: string | undefined
   activeInvocationId?: string | undefined
-  wrapperPid?: number | undefined
-  childPid?: number | undefined
   continuationKey?: string | undefined
   createdAt?: string | undefined
   lastActivityAt?: string | undefined
@@ -75,12 +73,9 @@ function seedRuntime(options: SeedRuntimeOptions): void {
       ...(options.controllerKind ? { controllerKind: options.controllerKind } : {}),
       ...(options.activeOperationId ? { activeOperationId: options.activeOperationId } : {}),
       ...(options.activeInvocationId ? { activeInvocationId: options.activeInvocationId } : {}),
-      ...(options.wrapperPid !== undefined ? { wrapperPid: options.wrapperPid } : {}),
-      ...(options.childPid !== undefined ? { childPid: options.childPid } : {}),
       ...(continuation ? { continuation } : {}),
       ...(options.runtimeStateJson ? { runtimeStateJson: options.runtimeStateJson } : {}),
       supportsInflightInput: false,
-      adopted: false,
       lastActivityAt: options.lastActivityAt ?? now,
       createdAt: options.createdAt ?? now,
       updatedAt: now,
@@ -222,15 +217,13 @@ describe('POST /v1/runtimes/inspect', () => {
     expect(body.evidenceAuthority).toEqual(evidenceAuthority)
   })
 
-  it('returns tmux runtime process fields when present', async () => {
+  it('returns tmux runtime fields', async () => {
     fixture.seedSession('hsid-inspect-tmux', 'inspect-tmux')
     seedRuntime({
       runtimeId: 'rt-inspect-tmux',
       hostSessionId: 'hsid-inspect-tmux',
       scopeRef: 'inspect-tmux',
       transport: 'tmux',
-      wrapperPid: 32101,
-      childPid: 32102,
     })
 
     const body = await inspectRuntimeJson('rt-inspect-tmux')
@@ -245,15 +238,13 @@ describe('POST /v1/runtimes/inspect', () => {
       harness: 'claude-code',
       provider: 'anthropic',
       status: 'ready',
-      wrapperPid: 32101,
-      childPid: 32102,
       activeRunId: null,
       continuationKey: null,
       continuationStale: false,
     })
   })
 
-  it('returns null process fields for a headless runtime', async () => {
+  it('returns a headless runtime', async () => {
     fixture.seedSession('hsid-inspect-headless', 'inspect-headless')
     seedRuntime({
       runtimeId: 'rt-inspect-headless',
@@ -268,8 +259,6 @@ describe('POST /v1/runtimes/inspect', () => {
     expect(body).toMatchObject({
       runtimeId: 'rt-inspect-headless',
       transport: 'headless',
-      wrapperPid: null,
-      childPid: null,
       activeRunId: 'run-inspect-headless',
     })
   })

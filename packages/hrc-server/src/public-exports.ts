@@ -94,12 +94,9 @@ export {
   parseRegistrationClassesConfig,
   resolveRegistrationClasses,
   validateRegistrationClassConfig,
-  isExternalRegistrationClass,
-  isParticipantRegistrationClass,
 } from './registration-classes-config.js'
 export type {
   ExternalRegistrationClassConfig,
-  ParticipantRegistrationClassConfig,
   RegistrationClassConfig,
   RegistrationClassScopeTemplate,
 } from './registration-classes-config.js'
@@ -135,7 +132,6 @@ export type {
 export { parseRegisterParticipantRequest } from './participant-registration-handlers.js'
 export type {
   DirectRegisterParticipantRequest,
-  LegacyRegisterParticipantRequest,
   RegisterParticipantRequest,
   RegisterParticipantResponse,
 } from './participant-registration-handlers.js'

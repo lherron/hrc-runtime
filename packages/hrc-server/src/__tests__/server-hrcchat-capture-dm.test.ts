@@ -28,7 +28,6 @@ describe('hrcchat minimal server routes', () => {
         provider: 'anthropic',
         status: 'busy',
         supportsInflightInput: false,
-        adopted: false,
         activeRunId: runId,
         lastActivityAt: timestamp,
         createdAt: timestamp,
@@ -106,7 +105,6 @@ describe('hrcchat minimal server routes', () => {
           status: 'active',
           createdAt: timestamp,
           updatedAt: timestamp,
-          ancestorScopeRefs: [],
         })
         db.runtimes.insert({
           runtimeId,
@@ -119,7 +117,6 @@ describe('hrcchat minimal server routes', () => {
           provider: 'openai',
           status: 'ready',
           supportsInflightInput: false,
-          adopted: false,
           createdAt: timestamp,
           updatedAt: timestamp,
           lastActivityAt: timestamp,
@@ -330,7 +327,6 @@ describe('hrcchat minimal server routes', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.sessions.insert({
         hostSessionId: 'hsid-dm-correlation-gen-4',
@@ -341,7 +337,6 @@ describe('hrcchat minimal server routes', () => {
         priorHostSessionId: 'hsid-dm-correlation-gen-1',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.continuities.upsert({
         scopeRef,

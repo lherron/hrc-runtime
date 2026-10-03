@@ -31,7 +31,6 @@ function seedCurrent(
       status: 'active',
       createdAt: input.ts,
       updatedAt: input.ts,
-      ancestorScopeRefs: [],
     })
     db.continuities.upsert({
       scopeRef,

@@ -146,7 +146,8 @@ describe('lifecycle persistence migrations (0019/0020/0021)', () => {
       const runtimeCols = tableColumns(db, 'runtimes')
       const invocationCols = tableColumns(db, 'broker_invocations')
       for (const col of lifecycleStateCols) {
-        expect(runtimeCols).toContain(col)
+        if (col === 'lifecycle_terminal_reason') expect(runtimeCols).toContain(col)
+        else expect(runtimeCols).not.toContain(col)
         expect(invocationCols).toContain(col)
       }
     } finally {
@@ -398,68 +399,6 @@ describe('lifecycle_policies audit repository round-trip', () => {
 
 // ── lifecycle-state columns on runtimes + broker_invocations ───────────────
 describe('runtime + invocation lifecycle-state round-trip', () => {
-  it('persists lifecycle columns on runtimes via insert and update', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      const now = ts()
-      db.sessions.insert({
-        hostSessionId: 'hsid-lc',
-        scopeRef: scopeRef('lc'),
-        laneRef: 'default',
-        generation: 1,
-        status: 'active',
-        createdAt: now,
-        updatedAt: now,
-        ancestorScopeRefs: [],
-      })
-
-      const escalationJson = JSON.stringify({ kind: 'turn-limit', at: now })
-      const runtime = db.runtimes.insert({
-        runtimeId: 'rt-lc',
-        hostSessionId: 'hsid-lc',
-        scopeRef: scopeRef('lc'),
-        laneRef: 'default',
-        generation: 1,
-        transport: 'headless',
-        harness: 'codex-cli',
-        provider: 'openai',
-        status: 'ready',
-        supportsInflightInput: true,
-        adopted: false,
-        lifecyclePolicyHash: 'lph-rt',
-        currentHarnessGeneration: 2,
-        currentTurnAttempt: 5,
-        lifecycleTerminalReason: undefined,
-        lastLifecycleEscalationJson: escalationJson,
-        createdAt: now,
-        updatedAt: now,
-      })
-      expect(runtime.lifecyclePolicyHash).toBe('lph-rt')
-      expect(runtime.currentHarnessGeneration).toBe(2)
-      expect(runtime.currentTurnAttempt).toBe(5)
-      expect(runtime.lastLifecycleEscalationJson).toBe(escalationJson)
-
-      const reloaded = db.runtimes.getByRuntimeId('rt-lc')
-      expect(reloaded?.currentHarnessGeneration).toBe(2)
-      expect(reloaded?.currentTurnAttempt).toBe(5)
-      expect(reloaded?.lifecyclePolicyHash).toBe('lph-rt')
-
-      const updated = db.runtimes.update('rt-lc', {
-        currentHarnessGeneration: 3,
-        currentTurnAttempt: 0,
-        lifecycleTerminalReason: 'turn-budget-exhausted',
-        updatedAt: ts(),
-      })
-      expect(updated?.currentHarnessGeneration).toBe(3)
-      expect(updated?.currentTurnAttempt).toBe(0)
-      expect(updated?.lifecycleTerminalReason).toBe('turn-budget-exhausted')
-      // Untouched lifecycle column survives the patch.
-      expect(updated?.lastLifecycleEscalationJson).toBe(escalationJson)
-    } finally {
-      db.close()
-    }
-  })
-
   it('persists lifecycle columns on broker_invocations via insert and update', () => {
     const db = openHrcDatabase(dbPath)
     try {

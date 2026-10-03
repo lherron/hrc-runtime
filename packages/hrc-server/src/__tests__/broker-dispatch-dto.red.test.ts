@@ -162,7 +162,6 @@ function seedBrokerRuntime(
       provider: PROVIDER,
       status: 'ready',
       supportsInflightInput: true, // Currently seeded as true (the lie we're fixing)
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: OPERATION_ID,
       activeInvocationId: INVOCATION_ID,
@@ -535,7 +534,6 @@ describe('T-05078/17 capability truth — broker headless supportsInFlightInput'
         provider: PROVIDER,
         status: 'busy',
         supportsInflightInput: true, // currently seeded as true (the lie); even so, endpoint rejects
-        adopted: false,
         controllerKind: 'harness-broker',
         activeOperationId: OPERATION_ID,
         activeInvocationId: INVOCATION_ID,

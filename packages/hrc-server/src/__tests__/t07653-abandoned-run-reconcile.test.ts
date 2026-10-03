@@ -96,7 +96,6 @@ function seedAbandonedRun(options: SeedOptions): void {
         ? {}
         : { activeRunId: options.runtimeActiveRunId }),
       supportsInflightInput: true,
-      adopted: false,
       lastActivityAt: runtimeTs,
       createdAt: runtimeTs,
       updatedAt: runtimeTs,

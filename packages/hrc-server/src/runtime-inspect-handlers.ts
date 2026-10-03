@@ -55,7 +55,7 @@ export async function handleInspectRuntime(
   const createdAtMs = Date.parse(runtime.createdAt)
   const lastActivityAt = runtime.lastActivityAt ?? null
   const lastActivityAtMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN
-  const continuation = runtime.continuation ?? session.continuation ?? null
+  const continuation = session.continuation ?? null
   const eventHighWaterSeq = runtime.activeInvocationId
     ? (this.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)?.lastEventSeq ??
       null)
@@ -150,8 +150,6 @@ export async function handleInspectRuntime(
     controllerKind: runtime.controllerKind ?? null,
     activeOperationId: runtime.activeOperationId ?? null,
     activeInvocationId: runtime.activeInvocationId ?? null,
-    wrapperPid: runtime.wrapperPid ?? null,
-    childPid: runtime.childPid ?? null,
     continuation,
     continuationKey: continuation?.key ?? null,
     continuationStale:

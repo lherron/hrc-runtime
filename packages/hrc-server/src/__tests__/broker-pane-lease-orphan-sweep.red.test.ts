@@ -108,7 +108,6 @@ function seedClaimingRuntime(driver: string, runtimeId: string, socketPath: stri
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId,
@@ -121,7 +120,6 @@ function seedClaimingRuntime(driver: string, runtimeId: string, socketPath: stri
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       tmuxJson: {
         socketPath,

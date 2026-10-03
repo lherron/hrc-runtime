@@ -161,7 +161,6 @@ function seedSession(hostSessionId: string): void {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 

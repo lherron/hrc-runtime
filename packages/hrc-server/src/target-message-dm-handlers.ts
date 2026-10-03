@@ -322,12 +322,7 @@ export async function deliverPersistedSemanticDm(
     if (!session && body.createIfMissing !== false) {
       const intent = body.runtimeIntent
       if (intent) {
-        session = await this.ensureTargetSession(
-          body.to.sessionRef,
-          intent,
-          body.parsedScopeJson,
-          summonOrigin
-        )
+        session = await this.ensureTargetSession(body.to.sessionRef, intent, summonOrigin)
       }
     }
 
@@ -337,7 +332,6 @@ export async function deliverPersistedSemanticDm(
           this,
           session,
           body.runtimeIntent,
-          body.parsedScopeJson,
           summonOrigin
         )
       }

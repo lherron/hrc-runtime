@@ -23,7 +23,6 @@ const session = {
   status: 'active',
   createdAt: '2026-07-18T12:00:00.000Z',
   updatedAt: '2026-07-18T12:00:00.000Z',
-  ancestorScopeRefs: [],
 }
 
 const runtime = {
@@ -37,7 +36,6 @@ const runtime = {
   provider: 'openai',
   status: 'ready',
   supportsInflightInput: true,
-  adopted: false,
   activeRunId: null,
   createdAt: '2026-07-18T12:00:00.000Z',
   updatedAt: '2026-07-18T12:00:00.000Z',
@@ -134,8 +132,6 @@ describe('hrc monitor show bounded snapshot reads', () => {
             createdAgeSec: 1,
             lastActivityAt: null,
             lastActivityAgeSec: null,
-            wrapperPid: null,
-            childPid: null,
             continuation: null,
             continuationKey: null,
             continuationStale: false,

@@ -95,7 +95,6 @@ function seedSession(): void {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 
@@ -112,7 +111,6 @@ function seedBrokerRuntime(runtimeId: string): HrcRuntimeSnapshot {
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     tmuxJson: {
       socketPath: LEASE_SOCKET,
@@ -164,7 +162,6 @@ function seedLegacyTmuxRuntime(runtimeId: string): HrcRuntimeSnapshot {
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     // No controllerKind => a legacy single-pane tmux runtime on the DEFAULT server.
     tmuxJson: {
       socketPath: '/tmp/default-tmux.sock',

@@ -79,7 +79,6 @@ function seedReusableBrokerRuntime(
       provider: 'openai',
       status: options.status ?? 'ready',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: OPERATION_ID,
       activeInvocationId: INVOCATION_ID,

@@ -30,10 +30,6 @@ function sortRuntimesByRecency(runtimes: HrcRuntimeSnapshot[]): HrcRuntimeSnapsh
   return [...runtimes].sort((left, right) => runtimeRecency(left) - runtimeRecency(right))
 }
 
-function hasContinuation(runtime: HrcRuntimeSnapshot): boolean {
-  return runtime.continuation != null
-}
-
 export function selectLatestUsableRuntime(
   runtimes: HrcRuntimeSnapshot[]
 ): HrcRuntimeSnapshot | undefined {
@@ -47,22 +43,9 @@ export function selectLatestUsableRuntime(
     return busyTmux.at(-1)
   }
 
-  const attachPreparedTmux = usable.filter(
-    (runtime) =>
-      runtime.transport === 'tmux' && runtime.harnessSessionJson?.['attachPrepared'] === true
-  )
-  if (attachPreparedTmux.length > 0) {
-    return attachPreparedTmux.at(-1)
-  }
-
   const headless = usable.filter((runtime) => runtime.transport === 'headless')
   if (headless.length > 0) {
     return headless.at(-1)
-  }
-
-  const resumable = usable.filter(hasContinuation)
-  if (resumable.length > 0) {
-    return resumable.at(-1)
   }
 
   return usable.at(-1)

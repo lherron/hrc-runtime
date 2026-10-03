@@ -127,8 +127,6 @@ export const MonitorEventName = [
   'turn.tool_call',
   'turn.tool_result',
   'turn.message',
-  'session.started',
-  'session.cleared',
 ] as const
 
 export type MonitorEventName = (typeof MonitorEventName)[number]

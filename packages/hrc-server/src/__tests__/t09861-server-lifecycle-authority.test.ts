@@ -134,7 +134,6 @@ function launchSeat(
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
   })
   node.server.db.runtimes.insert({
     runtimeId,
@@ -148,7 +147,6 @@ function launchSeat(
     // still live when the successor backfills (the pre-release seat case).
     ...(options.survivesBoot ? { runtimeStateJson: { lifecycleOwner: 'external' } } : {}),
     supportsInflightInput: false,
-    adopted: false,
     createdAt: NOW,
     updatedAt: NOW,
   })

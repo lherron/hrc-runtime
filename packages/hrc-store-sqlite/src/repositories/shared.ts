@@ -2,16 +2,11 @@ import type { Database, SQLQueryBindings } from 'bun:sqlite'
 import {
   type HrcActiveRunContributionRequest,
   type HrcActiveRunContributionResponse,
-  type HrcAppSessionRecord,
-  type HrcAppSessionSpec,
-  type HrcCommandLaunchSpec,
   type HrcContinuationRef,
   type HrcContinuityRecord,
   type HrcEventEnvelope,
-  type HrcLaunchRecord,
   type HrcLifecycleEvent,
   type HrcLocalBridgeRecord,
-  type HrcManagedSessionRecord,
   type HrcRunRecord,
   type HrcRuntimeIntent,
   type HrcRuntimePresentationRecord,
@@ -22,11 +17,8 @@ import {
 } from 'hrc-core'
 import type {
   ActiveInputDeliveryRow,
-  AppManagedSessionRow,
-  AppSessionRow,
   EventRow,
   HrcEventRow,
-  LaunchRow,
   LocalBridgeRow,
   RunRow,
   RuntimeBufferRow,
@@ -155,27 +147,6 @@ export type SurfaceBindingBindInput = Omit<
   boundAt: string
 }
 
-export type AppSessionApplyInput = {
-  appSessionKey: string
-  label?: string | undefined
-  metadata?: Record<string, unknown> | undefined
-}
-
-export type AppSessionBulkApplyResult = {
-  inserted: number
-  updated: number
-  removed: number
-}
-
-export type AppManagedSessionRecord = HrcManagedSessionRecord & {
-  lastAppliedSpec?: HrcAppSessionSpec | undefined
-}
-
-export type AppManagedSessionFindOptions = {
-  includeRemoved?: boolean | undefined
-  kind?: HrcManagedSessionRecord['kind'] | undefined
-}
-
 export type LocalBridgeStatus = 'active' | 'closed'
 
 export type SessionListFilters = {
@@ -197,7 +168,6 @@ export type RunUpdatePatch = Partial<
   errorCode?: HrcRunRecord['errorCode'] | null | undefined
   errorMessage?: string | null | undefined
 }
-export type LaunchUpdatePatch = Partial<Omit<HrcLaunchRecord, 'launchId'>>
 
 export function serializeJson(value: unknown): string | null {
   if (value === undefined) {
@@ -474,9 +444,6 @@ export function mapSessionRow(row: SessionRow): HrcSessionRecord {
     priorHostSessionId: row.prior_host_session_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    parsedScopeJson: parseJson<Record<string, unknown>>(row.parsed_scope_json, 'parsed_scope_json'),
-    ancestorScopeRefs:
-      parseJson<string[]>(row.ancestor_scope_refs_json, 'ancestor_scope_refs_json') ?? [],
     lastAppliedIntentJson: parseJson<HrcRuntimeIntent>(
       row.last_applied_intent_json,
       'last_applied_intent_json'
@@ -488,46 +455,29 @@ export function mapSessionRow(row: SessionRow): HrcSessionRecord {
 export function mapRuntimeRow(row: RuntimeRow): HrcRuntimeSnapshot {
   return {
     runtimeId: row.runtime_id,
-    runtimeKind: row.runtime_kind ?? 'harness',
     hostSessionId: row.host_session_id,
     scopeRef: row.scope_ref,
     laneRef: row.lane_ref,
     generation: row.generation,
-    launchId: row.launch_id ?? undefined,
     transport: row.transport,
     harness: row.harness ?? undefined,
     provider: row.provider ?? undefined,
     status: row.status,
     statusChangedAt: row.status_changed_at ?? 'unknown',
     tmuxJson: parseJson<Record<string, unknown>>(row.tmux_json, 'tmux_json'),
-    surfaceJson: parseJson<Record<string, unknown>>(row.surface_json, 'surface_json'),
-    wrapperPid: row.wrapper_pid ?? undefined,
-    childPid: row.child_pid ?? undefined,
-    harnessSessionJson: parseJson<Record<string, unknown>>(
-      row.harness_session_json,
-      'harness_session_json'
-    ),
-    commandSpec: parseJson<HrcCommandLaunchSpec>(row.command_spec_json, 'command_spec_json'),
-    continuation: parseJson<HrcContinuationRef>(row.continuation_json, 'continuation_json'),
     supportsInflightInput: fromSqliteBoolean(row.supports_inflight_input),
-    adopted: fromSqliteBoolean(row.adopted),
     activeRunId: row.active_run_id ?? undefined,
     lastActivityAt: row.last_activity_at ?? undefined,
     controllerKind: row.controller_kind ?? undefined,
     activeOperationId: row.active_operation_id ?? undefined,
     activeInvocationId: row.active_invocation_id ?? undefined,
-    compileId: row.compile_id ?? undefined,
     planHash: row.plan_hash ?? undefined,
     selectedProfileHash: row.selected_profile_hash ?? undefined,
     runtimeStateJson: parseJson<Record<string, unknown>>(
       row.runtime_state_json,
       'runtime_state_json'
     ),
-    lifecyclePolicyHash: row.lifecycle_policy_hash ?? undefined,
-    currentHarnessGeneration: row.current_harness_generation ?? undefined,
-    currentTurnAttempt: row.current_turn_attempt ?? undefined,
     lifecycleTerminalReason: row.lifecycle_terminal_reason ?? undefined,
-    lastLifecycleEscalationJson: row.last_lifecycle_escalation_json ?? undefined,
     presentation: parseJson<HrcRuntimePresentationRecord>(
       row.presentation_json,
       'presentation_json'
@@ -595,44 +545,10 @@ export function mapSurfaceBindingRow(row: SurfaceBindingRow): HrcSurfaceBindingR
     runtimeId: row.runtime_id,
     generation: row.generation,
     windowId: row.window_id ?? undefined,
-    tabId: row.tab_id ?? undefined,
     paneId: row.pane_id ?? undefined,
     boundAt: row.bound_at,
     unboundAt: row.unbound_at ?? undefined,
     reason: row.reason ?? undefined,
-  }
-}
-
-export function mapAppSessionRow(row: AppSessionRow): HrcAppSessionRecord {
-  return {
-    appId: row.app_id,
-    appSessionKey: row.app_session_key,
-    hostSessionId: row.host_session_id,
-    label: row.label ?? undefined,
-    metadata: parseJson<Record<string, unknown>>(row.metadata_json, 'metadata_json'),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    removedAt: row.removed_at ?? undefined,
-  }
-}
-
-export function mapAppManagedSessionRow(row: AppManagedSessionRow): AppManagedSessionRecord {
-  return {
-    appId: row.app_id,
-    appSessionKey: row.app_session_key,
-    kind: row.kind,
-    label: row.label ?? undefined,
-    metadata: parseJson<Record<string, unknown>>(row.metadata_json, 'metadata_json'),
-    activeHostSessionId: row.active_host_session_id,
-    generation: row.generation,
-    status: row.status,
-    lastAppliedSpec: parseJson<HrcAppSessionSpec>(
-      row.last_applied_spec_json,
-      'last_applied_spec_json'
-    ),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    removedAt: row.removed_at ?? undefined,
   }
 }
 
@@ -648,35 +564,6 @@ export function mapLocalBridgeRow(row: LocalBridgeRow): HrcLocalBridgeRecord {
     createdAt: row.created_at,
     closedAt: row.closed_at ?? undefined,
     status: row.status,
-  }
-}
-
-export function mapLaunchRow(row: LaunchRow): HrcLaunchRecord {
-  return {
-    launchId: row.launch_id,
-    hostSessionId: row.host_session_id,
-    generation: row.generation,
-    runtimeId: row.runtime_id ?? undefined,
-    harness: row.harness,
-    provider: row.provider,
-    launchArtifactPath: row.launch_artifact_path,
-    tmuxJson: parseJson<Record<string, unknown>>(row.tmux_json, 'tmux_json'),
-    surfaceJson: parseJson<Record<string, unknown>>(row.surface_json, 'surface_json'),
-    wrapperPid: row.wrapper_pid ?? undefined,
-    childPid: row.child_pid ?? undefined,
-    harnessSessionJson: parseJson<Record<string, unknown>>(
-      row.harness_session_json,
-      'harness_session_json'
-    ),
-    continuation: parseJson<HrcContinuationRef>(row.continuation_json, 'continuation_json'),
-    wrapperStartedAt: row.wrapper_started_at ?? undefined,
-    childStartedAt: row.child_started_at ?? undefined,
-    exitedAt: row.exited_at ?? undefined,
-    exitCode: row.exit_code ?? undefined,
-    signal: row.signal ?? undefined,
-    status: row.status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
   }
 }
 

@@ -121,7 +121,6 @@ async function seedLiveTarget(): Promise<void> {
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: 'op-t07398-c1',
       activeInvocationId: 'inv-t07398-c1',

@@ -57,7 +57,6 @@ function seedBase(): void {
       provider: 'codex',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: 'op-t08607-01',
       activeInvocationId: INVOCATION_ID,

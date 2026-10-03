@@ -8,7 +8,6 @@
  * predicates from broker/runtime-hosting.ts:
  *   - target-view.ts: supportsCapture, supportsLiteralSend (toTargetRuntimeView)
  *   - target-view.ts: sendReady, peekReady (toTargetCapabilities)
- *   - runtime-list-adopt-handlers.ts ~83: adopt gate rejects non-tmux transport
  *   - runtime-inspect-handlers.ts ~85: tmux status view absent for headless transport
  *   - runtime-io-handlers.ts ~83-87: reconcileTmuxRuntimeLiveness skips headless
  *   - controller-factory.ts ~167: reapBrokerTmuxLease returns early for headless
@@ -22,8 +21,6 @@
  *       supportsLiteralSend should be true → RED (transport gate says false)
  *   5b. toTargetCapabilities POSITIVE (headless+tmux-tui): sendReady and
  *       peekReady should be true → RED (transport gate says false)
- *   5c. POST /v1/runtimes/adopt POSITIVE (headless+tmux-tui): should succeed →
- *       RED (transport gate throws "cannot adopt a non-tmux runtime")
  *   5d. POST /v1/runtimes/inspect (headless+tmux-tui): should include `tmux`
  *       field with TUI window info → RED (transport gate omits it)
  *   5e. GET /v1/runtimes reconcile admission (headless+tmux-tui with dead socket):
@@ -99,7 +96,6 @@ function makeHeadlessTuiRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): Hr
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     // tmuxJson carries the TUI window identity used by reconcileTmuxRuntimeLiveness
     // to probe pane liveness (getBrokerRuntimeTmuxSocketPath reads socketPath here).
@@ -166,7 +162,6 @@ function makeHeadlessNoneRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): H
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',
@@ -217,7 +212,6 @@ function seedHeadlessTuiRuntimeInFixture(
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId: 'rt-4922-http-tui',
@@ -230,7 +224,6 @@ function seedHeadlessTuiRuntimeInFixture(
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       tmuxJson: {
         socketPath: BTMUX_SOCKET,
@@ -334,7 +327,6 @@ describe('RED test 6a: /quit lifecycle — USER-INITIATED classification missing
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId,
@@ -347,7 +339,6 @@ describe('RED test 6a: /quit lifecycle — USER-INITIATED classification missing
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         controllerKind: 'harness-broker',
         activeInvocationId: invocationId,
         activeRunId: runId,
@@ -503,7 +494,6 @@ describe('RED test 6b: reapBrokerTmuxLease transport gate — lease NOT killed f
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       // transport='headless' — this is the value that triggers the current transport gate
       db.runtimes.insert({
@@ -517,7 +507,6 @@ describe('RED test 6b: reapBrokerTmuxLease transport gate — lease NOT killed f
         provider: 'anthropic',
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         controllerKind: 'harness-broker',
         tmuxJson: {
           socketPath: BTMUX_SOCKET,

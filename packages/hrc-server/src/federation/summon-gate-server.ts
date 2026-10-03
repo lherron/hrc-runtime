@@ -16,7 +16,6 @@
 export type { SummonGateServerContext } from './summon-gate-server-context.js'
 export {
   assertSummonAuthority,
-  persistSessionTaskClaimAuthority,
   withParticipantAddressAuthority,
   withSummonAuthority,
 } from './summon-gate-server-authority.js'

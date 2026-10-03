@@ -86,12 +86,10 @@ describe('T-06697 federation v1.3 startup placement repair', () => {
       status: 'active',
       createdAt: NOW,
       updatedAt: NOW,
-      ancestorScopeRefs: [],
       ...(input.intent === undefined ? {} : { lastAppliedIntentJson: input.intent }),
     })
     h.db.runtimes.insert({
       runtimeId: `rt-t06697-${input.suffix}`,
-      runtimeKind: 'harness',
       hostSessionId,
       scopeRef: input.scopeRef,
       laneRef: 'main',
@@ -101,7 +99,6 @@ describe('T-06697 federation v1.3 startup placement repair', () => {
       provider: 'openai',
       status: 'ready',
       supportsInflightInput: true,
-      adopted: false,
       createdAt: NOW,
       updatedAt: NOW,
     })

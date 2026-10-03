@@ -86,7 +86,7 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
       laneRef: 'default',
       generation: 1,
       category: 'session',
-      eventKind: 'session.resolved',
+      eventKind: 'session.created',
       replayed: false,
       payload: {},
     }

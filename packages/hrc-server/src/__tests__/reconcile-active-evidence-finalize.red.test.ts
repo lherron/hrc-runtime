@@ -86,7 +86,6 @@ function seedFossilizedRun(options: SeedOptions): void {
       activeInvocationId: options.invocationId,
       activeRunId: options.runId,
       supportsInflightInput: true,
-      adopted: false,
       lastActivityAt: ts,
       createdAt: ts,
       updatedAt: ts,

@@ -48,7 +48,6 @@ async function makeFixture(specProjection?: unknown): Promise<Fixture> {
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
   })
   db.runtimes.insert({
     runtimeId: RUNTIME_ID,
@@ -61,7 +60,6 @@ async function makeFixture(specProjection?: unknown): Promise<Fixture> {
     provider: 'anthropic',
     status: 'busy',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeInvocationId: INVOCATION_ID,
     createdAt: NOW,

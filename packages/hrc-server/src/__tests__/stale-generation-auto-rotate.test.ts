@@ -429,7 +429,6 @@ describe('stale-generation auto-rotate skip when live tmux runtime exists', () =
           paneId: '%test',
         },
         supportsInflightInput: false,
-        adopted: false,
         lastActivityAt: now,
         createdAt: now,
         updatedAt: now,

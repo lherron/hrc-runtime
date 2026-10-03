@@ -220,7 +220,6 @@ beforeEach(async () => {
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
   })
   db.runtimes.insert({
     runtimeId: RUNTIME_ID,
@@ -233,7 +232,6 @@ beforeEach(async () => {
     provider: 'openai',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     createdAt: NOW,
     updatedAt: NOW,
     activeInvocationId: INVOCATION_ID,

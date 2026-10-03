@@ -45,7 +45,6 @@ function seedSession(
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
   })
 }
 
@@ -72,7 +71,6 @@ function seedRuntime(input: {
       ? {}
       : { activeOperationId: input.activeOperationId }),
     supportsInflightInput: true,
-    adopted: false,
     createdAt: NOW,
     updatedAt: NOW,
   })

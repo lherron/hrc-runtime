@@ -85,7 +85,6 @@ function seedRuntime(options: SeedRuntimeOptions): void {
           }
         : {}),
       supportsInflightInput: false,
-      adopted: false,
       lastActivityAt: createdAt,
       createdAt,
       updatedAt: now,

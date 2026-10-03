@@ -1,9 +1,4 @@
-import type {
-  HrcContinuationRef,
-  HrcLifecycleEvent,
-  HrcRuntimeSnapshot,
-  HrcSessionRecord,
-} from 'hrc-core'
+import type { HrcContinuationRef, HrcLifecycleEvent, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { appendHrcEvent } from './hrc-event-helper.js'
@@ -22,17 +17,6 @@ export function automaticContinuationForSession(
   return db.sessions.isContinuationReuseDisabled(session.hostSessionId)
     ? undefined
     : session.continuation
-}
-
-export function automaticContinuationForRuntime(
-  db: HrcDatabase,
-  session: HrcSessionRecord,
-  runtime: HrcRuntimeSnapshot
-): HrcContinuationRef | undefined {
-  if (db.sessions.isContinuationReuseDisabled(session.hostSessionId)) {
-    return undefined
-  }
-  return runtime.continuation ?? session.continuation
 }
 
 export type DropSessionContinuationResult = {

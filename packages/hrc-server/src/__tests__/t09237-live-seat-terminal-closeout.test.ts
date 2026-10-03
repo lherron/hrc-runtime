@@ -309,7 +309,6 @@ describe('T-09237 no-reuse dispatch against a dead seat births fresh', () => {
         brokerDriver: 'codex-cli-tmux',
       },
       supportsInflightInput: true,
-      adopted: false,
       lastActivityAt: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp,

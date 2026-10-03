@@ -20,7 +20,7 @@
  *   7. GET /v1/attach on SDK runtime returns error (attach not supported)
  *   8. Run record transitions: accepted → started → completed
  *   9. Runtime transitions: created → busy → ready after SDK dispatch
- *  10. harness_session_json persisted on runtime record after SDK turn
+ *  10. session continuation persisted after SDK turn
  *
  * Reference: wrkq T-00946 (agent-spaces/hrc/implementation-plan, archived).
  * The plan document itself no longer exists; docs/hrc-server-architecture.md
@@ -356,11 +356,9 @@ describe('runtime lifecycle start/attach', () => {
             provider: 'openai',
             status: 'ready',
             supportsInflightInput: true,
-            adopted: false,
             controllerKind: 'harness-broker',
             activeOperationId: operationId,
             activeInvocationId: invocationId,
-            continuation,
             createdAt: now,
             updatedAt: now,
             lastActivityAt: now,

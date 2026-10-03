@@ -37,7 +37,6 @@ function seedRuntimeWithDependents(
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
   db.runtimes.insert({
     runtimeId,
@@ -50,7 +49,6 @@ function seedRuntimeWithDependents(
     provider: 'anthropic',
     status: 'stale',
     supportsInflightInput: false,
-    adopted: false,
     lastActivityAt: now,
     createdAt: now,
     updatedAt: now,

@@ -71,7 +71,6 @@ function seedEventsForSession(
         status: 'active',
         createdAt: timestamp,
         updatedAt: timestamp,
-        ancestorScopeRefs: [],
       })
     } catch {
       // Session may already exist from a prior call with same hostSessionId

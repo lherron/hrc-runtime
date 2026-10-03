@@ -13,10 +13,7 @@ import { join } from 'node:path'
 import type { HrcContinuationRef, HrcSessionRecord } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
-import {
-  automaticContinuationForRuntime,
-  automaticContinuationForSession,
-} from '../session-continuation-reuse'
+import { automaticContinuationForSession } from '../session-continuation-reuse'
 import {
   LEGACY_CONTINUATION_CLEAR_BACKFILL_SOURCE,
   backfillLegacyContinuationClearBarriers,
@@ -54,7 +51,6 @@ function insertSession(
     status: opts.status ?? 'active',
     createdAt: tsAt(generation),
     updatedAt: tsAt(generation),
-    ancestorScopeRefs: [],
     ...(opts.priorHostSessionId ? { priorHostSessionId: opts.priorHostSessionId } : {}),
     ...(opts.continuation ? { continuation: opts.continuation } : {}),
   })
@@ -92,7 +88,6 @@ function appendLegacyBrokerContinuationCleared(hostSessionId: string, generation
     provider: 'openai',
     status: 'terminated',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     createdAt: tsAt(generation),
     updatedAt: tsAt(generation),
@@ -273,7 +268,7 @@ describe('continuation history retention', () => {
     const session = insertSession('hs-auto', 1, {
       continuation: { provider: 'anthropic', key: 'key-before-drop' },
     })
-    const runtime = db.runtimes.insert({
+    db.runtimes.insert({
       runtimeId: 'rt-auto',
       hostSessionId: session.hostSessionId,
       scopeRef: SCOPE_REF,
@@ -283,21 +278,17 @@ describe('continuation history retention', () => {
       harness: 'agent-sdk',
       provider: 'anthropic',
       status: 'terminated',
-      continuation: session.continuation,
       supportsInflightInput: false,
-      adopted: false,
       createdAt: tsAt(1),
       updatedAt: tsAt(1),
     })
 
     expect(automaticContinuationForSession(db, session)?.key).toBe('key-before-drop')
-    expect(automaticContinuationForRuntime(db, session, runtime)?.key).toBe('key-before-drop')
 
     db.sessions.setContinuationReuseDisabled(session.hostSessionId, true, tsAt(2))
     const retained = db.sessions.getByHostSessionId(session.hostSessionId)!
     expect(retained.continuation?.key).toBe('key-before-drop')
     expect(automaticContinuationForSession(db, retained)).toBeUndefined()
-    expect(automaticContinuationForRuntime(db, retained, runtime)).toBeUndefined()
 
     db.sessions.updateContinuation(
       session.hostSessionId,
@@ -309,7 +300,7 @@ describe('continuation history retention', () => {
     expect(automaticContinuationForSession(db, updated)?.key).toBe('key-after-fresh-start')
   })
 
-  it('repairs NULL session/runtime keys from the latest event time and is idempotent', () => {
+  it('repairs NULL session keys from the latest event time and is idempotent', () => {
     const session = insertSession('hs-repair', 1)
     db.runtimes.insert({
       runtimeId: 'rt-repair',
@@ -322,7 +313,6 @@ describe('continuation history retention', () => {
       provider: 'anthropic',
       status: 'terminated',
       supportsInflightInput: false,
-      adopted: false,
       createdAt: tsAt(1),
       updatedAt: tsAt(1),
     })
@@ -344,14 +334,13 @@ describe('continuation history retention', () => {
       payload: { provider: 'anthropic', kind: 'session', key: 'later-row-id' },
     })
 
-    expect(repairContinuationHistory(db)).toEqual({ sessions: 1, runtimes: 1 })
+    expect(repairContinuationHistory(db)).toEqual({ sessions: 1 })
     expect(db.sessions.getByHostSessionId(session.hostSessionId)?.continuation).toEqual({
       provider: 'anthropic',
       kind: 'session',
       key: 'latest-by-time',
     })
-    expect(db.runtimes.getByRuntimeId('rt-repair')?.continuation?.key).toBe('latest-by-time')
     expect(db.sessions.isContinuationReuseDisabled(session.hostSessionId)).toBe(true)
-    expect(repairContinuationHistory(db)).toEqual({ sessions: 0, runtimes: 0 })
+    expect(repairContinuationHistory(db)).toEqual({ sessions: 0 })
   })
 })

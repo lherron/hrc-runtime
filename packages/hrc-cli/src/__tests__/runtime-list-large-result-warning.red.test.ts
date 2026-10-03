@@ -38,7 +38,6 @@ function runtimeFixtures(count: number): HrcRuntimeSnapshot[] {
     provider: 'openai',
     status: 'terminated',
     supportsInflightInput: false,
-    adopted: false,
     createdAt: '2026-07-17T00:00:00.000Z',
     updatedAt: '2026-07-17T00:00:00.000Z',
     statusChangedAt: 'unknown',

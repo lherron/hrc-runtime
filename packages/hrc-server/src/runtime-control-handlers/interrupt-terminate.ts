@@ -10,7 +10,6 @@ import {
   evictExternalParticipant,
   isExternalLifecycleOwner,
 } from '../external-participant-lifecycle.js'
-import { cleanupRuntimeTaskClaimCredentialFile } from '../federation/task-claim-runtime.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import {
   isTerminalBrokerInvocationState,
@@ -19,7 +18,6 @@ import {
 } from '../require-helpers.js'
 import { runtimeActivityPatch } from '../runtime-activity.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
-import { writeServerLog } from '../server-log.js'
 import { finalizeRuntimeTermination } from '../server-misc.js'
 import { json, timestamp } from '../server-util.js'
 import { getTmuxSocketPath } from '../tmux-socket.js'
@@ -66,39 +64,6 @@ async function terminateExternalRuntime(
     runtimeId: runtime.runtimeId,
     droppedContinuation: false,
   } satisfies TerminateRuntimeResponse)
-}
-
-function cleanupTaskClaimCredential(
-  server: HrcServerInstanceForHandlers,
-  runtime: HrcRuntimeSnapshot
-): void {
-  const runtimeRoot = server.options?.runtimeRoot
-  if (runtimeRoot === undefined) {
-    writeServerLog('WARN', 'task_claim_credential.cleanup_skipped', {
-      runtimeId: runtime.runtimeId,
-      scopeRef: runtime.scopeRef,
-      reason: 'runtime_root_unavailable',
-    })
-    return
-  }
-  const result = cleanupRuntimeTaskClaimCredentialFile({
-    db: server.db,
-    runtimeRoot,
-    hostSessionId: runtime.hostSessionId,
-    runtimeId: runtime.runtimeId,
-  })
-  if (result.outcome === 'failed') {
-    writeServerLog('WARN', 'task_claim_credential.cleanup_failed', {
-      runtimeId: runtime.runtimeId,
-      scopeRef: runtime.scopeRef,
-      error: result.error,
-    })
-  } else if (result.outcome === 'removed') {
-    writeServerLog('INFO', 'task_claim_credential.removed', {
-      runtimeId: runtime.runtimeId,
-      scopeRef: runtime.scopeRef,
-    })
-  }
 }
 
 /**
@@ -408,7 +373,6 @@ export async function terminateTmuxRuntime(
   // are NOT guarded: their first terminate is legitimate cleanup that should
   // still tear the lease down.)
   if (runtime.status === 'terminated') {
-    cleanupTaskClaimCredential(this, runtime)
     return json({
       ok: true,
       hostSessionId: session.hostSessionId,
@@ -439,7 +403,6 @@ export async function terminateTmuxRuntime(
   }
 
   finalizeRuntimeTermination(this.db, runtime, now)
-  cleanupTaskClaimCredential(this, runtime)
   const event = appendHrcEvent(this.db, 'runtime.terminated', {
     ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
@@ -506,7 +469,6 @@ export async function terminateHeadlessRuntime(
   }
 
   finalizeRuntimeTermination(this.db, runtime, now)
-  cleanupTaskClaimCredential(this, runtime)
   settleBrokerRuntimeDisposed.call(this, runtime, now)
   const transport = headlessAuditTransport(runtime)
   const event = appendHrcEvent(this.db, 'runtime.terminated', {

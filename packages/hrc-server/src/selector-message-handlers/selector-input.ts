@@ -263,7 +263,6 @@ export async function handleLiteralInputBySelector(
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      ...(runtime.launchId ? { launchId: runtime.launchId } : {}),
       transport: runtime.transport,
       payload: createUserPromptPayload(body['text'] as string),
     })
@@ -434,10 +433,7 @@ export async function handleDispatchTurnBySelector(
         }
       )
     }
-    const parsedScopeJson = isRecord(body['parsedScopeJson'])
-      ? (body['parsedScopeJson'] as Record<string, unknown>)
-      : undefined
-    session = await this.ensureTargetSession(sessionRef, runtimeIntent, parsedScopeJson)
+    session = await this.ensureTargetSession(sessionRef, runtimeIntent)
   }
 
   if (!session) {

@@ -82,7 +82,6 @@ function seedDriverGraph(driver: 'claude-code-tmux' | 'codex-cli-tmux'): {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
   db.runtimes.insert({
     runtimeId,
@@ -95,7 +94,6 @@ function seedDriverGraph(driver: 'claude-code-tmux' | 'codex-cli-tmux'): {
     provider,
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: operationId,
     createdAt: now,

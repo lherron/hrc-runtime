@@ -36,7 +36,6 @@ function seedRun(db: ReturnType<typeof openHrcDatabase>, runId: string): HrcRunR
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
   return db.runs.insert({
     runId,

@@ -28,7 +28,6 @@ Date: `REPLACE_WITH_DATE`
 - T-01738 F-V2: `hrc server tmux status` reports the default server only.
 - T-01738 F-V3: `hrc server tmux kill --yes` kills the default server only; not executed on the shared daemon.
 - T-01738 F-V4: dead lease socket-file leak.
-- T-01738 F-V5: `hrc admin runtime adopt` does not verify dead-lease liveness.
 - Bridge socket plumbing is deferred on T-01737 if regressions reappear.
 - `hrcchat peek` prefer-interactive resolver follow-up is on T-01737 if regressions reappear.
 
@@ -57,7 +56,6 @@ Date: `REPLACE_WITH_DATE`
 | full-monitor | `hrc monitor show/watch/wait` | TODO | `evidence/full-monitor/` | Selector prefix required; payload shows tmux pane surface. |
 | full-list-inspect | `hrc runtime list --transport tmux` / `inspect` | TODO | `evidence/full-list-inspect/` | T-01738 F-V1 accepted if unchanged. |
 | full-sweep | `hrc runtime sweep --dry-run` | TODO | `evidence/full-sweep/` | Must not sweep live broker lease. |
-| full-adopt | `hrc admin runtime adopt` | TODO | `evidence/full-adopt/` | T-01738 F-V5 accepted if unchanged. |
 | full-attach | `hrc attach --dry-run` | TODO | `evidence/full-attach/` | Plan points at lease socket/pane. |
 | full-surface | `hrc admin surface bind/unbind/list` | TODO | `evidence/full-surface/` | `surfaceId == paneId`. |
 | full-bridge | `hrc admin bridge target/deliver-text/deliver/list/close` | TODO | `evidence/full-bridge/` | Delivery reaches lease pane. |

@@ -25,10 +25,6 @@ function ts(): string {
   return new Date().toISOString()
 }
 
-function scopeRef(key: string): string {
-  return `agent:test:project:nullable-transform:task:${key}`
-}
-
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-nulltx-test-'))
   dbPath = join(tmpDir, 'test.sqlite')
@@ -95,53 +91,6 @@ describe('runtime update: explicit null writes SQL NULL', () => {
       .get(id)
     return row?.value
   }
-
-  it('nulls runtimes.lifecycle_policy_hash when an explicit null is patched', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      const now = ts()
-      db.sessions.insert({
-        hostSessionId: 'hsid-nt',
-        scopeRef: scopeRef('nt'),
-        laneRef: 'default',
-        generation: 1,
-        status: 'active',
-        createdAt: now,
-        updatedAt: now,
-        ancestorScopeRefs: [],
-      })
-      db.runtimes.insert({
-        runtimeId: 'rt-nt',
-        hostSessionId: 'hsid-nt',
-        scopeRef: scopeRef('nt'),
-        laneRef: 'default',
-        generation: 1,
-        transport: 'headless',
-        harness: 'codex-cli',
-        provider: 'openai',
-        status: 'ready',
-        supportsInflightInput: true,
-        adopted: false,
-        lifecyclePolicyHash: 'lph-seed',
-        createdAt: now,
-        updatedAt: now,
-      })
-      expect(rawColumn(db, 'runtimes', 'lifecycle_policy_hash', 'runtime_id', 'rt-nt')).toBe(
-        'lph-seed'
-      )
-
-      // Force an explicit null through the typed API (the column is T|undefined
-      // at the contract level, but the binder/helper path must still null it).
-      db.runtimes.update('rt-nt', {
-        lifecyclePolicyHash: null,
-        updatedAt: ts(),
-      } as Parameters<typeof db.runtimes.update>[1])
-
-      expect(rawColumn(db, 'runtimes', 'lifecycle_policy_hash', 'runtime_id', 'rt-nt')).toBeNull()
-    } finally {
-      db.close()
-    }
-  })
 
   it('nulls broker_invocations.lifecycle_terminal_reason when an explicit null is patched', () => {
     const db = openHrcDatabase(dbPath)

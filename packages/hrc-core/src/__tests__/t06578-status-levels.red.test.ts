@@ -19,7 +19,6 @@ describe('T-06578 frozen runtime status levels', () => {
       exited: 'runtime-dead',
       starting: null,
       stopping: null,
-      adopted: null,
       detached: null,
     })
   })

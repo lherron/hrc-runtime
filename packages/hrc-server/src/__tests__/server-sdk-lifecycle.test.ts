@@ -20,7 +20,7 @@
  *   7. GET /v1/attach on SDK runtime returns error (attach not supported)
  *   8. Run record transitions: accepted → started → completed
  *   9. Runtime transitions: created → busy → ready after SDK dispatch
- *  10. harness_session_json persisted on runtime record after SDK turn
+ *  10. session continuation persisted after SDK turn
  *
  * Reference: wrkq T-00946 (agent-spaces/hrc/implementation-plan, archived).
  * The plan document itself no longer exists; docs/hrc-server-architecture.md
@@ -375,12 +375,6 @@ beforeEach(async () => {
         }
         expect(attachBody.error?.code).toBe('runtime_unavailable')
         expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
-
-        const launchesRes = await fetchSocket(
-          `/v1/launches?runtimeId=${encodeURIComponent(startData.runtimeId)}`
-        )
-        const launches = (await launchesRes.json()) as Array<{ lifecycleAction?: string }>
-        expect(launches.some((launch) => launch.lifecycleAction === 'attach')).toBe(false)
       },
       INTEGRATION_TIMEOUT_MS
     )

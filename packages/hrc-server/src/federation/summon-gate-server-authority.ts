@@ -5,7 +5,6 @@
 
 import { HrcConflictError, HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type { BirthDesignationEstablishmentDecision } from 'hrc-core'
-import type { SessionTaskClaimAuthority } from 'hrc-store-sqlite'
 
 import { assertLocalPersonaAllowed } from '../local-persona-policy.js'
 import { writeServerLog } from '../server-log.js'
@@ -19,73 +18,6 @@ import type {
 } from './summon-gate-server-placement.js'
 import { DIRECTIVE_REFUSAL_CODES } from './summon-gate-server-preflight.js'
 import { type SummonGateDeps, type SummonGateResult, evaluateSummonGate } from './summon-gate.js'
-import {
-  type TaskClaimAuthority,
-  type TaskClaimClient,
-  createTaskClaimClient,
-  taskClaimRequestForScope,
-} from './task-claim-client.js'
-
-function claimClientFor(server: SummonGateServerContext): TaskClaimClient {
-  return server.taskClaimClient ?? createTaskClaimClient()
-}
-
-async function releaseClaimBestEffort(
-  server: SummonGateServerContext,
-  authority: TaskClaimAuthority,
-  phase: 'establishment' | 'session-mint'
-): Promise<void> {
-  const parsed = taskClaimRequestForScope(authority.claimedScope)
-  if (parsed === undefined) {
-    writeServerLog('ERROR', 'federation.claim_birth.release_failed', {
-      taskId: authority.taskId,
-      claimedNode: authority.claimedNode,
-      claimGeneration: authority.claimGeneration,
-      phase,
-      diagnostic: 'persisted claimedScope is not a project task scope',
-      staleClaim: true,
-    })
-    return
-  }
-  try {
-    await claimClientFor(server).release(authority, parsed.projectId)
-    writeServerLog('INFO', 'federation.claim_birth.released_after_failure', {
-      taskId: authority.taskId,
-      claimedNode: authority.claimedNode,
-      claimGeneration: authority.claimGeneration,
-      phase,
-    })
-  } catch (error) {
-    writeServerLog('ERROR', 'federation.claim_birth.release_failed', {
-      taskId: authority.taskId,
-      claimedNode: authority.claimedNode,
-      claimGeneration: authority.claimGeneration,
-      phase,
-      diagnostic: error instanceof Error ? error.message : String(error),
-      staleClaim: true,
-    })
-  }
-}
-
-/** Persist bearer authority beside, never inside, the public session record. */
-export function persistSessionTaskClaimAuthority(
-  server: SummonGateServerContext,
-  hostSessionId: string,
-  authority: TaskClaimAuthority,
-  createdAt: string
-): SessionTaskClaimAuthority {
-  return server.db.sessionTaskClaimAuthorities.insert({
-    hostSessionId,
-    taskId: authority.taskId,
-    claimedBy: authority.claimedBy,
-    claimedScope: authority.claimedScope,
-    claimedNode: authority.claimedNode,
-    claimedAt: authority.claimedAt,
-    claimGeneration: authority.claimGeneration,
-    claimToken: authority.claimToken,
-    createdAt,
-  })
-}
 
 async function commitAuthorizedEstablishment(input: {
   deps: SummonGateDeps
@@ -306,24 +238,17 @@ export async function assertSummonAuthority(
   return await assertAuthority(server, request, false)
 }
 
-/** Session-mint boundary: unwind fresh claim authority if provisioning fails. */
+/** Session-mint boundary: authorize, then mint under the scope and session locks. */
 async function withAuthority<T>(
   server: SummonGateServerContext,
   request: SummonAuthorityRequest,
-  mint: (claimAuthority: TaskClaimAuthority | undefined) => T | Promise<T>,
+  mint: () => T | Promise<T>,
   participantClaim: boolean
 ): Promise<T> {
   return await withScopeSummonLock(server as object, request.scopeRef, async () => {
     const authorizeAndMint = async () => {
-      const authority = await assertAuthority(server, request, participantClaim)
-      try {
-        return await mint(authority?.claimAuthority)
-      } catch (error) {
-        if (authority?.claimAuthority !== undefined) {
-          await releaseClaimBestEffort(server, authority.claimAuthority, 'session-mint')
-        }
-        throw error
-      }
+      await assertAuthority(server, request, participantClaim)
+      return await mint()
     }
     return request.laneRef === undefined
       ? await authorizeAndMint()
@@ -339,7 +264,7 @@ async function withAuthority<T>(
 export async function withSummonAuthority<T>(
   server: SummonGateServerContext,
   request: SummonAuthorityRequest,
-  mint: (claimAuthority: TaskClaimAuthority | undefined) => T | Promise<T>
+  mint: () => T | Promise<T>
 ): Promise<T> {
   return await withAuthority(server, request, mint, false)
 }
@@ -348,7 +273,7 @@ export async function withSummonAuthority<T>(
 export async function withParticipantAddressAuthority<T>(
   server: SummonGateServerContext,
   address: { scopeRef: string; laneRef: string },
-  mint: (claimAuthority: TaskClaimAuthority | undefined) => T | Promise<T>
+  mint: () => T | Promise<T>
 ): Promise<T> {
   return await withAuthority(
     server,

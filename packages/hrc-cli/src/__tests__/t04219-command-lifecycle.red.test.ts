@@ -13,7 +13,7 @@
  *     • Output JSON MUST include `kind` field + concrete IDs (stable shape)
  *
  * #4  `hrc ls <noun>` — top-level polymorphic read.
- *     • Nouns: runtimes | sessions | launches | messages
+ *     • Nouns: runtimes | sessions | messages
  *     • JSON array output (same shape as the noun-owned list commands)
  *
  * #5  Admin relocation.
@@ -319,7 +319,6 @@ async function seedSessionAndRuntime(
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       createdAt: timestamp,
       updatedAt: timestamp,
     })

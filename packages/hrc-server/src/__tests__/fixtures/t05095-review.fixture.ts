@@ -194,7 +194,6 @@ export function createT05095Helpers(
         // points at a live run. Queue capability must not override explicit reject.
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         controllerKind: 'harness-broker',
         activeOperationId: operationId,
         activeInvocationId: input.invocationId,
@@ -272,7 +271,6 @@ export function createT05095Helpers(
         provider,
         status: input.status ?? 'ready',
         supportsInflightInput: false,
-        adopted: false,
         controllerKind: 'harness-broker',
         activeOperationId: operationId,
         activeInvocationId: input.invocationId,
@@ -417,7 +415,6 @@ export function createT05095Helpers(
         provider: PROVIDER,
         status: 'ready',
         supportsInflightInput: false,
-        adopted: false,
         controllerKind: 'harness-broker',
         activeOperationId: operationId,
         activeInvocationId: input.invocationId,

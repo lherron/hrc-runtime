@@ -78,7 +78,6 @@ afterEach(async () => {
 function coldRuntime(session: HrcSessionRecord, suffix: string): HrcRuntimeSnapshot {
   return {
     runtimeId: `rt-t08531-${suffix}`,
-    runtimeKind: 'harness',
     hostSessionId: session.hostSessionId,
     scopeRef: session.scopeRef,
     laneRef: session.laneRef,
@@ -88,7 +87,6 @@ function coldRuntime(session: HrcSessionRecord, suffix: string): HrcRuntimeSnaps
     provider: 'anthropic',
     status: 'starting',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     activeOperationId: `op-t08531-${suffix}`,
     activeInvocationId: `inv-t08531-${suffix}`,

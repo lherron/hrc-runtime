@@ -1,6 +1,5 @@
 import type {
   EnsureRuntimeResponse,
-  HrcManagedSessionRecord,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
   HrcStatusActiveRuntimeView,
@@ -8,27 +7,11 @@ import type {
   HrcStatusTmuxView,
   StartRuntimeResponse,
 } from 'hrc-core'
-import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 import { requireTmuxPane } from './require-helpers.js'
 import { findLatestSessionRuntime } from './runtime-select.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 import type { TmuxPaneState } from './tmux.js'
-
-export function toManagedSessionRecord(record: AppManagedSessionRecord): HrcManagedSessionRecord {
-  return {
-    appId: record.appId,
-    appSessionKey: record.appSessionKey,
-    kind: record.kind,
-    label: record.label,
-    metadata: record.metadata,
-    activeHostSessionId: record.activeHostSessionId,
-    generation: record.generation,
-    status: record.status,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    removedAt: record.removedAt,
-  }
-}
 
 export function toTmuxJson(tmuxPane: TmuxPaneState): Record<string, unknown> {
   return {

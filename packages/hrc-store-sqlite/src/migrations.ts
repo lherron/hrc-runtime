@@ -3,6 +3,7 @@ import type { Database } from 'bun:sqlite'
 import { brokerMigrations } from './migrations/broker-migrations.js'
 import { runtimeLegacyIdentityNullableMigration } from './migrations/runtime-legacy-identity-nullability.js'
 import { schemaMigrations } from './migrations/schema-migrations.js'
+import { sessionStateDeadFieldRemoval } from './migrations/session-state-dead-field-removal.js'
 import { sessionTitleCascadeMigrations } from './migrations/session-title-cascade-migrations.js'
 import { sessionTitleMigrations } from './migrations/session-title-migrations.js'
 import { type HrcMigration, execute } from './migrations/types.js'
@@ -17,6 +18,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   // Must run after broker migrations have added every runtime column that the
   // nullable-identity rebuild preserves.
   runtimeLegacyIdentityNullableMigration,
+  sessionStateDeadFieldRemoval,
 ]
 
 /**
@@ -237,42 +239,32 @@ export function runMigrations(db: Database): void {
     // and the migration it attributes land together or not at all. Safe here
     // because the full pending set has been applied: hrc_events is at its
     // final shape for this release.
-    if (upgradingExistingStore) {
+    if (upgradingExistingStore && migrations.at(-1)?.id === pending.at(-1)?.id) {
       recordMigrationApplication(
         db,
-        migrations.map((migration) => migration.id)
+        pending.map((migration) => migration.id)
       )
     }
   })
 
-  const foreignKeyRebuild = pending.find((migration) => migration.requiresForeignKeysDisabled)
-  if (foreignKeyRebuild === undefined) {
-    applyPending.immediate(pending)
-  } else {
-    const before = pending.slice(0, pending.indexOf(foreignKeyRebuild))
-    if (before.length > 0) applyPending.immediate(before)
-
-    // SQLite cannot drop a referenced table while FK enforcement is active.
-    // This dedicated migration copies the parent under the same public name,
-    // so its already-copied keys satisfy every child when enforcement returns.
+  // Each rebuild must run outside a transaction with FK enforcement disabled.
+  // More than one release migration may rebuild a referenced parent.
+  let batch: HrcMigration[] = []
+  for (const migration of pending) {
+    if (!migration.requiresForeignKeysDisabled) {
+      batch.push(migration)
+      continue
+    }
+    if (batch.length > 0) applyPending.immediate(batch)
+    batch = []
     db.exec('PRAGMA foreign_keys = OFF;')
     try {
-      db.transaction((migration: HrcMigration) => {
-        migration.apply(db)
-        execute(
-          db,
-          'INSERT INTO hrc_migrations (id, applied_at) VALUES (?, ?)',
-          migration.id,
-          new Date().toISOString()
-        )
-      })(foreignKeyRebuild)
+      applyPending.immediate([migration])
     } finally {
       db.exec('PRAGMA foreign_keys = ON;')
     }
-
-    const after = pending.slice(pending.indexOf(foreignKeyRebuild) + 1)
-    if (after.length > 0) applyPending.immediate(after)
   }
+  if (batch.length > 0) applyPending.immediate(batch)
 
   if (upgradingExistingStore) {
     const actor = resolveMigrationActor()

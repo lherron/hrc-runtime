@@ -5,7 +5,6 @@ import type { HrcAttachmentRef as AttachmentRef } from './placement-conventions.
  * Canonical source for R-3 deduplication (T-00990).
  */
 import type {
-  HrcCommandLaunchSpec,
   HrcDispatchOrigin,
   HrcExecutionFormat,
   HrcInputCorrelationFact,
@@ -91,24 +90,6 @@ export type ResolveSessionMissResponse = {
 }
 
 export type ResolveSessionResponse = ResolveSessionFoundResponse | ResolveSessionMissResponse
-
-export type ApplyAppSessionInput = {
-  appSessionKey: string
-  label?: string | undefined
-  metadata?: Record<string, unknown> | undefined
-}
-
-export type ApplyAppSessionsRequest = {
-  appId: string
-  hostSessionId: string
-  sessions: ApplyAppSessionInput[]
-}
-
-export type ApplyAppSessionsResponse = {
-  inserted: number
-  updated: number
-  removed: number
-}
 
 // -- Runtime management -------------------------------------------------------
 
@@ -324,17 +305,6 @@ export type OpenBrokerSessionResponse = {
     }
   }
   supportsInputQueue: boolean
-}
-
-export type EnsureWindowRequest = {
-  sessionRef: HrcSessionRef
-  command: HrcCommandLaunchSpec
-  restartStyle?: RestartStyle | undefined
-  forceRestart?: boolean | undefined
-}
-
-export type EnsureWindowResponse = EnsureRuntimeResponse & {
-  generation: number
 }
 
 // -- Execution / dispatch -----------------------------------------------------

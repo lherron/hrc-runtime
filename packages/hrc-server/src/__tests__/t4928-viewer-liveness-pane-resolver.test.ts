@@ -44,7 +44,6 @@ function makeViewerRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): HrcRunt
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     controllerKind: 'harness-broker',
     tmuxJson: undefined,
     runtimeStateJson: {

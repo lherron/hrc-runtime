@@ -3,7 +3,7 @@
  *
  * Tests the public surface of openHrcDatabase():
  *   - Fresh migration applies Phase 1 schema
- *   - CRUD for each repository (continuities, sessions, runtimes, runs, launches, events, surface_bindings, runtime_buffers)
+ *   - CRUD for each repository (continuities, sessions, runtimes, runs, events, surface_bindings, runtime_buffers)
  *   - Monotonic event seq ordering
  *   - JSON round-trip for intent/continuation/tmux_json
  *   - Concurrent read safety with WAL mode
@@ -24,7 +24,6 @@ import { join } from 'node:path'
 export type {
   HrcContinuationRef,
   HrcEventEnvelope,
-  HrcLaunchRecord,
   HrcRunRecord,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,

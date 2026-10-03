@@ -9,7 +9,6 @@ import type {
   ParticipantLifecycleOwner,
   ParticipantRecoveryDisposition,
   ParticipantRegistration,
-  ParticipantRegistrationMode,
   ParticipantRegistrationPolicy,
   ParticipantReplaySemantics,
   ParticipantResumeState,
@@ -17,9 +16,7 @@ import type {
 
 export type ParticipantRegistrationRow = {
   registration_id: string
-  registration_mode: ParticipantRegistrationMode
   class_id: string | null
-  adapter_id: string | null
   join_direction: 'hrc-hosted' | 'participant-served'
   participant_key: string | null
   scope_ref: string
@@ -28,8 +25,6 @@ export type ParticipantRegistrationRow = {
   generation: number
   workspace_cwd: string | null
   serving_socket_path: string | null
-  preparation_json: string | null
-  continuity_evidence_json: string | null
   address_policy: ParticipantAddressPolicy | null
   continuity_policy: ParticipantContinuityPolicy | null
   lifecycle_owner: ParticipantLifecycleOwner | null
@@ -55,7 +50,6 @@ export type ParticipantAttemptRow = {
   realized_hosting_json: string | null
   dispatch_json: string | null
   broker_identity_json: string | null
-  continuity_evidence_json: string | null
   activation_classification: ParticipantActivationClassification | null
   writer_evidence_json: string | null
   initial_activation_confirmed_at: string | null
@@ -78,9 +72,9 @@ export type ParticipantAttemptRow = {
 }
 
 export const REGISTRATION_COLUMNS = `
-  registration_id, registration_mode, class_id, adapter_id, join_direction, participant_key,
+  registration_id, class_id, join_direction, participant_key,
   scope_ref, lane_ref, host_session_id, generation, workspace_cwd,
-  serving_socket_path, preparation_json, continuity_evidence_json,
+  serving_socket_path,
   address_policy, continuity_policy, lifecycle_owner, replay_semantics,
   host_incarnation_id, created_at, updated_at`
 
@@ -89,7 +83,7 @@ export const ATTEMPT_COLUMNS = `
   host_binding_id, state,
   prepared_profile_json, adapter_dispatch_env_json, hosting_intent_json,
   realized_hosting_json, dispatch_json, broker_identity_json, initial_activation_confirmed_at,
-  continuity_evidence_json, activation_classification, writer_evidence_json,
+  activation_classification, writer_evidence_json,
   recovery_disposition, recovery_reason, establishment_work_state, establishment_attempt_count,
   establishment_next_attempt_at, establishment_last_error, attach_socket_path,
   continuation_carried, continuation_reason, continuation_selected_json,
@@ -121,7 +115,7 @@ export function isNonRunnableEstablishmentAttempt(attempt: ParticipantAttempt): 
 
 export function mapRegistration(row: ParticipantRegistrationRow): ParticipantRegistration {
   // The four policy columns are written together or not at all (the CHECK on
-  // registration_mode = 'direct' enforces it), so one non-null value is enough
+  // = 'direct' enforces it), so one non-null value is enough
   // to know the whole record is there.
   const policy: ParticipantRegistrationPolicy | null =
     row.address_policy === null ||
@@ -137,9 +131,7 @@ export function mapRegistration(row: ParticipantRegistrationRow): ParticipantReg
         }
   return {
     registrationId: row.registration_id,
-    registrationMode: row.registration_mode,
     ...(row.class_id === null ? {} : { classId: row.class_id }),
-    ...(row.adapter_id === null ? {} : { adapterId: row.adapter_id }),
     join: row.join_direction,
     ...(row.participant_key === null ? {} : { participantKey: row.participant_key }),
     scopeRef: row.scope_ref,
@@ -148,10 +140,6 @@ export function mapRegistration(row: ParticipantRegistrationRow): ParticipantReg
     generation: row.generation,
     ...(row.workspace_cwd === null ? {} : { workspaceCwd: row.workspace_cwd }),
     ...(row.serving_socket_path === null ? {} : { socketPath: row.serving_socket_path }),
-    ...(row.preparation_json === null ? {} : { preparationJson: row.preparation_json }),
-    ...(row.continuity_evidence_json === null
-      ? {}
-      : { continuityEvidenceJson: row.continuity_evidence_json }),
     ...(policy === null ? {} : { policy }),
     ...(row.host_incarnation_id === null ? {} : { hostIncarnationId: row.host_incarnation_id }),
     createdAt: row.created_at,
@@ -182,9 +170,6 @@ export function mapAttempt(row: ParticipantAttemptRow): ParticipantAttempt {
       : { realizedHostingJson: row.realized_hosting_json }),
     ...(row.dispatch_json === null ? {} : { dispatchJson: row.dispatch_json }),
     ...(row.broker_identity_json === null ? {} : { brokerIdentityJson: row.broker_identity_json }),
-    ...(row.continuity_evidence_json === null
-      ? {}
-      : { continuityEvidenceJson: row.continuity_evidence_json }),
     ...(row.activation_classification === null
       ? {}
       : { activationClassification: row.activation_classification }),

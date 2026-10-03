@@ -185,6 +185,9 @@ describe('T-08526 evidence-less participant transport succession', () => {
       created: true,
       identity: { generation: 2 },
     })
+    expect(server!.db.sessions.getByHostSessionId(prior.first.identity.hostSessionId)?.status).toBe(
+      'archived'
+    )
     expect(probeCalls).toEqual([prior.endpoint])
     const retiredAttempt = server!.db.participantRegistrations.getAttempt(prior.attemptId)!
     const evidence = JSON.parse(retiredAttempt.writerEvidenceJson!) as WriterEvidence

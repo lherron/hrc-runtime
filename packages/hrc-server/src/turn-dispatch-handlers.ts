@@ -17,7 +17,6 @@ import { handleSubmission } from './turn-dispatch-submission-handlers.js'
 import { handlePreemptAdmission } from './turn-dispatch-submission-support.js'
 
 export {
-  admitSubmissionTarget,
   handlePreemptAdmission,
   isOperatorPrincipal,
   preemptAdmission,

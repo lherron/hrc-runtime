@@ -103,7 +103,6 @@ async function seedBrokerInvocationInFixture(): Promise<void> {
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
 
     db.runtimes.insert({
@@ -117,7 +116,6 @@ async function seedBrokerInvocationInFixture(): Promise<void> {
       provider: 'openai',
       status: 'starting',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: 'op_broker_w3a',
       createdAt: now,

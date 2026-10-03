@@ -83,7 +83,6 @@ function seedSessionAndRuntime(
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 
   db.runtimes.insert({
@@ -97,7 +96,6 @@ function seedSessionAndRuntime(
     provider: 'anthropic',
     status: 'ready',
     supportsInflightInput: false,
-    adopted: false,
     createdAt: now,
     updatedAt: now,
   })

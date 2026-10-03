@@ -4,7 +4,6 @@ import type { HrcDatabase, HrcLifecycleEventInput } from 'hrc-store-sqlite'
 
 const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'session.created': 'session',
-  'session.resolved': 'session',
   'session.generation_auto_rotated': 'session',
   'session.continuation_dropped': 'session',
   // T-09872 `hrc restartme`: arm/cancel/execute of an agent's own restart.
@@ -15,9 +14,6 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   // session-title write/clear becomes a ledger fact so a presentation consumer
   // can retitle from the stream instead of polling.
   'session.retitled': 'session',
-  'app-session.created': 'app_session',
-  'app-session.removed': 'app_session',
-  'app-session.literal-input': 'app_session',
   'target.literal-input': 'app_session',
   'runtime.created': 'runtime',
   'runtime.ensured': 'runtime',
@@ -30,7 +26,6 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'runtime.crashed': 'runtime',
   'runtime.stale': 'runtime',
   'runtime.reassociated': 'runtime',
-  'runtime.adopted': 'runtime',
   // T-07594 §5.2: one invocation's presentation decision. Appended at the exact
   // point the in-daemon viewer spawn happens today — after the `:tui` substrate
   // exists — so a consumer needs no readiness race and no effectful read.

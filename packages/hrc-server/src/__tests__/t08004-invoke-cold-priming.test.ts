@@ -110,7 +110,6 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
     if (session === null) throw new Error('T-08004 fixture session missing')
     const runtime: HrcRuntimeSnapshot = {
       runtimeId: 'rt-t08004-single-turn',
-      runtimeKind: 'harness',
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
@@ -120,7 +119,6 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
       provider: 'anthropic',
       status: 'starting',
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: 'op-t08004-single-turn',
       activeInvocationId: 'inv-t08004-single-turn',
@@ -206,7 +204,6 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
     const firstRunId = 'run-t08012-launch-carried'
     const runtime: HrcRuntimeSnapshot = {
       runtimeId: 'rt-t08012-crossing',
-      runtimeKind: 'harness',
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
@@ -216,7 +213,6 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
       provider: 'anthropic',
       status: 'busy',
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeRunId: firstRunId,
       activeOperationId: 'op-t08012-crossing',

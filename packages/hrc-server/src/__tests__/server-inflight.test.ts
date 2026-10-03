@@ -59,7 +59,6 @@ function seedSdkActiveRuntime(input: {
       status: 'active',
       createdAt: timestamp,
       updatedAt: timestamp,
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId: input.runtimeId,
@@ -72,7 +71,6 @@ function seedSdkActiveRuntime(input: {
       provider: input.provider ?? 'anthropic',
       status: 'busy',
       supportsInflightInput: input.supportsInflightInput ?? true,
-      adopted: false,
       activeRunId: input.runId,
       lastActivityAt: timestamp,
       createdAt: timestamp,
@@ -123,7 +121,6 @@ function seedTmuxRuntime(hostSessionId: string, runtimeId: string): void {
         paneId: '%legacy',
       },
       supportsInflightInput: false,
-      adopted: false,
       lastActivityAt: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp,

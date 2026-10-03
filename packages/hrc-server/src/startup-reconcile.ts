@@ -1,10 +1,4 @@
-import { HrcErrorCode } from 'hrc-core'
-import type {
-  HrcLaunchRecord,
-  HrcLifecycleEvent,
-  HrcRuntimeSnapshot,
-  HrcSessionRecord,
-} from 'hrc-core'
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import {
   decideLegacyRuntimeStartupDisposition,
@@ -25,10 +19,7 @@ import {
 } from './broker/runtime-hosting.js'
 import { extractRuntimeControlState } from './broker/runtime-state.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
-import { appendHrcEvent } from './hrc-event-helper.js'
-import { isRunActive, requireSession } from './require-helpers.js'
-import { runtimeActivityPatch } from './runtime-activity.js'
-import { isLiveProcess } from './server-lock.js'
+import { requireSession } from './require-helpers.js'
 import { writeServerLog } from './server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
 import {
@@ -50,10 +41,7 @@ import {
   markRuntimeDead,
   markRuntimeStale,
 } from './startup-reconcile/runtime-mutations.js'
-import {
-  DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS,
-  HRC_REAPED_RUN_ERROR_MESSAGE,
-} from './startup-reconcile/types.js'
+import { DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS } from './startup-reconcile/types.js'
 import type {
   BrokerReattachOutcome,
   BrokerReattachProbe,
@@ -107,47 +95,6 @@ export async function reconcileStartupState(
     })
   }
 
-  for (const launch of db.launches.listAll()) {
-    if (!isOrphanableLaunchStatus(launch.status)) {
-      continue
-    }
-
-    try {
-      const trackedPid = getTrackedLaunchPid(launch)
-      if (trackedPid === undefined || isLiveProcess(trackedPid)) {
-        continue
-      }
-
-      const session = requireSession(db, launch.hostSessionId)
-      const now = timestamp()
-      const runtime = launch.runtimeId ? db.runtimes.getByRuntimeId(launch.runtimeId) : null
-      const activeRunId = runtime?.activeRunId
-      db.launches.update(launch.launchId, {
-        status: 'orphaned',
-        updatedAt: now,
-      })
-      appendHrcEvent(db, 'launch.orphaned', {
-        ts: now,
-        hostSessionId: session.hostSessionId,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        generation: session.generation,
-        runtimeId: launch.runtimeId,
-        runId: activeRunId,
-        launchId: launch.launchId,
-        payload: {
-          pid: trackedPid,
-          priorStatus: launch.status,
-        },
-      })
-      if (runtime?.transport === 'headless' && !isExternalLifecycleOwner(runtime) && activeRunId) {
-        reapStartupHeadlessOrphan(db, session, runtime, launch, activeRunId, now)
-      }
-    } catch (error) {
-      logStartupIssue('launch reconciliation failed', { launchId: launch.launchId }, error)
-    }
-  }
-
   for (const runtime of db.runtimes.listAll()) {
     if (isExternalLifecycleOwner(runtime)) {
       continue
@@ -174,26 +121,6 @@ export async function reconcileStartupState(
     }
 
     try {
-      const runtimeLaunches = db.launches.listByRuntimeId(runtime.runtimeId)
-      const currentRuntimeLaunches = runtimeLaunches.filter(
-        (launch) =>
-          launch.hostSessionId === runtime.hostSessionId && launch.generation === runtime.generation
-      )
-      const launchBecameOrphaned =
-        currentRuntimeLaunches.length > 0 &&
-        currentRuntimeLaunches.every((launch) => launch.status === 'orphaned') &&
-        (runtime.launchId === undefined ||
-          currentRuntimeLaunches.some((launch) => launch.launchId === runtime.launchId))
-      if (launchBecameOrphaned) {
-        markRuntimeStale(db, requireSession(db, runtime.hostSessionId), runtime, {
-          runtimeId: runtime.runtimeId,
-          reason: 'launch_orphaned',
-          priorStatus: runtime.status,
-          ...(runtime.launchId ? { launchId: runtime.launchId } : {}),
-        })
-        continue
-      }
-
       const tmuxSessionName = getObservedTmuxSessionName(runtime)
       if (!tmuxSessionName) {
         continue
@@ -341,7 +268,7 @@ export async function reconcileStartupState(
         transport: runtime.transport,
         status: runtime.status,
         brokerTmuxSocketPath: getBrokerRuntimeTmuxSocketPath(runtime),
-        hasAttachDescriptor: runtime.surfaceJson !== undefined || runtime.tmuxJson !== undefined,
+        hasAttachDescriptor: runtime.tmuxJson !== undefined,
       })
       if (decision.disposition !== 'stale') {
         continue
@@ -351,7 +278,6 @@ export async function reconcileStartupState(
         reason: decision.reason,
         priorStatus: runtime.status,
         sweep: 'legacy_startup_reconciliation',
-        ...(runtime.launchId ? { launchId: runtime.launchId } : {}),
       })
     } catch (error) {
       logStartupIssue('legacy runtime sweep failed', { runtimeId: runtime.runtimeId }, error)
@@ -735,79 +661,4 @@ function resolveHolderEnumerationTimeoutMs(): number | undefined {
   if (raw === undefined) return undefined
   const parsed = Number.parseInt(raw, 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
-}
-
-function isOrphanableLaunchStatus(status: string): boolean {
-  return status === 'started' || status === 'wrapper_started' || status === 'child_started'
-}
-
-function getTrackedLaunchPid(launch: HrcLaunchRecord): number | undefined {
-  if (launch.status === 'started') {
-    return launch.wrapperPid
-  }
-
-  if (launch.status === 'child_started') {
-    return launch.childPid ?? launch.wrapperPid
-  }
-
-  if (launch.status === 'wrapper_started') {
-    return launch.wrapperPid
-  }
-
-  return undefined
-}
-
-function reapStartupHeadlessOrphan(
-  db: HrcDatabase,
-  session: HrcSessionRecord,
-  runtime: HrcRuntimeSnapshot,
-  launch: HrcLaunchRecord,
-  runId: string,
-  now: string
-): HrcLifecycleEvent | null {
-  const run = db.runs.getByRunId(runId)
-  if (!run || !isRunActive(run) || run.transport !== 'headless') {
-    return null
-  }
-
-  db.runs.markCompleted(runId, {
-    status: 'failed',
-    completedAt: now,
-    updatedAt: now,
-    errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
-    errorMessage: `${HRC_REAPED_RUN_ERROR_MESSAGE}: orphaned-headless`,
-  })
-  db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
-  db.runtimes.update(runtime.runtimeId, {
-    status: 'stale',
-    statusChangedAt: now,
-    ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
-  })
-
-  return appendHrcEvent(db, 'turn.reaped', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    runId,
-    transport: 'headless',
-    errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
-    payload: {
-      runId,
-      runtimeId: runtime.runtimeId,
-      reason: 'orphaned-headless',
-      lastObservedAt: now,
-      observedSource: 'updated_at',
-      priorRunStatus: run.status,
-      priorRuntimeStatus: runtime.status,
-      nextRuntimeStatus: 'stale',
-      launchId: launch.launchId,
-      launchStatus: 'orphaned',
-      wrapperPid: launch.wrapperPid,
-      childPid: launch.childPid,
-      runtimeOwnershipCleared: true,
-    },
-  })
 }

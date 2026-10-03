@@ -424,8 +424,8 @@ The output always names the resolved kind and the concrete ID(s).
   program
     .command('ls')
     .alias('list')
-    .description('list runtimes | sessions | launches | messages')
-    .argument('[noun]', 'runtimes | sessions | launches | messages')
+    .description('list runtimes | sessions | messages')
+    .argument('[noun]', 'runtimes | sessions | messages')
     .option('--json', 'output as JSON')
     .allowUnknownOption(true)
     .allowExcessArguments(true)

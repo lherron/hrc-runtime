@@ -20,7 +20,6 @@ import {
 } from '../selector-resolve.js'
 import { hasFlag, parseFlag, parseTransportFlag, splitCsv } from './argv.js'
 import { requireArg } from './argv.js'
-import { throwIfHrcDomainError } from './errors.js'
 import {
   formatAgeSec,
   formatCaptureState,
@@ -174,17 +173,6 @@ export async function cmdRuntimeStatus(args: string[]): Promise<void> {
   )
 }
 
-export async function cmdLaunchList(args: string[]): Promise<void> {
-  const hostSessionId = parseFlag(args, '--host-session-id')
-  const runtimeId = parseFlag(args, '--runtime-id')
-  const client = createClient()
-  const launches = await client.listLaunches({
-    ...(hostSessionId ? { hostSessionId } : {}),
-    ...(runtimeId ? { runtimeId } : {}),
-  })
-  printJson(launches)
-}
-
 // ── hrc show / hrc ls (T-04219 P2 — context-aware viewer + noun lister) ───────
 
 /**
@@ -300,7 +288,7 @@ export async function cmdShow(args: string[]): Promise<void> {
   await renderShowMessage(client, target, jsonOutput)
 }
 
-const LS_NOUNS = ['runtimes', 'sessions', 'launches', 'messages'] as const
+const LS_NOUNS = ['runtimes', 'sessions', 'messages'] as const
 
 export async function cmdLs(noun: string | undefined, rest: string[]): Promise<void> {
   if (noun === undefined) {
@@ -312,9 +300,6 @@ export async function cmdLs(noun: string | undefined, rest: string[]): Promise<v
       return
     case 'sessions':
       await cmdSessionList(rest)
-      return
-    case 'launches':
-      await cmdLaunchList(rest)
       return
     case 'messages': {
       const client = createClient()
@@ -457,18 +442,5 @@ function printFirstTurnTripDetail(result: GetFirstTurnDiagnosticsResponse): void
   } else {
     process.stdout.write(`  capturedAt ${bundle.paneCapture.capturedAt}\n`)
     process.stdout.write(`${bundle.paneCapture.text}\n`)
-  }
-}
-
-export async function cmdAdopt(args: string[]): Promise<void> {
-  const runtimeArg = requireArg(args, 0, '<runtimeId>')
-  const client = createClient()
-  try {
-    const runtimeId = await resolveRuntimeArg(runtimeArg, client)
-    const result = await client.adoptRuntime(runtimeId)
-    printJson(result)
-  } catch (err) {
-    throwIfHrcDomainError(err)
-    throw err
   }
 }

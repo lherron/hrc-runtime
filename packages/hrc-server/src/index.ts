@@ -15,11 +15,6 @@ import {
 } from './accepted-run-recovery-handlers.js'
 import { AcpEventBridge } from './acp-event-bridge.js'
 import {
-  type AppSessionHandlersMethods,
-  appSessionHandlersMethods,
-} from './app-session-handlers.js'
-import { currentAppBirthRunReservationToken } from './app-session-identity.js'
-import {
   type BridgeSurfaceHandlersMethods,
   bridgeSurfaceHandlersMethods,
 } from './bridge-surface-handlers.js'
@@ -91,7 +86,6 @@ import {
   resolveStaleGenerationThresholdSec,
   resolveTmuxAgingEnabled,
 } from './option-resolvers.js'
-import { ParticipantAdapterRegistry } from './participant-adapter-registry.js'
 import {
   type ParticipantAttachHandlersMethods,
   participantAttachHandlersMethods,
@@ -138,7 +132,7 @@ import {
   runtimeInspectHandlersMethods,
 } from './runtime-inspect-handlers.js'
 import { type RuntimeIoHandlersMethods, runtimeIoHandlersMethods } from './runtime-io-handlers.js'
-import { createRuntimeListAdoptRoutes } from './runtime-list-adopt-handlers.js'
+import { createRuntimeListRoutes } from './runtime-list-handlers.js'
 import { type SdkTurnHandlersMethods, sdkTurnHandlersMethods } from './sdk-turn-handlers.js'
 import {
   type SeatWithdrawHandlersMethods,
@@ -287,7 +281,6 @@ function recordSqliteSlowStatement(
 
 export interface HrcServerInstance
   extends AcceptedRunRecoveryHandlersMethods,
-    AppSessionHandlersMethods,
     EventHandlersMethods,
     TurnDispatchHandlersMethods,
     BrokerInteractiveHandlersMethods,
@@ -543,13 +536,10 @@ export class HrcServerInstance implements HrcServer {
             nodeId: this.federationNodeId,
           })
         : undefined
-    for (const route of createRuntimeListAdoptRoutes({
+    for (const route of createRuntimeListRoutes({
       db: this.db,
-      runtimeRoot: this.options.runtimeRoot,
       staleGenerationThresholdSec: this.staleGenerationThresholdSec,
       reconcileTmuxRuntimeLiveness: (runtime) => this.reconcileTmuxRuntimeLiveness(runtime),
-      notifyEvent: (event) => this.notifyEvent(event),
-      brokerReattachOperations: this.brokerReattachOperations,
     })) {
       this.exactRouteHandlers[exactRouteKey(route.method, route.pathname)] = route.handler
     }
@@ -727,7 +717,6 @@ export type HrcServerInstanceClassBodyMethods = {
 Object.assign(
   HrcServerInstance.prototype,
   acceptedRunRecoveryHandlersMethods,
-  appSessionHandlersMethods,
   eventHandlersMethods,
   turnDispatchHandlersMethods,
   brokerInteractiveHandlersMethods,
@@ -765,15 +754,12 @@ Object.assign(
 
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {
   const registrationClasses = await resolveRegistrationClasses(options.registrationClasses)
-  const participantAdapterRegistry =
-    options.participantAdapterRegistry ?? new ParticipantAdapterRegistry([])
   const resolvedOptions: HrcServerOptions = {
     ...options,
     sqliteBusyTimeoutMs: resolveSqliteBusyTimeoutMs(options.sqliteBusyTimeoutMs),
     localPersonaAllowlist: normalizeLocalPersonaAllowlist(options.localPersonaAllowlist),
     commandRunTargets: await resolveCommandRunTargets(options.commandRunTargets),
     registrationClasses,
-    participantAdapterRegistry,
   }
   const logCtx = {
     runtimeRoot: resolvedOptions.runtimeRoot,
@@ -845,12 +831,6 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
         )
       },
     })
-    // T-08576 D5 rev 8: holder writes carry the reservation token through the
-    // app identity owner context only.
-    const ownedDb = db
-    db.runIdOwnership.setReservationTokenReader((runId) =>
-      currentAppBirthRunReservationToken(ownedDb, runId)
-    )
     const backfilledContinuationClears = backfillLegacyContinuationClearBarriers(db)
     if (backfilledContinuationClears > 0) {
       writeServerLog('INFO', 'server.start.continuation_clear_barriers_backfilled', {
@@ -858,10 +838,9 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       })
     }
     const continuationHistoryRepair = repairContinuationHistory(db)
-    if (continuationHistoryRepair.sessions > 0 || continuationHistoryRepair.runtimes > 0) {
+    if (continuationHistoryRepair.sessions > 0) {
       writeServerLog('INFO', 'server.start.continuation_history_repaired', {
         sessions: continuationHistoryRepair.sessions,
-        runtimes: continuationHistoryRepair.runtimes,
       })
     }
     const livePlacementRepairCandidates = captureLivePlacementRepairCandidates(db)

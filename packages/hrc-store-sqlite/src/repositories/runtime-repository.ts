@@ -17,47 +17,29 @@ import {
 
 const RUNTIME_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RuntimeUpdatePatch>> = [
   { key: 'hostSessionId', column: 'host_session_id' },
-  { key: 'runtimeKind', column: 'runtime_kind' },
   { key: 'scopeRef', column: 'scope_ref' },
   { key: 'laneRef', column: 'lane_ref' },
   { key: 'generation', column: 'generation' },
-  { key: 'launchId', column: 'launch_id' },
   { key: 'transport', column: 'transport' },
   { key: 'harness', column: 'harness' },
   { key: 'provider', column: 'provider' },
   { key: 'status', column: 'status' },
   { key: 'statusChangedAt', column: 'status_changed_at' },
   { key: 'tmuxJson', column: 'tmux_json', transform: (v) => serializeJson(v) },
-  { key: 'surfaceJson', column: 'surface_json', transform: (v) => serializeJson(v) },
-  { key: 'wrapperPid', column: 'wrapper_pid' },
-  { key: 'childPid', column: 'child_pid' },
-  {
-    key: 'harnessSessionJson',
-    column: 'harness_session_json',
-    transform: (v) => serializeJson(v),
-  },
-  { key: 'commandSpec', column: 'command_spec_json', transform: (v) => serializeJson(v) },
-  { key: 'continuation', column: 'continuation_json', transform: (v) => serializeJson(v) },
   {
     key: 'supportsInflightInput',
     column: 'supports_inflight_input',
     transform: (v) => toSqliteBoolean(v as boolean),
   },
-  { key: 'adopted', column: 'adopted', transform: (v) => toSqliteBoolean(v as boolean) },
   { key: 'activeRunId', column: 'active_run_id' },
   { key: 'lastActivityAt', column: 'last_activity_at' },
   { key: 'controllerKind', column: 'controller_kind' },
   { key: 'activeOperationId', column: 'active_operation_id' },
   { key: 'activeInvocationId', column: 'active_invocation_id' },
-  { key: 'compileId', column: 'compile_id' },
   { key: 'planHash', column: 'plan_hash' },
   { key: 'selectedProfileHash', column: 'selected_profile_hash' },
   { key: 'runtimeStateJson', column: 'runtime_state_json', transform: (v) => serializeJson(v) },
-  { key: 'lifecyclePolicyHash', column: 'lifecycle_policy_hash' },
-  { key: 'currentHarnessGeneration', column: 'current_harness_generation' },
-  { key: 'currentTurnAttempt', column: 'current_turn_attempt' },
   { key: 'lifecycleTerminalReason', column: 'lifecycle_terminal_reason' },
-  { key: 'lastLifecycleEscalationJson', column: 'last_lifecycle_escalation_json' },
   { key: 'presentation', column: 'presentation_json', transform: (v) => serializeJson(v) },
   { key: 'createdAt', column: 'created_at' },
   { key: 'updatedAt', column: 'updated_at' },
@@ -117,52 +99,36 @@ export class RuntimeRepository {
       `
         INSERT INTO runtimes (
           runtime_id,
-          runtime_kind,
           host_session_id,
           scope_ref,
           lane_ref,
           generation,
-          launch_id,
           transport,
           harness,
           provider,
           status,
           status_changed_at,
           tmux_json,
-          surface_json,
-          wrapper_pid,
-          child_pid,
-          harness_session_json,
-          command_spec_json,
-          continuation_json,
           supports_inflight_input,
-          adopted,
           active_run_id,
           last_activity_at,
           controller_kind,
           active_operation_id,
           active_invocation_id,
-          compile_id,
           plan_hash,
           selected_profile_hash,
           runtime_state_json,
-          lifecycle_policy_hash,
-          current_harness_generation,
-          current_turn_attempt,
           lifecycle_terminal_reason,
-          last_lifecycle_escalation_json,
           presentation_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runtimeId,
-      record.runtimeKind ?? 'harness',
       record.hostSessionId,
       record.scopeRef,
       record.laneRef,
       record.generation,
-      record.launchId ?? null,
       record.transport,
       record.harness ?? null,
       record.provider ?? null,
@@ -171,28 +137,16 @@ export class RuntimeRepository {
         ? record.statusChangedAt
         : null,
       serializeJson(record.tmuxJson),
-      serializeJson(record.surfaceJson),
-      record.wrapperPid ?? null,
-      record.childPid ?? null,
-      serializeJson(record.harnessSessionJson),
-      serializeJson(record.commandSpec),
-      serializeJson(record.continuation),
       toSqliteBoolean(record.supportsInflightInput),
-      toSqliteBoolean(record.adopted),
       record.activeRunId ?? null,
       record.lastActivityAt ?? null,
       record.controllerKind ?? null,
       record.activeOperationId ?? null,
       record.activeInvocationId ?? null,
-      record.compileId ?? null,
       record.planHash ?? null,
       record.selectedProfileHash ?? null,
       serializeJson(record.runtimeStateJson),
-      record.lifecyclePolicyHash ?? null,
-      record.currentHarnessGeneration ?? null,
-      record.currentTurnAttempt ?? null,
       record.lifecycleTerminalReason ?? null,
-      record.lastLifecycleEscalationJson ?? null,
       serializeJson(record.presentation),
       record.createdAt,
       record.updatedAt
@@ -381,21 +335,6 @@ export class RuntimeRepository {
     return this.update(runtimeId, { status, statusChangedAt: updatedAt, updatedAt })
   }
 
-  updatePids(
-    runtimeId: string,
-    updates: {
-      wrapperPid?: number | undefined
-      childPid?: number | undefined
-      updatedAt: string
-    }
-  ): HrcRuntimeSnapshot | null {
-    return this.update(runtimeId, {
-      ...(updates.wrapperPid !== undefined ? { wrapperPid: updates.wrapperPid } : {}),
-      ...(updates.childPid !== undefined ? { childPid: updates.childPid } : {}),
-      updatedAt: updates.updatedAt,
-    })
-  }
-
   updateRunId(
     runtimeId: string,
     activeRunId: string | undefined,
@@ -448,7 +387,7 @@ export class RuntimeRepository {
   /**
    * Hard-delete an orphaned runtime store row plus its runtime-scoped satellite
    * rows (T-05441). `runtimes(runtime_id)` is FK-referenced (no ON DELETE
-   * CASCADE, `foreign_keys = ON`) by runs, launches, events, runtime_buffers,
+   * CASCADE, `foreign_keys = ON`) by runs, events, runtime_buffers,
    * surface_bindings and local_bridges, so a plain `DELETE FROM runtimes` throws
    * FK_CONSTRAINT whenever any dependent row exists — essentially always for a
    * real runtime. We clear the dependents inside a single transaction before
@@ -512,10 +451,6 @@ export class RuntimeRepository {
       ),
       local_bridges: count(
         `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM local_bridges
-         WHERE runtime_id IN (SELECT runtime_id FROM selected)`
-      ),
-      launches: count(
-        `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM launches
          WHERE runtime_id IN (SELECT runtime_id FROM selected)`
       ),
       runs: count(
@@ -625,7 +560,6 @@ export class RuntimeRepository {
       // Runtime-only satellite tables.
       execute(this.db, 'DELETE FROM surface_bindings WHERE runtime_id = ?', id)
       execute(this.db, 'DELETE FROM local_bridges WHERE runtime_id = ?', id)
-      execute(this.db, 'DELETE FROM launches WHERE runtime_id = ?', id)
       // Runs last among the dependents (their referencing rows are now gone).
       execute(this.db, 'DELETE FROM runs WHERE runtime_id = ?', id)
       const result = this.db.query('DELETE FROM runtimes WHERE runtime_id = ?').run(id) as {
@@ -779,7 +713,6 @@ export class RuntimeRepository {
       executeSelected(
         'DELETE FROM local_bridges WHERE runtime_id IN (SELECT runtime_id FROM selected)'
       )
-      executeSelected('DELETE FROM launches WHERE runtime_id IN (SELECT runtime_id FROM selected)')
       executeSelected('DELETE FROM runs WHERE runtime_id IN (SELECT runtime_id FROM selected)')
       const result = this.db
         .query(

@@ -23,7 +23,6 @@ type SummaryTarget = {
   sessionRef: string
   scopeRef: string
   runtimeIntent: HrcRuntimeIntent
-  parsedScopeJson: Record<string, unknown>
 }
 
 export type StackedSummaryClient = Pick<
@@ -150,7 +149,6 @@ class SeatStackedSummarizer implements StackedSeatSummarizer {
       sessionRef: resolved.sessionRef,
       scopeRef: resolved.resolved.scopeRef,
       runtimeIntent: resolved.runtimeIntent,
-      parsedScopeJson: resolved.resolved.parsed as unknown as Record<string, unknown>,
     }
     return this.target
   }
@@ -160,7 +158,6 @@ class SeatStackedSummarizer implements StackedSeatSummarizer {
       .ensureTarget({
         sessionRef: target.sessionRef,
         runtimeIntent: target.runtimeIntent,
-        parsedScopeJson: target.parsedScopeJson,
       })
       .then((ensured) => {
         this.hostSessionId = ensured.activeHostSessionId

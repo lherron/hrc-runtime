@@ -117,7 +117,6 @@ async function seedAttachRedirectScenario(
       provider: 'openai',
       status: requestedStatus,
       supportsInflightInput: false,
-      adopted: false,
       createdAt: requestedCreatedAt,
       updatedAt: requestedCreatedAt,
     })
@@ -141,7 +140,6 @@ async function seedAttachRedirectScenario(
         brokerDriver: 'codex-cli-tmux',
       },
       supportsInflightInput: true,
-      adopted: false,
       createdAt: siblingCreatedAt,
       updatedAt: siblingCreatedAt,
     })

@@ -9,7 +9,7 @@
  *   read; it must NOT create anything.
  *
  *   Bug B (existing-session path): when a continuity session IS found the handler
- *   still calls appendEvent('session.resolved') + notifyEvent — a write-on-read.
+ *   still calls appendEvent + notifyEvent — a write-on-read.
  *   A plain resolve must emit NO lifecycle events in this path either.
  *
  *   Bug C (default lane): the CLI defaults the lane to 'default' instead of
@@ -21,7 +21,7 @@
  *           exists → created:false, 0 session rows, 0 continuity rows, 0
  *           session.created events.
  *   [RED 2] plain-resolve-existing-no-event — no create flag, continuity found
- *           → created:false, ZERO new lifecycle events (no session.resolved write).
+ *           → created:false, ZERO new lifecycle events (no resolution lifecycle write).
  *   [RED 3] default-lane-no-phantom — plain resolve with lane:default (the current
  *           wrong CLI default) must not mint a phantom lane:default session row.
  *   [GREEN 4] create-flag-still-creates — resolve with create:true still inserts
@@ -154,7 +154,7 @@ describe('[RED 1] plain resolve — no continuity exists — must create nothing
 // ── RED 2: plain resolve — existing session — emits no event ─────────────────
 
 describe('[RED 2] plain resolve — existing continuity found — must not emit any event', () => {
-  it('emits no session.resolved event when resolving an existing session without create flag', async () => {
+  it('emits no resolution lifecycle event when resolving an existing session without create flag', async () => {
     const scopeRef = 'agent:test-resolve-ro-existing:project:t01854'
     const sessionRef = `${scopeRef}/lane:main`
 
@@ -162,12 +162,12 @@ describe('[RED 2] plain resolve — existing continuity found — must not emit 
     await postResolve(sessionRef, { create: true })
     const eventsAfterCreate = listEventsByScopeRef(scopeRef)
 
-    // Plain resolve — finds existing continuity — must NOT emit session.resolved
+    // Plain resolve — finds existing continuity — must NOT emit resolution lifecycle
     const { body } = await postResolve(sessionRef)
     expect(body.created).toBe(false)
 
     const eventsAfterResolve = listEventsByScopeRef(scopeRef)
-    // RED: current code appends session.resolved (one more event than after create)
+    // RED: current code appends resolution lifecycle (one more event than after create)
     expect(eventsAfterResolve).toHaveLength(eventsAfterCreate.length)
   })
 
@@ -182,7 +182,7 @@ describe('[RED 2] plain resolve — existing continuity found — must not emit 
     await postResolve(sessionRef)
 
     const countAfter = listEventsByScopeRef(scopeRef).length
-    // RED: current code appends two session.resolved events (one per plain resolve)
+    // RED: current code appends two resolution lifecycle events (one per plain resolve)
     expect(countAfter).toBe(countBefore)
   })
 })

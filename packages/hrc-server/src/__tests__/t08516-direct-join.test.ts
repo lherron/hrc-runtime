@@ -15,12 +15,10 @@ import { join as joinPath } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
-import type { ParticipantAdapter } from 'spaces-runtime-contracts'
 
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { createHrcServer } from '../index.js'
-import type { HrcServer, HrcServerOptions, RegistrationClassConfig } from '../index.js'
-import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
+import type { HrcServer, HrcServerOptions } from '../index.js'
 import { assertReservedAddressAllowsBirth } from '../participant-address-provisioning.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
@@ -39,27 +37,6 @@ async function observe(response: Response): Promise<Observed> {
     // difference is exactly what a routing regression should show.
   }
   return { status: response.status, body: body as Record<string, unknown> }
-}
-
-/**
- * An adapter that fails loudly if anything touches it during a join.
- *
- * R6.8 case 2 wants proof that `admit` is never called, and the discriminating
- * way to prove it is an adapter that would make the request fail if it were:
- * a spy that merely records a zero call count is also satisfied by an adapter
- * that was never reachable in the first place. `prepare` throws for the same
- * reason -- joining must not run the post-join helper either.
- */
-function createExplodingAdapter(adapterId: string): ParticipantAdapter {
-  return {
-    adapterId,
-    admit() {
-      throw new Error('admit must never be called on a join path')
-    },
-    prepare() {
-      throw new Error('prepare must never be called during registration')
-    },
-  } as unknown as ParticipantAdapter
 }
 
 describe('T-08516 direct protocol join', () => {
@@ -211,14 +188,20 @@ describe('T-08516 direct protocol join', () => {
     const stored = readStore()
     expect(stored.registrations).toHaveLength(1)
     const registration = stored.registrations[0] as Record<string, unknown>
-    expect(registration['registration_mode']).toBe('direct')
     expect(registration['host_incarnation_id']).toBe('incarnation-alpha')
     // R7.1: nothing was fabricated for what the participant did not supply.
     expect(registration['class_id']).toBeNull()
-    expect(registration['adapter_id']).toBeNull()
+    // The retired key-scoped path's columns no longer exist at all.
+    for (const retired of [
+      'registration_mode',
+      'adapter_id',
+      'preparation_json',
+      'continuity_evidence_json',
+    ]) {
+      expect(registration).not.toHaveProperty(retired)
+    }
     expect(registration['participant_key']).toBeNull()
     expect(registration['workspace_cwd']).toBeNull()
-    expect(registration['preparation_json']).toBeNull()
     // R6.2's resolved defaults, stored so a lookup needs no class or adapter.
     expect(registration['address_policy']).toBe('selected-scope')
     expect(registration['continuity_policy']).toBe('host-incarnation')
@@ -244,46 +227,19 @@ describe('T-08516 direct protocol join', () => {
     expect(stored.bindings[0]?.['state']).toBe('BINDING')
   })
 
-  test('never calls admit or prepare, even with a configured class and adapter', async () => {
-    const participantClass = {
-      classId: 't08516-class',
-      adapterId: 't08516-adapter',
-      join: 'participant-served',
-      address: 'permanent-keyed',
-      continuity: 'key-scoped',
-      replaySemantics: 'full-source-replay',
-      scopeTemplate: { agent: 'arris', project: 'hrc-runtime' },
-      maxInstances: 4,
-      defaultTtl: 60,
-    }
-    await start({
-      registrationClasses: [participantClass] as unknown as readonly RegistrationClassConfig[],
-      participantAdapterRegistry: new ParticipantAdapterRegistry([
-        createExplodingAdapter('t08516-adapter'),
-      ]),
-    })
+  test('refuses the retired key-scoped request shape before recording anything', async () => {
+    await start()
 
-    // A direct join naming the class for delivery defaults still never loads it
-    // for permission: an adapter identifier is not admission authority.
-    const registered = await observe(await join({ classId: 't08516-class' }))
-    expect(registered.status).toBe(200)
-    expect(registered.body['status']).toBe('registered')
-
-    // And the legacy key-scoped path no longer calls admit either (R6.1/R6.9).
-    const legacy = await observe(
+    const keyScoped = await observe(
       await fixture.postJson('/v1/participants/register', {
         classId: 't08516-class',
-        processToken: 'ignored-compatibility-token',
-        participantKey: 'legacy-key',
-        // The one join-specific shape rule T-08349 already enforced survives.
-        socketPath: `${fixture.tmpDir}/legacy-broker.sock`,
+        participantKey: 'key-scoped',
+        socketPath: `${fixture.tmpDir}/key-scoped-broker.sock`,
       })
     )
-    expect(legacy.status).toBe(200)
-    expect(legacy.body).toMatchObject({
-      status: 'registered',
-      observation: { state: 'attachment_pending' },
-    })
+    expect(keyScoped.status).toBe(400)
+    expect(JSON.stringify(keyScoped.body)).toContain('registrationMode')
+    expect(readStore().registrations).toHaveLength(0)
   })
 
   test('a duplicate direct request returns the same identities', async () => {

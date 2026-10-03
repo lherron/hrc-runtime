@@ -40,7 +40,6 @@ type SequenceSnapshot = {
 type DurableSnapshot = {
   events: SequenceSnapshot
   hrcEvents: SequenceSnapshot
-  launches: number
   runs: number
   runtimes: number
 }
@@ -59,13 +58,12 @@ function sequenceSnapshot(
 }
 
 function durableSnapshot(db: HrcDatabase): DurableSnapshot {
-  const count = (table: 'launches' | 'runs' | 'runtimes'): number =>
+  const count = (table: 'runs' | 'runtimes'): number =>
     db.sqlite.query<{ count: number }, []>(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count ??
     0
   return {
     events: sequenceSnapshot(db, 'events', 'seq'),
     hrcEvents: sequenceSnapshot(db, 'hrc_events', 'hrc_seq'),
-    launches: count('launches'),
     runs: count('runs'),
     runtimes: count('runtimes'),
   }
@@ -266,7 +264,6 @@ for (const callbackCase of launchCallbackCases) {
         expect(retiredWarnLines(stderr)).toHaveLength(1)
         expect(retiredWarnLines(stderr)[0]).toContain(`"route":"${route}"`)
         expect(durableSnapshot(observed)).toEqual(before)
-        expect(observed.launches.getByLaunchId(launchId)).toBeNull()
       } finally {
         observed.close()
       }
@@ -312,18 +309,6 @@ test('R4: retired spool entries are quarantined while unhandled bytes, reader, a
     try {
       const session = seeded.sessions.getByHostSessionId(runtime.hostSessionId)
       if (!session) throw new Error('fixture session is missing')
-      seeded.launches.insert({
-        launchId: historicalLaunchId,
-        hostSessionId: runtime.hostSessionId,
-        generation: runtime.generation,
-        runtimeId: runtime.runtimeId,
-        harness: 'claude-code',
-        provider: 'anthropic',
-        launchArtifactPath: '',
-        status: 'exited',
-        createdAt: fixture.now(),
-        updatedAt: fixture.now(),
-      })
       seeded.events.append({
         ts: fixture.now(),
         hostSessionId: runtime.hostSessionId,
@@ -428,8 +413,6 @@ test('R4: retired spool entries are quarantined while unhandled bytes, reader, a
       expect(observed.hrcEvents.listByLaunch(historicalLaunchId)).toEqual([
         expect.objectContaining({ eventKind: 'launch.wrapper_started' }),
       ])
-      expect(observed.launches.getByLaunchId(historicalLaunchId)).not.toBeNull()
-      expect(observed.launches.getByLaunchId(launchKey)).toBeNull()
       expect(observed.runtimes.getByRuntimeId(runtime.runtimeId)).toMatchObject({
         status: reconciledRuntimeStatus,
       })

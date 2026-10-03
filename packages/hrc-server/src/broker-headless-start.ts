@@ -7,7 +7,6 @@ import type {
   HrcTurnResponseFormat,
 } from 'hrc-core'
 import { prepareActuatorSplitIntent } from './actuator-split.js'
-import { trackAppIdentityOperation } from './app-session-identity.js'
 import {
   assertPreparedAspdAttemptFormat,
   findPreparedAspdAttemptForFormatRetry,
@@ -419,7 +418,6 @@ export async function executeHeadlessBrokerStartTurn(
         this.runtimeStartOperations.delete(session.hostSessionId)
       }
     })
-  trackAppIdentityOperation(session, bootOperation)
   if (runtimeStartOwnership) {
     void bootOperation.then(runtimeStartOwnership.resolve, runtimeStartOwnership.reject)
   } else {

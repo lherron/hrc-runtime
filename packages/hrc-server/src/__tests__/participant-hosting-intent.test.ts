@@ -22,7 +22,6 @@ function registration(): ParticipantRegistration {
   return {
     registrationId: 'registration-participant-served',
     classId: 'class-participant-served',
-    adapterId: 'controlled-participant',
     join: 'participant-served',
     participantKey: 'key-participant-served',
     scopeRef: 'agent:larry:project:hrc-runtime:task:participant-hosting-intent',
@@ -31,7 +30,13 @@ function registration(): ParticipantRegistration {
     generation: 1,
     workspaceCwd: '/tmp/participant-workspace',
     socketPath: '/tmp/served broker.sock',
-    preparationJson: '{}',
+    policy: {
+      addressPolicy: 'selected-scope',
+      continuityPolicy: 'host-incarnation',
+      lifecycleOwner: 'externally-owned',
+      replaySemantics: 'full-source-replay',
+    },
+    hostIncarnationId: 'host-incarnation:hosting-intent',
     createdAt: '2026-09-09T22:20:00.000Z',
     updatedAt: '2026-09-09T22:20:00.000Z',
   }

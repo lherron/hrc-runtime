@@ -19,7 +19,6 @@ import type {
   PreemptSubmissionRequest,
   SteerSubmissionRequest,
 } from 'hrc-core'
-import { refuseAppScopedSession } from './app-session-identity.js'
 import { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import {
   brokerRuntimeRefusesAdmissionClass,
@@ -405,7 +404,6 @@ export async function handlePreemptAdmission(
       door: 'preempt',
     })
   }
-  admitSubmissionTarget(session, 'preempt')
   return json({
     admission: await preemptAdmission(this, session, body),
   } satisfies PreemptAdmissionResponse)
@@ -483,14 +481,4 @@ export function publicDoorReport(
         requestedDoor: report.requestedDoor,
         downgradeReason: report.downgradeReason,
       }
-}
-
-/**
- * T-08576 G1: the post-resolution entry step for every submission door. App
- * sessions are app-route-only, refused before participant, admission, rotation
- * or dispatch effects. Steer resolves through a strict parser that cannot reach
- * an app scope today; this is its defense in depth.
- */
-export function admitSubmissionTarget(session: HrcSessionRecord, door: SubmissionDoor): void {
-  refuseAppScopedSession(session, `submission-${door}`)
 }

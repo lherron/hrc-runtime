@@ -31,7 +31,6 @@ describe('T-04921 — profile-era viewer routing is refused before presentation 
       status: 'active',
       createdAt: NOW,
       updatedAt: NOW,
-      ancestorScopeRefs: [],
     })
   })
 

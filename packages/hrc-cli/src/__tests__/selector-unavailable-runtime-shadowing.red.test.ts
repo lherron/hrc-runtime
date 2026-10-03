@@ -85,7 +85,6 @@ function runtime(runtimeId: string, status: string): HrcRuntimeSnapshot {
     provider: 'anthropic',
     status,
     supportsInflightInput: true,
-    adopted: false,
     createdAt: '2026-07-18T00:00:00.000Z',
     updatedAt: '2026-07-18T00:00:00.000Z',
   }

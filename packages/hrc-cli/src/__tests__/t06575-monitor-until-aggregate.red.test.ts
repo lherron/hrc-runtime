@@ -46,7 +46,6 @@ type RuntimeStatus =
   | 'exited'
   | 'starting'
   | 'stopping'
-  | 'adopted'
 
 type Member = {
   agent: string
@@ -100,7 +99,6 @@ function makeState(
           : null,
       createdAt: OBSERVED_AT,
       updatedAt: OBSERVED_AT,
-      ancestorScopeRefs: [],
     })),
     runtimes: members.map((member) => ({
       runtimeId: runtimeId(member),
@@ -114,7 +112,6 @@ function makeState(
       status: member.status,
       statusChangedAt: member.changedAt ?? OBSERVED_AT,
       supportsInflightInput: false,
-      adopted: false,
       activeTurnId:
         member.status === 'busy' || member.status === 'awaiting_input'
           ? `turn-${member.agent}`
@@ -399,7 +396,6 @@ describe('T-06575 suite 4 — temporal truth', () => {
       exited: 'runtime-dead',
       starting: null,
       stopping: null,
-      adopted: null,
       detached: null,
     })
 

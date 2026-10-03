@@ -132,7 +132,6 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
         status: seed.runtimeStatus ?? 'busy',
         controllerKind: 'harness-broker',
         supportsInflightInput: false,
-        adopted: false,
         planHash: PLAN_HASH,
         selectedProfileHash: PROFILE_HASH,
         activeInvocationId: seed.invocationId,

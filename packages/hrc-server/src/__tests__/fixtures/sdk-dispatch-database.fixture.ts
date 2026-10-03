@@ -31,7 +31,6 @@ export function seedTerminatedTmuxRuntime(
       provider: 'anthropic',
       status: 'terminated',
       supportsInflightInput: false,
-      adopted: false,
       lastActivityAt: now,
       createdAt: now,
       updatedAt: now,

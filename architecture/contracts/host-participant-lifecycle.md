@@ -10,7 +10,8 @@ No further architecture-review round is a prerequisite for this work.
 
 Revision 7 retains R6.1–R6.8 with the concrete amendments R7.1–R7.7 below.
 Those amendments control any conflicting revision-6 or historical revision-5
-text. Source baseline is accepted foundation 0e5a0557 plus current published
+text. The R8 amendment (T-10146) retires the key-scoped path and controls
+everything below it. Source baseline is accepted foundation 0e5a0557 plus current published
 ASP pin 57b58166. Parked source is reusable work, not an accepted implementation.
 
 ## V2 descriptor amendment (T-08690)
@@ -24,34 +25,54 @@ with allocated identity and endpoint, but never accepts or translates an
 installed and restarted while ASP A remains active; main aspd activates ASP B
 only at the coordinated cutover.
 
+## R8 amendment: the key-scoped path is retired (T-10146, 2026-10-03)
+
+The direct protocol join is the only registration path. HRC no longer accepts
+the key-scoped request shape: `POST /v1/participants/register` without
+`registrationMode: 'direct'` is a malformed request (400), not a compatibility
+route. Retired with it, in source and schema
+(migration `0121_session_state_dead_field_removal`):
+
+- the server-composed participant adapter registry and the generic
+  `adapterId` participant class in `HRC_REGISTRATION_CLASSES_FILE`
+  (configured classes are external-registration classes only);
+- `participant_registrations.registration_mode`, `adapter_id`,
+  `preparation_json` and `continuity_evidence_json`, and
+  `participant_registration_attempts.continuity_evidence_json`;
+- HRC-run adapter `prepare` during registration and adapter-produced writer
+  evidence (`inspectWriter`/`retireWriter`) for succession.
+
+Succession evidence for an attached predecessor is HRC's own transport probe
+(R7.7); a never-attached direct attempt is superseded under its pre-attach rule.
+Activation accepts no continuity evidence, so it classifies as
+`attached_unknown` and emits no evidence-derived resume. Everything else below
+stands: writer-evidence subjects, the three independent retirement facts,
+absorbing dispositions, recovery dispositions, replacement intent and the
+TX-D/TX-6 boundaries. `classId` and `participantKey` remain optional direct
+metadata. Text below, including revision 5, that describes the key-scoped path,
+`legacy` registration mode, adapter preparation during registration, adapter
+writer evidence or continuity-evidence classification is historical and does
+not bind.
+
 ## R7.1 Honest storage before attachment (EN-12457 F1)
 
-Migrate `participant_registrations` once, preserving existing registration IDs,
-keys, addresses, sessions and all referencing attempts. Add explicit
-`registration_mode` (`legacy` for existing rows; `direct` for protocol joins).
-Allow class_id, adapter_id, workspace_cwd and preparation_json to be NULL when
-not supplied/known. No fabricated adapter, empty workspace, synthetic evidence
-or pretend preparation. Existing rows retain their values unchanged. Keep
-join_direction required: direct defaults to participant-served/external as an
+Allow class_id, participant_key and workspace_cwd to be NULL when not
+supplied/known. No fabricated class, key, empty workspace or synthetic evidence.
+Keep join_direction required: direct defaults to participant-served/external as an
 actual ownership policy, not an inferred claim about a driver. Store the resolved
 address/continuity/ownership policy with the registration so direct lookups never
-require a class or adapter lookup. A supplied unknown class is metadata only.
+require a class lookup. A supplied unknown class is metadata only.
 
-The durable registration_id is primary identity. Preserve existing legacy
-(class_id, participant_key) uniqueness for legacy rows. Direct duplicate lookup
+The durable registration_id is primary identity. Direct duplicate lookup
 is the canonical address plus its current host binding/incarnation, independent
 of optional class/key. Keep one registration owner per scope using the existing
 scope uniqueness and reservation ownership; H2 advances that registration's
 current session/generation under the existing transaction rather than making a
 second owner for the same scope. Retired bindings retain their own historical
 session/generation/attempt linkage. Null optional values must remain null through
-repository reads, API inspection and post-join preparation. Test migrating
-legacy active and unattached rows, not only an empty store.
-
-New keyless legacy requests are creation requests, not idempotent retries; a
-caller needs the returned key to retry. Do not describe a lost keyless creation
-reply as convergent. Direct requests always contain address/incarnation and
-therefore have a stable retry identity without an additional token.
+repository reads and API inspection. Direct requests always contain
+address/incarnation and therefore have a stable retry identity without an
+additional token.
 
 ## R7.2 Attachment is the durable work trigger (EN-12457 F2)
 
@@ -96,10 +117,8 @@ A clear arriving after freeze follows existing cancellation/fencing rules, not
 an in-place mutation of the immutable start tuple.
 
 The participant receives the selection over the protocol and can compose its
-descriptor directly. Do not depend on the withdrawn ASP admission extension. A
-post-join prepare helper may only serve a selected continuation when its real
-published preparation interface can carry it; otherwise report unsupported and
-use the direct attachment path. No HRC-local substitute producer declaration.
+descriptor directly. Do not depend on the withdrawn ASP admission extension.
+No HRC-local substitute producer declaration.
 A direct attach may instead use exact fields `{registrationId, attemptId,
 attachEpoch, resumeUnsupported: true, reason}` with a nonempty reason; persist unsupported, retain the selected record,
 keep addressed input pending, and return a truthful attachment outcome. This is
@@ -186,10 +205,9 @@ and ordinary nonparticipant submission behavior remains intact.
 
 ## R7.7 Lance ruling 2026-09-16: transport death is host death for evidence-less registrations, provisional
 
-For a direct registration carrying an exact `expectedPredecessor`, when the
-predecessor has no usable producer-evidence path (classless/keyless, or its
-adapter implements neither the required retirement nor inspection method), HRC
-decides succession from its own durable records. It opens a **fresh** connection
+For a direct registration carrying an exact `expectedPredecessor` against an
+attached predecessor, HRC decides succession from its own durable records (since
+R8 there is no producer-evidence path). It opens a **fresh** connection
 to the predecessor attempt's durable `attach_socket_path`, never a cached broker
 client, and requires the published broker hello within a bounded two-second
 probe. The result is persisted in the existing `WriterEvidence` receipt shape
@@ -224,7 +242,7 @@ binding remains `BINDING` until TX-6 retires it and allocates the successor in
 one transaction. Neither transaction requires a predecessor runtime row. The
 receipt does not claim that HRC observed the old host die. A duplicate request
 from the same host incarnation remains idempotent. Attached or uncertain
-attempts continue under the transport/producer evidence rules above, and a
+attempts continue under the transport evidence rules above, and a
 bare claim against them still conflicts. No owner-transfer token or operator
 authorization is added for this rule (Lance ruling 2026-09-25).
 
@@ -238,15 +256,13 @@ case remains measurable through the persisted `transport_dead` reason.
 `POST /v1/participants/register` accepts the participant's own declaration.
 HRC does not call `ParticipantAdapter.admit`, read a host descriptor, request an
 evidence file, load an adapter to approve identity, or require adapter availability
-before joining. This applies to existing generic key-scoped registration as well
-as new host-incarnation registration. Legacy EPR remains separate and unchanged.
+before joining. Legacy EPR remains separate and unchanged.
 
 HRC still parses the message, names the canonical home by redirect, and serializes the
 address claim. Syntax errors, a conflict with an existing occupant, an unsupported
 protocol operation, and an unavailable home are concrete protocol outcomes. They
 are not a second application's permission to join. There is no per-product join
-allowlist. Configured classes select defaults and delivery settings; an adapter
-identifier is never admission authority.
+allowlist. A configured class is never admission authority.
 
 For the direct host mode, `requestedSessionRef` and `hostIncarnationId` are the
 participant's declared address and current host identity. An address is not a PID,
@@ -257,9 +273,8 @@ No new token, signature, file, hash, provenance check or challenge is introduced
 
 ## R6.2 Request and compatibility
 
-The existing endpoint gains `registrationMode: 'direct'`. Absence selects the
-existing key-scoped request shape for compatibility, **not** its old admit gate.
-The direct request contains:
+The endpoint requires `registrationMode: 'direct'`; since R8 its absence is a
+malformed request. The direct request contains:
 
 - `registrationMode: 'direct'`;
 - `requestedSessionRef: string` and `hostIncarnationId: string`;
@@ -280,11 +295,6 @@ An unknown class is a delivery configuration problem recorded after joining; it
 cannot refuse allocation. A class cannot grant process ownership: managed mode
 still requires HRC's own committed launch record and implemented lifecycle guard.
 
-For legacy requests, `participantKey` is used when supplied; otherwise HRC
-allocates and returns a key, which the caller must retain for retries. HRC no
-longer discovers a permanent key by running adapter code. Existing registrations
-retain their stored keys, sessions, generations, attempts and frozen descriptors.
-A retry that cannot identify an existing registration cannot silently claim it.
 `processToken` and `evidence` remain accepted optional compatibility fields and
 are ignored for joining, identity, retry matching and continuation. They are not
 required in direct mode and are not passed to a permission callback.
@@ -357,11 +367,10 @@ frozen-start semantics. Invalid or unsupported delivery configuration leaves the
 participant registered with an attachment error and pending addressed work. It
 never births an unrelated generic harness at the reserved address.
 
-A locally configured ASP `prepare` helper may still compose the descriptor **after
-join** from the participant's supplied metadata and allocated identity. It has no
-admit call or authority to undo the registration. The Arris helper/driver may read
-its existing descriptor to locate its control socket at this stage. Alternatively
-the participant supplies its broker endpoint/descriptor directly. HRC need not know
+The participant supplies its broker endpoint/descriptor directly; its own helper
+may compose the descriptor after join from the identities HRC returned. HRC runs
+no adapter `prepare` (R8). The Arris helper/driver may read its existing
+descriptor to locate its control socket at this stage. HRC need not know
 the application control protocol. Queue, steer, truthful host execution admission,
 capture and events remain the ordinary broker/driver contract. No thread APIs,
 interrupt or preempt requirement is added.
@@ -378,15 +387,14 @@ intent and TX-D/TX-6 crash boundaries remain required for **replacement of an
 existing writer**, not first-join admission. Removing admit does not authorize
 live takeover or make transport loss proof of death.
 
-The existing writer observation/retirement methods remain a post-join lifecycle
-mechanism for participants that use them, not permission to register. Missing
+Succession writer evidence is HRC's own transport probe (R7.7, R8), never
+permission to register. Missing
 retirement/recovery information holds replacement of an occupied address; it
 does not bar first registration or ordinary same-host reconnection. No external
 host inspection, launch, kill, signal or reap authority is introduced.
 
 The existing global UNIQUE constraint on attempt `runtime_id` must be narrowed
-for H1. Preserve unique runtime ownership across registrations/bindings and for
-legacy key-scoped attempts; allow multiple attempts to reference the same runtime
+for H1. Preserve unique runtime ownership across registrations/bindings; allow multiple attempts to reference the same runtime
 only when they reference the same host binding. Keep invocation_id globally
 unique and (registration_id, attach_epoch) unique. Enforce this in the database,
 not only in the handler: rebuilding the old attempt table/index is a migration
@@ -436,15 +444,14 @@ for admission only. The accompanying active-record update records that authority
 Revision 5 managed save/stop, launchId correlation and host-aware lifecycle guard
 remain unchanged. Managed launch is still unsupported until that implementation
 exists. A registration cannot turn an externally launched process into an
-HRC-owned process. Existing key-scoped identity semantics remain; the old
-adapter permission path is intentionally removed for those consumers too.
+HRC-owned process.
 
 ## R6.8 Required implementation proof
 
 1. A direct participant with no adapter installed joins from its POST; response,
    durable address and restart/retry readback agree before any driver exists.
-2. An adapter whose admit throws/refuses is never called during either direct or
-   legacy join. No descriptor/evidence file is read on that path.
+2. Registration runs no adapter code and reads no descriptor/evidence file; the
+   retired key-scoped request shape is refused before any durable effect (R8).
 3. Registry-first virgin claim, wrong-home routing, concurrent conflict and
    reconnect converge; no duplicate address and no generic cold birth.
 4. Registered-but-unattached work survives daemon restart and stays pending;
@@ -454,8 +461,7 @@ adapter permission path is intentionally removed for those consumers too.
 6. H1/H2 and prior-writer recovery obey the surviving replacement contract.
 7. HRC continuation carry/clear/disabled-reuse cases use only its own records;
    unsupported native resume is an explicit outcome, never fabricated success.
-8. Existing key-scoped consumers retain recorded identities; legacy EPR regresses
-   neither its registration nor its delivery path. Managed external-no-kill
+8. Legacy EPR regresses neither its registration nor its delivery path. Managed external-no-kill
    negatives remain mandatory.
 
 ## R6.9 Delivery sequence and ownership (superseded by R7.5)
@@ -466,7 +472,7 @@ remaining functional decisions and dispatch under R7.5.
 
 ---
 
-# Revision 5 reference — subject to R6 amendments above
+# Revision 5 reference — subject to the R6, R7 and R8 amendments above
 
 # Host participant lifecycle — HRC architecture contract
 

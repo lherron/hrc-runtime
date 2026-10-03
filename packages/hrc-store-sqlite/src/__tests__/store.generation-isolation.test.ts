@@ -49,7 +49,6 @@ function seedSession(hostSessionId: string, key: string, generation = 1) {
     status: 'active',
     createdAt: now,
     updatedAt: now,
-    ancestorScopeRefs: [],
   })
 }
 

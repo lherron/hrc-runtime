@@ -33,10 +33,9 @@ import { isRuntimeUnavailableStatus } from './server-util.js'
  *   2. the attempt has a frozen descriptor (otherwise: attachment pending);
  *   3. the attempt is ACTIVE -- a nonterminal runtime alone is NOT activated
  *      attachment, and an absorbing attempt will never serve;
- *   4. for a DIRECT join, the attempt's host binding exists, is BOUND, and
- *      still names the same registration, incarnation, session, generation and
- *      runtime. A legacy key-scoped attempt has no binding by construction and
- *      is validated by its attempt linkage alone;
+ *   4. when the attempt names a host binding, that binding exists, is BOUND,
+ *      and still names the same registration, incarnation, session, generation
+ *      and runtime;
  *   5. the runtime row exists and is not in an unavailable status;
  *   6. the runtime is serving THIS attempt's invocation;
  *   7. the runtime's own session and generation match the registration's.
@@ -155,10 +154,7 @@ export function resolveParticipantDelivery(
     )
   }
 
-  // R7.6: the DIRECT host binding is part of current linkage. A legacy
-  // key-scoped attempt has none by construction and is validated by its attempt
-  // linkage alone, which is why this is keyed on the binding's presence rather
-  // than on the registration mode.
+  // R7.6: the host binding is part of current linkage.
   if (attempt.hostBindingId !== undefined) {
     const binding = server.db.participantHostBindings.getBindingById(attempt.hostBindingId)
     if (binding === null) {

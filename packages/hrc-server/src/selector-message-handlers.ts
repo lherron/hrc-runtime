@@ -11,14 +11,9 @@ import type {
   RestartStyle,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import {
-  assertScopeNotRetired,
-  persistSessionTaskClaimAuthority,
-  withSummonAuthority,
-} from './federation/summon-gate-server.js'
+import { assertScopeNotRetired, withSummonAuthority } from './federation/summon-gate-server.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 
-import { assertAppIdentityOwner, issueAppBirthRunGrantForCompile } from './app-session-identity.js'
 import type { BirthTimeline } from './birth-timeline.js'
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { assertReservedAddressAllowsBirth } from './participant-address-provisioning.js'
@@ -77,8 +72,6 @@ export function listAllSessions(
           prior_host_session_id,
           created_at,
           updated_at,
-          parsed_scope_json,
-          ancestor_scope_refs_json,
           last_applied_intent_json,
           continuation_json
         FROM sessions
@@ -95,8 +88,6 @@ export function listAllSessions(
           prior_host_session_id,
           created_at,
           updated_at,
-          parsed_scope_json,
-          ancestor_scope_refs_json,
           last_applied_intent_json,
           continuation_json
         FROM sessions
@@ -143,8 +134,6 @@ export function listRecentSessions(
           s.prior_host_session_id,
           s.created_at,
           s.updated_at,
-          s.parsed_scope_json,
-          s.ancestor_scope_refs_json,
           s.last_applied_intent_json,
           s.continuation_json
         FROM sessions s
@@ -196,7 +185,6 @@ export async function ensureRuntimeForSession(
   restartStyle: RestartStyle
 ): Promise<HrcRuntimeSnapshot> {
   assertLocalPersonaAllowed(this, session.scopeRef)
-  assertAppIdentityOwner(session)
   // This legacy-shaped ensure door has no harness or driver decision. A live
   // execution is reusable by its frozen realization; a fresh execution goes
   // through the ordinary ASP compile path, which returns hosting after it has
@@ -213,8 +201,6 @@ export async function ensureRuntimeForSession(
   }
 
   const birthRunId = `run-${randomUUID()}`
-  // T-08576 D5: reserve before any stale-mark, run, handle or launch effect.
-  issueAppBirthRunGrantForCompile(this.db, session, intent, birthRunId)
   if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
     this.markRuntimeStaleForBrokerReprovision(session, existingRuntime, {
       reason: 'ensure-runtime-fresh-execution-requested',
@@ -230,7 +216,6 @@ export async function ensureTargetSession(
   this: HrcServerInstanceForHandlers,
   sessionRef: string,
   intent: HrcRuntimeIntent,
-  parsedScopeJson?: Record<string, unknown>,
   origin: 'local' | 'federated-ingress' = 'local',
   options: {
     persistIntent?: boolean | undefined
@@ -271,28 +256,13 @@ export async function ensureTargetSession(
           // decides placement (gap-filling only) and provisioning.
           ...(intent.provision === undefined ? {} : { provision: intent.provision }),
         },
-        (claimAuthority) => {
+        () => {
           const raced = findTargetSession(this.db, normalized)
           if (raced !== null && raced.hostSessionId !== existing.hostSessionId) return raced
           const successor = this.db.sqlite.transaction(() => {
             const created = createSessionSuccessorFromContinuation(this.db, existing, {
               ...(options.persistIntent === false ? {} : { lastAppliedIntentJson: intent }),
-              ...(parsedScopeJson ? { parsedScopeJson } : {}),
             })
-            if (claimAuthority !== undefined) {
-              persistSessionTaskClaimAuthority(
-                this,
-                created.hostSessionId,
-                claimAuthority,
-                created.createdAt
-              )
-            } else {
-              this.db.sessionTaskClaimAuthorities.copy(
-                existing.hostSessionId,
-                created.hostSessionId,
-                created.createdAt
-              )
-            }
             return created
           })()
           this.notifyEvent(
@@ -314,9 +284,6 @@ export async function ensureTargetSession(
     if (options.persistIntent !== false) {
       this.db.sessions.updateIntent(existing.hostSessionId, intent, now)
     }
-    if (parsedScopeJson) {
-      this.db.sessions.updateParsedScope(existing.hostSessionId, parsedScopeJson, now)
-    }
     // Re-read to return the updated record
     return requireSession(this.db, existing.hostSessionId)
   }
@@ -335,7 +302,7 @@ export async function ensureTargetSession(
       // honors the same directive block on the same terms as the claim doors.
       ...(intent.provision === undefined ? {} : { provision: intent.provision }),
     },
-    (claimAuthority) => {
+    () => {
       // `withSummonAuthority` invokes its mint callback only after authority
       // has resolved and any required home/designation establishment committed.
       birthTimeline?.mark('home-resolution-designated')
@@ -355,16 +322,11 @@ export async function ensureTargetSession(
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
         ...(options.persistIntent === false ? {} : { lastAppliedIntentJson: intent }),
-        ...(parsedScopeJson ? { parsedScopeJson } : {}),
       }
 
       const created = this.db.sqlite.transaction(() => {
         const inserted = this.db.sessions.insert(session)
-        if (claimAuthority !== undefined) {
-          persistSessionTaskClaimAuthority(this, hostSessionId, claimAuthority, now)
-        }
         this.db.continuities.upsert({
           scopeRef,
           laneRef,
@@ -413,9 +375,6 @@ export async function handleEnsureTarget(
     })
   }
 
-  const parsedScopeJson = isRecord(body['parsedScopeJson'])
-    ? (body['parsedScopeJson'] as Record<string, unknown>)
-    : undefined
   const persistIntent = body['persistIntent']
   if (persistIntent !== undefined && typeof persistIntent !== 'boolean') {
     throw new HrcBadRequestError(
@@ -437,7 +396,6 @@ export async function handleEnsureTarget(
   const session = await this.ensureTargetSession(
     sessionRef,
     runtimeIntent as HrcRuntimeIntent,
-    parsedScopeJson,
     'local',
     {
       ...(persistIntent !== undefined ? { persistIntent } : {}),

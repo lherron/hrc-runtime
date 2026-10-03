@@ -43,7 +43,6 @@ test('owner termination preserves another durable protected input after in-memor
   const now = fixture.now()
   const runtime: HrcRuntimeSnapshot = {
     runtimeId: 'rt-t08207-protected-input',
-    runtimeKind: 'harness',
     hostSessionId: session.hostSessionId,
     scopeRef: session.scopeRef,
     laneRef: session.laneRef,
@@ -53,7 +52,6 @@ test('owner termination preserves another durable protected input after in-memor
     provider: 'openai',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     createdAt: now,
     updatedAt: now,

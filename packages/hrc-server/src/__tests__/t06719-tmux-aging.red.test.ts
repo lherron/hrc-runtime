@@ -54,8 +54,6 @@ type SeedOptions = {
   status?: 'ready' | 'busy' | undefined
   createdAt?: string | undefined
   missingTmuxIdentity?: boolean | undefined
-  wrapperPid?: number | undefined
-  childPid?: number | undefined
   brokerPid?: number | undefined
   activeRun?: boolean | undefined
   nonterminalRun?: boolean | undefined
@@ -86,14 +84,11 @@ function seedRuntime(options: SeedOptions): HrcRuntimeSnapshot {
       provider: 'anthropic',
       status: options.status ?? 'ready',
       ...(options.missingTmuxIdentity ? {} : { tmuxJson: identity }),
-      ...(options.wrapperPid !== undefined ? { wrapperPid: options.wrapperPid } : {}),
-      ...(options.childPid !== undefined ? { childPid: options.childPid } : {}),
       ...(options.brokerPid !== undefined
         ? { runtimeStateJson: { broker: { brokerPid: options.brokerPid } } }
         : {}),
       ...(invocationId !== undefined ? { activeInvocationId: invocationId } : {}),
       supportsInflightInput: false,
-      adopted: false,
       lastActivityAt: createdAt,
       createdAt,
       updatedAt: createdAt,
@@ -226,8 +221,6 @@ describe('T-06719 liveness-gated tmux aging', () => {
 
   it('stales only a fully-negative aged ready row and names every liveness skip', async () => {
     seedRuntime({ runtimeId: 'rt-orphan' })
-    seedRuntime({ runtimeId: 'rt-live-child', childPid: process.pid })
-    seedRuntime({ runtimeId: 'rt-live-wrapper', wrapperPid: process.pid })
     seedRuntime({ runtimeId: 'rt-live-broker', brokerPid: process.pid })
     seedRuntime({ runtimeId: 'rt-live-inv-broker', invocationBrokerPid: process.pid })
     seedRuntime({ runtimeId: 'rt-live-inv-child', invocationChildPid: process.pid })
@@ -252,16 +245,8 @@ describe('T-06719 liveness-gated tmux aging', () => {
     const body = await sweep()
     const byId = new Map(body.results.map((result) => [result.runtimeId, result]))
 
-    expect(body.summary).toMatchObject({ matched: 13, stale: 1, skipped: 12, errors: 0 })
+    expect(body.summary).toMatchObject({ matched: 11, stale: 1, skipped: 10, errors: 0 })
     expect(byId.get('rt-orphan')).toMatchObject({ status: 'stale' })
-    expect(byId.get('rt-live-child')).toMatchObject({
-      status: 'skipped',
-      reason: 'live_child_pid',
-    })
-    expect(byId.get('rt-live-wrapper')).toMatchObject({
-      status: 'skipped',
-      reason: 'live_wrapper_pid',
-    })
     expect(byId.get('rt-live-broker')).toMatchObject({
       status: 'skipped',
       reason: 'live_broker_pid',

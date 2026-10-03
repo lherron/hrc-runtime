@@ -40,11 +40,9 @@ export class ParticipantRegistrationRepository {
     execute(
       this.db,
       `INSERT INTO participant_registrations (${REGISTRATION_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.registrationId,
-      record.registrationMode,
       record.classId ?? null,
-      record.adapterId ?? null,
       record.join,
       record.participantKey ?? null,
       record.scopeRef,
@@ -53,8 +51,6 @@ export class ParticipantRegistrationRepository {
       record.generation,
       record.workspaceCwd ?? null,
       record.socketPath ?? null,
-      record.preparationJson ?? null,
-      record.continuityEvidenceJson ?? null,
       record.policy?.addressPolicy ?? null,
       record.policy?.continuityPolicy ?? null,
       record.policy?.lifecycleOwner ?? null,
@@ -64,19 +60,6 @@ export class ParticipantRegistrationRepository {
       record.updatedAt
     )
     return record
-  }
-
-  getRegistrationByClassAndKey(
-    classId: string,
-    participantKey: string
-  ): ParticipantRegistration | null {
-    const row = this.db
-      .query<ParticipantRegistrationRow, [string, string]>(
-        `SELECT ${REGISTRATION_COLUMNS} FROM participant_registrations
-         WHERE class_id = ? AND participant_key = ?`
-      )
-      .get(classId, participantKey)
-    return row === null ? null : mapRegistration(row)
   }
 
   getRegistrationByScopeRef(scopeRef: string): ParticipantRegistration | null {
@@ -100,7 +83,7 @@ export class ParticipantRegistrationRepository {
     const row = this.db
       .query<ParticipantRegistrationRow, [string, string]>(
         `SELECT ${REGISTRATION_COLUMNS} FROM participant_registrations
-         WHERE registration_mode = 'direct' AND scope_ref = ? AND host_incarnation_id = ?`
+         WHERE scope_ref = ? AND host_incarnation_id = ?`
       )
       .get(scopeRef, hostIncarnationId)
     return row === null ? null : mapRegistration(row)
@@ -135,21 +118,11 @@ export class ParticipantRegistrationRepository {
     return rows.map(mapAttempt)
   }
 
-  countRegistrationsByClassId(classId: string): number {
-    const row = this.db
-      .query<{ count: number }, [string]>(
-        'SELECT COUNT(*) AS count FROM participant_registrations WHERE class_id = ?'
-      )
-      .get(classId)
-    return row?.count ?? 0
-  }
-
   insertAttempt(record: ParticipantAttempt): ParticipantAttempt {
     execute(
       this.db,
       `INSERT INTO participant_registration_attempts (${ATTEMPT_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.attemptId,
       record.registrationId,
       record.attachEpoch,
@@ -166,7 +139,6 @@ export class ParticipantRegistrationRepository {
       record.dispatchJson ?? null,
       record.brokerIdentityJson ?? null,
       record.initialActivationConfirmedAt ?? null,
-      record.continuityEvidenceJson ?? null,
       record.activationClassification ?? null,
       record.writerEvidenceJson ?? null,
       record.recoveryDisposition,
@@ -397,41 +369,6 @@ export class ParticipantRegistrationRepository {
     return result.changes === 1
   }
 
-  /**
-   * Successor allocation refreshes only the adapter-supplied boundary. It
-   * deliberately cannot touch `continuity_evidence_json`: that column is the
-   * last ACTIVATED known evidence, and an allocated attempt has not activated.
-   * The attempt's own column carries the candidate until then.
-   */
-  updateRegistrationForSuccessor(input: {
-    registrationId: string
-    workspaceCwd?: string | undefined
-    socketPath?: string | undefined
-    preparationJson?: string | undefined
-    updatedAt: string
-  }): boolean {
-    // COALESCE, not assignment: with adapter admission gone these three arrive
-    // from the request or not at all, and a successor request that omits one
-    // must leave the stored value alone rather than blank it.
-    const result = this.db
-      .query(
-        `UPDATE participant_registrations
-            SET workspace_cwd = COALESCE(?, workspace_cwd),
-                serving_socket_path = COALESCE(?, serving_socket_path),
-                preparation_json = COALESCE(?, preparation_json),
-                updated_at = ?
-          WHERE registration_id = ?`
-      )
-      .run(
-        input.workspaceCwd ?? null,
-        input.socketPath ?? null,
-        input.preparationJson ?? null,
-        input.updatedAt,
-        input.registrationId
-      )
-    return result.changes === 1
-  }
-
   updateDirectRegistrationForHostSuccessor(input: {
     registrationId: string
     expectedHostSessionId: string
@@ -448,7 +385,7 @@ export class ParticipantRegistrationRepository {
             SET host_session_id = ?, generation = ?, host_incarnation_id = ?,
                 workspace_cwd = COALESCE(?, workspace_cwd),
                 serving_socket_path = COALESCE(?, serving_socket_path), updated_at = ?
-          WHERE registration_id = ? AND registration_mode = 'direct'
+          WHERE registration_id = ?
             AND host_session_id = ?`
       )
       .run(
@@ -477,7 +414,7 @@ export class ParticipantRegistrationRepository {
         `UPDATE participant_registrations
             SET workspace_cwd = COALESCE(?, workspace_cwd),
                 serving_socket_path = COALESCE(?, serving_socket_path), updated_at = ?
-          WHERE registration_id = ? AND registration_mode = 'direct'
+          WHERE registration_id = ?
             AND host_session_id = ? AND host_incarnation_id = ?`
       )
       .run(
@@ -510,26 +447,6 @@ export class ParticipantRegistrationRepository {
           WHERE registration_id = ? AND serving_socket_path IS NULL`
       )
       .run(input.socketPath, input.updatedAt, input.registrationId)
-    return result.changes === 1
-  }
-
-  /**
-   * Advances the retained known continuity evidence. Only the initial-activation
-   * transaction may call this, so an unactivated candidate never replaces the
-   * baseline that a later attempt is classified against.
-   */
-  acceptContinuityEvidence(input: {
-    registrationId: string
-    continuityEvidenceJson: string
-    updatedAt: string
-  }): boolean {
-    const result = this.db
-      .query(
-        `UPDATE participant_registrations
-            SET continuity_evidence_json = ?, updated_at = ?
-          WHERE registration_id = ?`
-      )
-      .run(input.continuityEvidenceJson, input.updatedAt, input.registrationId)
     return result.changes === 1
   }
 
@@ -791,29 +708,6 @@ export class ParticipantRegistrationRepository {
             AND establishment_work_state IN ('pending', 'retry_wait')`
       )
       .run(updatedAt, attemptId, attachEpoch)
-    return result.changes === 1
-  }
-
-  /**
-   * Freeze one durable boundary once. A retry can observe its existing bytes,
-   * but no caller may replace them under the same attempt identity.
-   */
-  freezePreparedDescriptorIfAbsent(
-    attemptId: string,
-    preparedDescriptorJson: string,
-    /** JSON `null` represents an omitted adapter dispatch environment. */
-    adapterDispatchEnvJson: string,
-    updatedAt: string
-  ): boolean {
-    const result = this.db
-      .query(
-        `UPDATE participant_registration_attempts
-            SET prepared_profile_json = ?, adapter_dispatch_env_json = ?, updated_at = ?
-          WHERE attempt_id = ?
-            AND prepared_profile_json IS NULL
-            AND adapter_dispatch_env_json IS NULL`
-      )
-      .run(preparedDescriptorJson, adapterDispatchEnvJson, updatedAt, attemptId)
     return result.changes === 1
   }
 

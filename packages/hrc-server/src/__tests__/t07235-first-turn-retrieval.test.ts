@@ -18,7 +18,7 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 import { handleFirstTurnDiagnostics } from '../first-turn-diagnostics-handlers'
 import { runFirstTurnEvaluationOnce } from '../first-turn-eval'
 import { armFirstTurnWatch } from '../first-turn-watch'
-import { createRuntimeListAdoptRoutes } from '../runtime-list-adopt-handlers'
+import { createRuntimeListRoutes } from '../runtime-list-handlers'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context'
 
 const HOST_SESSION_ID = 'hsid-retrieval'
@@ -48,7 +48,6 @@ async function makeFixture(): Promise<Fixture> {
     status: 'active',
     createdAt: PAST,
     updatedAt: PAST,
-    ancestorScopeRefs: [],
   })
   db.runtimes.insert({
     runtimeId: RUNTIME_ID,
@@ -61,7 +60,6 @@ async function makeFixture(): Promise<Fixture> {
     provider: 'anthropic',
     status: 'busy',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     createdAt: PAST,
     updatedAt: PAST,
@@ -145,7 +143,7 @@ describe('waiter mapping', () => {
 describe('runtime list health detail', () => {
   it('flags a tripped runtime and carries the trip event id', async () => {
     const tripEventSeq = await trip()
-    const routes = createRuntimeListAdoptRoutes({
+    const routes = createRuntimeListRoutes({
       db: fixture.db,
       runtimeRoot: fixture.runtimeRoot,
       staleGenerationThresholdSec: 86_400,
@@ -172,7 +170,7 @@ describe('runtime list health detail', () => {
   })
 
   it('leaves untripped runtimes with no health finding', async () => {
-    const routes = createRuntimeListAdoptRoutes({
+    const routes = createRuntimeListRoutes({
       db: fixture.db,
       runtimeRoot: fixture.runtimeRoot,
       staleGenerationThresholdSec: 86_400,

@@ -126,7 +126,6 @@ function seedLiveBrokerInvocation(
       provider: 'openai',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: `op-t08207-${input.executionFormat}`,
       activeInvocationId: invocationId,
@@ -635,7 +634,6 @@ describe('T-08207 format1 sealed HTTP doors', () => {
     '/v1/runs/resume-attached',
     '/v1/turns/by-selector',
     '/v1/messages',
-    '/v1/app-sessions/ensure',
     '/v1/participants/attach',
     '/v1/participants/register',
   ])('rejects executionFormat before any format1-only route can act: %s', async (path) => {

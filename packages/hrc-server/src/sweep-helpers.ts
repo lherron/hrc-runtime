@@ -202,12 +202,6 @@ export async function evaluateRuntimeAgingDisposition(
     return { eligible: false, reason: 'nonterminal_run' }
   }
 
-  if (runtime.childPid !== undefined && isLiveProcess(runtime.childPid)) {
-    return { eligible: false, reason: 'live_child_pid' }
-  }
-  if (runtime.wrapperPid !== undefined && isLiveProcess(runtime.wrapperPid)) {
-    return { eligible: false, reason: 'live_wrapper_pid' }
-  }
   const persistedBrokerPid = runtimeBrokerPid(runtime)
   if (persistedBrokerPid !== undefined && isLiveProcess(persistedBrokerPid)) {
     return { eligible: false, reason: 'live_broker_pid' }
@@ -332,11 +326,6 @@ export async function evaluatePruneLivenessSafety(
   if (db !== undefined && hasUnsettledAbsorbedAuxiliary(db, runtime.runtimeId)) {
     return { prunable: false, reason: 'unsettled_absorbed_auxiliary' }
   }
-  const trackedPid = runtime.childPid ?? runtime.wrapperPid
-  if (trackedPid !== undefined && isLiveProcess(trackedPid)) {
-    return { prunable: false, reason: 'live_process' }
-  }
-
   // H3: a harness-broker lease lives on its own per-runtime tmux server, not the
   // daemon socket, and has no `main` window. Probe the recorded leased pane on
   // that socket; fall back to the legacy session probe only when the private
@@ -441,8 +430,6 @@ export function filterRuntimes(
  *   - forceRestart is NOT requested
  *   - a prior runtime exists and is not in an unavailable state
  *   - its tmux session/pane is still present
- *   - the tracked process (childPid ?? wrapperPid) is still alive
- *     (if no pid is tracked yet we assume alive when tmux is alive)
  */
 export async function isInteractiveRuntimeLive(
   priorRuntime: HrcRuntimeSnapshot | null,
@@ -458,9 +445,6 @@ export async function isInteractiveRuntimeLive(
 
   const inspected = await tmux.inspectSession(tmuxSessionName)
   if (!inspected) return false
-
-  const trackedPid = priorRuntime.childPid ?? priorRuntime.wrapperPid
-  if (trackedPid !== undefined && !isLiveProcess(trackedPid)) return false
 
   return true
 }

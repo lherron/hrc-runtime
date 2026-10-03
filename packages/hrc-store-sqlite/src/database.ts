@@ -1,12 +1,12 @@
 import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { SessionTitleRepository } from './session-title-repository.js'
 
 import {
   CollectiveHistoryReplicationRepository,
   CollectiveHistoryRepository,
 } from './collective-history-repository.js'
-import { DesktopThreadRegistrationRepository } from './desktop-thread-registration-repository.js'
 import { ExternalRegistrationGrantRepository } from './external-registration-grant-repository.js'
 import { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 import { FederationOutboxRepository } from './federation-outbox-repository.js'
@@ -41,17 +41,11 @@ import { EventRepository, HrcLifecycleEventRepository } from './repositories/eve
 import { FirstTurnWatchRepository } from './repositories/first-turn-watch-repository.js'
 import { RetainedEvidenceOutcomeRepository } from './repositories/retained-evidence-outcome-repository.js'
 import {
-  LaunchRepository,
   RunIdOwnershipRegistry,
   RunRepository,
   RuntimeRepository,
 } from './repositories/runtime-repositories.js'
-import {
-  AppManagedSessionRepository,
-  AppSessionRepository,
-  ContinuityRepository,
-  SessionRepository,
-} from './repositories/session-repositories.js'
+import { ContinuityRepository, SessionRepository } from './repositories/session-repositories.js'
 import { SteerContributionRepository } from './repositories/steer-contribution-repository.js'
 import {
   type LedgerBlobMiss,
@@ -60,8 +54,6 @@ import {
 import { RosterClaimRepository } from './roster-claim-repository.js'
 import { assertStoreSchemaCurrent } from './schema-guard.js'
 import { SessionIndexRepository } from './session-index-repository.js'
-import { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
-import { SessionTitleRepository } from './session-title-repository.js'
 import { type SqliteSlowStatement, instrumentSqliteStatements } from './statement-telemetry.js'
 import { TranscriptIndexRepository } from './transcript-index-repository.js'
 import { WrkqLedgerCursorRepository } from './wrkq/ledger-cursor-repository.js'
@@ -93,19 +85,14 @@ export type HrcDatabase = {
   }
   continuities: ContinuityRepository
   sessions: SessionRepository
-  sessionIndex: SessionIndexRepository
   sessionTitles: SessionTitleRepository
-  sessionTaskClaimAuthorities: SessionTaskClaimAuthorityRepository
+  sessionIndex: SessionIndexRepository
   rosterClaims: RosterClaimRepository
-  desktopThreadRegistrations: DesktopThreadRegistrationRepository
   externalRegistrationGrants: ExternalRegistrationGrantRepository
   participantRegistrations: ParticipantRegistrationRepository
   participantHostBindings: ParticipantHostBindingRepository
-  appManagedSessions: AppManagedSessionRepository
-  appSessions: AppSessionRepository
   runtimes: RuntimeRepository
   runs: RunRepository
-  launches: LaunchRepository
   events: EventRepository
   hrcEvents: HrcLifecycleEventRepository
   localBridges: LocalBridgeRepository
@@ -218,19 +205,14 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     },
     continuities: new ContinuityRepository(sqlite),
     sessions: new SessionRepository(sqlite),
-    sessionIndex: new SessionIndexRepository(sqlite),
     sessionTitles: new SessionTitleRepository(sqlite),
-    sessionTaskClaimAuthorities: new SessionTaskClaimAuthorityRepository(sqlite),
+    sessionIndex: new SessionIndexRepository(sqlite),
     rosterClaims: new RosterClaimRepository(sqlite),
-    desktopThreadRegistrations: new DesktopThreadRegistrationRepository(sqlite),
     externalRegistrationGrants: new ExternalRegistrationGrantRepository(sqlite),
     participantRegistrations: new ParticipantRegistrationRepository(sqlite),
     participantHostBindings: new ParticipantHostBindingRepository(sqlite),
-    appManagedSessions: new AppManagedSessionRepository(sqlite),
-    appSessions: new AppSessionRepository(sqlite),
     runtimes: new RuntimeRepository(sqlite, runIdOwnership),
     runs: new RunRepository(sqlite, runIdOwnership),
-    launches: new LaunchRepository(sqlite),
     events: new EventRepository(sqlite),
     hrcEvents: new HrcLifecycleEventRepository(sqlite, toolResultBlobs),
     localBridges: new LocalBridgeRepository(sqlite),

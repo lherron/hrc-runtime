@@ -157,7 +157,6 @@ function seedBrokerTmuxRuntime(opts: SeedBrokerRuntimeOpts): void {
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId: opts.runtimeId,
@@ -170,7 +169,6 @@ function seedBrokerTmuxRuntime(opts: SeedBrokerRuntimeOpts): void {
       provider: 'anthropic',
       status: 'busy',
       supportsInflightInput: true,
-      adopted: false,
       controllerKind: 'harness-broker',
       ...(opts.activeInvocationId ? { activeInvocationId: opts.activeInvocationId } : {}),
       tmuxJson: {
@@ -233,7 +231,6 @@ function seedAdoptedHeadlessRuntime(opts: {
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ancestorScopeRefs: [],
     })
     db.runtimes.insert({
       runtimeId: opts.runtimeId,
@@ -246,7 +243,6 @@ function seedAdoptedHeadlessRuntime(opts: {
       provider: 'anthropic',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: true, // pre-broker / adopted harness — no broker facts
       lastActivityAt: now,
       createdAt: now,
       updatedAt: now,

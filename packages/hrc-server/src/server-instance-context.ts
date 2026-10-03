@@ -16,7 +16,6 @@ import type { SubscriberAdmissionRegistry } from './subscriber-admission-account
 
 import type { AcceptedRunRecoveryHandlersMethods } from './accepted-run-recovery-handlers.js'
 import type { AcpEventBridge } from './acp-event-bridge.js'
-import type { AppSessionHandlersMethods } from './app-session-handlers.js'
 import type { BridgeSurfaceHandlersMethods } from './bridge-surface-handlers.js'
 import type { BrokerHeadlessHandlersMethods } from './broker-headless-handlers.js'
 import type { BrokerInteractiveHandlersMethods } from './broker-interactive-handlers.js'
@@ -85,7 +84,6 @@ export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
  * type-checked.
  */
 type DecomposedHandlerMethods = AcceptedRunRecoveryHandlersMethods &
-  AppSessionHandlersMethods &
   BridgeSurfaceHandlersMethods &
   BrokerHeadlessHandlersMethods &
   BrokerInteractiveHandlersMethods &

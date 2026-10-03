@@ -37,6 +37,7 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   CONTINUATION_KEY,
+  HOST_SESSION_ID,
   INVOCATION_ID,
   RUNTIME_ID,
   envelope,
@@ -73,7 +74,7 @@ describe('idempotency', () => {
     )
 
     // The single projection is intact (not applied twice / not reverted).
-    expect(harness.fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual({
+    expect(harness.fixture.db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual({
       provider: 'openai',
       key: CONTINUATION_KEY,
     })

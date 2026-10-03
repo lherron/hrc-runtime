@@ -113,8 +113,6 @@ export type HrcRuntimeHealthDetail = {
 
 /** Event kind carrying one invocation's presentation decision (T-07594 §5.2). */
 export const HRC_RUNTIME_PRESENTATION_EVENT = 'runtime.presentation'
-/** Event kind carrying a session-title write or clear (T-07594 §5.2). */
-export const HRC_SESSION_RETITLED_EVENT = 'session.retitled'
 
 /**
  * tmux coordinates an operator (or a viewer) attaches with. Present only when
@@ -139,11 +137,6 @@ export type HrcRuntimePresentationEventPayload = {
   presentation: HrcRuntimePresentationRecord
   tmux?: HrcPresentationTmuxTarget | undefined
   title?: string | undefined
-}
-
-/** `session.retitled` payload. `null` is an explicit clear, not an absence. */
-export type HrcSessionRetitledEventPayload = {
-  title: string | null
 }
 
 /**
@@ -224,4 +217,12 @@ export type HrcPermissionDecisionRecord = {
   policyJson: string
   requestedAt: string
   decidedAt: string
+}
+
+/** Event kind carrying a session-title write or clear (T-07594 §5.2). */
+export const HRC_SESSION_RETITLED_EVENT = 'session.retitled'
+
+/** `session.retitled` payload. `null` is an explicit clear, not an absence. */
+export type HrcSessionRetitledEventPayload = {
+  title: string | null
 }

@@ -35,8 +35,6 @@ export function printRuntimeInspect(
       runtime.lastActivityAgeSec === null ? '(none)' : formatAgeSec(runtime.lastActivityAgeSec)
     })`,
     `  activeRunId   ${runtime.activeRunId ?? '(none)'}`,
-    `  wrapperPid    ${runtime.wrapperPid ?? '(none)'}`,
-    `  childPid      ${runtime.childPid ?? '(none)'}`,
     `  continuation  ${continuation}`,
   ]
   if (runtime.capture !== undefined) {

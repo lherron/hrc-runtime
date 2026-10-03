@@ -39,7 +39,6 @@ describe('dispatchTurn against live interactive harness', () => {
     const pane = await tmux.ensurePane(hostSessionId, 'fresh_pty')
 
     const runtimeId = `rt-live-${randomUUID()}`
-    const launchId = `launch-live-${randomUUID()}`
     const timestamp = fixture.now()
 
     const seedDb = openHrcDatabase(fixture.dbPath)
@@ -55,22 +54,8 @@ describe('dispatchTurn against live interactive harness', () => {
         provider: 'anthropic',
         status: 'ready',
         tmuxJson: pane,
-        launchId,
         supportsInflightInput: false,
-        adopted: false,
         lastActivityAt: timestamp,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      })
-      seedDb.launches.insert({
-        launchId,
-        hostSessionId,
-        generation,
-        runtimeId,
-        harness: 'claude-code',
-        provider: 'anthropic',
-        launchArtifactPath: '/tmp/fake-existing-launch.json',
-        status: 'child_started',
         createdAt: timestamp,
         updatedAt: timestamp,
       })

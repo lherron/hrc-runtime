@@ -20,7 +20,6 @@ import {
   assertActuatorSplitRouteAdmission,
   assertActuatorSplitRuntimeReuse,
 } from './actuator-split.js'
-import { refuseAppScopedSession } from './app-session-identity.js'
 import {
   assertPreparedAspdAttemptFormat,
   findPreparedAspdAttemptForFormatRetry,
@@ -81,7 +80,6 @@ export async function handleEnsureRuntime(
 ): Promise<Response> {
   const body = parseEnsureRuntimeRequest(await parseJsonBody(request))
   const requested = requireSession(this.db, body.hostSessionId)
-  refuseAppScopedSession(requested, 'runtime-ensure')
   const { session } = await this.maybeAutoRotateStaleSession(requested, {
     allowStaleGeneration: body.allowStaleGeneration,
     trigger: 'runtime-ensure',
@@ -112,7 +110,6 @@ export async function handleStartRuntime(
     return json(await this.startRoutedExactScopeRuntime(body))
   }
   const requested = requireSession(this.db, body.hostSessionId)
-  refuseAppScopedSession(requested, 'runtime-start')
   const { session } = await this.maybeAutoRotateStaleSession(requested, {
     allowStaleGeneration: body.allowStaleGeneration,
     trigger: 'runtime-start',
@@ -131,7 +128,6 @@ export async function handleOpenBrokerSession(
 ): Promise<Response> {
   const body = parseOpenBrokerSessionRequest(await parseJsonBody(request))
   const requestedSession = requireSession(this.db, body.hostSessionId)
-  refuseAppScopedSession(requestedSession, 'broker-session-open')
   const continuity = requireContinuity(this.db, requestedSession)
   const activeSession = requireSession(this.db, continuity.activeHostSessionId)
   const fence = validateFence(body.fences, {
@@ -239,7 +235,6 @@ export async function handleDispatchTurn(
 ): Promise<Response> {
   const body = parseDispatchTurnRequest(await parseJsonBody(request))
   const requestedSession = requireSession(this.db, body.hostSessionId)
-  refuseAppScopedSession(requestedSession, 'dispatch-turn')
   const continuity = requireContinuity(this.db, requestedSession)
   const activeSession = requireSession(this.db, continuity.activeHostSessionId)
   const fence = validateFence(body.fences, {

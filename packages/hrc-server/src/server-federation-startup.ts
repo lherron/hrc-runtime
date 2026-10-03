@@ -27,7 +27,7 @@ import {
 } from './federation/summon-gate-server.js'
 import type { HrcServerInstance } from './index.js'
 import { suffixRosterFamily } from './roster-claim.js'
-import { listRuntimesForProjection } from './runtime-list-adopt-handlers.js'
+import { listRuntimesForProjection } from './runtime-list-handlers.js'
 import { writeServerLog } from './server-log.js'
 import { parseStartRuntimeRequest } from './server-parsers.js'
 import type { HrcServerOptions } from './server-types.js'

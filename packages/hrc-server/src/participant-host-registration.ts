@@ -17,7 +17,6 @@ import {
   hasLegacyArrisHostIncarnationSelection,
   isNeverAttachedDirectAttempt,
 } from './participant-succession.js'
-import { isParticipantRegistrationClass } from './registration-classes-config.js'
 import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { createHostSessionId, timestamp } from './server-util.js'
@@ -362,25 +361,13 @@ async function registerDirectParticipantLocked(
   const attemptId = `participant-attempt-${randomUUID()}`
   const runtimeId = `rt-${randomUUID()}`
   const continuation = selectContinuation(server, null)
-  const configuredClass =
-    request.classId === undefined
-      ? undefined
-      : server.options.registrationClasses?.find(
-          (candidate) => candidate.classId === request.classId
-        )
-  const configuredAdapterId =
-    configuredClass !== undefined && isParticipantRegistrationClass(configuredClass)
-      ? configuredClass.adapterId
-      : undefined
 
   const registration: ParticipantRegistration = {
     registrationId,
-    registrationMode: 'direct',
-    // No class, no adapter, no preparation and no workspace are stored unless
-    // the participant actually supplied them. R7.1 forbids the placeholders
+    // No class, no key and no workspace are stored unless the participant
+    // actually supplied them. R7.1 forbids the placeholders
     // that would otherwise make these columns look answered.
     ...(request.classId === undefined ? {} : { classId: request.classId }),
-    ...(configuredAdapterId === undefined ? {} : { adapterId: configuredAdapterId }),
     join: 'participant-served',
     ...(request.participantKey === undefined ? {} : { participantKey: request.participantKey }),
     scopeRef,
@@ -441,8 +428,6 @@ async function registerDirectParticipantLocked(
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      parsedScopeJson: parseScopeRef(scopeRef) as unknown as Record<string, unknown>,
-      ancestorScopeRefs: [],
     })
     server.db.continuities.upsert({
       scopeRef,

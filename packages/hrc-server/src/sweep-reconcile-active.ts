@@ -424,8 +424,7 @@ function listActiveRunReconcileCandidates(
     if (!runtime || runtime.activeRunId !== run.runId) continue
     if (isExternalLifecycleOwner(runtime)) continue
 
-    const launch = runtime.launchId ? ctx.db.launches.getByLaunchId(runtime.launchId) : null
-    if (run.transport === 'headless' && launch?.status !== 'orphaned') continue
+    if (run.transport === 'headless') continue
 
     const observed = latestObservedRunActivity(ctx, run)
     const observedMs = Date.parse(observed.observedAt)
@@ -436,7 +435,6 @@ function listActiveRunReconcileCandidates(
     candidates.push({
       run,
       runtime,
-      ...(launch ? { launch } : {}),
       ...observed,
     })
   }
@@ -447,7 +445,7 @@ async function planActiveRunReconcile(
   ctx: ServerContext,
   candidate: ActiveRunReconcileCandidate
 ): Promise<ActiveRunReconcilePlan> {
-  const { runtime, launch } = candidate
+  const { runtime } = candidate
 
   // T-01946: a turn parked on a user prompt (open ask bracket) is NEVER reapable,
   // across every runtime status. The bracket — judged from the durable broker
@@ -472,15 +470,6 @@ async function planActiveRunReconcile(
   // terminal, so it falls through to the status-based reap branches below.
   const finalizePlan = planFinalizeFromOrphanTerminal(ctx, candidate, runtime)
   if (finalizePlan) return finalizePlan
-
-  if (runtime.transport === 'headless' && launch?.status === 'orphaned') {
-    return {
-      action: 'reap',
-      reason: 'orphaned-headless',
-      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
-      nextRuntimeStatus: 'stale',
-    }
-  }
 
   if (runtime.status === 'terminated') {
     return {
@@ -511,23 +500,6 @@ async function planActiveRunReconcile(
       action: 'reap',
       reason: 'runtime_ready_with_active_run',
       errorCode: HrcErrorCode.RUNTIME_READY_WITH_ACTIVE_RUN,
-    }
-  }
-
-  if (launch && (launch.status === 'exited' || launch.status === 'failed')) {
-    return {
-      action: 'reap',
-      reason: 'runtime_process_exited_with_active_run',
-      errorCode: HrcErrorCode.RUNTIME_PROCESS_EXITED_WITH_ACTIVE_RUN,
-    }
-  }
-
-  if (launch?.status === 'orphaned') {
-    return {
-      action: 'reap',
-      reason: 'runtime_unavailable_with_active_run',
-      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
-      nextRuntimeStatus: 'stale',
     }
   }
 
@@ -823,8 +795,6 @@ function activeRunReconcileResult(
     runtimeStatus: candidate.runtime.status,
     ...(plan.nextRuntimeStatus ? { nextRuntimeStatus: plan.nextRuntimeStatus } : {}),
     runtimeOwnershipCleared,
-    ...(candidate.launch ? { launchId: candidate.launch.launchId } : {}),
-    ...(candidate.launch ? { launchStatus: candidate.launch.status } : {}),
     ...(plan.errorCode ? { errorCode: plan.errorCode } : {}),
   }
 }
@@ -925,16 +895,6 @@ function reapActiveRun(
       priorRunStatus: candidate.run.status,
       priorRuntimeStatus: candidate.runtime.status,
       ...(plan.nextRuntimeStatus ? { nextRuntimeStatus: plan.nextRuntimeStatus } : {}),
-      ...(candidate.launch
-        ? {
-            launchId: candidate.launch.launchId,
-            launchStatus: candidate.launch.status,
-            wrapperPid: candidate.launch.wrapperPid,
-            childPid: candidate.launch.childPid,
-            exitCode: candidate.launch.exitCode,
-            signal: candidate.launch.signal,
-          }
-        : {}),
       runtimeOwnershipCleared,
     },
   })

@@ -299,7 +299,6 @@ export function parseSemanticDmRequest(input: unknown): {
   replyToMessageId?: string | undefined
   runtimeIntent?: HrcDmRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
-  parsedScopeJson?: Record<string, unknown> | undefined
   wait?: { enabled: boolean; timeoutMs?: number | undefined } | undefined
   allowStaleGeneration?: boolean | undefined
   freshContext?: boolean | undefined
@@ -353,10 +352,6 @@ export function parseSemanticDmRequest(input: unknown): {
   const createIfMissing =
     typeof input['createIfMissing'] === 'boolean' ? input['createIfMissing'] : undefined
 
-  const parsedScopeJson = isRecord(input['parsedScopeJson'])
-    ? (input['parsedScopeJson'] as Record<string, unknown>)
-    : undefined
-
   const waitInput = input['wait']
   const wait =
     isRecord(waitInput) && typeof waitInput['enabled'] === 'boolean'
@@ -398,7 +393,6 @@ export function parseSemanticDmRequest(input: unknown): {
     ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
     ...(runtimeIntent !== undefined ? { runtimeIntent } : {}),
     ...(createIfMissing !== undefined ? { createIfMissing } : {}),
-    ...(parsedScopeJson !== undefined ? { parsedScopeJson } : {}),
     ...(wait !== undefined ? { wait } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(freshContext !== undefined ? { freshContext } : {}),

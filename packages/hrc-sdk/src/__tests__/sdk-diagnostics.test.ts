@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { StatusResponse } from 'hrc-core'
-import { HRC_API_VERSION, HrcDomainError, HrcErrorCode } from 'hrc-core'
+import { HRC_API_VERSION } from 'hrc-core'
 
 // RED GATE: These imports will fail until Curly implements the sdk module
 import { HrcClient } from '../index'
@@ -124,8 +124,8 @@ describe('Phase 6 diagnostics round-trip', () => {
       clearContext: true,
     })
     expect(result.capabilities.platform).toEqual({
-      appOwnedSessions: true,
-      appHarnessSessions: true,
+      appOwnedSessions: false,
+      appHarnessSessions: false,
       commandSessions: true,
       literalInput: true,
       surfaceBindings: true,
@@ -155,35 +155,11 @@ describe('Phase 6 diagnostics round-trip', () => {
     // server instance, so we only assert the shape, not the count.
   })
 
-  it('listLaunches returns empty array when none exist', async () => {
-    if (!server) return
-    const client = new HrcClient(socketPath)
-    // RED: listLaunches does not exist on HrcClient
-    const result = await (client as any).listLaunches()
-    expect(Array.isArray(result)).toBe(true)
-  })
-
   it('listRuns returns an array', async () => {
     if (!server) return
     const client = new HrcClient(socketPath)
     const result = await client.listRuns({ limit: 1 })
     expect(Array.isArray(result)).toBe(true)
-  })
-
-  it('adoptRuntime on unknown runtime throws UNKNOWN_RUNTIME', async () => {
-    if (!server) return
-    const client = new HrcClient(socketPath)
-
-    // RED: adoptRuntime does not exist on HrcClient
-    try {
-      await (client as any).adoptRuntime('nonexistent-runtime-id')
-      expect.unreachable('should have thrown UNKNOWN_RUNTIME')
-    } catch (err) {
-      expect(err).toBeInstanceOf(HrcDomainError)
-      const domainErr = err as InstanceType<typeof HrcDomainError>
-      expect(domainErr.code).toBe(HrcErrorCode.UNKNOWN_RUNTIME)
-      expect(domainErr.status).toBe(404)
-    }
   })
 })
 

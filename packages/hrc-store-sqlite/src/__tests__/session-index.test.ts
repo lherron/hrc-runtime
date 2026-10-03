@@ -38,7 +38,6 @@ function seedCurrent(
     status: 'active',
     createdAt: updatedAt,
     updatedAt,
-    ancestorScopeRefs: [],
   })
   db.continuities.upsert({
     scopeRef,
@@ -77,7 +76,6 @@ function insertRuntime(
     provider: input.provider === undefined ? 'openai' : input.provider,
     status: input.status ?? 'ready',
     supportsInflightInput: input.supportsInflightInput ?? true,
-    adopted: false,
     ...(input.lastActivityAt === undefined ? {} : { lastActivityAt: input.lastActivityAt }),
     createdAt: updatedAt,
     updatedAt,
@@ -232,7 +230,7 @@ describe('session_index maintained projection', () => {
       appendEvent(db, 'hsid-a', seeded.scopeRef, seeded.laneRef, '2026-08-11T12:00:00.000Z')
       appendEvent(db, 'hsid-a', seeded.scopeRef, seeded.laneRef, '2026-08-11T09:00:00.000Z')
       db.runtimes.updateActivity('rt-a', '2026-08-11T10:30:00.000Z', '2026-08-11T13:00:00.000Z')
-      db.sessions.updateParsedScope('hsid-a', { agentId: 'cody' }, '2026-08-11T14:00:00.000Z')
+      db.sessions.updateStatus('hsid-a', 'active', '2026-08-11T14:00:00.000Z')
       db.sessions.updateContinuation(
         'hsid-a',
         { provider: 'openai', key: 'thread' },
@@ -274,7 +272,6 @@ describe('session_index maintained projection', () => {
         priorHostSessionId: 'hsid-g1',
         createdAt: '2026-08-11T09:00:00.000Z',
         updatedAt: '2026-08-11T09:00:00.000Z',
-        ancestorScopeRefs: [],
       })
       db.continuities.upsert({
         scopeRef: first.scopeRef,

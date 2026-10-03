@@ -46,7 +46,6 @@ FULL adds:
 2. `hrc monitor show`, `watch`, `wait`
 3. `hrc runtime list --transport tmux`, `inspect`
 4. `hrc runtime sweep --dry-run`
-5. `hrc admin runtime adopt`
 6. `hrc attach --dry-run`
 7. `hrc admin surface bind`, `unbind`, `list`
 8. `hrc admin bridge target`, `deliver-text`, `deliver`, `list`, `close`
@@ -280,7 +279,6 @@ Record these as accepted NOTE rows unless the observed behavior gets worse:
 - T-01738 F-V2: `hrc server tmux status` reports the default server only.
 - T-01738 F-V3: `hrc server tmux kill --yes` kills the default server only; do not execute on the shared daemon.
 - T-01738 F-V4: dead lease socket-file leak.
-- T-01738 F-V5: `hrc admin runtime adopt` does not verify dead-lease liveness.
 - Bridge socket plumbing has deferred work on T-01737 if regressions reappear.
 - `hrcchat peek` resolver prefer-interactive behavior is a T-01737 follow-up if regressions reappear.
 

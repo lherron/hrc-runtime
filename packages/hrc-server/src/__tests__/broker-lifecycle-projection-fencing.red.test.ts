@@ -70,6 +70,7 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import {
+  HOST_SESSION_ID,
   INVOCATION_ID,
   RUNTIME_ID,
   RUN_ID,
@@ -168,9 +169,10 @@ describe('lifecycle vocabulary projection', () => {
     )
 
     // The accepted hash is confirmed against WS-A's dispatch and persisted on the
-    // runtime (the runtime fixture starts with no lifecyclePolicyHash).
-    const runtime = db.runtimes.getByRuntimeId(RUNTIME_ID)!
-    expect(runtime.lifecyclePolicyHash).toBe(POLICY_HASH)
+    // invocation.
+    expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.lifecyclePolicyHash).toBe(
+      POLICY_HASH
+    )
 
     // The accepted modes are retained as immutable evidence.
     const evidence = db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 3)!
@@ -215,7 +217,6 @@ describe('lifecycle vocabulary projection', () => {
     )
 
     expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.currentHarnessGeneration).toBe(2)
-    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.currentHarnessGeneration).toBe(2)
   })
 
   it('harness.exited records lifecycle_terminal_reason on the invocation', () => {
@@ -385,10 +386,11 @@ describe('generation/attempt fencing', () => {
     const db = fixture.db
     seedCurrent({ generation: 3 })
     // Live continuation captured by the current generation.
-    db.runtimes.update(RUNTIME_ID, {
-      continuation: { provider: 'openai', key: 'live_continuation' },
-      updatedAt: ts(99),
-    })
+    db.sessions.updateContinuation(
+      HOST_SESSION_ID,
+      { provider: 'openai', key: 'live_continuation' },
+      ts(99)
+    )
     const mapper = makeMapper()
 
     mapper.apply(
@@ -401,7 +403,7 @@ describe('generation/attempt fencing', () => {
     )
 
     expect(db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 31)).not.toBeNull()
-    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual({
+    expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual({
       provider: 'openai',
       key: 'live_continuation',
     })

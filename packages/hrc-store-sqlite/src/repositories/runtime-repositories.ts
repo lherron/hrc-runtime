@@ -1,10 +1,8 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
-import type { HrcErrorCode, HrcLaunchRecord, HrcRunRecord } from 'hrc-core'
-import type { LaunchRow, RunRow } from './rows.js'
+import type { HrcErrorCode, HrcRunRecord } from 'hrc-core'
+import type { RunRow } from './rows.js'
 import { RunIdOwnershipRegistry } from './runtime-run-id-ownership.js'
 import {
-  LAUNCH_COLUMNS,
-  type LaunchUpdatePatch,
   type PatchEntrySpec,
   RUN_COLUMNS,
   type RunListFilters,
@@ -13,10 +11,8 @@ import {
   buildSetClause,
   collectPatchEntries,
   execute,
-  mapLaunchRow,
   mapRunRow,
   requireRecord,
-  serializeJson,
 } from './shared.js'
 
 export {
@@ -535,211 +531,5 @@ export class RunRepository {
     )
 
     return this.getByRunId(runId)
-  }
-}
-
-const LAUNCH_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<LaunchUpdatePatch>> = [
-  { key: 'hostSessionId', column: 'host_session_id' },
-  { key: 'generation', column: 'generation' },
-  { key: 'runtimeId', column: 'runtime_id' },
-  { key: 'harness', column: 'harness' },
-  { key: 'provider', column: 'provider' },
-  { key: 'launchArtifactPath', column: 'launch_artifact_path' },
-  { key: 'tmuxJson', column: 'tmux_json', transform: (v) => serializeJson(v) },
-  { key: 'surfaceJson', column: 'surface_json', transform: (v) => serializeJson(v) },
-  { key: 'wrapperPid', column: 'wrapper_pid' },
-  { key: 'childPid', column: 'child_pid' },
-  {
-    key: 'harnessSessionJson',
-    column: 'harness_session_json',
-    transform: (v) => serializeJson(v),
-  },
-  { key: 'continuation', column: 'continuation_json', transform: (v) => serializeJson(v) },
-  { key: 'wrapperStartedAt', column: 'wrapper_started_at' },
-  { key: 'childStartedAt', column: 'child_started_at' },
-  { key: 'exitedAt', column: 'exited_at' },
-  { key: 'exitCode', column: 'exit_code' },
-  { key: 'signal', column: 'signal' },
-  { key: 'status', column: 'status' },
-  { key: 'createdAt', column: 'created_at' },
-  { key: 'updatedAt', column: 'updated_at' },
-]
-
-export class LaunchRepository {
-  constructor(private readonly db: Database) {}
-
-  insert(record: HrcLaunchRecord): HrcLaunchRecord {
-    execute(
-      this.db,
-      `
-        INSERT INTO launches (
-          launch_id,
-          host_session_id,
-          generation,
-          runtime_id,
-          harness,
-          provider,
-          launch_artifact_path,
-          tmux_json,
-          surface_json,
-          wrapper_pid,
-          child_pid,
-          harness_session_json,
-          continuation_json,
-          wrapper_started_at,
-          child_started_at,
-          exited_at,
-          exit_code,
-          signal,
-          status,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      record.launchId,
-      record.hostSessionId,
-      record.generation,
-      record.runtimeId ?? null,
-      record.harness,
-      record.provider,
-      record.launchArtifactPath,
-      serializeJson(record.tmuxJson),
-      serializeJson(record.surfaceJson),
-      record.wrapperPid ?? null,
-      record.childPid ?? null,
-      serializeJson(record.harnessSessionJson),
-      serializeJson(record.continuation),
-      record.wrapperStartedAt ?? null,
-      record.childStartedAt ?? null,
-      record.exitedAt ?? null,
-      record.exitCode ?? null,
-      record.signal ?? null,
-      record.status,
-      record.createdAt,
-      record.updatedAt
-    )
-
-    return requireRecord(
-      this.getByLaunchId(record.launchId),
-      `failed to reload launch ${record.launchId}`
-    )
-  }
-
-  getByLaunchId(launchId: string): HrcLaunchRecord | null {
-    const row = this.db
-      .query<LaunchRow, [string]>(`SELECT ${LAUNCH_COLUMNS} FROM launches WHERE launch_id = ?`)
-      .get(launchId)
-
-    return row ? mapLaunchRow(row) : null
-  }
-
-  update(launchId: string, patch: LaunchUpdatePatch): HrcLaunchRecord | null {
-    const entries = collectPatchEntries(patch, LAUNCH_UPDATE_SPEC)
-
-    if (entries.length === 0) {
-      return this.getByLaunchId(launchId)
-    }
-
-    const { clause, values } = buildSetClause(entries)
-    execute(this.db, `UPDATE launches SET ${clause} WHERE launch_id = ?`, ...values, launchId)
-    return this.getByLaunchId(launchId)
-  }
-
-  updateWrapperStarted(
-    launchId: string,
-    updates: {
-      wrapperPid?: number | undefined
-      wrapperStartedAt: string
-      updatedAt: string
-    }
-  ): HrcLaunchRecord | null {
-    return this.update(launchId, {
-      ...(updates.wrapperPid !== undefined ? { wrapperPid: updates.wrapperPid } : {}),
-      wrapperStartedAt: updates.wrapperStartedAt,
-      updatedAt: updates.updatedAt,
-    })
-  }
-
-  updateChildStarted(
-    launchId: string,
-    updates: {
-      childPid?: number | undefined
-      childStartedAt: string
-      updatedAt: string
-    }
-  ): HrcLaunchRecord | null {
-    return this.update(launchId, {
-      ...(updates.childPid !== undefined ? { childPid: updates.childPid } : {}),
-      childStartedAt: updates.childStartedAt,
-      updatedAt: updates.updatedAt,
-    })
-  }
-
-  updateExited(
-    launchId: string,
-    updates: {
-      exitedAt: string
-      updatedAt: string
-      status: string
-      exitCode?: number | undefined
-      signal?: string | undefined
-    }
-  ): HrcLaunchRecord | null {
-    execute(
-      this.db,
-      `
-        UPDATE launches
-        SET
-          exited_at = ?,
-          updated_at = ?,
-          status = ?,
-          exit_code = ?,
-          signal = ?
-        WHERE launch_id = ?
-      `,
-      updates.exitedAt,
-      updates.updatedAt,
-      updates.status,
-      updates.exitCode ?? null,
-      updates.signal ?? null,
-      launchId
-    )
-
-    return this.getByLaunchId(launchId)
-  }
-
-  listAll(): HrcLaunchRecord[] {
-    const rows = this.db
-      .query<LaunchRow, []>(
-        `SELECT ${LAUNCH_COLUMNS} FROM launches
-          ORDER BY created_at ASC, launch_id ASC`
-      )
-      .all()
-
-    return rows.map(mapLaunchRow)
-  }
-
-  listByHostSessionId(hostSessionId: string): HrcLaunchRecord[] {
-    const rows = this.db
-      .query<LaunchRow, [string]>(
-        `SELECT ${LAUNCH_COLUMNS} FROM launches
-          WHERE host_session_id = ?
-          ORDER BY created_at ASC, launch_id ASC`
-      )
-      .all(hostSessionId)
-
-    return rows.map(mapLaunchRow)
-  }
-
-  listByRuntimeId(runtimeId: string): HrcLaunchRecord[] {
-    const rows = this.db
-      .query<LaunchRow, [string]>(
-        `SELECT ${LAUNCH_COLUMNS} FROM launches
-          WHERE runtime_id = ?
-          ORDER BY created_at ASC, launch_id ASC`
-      )
-      .all(runtimeId)
-
-    return rows.map(mapLaunchRow)
   }
 }

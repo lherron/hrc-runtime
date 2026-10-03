@@ -63,7 +63,6 @@ function seedSeat(options: { capabilitiesJson?: string | undefined } = {}): void
       provider: 'codex',
       status: 'ready',
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: OPERATION_ID,
       activeInvocationId: INVOCATION_ID,

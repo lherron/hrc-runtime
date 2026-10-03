@@ -188,7 +188,6 @@ export function backfillLegacyContinuationClearBarriers(db: HrcDatabase): number
 
 export type ContinuationHistoryRepairResult = {
   sessions: number
-  runtimes: number
 }
 
 /**
@@ -232,38 +231,7 @@ export function repairContinuationHistory(db: HrcDatabase): ContinuationHistoryR
       )
       .run().changes
 
-    const runtimes = db.sqlite
-      .query(
-        `WITH ranked AS (
-           SELECT
-             event.runtime_id,
-             event.broker_event_json AS continuation_json,
-             ROW_NUMBER() OVER (
-               PARTITION BY event.runtime_id
-               ORDER BY event.time DESC, event.id DESC
-             ) AS rank
-           FROM broker_invocation_events event
-           WHERE event.type = 'continuation.updated'
-             AND json_valid(event.broker_event_json)
-             AND json_type(event.broker_event_json, '$.key') = 'text'
-             AND length(trim(json_extract(event.broker_event_json, '$.key'))) > 0
-         ), latest AS (
-           SELECT runtime_id, continuation_json
-           FROM ranked
-           WHERE rank = 1
-         )
-         UPDATE runtimes
-         SET continuation_json = (
-               SELECT latest.continuation_json
-               FROM latest
-               WHERE latest.runtime_id = runtimes.runtime_id
-             )
-         WHERE continuation_json IS NULL
-           AND runtime_id IN (SELECT runtime_id FROM latest)`
-      )
-      .run().changes
-
-    return { sessions, runtimes }
+    return { sessions }
   })()
 }
 

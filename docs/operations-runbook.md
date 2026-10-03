@@ -193,7 +193,7 @@ handoff/validation evidence.
   `incremental_vacuum`. Full `VACUUM` remains an offline coordinated operation.
 - Terminated `runtimes` rows are **keep-forever history**: no TTL, ever.
   The controlling reason is resume-path integrity — terminated rows anchor
-  the `scope_ref` → `host_session_id` → `harness_session_json` chain used
+  the `scope_ref` → `host_session_id` → `continuation_json` chain used
   by `--resume`; deleting them could orphan resumable state.
 - Federation node-local retirement fences are keep-forever authority (no TTL).
   The shared active binding is conditionally deleted only after that old-home

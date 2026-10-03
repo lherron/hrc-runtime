@@ -290,7 +290,6 @@ describe('T-08540 ownership proof is decided by the real admission on every door
         brokerDriver: 'codex-cli-tmux',
       },
       supportsInflightInput: true,
-      adopted: false,
       lastActivityAt: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp,

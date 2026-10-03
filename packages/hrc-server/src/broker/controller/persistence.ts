@@ -22,7 +22,6 @@ import type { BrokerHelloResponse, InvocationStartResponse } from 'spaces-harnes
 import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 import { neutralSpecHash } from 'spaces-runtime-contracts'
 
-import { assertAppStartGraphRunIdentity } from '../../app-session-identity.js'
 import { armFirstTurnWatch } from '../../first-turn-watch'
 import { appendHrcEventWithinExistingTransaction } from '../../hrc-event-helper'
 import { runtimeActivityPatch } from '../../runtime-activity'
@@ -138,14 +137,6 @@ function persistStartGraphInTransaction(
       `host session not found: ${String(identity.hostSessionId)}`
     )
   }
-  // T-08576 D5 backstop: an app compile identity carrying a run id must hold
-  // that run's live reservation token before any start-graph row.
-  assertAppStartGraphRunIdentity(
-    ctx.db,
-    session,
-    identity.runId !== undefined ? String(identity.runId) : undefined
-  )
-
   ctx.db.compiledRuntimePlans.insert({
     planHash: String(input.plan.planHash),
     compileId: String(input.plan.compileId),
@@ -153,7 +144,6 @@ function persistStartGraphInTransaction(
     compilerName: 'aspc',
     compilerVersion: 'v2',
     planProjectionJson: JSON.stringify(input.plan),
-    diagnosticsJson: JSON.stringify(input.plan.diagnostics ?? []),
     createdAt: input.plan.createdAt,
   })
 
@@ -165,7 +155,6 @@ function persistStartGraphInTransaction(
     generation: identity.generation,
     operationKind: 'broker_invocation',
     controller: 'harness-broker',
-    compileId: String(input.plan.compileId),
     planHash: String(input.plan.planHash),
     selectedProfileId: String(input.execution.profile.profileId),
     selectedProfileHash: String(input.execution.profile.profileHash),
@@ -217,7 +206,6 @@ function persistStartGraphInTransaction(
     tmuxAllocation && executionUsesTerminalSurface(input.execution) ? 'tmux' : 'headless'
   const runtime = ctx.db.runtimes.insert({
     runtimeId: String(identity.runtimeId),
-    runtimeKind: 'harness',
     hostSessionId: String(identity.hostSessionId),
     scopeRef: session.scopeRef,
     laneRef: session.laneRef,
@@ -229,7 +217,6 @@ function persistStartGraphInTransaction(
     status: 'starting',
     statusChangedAt: now,
     supportsInflightInput: true,
-    adopted: false,
     // Observer-pane runtimes persist tmuxJson too: the viewer attaches to the
     // observer pane (transport stays 'headless' per T-01874).
     ...(tmuxAllocation &&
@@ -242,7 +229,6 @@ function persistStartGraphInTransaction(
     controllerKind: 'harness-broker',
     activeOperationId: String(identity.operationId),
     activeInvocationId: String(identity.invocationId),
-    compileId: String(input.plan.compileId),
     planHash: String(input.plan.planHash),
     selectedProfileHash: String(input.execution.profile.profileHash),
     runtimeStateJson: {

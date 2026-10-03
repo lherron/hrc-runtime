@@ -22,7 +22,6 @@
  * Reference: T-00946 (parent), T-00957 (CLI implementation task)
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { type Socket, createServer } from 'node:net'
@@ -292,7 +291,6 @@ describe('Phase 6 diagnostics CLI', () => {
         status: 'active',
         createdAt: now,
         updatedAt: now,
-        ancestorScopeRefs: [],
       })
       db.runtimes.insert({
         runtimeId,
@@ -305,7 +303,6 @@ describe('Phase 6 diagnostics CLI', () => {
         provider: 'openai',
         status: 'ready',
         supportsInflightInput: true,
-        adopted: false,
         controllerKind: 'harness-broker',
         createdAt: now,
         updatedAt: now,
@@ -416,115 +413,5 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(Array.isArray(body)).toBe(true)
     expect(body.length).toBe(1)
     expect(body[0].hostSessionId).toBe(hostSessionId)
-  })
-
-  it('hrc ls launches prints JSON array and exits 0', async () => {
-    const result = await runCli(['ls', 'launches'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(Array.isArray(body)).toBe(true)
-  })
-
-  it('hrc ls launches with --runtime-id filter', async () => {
-    // Seed a runtime to get launches
-    const resolveResult = await runCli(
-      [
-        'session',
-        'resolve',
-        '--scope',
-        testProjectScope('diag-launch-list'),
-        '--lane',
-        'default',
-        '--create',
-      ],
-      cliEnv()
-    )
-    const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
-    const { runtimeId } = await seedRuntime(hostSessionId)
-
-    const result = await runCli(['ls', 'launches', '--runtime-id', runtimeId], cliEnv())
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(Array.isArray(body)).toBe(true)
-    for (const launch of body) {
-      expect(launch.runtimeId).toBe(runtimeId)
-    }
-  })
-
-  it('hrc admin runtime adopt on dead runtime prints adopted JSON and exits 0', async () => {
-    // Seed a dead runtime
-    const resolveResult = await runCli(
-      [
-        'session',
-        'resolve',
-        '--scope',
-        testProjectScope('diag-adopt-cli'),
-        '--lane',
-        'default',
-        '--create',
-      ],
-      cliEnv()
-    )
-    const resolved = JSON.parse(resolveResult.stdout.trim())
-    const runtimeId = `rt-adopt-cli-${randomUUID()}`
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    db.runtimes.insert({
-      runtimeId,
-      hostSessionId: resolved.hostSessionId,
-      scopeRef: testProjectScope('diag-adopt-cli'),
-      laneRef: 'default',
-      generation: resolved.generation,
-      transport: 'tmux',
-      harness: 'claude-code',
-      provider: 'anthropic',
-      status: 'dead',
-      tmuxJson: {
-        socketPath: tmuxSocketPath,
-        sessionName: 'hrc-adopt-cli',
-        windowName: 'main',
-        sessionId: '$1',
-        windowId: '@1',
-        paneId: '%1',
-      },
-      supportsInflightInput: false,
-      adopted: false,
-      createdAt: now,
-      updatedAt: now,
-    })
-
-    const result = await runCli(['admin', 'runtime', 'adopt', runtimeId], cliEnv())
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(body.status).toBe('adopted')
-    expect(body.adopted).toBe(true)
-    expect(body.runtimeId).toBe(runtimeId)
-  })
-
-  it('hrc admin runtime adopt on active runtime exits 1', async () => {
-    const resolveResult = await runCli(
-      [
-        'session',
-        'resolve',
-        '--scope',
-        testProjectScope('diag-adopt-active-cli'),
-        '--lane',
-        'default',
-        '--create',
-      ],
-      cliEnv()
-    )
-    const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
-    const { runtimeId } = await seedRuntime(hostSessionId)
-
-    const result = await runCli(['admin', 'runtime', 'adopt', runtimeId], cliEnv())
-    expect(result.exitCode).toBe(1)
-    expect(result.stderr.length).toBeGreaterThan(0)
-  })
-
-  it('hrc admin runtime adopt on unknown runtime exits 1', async () => {
-    const result = await runCli(['admin', 'runtime', 'adopt', 'nonexistent-runtime-id'], cliEnv())
-    expect(result.exitCode).toBe(1)
-    expect(result.stderr.length).toBeGreaterThan(0)
   })
 })

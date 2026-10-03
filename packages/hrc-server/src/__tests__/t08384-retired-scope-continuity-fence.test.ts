@@ -63,7 +63,6 @@ function seedContinuity(
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
     continuation: {
       provider: 'codex',
       kind: 'thread',

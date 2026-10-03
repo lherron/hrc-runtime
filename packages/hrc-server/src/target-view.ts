@@ -23,7 +23,7 @@ import {
   normalizeTargetSessionRef,
   targetLaneCandidates,
 } from './messages.js'
-import { isRuntimeUnavailableStatus, requireContinuity, requireSession } from './require-helpers.js'
+import { isRuntimeUnavailableStatus, requireSession } from './require-helpers.js'
 import { findBoundSessionRuntime } from './runtime-select.js'
 import { type BridgeTargetRequest, parseSessionRef } from './server-parsers.js'
 
@@ -217,7 +217,6 @@ export function toTargetView(db: HrcDatabase, session: HrcSessionRecord): HrcTar
     scopeRef: session.scopeRef,
     laneRef,
     state,
-    parsedScopeJson: session.parsedScopeJson,
     lastAppliedIntentJson: session.lastAppliedIntentJson,
     continuation: session.continuation,
     activeHostSessionId: session.hostSessionId,
@@ -242,7 +241,6 @@ export async function toTargetViewWithArtifactProbe(
     scopeRef: session.scopeRef,
     laneRef,
     state,
-    parsedScopeJson: session.parsedScopeJson,
     lastAppliedIntentJson: session.lastAppliedIntentJson,
     continuation: session.continuation,
     activeHostSessionId: session.hostSessionId,
@@ -324,33 +322,16 @@ export function resolveBridgeTargetSession(
     return requireSession(db, request.selector.hostSessionId)
   }
 
-  if ('sessionRef' in request.selector) {
-    const session = findContinuitySession(db, request.selector.sessionRef)
-    if (!session) {
-      throw new HrcNotFoundError(
-        HrcErrorCode.UNKNOWN_SESSION,
-        `unknown session "${request.selector.sessionRef}"`,
-        {
-          sessionRef: request.selector.sessionRef,
-        }
-      )
-    }
-
-    return session
+  const session = findContinuitySession(db, request.selector.sessionRef)
+  if (!session) {
+    throw new HrcNotFoundError(
+      HrcErrorCode.UNKNOWN_SESSION,
+      `unknown session "${request.selector.sessionRef}"`,
+      {
+        sessionRef: request.selector.sessionRef,
+      }
+    )
   }
 
-  const appSession = db.appManagedSessions.findByKey(
-    request.selector.appSession.appId,
-    request.selector.appSession.appSessionKey
-  )
-  if (!appSession || appSession.status === 'removed') {
-    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_APP_SESSION, 'unknown app session', {
-      appId: request.selector.appSession.appId,
-      appSessionKey: request.selector.appSession.appSessionKey,
-    })
-  }
-
-  const session = requireSession(db, appSession.activeHostSessionId)
-  const continuity = requireContinuity(db, session)
-  return requireSession(db, continuity.activeHostSessionId)
+  return session
 }

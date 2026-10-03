@@ -575,13 +575,11 @@ export class SessionProjectEventPublisher {
   private birthFact(event: RuntimeLifecycleEvent): SessionProjectEventFact | undefined {
     const session = this.deps.db.sessions.getByHostSessionId(event.hostSessionId)
     if (session === null) return undefined
-    const claim = this.deps.db.sessionTaskClaimAuthorities.getByHostSessionId(event.hostSessionId)
     return deriveSessionProjectEvent({
       session,
       payload: event.payload,
       node: this.deps.node,
       occurredAt: event.ts,
-      ...(claim === null ? {} : { requestedBy: claim.claimedBy }),
     })
   }
 

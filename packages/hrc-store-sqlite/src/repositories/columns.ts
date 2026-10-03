@@ -12,47 +12,31 @@ export const SESSION_COLUMNS = `
   prior_host_session_id,
   created_at,
   updated_at,
-  parsed_scope_json,
-  ancestor_scope_refs_json,
   last_applied_intent_json,
   continuation_json`
 
 export const RUNTIME_COLUMNS = `
   runtime_id,
-  runtime_kind,
   host_session_id,
   scope_ref,
   lane_ref,
   generation,
-  launch_id,
   transport,
   harness,
   provider,
   status,
   status_changed_at,
   tmux_json,
-  surface_json,
-  wrapper_pid,
-  child_pid,
-  harness_session_json,
-  command_spec_json,
-  continuation_json,
   supports_inflight_input,
-  adopted,
   active_run_id,
   last_activity_at,
   controller_kind,
   active_operation_id,
   active_invocation_id,
-  compile_id,
   plan_hash,
   selected_profile_hash,
   runtime_state_json,
-  lifecycle_policy_hash,
-  current_harness_generation,
-  current_turn_attempt,
   lifecycle_terminal_reason,
-  last_lifecycle_escalation_json,
   presentation_json,
   created_at,
   updated_at`
@@ -97,29 +81,6 @@ export const RUN_COLUMNS = `
   origin_kind,
   origin_causation_ref`
 
-export const LAUNCH_COLUMNS = `
-  launch_id,
-  host_session_id,
-  generation,
-  runtime_id,
-  harness,
-  provider,
-  launch_artifact_path,
-  tmux_json,
-  surface_json,
-  wrapper_pid,
-  child_pid,
-  harness_session_json,
-  continuation_json,
-  wrapper_started_at,
-  child_started_at,
-  exited_at,
-  exit_code,
-  signal,
-  status,
-  created_at,
-  updated_at`
-
 export const EVENT_COLUMNS = `
   seq,
   stream_seq,
@@ -157,30 +118,6 @@ export const HRC_EVENT_COLUMNS = `
   evidence_origin,
   payload_json`
 
-export const APP_SESSION_COLUMNS = `
-  app_id,
-  app_session_key,
-  host_session_id,
-  label,
-  metadata_json,
-  created_at,
-  updated_at,
-  removed_at`
-
-export const APP_MANAGED_SESSION_COLUMNS = `
-  app_id,
-  app_session_key,
-  kind,
-  label,
-  metadata_json,
-  active_host_session_id,
-  generation,
-  status,
-  last_applied_spec_json,
-  created_at,
-  updated_at,
-  removed_at`
-
 export const LOCAL_BRIDGE_COLUMNS = `
   bridge_id,
   host_session_id,
@@ -201,7 +138,6 @@ export const SURFACE_BINDING_COLUMNS = `
   runtime_id,
   generation,
   window_id,
-  tab_id,
   pane_id,
   bound_at,
   unbound_at,

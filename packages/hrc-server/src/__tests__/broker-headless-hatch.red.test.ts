@@ -262,7 +262,6 @@ async function makeFixture(runtimeId = 'runtime_w2'): Promise<Fixture> {
     status: 'active',
     createdAt: NOW,
     updatedAt: NOW,
-    ancestorScopeRefs: [],
   })
   void runtimeId
   return {
@@ -448,7 +447,6 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
       provider: 'openai' as const,
       status: 'ready' as const,
       supportsInflightInput: false,
-      adopted: false,
       controllerKind: 'harness-broker' as const,
       createdAt: NOW,
       updatedAt: NOW,

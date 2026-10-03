@@ -60,7 +60,6 @@ function seedRuntime(options: SeedRuntimeOptions): void {
       provider: 'anthropic',
       status: options.activeRunId ? 'busy' : 'ready',
       supportsInflightInput: false,
-      adopted: false,
       ...(options.activeRunId ? { activeRunId: options.activeRunId } : {}),
       lastActivityAt: now,
       createdAt: now,

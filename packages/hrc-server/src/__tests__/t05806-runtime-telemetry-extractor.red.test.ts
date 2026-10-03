@@ -21,7 +21,6 @@ function makeRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): HrcRuntimeSna
     provider: 'openai',
     status: 'ready',
     supportsInflightInput: true,
-    adopted: false,
     controllerKind: 'harness-broker',
     createdAt: '2026-07-07T17:00:00.000Z',
     updatedAt: '2026-07-07T17:05:00.000Z',

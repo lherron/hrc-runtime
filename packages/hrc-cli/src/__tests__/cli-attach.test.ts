@@ -220,12 +220,7 @@ describe('hrc attach <scope>', () => {
         harness: 'codex-cli',
         provider: 'openai',
         status: 'ready',
-        continuation: {
-          provider: 'openai',
-          key: 'thread-123',
-        },
         supportsInflightInput: false,
-        adopted: false,
         createdAt: '2026-04-15T21:25:32.416Z',
         updatedAt: '2026-04-15T21:25:32.416Z',
       },
@@ -245,7 +240,6 @@ describe('hrc attach <scope>', () => {
           paneId: '%12',
         },
         supportsInflightInput: false,
-        adopted: false,
         createdAt: '2026-04-15T21:27:16.883Z',
         updatedAt: '2026-04-15T21:27:16.883Z',
       },
@@ -271,7 +265,6 @@ describe('hrc attach <scope>', () => {
         paneId: '%14',
       },
       supportsInflightInput: false,
-      adopted: false,
       createdAt: '2026-04-16T00:00:00.000Z',
       updatedAt: '2026-04-16T00:00:00.000Z',
     }
@@ -285,12 +278,7 @@ describe('hrc attach <scope>', () => {
       harness: 'codex-cli',
       provider: 'openai',
       status: 'ready',
-      continuation: {
-        provider: 'openai',
-        key: 'thread-123',
-      },
       supportsInflightInput: false,
-      adopted: false,
       createdAt: '2026-04-16T00:00:01.000Z',
       updatedAt: '2026-04-16T00:00:01.000Z',
     }
@@ -342,7 +330,6 @@ describe('hrc attach <scope>', () => {
         paneId: '%16',
       },
       supportsInflightInput: false,
-      adopted: false,
       createdAt: '2026-04-16T00:10:00.000Z',
       updatedAt: '2026-04-16T00:10:00.000Z',
     }
@@ -356,12 +343,7 @@ describe('hrc attach <scope>', () => {
       harness: 'codex-cli',
       provider: 'openai',
       status: 'ready',
-      continuation: {
-        provider: 'openai',
-        key: 'thread-456',
-      },
       supportsInflightInput: false,
-      adopted: false,
       createdAt: '2026-04-16T00:10:01.000Z',
       updatedAt: '2026-04-16T00:10:01.000Z',
     }

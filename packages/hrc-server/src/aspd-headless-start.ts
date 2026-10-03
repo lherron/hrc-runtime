@@ -225,10 +225,6 @@ export async function prepareAspdHeadlessAttempt(
     )
   const hrcDispatchEnv = buildManagedBrokerDispatchEnv({
     baseEnv: mergeEnv(buildHrcCorrelationEnv(intent), intent.launch),
-    db: server.db,
-    runtimeRoot: server.options.runtimeRoot,
-    hostSessionId: session.hostSessionId,
-    runtimeId,
     mailStopSocket: server.options.socketPath,
   })
 
@@ -589,7 +585,6 @@ export async function prepareAspdHeadlessAttempt(
       compilerName: 'aspc',
       compilerVersion: 'v2',
       planProjectionJson: JSON.stringify(compiled.plan),
-      diagnosticsJson: JSON.stringify(compiled.plan.diagnostics ?? []),
       createdAt: compiled.plan.createdAt,
     })
     server.db.runtimeOperations.insert({
