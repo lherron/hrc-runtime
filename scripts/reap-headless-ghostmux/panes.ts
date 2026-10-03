@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { agentFromScope, scopeFromTitle, sqlQuote } from './eligibility'
+import { scopeFromTitle, sqlQuote } from './eligibility'
 import { isRecord, run, tryRun } from './process'
 import { type DiscoveredPane, HEADLESS_PANE_ROLE, type Options, type PaneStatus } from './types'
 
@@ -119,15 +119,44 @@ export function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus 
       ? metadata.hrc_scope_ref
       : scopeFromTitle(pane.title)
   const runtimeId = typeof metadata.hrc_runtime_id === 'string' ? metadata.hrc_runtime_id : ''
-  const agent = agentFromScope(scopeRef)
+  const agent = 'unknown'
 
   if (options.simulate) {
     // C10D0144 simulates an already-terminated leftover viewer (no live runtime
     // to reap, but still parked on the close prompt).
     const leftover = pane.id === 'C10D0144'
+    const simulationIdentities: Record<string, NonNullable<PaneStatus['identity']>> = {
+      '7BF21FAF': {
+        kind: 'project-task',
+        agentId: 'smokey',
+        projectId: 'agent-control-plane',
+        taskId: 'T-02864',
+      },
+      EB834507: {
+        kind: 'project-task',
+        agentId: 'curly',
+        projectId: 'agent-control-plane',
+        taskId: 'T-02864',
+      },
+      A11CE003: {
+        kind: 'project-task',
+        agentId: 'larry',
+        projectId: 'hrc-runtime',
+        taskId: 'primary',
+      },
+      CH1EF001: { kind: 'project-task', agentId: 'chief', projectId: 'hcs', taskId: 'T-07818' },
+      C10D0144: {
+        kind: 'project-task',
+        agentId: 'clod',
+        projectId: 'agent-spaces',
+        taskId: 'primary',
+      },
+    }
+    const identity = simulationIdentities[pane.id]
     return {
       ...pane,
-      agent,
+      agent: identity?.agentId ?? agent,
+      identity,
       scopeRef,
       runtimeId,
       runtimeStatus: leftover ? 'terminated' : 'ready',
@@ -184,7 +213,7 @@ export function statusSql(scopeRef: string, runtimeId: string, tag: string): str
         VALUES ('${escapedScope}', '${escapedRuntime}')
       ),
       latest_runtime AS (
-        SELECT runtime_id, status, active_run_id, transport, controller_kind,
+        SELECT runtime_id, scope_ref, lane_ref, status, active_run_id, transport, controller_kind,
                runtime_state_json, last_activity_at, updated_at
         FROM runtimes
         WHERE (runtime_id = (SELECT runtime_id FROM target) AND (SELECT runtime_id FROM target) <> '')
@@ -265,7 +294,8 @@ export function statusSql(scopeRef: string, runtimeId: string, tag: string): str
             ELSE 'daemon-child'
           END,
           ''
-        );
+        ),
+        (SELECT json_object('kind',scope_kind,'agentId',agent_id,'projectId',project_id,'taskId',task_id,'roleName',role_name) FROM continuities WHERE scope_ref=(SELECT scope_ref FROM latest_runtime) AND lane_ref=(SELECT lane_ref FROM latest_runtime));
     `
 }
 
@@ -291,11 +321,19 @@ export function paneStatusFromFields(
     latestTurnEventKind,
     presentationKind,
     substrateKind,
+    identityJson,
   ] = fields
 
+  const raw = identityJson ? JSON.parse(identityJson) : undefined
+  const identity = raw
+    ? (Object.fromEntries(
+        Object.entries(raw).filter(([, value]) => value !== null)
+      ) as PaneStatus['identity'])
+    : undefined
   return {
     ...pane,
-    agent,
+    agent: identity?.agentId ?? agent,
+    identity,
     scopeRef,
     runtimeId: resolvedRuntime || runtimeId,
     runtimeStatus: runtimeStatus || 'unknown',
@@ -361,6 +399,6 @@ export function queryStatuses(panes: DiscoveredPane[], options: Options): PaneSt
   return targets.map((t) => {
     const fields = rows.get(t.tag)
     if (!fields) return queryStatus(t.pane, options)
-    return paneStatusFromFields(t.pane, t.scopeRef, t.runtimeId, agentFromScope(t.scopeRef), fields)
+    return paneStatusFromFields(t.pane, t.scopeRef, t.runtimeId, 'unknown', fields)
   })
 }

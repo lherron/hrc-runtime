@@ -1,3 +1,4 @@
+import { type SessionIdentity, formatSessionIdentityHandle } from 'hrc-core'
 import { MIN_IDLE_MINUTES, MIN_IDLE_MS, type PaneStatus, color } from './types'
 
 export function sqlQuote(value: string): string {
@@ -9,46 +10,14 @@ export function scopeFromTitle(title: string): string {
   return title.startsWith(prefix) ? title.slice(prefix.length) : ''
 }
 
-export function agentFromScope(scopeRef: string): string {
-  if (!scopeRef.startsWith('agent:')) return 'unknown'
-  const rest = scopeRef.slice('agent:'.length)
-  return rest.split(':')[0] || 'unknown'
+export function handleFromIdentity(scopeRef: string, identity?: SessionIdentity): string {
+  return identity ? formatSessionIdentityHandle(identity) : scopeRef
 }
 
-export function handleFromScope(scopeRef: string): string {
-  const parts = scopeRef.split(':')
-  const agent = parts[0] === 'agent' ? parts[1] : ''
-  let project = ''
-  let task = ''
-  let role = ''
-
-  for (let i = 2; i < parts.length - 1; i += 2) {
-    const key = parts[i]
-    const value = parts[i + 1] ?? ''
-    if (key === 'project') project = value
-    if (key === 'task') task = value
-    if (key === 'role') role = value
-  }
-
-  if (!agent) return scopeRef
-  let handle = agent
-  if (project) handle += `@${project}`
-  if (task) handle += `:${task}`
-  if (role) handle += `/${role}`
-  return handle
-}
-
-export function taskFromScope(scopeRef: string): string {
-  const parts = scopeRef.split(':')
-  for (let i = 2; i < parts.length - 1; i += 2) {
-    if (parts[i] === 'task') return parts[i + 1] ?? ''
-  }
-  return ''
-}
-
-export function projectHandleFromScope(scopeRef: string): string {
-  const handle = handleFromScope(scopeRef)
-  return handle.split(':')[0] || handle
+export function projectHandleFromIdentity(scopeRef: string, identity?: SessionIdentity): string {
+  return identity
+    ? identity.agentId + (identity.projectId ? `@${identity.projectId}` : '')
+    : scopeRef
 }
 
 export function formatDurationAgo(timestamp: string): string {
@@ -118,7 +87,7 @@ export function skipReasons(status: PaneStatus): string[] {
 
   const reasons: string[] = []
 
-  if (taskFromScope(status.scopeRef) === 'primary') {
+  if (status.identity?.taskId === 'primary') {
     reasons.push(
       ':primary standing session — never reaped by this sweep; terminate manually with hrc runtime terminate if truly intended'
     )
@@ -129,7 +98,7 @@ export function skipReasons(status: PaneStatus): string[] {
   // Lance's visits is their NORMAL state — an idle chief seat is not an
   // abandoned one. Exempt by agent, not project, so chief seats stay safe
   // wherever they live (T-07819).
-  if (agentFromScope(status.scopeRef) === 'chief') {
+  if (status.identity?.agentId === 'chief') {
     reasons.push(
       'chief@* attention-thread seat — idle between visits is its normal state; never reaped by this sweep'
     )

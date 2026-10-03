@@ -1,4 +1,5 @@
 import { Chalk } from 'chalk'
+import type { SessionIdentity } from 'hrc-core'
 
 export type Options = {
   dryRun: boolean
@@ -33,6 +34,7 @@ export const MIN_IDLE_MINUTES = 30
 export const MIN_IDLE_MS = MIN_IDLE_MINUTES * 60 * 1000
 
 export type PaneStatus = Pane & {
+  identity?: SessionIdentity | undefined
   agent: string
   scopeRef: string
   runtimeId: string

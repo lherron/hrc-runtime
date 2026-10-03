@@ -36,27 +36,21 @@ for s in surfaces:
     if md.get("hrc_role") != "headless-agent-pane":
         continue
     tk = md.get("hrc_tab_key") or ""
-    scope = md.get("hrc_scope_ref") or ""
     label = md.get("hrc_tab_label") or s.get("title") or tk
-    entry = tabs.setdefault(tk, {"label": label, "scopes": set(), "surfaces": []})
+    entry = tabs.setdefault(tk, {"label": label, "surfaces": []})
     entry["surfaces"].append(sid)
-    if scope:
-        entry["scopes"].add(scope)
 
 if not tabs:
     print("hrc-focus: no headless agent panes found (is the Headless Sessions window open?)", file=sys.stderr)
     sys.exit(1)
 
 # Match: exact `task:<query>`, else tab-key task segment starts with query,
-# else any scope ref contains `:task:<query>` or the bare query.
+# Durable hrc_tab_key is the grouping/selection address.
 def task_seg(tk): return tk[len("task:"):] if tk.startswith("task:") else ""
 
 exact = [tk for tk in tabs if tk == f"task:{query}"]
 prefix = [tk for tk in tabs if task_seg(tk).startswith(query)]
-scoped = [tk for tk, e in tabs.items()
-          if any(f":task:{query}" in sc or query in sc for sc in e["scopes"])]
-
-matches = exact or prefix or scoped
+matches = exact or prefix
 matches = list(dict.fromkeys(matches))  # de-dupe, keep order
 
 if not matches:

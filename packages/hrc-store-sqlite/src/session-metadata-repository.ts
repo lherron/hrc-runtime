@@ -140,7 +140,7 @@ export class SessionMetadataRepository {
             ts: now,
             hostSessionId: continuity.active_host_session_id,
             scopeRef,
-            laneRef: canonicalLaneRef(laneRef),
+            laneRef,
             generation: session.generation,
             category: 'session',
             eventKind,

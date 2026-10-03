@@ -172,6 +172,12 @@ beforeEach(() => {
   process.env['HRC_STATE_DIR'] = stateRoot
   const db = openHrcDatabase(join(stateRoot, 'state.sqlite'))
   try {
+    db.continuities.upsert({
+      scopeRef: SCOPE_REF,
+      laneRef: 'main',
+      activeHostSessionId: HOST_SESSION_ID,
+      updatedAt: session.updatedAt,
+    })
     db.sessions.insert(session as never)
     db.runtimes.insert(runtime as never)
   } finally {

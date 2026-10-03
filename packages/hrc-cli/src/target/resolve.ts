@@ -1,3 +1,4 @@
+import { parseScopeRef } from 'agent-scope'
 import { CliUsageError } from 'cli-kit'
 import type { HrcRuntimeIntent } from 'hrc-core'
 import { inferProjectIdFromCwd } from 'hrc-core'
@@ -28,7 +29,11 @@ import {
 function callerTaskId(): string | undefined {
   const raw = process.env['HRC_SESSION_REF']
   if (!raw) return undefined
-  return /:task:([^:/]+)/.exec(raw)?.[1]
+  try {
+    return parseScopeRef(raw.split('/lane:')[0] ?? raw).taskId
+  } catch {
+    return undefined
+  }
 }
 
 export async function resolveTargetScope(

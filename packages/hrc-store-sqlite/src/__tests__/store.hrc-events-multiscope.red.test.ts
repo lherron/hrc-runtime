@@ -28,6 +28,12 @@ function seed(scopeRefs: string[], databasePath: string): ReturnType<typeof open
   for (const [index, scopeRef] of scopeRefs.entries()) {
     const hostSessionId = `host-${index}`
     const now = `2026-07-17T15:00:0${index}.000Z`
+    db.continuities.upsert({
+      scopeRef,
+      laneRef: 'main',
+      activeHostSessionId: hostSessionId,
+      updatedAt: now,
+    })
     db.sessions.insert({
       hostSessionId,
       scopeRef,

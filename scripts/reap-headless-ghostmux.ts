@@ -8,9 +8,9 @@ import { parseArgs } from './reap-headless-ghostmux/cli'
 import {
   eventKindColor,
   formatDurationAgo,
-  handleFromScope,
+  handleFromIdentity,
   isQuitEligible,
-  projectHandleFromScope,
+  projectHandleFromIdentity,
   shortRun,
   shortRuntime,
   skipReasons,
@@ -69,7 +69,7 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
     const heading = [
       color.dim(`${String(index + 1).padStart(2)}.`),
       color.cyan(status.id),
-      color.bold(projectHandleFromScope(status.scopeRef)),
+      color.bold(projectHandleFromIdentity(status.scopeRef, status.identity)),
       statusColor(status.runtimeStatus),
       color.dim('/'),
       statusColor(status.turnStatus),
@@ -78,7 +78,9 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
     ].join(' ')
 
     console.log(heading)
-    console.log(`    ${color.dim('scope')}      ${color.dim(handleFromScope(status.scopeRef))}`)
+    console.log(
+      `    ${color.dim('scope')}      ${color.dim(handleFromIdentity(status.scopeRef, status.identity))}`
+    )
     console.log(
       `    ${color.dim('run')}        ${color.dim(shortRun(status.runId))} ${color.dim(
         shortRuntime(status.runtimeId)
@@ -305,7 +307,7 @@ async function sweep(options: Options): Promise<number> {
   const reapStarted = performance.now()
   for (const status of eligibleStatuses) {
     const result = sendReap(status, options)
-    const suffix = `${color.dim(handleFromScope(status.scopeRef))} ${color.dim(shortRuntime(status.runtimeId))}`
+    const suffix = `${color.dim(handleFromIdentity(status.scopeRef, status.identity))} ${color.dim(shortRuntime(status.runtimeId))}`
     if (result.kind === 'already-terminated') {
       reapWarned += 1
       console.log(`  ${color.cyan(status.id)} ${color.yellow('already terminated')} ${suffix}`)

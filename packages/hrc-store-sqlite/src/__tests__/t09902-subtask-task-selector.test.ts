@@ -41,6 +41,12 @@ function scopesFor(filters: HrcLifecycleMonitorFilters): string[] {
   const db = openHrcDatabase(join(tempDir, `state-${ordinal++}.sqlite`))
   try {
     for (const [index, scopeRef] of ALL.entries()) {
+      db.continuities.upsert({
+        scopeRef,
+        laneRef: 'main',
+        activeHostSessionId: `host-${index}`,
+        updatedAt: '2026-07-18T12:00:00.000Z',
+      })
       db.hrcEvents.append({
         ts: `2026-09-30T15:00:0${index}.000Z`,
         category: 'turn',

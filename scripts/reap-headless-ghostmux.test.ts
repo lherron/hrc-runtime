@@ -88,6 +88,9 @@ function reapStatusFixture(input: {
     )
   }
   try {
+    db.exec(
+      "ALTER TABLE runtimes ADD COLUMN lane_ref TEXT DEFAULT 'main'; CREATE TABLE continuities (scope_ref TEXT,lane_ref TEXT,scope_kind TEXT,agent_id TEXT,project_id TEXT,task_id TEXT,role_name TEXT);"
+    )
     return db.query(statusSql(scopeRef, runtimeId, '')).values()[0] ?? []
   } finally {
     db.close()
@@ -207,6 +210,9 @@ function coalescedStatusFixture(input: {
     `INSERT INTO hrc_events VALUES (20, ?, ?, 'run-aux', '2026-09-09T22:12:27.028Z', 'broker.submission.milestone')`
   ).run(runtimeId, scopeRef)
   try {
+    db.exec(
+      "ALTER TABLE runtimes ADD COLUMN lane_ref TEXT DEFAULT 'main'; CREATE TABLE continuities (scope_ref TEXT,lane_ref TEXT,scope_kind TEXT,agent_id TEXT,project_id TEXT,task_id TEXT,role_name TEXT);"
+    )
     return db.query(statusSql(scopeRef, runtimeId, '')).values()[0] ?? []
   } finally {
     db.close()
@@ -249,6 +255,12 @@ function eligibleStatus(overrides: Partial<PaneStatus> = {}): PaneStatus {
     id: 'PANE0001',
     title: 'hrc headless agent:clod:project:hrc-runtime:task:reap-probe',
     agent: 'clod',
+    identity: {
+      kind: 'project-task',
+      agentId: 'clod',
+      projectId: 'hrc-runtime',
+      taskId: 'reap-probe',
+    },
     scopeRef: 'agent:clod:project:hrc-runtime:task:reap-probe',
     runtimeId: 'rt-eligible',
     runtimeStatus: 'ready',
@@ -362,13 +374,31 @@ describe('skipReasons (per-pane skip explanations)', () => {
 
   it('never reaps a :primary standing session that is otherwise eligible', () => {
     const reasons = skipReasons(
-      eligibleStatus({ scopeRef: 'agent:clod:project:hrc-runtime:task:primary' })
+      eligibleStatus({
+        scopeRef: 'agent:clod:project:hrc-runtime:task:primary',
+        identity: {
+          kind: 'project-task',
+          agentId: 'clod',
+          projectId: 'hrc-runtime',
+          taskId: 'primary',
+        },
+      })
     )
     expect(reasons).toEqual([
       ':primary standing session — never reaped by this sweep; terminate manually with hrc runtime terminate if truly intended',
     ])
     expect(
-      isQuitEligible(eligibleStatus({ scopeRef: 'agent:clod:project:hrc-runtime:task:primary' }))
+      isQuitEligible(
+        eligibleStatus({
+          scopeRef: 'agent:clod:project:hrc-runtime:task:primary',
+          identity: {
+            kind: 'project-task',
+            agentId: 'clod',
+            projectId: 'hrc-runtime',
+            taskId: 'primary',
+          },
+        })
+      )
     ).toBe(false)
   })
 
@@ -380,16 +410,38 @@ describe('skipReasons (per-pane skip explanations)', () => {
 
   it('never reaps a chief@* attention-thread seat that is otherwise eligible (T-07819)', () => {
     const chiefScope = 'agent:chief:project:hcs:task:T-07818'
-    const reasons = skipReasons(eligibleStatus({ scopeRef: chiefScope }))
+    const reasons = skipReasons(
+      eligibleStatus({
+        scopeRef: chiefScope,
+        identity: { kind: 'project-task', agentId: 'chief', projectId: 'hcs', taskId: 'T-07818' },
+      })
+    )
     expect(reasons).toEqual([
       'chief@* attention-thread seat — idle between visits is its normal state; never reaped by this sweep',
     ])
-    expect(isQuitEligible(eligibleStatus({ scopeRef: chiefScope }))).toBe(false)
+    expect(
+      isQuitEligible(
+        eligibleStatus({
+          scopeRef: chiefScope,
+          identity: { kind: 'project-task', agentId: 'chief', projectId: 'hcs', taskId: 'T-07818' },
+        })
+      )
+    ).toBe(false)
   })
 
   it('exempts chief by agent regardless of project', () => {
     expect(
-      isQuitEligible(eligibleStatus({ scopeRef: 'agent:chief:project:hrc-runtime:task:T-99999' }))
+      isQuitEligible(
+        eligibleStatus({
+          scopeRef: 'agent:chief:project:hrc-runtime:task:T-99999',
+          identity: {
+            kind: 'project-task',
+            agentId: 'chief',
+            projectId: 'hrc-runtime',
+            taskId: 'T-99999',
+          },
+        })
+      )
     ).toBe(false)
   })
 

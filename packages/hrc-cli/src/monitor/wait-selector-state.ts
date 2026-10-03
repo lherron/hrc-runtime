@@ -203,9 +203,10 @@ export function readScopedSelectorHostIds(
       predicates.push("scope_ref LIKE ? ESCAPE '\\'")
       values.push(`${escapeLike(spec.prefix)}%`)
     } else if (spec.kind === 'task') {
-      predicates.push("(scope_ref LIKE ? ESCAPE '\\' OR scope_ref LIKE ? ESCAPE '\\')")
-      const segment = escapeLike(`:task:${spec.taskId}`)
-      values.push(`%${segment}:%`, `%${segment}`)
+      predicates.push(
+        '(sessions.scope_ref,sessions.lane_ref) IN (SELECT c.scope_ref,c.lane_ref FROM continuities c WHERE c.task_id=?)'
+      )
+      values.push(spec.taskId)
     }
   }
   if (predicates.length === 0) return []

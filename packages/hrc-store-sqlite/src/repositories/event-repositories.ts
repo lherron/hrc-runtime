@@ -57,17 +57,17 @@ function taskScopePredicate(
   taskId: string,
   options: { includeSubtasks: boolean }
 ): { sql: string; values: string[] } {
-  const segment = escapeLike(`:task:${taskId}`)
   const parsed = parseTaskId(taskId)
-  if (options.includeSubtasks && parsed !== undefined && parsed.slug === undefined) {
-    return {
-      sql: "(scope_ref LIKE ? ESCAPE '\\' OR scope_ref LIKE ? ESCAPE '\\' OR scope_ref LIKE ? ESCAPE '\\')",
-      values: [`%${segment}:%`, `%${segment}`, `%${segment}.%`],
-    }
-  }
+  const taskPredicate =
+    options.includeSubtasks && parsed !== undefined && parsed.slug === undefined
+      ? "(c.task_id = ? OR c.task_id LIKE ? ESCAPE '\\')"
+      : 'c.task_id = ?'
   return {
-    sql: "(scope_ref LIKE ? ESCAPE '\\' OR scope_ref LIKE ? ESCAPE '\\')",
-    values: [`%${segment}:%`, `%${segment}`],
+    sql: `(hrc_events.scope_ref,hrc_events.lane_ref) IN (SELECT c.scope_ref,c.lane_ref FROM continuities c WHERE ${taskPredicate})`,
+    values:
+      options.includeSubtasks && parsed !== undefined && parsed.slug === undefined
+        ? [taskId, `${escapeLike(taskId)}.%`]
+        : [taskId],
   }
 }
 
