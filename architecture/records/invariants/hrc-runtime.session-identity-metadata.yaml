@@ -1,0 +1,71 @@
+id: hrc-runtime.session-identity-metadata
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: stored continuity identity and continuity-keyed session metadata under T-10148
+predicate: >
+  HRC stores parsed scope identity as typed columns on continuities. The
+  continuity-insert repository path writes kind, agentId, projectId, taskId
+  and roleName once using the canonical agent-scope parseScopeRef; those
+  identity columns are never updated. Migration backfills existing continuities
+  with that same parser; rejected scopes retain their raw scope_ref as agent_id
+  with kind unparsed and are counted and logged. Session and runtime wire rows
+  expose the stored identity. A session without a continuity is historical,
+  including synthetic bookkeeping sessions, and the by-host read returns it
+  without identity; consumers treat that absence as historical with no identity
+  rather than reparsing. Human-input address parsing remains valid. Lanes carry
+  no identity parts and are returned in canonical main or lane form.
+  Session metadata is open and keyed by scope_ref and lane_ref, with at most
+  one row per key per source and resolution precedence api over launch over hrc.
+  Identity and observed runtime facts are not metadata. Registered v1 keys
+  title, appearance.color and appearance.terminalBg validate their meaning;
+  unknown keys retain their JSON values subject to common grammar and limits.
+  Keys have at most four segments of at most 64 characters and at most 128 bytes
+  total; values are JSON scalars or arrays of scalars serialized to at most
+  4 KB, attribution is at most 256 bytes, and at most 64 distinct keys exist
+  per continuity across all sources. Strict key-prefix collisions are forbidden.
+  Launch metadata comes from the ASP compile response envelope, never the
+  compiled plan or plan hash, or from the participant's own register or attach
+  request. A compile, register or attach carrying metadata replaces the entire
+  launch set in one transaction, deleting omitted keys; the last write wins.
+  An absent field leaves the set unchanged and an empty carried object clears
+  it. Launch metadata has no ownership or current-generation compare-and-set
+  requirement. This is cosmetic metadata, not lifecycle authority; duplicate,
+  reattach or delayed launch writes may replace a prior declaration. There are
+  no not-establishing or superseded metadata diagnostics. Invalid launch keys
+  are dropped with rejection diagnostics without blocking start or join, and
+  join responses list rejected keys. API writes have no authority check,
+  target an existing home-node continuity, persist until cleared, and reject
+  an invalid batch atomically. v1 writes no hrc-source keys. Resolved title and
+  metadata survive rotation; session_index.title and presentation rows use the
+  resolved title. Metadata changes append one session.metadata.changed event
+  per changed stored key/source row in the write transaction; unchanged launch
+  replacement emits none. Reads remain store-only projections under the viewer
+  law. During deprecation the existing POST and DELETE host-session title
+  routes, SDK methods and retitle CLI are shims over api title, preserve the
+  existing request body, accept and ignore source, model and force, and retain
+  the session.retitled compatibility event. Migration preserves the most
+  recently updated title per continuity before removing session_titles and
+  its triggers.
+authority: wrkq:T-10148 revision 3 specification etag 6, Daedalus architecture approval, 2026-10-03; Lance Herron overrides of review F1 and F2 relayed in EN-22974 and its subsequent etag correction
+source:
+  - wrkq:T-10148
+  - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
+  - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
+  - architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml
+  - architecture/records/invariants/hrc-runtime.mobile-session-index.yaml
+  - packages/hrc-store-sqlite/src/repositories/session-repositories.ts
+  - packages/hrc-server/src/participant-host-registration.ts
+  - packages/hrc-server/src/participant-attach-handlers.ts
+  - packages/hrc-server/src/aspd-headless-start.ts
+required_tests:
+  - T-10148 shared-parser backfill and continuity creation fixtures agree, identity columns have no NULL agent_id and fleet unparsed counts are reported
+  - T-10148 HRC-received scope identity parser sweep covers all four repos and lists justified human-input exceptions
+  - T-10148 same-plan-hash metadata refresh, absent versus empty launch sets, omitted-key deletion, source precedence and invalid-key soft rejection
+  - T-10148 prefix collisions, 129-byte keys, 65-character segments, value and distinct-key limits are enforced on launch and atomic API writes
+  - T-10148 installed multi-project viewer, rotation persistence, retitle and actual slugger POST compatibility E2E saves an artifact and reads matching changed events
+  - T-10148 metadata reads extend t07594-side-effect-free-reads without lifecycle mutation or probes
+last_verified: 2026-10-03 revision 3 design reviewed against source and Lance overrides; implementation, migration and installed acceptance pending
+reopen_when: Continuity identity storage, parser ownership, historical identity absence, wire coverage, metadata grammar or limits, registered keys, source precedence, cosmetic versus lifecycle authority, last-writer launch semantics, envelope/plan placement, home-node writes, title migration or shim compatibility, event atomicity, or read side effects change.
+supersedes: []
+superseded_by: []
