@@ -37,14 +37,14 @@ The coupling extends beyond direct execution-library imports.
 
 Representative source evidence:
 
-- [HRC ASP dependency sync set](scripts/sync-asp-from-verdaccio.ts).
-- [Runtime-intent assembly](packages/hrc-core/src/runtime-intent-assembly.ts).
-- [Direct harness planning](packages/hrc-server/src/agent-spaces-adapter/direct-agent-harness.ts)
-  and [driver admission](packages/hrc-server/src/agent-spaces-adapter/compile-profile-selector.ts).
-- [ASP executable selection](packages/hrc-server/src/asp-toolchain.ts).
-- [ASP install and downstream sync](../agent-spaces/justfile).
-- [Native event interpretation](packages/hrc-events/src/otel-normalizer.ts)
-  and [transcript interpretation](packages/hrc-server/src/hrc-event-helper.ts).
+- [HRC ASP dependency sync set](../../scripts/sync-asp-from-verdaccio.ts).
+- [Runtime-intent assembly](../../packages/hrc-core/src/runtime-intent-assembly.ts).
+- [Direct harness planning](../../packages/hrc-server/src/agent-spaces-adapter/direct-agent-harness.ts)
+  and [driver admission](../../packages/hrc-server/src/agent-spaces-adapter/compile-profile-selector.ts).
+- [ASP executable selection](../../packages/hrc-server/src/asp-toolchain.ts).
+- [ASP install and downstream sync](../../../agent-spaces/justfile).
+- [Native event interpretation](../../packages/hrc-events/src/otel-normalizer.ts)
+  and [transcript interpretation](../../packages/hrc-server/src/hrc-event-helper.ts).
 
 ## Process topology
 
@@ -400,16 +400,16 @@ claim and cannot substitute for either gate.
 
 ## Existing laws the implementation must preserve or explicitly amend
 
-- [ASP toolchain selection](architecture/records/invariants/hrc-runtime.asp-toolchain-selection.yaml):
+- [ASP toolchain selection](../../architecture/records/invariants/hrc-runtime.asp-toolchain-selection.yaml):
   replace bundled selection and per-binary release ambiguity explicitly.
-- [Participant lifecycle](architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml):
+- [Participant lifecycle](../../architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml):
   preserve registration independence, commit ordering, ownership, attachment,
   succession, continuation, and recovery distinctions.
-- [Broker admission](architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml):
+- [Broker admission](../../architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml):
   preserve HRC caller policy and broker-owned admission/evidence.
-- [Continuation history](architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml):
+- [Continuation history](../../architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml):
   preserve clear barriers and distinguish carried history from native resume.
-- [Viewer boundary](architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml):
+- [Viewer boundary](../../architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml):
   preserve presentation failure isolation and Ghostty actuation ownership.
 
 The first milestone is independent ASP delivery demonstrated against frozen

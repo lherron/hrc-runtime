@@ -12,7 +12,7 @@ import type { WrkqProjectEventPostParams } from './ledger-client.js'
  * project timeline that a human already reads (`wrkp log <project>`).
  *
  * The vocabulary, its stability promise, and the affiliation consequence are
- * declared in `session-project-events.md` beside this file. hrc-runtime owns
+ * declared in `architecture/contracts/session-project-events.md`. hrc-runtime owns
  * `session.*`; wrkq owns only the envelope and cannot validate a subject
  * namespace, so this module and that doc are the only guards.
  *

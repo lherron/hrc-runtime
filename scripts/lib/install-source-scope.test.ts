@@ -33,9 +33,7 @@ describe('isInstallSourcePath', () => {
 
   test('prose is prose wherever it sits, including beside the code it describes', () => {
     expect(isInstallSourcePath('CLAUDE.md')).toBe(false)
-    expect(isInstallSourcePath('packages/hrc-server/src/wrkq/session-project-events.md')).toBe(
-      false
-    )
+    expect(isInstallSourcePath('packages/hrc-server/src/wrkq/notes.md')).toBe(false)
     expect(isInstallSourcePath('docs/html/T-04901.HTML')).toBe(false)
   })
 

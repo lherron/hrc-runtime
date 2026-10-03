@@ -125,7 +125,7 @@ describe("this repository's hook scope ignore list", () => {
     expect(ignore.ignores('architecture/index.jsonl')).toBeTrue()
     expect(ignore.ignores('architecture/INVARIANTS.md')).toBeTrue()
     expect(ignore.ignores('docs/operations-runbook.md')).toBeTrue()
-    expect(ignore.ignores('packages/hrc-server/src/wrkq/session-project-events.md')).toBeTrue()
+    expect(ignore.ignores('packages/hrc-server/src/wrkq/notes.md')).toBeTrue()
 
     for (const path of [
       'packages/hrc-server/src/index.ts',

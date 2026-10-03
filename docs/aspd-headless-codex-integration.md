@@ -109,7 +109,7 @@ tmux replay, input, interrupt and terminate, then a dead-seat v2 reprovision
 using the retained old continuation.
 
 Status: implementation spec for T-08542; Daedalus APPROVE EN-12902 (records
-`248138b9`). Governing design: `asp-hrc-split-proposal.md` at `bf3e539e`
+`248138b9`). Governing design: `architecture/proposals/asp-hrc-split-proposal.md` (written at `bf3e539e`)
 (Daedalus APPROVE EN-12789, R-00095), migration step 3 ("prove one complete
 execution path with frozen HRC"). Producer prerequisite: agent-spaces T-08539
 (`docs/aspd.md`, scope EN-12854/EN-12856, acceptance C-23052). Brief: EN-12894.

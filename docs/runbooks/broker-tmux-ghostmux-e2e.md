@@ -1,6 +1,7 @@
 # broker-tmux ghostmux E2E validation harness
 
-This package is the repeatable manual validation harness for T-01740. It drives
+The harness in `packages/hrc-server/validation/broker-tmux-ghostmux-e2e/` is the
+repeatable manual validation harness for T-01740. It drives
 real Ghostty surfaces through `ghostmux`, starts two interactive HRC runtimes,
 and records a committed findings directory for each run.
 

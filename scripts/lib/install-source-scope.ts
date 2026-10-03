@@ -34,7 +34,7 @@ const DOCUMENTATION_DIRECTORIES: readonly string[] = ['docs', 'architecture']
 
 /**
  * Extensions that are prose wherever they sit, including beside the code they
- * describe (`packages/hrc-server/src/wrkq/session-project-events.md`). No
+ * describe (`packages/hrc-server/src/wrkq/notes.md`). No
  * tracked file with one of these extensions is loaded at runtime or packed into
  * a published package; if that ever changes, the file stops being documentation
  * and this set stops covering it.
