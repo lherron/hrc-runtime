@@ -75,8 +75,9 @@ prior multi-gigabyte observation-ledger growth:
   `collective_history_replications` are durable checkpoints; deleting them
   would make every restart replay the corresponding local message.
 - Every `hrcmail_*` table is durable local execution or recovery state around
-  the wrkq-owned collaboration ledger: drive slots and attempts, presentation
-  receipts, reminders, failure notices, and legacy idempotency records.
+  the wrkq-owned collaboration ledger: delivery intents and expiries,
+  presentation receipts, birth and stop refusals, seat hints, failure notices,
+  ingress receipts, federated origins, and legacy envelope records.
 
 None has a TTL or standing delete path. A future deletion policy requires its
 own approved terminality and replay-fence contract; row age alone is not

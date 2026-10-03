@@ -24,8 +24,8 @@ labels the selected view; named-command help is never filtered, and `hrc admin
 --help` always exposes the full cellar.
 
 For target-handle syntax used throughout this page, see
-`hrc-runtime/target-handles`. For the messaging CLI (`hrcchat`), see
-`hrc-runtime/hrcchat-messaging`.
+`hrc-runtime/target-handles`. Agent messaging is `wrkc`; the `hrcchat` CLI
+was retired in T-07616.
 
 ## ASP v2 selection contract (T-08690; pending Daedalus review)
 
@@ -339,8 +339,8 @@ Terminal events also carry `outcome`: `success`, `not_matched`,
 `hrc status`, `hrc events`, `hrc server health`, and `hrcchat status|watch| wait` plus `hrcchat dm --wait` have been **removed** and now reject with an
 error. Replacements: `hrc monitor show` (was `hrc status` /
 `hrcchat status`), `hrc monitor watch` (was `hrc events` / `hrcchat watch`), `hrc monitor wait` (was `hrcchat wait`), `hrc server status` (was
-`hrc server health`). The `dm --wait` replacement flow is documented in
-`hrc-runtime/hrcchat-messaging`.
+`hrc server health`). `hrcchat dm` itself is gone; send agent messages with
+`wrkc say`.
 
 Source of truth: command registration in `packages/hrc-cli/src/cli.ts`;
 monitor-wait codes in `packages/hrc-core/src/monitor/condition-engine.ts`.

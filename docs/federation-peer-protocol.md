@@ -24,6 +24,7 @@ availability is discovered from health capabilities and route presence.
 | `POST` | `/v1/federation/history/replicate` | Replicate one collective-history record. |
 | `POST` | `/v1/federation/history/query` | Query collective history. |
 | `POST` | `/v1/federation/history/checkpoint` | Record a history checkpoint. |
+| `POST` | `/v1/federation/server-lifecycle` | Attested remote HRC restart (T-09861); advertised by the `serverLifecycle` health capability. |
 
 The old federation message accept routes are deleted. Cross-node agent talk is
 carried by the shared wrkq ledger; the peer surface retains placement, birth,
@@ -54,7 +55,8 @@ home durably fences itself before conditionally deleting its registry row; see
 ## Error model
 
 Malformed bodies return `400 invalid_request`. A missing optional capability
-returns a route-appropriate `404` refusal. Temporary authority or runtime
+returns a route-appropriate `404` refusal (for example `peer_upgrade_required`
+on `server-lifecycle`). Temporary authority or runtime
 failures return a structured retryable refusal. Unexpected handler failures are
 redacted to `500 internal_error`; tokens and request-controlled details are not
 reflected.

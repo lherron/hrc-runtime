@@ -1,8 +1,6 @@
 # HRC Monitor — Canonical Specification
 
-**Path:** `packages/hrc-events/MONITOR_PROPOSAL.md`
-**Date:** 2026-06-07
-**Status:** CANONICAL. Supersedes `MONITOR_HARNESS_AUDIT.md`. Replaces the historical, never-committed `MONITOR_PROPOSAL.md` that the codebase already references (`monitor-schema.ts`, the selector grammar tests at `§5`, the condition-engine acceptance tests at `§6`, and the wait exit-mapping tests at `§7.3`).
+**Status:** CANONICAL. Supersedes `MONITOR_HARNESS_AUDIT.md` and the never-committed `MONITOR_PROPOSAL.md`. Code and tests cite this file's sections (`monitor-schema.ts`, the selector grammar tests at `§5`, the condition-engine acceptance tests at `§6`, and the wait exit-mapping tests at `§7.3`).
 
 **Source of truth is the code, not this document.** Where this spec and the implementation disagree, the implementation wins and this doc is the bug. The authoritative artifacts are:
 
@@ -27,11 +25,12 @@ A monitor result is only `turn_succeeded` (or `response`, or `idle`) when a posi
 ## 3. Architecture
 
 ```
-inner harness (Claude SDK / Codex RPC / Pi) ──emits──▶ session events
-        │                                                    │
-        │ hooks / normalizers                                │ normalizers
-        ▼                                                    ▼
-   HookDerivedEvent ──────────────────────────────▶ monitor event stream
+inner harness (Claude / Codex / Pi) inside the harness broker
+        │
+        │ broker envelopes (the only ingest path; hook, OTEL and
+        │ launch-callback ingest were retired in T-08566)
+        ▼
+   hrc_events ledger ─────────────────────────────▶ monitor event stream
                                                              │
                                   reader.snapshot / reader.watch / captureStart
                                                              │
@@ -55,13 +54,13 @@ The monitor reads three things from its `HrcMonitorConditionEngineReader`:
 
 Defined in `monitor-schema.ts`. Every stdout line in `--output json` mode is a `MonitorEvent`.
 
-**Stable event names** (`MonitorEventName`): `monitor.snapshot`, `turn.started`, `turn.finished`, `turn.zombied`, `turn.reaped`, `runtime.idle`, `runtime.busy`, `runtime.crashed`, `runtime.dead`, `message.response`, `monitor.completed`, `monitor.stalled`. The list is append-only — new names may be added; shipped names are frozen.
+**Stable event names** (`MonitorEventName`): `monitor.snapshot`, `turn.started`, `turn.finished`, `turn.zombied`, `turn.reaped`, `runtime.idle`, `runtime.busy`, `runtime.crashed`, `runtime.dead`, `message.response`, `monitor.completed`, `monitor.stalled`. The list is append-only — new names may be added; shipped names are frozen. Server-side filtered `monitor watch` (`--kind`/`--tool`/`--grep`/`--milestone`) also emits these raw `hrc_events` kinds verbatim: `turn.completed`, `turn.failed`, `turn.tool_call`, `turn.tool_result`, `turn.message`, `session.started`, `session.cleared`.
 
 **Envelope fields:** `event` (required), `selector` (required, canonical string), `replayed` (required bool), `ts` (required ISO-8601). Optional: `runtimeId`, `turnId`, `result`, `failureKind`, `reason`, `exitCode`.
 
-**`result` discriminator** (`MonitorResult`): `turn_succeeded`, `turn_failed`, `runtime_dead`, `runtime_crashed`, `response`, `idle_no_response`, `already_idle`, `already_busy`, `no_active_turn`, `context_changed`, `timeout`, `stalled`, `monitor_error`.
+**`result` discriminator** (`MonitorResult`): `turn_succeeded`, `turn_failed`, `runtime_dead`, `runtime_crashed`, `response`, `idle`, `busy`, `idle_no_response`, `turn_finished_without_response`, `already_idle`, `already_busy`, `already_dead`, `no_active_turn`, `matched`, `already_true`, `no_session_ever`, `runtime_death_obstruction`, `context_changed`, `timeout`, `stalled`, `monitor_error`, `interrupted`.
 
-> Note: the condition engine's internal `HrcMonitorConditionResult` (in `condition-engine.ts`) is a slightly wider set than the schema's `MonitorResult` — it additionally carries `idle`, `busy`, `already_dead`, and `turn_finished_without_response` as wait outcomes. These are engine-internal results; the schema enumerates the values that appear in a `monitor.completed` envelope's `result` field.
+**`outcome`** (`MonitorOutcome`): `success`, `not_matched`, `observed_failure`, `error` (see §7).
 
 **`failureKind` discriminator** (`MonitorFailureKind`): `model`, `tool`, `process`, `runtime`, `cancelled`, `unknown`. Present when `result` is `turn_failed`, `runtime_dead`, or `runtime_crashed`. `unknown` is the honest default per §2.
 
@@ -133,20 +132,18 @@ the first member of an ambiguous role tree.
    - `busy` while runtime status is `busy` → `already_busy` (exit 0).
    - `runtime-dead` while status ∈ `{dead, stopped, crashed, exited, terminated}` → `already_dead` (exit 0).
    - edge conditions never short-circuit on the snapshot.
-   - `terminal` never short-circuits from idle or dead snapshot state. It requires durable terminal evidence after its cursor fence.
 3. Otherwise `watch(follow:true, fromSeq:capture.streamCursorSeq)`, including correlated message responses for the `response` conditions, and evaluate each event via `evaluateEvent`.
 
 **Per-event evaluation** (`evaluateEvent`), in order:
 
 - `monitor.snapshot` events are ignored.
 - **Context-changed wins first** (`evaluateContextChanged`): an explicit `result=context_changed` with a valid `reason`; or a `generation` mismatch on the captured `sessionRef` → `generation_changed`; or a differing `hostSessionId` on the captured `sessionRef` → `session_rebound`; or a `context.cleared`/`session.cleared` event on the captured `sessionRef` → `cleared`. All → exit 22.
-- **Runtime failure next** (`evaluateRuntimeFailure`, skipped when the condition is itself `runtime-dead`): a `runtime.dead` or `runtime.crashed` event for the captured runtime short-circuits any wait → `runtime_dead` / `runtime_crashed`, exit 2, with `failureKind` from the event (default `unknown`).
+- **Runtime failure next** (`evaluateRuntimeFailure`, skipped when the condition is itself `runtime-dead`): a `runtime.dead` or `runtime.crashed` event for the captured runtime short-circuits any wait → `runtime_dead` / `runtime_crashed`, exit 12 (`not_matched` obstruction), with `failureKind` from the event (default `unknown`).
 - Then the condition-specific branch:
   - `turn-finished` → matches `turn.finished` for the captured turn; maps `turn_failed` / `runtime_dead` / `runtime_crashed` to `outcome:observed_failure`, exit 13; success exits 0.
   - `idle` → `runtime.idle` for the captured runtime → exit 0.
   - `busy` → `runtime.busy` for the captured runtime → exit 0.
   - `response` → `message.response` matching the msg/seq selector → `response` exit 0; if instead the captured turn finishes or the runtime goes idle first → `turn_finished_without_response` exit 22.
-  - `response` → matching `message.response` after arm → exit 0.
   - `runtime-dead` → requested `runtime.dead` / `runtime.crashed` is success, exit 0; death obstructing another condition is `not_matched`, exit 12.
   - the implicit success-seeking fence treats `turn.failed`, `runtime.dead`, and `runtime.crashed` as `observed_failure`, exit 13.
 
@@ -194,23 +191,23 @@ The mapping is produced directly by the `exitCode` set on each `HrcMonitorCondit
 
 ## 8. Harness signal coverage
 
-Coverage matrix carried forward from `MONITOR_HARNESS_AUDIT.md`. The recurring shape: harnesses emit turn lifecycle and message signals well, but **none emit structured failure classification, crash-vs-stop differentiation, or context-changed signals**. Where a harness is silent, the monitor degrades to `unknown` / non-committal terminals per §2.
+Coverage matrix carried forward from `MONITOR_HARNESS_AUDIT.md`. Every harness now reaches HRC through harness-broker envelopes (`turn.started`, `turn.completed`, and so on, projected in `packages/hrc-server/src/broker/controller/bc-projection.ts`); the harness packages live in agent-spaces (`drivers/harness-*`, `harness/harness-broker*`). The recurring shape: harnesses emit turn lifecycle and message signals well, but **none emit structured failure classification, crash-vs-stop differentiation, or context-changed signals**. Where a harness is silent, the monitor degrades to `unknown` / non-committal terminals per §2.
 
 ### Claude — `spaces-harness-claude` (Agent SDK, in-process)
 
-- **Emits:** `turn.started`/`turn.finished` (synthetic turnId from `sendPrompt`/iterator completion), `runtime.busy`/`runtime.idle` (inferred from idle↔running transitions), `message.response` (assistant `message_end`), `monitor.snapshot` (via `getMetadata`). Hooks normalized via `hook-normalizer.ts`.
+- **Emits:** `turn.started`/`turn.finished` (synthetic turnId from `sendPrompt`/iterator completion), `runtime.busy`/`runtime.idle` (inferred from idle↔running transitions), `message.response` (assistant `message_end`), `monitor.snapshot` (via `getMetadata`). Reaches HRC as harness-broker envelopes.
 - **Gaps:** no structured `failureKind`; no crash-vs-clean-stop distinction (both end in `agent_end` with a free-form reason); no `context_changed` signal (`PreCompact` does not map to it); no exit code (in-process SDK has no child to exit).
 
 ### Codex — `spaces-harness-codex` (RPC over Codex CLI child process)
 
-- **Emits:** `turn.started`/`turn.finished` (from `turn/started`/`turn/completed` RPC, with diff/plan artifacts), `runtime.busy` (internal idle→running→streaming), `message.response`, `monitor.snapshot` (threadId identity). OTEL normalized via `otel-normalizer.ts`.
+- **Emits:** `turn.started`/`turn.finished` (from `turn/started`/`turn/completed` RPC, with diff/plan artifacts), `runtime.busy` (internal idle→running→streaming), `message.response`, `monitor.snapshot` (threadId identity). Reaches HRC as harness-broker envelopes.
 - **Gaps:** **no `agent_end`** — `stop()` kills the child and rejects pending turns silently; no structured failure classification (the `error` RPC's `codexErrorInfo`/`willRetry` are not mapped); no crash detection (the session does not own the `proc` exit); no `context_changed`; `supportsInterrupt:false`.
 
 ### Pi — `spaces-harness-pi` (CLI) and `spaces-harness-pi-sdk` (SDK)
 
-- **CLI:** no unified session; signals flow through the HRC events bridge (`before_agent_start`…`session_shutdown`) and the asp-hooks bridge. Cannot block hooks (warning W301 — hooks are best-effort).
+- **CLI:** no unified session. Cannot block hooks (warning W301 — hooks are best-effort).
 - **SDK:** emits `turn.started`/`turn.finished`, internal `runtime.busy`/`runtime.idle`, `message.response`, `monitor.snapshot`. `supportsNativeResume:false`, `supportsInterrupt:false`.
-- **Gaps:** no failure classification (either adapter); no crash detection; no `context_changed`; **turn-normalizer gap** — `pi-normalizer.ts` maps `turn_start`/`turn_end` to `notice` events rather than first-class turn lifecycle events, so the monitor must reconstruct turn boundaries from notices.
+- **Gaps:** no failure classification (either adapter); no crash detection; no `context_changed`.
 
 ### tmux — `hrc-server` `TmuxManager` (transport, not a harness)
 
@@ -221,17 +218,15 @@ Coverage matrix carried forward from `MONITOR_HARNESS_AUDIT.md`. The recurring s
 
 These are documented gaps, **not** filed tasks and **not** claims of implemented behavior. Do not read any of these as shipped.
 
-1. **No periodic tmux pane-health poll.** There is no background `setInterval` health loop over active panes. The only pane-liveness check is the **on-demand** `TmuxManager.inspectPaneLiveness(paneId)` (`tmux.ts:579`), called by the sweep/reconcile and runtime-io paths (`sweep-reconcile.ts:636`, `runtime-io-handlers.ts:143/156/160`, `broker-interactive-handlers.ts:599`) when a code path explicitly probes a pane. The audit's recommendation of a configurable liveness interval (default 5s) checking all active panes is **unimplemented**.
+1. **No general tmux pane-health poll.** Pane liveness is checked by `TmuxManager.inspectPaneLiveness(paneId)` (`tmux.ts`) only where a code path asks: runtime I/O (`runtime-io-handlers.ts`), broker input turns (`broker-interactive-input-turn.ts`), lease sweeps (`sweep-helpers.ts`), and the recurring active-run reconcile (`sweep-reconcile-active.ts`), which runs on the zombie-sweep interval and probes only the leased pane of a harness-broker run older than the zombie-run timeout. A live pane there leaves the run `suspect`; it is not a turn signal. The audit's recommendation of a configurable liveness interval (default 5s) checking all active panes is **unimplemented**.
 
-2. **No `#{pane_dead_status}` exit-code forwarding.** `inspectPaneLiveness` queries only `#{pane_dead}` and `#{pane_current_command}` (`tmux.ts:586-587`). The dead-process exit code (`#{pane_dead_status}`) is **not** read and **not** surfaced as `exitCode` on a monitor event. The schema has an `exitCode` field, but no tmux path populates it from pane death. The audit's recommendation to parse `#{pane_dead_status}` into the monitor event is **unimplemented**.
+2. **No `#{pane_dead_status}` exit-code forwarding.** `inspectPaneLiveness` queries only `#{pane_dead}` and `#{pane_current_command}` (`tmux.ts`). The dead-process exit code (`#{pane_dead_status}`) is **not** read and **not** surfaced as `exitCode` on a monitor event. The schema has an `exitCode` field, but no tmux path populates it from pane death. The audit's recommendation to parse `#{pane_dead_status}` into the monitor event is **unimplemented**.
 
-3. **Harness failure classification (`failureKind`) is not emitted by any harness.** Per §8, every harness is silent on structured failure kind, so the engine's `failureKindValue` returns `unknown` in practice. The audit's gap-fill recommendations — parse SDK/RPC error patterns into `model`/`tool`/`process`; emit a structured `failure`/`agent_end` reason enum; add a Codex process-exit handler that emits `runtime_crashed`/`failureKind=process` — are all **unimplemented** recommendations, not present behavior.
+3. **Harness failure classification (`failureKind`) is not emitted by any harness.** Per §8, every harness is silent on structured failure kind. The engine's `failureKindValue` returns `unknown` unless the event carries one, and the only producer is the CLI wait projection (`packages/hrc-cli/src/monitor/wait-projection.ts`), which stamps `runtime` on a failed `turn.finished` and on `runtime.dead`/`runtime.crashed`. `model`, `tool`, `process` and `cancelled` are never produced. The audit's gap-fill recommendations — parse SDK/RPC error patterns into `model`/`tool`/`process`; emit a structured `failure`/`agent_end` reason enum; add a Codex process-exit handler that emits `runtime_crashed`/`failureKind=process` — are all **unimplemented** recommendations, not present behavior.
 
 4. **No crash-vs-stop differentiation from harnesses.** Neither Claude (`agent_end` reason is free-form) nor Codex (no `agent_end` at all) distinguishes clean stop from crash. The monitor cannot currently emit `runtime_crashed` from harness signal alone; the recommendation to add a `clean_stop | error | crash` reason enum is **unimplemented**.
 
 5. **No harness-sourced `context_changed` signal.** No harness emits session-rebound, generation-change, or context-cleared events. The engine's `evaluateContextChanged` can still derive `context_changed` from a `generation`/`hostSessionId` mismatch on the captured `sessionRef` or from a `context.cleared`/`session.cleared` event if some other layer emits one — but the harnesses themselves do not produce these. Documenting Pi's lack of a generation concept as a permanent limitation (rather than synthesizing a signal) remains the standing recommendation.
-
-6. **Pi turn-normalizer downgrade.** `pi-normalizer.ts` still emits `turn_start`/`turn_end` as `notice` events. The recommendation to preserve them as first-class turn events so the engine can match them directly is **unimplemented**.
 
 ---
 

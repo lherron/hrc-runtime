@@ -18,8 +18,8 @@ for placement/routing, which is a separate concern from identity).
 
 ## Target handle (shorthand) — what you type
 
-Most user-facing commands (`hrc run`, `hrc start`, `hrc attach`,
-`hrcchat dm`, monitor selectors) accept:
+Most user-facing commands (`hrc run`, `hrc start`, `hrc attach`, monitor
+selectors) and `wrkc` addressing accept:
 
 ```
 <agentId>
@@ -58,10 +58,13 @@ cody@agent-spaces:T-123/reviewer~planning
   interactive (TTY) invocation where the cwd is a registered project that
   differs from `ASP_PROJECT`, the physical cwd wins (a stderr note is
   printed).
+- If `:<taskId>` is omitted, the shared agent-scope resolver fills the task
+  default `primary`.
 - Managed handle commands (`run`/`start`/`attach`) default the lane to
   `main` when `~<lane>` is omitted.
-- Low-level `hrc session resolve` defaults to `main` unless `--lane` is
-  passed explicitly.
+- Low-level `hrc session resolve --scope <scopeRef>` takes a canonical
+  scope ref, not a handle, and defaults to `main` unless `--lane` is passed
+  explicitly.
 
 ## Scope ref / session ref (canonical) — what HRC stores
 
@@ -69,29 +72,39 @@ The handle resolves to a canonical, fully-qualified pair. These are what
 appear in JSON output and error messages:
 
 ```
-scopeRef     agent:<agentId>:project:<projectId>
-sessionRef   agent:<agentId>:project:<projectId>/lane:<lane>
+scopeRef     agent:<agentId>:project:<projectId>:task:<taskId>[:role:<roleName>]
+sessionRef   <scopeRef>/lane:<lane>
 ```
 
-Example: `cody@agent-spaces` resolves to
-`scopeRef = agent:cody:project:agent-spaces` and
-`sessionRef = agent:cody:project:agent-spaces/lane:main`.
+Examples:
 
-Note the canonical forms have no `taskId`/`roleName` segment in the ref
-strings shown above — task/role selection composes with the runtime and
-message dispatch layer on top of the agent/project scope, not into a
-different ref shape at this layer.
+| Handle | scopeRef | lane |
+| --- | --- | --- |
+| `cody@agent-spaces` | `agent:cody:project:agent-spaces:task:primary` | `main` |
+| `cody@agent-spaces:T-123` | `agent:cody:project:agent-spaces:task:T-123` | `main` |
+| `cody@agent-spaces:T-123/reviewer` | `agent:cody:project:agent-spaces:task:T-123:role:reviewer` | `main` |
+| `cody@agent-spaces~repair` | `agent:cody:project:agent-spaces:task:primary` | `repair` |
+
+The task and role are part of the scope ref; the lane is only in the
+session ref.
 
 ## Monitor selectors
 
-`hrc monitor show | watch | wait` accept a selector that is either a target
-handle (resolved to a session selector as above) or an explicit prefixed
-form:
+`hrc show` and `hrc monitor show | watch | wait` accept a selector that is
+either a target handle or an explicit prefixed form:
 
 ```
 <handle>                       e.g. clod@agent-spaces  (session selector)
-msg:<messageId>                a specific durable message (required for response* waits)
+runtime:<runtimeId>            one runtime (a raw runtimeId also works)
+host:<hostSessionId>           one host session (a raw hostSessionId also works)
+scope:<scopeRef>               canonical scope ref
+session:<sessionRef>           canonical session ref
+msg:<messageId>                a durable message (response waits need exactly one msg: or seq:)
+seq:<messageSeq>               a durable message by sequence
 ```
+
+Raw native IDs win first, explicit prefixes win by type, and ambiguous bare
+selectors fail closed.
 
 A bare/empty selector means "all events / aggregate snapshot." Task/prefix
 or multiple selectors form a *quantified* family (`--until-any` / `--until-all`);
@@ -99,18 +112,18 @@ exact single selectors use plain `--until`.
 
 ## Where this grammar is enforced
 
-- Handle parsing/normalization: `packages/hrcchat-cli/src/normalize.ts` and
-  the equivalent resolution path in `hrc-cli`.
-- Scope ref parsing lives in the ASP `agent-scope` package
-  (`parseScopeRef`), consumed by HRC — HRC does not own the ref grammar
-  itself, it resolves handles down to it.
+- Handle and scope ref parsing live in the ASP `agent-scope` package
+  (`resolveScopeInput`, `parseScopeRef`), consumed by HRC — HRC does not own
+  the ref grammar itself, it resolves handles down to it.
+- HRC's project defaulting is `packages/hrc-cli/src/cli/scope.ts`; selector
+  resolution is `packages/hrc-cli/src/selector-resolve.ts`.
 - The full command-level detail for every consumer of this grammar (run,
-  start, attach, monitor, hrcchat dm) is in `hrc-runtime/cli-surface` and
-  `hrc-runtime/hrcchat-messaging`.
+  start, attach, monitor) is in `hrc-runtime/cli-surface`.
 
 ## Federation note
 
-Identity stays node-free by design: nothing in `scopeRef`/`sessionRef`
-changes when a scope's home node changes. Placement, routing, and the
+Identity stays node-free by design: a scope's home node is never encoded in
+`scopeRef`/`sessionRef`. Federation v1.3 never moves an established scope;
+see [Federation ordered retirement](federation-registry-retirement.md). Placement, routing, and the
 binding registry are a federation-layer concern layered on top of this
 identity grammar, not encoded inside it.
