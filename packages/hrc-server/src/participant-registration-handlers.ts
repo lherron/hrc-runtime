@@ -147,6 +147,7 @@ function optionalSocketPath(value: unknown): string | undefined {
 }
 
 const DIRECT_FIELDS = [
+  'metadata',
   'registrationMode',
   'requestedSessionRef',
   'hostIncarnationId',

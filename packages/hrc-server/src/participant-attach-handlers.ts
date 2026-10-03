@@ -90,6 +90,7 @@ export function parseAttachParticipantRequest(input: unknown): AttachParticipant
   }
   const body = input as Record<string, unknown>
   const allowed = new Set([
+    'metadata',
     'registrationId',
     'attemptId',
     'attachEpoch',
