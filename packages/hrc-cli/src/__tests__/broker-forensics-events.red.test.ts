@@ -403,6 +403,11 @@ beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-broker-forensics-')
   seedForensicsLedger(fixture)
   server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+  // The seeded ledger has unbound terminal history, so the startup retained-evidence
+  // pass logs to stderr. Let its timer fire and the pass finish before any CLI
+  // capture, or a slow pass lands inside a case's stderr.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await server.runRetainedEvidencePass()
 })
 
 afterEach(async () => {
