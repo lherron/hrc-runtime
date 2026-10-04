@@ -1,0 +1,72 @@
+id: hrc-runtime.submission-admission-pipeline
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: common admission for HRC agent-input submission doors and continuation of admitted durable headless input
+predicate: >
+  Under T-10232's four-phase adoption, every HRC turn submission passes through
+  one typed admission pipeline before its executor. The order is drain lease,
+  retired/persona checks, fences and idempotency, participant resolution,
+  ownership proof, capability and preempt authority, execution format and
+  presentation, rotation, then launch-carry and observation. Pre-effect
+  refusals perform no rotation, allocation, compile, body write, broker disposal
+  or pane change. A replay rereads and compares the recorded frozen execution
+  format before returning; a mismatch refuses and a matching replay creates
+  no new work. Participants are resolved before rotation, never rotated or
+  replaced by a substitute birth, and refuse freshContext. Carried ownership
+  proof is checked against the current invocation on every applicable route.
+  Preempt capability and principal/envelope authority are checked against the
+  current invocation before rotation. HRC consumes broker capabilities and
+  leaves seat busy authority and per-seat admission mechanism with the broker.
+  The drain lease spans admission and routing until the route settles; the
+  branded single-use plan is constructed and consumed inside that leased call
+  and never returned. Lease release proves no landing or removal. Outcomes
+  distinguish refused, replayed, routed and possible_write. Only pre-effect
+  refusal is terminalized by the pipeline itself. Past preflight, input
+  terminality requires the existing matching positive rejection or proved
+  withdrawal boundary; rotation failure, route throw, timeout, missing launch
+  identity, response-projection failure and caller cancellation remain
+  possible_write. The pipeline preserves the route's run, input, uncertainty
+  and protection state and permits later committed landing evidence. Existing
+  per-format execution and collaboration terminality remain authoritative.
+  The nonempty broker literal flush uses enqueue; buffering without Enter and
+  empty Enter on an empty buffer remain non-submitting operations. Active-run
+  contributions and raw bridge keystrokes retain their existing fences and
+  join admission if they gain turn-submission behavior. Durable headless queue
+  drain continues already-admitted work without re-admission, retains its drain
+  lease, atomic claim, coalescing, run identity and existing disposition, and
+  applies launch-carry from persisted admittedIntent, defaulting legacy rows
+  to enqueue. Every admission records one nine-step trace and outcome in
+  submission.admission, including explicit not-applicable, replay and
+  not-reached outcomes. At the seal phase, executors require the admitted plan,
+  with claimed durable queue continuation as the sole alternate construction
+  entry; a check in just check forbids handler/executor bypasses and exhaustive
+  door-by-driver conformance covers all submission doors.
+authority: mable@foundry R1 under Lance's delegation, 2026-10-04; Daedalus approval of wrkq:T-10232 etag 6, 2026-10-04
+source:
+  - wrkq:T-10226
+  - wrkq:T-10232
+  - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
+  - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
+  - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
+  - architecture/records/invariants/hrc-runtime.collaboration-presentation-authority.yaml
+  - packages/hrc-server/src/turn-admission-gate.ts
+  - packages/hrc-server/src/turn-dispatch-session-dispatch.ts
+  - packages/hrc-server/src/turn-dispatch-submission-handlers.ts
+  - packages/hrc-server/src/broker-headless-queue.ts
+  - packages/hrc-server/src/selector-message-handlers/selector-input.ts
+required_tests:
+  - T-10232 exhaustive HTTP door-by-driver conformance with typed production-interface boundary fakes and explicit inapplicable cells
+  - T-10232 E0 refusal cells preserve session invocation broker and pane for freshContext plus format mismatch or unauthorized preempt
+  - T-10232 same-key changed-format refusal and matching replay without a new run
+  - T-10232 drain closure waits through leased routing and refuses new submissions on every door
+  - T-10232 write-then-throw and timeout remain possible_write with protection preserved and subsequent committed landing projectable
+  - T-10232 cold-launch carry per intent and internal cold-enqueue restart/drain coverage with existing queue identity preserved
+  - T-10232 seal check in just check prevents executor bypasses
+  - T-10232 each phase preserves just verify and supplies installed per-door admission-event and delivery evidence, including live tmux handoff and literal paste-then-Enter
+last_verified:
+  date: 2026-10-04
+  evidence: Design approval of T-10232 etag 6 after source and active-record review; resolves F1-F7. Four-phase implementation, conformance, seal and installed acceptance evidence remain pending. No implementation gate result is asserted.
+reopen_when: Admission order, door inventory or exclusions, authority or format replay checks, plan construction, drain lease lifetime, queue continuation identity or carry, per-format uncertainty and terminality, or structural/conformance enforcement changes.
+supersedes: []
+superseded_by: []
