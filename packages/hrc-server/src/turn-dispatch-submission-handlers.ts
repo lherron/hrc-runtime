@@ -65,6 +65,7 @@ export async function handleSubmission(
   const invokeColdBirthPromptMode =
     door === 'invoke' ? (body as InvokeSubmissionRequest).coldBirth?.promptMode : undefined
   const allowLaunchReceipt = door === 'invoke' && !wait && invokeColdBirthPromptMode !== undefined
+  let admittedDoorReport: HrcSubmissionDoorReport | undefined
   const admitted = await submitThroughAdmission(
     this,
     {
@@ -93,33 +94,16 @@ export async function handleSubmission(
         const recorded = echoPersistedBrokerExecutionFormat(this, await pending.promise)
         return {
           format: recorded.executionFormat ?? 'format1',
-          project: () =>
-            waitForPublicDispatchStage(
-              this,
-              recorded,
-              wait ? 'terminal' : 'accepted',
-              true,
-              request.signal,
-              true,
-              publicDoorReport(door, submissionDoorReport(this, session, door))
-            ),
+          project: async () => json(recorded),
         }
       },
-      replay: async (run) =>
-        waitForPublicDispatchStage(
-          this,
-          replayDispatchBody(this, run),
-          wait ? 'terminal' : 'accepted',
-          true,
-          request.signal,
-          true,
-          publicDoorReport(door, submissionDoorReport(this, session, door))
-        ),
+      replay: async (run) => json(replayDispatchBody(this, run)),
     },
     async (plan) => {
       const session = plan.session
       const intent = plan.runtimeIntent
       const doorReport = plan.doorReport ?? submissionDoorReport(this, session, door)
+      admittedDoorReport = publicDoorReport(door, doorReport)
       const effectiveDoor = plan.effectiveDoor
       const operationKey =
         idempotencyKey !== undefined ? `${session.hostSessionId}\u0000${idempotencyKey}` : undefined
@@ -201,15 +185,7 @@ export async function handleSubmission(
           payload,
         })
       }
-      const response = await waitForPublicDispatchStage(
-        this,
-        publicResponse,
-        wait ? 'terminal' : 'accepted',
-        false,
-        request.signal,
-        true,
-        publicDoorReport(door, doorReport)
-      )
+      const response = json(publicResponse)
       return publicResponse.admission === 'rejected'
         ? {
             kind: 'rejected_unlanded',
@@ -218,7 +194,18 @@ export async function handleSubmission(
         : { kind: 'accepted', value: response }
     }
   )
-  return submissionResponse(admitted)
+  const receipt = submissionResponse(admitted)
+  if (admitted.outcome === 'refused') return receipt
+  // Stage projection observes the receipt after admission released its drain lease.
+  return waitForPublicDispatchStage(
+    this,
+    (await receipt.json()) as DispatchTurnResponse,
+    wait ? 'terminal' : 'accepted',
+    admitted.outcome === 'replayed',
+    request.signal,
+    true,
+    admittedDoorReport ?? publicDoorReport(door, submissionDoorReport(this, session, door))
+  )
 }
 
 function publicDispatchBody(

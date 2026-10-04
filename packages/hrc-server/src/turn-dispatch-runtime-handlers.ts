@@ -264,11 +264,10 @@ export async function handleDispatchTurn(
         const recorded = echoPersistedBrokerExecutionFormat(this, await pending.promise)
         return {
           format: recorded.executionFormat ?? 'format1',
-          project: () => waitForPublicDispatchStage(this, recorded, waitFor, true, request.signal),
+          project: async () => json(recorded),
         }
       },
-      replay: async (run) =>
-        waitForPublicDispatchStage(this, replayDispatchBody(this, run), waitFor, true),
+      replay: async (run) => json(replayDispatchBody(this, run)),
     },
     async (plan) => {
       const session = plan.session
@@ -325,7 +324,7 @@ export async function handleDispatchTurn(
       }
       try {
         const receipt = await dispatchPromise
-        const response = await waitForPublicDispatchStage(this, receipt, waitFor, false)
+        const response = json(receipt)
         return receipt.admission === 'rejected'
           ? {
               kind: 'rejected_unlanded',
@@ -342,7 +341,16 @@ export async function handleDispatchTurn(
       }
     }
   )
-  return submissionResponse(admitted)
+  const receipt = submissionResponse(admitted)
+  if (admitted.outcome === 'refused') return receipt
+  // Public stage waits are observation, outside the dispatch receipt's lease.
+  return waitForPublicDispatchStage(
+    this,
+    (await receipt.json()) as DispatchTurnResponse,
+    waitFor,
+    admitted.outcome === 'replayed',
+    request.signal
+  )
 }
 
 export async function openHeadlessBrokerSessionForSession(

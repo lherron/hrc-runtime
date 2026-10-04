@@ -8,7 +8,8 @@ import type { HrcServerInstanceForHandlers } from '../../server-instance-context
 export function fakeBrokerClient(
   ctx: HrcServerInstanceForHandlers,
   runtimeId: string,
-  invocationId: string
+  invocationId: string,
+  completion?: Promise<void>
 ): BrokerClientLike {
   let calls = 0
   const unused = async (): Promise<never> => {
@@ -16,7 +17,7 @@ export function fakeBrokerClient(
   }
   const submit = async () => {
     const submissionId = inputId(`sub-conformance-${++calls}`)
-    setTimeout(() => {
+    setTimeout(async () => {
       const run = ctx.db.runs
         .listRuns()
         .find((row) => row.runtimeId === runtimeId && row.brokerSubmissionId === submissionId)
@@ -41,14 +42,25 @@ export function fakeBrokerClient(
             turnId: nativeTurn,
           }
         ),
+        ...(completion === undefined
+          ? []
+          : [
+              envelope(
+                'submission.executed',
+                seq + 2,
+                { submissionId, turnId: nativeTurn },
+                { invocationId: invocationId as InvocationId }
+              ),
+            ]),
         envelope(
           'turn.completed',
-          seq + 2,
+          seq + 3,
           { status: 'completed', turnId: nativeTurn },
           { invocationId: invocationId as InvocationId, turnId: nativeTurn }
         ),
       ]) {
-        for (const lifecycle of mapper.apply({
+        if (event.type === 'turn.completed') await completion
+        const result = mapper.apply({
           ...event,
           correlation: {
             runId: run.runId,
@@ -57,8 +69,10 @@ export function fakeBrokerClient(
             scopeRef: run.scopeRef,
             laneRef: run.laneRef,
           },
-        }).lifecycleEvents)
-          ctx.notifyEvent(lifecycle)
+        })
+        for (const lifecycle of result.lifecycleEvents) ctx.notifyEvent(lifecycle)
+        for (const subscriber of ctx.rawBrokerSubscribers)
+          subscriber({ envelope: event, record: result.brokerEvent })
       }
     }, 10)
     return { submissionId, admission: 'admitted' as const }

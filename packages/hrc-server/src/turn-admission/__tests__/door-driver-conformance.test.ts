@@ -568,3 +568,60 @@ for (const driver of ['format1-headless', 'tmux-live', 'participant'] as const) 
     })
   }
 }
+
+for (const door of ['submission', 'turns'] as const) {
+  for (const replay of [false, true]) {
+    test(`${door}: terminal observation releases the drain lease (replay=${replay})`, async () => {
+      seedDriver('tmux-live')
+      let complete!: () => void
+      const completion = new Promise<void>((resolve) => {
+        complete = resolve
+      })
+      ctx.getHarnessBrokerController().active.set(runtimeId, {
+        runtimeId,
+        invocationId,
+        client: fakeBrokerClient(ctx, runtimeId, invocationId, completion),
+        closing: false,
+      })
+      ctx.reconcileTmuxRuntimeLiveness = async (runtime) => runtime
+      ctx.publishPresentation = async () => {}
+      const patch = { idempotencyKey: 'terminal-drain-key' }
+      if (replay) expect((await post(door, 'invoke', patch)).status).toBe(202)
+      let responseSettled = false
+      const pending = post(door, 'invoke', {
+        ...patch,
+        ...(door === 'turns' ? { waitFor: 'terminal' } : { wait: true }),
+      }).then((response) => {
+        responseSettled = true
+        return response
+      })
+      const deadline = Date.now() + 3000
+      while (
+        !ctx.db.runs.listRuns().some((run) => run.status === 'running') ||
+        ctx.rawBrokerSubscribers.size === 0
+      ) {
+        if (Date.now() > deadline)
+          throw new Error('terminal observer did not attach to running submission')
+        await Bun.sleep(10)
+      }
+      const closing = ctx.turnAdmissionGate.close({ operationId: 'terminal-observation-drain' })
+      const drained = await Promise.race([
+        closing.then(() => true),
+        Bun.sleep(500).then(() => false),
+      ])
+      const responsePendingAtDrain = !responseSettled
+      const eventsAtDrain = ctx.db.hrcEvents.listByKind('submission.admission')
+      complete()
+      const response = await pending
+      await closing
+      expect(drained).toBe(true)
+      expect(responsePendingAtDrain).toBe(true)
+      expect(eventsAtDrain).toHaveLength(replay ? 2 : 1)
+      expect(eventsAtDrain.at(-1)?.payload).toMatchObject({
+        outcome: replay ? 'replayed' : 'routed',
+      })
+      expect(response.status).toBe(200)
+      expect((await response.json()).stage).toBe('terminal')
+    })
+  }
+}
