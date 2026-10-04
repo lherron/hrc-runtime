@@ -508,7 +508,12 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
     const [op] = operations(s.hostSessionId)
     expect(op?.record.dispatch.routeDecision.door).toBe('attached-run')
     expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toBeUndefined()
-    internal().harnessBrokerController?.cancelAttachedStart?.('attached-t8562')
+    // The operation record lands before the start registers as pending; a cancel
+    // in that gap is a no-op and the start never settles. Production cancels only
+    // after readiness, so wait for it here too.
+    const controller = internal().harnessBrokerController
+    await controller?.waitForAttachedStartReady?.('attached-t8562')
+    controller?.cancelAttachedStart?.('attached-t8562', 't8562 cleanup')
     await start.catch(() => undefined)
   })
 
