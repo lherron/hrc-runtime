@@ -504,6 +504,18 @@ install-mail-injector-launchd version:
     fi
     [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
       fail "pin an exact version, got '${version}'"
+    # One hrc-core in the tree, or unknown-session lookups throw instead of
+    # matching HrcDomainError and the node never cold-births mail (EN-23153,
+    # EN-23299: 0.1.0-dev.20261003170619 nested an old hrc-core).
+    injector_core="$(npm view "hrc-mail-injector@${version}" dependencies.hrc-core 2>/dev/null)" ||
+      fail "could not read hrc-mail-injector@${version} dependencies from the registry"
+    injector_lib="$(npm view "hrc-mail-injector@${version}" dependencies.hrc-injector-core 2>/dev/null)"
+    if [[ -n "$injector_lib" ]]; then
+      lib_core="$(npm view "hrc-injector-core@${injector_lib}" dependencies.hrc-core 2>/dev/null)" ||
+        fail "could not read hrc-injector-core@${injector_lib} dependencies from the registry"
+      [[ "$lib_core" == "$injector_core" ]] ||
+        fail "hrc-mail-injector@${version} pins hrc-core ${injector_core} but its hrc-injector-core@${injector_lib} pins ${lib_core}; two hrc-core copies break cold births. Install a coherent version (latest)."
+    fi
 
     label=com.praesidium.hrc-mail-injector
     uid="$(id -u)"
