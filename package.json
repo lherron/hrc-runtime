@@ -33,7 +33,7 @@
     "test": "bun run test:fast && bun run test:integration",
     "test:unit": "bash -lc 'export TMPDIR=/tmp; for pkg in \"agent-action-render\" \"hrc-core\" \"hrc-events\" \"hrc-capture-verifier\" \"hrc-frame-render\"; do bun run --filter \"$pkg\" test || exit $?; done'",
     "test:contract": "bash -lc 'export TMPDIR=/tmp; for pkg in \"hrc-store-sqlite\" \"hrc-transcript-index\" \"hrc-sdk\" \"hrc-cli\"; do bun run --filter \"$pkg\" test || exit $?; done'",
-    "test:integration": "TMPDIR=/tmp bun run --filter hrc-server test",
+    "test:integration": "TMPDIR=/tmp HRC_FEDERATION_TEST_MODE=loopback bun run --filter hrc-server test",
     "test:scripts": "TMPDIR=/tmp bun test --parallel=4 scripts/",
     "test:installed-live": "just e2e",
     "test:observability": "bun scripts/test-observability.ts",

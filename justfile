@@ -77,6 +77,11 @@ test-federation-loopback:
 test-federation-live:
     bun scripts/run-federation-corpus.ts live
 
+# Everything that needs this host's live installation or network: the
+# installed-surface e2e and the federation corpus over the real tailnet
+# interface. `verify` stays self-contained (T-10161).
+smoke-live: installed-live-test test-federation-live
+
 # Run linter
 lint:
     bun run lint

@@ -49,6 +49,12 @@ jobs:
           git clean -fdq
           echo "verifying $REPO ${BEFORE:0:12}..${SHA:0:12} in $WORKTREE"
 
+      # dev-env reuses a running ephemeral daemon, which would serve an earlier
+      # push's code. Each post-push verify starts from a fresh environment.
+      - name: Tear down the previous dev environment
+        working-directory: ${{ env.WORKTREE }}
+        run: just env-down
+
       # One verify at a time on mini (it hosts the canonical wrkq DB). A job
       # waits for the machine-wide lock; it never skips. Verify runs in its own
       # session: when a newer push cancels this run, the trap SIGKILLs that

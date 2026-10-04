@@ -1,5 +1,8 @@
 import { Database } from 'bun:sqlite'
 import { describe, expect, it } from 'bun:test'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   HEADLESS_PANE_ROLE,
@@ -839,7 +842,13 @@ describe('simulated reap outcome presentation', () => {
       {
         stdout: 'pipe',
         stderr: 'pipe',
-        env: { ...process.env, NO_COLOR: '1' },
+        // The run records metrics beside HRC_DB_PATH; a scratch path keeps them
+        // out of the host's live state dir (T-10161).
+        env: {
+          ...process.env,
+          NO_COLOR: '1',
+          HRC_DB_PATH: join(mkdtempSync(join(tmpdir(), 'reap-headless-')), 'state.sqlite'),
+        },
       }
     )
     const stdout = new TextDecoder().decode(proc.stdout)

@@ -159,16 +159,31 @@ provision_wrkq() {
   fi
 }
 
-resolve_project_search_root() {
-  # A hook exports GIT_DIR/GIT_WORK_TREE for its own checkout. The helper drops
-  # every GIT_* override before asking Git for the common directory, whose owner
-  # is the canonical checkout even when this script runs from a linked worktree.
-  # HRC marker discovery then receives the stable parent containing registered
-  # project checkouts instead of borrowing HOME or the worktree's path shape.
-  PROJECT_SEARCH_ROOT="$(
-    bun "${REPO_ROOT}/scripts/resolve-project-search-root.ts" "${REPO_ROOT}"
-  )"
-  [[ -n "${PROJECT_SEARCH_ROOT}" ]] || die "canonical project search root resolved empty"
+# Every project id the suites resolve by marker scan. A fixture project is an
+# empty canonical checkout (a directory with its own .git) under the
+# environment's own search root, so placement never resolves the operator's
+# live checkouts under ~/praesidium (T-10161).
+FIXTURE_PROJECTS=(
+  hrc-runtime agent-spaces agent-control-plane wrkq taskboard foundry ghostmux arris
+)
+
+provision_projects() {
+  PROJECT_SEARCH_ROOT="${ROOT}/projects"
+  local project
+  for project in "${FIXTURE_PROJECTS[@]}"; do
+    [[ -d "${PROJECT_SEARCH_ROOT}/${project}/.git" ]] && continue
+    mkdir -p "${PROJECT_SEARCH_ROOT}/${project}"
+    # A hook exports GIT_DIR and kin; they would aim init at the outer checkout.
+    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+      git init -q "${PROJECT_SEARCH_ROOT}/${project}"
+  done
+}
+
+# What the running daemon was started from. A daemon is reused only when both
+# match: its ledger and its project search root. (The post-push runner tears the
+# environment down before each verify, so it never serves an earlier push's code.)
+daemon_fingerprint() {
+  printf '%s\n%s\n' "${WRKQ_DB_FILE}" "${PROJECT_SEARCH_ROOT}"
 }
 
 start_daemon() {
@@ -176,11 +191,11 @@ start_daemon() {
   # still reaches the operator's; reusing it would keep half the environment
   # on production state, so it is replaced rather than reused.
   if daemon_responds; then
-    if [[ "$(cat "${DAEMON_WRKQ_FILE}" 2>/dev/null || true)" == "${WRKQ_DB_FILE}" ]]; then
+    if [[ "$(cat "${DAEMON_WRKQ_FILE}" 2>/dev/null || true)" == "$(daemon_fingerprint)" ]]; then
       log "daemon already healthy on ${SOCKET} (reused)"
       return 0
     fi
-    log "replacing daemon started without the ephemeral wrkq ledger"
+    log "replacing daemon started from another ledger or project root"
     stop_daemon
   fi
 
@@ -201,7 +216,7 @@ start_daemon() {
       nohup env -u WRKQ_DB_PATH -u WRKQ_DB_PATH_FILE bun "${REPO_ROOT}/packages/hrc-cli/bin/hrc.js" server serve \
       >"${LOG_FILE}" 2>&1 &
     printf '%s\n' "$!" > "${PID_FILE}"
-    printf '%s\n' "${WRKQ_DB_FILE}" > "${DAEMON_WRKQ_FILE}"
+    daemon_fingerprint > "${DAEMON_WRKQ_FILE}"
   )
 
   local waited=0
@@ -243,7 +258,7 @@ stop_daemon() {
 cmd_up() {
   mkdir -p "${ROOT}" "${RUN_DIR}" "${STATE_DIR}" "${AGENTS_DIR}"
   provision_build
-  resolve_project_search_root
+  provision_projects
   provision_agents
   provision_wrkq
   start_daemon
@@ -255,7 +270,7 @@ cmd_up() {
   log "  state dir    ${STATE_DIR}   (HRC_STATE_DIR)"
   log "  agents root  ${AGENTS_DIR}   (ASP_AGENTS_ROOT, ${#FIXTURE_AGENTS[@]} fixture homes)"
   log "  wrkq ledger  ${WRKQ_DB_FILE}   (WRKQ_DB)"
-  log "  projects     ${PROJECT_SEARCH_ROOT}   (HRC_PROJECT_SEARCH_ROOTS)"
+  log "  projects     ${PROJECT_SEARCH_ROOT}   (HRC_PROJECT_SEARCH_ROOTS, ${#FIXTURE_PROJECTS[@]} fixture checkouts)"
   log "  daemon       ${SOCKET}  pid $(cat "${PID_FILE}" 2>/dev/null || echo '?')"
   log "  daemon log   ${LOG_FILE}"
   log "  env file     ${ENV_FILE}   (source it to point a shell here)"
