@@ -24,6 +24,7 @@ import {
   resolveParticipantDelivery,
 } from './participant-delivery.js'
 import { requireSession } from './require-helpers.js'
+import { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { parseJsonBody, parseSubmissionRequest } from './server-parsers.js'
 import { assertDispatchRunId, json, timestamp } from './server-util.js'
@@ -175,9 +176,10 @@ export async function handleSubmission(
   const intent = participantSession
     ? undefined
     : door === 'steer'
-      ? session.lastAppliedIntentJson
+      ? omitPersistedSelectionForReuse(session.lastAppliedIntentJson)
       : normalizeDispatchIntent(
-          sessionBoundBody?.runtimeIntent ?? session.lastAppliedIntentJson,
+          sessionBoundBody?.runtimeIntent ??
+            omitPersistedSelectionForReuse(session.lastAppliedIntentJson),
           session,
           runId
         )

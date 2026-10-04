@@ -46,6 +46,7 @@ import {
   getDurableHeadlessRuntimeForReattach,
   getReusableHeadlessRuntimeForSession,
 } from './runtime-select.js'
+import { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import {
   parseDispatchTurnRequest,
@@ -145,7 +146,7 @@ export async function handleOpenBrokerSession(
     trigger: 'broker-session-open',
   })
   const intent = normalizeBrokerSessionOpenIntent(
-    body.runtimeIntent ?? session.lastAppliedIntentJson,
+    body.runtimeIntent ?? omitPersistedSelectionForReuse(session.lastAppliedIntentJson),
     session
   )
 
@@ -258,7 +259,7 @@ export async function handleDispatchTurn(
   const executionFormat = body.executionFormat ?? 'format1'
   let runId: string | undefined = executionFormat === 'format2' ? undefined : `run-${randomUUID()}`
   const parsedIntent = normalizeDispatchIntent(
-    body.runtimeIntent ?? session.lastAppliedIntentJson,
+    body.runtimeIntent ?? omitPersistedSelectionForReuse(session.lastAppliedIntentJson),
     session,
     runId
   )
