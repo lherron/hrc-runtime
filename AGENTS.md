@@ -90,8 +90,9 @@ there is the one version this workspace may resolve for that dependency.
   tree, not a resolution this workspace performs.
 - `just doctor` (`bun run doctor`, `--check` to report only) prunes nested
   `<package>/node_modules/<dep>` copies of a pinned dependency whose version
-  differs from the root resolution. It also runs inside
-  `scripts/install-workspace-deps.ts` right after `bun install`.
+  differs from the root resolution. No recipe runs it for you: after a
+  `bun install`, run `just doctor`, or install with
+  `bun scripts/install-workspace-deps.ts`, which installs and then sweeps.
 
 **Why both.** A floating specifier in a member manifest does not merely widen a
 range: bun resolves it separately and installs a nested copy, and TypeScript

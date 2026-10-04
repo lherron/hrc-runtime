@@ -43,3 +43,5 @@ push on mini, catches but does not block).
 | Read `bun.lock`'s last commit before `just install` | `check-asp-skew --warn` is advisory by design |
 | Fleet promotion only through `just deploy-*` | nothing refuses a hand promotion |
 | Index every docs page in `docs/README.md` | no index-completeness check yet |
+| Run package tests with `bun run test`, not bare `bun test` | bare `bun test` skips the hermetic runner, but refusing it would break ad-hoc runs (ruling R4, T-10226); revisit if a test writes the live ledger again |
+| Run `just doctor` after any `bun install` | no recipe resolves dependencies, so nothing calls the sweep automatically |
