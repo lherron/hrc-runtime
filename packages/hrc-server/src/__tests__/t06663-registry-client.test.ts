@@ -157,7 +157,10 @@ describe('T-06663 registry error taxonomy and retry posture', () => {
           init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
         })
       },
-      { perAttemptTimeoutMs: 5, totalTimeoutMs: 100, sleep: async () => {} }
+      // Freeze the budget clock: this case proves the per-attempt timeout, and
+      // late 5ms timers on a loaded runner must not spend the real total budget
+      // (mini run 37231781526). The total cap is pinned by the next case.
+      { perAttemptTimeoutMs: 5, totalTimeoutMs: 100, now: () => 0, sleep: async () => {} }
     )
 
     const error = await client.consult(SCOPE).catch((caught: unknown) => caught)
