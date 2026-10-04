@@ -33,6 +33,7 @@ import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
 import { installOldEngineDaemon } from '../../__tests__/old-engine-daemon.js'
 import { TurnExitError, type TurnOptions, cmdTurn } from '../commands/turn.js'
+import type { StackedAggregatorOptions } from '../stacked-aggregator.js'
 
 const oldEngineDaemon = installOldEngineDaemon()
 afterAll(() => oldEngineDaemon.stop())
@@ -63,7 +64,9 @@ afterEach(restoreEnv)
 // Section 1 — Aggregator-level harness
 // ═══════════════════════════════════════════════════════════════════════════════
 
-class FakeClock {
+class FakeClock
+  implements Required<Pick<StackedAggregatorOptions, 'now' | 'setTimeout' | 'clearTimeout'>>
+{
   nowMs = Date.parse('2026-05-13T18:00:00.000Z')
   private nextHandle = 1
   private timers = new Map<number, { at: number; callback: () => void }>()
@@ -76,8 +79,8 @@ class FakeClock {
     return handle
   }
 
-  clearTimeout = (handle: number): void => {
-    this.timers.delete(handle)
+  clearTimeout = (handle: unknown): void => {
+    this.timers.delete(handle as number)
   }
 }
 

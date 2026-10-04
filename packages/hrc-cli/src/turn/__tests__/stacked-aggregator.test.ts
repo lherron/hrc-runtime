@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { HrcLifecycleEvent, SemanticTurnHandoffStartedResponse } from 'hrc-core'
+import type { StackedAggregatorOptions } from '../stacked-aggregator.js'
 
 type StackedLine = {
   type: 'turn_stacked'
@@ -19,7 +20,9 @@ type StackedLine = {
 
 type TimerHandle = number
 
-class FakeClock {
+class FakeClock
+  implements Required<Pick<StackedAggregatorOptions, 'now' | 'setTimeout' | 'clearTimeout'>>
+{
   nowMs = Date.parse('2026-05-13T18:00:00.000Z')
   private nextHandle = 1
   private timers = new Map<TimerHandle, { at: number; callback: () => void }>()
@@ -32,8 +35,8 @@ class FakeClock {
     return handle
   }
 
-  clearTimeout = (handle: TimerHandle): void => {
-    this.timers.delete(handle)
+  clearTimeout = (handle: unknown): void => {
+    this.timers.delete(handle as TimerHandle)
   }
 
   async advance(ms: number): Promise<void> {

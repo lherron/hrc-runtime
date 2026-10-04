@@ -47,5 +47,6 @@ Current reference for the HRC runtime. Design records live in
 ## Policy and process
 
 - [rule-enforcers.md](rule-enforcers.md) — each repo rule and the check, type or test that fails when it is broken (or `judgment`).
+- [test-doubles.md](test-doubles.md) — what counts as a test double, how it is typed against production, and how to capture a producer fixture (R2).
 - [suppression-policy.md](suppression-policy.md) — lint/type suppressions require a ticketed `EXCEPTION(T-…)` justification.
 - [agent-enablement-changelog.md](agent-enablement-changelog.md) — append-only ledger of reusable agent-enablement lessons.

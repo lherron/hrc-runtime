@@ -108,6 +108,7 @@ check:
     bun scripts/check-env-hygiene.ts
     bun scripts/check-test-hermetic.ts
     bun scripts/check-daemon-subprocess.ts
+    bun scripts/check-test-doubles.ts
 
 # Prune nested node_modules copies of a root-pinned dependency that shadow the
 # root resolution. `bun install` writes but never tidies, so a copy an earlier

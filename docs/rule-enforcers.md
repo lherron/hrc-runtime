@@ -14,6 +14,7 @@ push on mini, catches but does not block).
 | A test process never inherits GIT_DIR/GIT_WORK_TREE or a live wrkq locator | `scripts/hermetic-test.ts` + `scripts/lib/hermetic-test-env.ts`; the preload refuses a bypassing run | every test run |
 | Every test root registers the preload, runs through the hermetic runner, and sits in one verify tier | `scripts/check-test-hermetic.ts` | check |
 | Daemon code runs subprocesses only through `runBoundedSubprocess`; no synchronous spawn in hrc-server or its workspace deps | `scripts/check-daemon-subprocess.ts` (raw-spawn baseline is `{}`: any raw spawn fails) | check |
+| A test double is typed against the production interface it stands in for and type-checks; a new or changed double for a cross-project producer (wrkq ledger, aspd, ghostmux) cites a captured wire fixture | `scripts/check-test-doubles.ts` (ratchet: `scripts/test-double-baseline.json` only goes down); see [test-doubles.md](test-doubles.md) | check |
 | A scope verb's flags (`start`/`run`/`resume`) are declared once | architecture: `packages/hrc-cli/src/cli/scope-verb-options.ts`; `scope-verb-options.test.ts` | pre-commit (typecheck), verify |
 | HRC source does not import ACP-owned packages | `scripts/check-boundaries.ts` | pre-commit, check |
 | Member dependency specifiers match the root `overrides` pin table | `scripts/check-dependency-pins.ts` | pre-commit, check |

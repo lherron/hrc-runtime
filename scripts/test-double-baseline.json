@@ -1,0 +1,51 @@
+{
+  "nonconforming": {
+    "packages/hrc-cli/src/__tests__/fake-daemon.ts": 2,
+    "packages/hrc-cli/src/__tests__/t06613-target-locate-federation.test.ts": 1,
+    "packages/hrc-cli/src/__tests__/worktree-prune.test.ts": 1,
+    "packages/hrc-cli/src/turn/__tests__/stacked-summary.test.ts": 1,
+    "packages/hrc-cli/src/turn/__tests__/task-state.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-claimed-lease-reaping.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-degraded-tmux-fallback.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-durable-activation.red.test.ts": 2,
+    "packages/hrc-server/src/__tests__/broker-durable-allocator.red.test.ts": 2,
+    "packages/hrc-server/src/__tests__/broker-durable-reattach-on-dispatch.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-headless-hatch.red.test.ts": 2,
+    "packages/hrc-server/src/__tests__/broker-headless-viewer-allocation.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-headless-viewer-observer.red.test.ts": 2,
+    "packages/hrc-server/src/__tests__/broker-inspect-liveness.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-inspect-routes.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-inspect-summary.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-lease-teardown.red.test.ts": 2,
+    "packages/hrc-server/src/__tests__/broker-lifecycle-overlay.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-pane-lease-dispatch.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-permission-policy.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-reattach-live-events-and-fence.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-replay-ack.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/broker-startup-reattach.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/fixtures/aspd-observation-doubles.ts": 1,
+    "packages/hrc-server/src/__tests__/fixtures/aspd-route-doubles.ts": 2,
+    "packages/hrc-server/src/__tests__/fixtures/broker-controller.fixture.ts": 1,
+    "packages/hrc-server/src/__tests__/fixtures/broker-endpoint-substrate.fixture.ts": 1,
+    "packages/hrc-server/src/__tests__/fixtures/t08566-offline-reader-double.ts": 1,
+    "packages/hrc-server/src/__tests__/participant-realization.test.ts": 1,
+    "packages/hrc-server/src/__tests__/server-events-follow-timeout.test.ts": 1,
+    "packages/hrc-server/src/__tests__/server-stop-follow-streams.test.ts": 1,
+    "packages/hrc-server/src/__tests__/t05881-operator-attach-viewer-suppression.test.ts": 2,
+    "packages/hrc-server/src/__tests__/t07203-steer-class.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/t07236-acp-event-bridge.test.ts": 1,
+    "packages/hrc-server/src/__tests__/t08296-shared-attach-integration.test.ts": 1,
+    "packages/hrc-server/src/__tests__/t08456-dispatch-birth-presentation.test.ts": 1,
+    "packages/hrc-server/src/__tests__/t08566-stage2-reader-release.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/t08566-stage2-retained-fence.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/t08865-submission-wait-start-failure.test.ts": 1,
+    "packages/hrc-server/src/__tests__/t4922-broker-lease-predicates.red.test.ts": 1,
+    "packages/hrc-server/src/__tests__/t4922-presentation-predicates.red.test.ts": 2,
+    "scripts/prune-hrc-event-deltas.tool-result-spill.test.ts": 1
+  },
+  "uncaptured": {
+    "packages/hrc-server/src/__tests__/fixtures/fake-wrkq-ledger.ts": [
+      "FakeWrkqLedger:312712f4a665"
+    ]
+  }
+}
