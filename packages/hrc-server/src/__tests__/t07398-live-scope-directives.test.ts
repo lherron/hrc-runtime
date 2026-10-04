@@ -111,6 +111,20 @@ async function seedLiveInteractive(): Promise<{ hostSessionId: string }> {
     client: fakeBrokerClient(ctx, 'rt-t07398-live', 'inv-t07398-live'),
     closing: false,
   })
+  ctx.db.brokerInvocations.update('inv-t07398-live', { executionFormat: 'format1' })
+  ctx.db.runtimeOperations.insert({
+    operationId: 'op-t07398-live',
+    runtimeId: 'rt-t07398-live',
+    hostSessionId,
+    generation,
+    operationKind: 'broker_invocation',
+    controller: 'harness-broker',
+    startupMethod: 'test',
+    status: 'started',
+    routeDecisionJson: '{}',
+    createdAt: now,
+    updatedAt: now,
+  })
   ctx.reconcileTmuxRuntimeLiveness = async (runtime) => runtime
   return { hostSessionId }
 }
@@ -159,4 +173,37 @@ describe('T-07398 live-scope directive semantics', () => {
       // a successor inherits what it was born with, not what a DM asked for.
       expect(persistedProvision(hostSessionId)).toEqual({ ...BIRTH_PROVISION })
     })
+  it('D8 reply wait does not hold the drain lease after turn completion', async () => {
+    await seedLiveInteractive()
+    const ctx = server as unknown as HrcServerInstanceForHandlers
+    let responseSettled = false
+    const pending = fixture
+      .postJson('/v1/messages/dm', {
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'session', sessionRef: SESSION_REF },
+        body: 'complete this turn without a reply message',
+        runtimeIntent: birthIntent,
+        wait: { enabled: true, timeoutMs: 2000 },
+      })
+      .then((response) => {
+        responseSettled = true
+        return response
+      })
+    const deadline = Date.now() + 5000
+    while (!ctx.db.runs.listRuns().some((run) => run.status === 'completed')) {
+      if (Date.now() > deadline) throw new Error('DM turn did not complete')
+      await Bun.sleep(10)
+    }
+    const closing = ctx.turnAdmissionGate.close({ operationId: 'dm-reply-wait-drain' })
+    const drained = await Promise.race([closing.then(() => true), Bun.sleep(500).then(() => false)])
+    const responsePendingAtDrain = !responseSettled
+    const admissionAtDrain = ctx.db.hrcEvents.listByKind('submission.admission').at(-1)
+    const response = await pending
+    await closing
+    expect(drained).toBe(true)
+    expect(responsePendingAtDrain).toBe(true)
+    expect(admissionAtDrain?.payload).toMatchObject({ door: 'dm', outcome: 'routed' })
+    expect(response.status).toBe(200)
+    expect((await response.json()).waited).toMatchObject({ matched: false, reason: 'timeout' })
+  })
 })

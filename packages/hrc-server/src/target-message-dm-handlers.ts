@@ -199,6 +199,28 @@ export async function handleSemanticDm(
 
   const respondTo = body.respondTo ?? body.from
   let written: HrcMessageRecord | undefined
+  // Reply-message observation follows delivery and must not extend its drain lease.
+  const waitForReply = async (response: Response): Promise<Response> => {
+    const record = written
+    if (!body.wait?.enabled || record?.phase !== 'request') return response
+    const waited: WaitMessageResponse = await this.waitForMessage(
+      {
+        thread: { rootMessageId: record.rootMessageId },
+        to: respondTo,
+        kinds: ['dm'],
+        phases: ['response'],
+        afterSeq: record.messageSeq,
+      },
+      body.wait.timeoutMs ?? 30_000,
+      record.messageId
+    )
+    const projected = (await response.json()) as SemanticDmResponse
+    return json({
+      ...projected,
+      request: this.db.messages.getById(record.messageId) ?? projected.request,
+      waited,
+    } satisfies SemanticDmResponse)
+  }
   const persistAndDeliver = async (plan?: AdmittedPlan): Promise<Response> => {
     const record = this.insertAndNotifyMessage({
       messageId: `msg-${randomUUID()}`,
@@ -223,23 +245,6 @@ export async function handleSemanticDm(
       plan
     )
 
-    // Handle --wait
-    let waited: WaitMessageResponse | undefined
-    if (body.wait?.enabled && record.phase === 'request') {
-      const timeoutMs = body.wait.timeoutMs ?? 30_000
-      waited = await this.waitForMessage(
-        {
-          thread: { rootMessageId: record.rootMessageId },
-          to: respondTo,
-          kinds: ['dm'],
-          phases: ['response'],
-          afterSeq: record.messageSeq,
-        },
-        timeoutMs,
-        record.messageId
-      )
-    }
-
     // Re-read the record to pick up execution updates written by the durable
     // correlation join and tmux-literal delivery path (updateExecution calls
     // modify the DB but not the in-memory record object).
@@ -249,25 +254,24 @@ export async function handleSemanticDm(
       request: freshRecord,
       ...(execution ? { execution } : {}),
       ...(reply ? { reply } : {}),
-      ...(waited ? { waited } : {}),
       ...(warnings ? { warnings } : {}),
       ...(delivery ? { delivery } : {}),
       ...(directivesApplied === undefined ? {} : { directivesApplied }),
     } satisfies SemanticDmResponse)
   }
   if (body.to.kind !== 'session' || isCodexAppOwnedScopeRef(body.to.sessionRef))
-    return await persistAndDeliver()
+    return await waitForReply(await persistAndDeliver())
   let target = findTargetSession(this.db, body.to.sessionRef)
   if (target == null && body.createIfMissing !== false && body.runtimeIntent !== undefined)
     target = await this.ensureTargetSession(body.to.sessionRef, body.runtimeIntent)
-  if (target == null) return await persistAndDeliver()
+  if (target == null) return await waitForReply(await persistAndDeliver())
   // Ledger-only, unsummoned DMs retain their non-turn behavior.
   if (
     body.runtimeIntent === undefined &&
     target.lastAppliedIntentJson === undefined &&
     resolveParticipantDelivery(this, target) === null
   )
-    return await persistAndDeliver()
+    return await waitForReply(await persistAndDeliver())
   const result = await submitThroughAdmission(
     this,
     {
@@ -295,11 +299,13 @@ export async function handleSemanticDm(
   // The existing DM route returns its failed message rather than throwing an HTTP error.
   // Classification occurs before that projection, so a route throw stays possible_write.
   if (result.outcome === 'possible_write' && written !== undefined)
-    return json({
-      request: this.db.messages.getById(written.messageId) ?? written,
-      ...(directivesApplied === undefined ? {} : { directivesApplied }),
-    })
-  return submissionResponse(result)
+    return await waitForReply(
+      json({
+        request: this.db.messages.getById(written.messageId) ?? written,
+        ...(directivesApplied === undefined ? {} : { directivesApplied }),
+      })
+    )
+  return await waitForReply(submissionResponse(result))
 }
 
 export function completeDirectiveOnlyIntent(
