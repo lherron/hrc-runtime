@@ -1,5 +1,6 @@
 import { readdir, realpath, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { SubprocessTimeoutError, runBoundedSubprocess } from '../bounded-subprocess.js'
 import { writeServerLog } from '../server-log.js'
 import type {
   RendererControlSocketSweepOptions,
@@ -159,66 +160,20 @@ export class HolderEnumerationAbortedError extends Error {
 
 async function enumerateHeldUnixSocketPaths(timeoutMs?: number): Promise<Set<string>> {
   const budgetMs = timeoutMs ?? RENDERER_CONTROL_HOLDER_ENUMERATION_TIMEOUT_MS
-  const signal = AbortSignal.timeout(budgetMs)
-  const proc = Bun.spawn([...LSOF_HELD_UNIX_SOCKET_ARGV], {
-    env: process.env,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    signal,
-  })
-
-  /**
-   * The deadline has to be raced, not merely armed.
-   *
-   * Killing the child does not end the read: the write end of these pipes is
-   * held by EVERY process that inherited it, so anything the child spawned (or
-   * orphaned) keeps stdout open and `Response.text()` pending long after the
-   * kill. Awaiting the reads and the exit together therefore inherits the
-   * lifetime of the slowest holder, which is exactly the unbounded wait this
-   * budget exists to prevent — the same defect in a second disguise, and the
-   * one that made a 250ms budget still take 5s in test. (T-07740)
-   */
-  const deadline = new Promise<never>((_, reject) => {
-    signal.addEventListener('abort', () => reject(new HolderEnumerationAbortedError(budgetMs)), {
-      once: true,
-    })
-  })
-  // The loser of the race always settles; swallow it so it is never an
-  // unhandled rejection.
-  deadline.catch(() => {})
-
-  let stdout: string
-  let stderr: string
-  let exitCode: number | null
+  let result: Awaited<ReturnType<typeof runBoundedSubprocess>>
   try {
-    ;[stdout, stderr, exitCode] = await Promise.race([
-      Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]),
-      deadline,
-    ])
+    result = await runBoundedSubprocess(LSOF_HELD_UNIX_SOCKET_ARGV, { timeoutMs: budgetMs })
   } catch (error) {
-    // SIGTERM is what the AbortSignal already sent; escalate rather than leave
-    // a wedged child holding the pipes.
-    try {
-      proc.kill('SIGKILL')
-    } catch {
-      // Already gone.
-    }
+    // A killed lsof's stderr describes what it printed before the kill, never
+    // the kill: report the budget, not stale stderr. (T-07740)
+    if (error instanceof SubprocessTimeoutError) throw new HolderEnumerationAbortedError(budgetMs)
     throw error
   }
-
-  // Check the signal BEFORE the exit code: an aborted process exits non-zero
-  // with stale stderr, and reporting that stderr as the cause is what sent an
-  // earlier investigation after an innocent mount. (T-07740)
-  if (signal.aborted) throw new HolderEnumerationAbortedError(budgetMs)
-  if (exitCode !== 0) {
-    throw new Error(stderr.trim() || `lsof exited with status ${exitCode}`)
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || `lsof exited with status ${result.exitCode}`)
   }
 
-  return parseLsofUnixSocketPaths(stdout)
+  return parseLsofUnixSocketPaths(result.stdout)
 }
 
 /**
