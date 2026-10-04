@@ -21,7 +21,6 @@ import {
   hasLeasedBrokerSubstrate,
   parseBrokerRuntimeHostingState,
 } from './broker/runtime-hosting.js'
-import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import {
   assertProvisionDirectiveAdmissible,
@@ -35,6 +34,7 @@ import {
   formatSessionRef,
   parseSemanticDmRequest,
 } from './messages.js'
+import { resolveParticipantDelivery } from './participant-delivery.js'
 import { findLatestRuntime } from './runtime-select.js'
 import { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
 import {
@@ -66,6 +66,8 @@ import {
 import { createNotifiedSessionSuccessor } from './target-message-successor-handlers.js'
 import { findTargetSession } from './target-view.js'
 import { createTmuxManager } from './tmux.js'
+import { submissionResponse, submitThroughAdmission } from './turn-admission/submit.js'
+import type { AdmittedPlan } from './turn-admission/types.js'
 
 /**
  * `POST /v1/messages/dm` — local semantic DM.
@@ -180,8 +182,10 @@ export async function handleSemanticDm(
     // T-07612 §10 (flag day T-07616): the federation MESSAGE path is deleted,
     // so there is no remote branch left — every target this daemon admits is
     // local, and cross-node work travels the wrkq ledger.
-    assertLocalPersonaAllowed(this, scopeRef)
-    await assertLocalTargetNotRetired()
+    if (findTargetSession(this.db, targetSessionRef) === undefined) {
+      assertLocalPersonaAllowed(this, scopeRef)
+      await assertLocalTargetNotRetired()
+    }
   }
 
   // T-07398 — provisioning is decided at BIRTH. A directive block arriving at a
@@ -194,58 +198,108 @@ export async function handleSemanticDm(
     body.runtimeIntent?.provision === undefined ? undefined : !targetHasLiveRuntime(this, body.to)
 
   const respondTo = body.respondTo ?? body.from
-  const record = this.insertAndNotifyMessage({
-    messageId: `msg-${randomUUID()}`,
-    kind: 'dm',
-    phase: parent !== undefined ? 'response' : body.to.kind === 'session' ? 'request' : 'oneway',
-    from: body.from,
-    to: body.to,
-    body: body.body,
-    ...(body.replyToMessageId !== undefined ? { replyToMessageId: body.replyToMessageId } : {}),
-    ...(parent ? { rootMessageId: parent.rootMessageId } : {}),
-    execution: {
-      state: 'not_applicable',
-      ...(body.mode && body.mode !== 'auto' ? { mode: body.mode } : {}),
-    },
-  })
-
-  const { execution, reply, warnings, delivery } = await this.deliverPersistedSemanticDm(
-    body,
-    record,
-    respondTo
-  )
-
-  // Handle --wait
-  let waited: WaitMessageResponse | undefined
-  if (body.wait?.enabled && record.phase === 'request') {
-    const timeoutMs = body.wait.timeoutMs ?? 30_000
-    waited = await this.waitForMessage(
-      {
-        thread: { rootMessageId: record.rootMessageId },
-        to: respondTo,
-        kinds: ['dm'],
-        phases: ['response'],
-        afterSeq: record.messageSeq,
+  let written: HrcMessageRecord | undefined
+  const persistAndDeliver = async (plan?: AdmittedPlan): Promise<Response> => {
+    const record = this.insertAndNotifyMessage({
+      messageId: `msg-${randomUUID()}`,
+      kind: 'dm',
+      phase: parent !== undefined ? 'response' : body.to.kind === 'session' ? 'request' : 'oneway',
+      from: body.from,
+      to: body.to,
+      body: body.body,
+      ...(body.replyToMessageId !== undefined ? { replyToMessageId: body.replyToMessageId } : {}),
+      ...(parent ? { rootMessageId: parent.rootMessageId } : {}),
+      execution: {
+        state: 'not_applicable',
+        ...(body.mode && body.mode !== 'auto' ? { mode: body.mode } : {}),
       },
-      timeoutMs,
-      record.messageId
+    })
+
+    written = record
+    const { execution, reply, warnings, delivery } = await this.deliverPersistedSemanticDm(
+      body,
+      record,
+      respondTo,
+      plan
     )
+
+    // Handle --wait
+    let waited: WaitMessageResponse | undefined
+    if (body.wait?.enabled && record.phase === 'request') {
+      const timeoutMs = body.wait.timeoutMs ?? 30_000
+      waited = await this.waitForMessage(
+        {
+          thread: { rootMessageId: record.rootMessageId },
+          to: respondTo,
+          kinds: ['dm'],
+          phases: ['response'],
+          afterSeq: record.messageSeq,
+        },
+        timeoutMs,
+        record.messageId
+      )
+    }
+
+    // Re-read the record to pick up execution updates written by the durable
+    // correlation join and tmux-literal delivery path (updateExecution calls
+    // modify the DB but not the in-memory record object).
+    const freshRecord = this.db.messages.getById(record.messageId) ?? record
+
+    return json({
+      request: freshRecord,
+      ...(execution ? { execution } : {}),
+      ...(reply ? { reply } : {}),
+      ...(waited ? { waited } : {}),
+      ...(warnings ? { warnings } : {}),
+      ...(delivery ? { delivery } : {}),
+      ...(directivesApplied === undefined ? {} : { directivesApplied }),
+    } satisfies SemanticDmResponse)
   }
-
-  // Re-read the record to pick up execution updates written by the durable
-  // correlation join and tmux-literal delivery path (updateExecution calls
-  // modify the DB but not the in-memory record object).
-  const freshRecord = this.db.messages.getById(record.messageId) ?? record
-
-  return json({
-    request: freshRecord,
-    ...(execution ? { execution } : {}),
-    ...(reply ? { reply } : {}),
-    ...(waited ? { waited } : {}),
-    ...(warnings ? { warnings } : {}),
-    ...(delivery ? { delivery } : {}),
-    ...(directivesApplied === undefined ? {} : { directivesApplied }),
-  } satisfies SemanticDmResponse)
+  if (body.to.kind !== 'session' || isCodexAppOwnedScopeRef(body.to.sessionRef))
+    return await persistAndDeliver()
+  let target = findTargetSession(this.db, body.to.sessionRef)
+  if (target == null && body.createIfMissing !== false && body.runtimeIntent !== undefined)
+    target = await this.ensureTargetSession(body.to.sessionRef, body.runtimeIntent)
+  if (target == null) return await persistAndDeliver()
+  // Ledger-only, unsummoned DMs retain their non-turn behavior.
+  if (
+    body.runtimeIntent === undefined &&
+    target.lastAppliedIntentJson === undefined &&
+    resolveParticipantDelivery(this, target) === null
+  )
+    return await persistAndDeliver()
+  const result = await submitThroughAdmission(
+    this,
+    {
+      door: 'dm',
+      intent: 'enqueue',
+      target,
+      body: body.body,
+      principal: body.from.kind === 'entity' ? body.from.entity : body.from.sessionRef,
+      runtimeIntent: body.runtimeIntent,
+      executionFormat: 'format1',
+      responseFormat: body.responseFormat,
+      allowStaleGeneration: body.allowStaleGeneration,
+      signal: request.signal,
+      options: {
+        runId: `run-${randomUUID()}`,
+        waitForCompletion: body.wait?.enabled === true,
+        joinInFlightRuntimeStart: true,
+      },
+      replay: async () => {
+        throw new Error('DM has no idempotency key')
+      },
+    },
+    async (plan) => ({ kind: 'accepted', value: await persistAndDeliver(plan) })
+  )
+  // The existing DM route returns its failed message rather than throwing an HTTP error.
+  // Classification occurs before that projection, so a route throw stays possible_write.
+  if (result.outcome === 'possible_write' && written !== undefined)
+    return json({
+      request: this.db.messages.getById(written.messageId) ?? written,
+      ...(directivesApplied === undefined ? {} : { directivesApplied }),
+    })
+  return submissionResponse(result)
 }
 
 export function completeDirectiveOnlyIntent(
@@ -289,7 +343,8 @@ export async function deliverPersistedSemanticDm(
   this: HrcServerInstanceForHandlers,
   body: CompleteSemanticDmRequest,
   record: HrcMessageRecord,
-  respondTo: HrcMessageAddress
+  respondTo: HrcMessageAddress,
+  plan?: AdmittedPlan
 ): Promise<{
   execution?: DispatchTurnBySelectorResponse | undefined
   reply?: HrcMessageRecord | undefined
@@ -318,7 +373,7 @@ export async function deliverPersistedSemanticDm(
   if (body.to.kind === 'session' && !codexAppOwnedTarget) {
     assertLocalPersonaAllowed(this, scopeRefOf(body.to.sessionRef))
     // Auto-summon if needed
-    let session = findTargetSession(this.db, body.to.sessionRef)
+    let session = plan?.session ?? findTargetSession(this.db, body.to.sessionRef)
     if (!session && body.createIfMissing !== false) {
       const intent = body.runtimeIntent
       if (intent) {
@@ -327,7 +382,7 @@ export async function deliverPersistedSemanticDm(
     }
 
     if (session) {
-      if (session.status === 'archived' && session.continuation?.key) {
+      if (plan === undefined && session.status === 'archived' && session.continuation?.key) {
         session = await createNotifiedSessionSuccessor(
           this,
           session,
@@ -340,11 +395,13 @@ export async function deliverPersistedSemanticDm(
       // caller did not opt in to stale reuse. This both prevents DMs from
       // silently dispatching into corrupted legacy sessions and keeps the
       // tmux-literal path using a fresh continuation for future turns.
-      const rotationResult = await this.maybeAutoRotateStaleSession(session, {
-        allowStaleGeneration: body.allowStaleGeneration,
-        trigger: 'semantic-dm',
-      })
-      session = rotationResult.session
+      if (plan === undefined)
+        session = (
+          await this.maybeAutoRotateStaleSession(session, {
+            allowStaleGeneration: body.allowStaleGeneration,
+            trigger: 'semantic-dm',
+          })
+        ).session
 
       // Durable correlation join (F2e): persist session-level correlation at
       // insert time so that `hrc monitor wait msg:<id>` can resolve the
@@ -373,6 +430,7 @@ export async function deliverPersistedSemanticDm(
 
       const result = await this.executeSemanticTurn(session, body, record, respondTo, {
         waitForCompletion: body.wait?.enabled === true,
+        admissionPlan: plan,
       })
       execution = result.execution
       reply = result.reply
@@ -451,6 +509,7 @@ export async function executeSemanticTurn(
   respondTo: HrcMessageAddress,
   options: {
     waitForCompletion?: boolean | undefined
+    admissionPlan?: AdmittedPlan | undefined
   } = {}
 ): Promise<{
   execution?: DispatchTurnBySelectorResponse
@@ -463,7 +522,7 @@ export async function executeSemanticTurn(
     (session.lastAppliedIntentJson === undefined
       ? undefined
       : omitPersistedSelectionForReuse(session.lastAppliedIntentJson))
-  if (!baseIntent) return {}
+  if (!baseIntent && options.admissionPlan?.participant == null) return {}
 
   try {
     const latestRuntime = this.db.runtimes.listByHostSessionId(session.hostSessionId).at(-1)
@@ -475,8 +534,7 @@ export async function executeSemanticTurn(
       await this.reattachLiveSemanticDmSubstrate(latestRuntime)
     }
 
-    const runId = `run-${randomUUID()}`
-    const normalizedIntent = normalizeDispatchIntent(baseIntent, session, runId)
+    const runId = options.admissionPlan?.options.runId ?? `run-${randomUUID()}`
     const payload = formatDmPayload(
       body.from,
       body.to,
@@ -484,19 +542,26 @@ export async function executeSemanticTurn(
       record.messageSeq,
       record.createdAt
     )
-    const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
-      runId,
-      waitForCompletion: options.waitForCompletion,
-      submissionDoor: 'enqueue',
-      responseFormat: body.responseFormat,
-      // T-07236: see above — provenance from the durable DM sender.
-      ...originDispatchOption(body.from, this.db),
-      // T-07202: a semantic DM can cross another DM while an interactive
-      // broker is still cold-provisioning. Join that host-session boot and
-      // deliver this DM through its winning runtime instead of minting a
-      // second runtime. Other dispatch sources retain their current policy.
-      joinInFlightRuntimeStart: true,
-    })
+    const turnResponse = await this.dispatchTurnForSession(
+      session,
+      options.admissionPlan?.runtimeIntent ?? baseIntent,
+      payload,
+      {
+        ...options.admissionPlan?.options,
+        admissionPlan: options.admissionPlan,
+        runId,
+        waitForCompletion: options.waitForCompletion,
+        submissionDoor: 'enqueue',
+        responseFormat: body.responseFormat,
+        // T-07236: see above — provenance from the durable DM sender.
+        ...originDispatchOption(body.from, this.db),
+        // T-07202: a semantic DM can cross another DM while an interactive
+        // broker is still cold-provisioning. Join that host-session boot and
+        // deliver this DM through its winning runtime instead of minting a
+        // second runtime. Other dispatch sources retain their current policy.
+        joinInFlightRuntimeStart: true,
+      }
+    )
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
     assertDispatchRunId(turnBody)
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
@@ -609,6 +674,7 @@ export async function executeSemanticTurn(
       errorCode: 'semantic_dm_execution_failed',
       errorMessage,
     })
+    if (options.admissionPlan !== undefined) throw err
     return {}
   }
 }

@@ -1,3 +1,4 @@
+import { claimQueuedHeadlessTurnInput } from '../../broker-headless-queue.js'
 /**
  * Pure persistence helpers for HarnessBrokerController.
  *
@@ -279,9 +280,9 @@ function persistStartGraphInTransaction(
   // structural fact: interactive tmux profiles deliver launch text through argv
   // and carry no `initialInput` at all, so they keep `dispatchedInputId ===
   // undefined` and the separate T-07920 launch-primed attribution it selects.
-  const run =
+  const runFields =
     identity.runId !== undefined
-      ? ctx.db.runs.insert({
+      ? {
           runId: String(identity.runId),
           hostSessionId: String(identity.hostSessionId),
           runtimeId: String(identity.runtimeId),
@@ -289,7 +290,7 @@ function persistStartGraphInTransaction(
           laneRef: session.laneRef,
           generation: identity.generation,
           transport,
-          status: 'accepted',
+          status: 'accepted' as const,
           acceptedAt: now,
           updatedAt: now,
           operationId: String(identity.operationId),
@@ -306,8 +307,33 @@ function persistStartGraphInTransaction(
             ? { brokerSubmissionId: String(initialInputId) }
             : {}),
           ...dispatchOriginRunFields(input),
-        })
+        }
       : undefined
+
+  let run: HrcRunRecord | undefined
+  if (runFields !== undefined) {
+    const queued = ctx.db.runs.getByRunId(runFields.runId)
+    if (queued?.status === 'queued') {
+      const carriedInput =
+        initialInputId === undefined ? queued.dispatchedInputId : String(initialInputId)
+      if (carriedInput === undefined)
+        throw new BrokerControllerError(
+          'queued_input_identity_missing',
+          'queued launch has no input identity',
+          { runId: queued.runId }
+        )
+      // Cold queue continuation owns the same row; claim and coalesce atomically
+      // in the start graph before the broker can observe its launch body.
+      claimQueuedHeadlessTurnInput(ctx, runtime, queued.runId, carriedInput, input.coalescedMembers)
+      // The claim already persisted runtime/input ownership. Keep the queue's
+      // original acceptance time, retry key and provenance intact.
+      run =
+        ctx.db.runs.update(queued.runId, {
+          transport,
+          ...(initialInputId === undefined ? {} : { brokerSubmissionId: String(initialInputId) }),
+        }) ?? undefined
+    } else run = ctx.db.runs.insert(runFields)
+  }
 
   // T-08004: compiler-selected interactive tmux profiles deliver their first
   // prompt through launch argv and therefore have no broker `initialInput` to

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { HrcServerInstanceForHandlers } from '../server-instance-context'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -400,5 +401,171 @@ describe('T-09643 launch-carried cold birth answers the door with the broker ide
     expect(response.status).toBe(503)
     expect(body.submissionId).toBeUndefined()
     expect(body.error?.message).toBe('launch-carried run ended without broker submission identity')
+  })
+})
+
+describe('T-10232 phase 2 cold launch and admitted queue continuation', () => {
+  it('D6 cold selector body rides the launch rather than a second input', async () => {
+    aspd.launchCarriedInitialPrompt = true
+    const s = await seedInteractive()
+    const pending = fixture.postJson('/v1/turns/by-selector', {
+      selector: { sessionRef: `${SCOPE}/lane:main` },
+      prompt: MARK,
+      runtimeIntent: driverIntent('claude-code-tmux'),
+    })
+    await settle(() => ledger.startCalls.length === 1)
+    const request = ledger.startCalls[0]?.request
+    expect(launchPrompt(request)).toContain('T9643-MARK')
+    observeLaunchTurn(String(request?.spec.invocationId))
+    expect((await pending).status).toBe(200)
+    expect(delivered).toEqual([])
+    const events = internal().db.hrcEvents.listByKind('submission.admission')
+    expect(events).toHaveLength(1)
+    expect(events[0]?.hostSessionId).toBe(s.hostSessionId)
+    expect(events[0]?.payload).toMatchObject({
+      door: 'turns-by-selector',
+      intent: 'enqueue',
+      outcome: 'routed',
+    })
+  })
+
+  it('D11 legacy no-aspd cold arm refuses because its compiler fallback is retired', async () => {
+    const s = await seedInteractive()
+    setEnv('HRC_ASPD_SOCKET', undefined)
+    const response = await fixture.postJson('/v1/runs/prepare-attached', {
+      hostSessionId: s.hostSessionId,
+      intent: driverIntent('claude-code-tmux'),
+      prompt: MARK,
+    })
+    const body = await response.json()
+    expect(response.status).toBe(503)
+    expect(body.error.detail.code).toBe('aspd_unconfigured')
+    expect(ledger.startCalls).toEqual([])
+    expect(delivered).toEqual([])
+    const event = internal().db.hrcEvents.listByKind('submission.admission').at(-1)
+    expect(event?.payload).toMatchObject({
+      door: 'prepare-attached',
+      intent: 'invoke',
+      effectiveDoor: 'invoke',
+      outcome: 'possible_write',
+      trace: [
+        { step: 'drain-lease', outcome: 'passed' },
+        { step: 'retired-persona', outcome: 'passed' },
+        { step: 'fence', outcome: 'skipped:not-carried' },
+        { step: 'participant-resolution', outcome: 'skipped:not-applicable' },
+        { step: 'ownership-proof', outcome: 'skipped:not-carried' },
+        { step: 'capability-authority', outcome: 'passed' },
+        { step: 'execution-presentation', outcome: 'passed' },
+        { step: 'rotation', outcome: 'passed' },
+        { step: 'launch-carry-observation', outcome: 'passed' },
+      ],
+    })
+  })
+
+  for (const legacy of [false, true]) {
+    it(`D14 cold enqueue, daemon restart, drain carries body at launch (legacy=${legacy})`, async () => {
+      aspd.producerResult = producerResult()
+      const s = await session()
+      internal().db.sessions.updateIntent(
+        s.hostSessionId,
+        headlessIntent(),
+        new Date().toISOString()
+      )
+      let rejectBoot!: (error: Error) => void
+      const boot = new Promise<HrcRuntimeSnapshot>((_resolve, reject) => {
+        rejectBoot = reject
+      })
+      internal().runtimeStartOperations.set(s.hostSessionId, boot)
+      const pending = fixture.postJson('/v1/turns/by-selector', {
+        selector: { sessionRef: `${SCOPE}/lane:main` },
+        prompt: MARK,
+        runtimeIntent: headlessIntent(),
+      })
+      await settle(() =>
+        internal()
+          .db.runs.listQueuedByHostSessionId(s.hostSessionId)
+          .some((run) => run.status === 'queued')
+      )
+      const queued = internal()
+        .db.runs.listQueuedByHostSessionId(s.hostSessionId)
+        .find((run) => run.status === 'queued')
+      expect(queued).toBeDefined()
+      if (queued === undefined) throw new Error('door did not persist queue')
+      const correlation = JSON.parse(internal().db.runs.getCorrelationJson(queued.runId) ?? '{}')
+      expect(correlation.admittedIntent).toBe('enqueue')
+      expect(correlation.prompt).toBe(MARK)
+      if (legacy) {
+        correlation.admittedIntent = undefined
+        internal().db.runs.setCorrelationJson(queued.runId, JSON.stringify(correlation))
+      }
+      rejectBoot(new Error('simulated boot lost before daemon restart'))
+      expect((await pending).status).toBe(500) // Simulated boot error is the unchanged uncertain HTTP shape.
+      internal().runtimeStartOperations.delete(s.hostSessionId)
+      await server.stop()
+      await bootServer()
+      const ctx = server as unknown as HrcServerInstanceForHandlers
+      expect(ctx.db.runs.getByRunId(queued.runId)?.status).toBe('queued')
+      await ctx.drainDurableHeadlessTurnInputs(s.hostSessionId)
+      const launch = ledger.startCalls.at(-1)?.request
+      expect(initialInputText(launch)).toContain('T9643-MARK')
+      expect(delivered).toEqual([])
+      expect(ctx.db.runs.getByRunId(queued.runId)?.status).toBe('accepted')
+      expect(ctx.db.runs.getByRunId(queued.runId)?.acceptedAt).toBe(queued.acceptedAt)
+      expect(ctx.db.runs.getByRunId(queued.runId)?.dispatchIdempotencyKey).toBe(
+        queued.dispatchIdempotencyKey
+      )
+      expect(ctx.db.runs.getByRunId(queued.runId)?.invocationId).toBe(launch?.spec.invocationId)
+      // Only the original door admission was recorded; drain did not re-admit.
+      expect(ctx.db.hrcEvents.listByKind('submission.admission')).toHaveLength(1)
+      expect(ctx.queuedTurnInputDrains.size).toBe(0)
+    }, 30_000)
+  }
+  it('D14 cold continuation coalesces atomically under the drain lease until acceptance', async () => {
+    aspd.producerResult = producerResult()
+    const s = await session()
+    const ctx = server as unknown as HrcServerInstanceForHandlers
+    ctx.db.sessions.updateIntent(s.hostSessionId, headlessIntent(), new Date().toISOString())
+    for (const [position, runId] of ['run-queued-member', 'run-queued-owner'].entries()) {
+      const message = ctx.insertAndNotifyMessage({
+        messageId: `msg-queue-${position}`,
+        kind: 'dm',
+        phase: 'request',
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'session', sessionRef: `${SCOPE}/lane:main` },
+        body: `${MARK}-${position}`,
+        execution: { state: 'accepted', runId },
+      })
+      ctx.enqueueDurableHeadlessTurnInput(s, message.body, runId, {
+        source: 'semantic_dm',
+        sourceMessageId: message.messageId,
+        admittedIntent: 'enqueue',
+      })
+    }
+    const draining = ctx.drainDurableHeadlessTurnInputs(s.hostSessionId)
+    expect(ctx.turnAdmissionGate.snapshot().activeAdmissions).toBe(1)
+    let closed = false
+    const closing = ctx.turnAdmissionGate.close({ operationId: 'queue-lease-test' }).then(() => {
+      closed = true
+    })
+    expect(closed).toBe(false)
+    await draining
+    await closing
+    expect(ctx.db.runs.getByRunId('run-queued-member')).toMatchObject({
+      status: 'coalesced',
+      coalescedIntoRunId: 'run-queued-owner',
+      coalescedPosition: 0,
+    })
+    expect(ctx.db.messages.getById('msg-queue-0')?.execution).toMatchObject({
+      state: 'coalesced',
+      coalescedIntoRunId: 'run-queued-owner',
+    })
+    expect(ctx.db.runs.getByRunId('run-queued-owner')?.status).toBe('accepted')
+    expect(ledger.startCalls).toHaveLength(1)
+    expect(initialInputText(ledger.startCalls[0]?.request)).toContain(`${MARK}-0`)
+    expect(initialInputText(ledger.startCalls[0]?.request)).toContain(`${MARK}-1`)
+    expect(closed).toBe(true)
+    expect(ctx.db.hrcEvents.listByKind('submission.admission')).toHaveLength(0)
+    expect(ctx.db.messages.getById('msg-queue-1')?.execution.state).toBe('started')
+    expect(delivered).toEqual([])
   })
 })

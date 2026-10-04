@@ -1,3 +1,4 @@
+import type { CoalescedQueuedMember } from '../../server-types.js'
 /**
  * Public type/contract surface for HarnessBrokerController.
  *
@@ -538,6 +539,7 @@ export type BrokerControllerStartInput = {
   format2RequestHash?: string | undefined
   /** Public submission door whose cold-start carriage selected this run. */
   submissionDoor?: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
+  coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
   /**
    * Recorded initiating principal of the dispatch (T-07236). Dispatch-time
    * provenance, NOT compiler closure: like the watchdog override it never

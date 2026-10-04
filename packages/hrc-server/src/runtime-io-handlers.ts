@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
+import type { AdmittedPlan } from './turn-admission/types.js'
+import { enrichDispatchTurnResponse } from './turn-dispatch-attached-run-handlers.js'
 
 import { HrcBadRequestError, HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
 import type {
@@ -753,6 +755,7 @@ export async function startRuntimeForSession(
 
 /** T-08556 (§1.4): the attached-run door's prompt and the sink for its turn response. */
 export type AttachedRunPrompt = {
+  plan: AdmittedPlan
   prompt: string
   runId: string
   onDelivered: (response: Response) => void
@@ -765,31 +768,34 @@ export type AttachedRunPrompt = {
  */
 async function deliverAttachedRunPrompt(
   server: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  _session: HrcSessionRecord,
   runtime: HrcRuntimeSnapshot,
   input: AttachedRunPrompt
 ): Promise<void> {
-  const releaseAdmission = server.turnAdmissionGate.admit({ existingAcceptedRun: false })
-  try {
-    const current = requireRuntime(server.db, runtime.runtimeId)
-    const response =
-      current.transport === 'tmux'
-        ? await server.executeInteractiveBrokerInputTurn(
-            session,
-            current,
-            input.prompt,
-            input.runId,
-            {
-              waitForCompletion: false,
-            }
-          )
-        : await server.executeHeadlessBrokerInputTurn(session, current, input.prompt, input.runId, {
-            waitForCompletion: false,
-          })
-    input.onDelivered(response)
-  } finally {
-    releaseAdmission()
-  }
+  // The attached door owns the lease and admission; consume its plan by identity.
+  const current = requireRuntime(server.db, runtime.runtimeId)
+  const options = { ...input.plan.options, waitForCompletion: false }
+  const response =
+    current.transport === 'tmux'
+      ? await server.executeInteractiveBrokerInputTurn(
+          input.plan.session,
+          current,
+          input.prompt,
+          input.runId,
+          options
+        )
+      : await server.executeHeadlessBrokerInputTurn(
+          input.plan.session,
+          current,
+          input.prompt,
+          input.runId,
+          options
+        )
+  input.onDelivered(
+    input.plan.observation === undefined
+      ? response
+      : await enrichDispatchTurnResponse(server, response, input.plan.observation)
+  )
 }
 
 export function selectInteractiveTmuxBrokerOptions(

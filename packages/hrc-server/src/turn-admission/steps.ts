@@ -37,6 +37,7 @@ import {
 import { requireContinuity, requireSession } from '../require-helpers.js'
 import { omitPersistedSelectionForReuse } from '../selector-message-handlers/selection-request.js'
 import { json } from '../server-util.js'
+import { createNotifiedSessionSuccessor } from '../target-message-successor-handlers.js'
 import { captureBrokerAfterSeqByInvocation } from '../turn-dispatch-attached-run-handlers.js'
 import { assertBrokerRuntimeExecutionFormat } from '../turn-dispatch-runtime-handlers.js'
 import {
@@ -318,6 +319,17 @@ export async function rotation(
   partial: PartialPlan
 ): Promise<StepOutcome<Response>> {
   if (partial.participant != null) return { outcome: 'skipped:not-applicable' }
+  if (
+    req.door === 'dm' &&
+    partial.session.status === 'archived' &&
+    partial.session.continuation?.key
+  )
+    partial.session = await createNotifiedSessionSuccessor(
+      ctx,
+      partial.session,
+      req.runtimeIntent,
+      'local'
+    )
   if (req.intent !== 'steer') {
     partial.session = (
       await ctx.maybeAutoRotateStaleSession(partial.session, {

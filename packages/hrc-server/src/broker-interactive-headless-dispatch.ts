@@ -311,6 +311,7 @@ export async function handleHeadlessBrokerDispatchTurn(
     if (admitBeforeBoot) {
       this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
         source: 'boot',
+        admittedIntent: options.submissionDoor ?? 'enqueue',
         responseFormat: options.responseFormat,
         dispatchIdempotencyKey: options.dispatchIdempotencyKey,
       })
@@ -333,6 +334,7 @@ export async function handleHeadlessBrokerDispatchTurn(
     if (!admitBeforeBoot) {
       this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
         source: 'boot',
+        admittedIntent: options.submissionDoor ?? 'enqueue',
         responseFormat: options.responseFormat,
         dispatchIdempotencyKey: options.dispatchIdempotencyKey,
       })

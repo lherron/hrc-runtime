@@ -16,7 +16,7 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from 'hrc-core'
-import { normalizeDispatchIntent } from '../dispatch-invocation.js'
+import type { HrcFence } from 'hrc-core'
 import { projectSemanticTurnResponse } from '../event-notification-handlers.js'
 import { assertScopeNotRetired } from '../federation/summon-gate-server.js'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper.js'
@@ -39,6 +39,7 @@ import {
   timestamp,
 } from '../server-util.js'
 import { findTargetSession } from '../target-view.js'
+import { submissionResponse, submitThroughAdmission } from '../turn-admission/submit.js'
 import { omitPersistedSelectionForReuse } from './selection-request.js'
 
 // Broker/SDK buffers are token-stream chunks rather than terminal lines. A
@@ -404,15 +405,16 @@ export async function handleDispatchTurnBySelector(
   }
   const responseFormat = parseOptionalTurnResponseFormat(body['responseFormat'])
 
-  await assertScopeNotRetired(this, {
-    scopeRef: parseSessionRef(sessionRef).scopeRef,
-    path: 'archived-successor',
-    advisoryCoveredByDownstreamGate: () =>
-      findTargetSession(this.db, sessionRef) === undefined &&
-      body['createIfMissing'] === true &&
-      isRecord(body['runtimeIntent']) &&
-      !isCodexAppOwnedScopeRef(sessionRef),
-  })
+  if (findTargetSession(this.db, sessionRef) == null)
+    await assertScopeNotRetired(this, {
+      scopeRef: parseSessionRef(sessionRef).scopeRef,
+      path: 'archived-successor',
+      advisoryCoveredByDownstreamGate: () =>
+        findTargetSession(this.db, sessionRef) === undefined &&
+        body['createIfMissing'] === true &&
+        isRecord(body['runtimeIntent']) &&
+        !isCodexAppOwnedScopeRef(sessionRef),
+    })
 
   let session = findTargetSession(this.db, sessionRef)
   if (
@@ -458,39 +460,78 @@ export async function handleDispatchTurnBySelector(
     )
   }
 
+  const proof = body['establishedBrokerInvocationId']
+  if (proof !== undefined && typeof proof !== 'string')
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'establishedBrokerInvocationId must be a string',
+      { field: 'establishedBrokerInvocationId' }
+    )
   const runId = `run-${randomUUID()}`
-  const normalizedIntent = normalizeDispatchIntent(intent, session, runId)
-  const turnResponse = await this.dispatchTurnForSession(
-    session,
-    normalizedIntent,
-    body['prompt'],
-    { runId, responseFormat }
+  return submissionResponse(
+    await submitThroughAdmission(
+      this,
+      {
+        door: 'turns-by-selector',
+        intent: 'enqueue',
+        target: session,
+        body: body['prompt'],
+        principal: 'system',
+        runtimeIntent: intent,
+        executionFormat: 'format1',
+        responseFormat,
+        signal: request.signal,
+        fences: body['fences'] as HrcFence | undefined,
+        carried: { ownershipProof: proof as string | undefined },
+        options: {
+          runId,
+          responseFormat,
+          establishedBrokerInvocationId: proof as string | undefined,
+        },
+        replay: async () => {
+          throw new Error('selector door has no idempotency key')
+        },
+      },
+      async (plan) => {
+        const session = plan.session
+        const turnResponse = await this.dispatchTurnForSession(
+          session,
+          plan.runtimeIntent,
+          body['prompt'] as string,
+          {
+            ...plan.options,
+            admissionPlan: plan,
+          }
+        )
+        const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+        assertDispatchRunId(turnBody)
+        const transport = turnBody.transport
+
+        // T-07969: one body authority — the projection selects the turn's final
+        // message rather than joining the raw narrated buffer stream.
+        let finalOutput: string | undefined
+        if (transport !== 'tmux') {
+          const { body } = projectSemanticTurnResponse(this.db, turnBody.runId)
+          if (body.length > 0) {
+            finalOutput = body
+          }
+        }
+
+        const turnStatus = turnBody.status === 'completed' ? 'completed' : 'started'
+        const response = json({
+          runId: turnBody.runId,
+          sessionRef: formatSelectorRef(session),
+          hostSessionId: turnBody.hostSessionId,
+          generation: turnBody.generation,
+          runtimeId: requireDispatchRuntimeId(turnBody),
+          transport,
+          mode: transport === 'sdk' ? 'nonInteractive' : 'headless',
+          status: turnStatus,
+          finalOutput,
+          continuationUpdated: turnStatus === 'completed',
+        } satisfies DispatchTurnBySelectorResponse)
+        return { kind: 'accepted', value: response }
+      }
+    )
   )
-  const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-  assertDispatchRunId(turnBody)
-  const transport = turnBody.transport
-
-  // T-07969: one body authority — the projection selects the turn's final
-  // message rather than joining the raw narrated buffer stream.
-  let finalOutput: string | undefined
-  if (transport !== 'tmux') {
-    const { body } = projectSemanticTurnResponse(this.db, turnBody.runId)
-    if (body.length > 0) {
-      finalOutput = body
-    }
-  }
-
-  const turnStatus = turnBody.status === 'completed' ? 'completed' : 'started'
-  return json({
-    runId: turnBody.runId,
-    sessionRef: formatSelectorRef(session),
-    hostSessionId: turnBody.hostSessionId,
-    generation: turnBody.generation,
-    runtimeId: requireDispatchRuntimeId(turnBody),
-    transport,
-    mode: transport === 'sdk' ? 'nonInteractive' : 'headless',
-    status: turnStatus,
-    finalOutput,
-    continuationUpdated: turnStatus === 'completed',
-  } satisfies DispatchTurnBySelectorResponse)
 }

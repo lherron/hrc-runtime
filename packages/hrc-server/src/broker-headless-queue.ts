@@ -26,6 +26,7 @@ type DurableHeadlessTurnInput = {
   source: string
   sourceMessageId?: string | undefined
   responseFormat?: HrcTurnResponseFormat | undefined
+  admittedIntent?: NonNullable<DispatchRunPersistenceOptions['submissionDoor']> | undefined
 }
 
 function parseDurableHeadlessTurnInput(value: string | null): DurableHeadlessTurnInput | undefined {
@@ -138,6 +139,7 @@ export function enqueueDurableHeadlessTurnInput(
     runtimeId?: string | undefined
     sourceMessageId?: string | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
+    admittedIntent?: NonNullable<DispatchRunPersistenceOptions['submissionDoor']> | undefined
   }
 ): void {
   this.db.sqlite.transaction(() => {
@@ -169,6 +171,7 @@ export function enqueueDurableHeadlessTurnInput(
         kind: 'durable_headless_turn_input',
         prompt,
         source: options.source,
+        admittedIntent: options.admittedIntent ?? options.submissionDoor ?? 'enqueue',
         ...(options.sourceMessageId !== undefined
           ? { sourceMessageId: options.sourceMessageId }
           : {}),
@@ -211,9 +214,29 @@ export async function dispatchQueuedHeadlessTurnInput(
     })
   }
 
+  claimQueuedHeadlessTurnInput(this, runtime, runId, inputId, options.coalescedMembers)
+
+  return await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, options)
+}
+
+/** Atomic claim/coalescing is shared by warm submit and launch-carried continuation. */
+export function claimQueuedHeadlessTurnInput(
+  ctx: Pick<HrcServerInstanceForHandlers, 'db'>,
+  runtime: HrcRuntimeSnapshot,
+  runId: string,
+  inputId: string,
+  coalescedMembers: readonly CoalescedQueuedMember[] = []
+): void {
+  const invocationId = runtime.activeInvocationId
+  if (invocationId === undefined)
+    throw new HrcRuntimeUnavailableError('queued turn runtime has no broker invocation', {
+      runtimeId: runtime.runtimeId,
+      runId,
+      route: 'broker-queued-input',
+    })
   const claimedAt = timestamp()
-  const claimed = this.db.sqlite.transaction(() => {
-    const ownerClaimed = this.db.runs.claimQueued(runId, {
+  const claimed = ctx.db.sqlite.transaction(() => {
+    const ownerClaimed = ctx.db.runs.claimQueued(runId, {
       runtimeId: runtime.runtimeId,
       invocationId,
       operationId: runtime.activeOperationId,
@@ -222,8 +245,8 @@ export async function dispatchQueuedHeadlessTurnInput(
     })
     if (!ownerClaimed) return false
 
-    for (const member of options.coalescedMembers ?? []) {
-      const message = this.db.messages.getById(member.sourceMessageId)
+    for (const member of coalescedMembers) {
+      const message = ctx.db.messages.getById(member.sourceMessageId)
       if (
         message === undefined ||
         message.execution.state !== 'accepted' ||
@@ -232,7 +255,7 @@ export async function dispatchQueuedHeadlessTurnInput(
         throw new Error(`queued DM ${member.sourceMessageId} is not coalescible`)
       }
       if (
-        !this.db.runs.markQueuedCoalesced(member.runId, {
+        !ctx.db.runs.markQueuedCoalesced(member.runId, {
           ownerRunId: runId,
           position: member.position,
           completedAt: claimedAt,
@@ -241,7 +264,7 @@ export async function dispatchQueuedHeadlessTurnInput(
       ) {
         throw new Error(`queued run ${member.runId} is not coalescible`)
       }
-      this.db.messages.updateExecution(member.sourceMessageId, {
+      ctx.db.messages.updateExecution(member.sourceMessageId, {
         state: 'coalesced',
         coalescedIntoRunId: runId,
         coalescedPosition: member.position,
@@ -256,8 +279,6 @@ export async function dispatchQueuedHeadlessTurnInput(
       route: 'broker-queued-input',
     })
   }
-
-  return await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, options)
 }
 
 export async function drainDurableHeadlessTurnInputs(
@@ -345,6 +366,8 @@ export async function drainDurableHeadlessTurnInputs(
     })
     const response = await this.dispatchTurnForSession(session, intent, prompt, {
       runId: queued.runId,
+      // This is a continuation of admitted work, not a second admission.
+      submissionDoor: delivery.admittedIntent ?? 'enqueue',
       waitForCompletion: false,
       responseFormat: delivery.responseFormat,
       ...(coalescedMembers.length === 0 ? {} : { coalescedMembers }),

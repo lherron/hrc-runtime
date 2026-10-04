@@ -9,6 +9,7 @@ import {
 import { seedDispatchedBrokerInvocation } from '../../__tests__/persisted-invocation.fixture'
 import { type HrcServer, createHrcServer } from '../../index'
 import type { HrcServerInstanceForHandlers } from '../../server-instance-context'
+import { parsePrepareAttachedRunRequest } from '../../server-parsers'
 import { ADMISSION_STEPS } from '../admit'
 import { fakeBrokerClient } from './broker-boundary.fixture'
 import { DOORS, DRIVERS, type Driver, EXPECTED, expectedTrace } from './expected-admission'
@@ -414,4 +415,156 @@ for (const door of ['submission', 'turns'] as const) {
     expect(ctx.db.hrcEvents.listByKind('submission.door_downgraded')).toHaveLength(0)
     await Bun.sleep(30)
   })
+}
+
+function postPhase2(door: 'turns-by-selector' | 'dm' | 'prepare-attached', patch: object = {}) {
+  const ref = `${session.scopeRef}/lane:${session.laneRef}`
+  if (door === 'dm')
+    return fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: ref },
+      body: 'phase2 conformance',
+      runtimeIntent: runtimeIntent(),
+      ...patch,
+    })
+  if (door === 'prepare-attached')
+    return fixture.postJson('/v1/runs/prepare-attached', {
+      hostSessionId: session.hostSessionId,
+      intent: runtimeIntent(),
+      prompt: 'phase2 conformance',
+      ...patch,
+    })
+  return fixture.postJson('/v1/turns/by-selector', {
+    selector: { sessionRef: ref },
+    prompt: 'phase2 conformance',
+    runtimeIntent: runtimeIntent(),
+    ...patch,
+  })
+}
+for (const driver of DRIVERS) {
+  for (const door of ['turns-by-selector', 'dm', 'prepare-attached'] as const) {
+    test(`${door} × ${driver}: drain refuses before message or route mutation`, async () => {
+      seedDriver(driver)
+      await ctx.turnAdmissionGate.close({ operationId: 'phase2-close' })
+      const before = snapshot()
+      const messages = ctx.db.sqlite.query('SELECT * FROM messages').all()
+      expect((await postPhase2(door)).status).toBe(503)
+      expect(snapshot()).toEqual(before)
+      expect(ctx.db.sqlite.query('SELECT * FROM messages').all()).toEqual(messages)
+      expect(admission('refused').trace.map((entry) => entry.outcome)).toEqual(
+        expectedTrace(driver, 'drain')
+      )
+    })
+  }
+}
+for (const driver of DRIVERS) {
+  for (const door of ['turns-by-selector', 'dm', 'prepare-attached'] as const) {
+    test(`${door} × ${driver}: retired refuses before rotation or message write`, async () => {
+      seedDriver(driver)
+      const ledger = createPlacementLedgerRepository(ctx.db.sqlite)
+      ledger.installActive({
+        scopeRef: session.scopeRef,
+        homeNodeId: 'conformance-node',
+        updatedAt: fixture.now(),
+      })
+      ledger.retire({
+        scopeRef: session.scopeRef,
+        expectedHomeNodeId: 'conformance-node',
+        reason: 'phase2 conformance',
+        retiredAt: fixture.now(),
+      })
+      const before = snapshot()
+      const messages = ctx.db.sqlite.query('SELECT * FROM messages').all()
+      expect((await postPhase2(door)).status).toBe(409)
+      expect(snapshot()).toEqual(before)
+      expect(ctx.db.sqlite.query('SELECT * FROM messages').all()).toEqual(messages)
+      expect(admission('refused').trace.map((entry) => entry.outcome)).toEqual(
+        expectedTrace(driver, 'retired')
+      )
+    })
+  }
+}
+for (const door of ['turns-by-selector', 'dm', 'prepare-attached'] as const) {
+  test(`${door}: frozen format mismatch refuses before stale rotation`, async () => {
+    seedDriver('v2-headless')
+    const createdAt = new Date(Date.now() - 120_000).toISOString()
+    ctx.db.sqlite
+      .query('UPDATE sessions SET created_at=? WHERE host_session_id=?')
+      .run(createdAt, session.hostSessionId)
+    const before = snapshot()
+    expect((await postPhase2(door)).status).toBe(503)
+    expect(snapshot()).toEqual(before)
+    const trace = admission('refused').trace
+    expect(trace[6]?.outcome).toBe('refused')
+    expect(trace[7]?.outcome).toBe('not-reached')
+  })
+}
+test('D11 freshContext is inapplicable: its parser has no such request field', () => {
+  expect(EXPECTED['prepare-attached'].freshContext).toBe(
+    'not on the wire contract; prepare-attached has no freshContext field'
+  )
+  const parsed = parsePrepareAttachedRunRequest({
+    hostSessionId: session.hostSessionId,
+    intent: runtimeIntent(),
+    prompt: 'probe',
+    freshContext: true,
+  })
+  expect(Object.hasOwn(parsed, 'freshContext')).toBe(false)
+})
+
+for (const driver of ['format1-headless', 'v2-headless', 'tmux-live', 'participant'] as const) {
+  test(`turns-by-selector × ${driver}: carried mismatch preserves E0`, async () => {
+    seedDriver(driver)
+    const before = snapshot()
+    expect(
+      (await postPhase2('turns-by-selector', { establishedBrokerInvocationId: 'wrong' })).status
+    ).toBe(503)
+    expect(snapshot()).toEqual(before)
+    expect(admission('refused').trace[4]?.outcome).toBe('refused')
+  })
+}
+test('D8 freshContext preserves the broader existing rejection', async () => {
+  seedDriver('participant')
+  const before = snapshot()
+  expect(EXPECTED.dm.freshContext).toBe(
+    'not accepted by this door; semantic DM rejects freshContext before target lookup'
+  )
+  expect((await postPhase2('dm', { freshContext: true })).status).toBe(400)
+  expect(snapshot()).toEqual(before)
+  expect(ctx.db.hrcEvents.listByKind('submission.admission')).toHaveLength(0)
+})
+for (const driver of ['format1-headless', 'tmux-live', 'participant'] as const) {
+  for (const door of ['turns-by-selector', 'dm', 'prepare-attached'] as const) {
+    if (door === 'prepare-attached' && driver === 'format1-headless') continue // Headless has no attach surface; admission guards above still apply.
+    test(`${door} × ${driver}: delivery uses the leased plan`, async () => {
+      seedDriver(driver)
+      if (door === 'prepare-attached' && driver === 'participant')
+        ctx.db.runtimes.update(runtimeId, {
+          transport: 'tmux',
+          tmuxJson: {
+            socketPath: fixture.tmuxSocketPath,
+            sessionName: 'conformance',
+            windowName: 'main',
+            paneId: '%1',
+            brokerDriver: 'codex-cli-tmux',
+          },
+        })
+      ctx.getHarnessBrokerController().active.set(runtimeId, {
+        runtimeId,
+        invocationId,
+        client: fakeBrokerClient(ctx, runtimeId, invocationId),
+        closing: false,
+      })
+      ctx.reconcileTmuxRuntimeLiveness = async (runtime) => runtime
+      ctx.publishPresentation = async () => {}
+      const response = await postPhase2(door)
+      expect(response.status).toBe(200)
+      await response.json()
+      expect(admission('routed').trace[5]?.outcome).toBe('passed')
+      expect(ctx.db.sessions.getByHostSessionId(session.hostSessionId)?.generation).toBe(1)
+      if (driver === 'participant')
+        expect(admission('routed').trace[7]?.outcome).toBe('skipped:not-applicable')
+      await Bun.sleep(30)
+    })
+  }
 }

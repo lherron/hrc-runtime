@@ -121,6 +121,8 @@ export type DispatchRunPersistenceOptions = Pick<HrcRunRecord, 'dispatchIdempote
   birthTimeline?: BirthTimeline | undefined
   /** Admission syscall selected by the caller; never inferred from seat state. */
   submissionDoor?: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
+  /** Claimed queued members follow the owner through a cold continuation start. */
+  coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
   submissionOrigin?: SubmissionOrigin | undefined
   ttlMs?: number | undefined
   turnPolicy?: TurnPolicy | undefined
@@ -204,6 +206,7 @@ export function dispatchRunPersistence(
     format2RequestHash: options.format2RequestHash,
     birthTimeline: options.birthTimeline,
     submissionDoor: options.submissionDoor,
+    coalescedMembers: options.coalescedMembers,
     submissionOrigin: options.submissionOrigin,
     ttlMs: options.ttlMs,
     turnPolicy: options.turnPolicy,

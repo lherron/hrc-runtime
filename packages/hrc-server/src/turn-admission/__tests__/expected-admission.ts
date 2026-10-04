@@ -12,12 +12,12 @@ export type Driver = (typeof DRIVERS)[number]
 export const DOORS = {
   submission: ['invoke', 'enqueue', 'preempt', 'steer'],
   turns: ['invoke'],
-  'turns-by-selector': [],
+  'turns-by-selector': ['enqueue'],
   'literal-flush': [],
-  dm: [],
+  dm: ['enqueue'],
   'turn-handoff': [],
   'runtime-start-prompt': [],
-  'prepare-attached': [],
+  'prepare-attached': ['invoke'],
 } as const satisfies Record<SubmissionDoorKind, readonly string[]>
 export const EXPECTED = {
   submission: {
@@ -32,12 +32,31 @@ export const EXPECTED = {
     proof: ['invoke'],
     replay: true,
   },
-  'turns-by-selector': { enabled: false, reason: 'phase 2' },
+  'turns-by-selector': {
+    enabled: true,
+    freshContext: 'not on the wire contract',
+    proof: ['enqueue'],
+    replay: 'not on the wire contract; selector door has no idempotency field',
+  },
   'literal-flush': { enabled: false, reason: 'phase 3' },
-  dm: { enabled: false, reason: 'phase 2' },
+  dm: {
+    enabled: true,
+    freshContext:
+      'not accepted by this door; semantic DM rejects freshContext before target lookup',
+    proof: [],
+    replay: 'not on the wire contract; semantic DM has no idempotency field',
+  },
   'turn-handoff': { enabled: false, reason: 'phase 3' },
   'runtime-start-prompt': { enabled: false, reason: 'phase 3' },
-  'prepare-attached': { enabled: false, reason: 'phase 2' },
+  'prepare-attached': {
+    enabled: true,
+    freshContext: 'not on the wire contract; prepare-attached has no freshContext field',
+    proof: [],
+    replay: 'not on the wire contract; prepare-attached has no idempotency field',
+    legacyColdDelivery:
+      'T-08596 retired the no-aspd compiler fallback; aspd_unconfigured is authoritative',
+    headlessDelivery: 'attached delivery requires an attach surface; ordinary headless has none',
+  },
 } as const satisfies Record<SubmissionDoorKind, object>
 
 // The whole trace, including cells that did not execute, is part of each expectation.
@@ -72,4 +91,11 @@ export const DELIVERY_INAPPLICABLE = {
   'tmux-cold': 'cold launch carry is covered by t09643-launch-carried-door-identity.test.ts',
   'v2-headless':
     'format2 durable input and uncertainty are covered by t08207-public-ingress.test.ts and uncertainty-ledger.test.ts',
+} as const
+
+// D14 continues admitted work and never has a second door trace.
+export const QUEUE_CONTINUATION = {
+  intentField: 'admittedIntent',
+  legacyIntent: 'enqueue',
+  readmitted: false,
 } as const

@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
+
+import { type HrcServer, createHrcServer } from '../index'
+import type { HrcServerInstanceForHandlers } from '../server-instance-context'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
 
 import { handlePrepareAttachedRun, handleResumeAttachedRun } from '../turn-dispatch-handlers.js'
 
@@ -36,6 +40,20 @@ const unmanagedRelease = {
   processStartedAt: session.createdAt,
 } as const
 
+let fixture: HrcServerTestFixture
+let realServer: HrcServer
+let ctx: HrcServerInstanceForHandlers
+beforeEach(async () => {
+  fixture = await createHrcTestFixture('attached-run-lifecycle-')
+  fixture.seedSession(session.hostSessionId, session.scopeRef)
+  realServer = await createHrcServer(fixture.serverOpts())
+  ctx = realServer as unknown as HrcServerInstanceForHandlers
+})
+afterEach(async () => {
+  await realServer.stop()
+  await fixture.cleanup()
+})
+
 describe('attached-run operation lifecycle', () => {
   it('keeps a prepared run resumable after its accepted response settles', async () => {
     let settleAccepted!: () => void
@@ -47,13 +65,7 @@ describe('attached-run operation lifecycle', () => {
       string,
       { result: Promise<unknown>; resumeDeadlineTimer?: ReturnType<typeof setTimeout> }
     >()
-    const server = {
-      db: {
-        sessions: {
-          getByHostSessionId: (hostSessionId: string) =>
-            hostSessionId === session.hostSessionId ? session : null,
-        },
-      },
+    const server = Object.assign(ctx, {
       attachedRunOperations,
       capturedRelease: unmanagedRelease,
       maybeAutoRotateStaleSession: async () => ({ session }),
@@ -90,7 +102,7 @@ describe('attached-run operation lifecycle', () => {
             generation: session.generation,
           },
         }),
-    }
+    })
 
     const preparedResponse = await handlePrepareAttachedRun.call(
       server as never,
@@ -100,6 +112,14 @@ describe('attached-run operation lifecycle', () => {
         body: JSON.stringify({
           hostSessionId: session.hostSessionId,
           intent: {
+            placement: {
+              cwd: fixture.tmpDir,
+              agentRoot: fixture.tmpDir,
+              projectRoot: fixture.tmpDir,
+              runMode: 'task',
+              bundle: { kind: 'compose', compose: [] },
+              dryRun: true,
+            },
             harness: { provider: 'openai', id: 'codex-cli', interactive: true },
             execution: { preferredMode: 'interactive' },
           },
@@ -149,13 +169,7 @@ describe('attached-run operation lifecycle', () => {
       { result: Promise<unknown>; resumeDeadlineTimer?: ReturnType<typeof setTimeout> }
     >()
     const cancels: string[] = []
-    const server = {
-      db: {
-        sessions: {
-          getByHostSessionId: (hostSessionId: string) =>
-            hostSessionId === session.hostSessionId ? session : null,
-        },
-      },
+    const server = Object.assign(ctx, {
       attachedRunOperations,
       capturedRelease: unmanagedRelease,
       maybeAutoRotateStaleSession: async () => ({ session }),
@@ -172,7 +186,7 @@ describe('attached-run operation lifecycle', () => {
           cancels.push(`${pendingStartId}:${reason}`)
         },
       }),
-    }
+    })
 
     const request = new Request('http://hrc/v1/runs/prepare-attached', {
       method: 'POST',
@@ -180,6 +194,14 @@ describe('attached-run operation lifecycle', () => {
       body: JSON.stringify({
         hostSessionId: session.hostSessionId,
         intent: {
+          placement: {
+            cwd: fixture.tmpDir,
+            agentRoot: fixture.tmpDir,
+            projectRoot: fixture.tmpDir,
+            runMode: 'task',
+            bundle: { kind: 'compose', compose: [] },
+            dryRun: true,
+          },
           harness: { provider: 'openai', id: 'codex-cli', interactive: true },
           execution: { preferredMode: 'interactive' },
         },

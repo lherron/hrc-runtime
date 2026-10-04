@@ -25,6 +25,8 @@ import {
 import type { AttachedRunObservation, PendingAttachedRunOperation } from './server-types.js'
 import { assertDispatchRunId, json, requireDispatchRuntimeId } from './server-util.js'
 import { toStartRuntimeResponse } from './status-views.js'
+import { submissionResponse, submitThroughAdmission } from './turn-admission/submit.js'
+import type { AdmittedPlan } from './turn-admission/types.js'
 
 type AttachedRunResult = StartRuntimeResponse | DispatchTurnResponse
 
@@ -152,10 +154,15 @@ export async function handlePrepareAttachedRun(
 ): Promise<Response> {
   const body = parsePrepareAttachedRunRequest(await parseJsonBody(request))
   const requested = requireSession(this.db, body.hostSessionId)
-  const { session } = await this.maybeAutoRotateStaleSession(requested, {
-    allowStaleGeneration: body.allowStaleGeneration,
-    trigger: 'prepare-attached-run',
-  })
+  let session = requested
+  const hasPrompt = body.prompt !== undefined && body.prompt.length > 0
+  if (!hasPrompt)
+    session = (
+      await this.maybeAutoRotateStaleSession(requested, {
+        allowStaleGeneration: body.allowStaleGeneration,
+        trigger: 'prepare-attached-run',
+      })
+    ).session
   const pendingStartId = `attached-${randomUUID()}`
   const controller = this.getHarnessBrokerController()
   const phases: PhaseRecord[] = []
@@ -195,13 +202,23 @@ export async function handlePrepareAttachedRun(
       ...extra,
     })
   }
-  const operation = (async (): Promise<AttachedRunResult> => {
-    // T-08556 (§1.4): on a node that declares an aspd endpoint, a Codex attached
+  const perform = async (plan?: AdmittedPlan): Promise<AttachedRunResult> => {
+    if (plan !== undefined) session = plan.session
+    const intent = plan?.runtimeIntent ?? body.intent
+    if (plan?.participant != null)
+      return await dispatchTurnResponseJson(
+        await this.dispatchTurnForSession(session, plan.runtimeIntent, body.prompt ?? '', {
+          ...plan.options,
+          admissionPlan: plan,
+          waitForCompletion: false,
+        })
+      )
+    // T-08556 (§1.4): on a node that declares an aspd endpoint, every attached
     // run selects its runtime only through the start singleflight (join first,
     // registered before its first await), with or without a prompt, and the
     // prompt is delivered once after that start settles into the runtime it chose.
-    if (isAttachedRunAspdCodexIntent(body.intent)) {
-      const { initialPrompt: _initialPrompt, ...startIntent } = body.intent
+    if (isAttachedRunAspdCodexIntent(intent)) {
+      const { initialPrompt: _initialPrompt, ...startIntent } = intent
       let delivered: Response | undefined
       const runtime = await this.startRuntimeForSession(
         session,
@@ -210,11 +227,12 @@ export async function handlePrepareAttachedRun(
         {
           attachBeforeInvocationStart: attach,
           attachedRunDoor: true,
-          ...(body.prompt && body.prompt.length > 0
+          ...(body.prompt && body.prompt.length > 0 && plan !== undefined
             ? {
                 attachedRunPrompt: {
                   prompt: body.prompt,
-                  runId: `run-${randomUUID()}`,
+                  runId: plan?.options.runId ?? `run-${randomUUID()}`,
+                  plan,
                   onDelivered: (response: Response) => {
                     delivered = response
                   },
@@ -228,8 +246,10 @@ export async function handlePrepareAttachedRun(
         : toStartRuntimeResponse(runtime)
     }
     if (body.prompt && body.prompt.length > 0) {
-      const response = await this.dispatchTurnForSession(session, body.intent, body.prompt, {
-        runId: `run-${randomUUID()}`,
+      const response = await this.dispatchTurnForSession(session, intent, body.prompt, {
+        ...plan?.options,
+        ...(plan === undefined ? {} : { admissionPlan: plan }),
+        runId: plan?.options.runId ?? `run-${randomUUID()}`,
         waitForCompletion: false,
         attachBeforeInvocationStart: attach,
       })
@@ -243,7 +263,37 @@ export async function handlePrepareAttachedRun(
       { attachBeforeInvocationStart: attach }
     )
     return toStartRuntimeResponse(runtime)
-  })()
+  }
+  const operation = hasPrompt
+    ? (async (): Promise<AttachedRunResult> => {
+        const response = submissionResponse(
+          await submitThroughAdmission(
+            this,
+            {
+              door: 'prepare-attached',
+              intent: 'invoke',
+              target: requested,
+              body: body.prompt ?? '',
+              principal: 'system',
+              runtimeIntent: body.intent,
+              executionFormat: 'format1',
+              signal: request.signal,
+              allowStaleGeneration: body.allowStaleGeneration,
+              options: {
+                runId: `run-${randomUUID()}`,
+                waitForCompletion: false,
+                attachBeforeInvocationStart: attach,
+              },
+              replay: async () => {
+                throw new Error('attached door has no idempotency key')
+              },
+            },
+            async (plan) => ({ kind: 'accepted', value: json(await perform(plan)) })
+          )
+        )
+        return (await response.json()) as AttachedRunResult
+      })()
+    : perform()
 
   const pendingOperation: PendingAttachedRunOperation = { result: operation }
   const savePreparationAt = performance.now()
