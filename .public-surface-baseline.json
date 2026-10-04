@@ -3607,6 +3607,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "killSubprocess",
+      "kind": "value",
+      "file": "packages/hrc-core/src/bounded-subprocess.ts",
+      "hash": "hrc-core|killSubprocess|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "LaunchCommandScopedRunBinding",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
@@ -3851,6 +3859,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|LocateSkew|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LongLivedSubprocess",
+      "kind": "type",
+      "file": "packages/hrc-core/src/bounded-subprocess.ts",
+      "hash": "hrc-core|LongLivedSubprocess|type",
       "count": 1
     },
     {
@@ -4575,6 +4591,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "runBoundedSubprocess",
+      "kind": "value",
+      "file": "packages/hrc-core/src/bounded-subprocess.ts",
+      "hash": "hrc-core|runBoundedSubprocess|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "RunDiagnostics",
       "kind": "type",
       "file": "packages/hrc-core/src/declaration-contracts.ts",
@@ -4871,6 +4895,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "spawnLongLivedSubprocess",
+      "kind": "value",
+      "file": "packages/hrc-core/src/bounded-subprocess.ts",
+      "hash": "hrc-core|spawnLongLivedSubprocess|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "splitSessionRef",
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
@@ -4923,6 +4955,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|SteerSubmissionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SubprocessOutputLimitError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/bounded-subprocess.ts",
+      "hash": "hrc-core|SubprocessOutputLimitError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SubprocessTimeoutError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/bounded-subprocess.ts",
+      "hash": "hrc-core|SubprocessTimeoutError|value",
       "count": 1
     },
     {

@@ -4,7 +4,9 @@ import { dirname, join } from 'node:path'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { assertSocketPathWithinBudget } from 'spaces-harness-broker-client'
 
+import { SubprocessTimeoutError, runBoundedSubprocess } from './bounded-subprocess.js'
 import { requireTmuxPane } from './require-helpers.js'
+import { writeServerLog } from './server-log.js'
 import type { HrcServerOptions } from './server-types.js'
 
 const MIN_SUPPORTED_TMUX_VERSION = {
@@ -78,20 +80,17 @@ export function preflightBrokerIpcSocketPath(socketPath: string): void {
   assertSocketPathWithinBudget(socketPath)
 }
 
+/** `tmux -V` prints and exits without touching a server. */
+const TMUX_VERSION_PROBE_TIMEOUT_MS = 5_000
+
 export async function detectTmuxBackend(): Promise<{
   available: boolean
   version?: string | undefined
 }> {
   try {
-    const proc = Bun.spawn(['tmux', '-V'], {
-      stdout: 'pipe',
-      stderr: 'pipe',
+    const { stdout, stderr, exitCode } = await runBoundedSubprocess(['tmux', '-V'], {
+      timeoutMs: TMUX_VERSION_PROBE_TIMEOUT_MS,
     })
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
     const version = parseTmuxVersion(stdout, stderr)
     const available =
       exitCode === 0 &&
@@ -102,7 +101,12 @@ export async function detectTmuxBackend(): Promise<{
       available,
       version: version.raw,
     }
-  } catch {
+  } catch (error) {
+    // A timed-out probe says nothing about whether tmux is installed; name it
+    // in the log so an unavailable status is never read as "tmux is missing".
+    if (error instanceof SubprocessTimeoutError) {
+      writeServerLog('WARN', 'tmux.version_probe_timeout', { timeoutMs: error.timeoutMs })
+    }
     return { available: false }
   }
 }

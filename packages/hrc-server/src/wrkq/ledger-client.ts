@@ -41,6 +41,7 @@ export class WrkqLedgerRequestError extends Error {
 }
 import type { WrkqProjectRegistryEntry } from 'hrc-core'
 
+import { type LongLivedSubprocess, spawnLongLivedSubprocess } from '../bounded-subprocess.js'
 import { wrkqAuthorityEnvironment } from '../federation/wrkq-authority.js'
 import { writeServerLog } from '../server-log.js'
 
@@ -229,7 +230,7 @@ type PendingCall = {
 }
 
 type Child = {
-  process: ReturnType<typeof Bun.spawn>
+  process: LongLivedSubprocess
   stdin: import('bun').FileSink
 }
 
@@ -400,21 +401,18 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
 
   private ensureChild(method: string): Child {
     if (this.child !== undefined) return this.child
-    let spawned: ReturnType<typeof Bun.spawn>
+    let spawned: LongLivedSubprocess
     try {
-      spawned = Bun.spawn([...this.command], {
-        stdin: 'pipe',
-        stdout: 'pipe',
-        stderr: 'pipe',
-        env: this.env,
-      })
+      // Every request below is bounded by requestTimeoutMs and a miss tears
+      // this child down: the long-lived contract of spawnLongLivedSubprocess.
+      spawned = spawnLongLivedSubprocess(this.command, { env: this.env })
     } catch (error) {
       throw new WrkqLedgerUnavailableError(
         `failed to spawn ${this.command.join(' ')}: ${errorText(error)}`,
         method
       )
     }
-    const child: Child = { process: spawned, stdin: spawned.stdin as import('bun').FileSink }
+    const child: Child = { process: spawned, stdin: spawned.stdin }
     this.child = child
     this.buffer = ''
     void this.pump(child)

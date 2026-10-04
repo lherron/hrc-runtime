@@ -13,6 +13,8 @@ import {
 } from 'hrc-core'
 import { type InvocationStartRequest, isCredentialEnvKey } from 'spaces-harness-broker-protocol'
 
+import { runBoundedSubprocess } from './bounded-subprocess.js'
+
 export type ActuatorSplitRoute =
   | 'broker'
   | 'sdk'
@@ -494,21 +496,22 @@ function assertTargetContainment(
   }
 }
 
+/**
+ * The admission reads are `git status` and `git rev-parse` on the workspace.
+ * Generous for a large index; a timeout rejects admission with the call's
+ * reason, as a git failure does.
+ */
+const ACTUATOR_GIT_TIMEOUT_MS = 30_000
+
 async function gitValue(workspaceRoot: string, args: string[], reason: string): Promise<string> {
-  const env = environmentWithoutGitOverrides()
-  const child = Bun.spawn(['git', '-C', workspaceRoot, ...args], {
-    env,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    stdin: 'ignore',
-  })
-  const [exitCode, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ])
-  if (exitCode !== 0) reject(reason, { cause: stderr.trim() })
-  return stdout.trim()
+  const result = await runBoundedSubprocess(['git', '-C', workspaceRoot, ...args], {
+    env: environmentWithoutGitOverrides(),
+    timeoutMs: ACTUATOR_GIT_TIMEOUT_MS,
+  }).catch((error: unknown) =>
+    reject(reason, { cause: error instanceof Error ? error.message : String(error) })
+  )
+  if (result.exitCode !== 0) reject(reason, { cause: result.stderr.trim() })
+  return result.stdout.trim()
 }
 
 async function resolveApprovedMutation(

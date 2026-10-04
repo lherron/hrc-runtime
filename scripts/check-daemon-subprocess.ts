@@ -12,9 +12,9 @@
  * - A synchronous spawn in hrc-server or any workspace package it depends on
  *   fails outright.
  * - A raw async spawn (`Bun.spawn`, `spawn`, `execFile`) outside
- *   packages/hrc-server/src/bounded-subprocess.ts fails when a file has more
- *   than scripts/daemon-subprocess-baseline.json records. The baseline only
- *   goes down: migrate a site and lower its count.
+ *   packages/hrc-core/src/bounded-subprocess.ts fails when a file has more
+ *   than scripts/daemon-subprocess-baseline.json records. The baseline is {}
+ *   since T-10229 migrated every site; keep it there.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -33,7 +33,7 @@ export function daemonPackages(repoRoot: string): string[] {
   return ['hrc-server', ...workspace]
 }
 
-export const BOUNDED_MODULE = 'packages/hrc-server/src/bounded-subprocess.ts'
+export const BOUNDED_MODULE = 'packages/hrc-core/src/bounded-subprocess.ts'
 export const BASELINE_PATH = 'scripts/daemon-subprocess-baseline.json'
 
 const SYNC_SPAWN = /(?<![.\w])(spawnSync|execSync|execFileSync)\s*\(|\bBun\.spawnSync\s*\(/g

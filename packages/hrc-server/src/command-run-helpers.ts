@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   HrcBadRequestError,
@@ -8,11 +7,19 @@ import {
   type HrcSessionRecord,
   type LaunchCommandScopedRunResponse,
 } from 'hrc-core'
+import { runBoundedSubprocess } from './bounded-subprocess.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import type { HrcServerInstance } from './index.js'
 import { writeServerLog } from './server-log.js'
 import { parseSessionRef } from './server-parsers.js'
 import { timestamp } from './server-util.js'
+
+/**
+ * A configured command-run is a whole job, not a probe, so the bound is an
+ * hour: long enough for any healthy build or script, and still an end for one
+ * that wedged and would otherwise hold its run open forever.
+ */
+const COMMAND_RUN_TIMEOUT_MS = 60 * 60 * 1000
 
 export type CommandRunProcessResult = {
   exitCode: number | null
@@ -106,39 +113,22 @@ export async function runConfiguredCommand(
     throw new HrcInternalError('configured command-run target has no executable')
   }
 
-  const child = spawn(executable, argv.slice(1), {
+  // A timeout rejects with SubprocessTimeoutError, which the caller records as
+  // a failed run.
+  const result = await runBoundedSubprocess(argv, {
     cwd: command.cwd,
     env,
-    stdio: ['pipe', 'ignore', 'pipe'],
+    timeoutMs: COMMAND_RUN_TIMEOUT_MS,
+    stdin: stdinJson === undefined ? '' : `${JSON.stringify(stdinJson)}\n`,
+    stdout: 'ignore',
+    stderrTailChars: 4096,
   })
-
-  let stderr = ''
-  child.stderr?.setEncoding('utf8')
-  child.stderr?.on('data', (chunk) => {
-    stderr += String(chunk)
-    if (stderr.length > 4096) {
-      stderr = stderr.slice(-4096)
-    }
-  })
-
-  child.stdin?.end(stdinJson === undefined ? '' : `${JSON.stringify(stdinJson)}\n`)
-
-  return await new Promise<CommandRunProcessResult>((resolve) => {
-    child.once('error', (error) =>
-      resolve({
-        exitCode: 1,
-        signal: null,
-        errorMessage: error.message,
-      })
-    )
-    child.once('exit', (exitCode, signal) =>
-      resolve({
-        exitCode,
-        signal,
-        ...(stderr.trim().length > 0 ? { errorMessage: stderr.trim() } : {}),
-      })
-    )
-  })
+  const stderr = result.stderr.trim()
+  return {
+    exitCode: result.signalCode === null ? result.exitCode : null,
+    signal: result.signalCode,
+    ...(stderr.length > 0 ? { errorMessage: stderr } : {}),
+  }
 }
 
 export async function finalizeConfiguredCommandRun(

@@ -1,9 +1,9 @@
-import { execFile } from 'node:child_process'
 import { constants, accessSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { delimiter, isAbsolute, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { SubprocessTimeoutError, runBoundedSubprocess } from './bounded-subprocess.js'
 import {
   listInheritedEnvKeysToScrub,
   sanitizeTmuxClientEnv,
@@ -47,6 +47,12 @@ type TmuxExecResult = {
 }
 
 export const DEFAULT_TMUX_COMMAND_TIMEOUT_MS = 5_000
+
+/** One-pid `ps` answers in milliseconds; the bound is for a wedged process table. */
+const PS_COMMAND_LINE_TIMEOUT_MS = 5_000
+
+/** A tmux reply past this is a runaway capture, not a control answer. */
+const TMUX_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 
 const SERVER_OPTIONS: ReadonlyArray<readonly [string, string]> = [
   ['extended-keys', 'on'],
@@ -271,7 +277,7 @@ export class TmuxManager {
       const existing = await this.inspectSession(sessionName)
       if (existing) {
         const retiredSessionName = `${sessionName}-retired-${Date.now()}`
-        await this.exec(['rename-session', '-t', `=${sessionName}`, retiredSessionName])
+        await this.execTmux(['rename-session', '-t', `=${sessionName}`, retiredSessionName])
         try {
           const created = await this.createNamedSession(sessionName)
           await this.killSession(retiredSessionName)
@@ -333,7 +339,7 @@ export class TmuxManager {
   }
 
   async capture(paneId: string): Promise<string> {
-    const result = await this.exec(['capture-pane', '-t', paneId, '-p'])
+    const result = await this.execTmux(['capture-pane', '-t', paneId, '-p'])
     return result.stdout
   }
 
@@ -393,7 +399,7 @@ export class TmuxManager {
     windowName: string
   }): Promise<TmuxPaneState | null> {
     try {
-      const result = await this.exec([
+      const result = await this.execTmux([
         'list-panes',
         '-t',
         `=${input.sessionName}:${input.windowName}`,
@@ -414,7 +420,7 @@ export class TmuxManager {
   /** Resolve a pane's current session/window identity even after a window rename. */
   async inspectPane(paneId: string): Promise<TmuxPaneState | null> {
     try {
-      const result = await this.exec([
+      const result = await this.execTmux([
         'display-message',
         '-p',
         '-t',
@@ -458,7 +464,7 @@ export class TmuxManager {
     commandLine?: string | undefined
   } | null> {
     try {
-      const result = await this.exec([
+      const result = await this.execTmux([
         'display-message',
         '-p',
         '-t',
@@ -485,16 +491,15 @@ export class TmuxManager {
    * distinguish its committed broker argv from an unrelated live pane.
    */
   private async inspectProcessCommandLine(pid: number): Promise<string | undefined> {
-    return await new Promise((resolve) => {
-      execFile('ps', ['-ww', '-p', String(pid), '-o', 'command='], (error, stdout) => {
-        if (error) {
-          resolve(undefined)
-          return
-        }
-        const commandLine = stdout.trim()
-        resolve(commandLine.length === 0 ? undefined : commandLine)
-      })
-    })
+    // undefined = the pid is gone. A timeout rejects: an unread command line is
+    // not evidence of an unrelated pane.
+    const { stdout, exitCode } = await runBoundedSubprocess(
+      ['ps', '-ww', '-p', String(pid), '-o', 'command='],
+      { timeoutMs: PS_COMMAND_LINE_TIMEOUT_MS }
+    )
+    if (exitCode !== 0) return undefined
+    const commandLine = stdout.trim()
+    return commandLine.length === 0 ? undefined : commandLine
   }
 
   private async createNamedWindow(
@@ -522,7 +527,7 @@ export class TmuxManager {
     if (command !== undefined) {
       args.push(command)
     }
-    const result = await this.exec(args)
+    const result = await this.execTmux(args)
     if (!exists) {
       await this.applyServerOptions()
     }
@@ -551,7 +556,7 @@ export class TmuxManager {
 
   private async sessionExists(sessionName: string): Promise<boolean> {
     try {
-      await this.exec(['has-session', '-t', `=${sessionName}`])
+      await this.execTmux(['has-session', '-t', `=${sessionName}`])
       return true
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -585,7 +590,7 @@ export class TmuxManager {
           : options.activeWindowName !== undefined
             ? '#{window_name}'
             : '#{client_tty}'
-      const result = await this.exec(['list-clients', '-t', target, '-F', format])
+      const result = await this.execTmux(['list-clients', '-t', target, '-F', format])
       const values = result.stdout
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -628,7 +633,7 @@ export class TmuxManager {
   }
 
   async interrupt(paneId: string): Promise<void> {
-    await this.exec(['send-keys', '-t', paneId, 'C-c'])
+    await this.execTmux(['send-keys', '-t', paneId, 'C-c'])
   }
 
   async terminate(sessionName: string): Promise<void> {
@@ -642,7 +647,7 @@ export class TmuxManager {
    */
   async killServer(): Promise<void> {
     try {
-      await this.exec(['kill-server'])
+      await this.execTmux(['kill-server'])
     } catch (error) {
       // Killing the last session already exits the server and removes the
       // socket, so kill-server can race to a gone/absent server. Tolerate both
@@ -663,11 +668,11 @@ export class TmuxManager {
       return
     }
 
-    await this.exec(['send-keys', '-l', '-t', paneId, text])
+    await this.execTmux(['send-keys', '-l', '-t', paneId, text])
   }
 
   async sendEnter(paneId: string): Promise<void> {
-    await this.exec(['send-keys', '-t', paneId, 'Enter'])
+    await this.execTmux(['send-keys', '-t', paneId, 'Enter'])
   }
 
   async sendKeys(paneId: string, keys: string): Promise<void> {
@@ -680,7 +685,7 @@ export class TmuxManager {
 
   async inspectSession(sessionName: string): Promise<TmuxPaneState | null> {
     try {
-      const result = await this.exec([
+      const result = await this.execTmux([
         'list-panes',
         '-t',
         `=${sessionName}:${WINDOW_NAME}`,
@@ -708,7 +713,7 @@ export class TmuxManager {
    */
   async inspectPaneLiveness(paneId: string): Promise<TmuxPaneLiveness | null> {
     try {
-      const result = await this.exec([
+      const result = await this.execTmux([
         'display-message',
         '-p',
         '-t',
@@ -736,7 +741,7 @@ export class TmuxManager {
       const args = ['list-sessions', '-F', '#{session_name}']
       const result =
         options.timeoutMs === undefined
-          ? await this.exec(args)
+          ? await this.execTmux(args)
           : await this.execWithTimeout(args, options.timeoutMs)
       return result.stdout
         .split('\n')
@@ -770,7 +775,7 @@ export class TmuxManager {
       '#{session_id}\t#{window_id}\t#{pane_id}\t#{session_name}'
     )
 
-    const result = await this.exec(args)
+    const result = await this.execTmux(args)
     await this.applyServerOptions()
 
     return parsePaneState(result.stdout, this.socketPath)
@@ -785,7 +790,7 @@ export class TmuxManager {
   private async applyServerOptions(): Promise<void> {
     for (const [option, value] of SERVER_OPTIONS) {
       try {
-        await this.exec(['set-option', '-s', option, value])
+        await this.execTmux(['set-option', '-s', option, value])
       } catch {
         // Best effort: an older tmux may not know the option.
       }
@@ -795,7 +800,7 @@ export class TmuxManager {
   private async scrubServerEnvironment(): Promise<void> {
     for (const key of listInheritedEnvKeysToScrub(process.env)) {
       try {
-        await this.exec(['set-environment', '-gu', key])
+        await this.execTmux(['set-environment', '-gu', key])
       } catch {
         // Best effort: keep startup resilient if a key is already absent.
       }
@@ -804,7 +809,7 @@ export class TmuxManager {
 
   private async killSession(sessionName: string): Promise<void> {
     try {
-      await this.exec(['kill-session', '-t', `=${sessionName}`])
+      await this.execTmux(['kill-session', '-t', `=${sessionName}`])
     } catch (error) {
       if (error instanceof Error && isMissingTargetError(error.message)) {
         return
@@ -815,14 +820,14 @@ export class TmuxManager {
 
   private async startServer(): Promise<void> {
     try {
-      await this.exec(['start-server'])
+      await this.execTmux(['start-server'])
     } catch (_error) {
       await rm(this.socketPath, { force: true }).catch(() => undefined)
-      await this.exec(['start-server'])
+      await this.execTmux(['start-server'])
     }
   }
 
-  private async exec(args: string[]): Promise<TmuxExecResult> {
+  private async execTmux(args: string[]): Promise<TmuxExecResult> {
     return this.execWithTimeout(args, this.commandTimeoutMs)
   }
 
@@ -831,41 +836,28 @@ export class TmuxManager {
   }
 
   private async execRawWithTimeout(args: string[], timeoutMs: number): Promise<TmuxExecResult> {
-    return await new Promise((resolve, reject) => {
-      execFile(
-        this.tmuxBinary,
-        args,
-        {
-          encoding: 'utf8',
-          env: sanitizeTmuxClientEnv(process.env),
-          killSignal: 'SIGKILL',
-          maxBuffer: 10 * 1024 * 1024,
-          timeout: timeoutMs,
-        },
-        (error, stdout, stderr) => {
-          const command = [this.tmuxBinary, ...args].join(' ')
-          const timedOut =
-            typeof error === 'object' &&
-            error !== null &&
-            'killed' in error &&
-            error.killed === true &&
-            'signal' in error &&
-            error.signal === 'SIGKILL'
-          if (timedOut) {
-            reject(new TmuxCommandTimeoutError(command, timeoutMs))
-            return
-          }
-
-          if (error) {
-            const rendered = stderr.trim() || stdout.trim() || error.message
-            reject(new Error(rendered))
-            return
-          }
-
-          resolve({ stdout, stderr })
-        }
+    const command = [this.tmuxBinary, ...args].join(' ')
+    let result: Awaited<ReturnType<typeof runBoundedSubprocess>>
+    try {
+      result = await runBoundedSubprocess([this.tmuxBinary, ...args], {
+        env: sanitizeTmuxClientEnv(process.env),
+        timeoutMs,
+        maxStdoutBytes: TMUX_MAX_OUTPUT_BYTES,
+      })
+    } catch (error) {
+      if (error instanceof SubprocessTimeoutError) {
+        throw new TmuxCommandTimeoutError(command, timeoutMs)
+      }
+      throw error
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(
+        result.stderr.trim() ||
+          result.stdout.trim() ||
+          `${command} exited ${result.signalCode ?? result.exitCode}`
       )
-    })
+    }
+    return { stdout: result.stdout, stderr: result.stderr }
   }
 
   private async execRaw(args: string[]): Promise<TmuxExecResult> {

@@ -1,12 +1,1 @@
-{
-  "packages/hrc-core/src/placement-policy.ts": 1,
-  "packages/hrc-server/src/actuator-split.ts": 1,
-  "packages/hrc-server/src/broker/offline-evidence-reader.ts": 1,
-  "packages/hrc-server/src/command-run-helpers.ts": 1,
-  "packages/hrc-server/src/first-turn-bundle.ts": 1,
-  "packages/hrc-server/src/startup-reconcile/lease-identity-ipc-dirs.ts": 1,
-  "packages/hrc-server/src/startup-reconcile/lease-identity.ts": 1,
-  "packages/hrc-server/src/tmux-socket.ts": 1,
-  "packages/hrc-server/src/tmux.ts": 3,
-  "packages/hrc-server/src/wrkq/ledger-client.ts": 1
-}
+{}

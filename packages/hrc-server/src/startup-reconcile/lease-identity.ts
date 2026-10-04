@@ -2,6 +2,7 @@ import { readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { runBoundedSubprocess } from '../bounded-subprocess.js'
 import { getBrokerRuntimeTmuxSocketPath } from '../broker-decisions.js'
 import {
   compareBrokerLeaseIdentity,
@@ -472,15 +473,18 @@ function logClaimedLeaseIdentityObservation(
   return { disposition, reason: input.reason, evidence }
 }
 
+/** One-pid `ps` answers in milliseconds; the bound is for a wedged process table. */
+const PS_PROBE_TIMEOUT_MS = 5_000
+
+/**
+ * undefined = the pid is gone. A timeout rejects instead: it is not evidence the
+ * broker is absent, and the sweep's catch preserves the lease and counts an error.
+ */
 async function inspectProcessCommand(pid: number): Promise<string | undefined> {
-  const process = Bun.spawn(['ps', '-p', String(pid), '-o', 'command='], {
-    stdout: 'pipe',
-    stderr: 'ignore',
-  })
-  const [stdout, exitCode] = await Promise.all([
-    new Response(process.stdout).text(),
-    process.exited,
-  ])
+  const { stdout, exitCode } = await runBoundedSubprocess(
+    ['ps', '-p', String(pid), '-o', 'command='],
+    { timeoutMs: PS_PROBE_TIMEOUT_MS }
+  )
   if (exitCode !== 0) return undefined
   const command = stdout.trim()
   return command.length > 0 ? command : undefined

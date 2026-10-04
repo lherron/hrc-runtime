@@ -12,11 +12,11 @@
  * are applied by the caller, never derived here.
  */
 
-import { execFile } from 'node:child_process'
 import { readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
+import { runBoundedSubprocess } from './bounded-subprocess.js'
 import { environmentWithoutGitOverrides } from './git-environment.js'
 import { findProjectMarker } from './placement-conventions.js'
 import { type WrkqProjectRegistryEntry, findWrkqProjectEntry } from './project-registry.js'
@@ -206,27 +206,33 @@ function worktreeFingerprint(
   return parts.join('|')
 }
 
-function spawnGitWorktreeList(
+/**
+ * `git worktree list` reads only the admin directory, normally in milliseconds.
+ * The bound is for a wedged filesystem, not a slow repo; a timeout fails the
+ * placement, as any other git failure does.
+ */
+const GIT_WORKTREE_LIST_TIMEOUT_MS = 15_000
+
+async function spawnGitWorktreeList(
   canonicalRoot: string,
   env: Record<string, string | undefined>
 ): Promise<GitWorktree[]> {
-  return new Promise((resolvePromise, reject) => {
-    execFile(
-      'git',
-      ['-C', canonicalRoot, 'worktree', 'list', '--porcelain'],
-      { encoding: 'utf8', env: env as NodeJS.ProcessEnv, maxBuffer: 16 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        if (error) {
-          const status = typeof error.code === 'number' ? error.code : undefined
-          const diagnostic =
-            String(stderr ?? '').trim() || `git exited ${status ?? 'without status'}`
-          reject(new Error(`cannot inspect worktrees for ${canonicalRoot}: ${diagnostic}`))
-          return
-        }
-        resolvePromise(parseWorktreePorcelain(stdout))
-      }
+  let result: Awaited<ReturnType<typeof runBoundedSubprocess>>
+  try {
+    result = await runBoundedSubprocess(
+      ['git', '-C', canonicalRoot, 'worktree', 'list', '--porcelain'],
+      { env, timeoutMs: GIT_WORKTREE_LIST_TIMEOUT_MS }
     )
-  })
+  } catch (error) {
+    // A SubprocessTimeoutError's message names the bound; never the stale stderr.
+    const diagnostic = error instanceof Error ? error.message : String(error)
+    throw new Error(`cannot inspect worktrees for ${canonicalRoot}: ${diagnostic}`)
+  }
+  if (result.exitCode !== 0) {
+    const diagnostic = result.stderr.trim() || `git exited ${result.exitCode ?? 'without status'}`
+    throw new Error(`cannot inspect worktrees for ${canonicalRoot}: ${diagnostic}`)
+  }
+  return parseWorktreePorcelain(result.stdout)
 }
 
 async function listGitWorktrees(

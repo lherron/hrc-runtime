@@ -1,8 +1,13 @@
 /** T-08566 stage 2 — offline evidence reader process (SPEC §3.4.1). */
 
-import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 
+import {
+  SubprocessOutputLimitError,
+  SubprocessTimeoutError,
+  killSubprocess,
+  runBoundedSubprocess,
+} from '../bounded-subprocess.js'
 import {
   OFFLINE_EVIDENCE_STDERR_MAX_BYTES,
   OFFLINE_EVIDENCE_STDOUT_SLACK_BYTES,
@@ -28,18 +33,9 @@ function minimalReaderEnv(): Record<string, string> {
 const activeReaderGroups = new Set<number>()
 
 function killReaderGroup(pid: number | undefined): void {
-  if (pid === undefined) return
-  try {
-    // The reader leads its own process group; kill the group so helper
-    // grandchildren (shell wrappers, interpreters) cannot outlive it.
-    process.kill(-pid, 'SIGKILL')
-  } catch {
-    try {
-      process.kill(pid, 'SIGKILL')
-    } catch {
-      // already gone
-    }
-  }
+  // The reader leads its own process group; kill the group so helper
+  // grandchildren (shell wrappers, interpreters) cannot outlive it.
+  if (pid !== undefined) killSubprocess(pid, true)
 }
 
 /** Kill every in-flight offline reader (graceful server stop). */
@@ -59,93 +55,72 @@ export async function callReader(
 ): Promise<ReaderCall> {
   const indexPath = join(dirname(ledgerPath), 'ledger-index.db')
   const stdoutCap = maxBytes + OFFLINE_EVIDENCE_STDOUT_SLACK_BYTES
-  return await new Promise<ReaderCall>((resolve) => {
-    let settled = false
-    const stdout: Buffer[] = []
-    let stdoutBytes = 0
-    let stderr = ''
-    const child = spawn(
-      executable,
-      ['evidence-read', '--event-ledger', ledgerPath, '--index', indexPath],
-      { env: minimalReaderEnv(), stdio: ['pipe', 'pipe', 'pipe'], detached: true }
+  let pid: number | undefined
+  let result: Awaited<ReturnType<typeof runBoundedSubprocess>>
+  try {
+    result = await runBoundedSubprocess(
+      [executable, 'evidence-read', '--event-ledger', ledgerPath, '--index', indexPath],
+      {
+        env: minimalReaderEnv(),
+        timeoutMs,
+        stdin: JSON.stringify(request),
+        maxStdoutBytes: stdoutCap,
+        stderrTailChars: OFFLINE_EVIDENCE_STDERR_MAX_BYTES,
+        processGroup: true,
+        onSpawn: (spawned) => {
+          pid = spawned
+          activeReaderGroups.add(spawned)
+        },
+      }
     )
-    if (child.pid !== undefined) activeReaderGroups.add(child.pid)
-    const finish = (result: ReaderCall) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      if (child.pid !== undefined) activeReaderGroups.delete(child.pid)
-      resolve(result)
+  } catch (error) {
+    if (error instanceof SubprocessTimeoutError) {
+      return { kind: 'failed', outcome: 'reader_timeout', detail: { timeoutMs }, stdoutBytes: 0 }
     }
-    const kill = () => killReaderGroup(child.pid)
-    const timer = setTimeout(() => {
-      kill()
-      finish({
+    if (error instanceof SubprocessOutputLimitError) {
+      return {
         kind: 'failed',
-        outcome: 'reader_timeout',
-        detail: { timeoutMs, stderr: stderr.slice(0, 2048) },
-        stdoutBytes,
-      })
-    }, timeoutMs)
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBytes += chunk.length
-      if (stdoutBytes > stdoutCap) {
-        kill()
-        finish({
-          kind: 'failed',
-          outcome: 'reader_contract_violation',
-          detail: { violation: 'stdout_overflow', stdoutCap, stdoutBytes },
-          stdoutBytes,
-        })
-        return
+        outcome: 'reader_contract_violation',
+        detail: { violation: 'stdout_overflow', stdoutCap, stdoutBytes: error.stdoutBytes },
+        stdoutBytes: error.stdoutBytes,
       }
-      stdout.push(chunk)
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      if (stderr.length < OFFLINE_EVIDENCE_STDERR_MAX_BYTES) stderr += chunk.toString('utf8')
-    })
-    child.on('error', (error) => {
-      finish({
+    }
+    return {
+      kind: 'failed',
+      outcome: 'reader_failed',
+      detail: { error: error instanceof Error ? error.message : String(error) },
+      stdoutBytes: 0,
+    }
+  } finally {
+    if (pid !== undefined) activeReaderGroups.delete(pid)
+  }
+
+  const { exitCode: code, stdoutBytes, stderr } = result
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(result.stdout)
+  } catch {
+    parsed = undefined
+  }
+  if (code === 0 || code === 2) {
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return {
         kind: 'failed',
-        outcome: 'reader_failed',
-        detail: { error: error.message },
+        outcome: 'reader_contract_violation',
+        detail: { violation: 'unparseable_response', exitCode: code },
         stdoutBytes,
-      })
-    })
-    child.on('close', (code) => {
-      if (settled) return
-      const text = Buffer.concat(stdout).toString('utf8')
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(text)
-      } catch {
-        parsed = undefined
       }
-      if (code === 0 || code === 2) {
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          finish({
-            kind: 'failed',
-            outcome: 'reader_contract_violation',
-            detail: { violation: 'unparseable_response', exitCode: code },
-            stdoutBytes,
-          })
-          return
-        }
-        finish({
-          kind: code === 0 ? 'ok' : 'typed',
-          response: parsed as Record<string, unknown>,
-          stdoutBytes,
-        })
-        return
-      }
-      finish({
-        kind: 'failed',
-        outcome: 'reader_failed',
-        detail: { exitCode: code, stderr: stderr.slice(0, 2048) },
-        stdoutBytes,
-      })
-    })
-    child.stdin.on('error', () => undefined)
-    child.stdin.end(JSON.stringify(request))
-  })
+    }
+    return {
+      kind: code === 0 ? 'ok' : 'typed',
+      response: parsed as Record<string, unknown>,
+      stdoutBytes,
+    }
+  }
+  return {
+    kind: 'failed',
+    outcome: 'reader_failed',
+    detail: { exitCode: code, stderr: stderr.slice(0, 2048) },
+    stdoutBytes,
+  }
 }

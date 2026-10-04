@@ -729,3 +729,11 @@ export type { HrcSessionRetitledEventPayload } from './contracts-diagnostics.js'
 export type { HrcCommandLaunchSpec } from './contracts-records.js'
 
 export * from './session-metadata.js'
+export {
+  type LongLivedSubprocess,
+  SubprocessOutputLimitError,
+  SubprocessTimeoutError,
+  killSubprocess,
+  runBoundedSubprocess,
+  spawnLongLivedSubprocess,
+} from './bounded-subprocess.js'

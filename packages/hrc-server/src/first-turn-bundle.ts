@@ -27,6 +27,7 @@ import {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import { runBoundedSubprocess } from './bounded-subprocess.js'
 import type { HrcServerOptions } from './server-types.js'
 import { type TmuxManager as ServerTmuxManager, createTmuxManager } from './tmux.js'
 
@@ -317,9 +318,10 @@ export async function assembleFirstTurnBundle(
   if (harnessCommand === undefined) {
     failures['harnessVersion'] = 'harness_command_unknown'
   } else {
+    const budgetMs = Math.min(HARNESS_VERSION_PROBE_TIMEOUT_MS, remaining())
     const probed = await withBudget(
-      probeHarnessVersion(harnessCommand),
-      Math.min(2_000, remaining()),
+      probeHarnessVersion(harnessCommand, budgetMs),
+      budgetMs,
       'harness_version'
     )
     if (probed.ok && probed.value !== undefined) versions.harnessVersion = probed.value
@@ -394,19 +396,16 @@ function generationStillCurrent(db: HrcDatabase, watch: HrcFirstTurnWatchRecord)
  * harness argv is NOT reused (only `--version`), so no prompt material is
  * involved.
  */
-async function probeHarnessVersion(command: string): Promise<string | undefined> {
-  const proc = Bun.spawn([command, '--version'], {
-    stdin: 'ignore',
-    stdout: 'pipe',
-    stderr: 'ignore',
-  })
-  try {
-    const text = await new Response(proc.stdout).text()
-    const exitCode = await proc.exited
-    if (exitCode !== 0) return undefined
-    const first = text.split('\n')[0]?.trim()
-    return first !== undefined && first.length > 0 ? first : undefined
-  } finally {
-    proc.kill()
-  }
+/** `<harness> --version` prints and exits; two seconds is already generous. */
+const HARNESS_VERSION_PROBE_TIMEOUT_MS = 2_000
+
+async function probeHarnessVersion(
+  command: string,
+  timeoutMs: number
+): Promise<string | undefined> {
+  // A timeout rejects, so the bundle records a failure instead of "no version".
+  const { stdout, exitCode } = await runBoundedSubprocess([command, '--version'], { timeoutMs })
+  if (exitCode !== 0) return undefined
+  const first = stdout.split('\n')[0]?.trim()
+  return first !== undefined && first.length > 0 ? first : undefined
 }

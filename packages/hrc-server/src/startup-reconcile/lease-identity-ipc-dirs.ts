@@ -1,6 +1,7 @@
 import { readdir, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { runBoundedSubprocess } from '../bounded-subprocess.js'
 import {
   persistedEventLedgerPath,
   recordUnboundBeforeSweep,
@@ -134,16 +135,14 @@ function pathWithinDirectory(path: string, directory: string): boolean {
   return suffix === '' || (!suffix.startsWith('..') && !isAbsolute(suffix))
 }
 
+/** Machine-wide `ps` answers in well under a second; the bound is for a wedged process table. */
+const PS_LIST_TIMEOUT_MS = 5_000
+
+/** Rejects on a timeout or failure; the caller then preserves every directory. */
 export async function listProcessCommands(): Promise<string[]> {
-  const process = Bun.spawn(['ps', '-axo', 'command='], {
-    stdout: 'pipe',
-    stderr: 'pipe',
+  const { stdout, stderr, exitCode } = await runBoundedSubprocess(['ps', '-axo', 'command='], {
+    timeoutMs: PS_LIST_TIMEOUT_MS,
   })
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
-    process.exited,
-  ])
   if (exitCode !== 0) {
     throw new Error(stderr.trim() || `ps exited with status ${exitCode}`)
   }
