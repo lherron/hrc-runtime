@@ -130,7 +130,7 @@ export async function dispatchAdmittedTurnForSession(
   // explicit `wait: true` cannot find the broker selector and fails with
   // "dispatch wait requires broker submission identity" -- which is exactly
   // what my first cut did, because it returned unenriched.
-  const observationContext: DispatchTurnObservationContext = {
+  const observationContext: DispatchTurnObservationContext = options.admissionPlan?.observation ?? {
     lifecycleFromSeq: this.db.hrcEvents.maxHrcSeq() + 1,
     brokerAfterSeqByInvocation: captureBrokerAfterSeqByInvocation(this, session.hostSessionId),
   }

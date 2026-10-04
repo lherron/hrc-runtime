@@ -11,34 +11,20 @@ import type {
   InvokeSubmissionRequest,
   PreemptSubmissionRequest,
 } from 'hrc-core'
-import {
-  assertPreparedAspdAttemptFormat,
-  findPreparedAspdAttemptForFormatRetry,
-} from './aspd-headless-start.js'
-import { BROKER_PREEMPT_UNSUPPORTED_REASON } from './broker/capabilities.js'
-import { normalizeDispatchIntent } from './dispatch-invocation.js'
-import { assertScopeNotRetired } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
-import {
-  participantRotationUnsupported,
-  resolveParticipantDelivery,
-} from './participant-delivery.js'
-import { requireSession } from './require-helpers.js'
-import { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { parseJsonBody, parseSubmissionRequest } from './server-parsers.js'
 import { assertDispatchRunId, json, timestamp } from './server-util.js'
+import { submissionResponse, submitThroughAdmission } from './turn-admission/submit.js'
 import type { DispatchTurnForSessionOptions } from './turn-dispatch-session-dispatch.js'
 import {
   type InFlightIdempotentDispatch,
   type PublicDispatchWaitStage,
   type SubmissionDoor,
   type SubmissionDoorRequest,
-  assertIdempotencyExecutionFormat,
   format2RequestHash,
   idempotentDispatches,
   joinedOutcome,
-  preemptAdmission,
   publicDoorReport,
   resolveSubmissionTarget,
   runOriginFromSubmission,
@@ -61,229 +47,178 @@ export async function handleSubmission(
         : door === 'invoke'
           ? parseSubmissionRequest(raw, 'invoke')
           : parseSubmissionRequest(raw, 'preempt')
-  let session = resolveSubmissionTarget(this, body.target, door !== 'steer')
+  const session = resolveSubmissionTarget(this, body.target, door !== 'steer')
   if (session === null) {
     throw new HrcRuntimeUnavailableError('submission target is unavailable', {
       target: body.target,
       door,
     })
   }
-  // T-09762: every door (invoke, enqueue, steer, preempt) refuses a scope this
-  // node retired, typed as the gate's scope-retired conflict, before rotation
-  // or dispatch can seat it.
-  await assertScopeNotRetired(this, { scopeRef: session.scopeRef, path: 'resolve-session' })
-  // R7.6: the participant target is resolved BEFORE generic rotation. Rotating
-  // a participant's session would move the address off the incarnation that
-  // holds it, so an external participant is exempt from the stale sweep and a
-  // fresh-context request against one is refused rather than honored quietly.
-  const participantSession = resolveParticipantDelivery(this, session) !== null
-  if (door !== 'steer' && !participantSession) {
-    const staleRotation = await this.maybeAutoRotateStaleSession(session, {
-      trigger: `submission-${door}`,
-    })
-    session = staleRotation.session
-  }
-  if (participantSession && body.freshContext === true) {
-    throw participantRotationUnsupported(session, 'fresh-context rotation')
-  }
-  if (door === 'preempt') {
-    const admission = await preemptAdmission(this, session, body as PreemptSubmissionRequest)
-    if (admission !== 'authorized') {
-      // The reason is the whole point of the refusal: `unsupported:preempt` says
-      // this seat's driver does not implement interruption, `authority-denied`
-      // says this caller may not interrupt it. Both are rejections; only one is
-      // fixable by the caller.
-      const reason =
-        admission === 'preempt-unsupported' ? BROKER_PREEMPT_UNSUPPORTED_REASON : 'authority-denied'
-      return json({
-        submissionId: `hrc-rejected-${randomUUID()}`,
-        admission: 'rejected',
-        reason,
-        disposition: { type: 'rejected', reason },
-      } satisfies HrcSubmissionResponse)
-    }
-  }
+  const executionFormat = body.executionFormat ?? 'format1'
+  const wait = 'wait' in body && body.wait === true
+  const idempotencyKey = body.idempotencyKey
   const sessionBoundBody =
     door === 'steer'
       ? undefined
       : (body as EnqueueSubmissionRequest | InvokeSubmissionRequest | PreemptSubmissionRequest)
-  if (body.freshContext === true) {
-    const rotation = await this.rotateSessionContext(session, {
-      relaunch: false,
-      dropContinuation: true,
-      ...(sessionBoundBody?.runtimeIntent !== undefined
-        ? { runtimeIntent: sessionBoundBody.runtimeIntent }
-        : {}),
-      reason: `submission-${door}-fresh-context`,
-    })
-    session = requireSession(this.db, rotation.hostSessionId)
-  }
-  // Read AFTER every session choice above (steer: no stale rotation, last
-  // applied intent), so the classes checked belong to the incarnation the body
-  // lands on. Those steer-only choices stay on the REQUESTED door on purpose.
-  const doorReport = submissionDoorReport(this, session, door)
-  const effectiveDoor = doorReport.effectiveDoor
-  const idempotencyKey = body.idempotencyKey
-  const executionFormat = body.executionFormat ?? 'format1'
-  const wait = 'wait' in body && body.wait === true
+  const runId = executionFormat === 'format2' ? undefined : `run-${randomUUID()}`
   const invokeColdBirthPromptMode =
     door === 'invoke' ? (body as InvokeSubmissionRequest).coldBirth?.promptMode : undefined
-  // A non-waiting cold invoke needs only the durable launch receipt. The
-  // provider's invocation.start RPC may remain open for the whole first turn;
-  // waiting for it here turns upstream model latency into an injector timeout.
   const allowLaunchReceipt = door === 'invoke' && !wait && invokeColdBirthPromptMode !== undefined
-  if (idempotencyKey !== undefined) {
-    const existing = this.db.runs.getByDispatchIdempotencyKey(session.hostSessionId, idempotencyKey)
-    if (existing !== null) {
-      assertIdempotencyExecutionFormat(existing.executionFormat ?? 'format1', executionFormat, {
-        hostSessionId: session.hostSessionId,
+  const admitted = await submitThroughAdmission(
+    this,
+    {
+      door: 'submission',
+      signal: request.signal,
+      intent: door,
+      target: session,
+      body: body.body,
+      principal: body.origin.principalRef,
+      executionFormat,
+      responseFormat: body.responseFormat,
+      runtimeIntent: sessionBoundBody?.runtimeIntent,
+      carried: {
+        ownershipProof: sessionBoundBody?.establishedBrokerInvocationId,
         idempotencyKey,
-        source: 'run',
+        freshContext: body.freshContext,
+      },
+      ...(door === 'preempt' ? { preemptRequest: body as PreemptSubmissionRequest } : {}),
+      options: { ...(runId !== undefined ? { runId } : {}), executionFormat, submissionDoor: door },
+      pendingReplay: async (resolvedSession) => {
+        if (idempotencyKey === undefined) return undefined
+        const pending = idempotentDispatches
+          .get(this)
+          ?.get(`${resolvedSession.hostSessionId}\u0000${idempotencyKey}`)
+        if (pending === undefined) return undefined
+        const recorded = echoPersistedBrokerExecutionFormat(this, await pending.promise)
+        return {
+          format: recorded.executionFormat ?? 'format1',
+          project: () =>
+            waitForPublicDispatchStage(
+              this,
+              recorded,
+              wait ? 'terminal' : 'accepted',
+              true,
+              request.signal,
+              true,
+              publicDoorReport(door, submissionDoorReport(this, session, door))
+            ),
+        }
+      },
+      replay: async (run) =>
+        waitForPublicDispatchStage(
+          this,
+          replayDispatchBody(this, run),
+          wait ? 'terminal' : 'accepted',
+          true,
+          request.signal,
+          true,
+          publicDoorReport(door, submissionDoorReport(this, session, door))
+        ),
+    },
+    async (plan) => {
+      const session = plan.session
+      const intent = plan.runtimeIntent
+      const doorReport = plan.doorReport ?? submissionDoorReport(this, session, door)
+      const effectiveDoor = plan.effectiveDoor
+      const operationKey =
+        idempotencyKey !== undefined ? `${session.hostSessionId}\u0000${idempotencyKey}` : undefined
+      const operations =
+        idempotentDispatches.get(this) ?? new Map<string, InFlightIdempotentDispatch>()
+      if (!idempotentDispatches.has(this)) idempotentDispatches.set(this, operations)
+      const dispatchPromise = dispatchPublicSubmission(this, session, intent, body.body, {
+        ...plan.options,
+        admissionPlan: plan,
+        ...(runId !== undefined ? { runId } : {}),
+        executionFormat,
+        ...(executionFormat === 'format2'
+          ? {
+              format2RequestHash: format2RequestHash({
+                hostSessionId: session.hostSessionId,
+                door,
+                request: body,
+              }),
+            }
+          : {}),
+        // An ordinary submission response is not complete until the broker has
+        // minted its identity. A non-waiting cold invoke instead ends at the
+        // durable start graph so provider execution cannot hold the launch RPC.
+        waitForCompletion: !allowLaunchReceipt,
+        submissionDoor: door === 'invoke' ? 'invoke' : effectiveDoor,
+        submissionOrigin: body.origin,
+        origin: runOriginFromSubmission(body.origin),
+        responseFormat: body.responseFormat,
+        freshContext: body.freshContext,
+        ...(invokeColdBirthPromptMode !== undefined
+          ? { coldBirthPromptMode: invokeColdBirthPromptMode }
+          : {}),
+        ...('ttlMs' in body && body.ttlMs !== undefined ? { ttlMs: body.ttlMs } : {}),
+        ...('turnPolicy' in body && body.turnPolicy !== undefined
+          ? { turnPolicy: body.turnPolicy }
+          : {}),
+        ...(sessionBoundBody?.establishedBrokerInvocationId !== undefined
+          ? { establishedBrokerInvocationId: sessionBoundBody.establishedBrokerInvocationId }
+          : {}),
+        ...(idempotencyKey !== undefined ? { dispatchIdempotencyKey: idempotencyKey } : {}),
+        requireSubmissionIdentity: true,
       })
-      return await waitForPublicDispatchStage(
+      if (operationKey !== undefined) operations.set(operationKey, { promise: dispatchPromise })
+      let publicResponse: DispatchTurnResponse
+      try {
+        publicResponse = await dispatchPromise
+      } finally {
+        if (
+          operationKey !== undefined &&
+          operations.get(operationKey)?.promise === dispatchPromise
+        ) {
+          operations.delete(operationKey)
+        }
+      }
+      if (doorReport.requestedDoor !== undefined) {
+        const runtimeId = publicResponse.runtimeId ?? doorReport.runtime?.runtimeId
+        const invocationId =
+          publicResponse.observation?.broker?.selector.invocationId ??
+          doorReport.runtime?.activeInvocationId
+        const payload = {
+          ...(runtimeId !== undefined ? { runtimeId } : {}),
+          ...(invocationId !== undefined ? { invocationId } : {}),
+          ...(publicResponse.submissionId !== undefined
+            ? { submissionId: publicResponse.submissionId }
+            : {}),
+          requestedDoor: doorReport.requestedDoor,
+          effectiveDoor,
+          reason: doorReport.downgradeReason,
+          ...(body.origin.envelopeId !== undefined ? { envelopeId: body.origin.envelopeId } : {}),
+        }
+        appendHrcEvent(this.db, 'submission.door_downgraded', {
+          ts: timestamp(),
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          ...(runtimeId !== undefined ? { runtimeId } : {}),
+          runId,
+          payload,
+        })
+      }
+      const response = await waitForPublicDispatchStage(
         this,
-        replayDispatchBody(this, existing),
+        publicResponse,
         wait ? 'terminal' : 'accepted',
-        true,
+        false,
         request.signal,
         true,
         publicDoorReport(door, doorReport)
       )
+      return publicResponse.admission === 'rejected'
+        ? {
+            kind: 'rejected_unlanded',
+            rejection: { source: 'positive-rejection', value: response },
+          }
+        : { kind: 'accepted', value: response }
     }
-  }
-  if (idempotencyKey !== undefined) {
-    const resumable = findPreparedAspdAttemptForFormatRetry(
-      this,
-      session.hostSessionId,
-      idempotencyKey
-    )
-    if (resumable !== undefined) {
-      assertPreparedAspdAttemptFormat(resumable, executionFormat, session.hostSessionId)
-      assertIdempotencyExecutionFormat(resumable.executionFormat, executionFormat, {
-        hostSessionId: session.hostSessionId,
-        idempotencyKey,
-        source: 'preparation',
-      })
-    }
-  }
-  const runId: string | undefined =
-    executionFormat === 'format2' ? undefined : `run-${randomUUID()}`
-  // R7.6: resolution precedes runtime-intent validation, and this is where that
-  // validation actually lives. A participant is routed by its durable linkage,
-  // so it has no intent to validate and must not be asked for one -- that
-  // question is what answered `missing_runtime_intent` to every queue, and what
-  // birthed a substitute when a caller answered it.
-  const intent = participantSession
-    ? undefined
-    : door === 'steer'
-      ? omitPersistedSelectionForReuse(session.lastAppliedIntentJson)
-      : normalizeDispatchIntent(
-          sessionBoundBody?.runtimeIntent ??
-            omitPersistedSelectionForReuse(session.lastAppliedIntentJson),
-          session,
-          runId
-        )
-  if (!participantSession && intent === undefined) {
-    throw new HrcRuntimeUnavailableError('submission target has no runtime intent', {
-      target: body.target,
-      door,
-    })
-  }
-  const operationKey =
-    idempotencyKey !== undefined ? `${session.hostSessionId}\u0000${idempotencyKey}` : undefined
-  const operations = idempotentDispatches.get(this) ?? new Map<string, InFlightIdempotentDispatch>()
-  if (!idempotentDispatches.has(this)) idempotentDispatches.set(this, operations)
-  const pending = operationKey !== undefined ? operations.get(operationKey) : undefined
-  if (pending !== undefined) {
-    return await waitForPublicDispatchStage(
-      this,
-      await pending.promise,
-      wait ? 'terminal' : 'accepted',
-      true,
-      request.signal,
-      true,
-      publicDoorReport(door, doorReport)
-    )
-  }
-  const dispatchPromise = dispatchPublicSubmission(this, session, intent, body.body, {
-    ...(runId !== undefined ? { runId } : {}),
-    executionFormat,
-    ...(executionFormat === 'format2'
-      ? {
-          format2RequestHash: format2RequestHash({
-            hostSessionId: session.hostSessionId,
-            door,
-            request: body,
-          }),
-        }
-      : {}),
-    // An ordinary submission response is not complete until the broker has
-    // minted its identity. A non-waiting cold invoke instead ends at the
-    // durable start graph so provider execution cannot hold the launch RPC.
-    waitForCompletion: !allowLaunchReceipt,
-    submissionDoor: effectiveDoor,
-    submissionOrigin: body.origin,
-    origin: runOriginFromSubmission(body.origin),
-    responseFormat: body.responseFormat,
-    freshContext: body.freshContext,
-    ...(invokeColdBirthPromptMode !== undefined
-      ? { coldBirthPromptMode: invokeColdBirthPromptMode }
-      : {}),
-    ...('ttlMs' in body && body.ttlMs !== undefined ? { ttlMs: body.ttlMs } : {}),
-    ...('turnPolicy' in body && body.turnPolicy !== undefined
-      ? { turnPolicy: body.turnPolicy }
-      : {}),
-    ...(sessionBoundBody?.establishedBrokerInvocationId !== undefined
-      ? { establishedBrokerInvocationId: sessionBoundBody.establishedBrokerInvocationId }
-      : {}),
-    ...(idempotencyKey !== undefined ? { dispatchIdempotencyKey: idempotencyKey } : {}),
-    requireSubmissionIdentity: true,
-  })
-  if (operationKey !== undefined) operations.set(operationKey, { promise: dispatchPromise })
-  let publicResponse: DispatchTurnResponse
-  try {
-    publicResponse = await dispatchPromise
-  } finally {
-    if (operationKey !== undefined && operations.get(operationKey)?.promise === dispatchPromise) {
-      operations.delete(operationKey)
-    }
-  }
-  if (doorReport.requestedDoor !== undefined) {
-    const runtimeId = publicResponse.runtimeId ?? doorReport.runtime?.runtimeId
-    const invocationId =
-      publicResponse.observation?.broker?.selector.invocationId ??
-      doorReport.runtime?.activeInvocationId
-    const payload = {
-      ...(runtimeId !== undefined ? { runtimeId } : {}),
-      ...(invocationId !== undefined ? { invocationId } : {}),
-      ...(publicResponse.submissionId !== undefined
-        ? { submissionId: publicResponse.submissionId }
-        : {}),
-      requestedDoor: doorReport.requestedDoor,
-      effectiveDoor,
-      reason: doorReport.downgradeReason,
-      ...(body.origin.envelopeId !== undefined ? { envelopeId: body.origin.envelopeId } : {}),
-    }
-    appendHrcEvent(this.db, 'submission.door_downgraded', {
-      ts: timestamp(),
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      ...(runtimeId !== undefined ? { runtimeId } : {}),
-      runId,
-      payload,
-    })
-  }
-  return await waitForPublicDispatchStage(
-    this,
-    publicResponse,
-    wait ? 'terminal' : 'accepted',
-    false,
-    request.signal,
-    true,
-    publicDoorReport(door, doorReport)
   )
+  return submissionResponse(admitted)
 }
 
 function publicDispatchBody(
@@ -426,7 +361,7 @@ export function replayDispatchBody(
  * be a stale retry or a client talking to an older server. Legacy non-broker
  * responses have no invocation to prove and retain their existing shape.
  */
-function echoPersistedBrokerExecutionFormat(
+export function echoPersistedBrokerExecutionFormat(
   server: Pick<HrcServerInstanceForHandlers, 'db'>,
   dispatch: DispatchTurnResponse
 ): DispatchTurnResponse {

@@ -21,20 +21,13 @@ import {
   assertActuatorSplitRuntimeReuse,
 } from './actuator-split.js'
 import {
-  assertPreparedAspdAttemptFormat,
-  findPreparedAspdAttemptForFormatRetry,
-  readAspdPreparation,
-} from './aspd-headless-start.js'
-import {
   decideHeadlessExecutionRoute,
   isProducerSelectedOrdinaryBirth,
   shouldUseHeadlessTransport,
 } from './broker-decisions.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
-import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
-import { withFrozenOperatorPresentation } from './presentation-operator.js'
 import {
   brokerRuntimeSupportsAdmissionClass,
   isTerminalBrokerInvocationState,
@@ -61,15 +54,16 @@ import {
   reattachDurableBrokerForDispatch,
 } from './startup-reconcile.js'
 import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.js'
+import { submissionResponse, submitThroughAdmission } from './turn-admission/submit.js'
 import { normalizeJsonRepairCorrelation } from './turn-dispatch-attached-run-handlers.js'
 import {
   dispatchPublicSubmission,
+  echoPersistedBrokerExecutionFormat,
   replayDispatchBody,
   waitForPublicDispatchStage,
 } from './turn-dispatch-submission-handlers.js'
 import {
   type InFlightIdempotentDispatch,
-  assertIdempotencyExecutionFormat,
   format2RequestHash,
   idempotentDispatches,
   resolvePublicWaitStage,
@@ -236,148 +230,119 @@ export async function handleDispatchTurn(
 ): Promise<Response> {
   const body = parseDispatchTurnRequest(await parseJsonBody(request))
   const requestedSession = requireSession(this.db, body.hostSessionId)
-  const continuity = requireContinuity(this.db, requestedSession)
-  const activeSession = requireSession(this.db, continuity.activeHostSessionId)
-  const fence = validateFence(body.fences, {
-    activeHostSessionId: activeSession.hostSessionId,
-    generation: activeSession.generation,
-  })
-
-  if (!fence.ok) {
-    throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, fence.message, fence.detail)
-  }
-
-  const resolved = requireSession(this.db, fence.resolvedHostSessionId)
-  // Stale-generation guard runs after fence validation so that a caller
-  // pinning a specific generation via `fences` gets a predictable
-  // STALE_CONTEXT error instead of silent rotation.
-  const { session } = await this.maybeAutoRotateStaleSession(resolved, {
-    allowStaleGeneration: body.allowStaleGeneration,
-    trigger: 'dispatch-turn',
-  })
   const waitFor = resolvePublicWaitStage(body)
   const executionFormat = body.executionFormat ?? 'format1'
-  let runId: string | undefined = executionFormat === 'format2' ? undefined : `run-${randomUUID()}`
-  const parsedIntent = normalizeDispatchIntent(
-    body.runtimeIntent ?? omitPersistedSelectionForReuse(session.lastAppliedIntentJson),
-    session,
-    runId
-  )
-  let intent =
-    body.attachments !== undefined
-      ? { ...parsedIntent, attachments: body.attachments }
-      : parsedIntent
+  const runId = executionFormat === 'format2' ? undefined : `run-${randomUUID()}`
   const idempotencyKey = body.idempotencyKey
-
-  if (idempotencyKey !== undefined) {
-    const existing = this.db.runs.getByDispatchIdempotencyKey(session.hostSessionId, idempotencyKey)
-    if (existing !== null) {
-      assertIdempotencyExecutionFormat(existing.executionFormat ?? 'format1', executionFormat, {
-        hostSessionId: session.hostSessionId,
-        idempotencyKey,
-        source: 'run',
-      })
-      return await waitForPublicDispatchStage(
-        this,
-        replayDispatchBody(this, existing),
-        waitFor,
-        true
-      )
-    }
-  }
-
-  // A same-key retry must preserve the format frozen before P. Format2 rows
-  // intentionally have no run; format1 resumes its recorded admission run.
-  if (idempotencyKey !== undefined) {
-    const resumable = findPreparedAspdAttemptForFormatRetry(
-      this,
-      session.hostSessionId,
-      idempotencyKey
-    )
-    if (resumable !== undefined) {
-      assertPreparedAspdAttemptFormat(resumable, executionFormat, session.hostSessionId)
-      assertIdempotencyExecutionFormat(resumable.executionFormat, executionFormat, {
-        hostSessionId: session.hostSessionId,
-        idempotencyKey,
-        source: 'preparation',
-      })
-      if (executionFormat === 'format1') {
-        if (resumable.runId === undefined) {
-          throw new HrcRuntimeUnavailableError('format1 preparation has no admission-time run id', {
-            code: 'execution_format_mismatch',
-            hostSessionId: session.hostSessionId,
-            operationId: resumable.operationId,
-          })
+  const admitted = await submitThroughAdmission(
+    this,
+    {
+      door: 'turns',
+      signal: request.signal,
+      intent: 'invoke',
+      target: requestedSession,
+      body: body.prompt,
+      principal: body.origin?.actor ?? 'system:unknown',
+      executionFormat,
+      responseFormat: body.responseFormat,
+      runtimeIntent: body.runtimeIntent,
+      attachments: body.attachments,
+      fences: body.fences,
+      allowStaleGeneration: body.allowStaleGeneration,
+      carried: { ownershipProof: body.establishedBrokerInvocationId, idempotencyKey },
+      options: {
+        ...(runId !== undefined ? { runId } : {}),
+        executionFormat,
+        submissionDoor: 'invoke',
+      },
+      pendingReplay: async (resolvedSession) => {
+        if (idempotencyKey === undefined) return undefined
+        const pending = idempotentDispatches
+          .get(this)
+          ?.get(`${resolvedSession.hostSessionId}\u0000${idempotencyKey}`)
+        if (pending === undefined) return undefined
+        const recorded = echoPersistedBrokerExecutionFormat(this, await pending.promise)
+        return {
+          format: recorded.executionFormat ?? 'format1',
+          project: () => waitForPublicDispatchStage(this, recorded, waitFor, true, request.signal),
         }
-        runId = resumable.runId
-        // T-08553: the frozen preparation already fixed its presentation. Carry
-        // its recorded choice so node defaults are not re-evaluated on retry.
-        intent = withFrozenOperatorPresentation(
-          intent,
-          readAspdPreparation(this, resumable.operationId).record.intent
-        )
+      },
+      replay: async (run) =>
+        waitForPublicDispatchStage(this, replayDispatchBody(this, run), waitFor, true),
+    },
+    async (plan) => {
+      const session = plan.session
+      const intent = plan.runtimeIntent
+      const runId = plan.options.runId
+      const operationKey =
+        idempotencyKey !== undefined ? `${session.hostSessionId}\u0000${idempotencyKey}` : undefined
+      const operations =
+        idempotentDispatches.get(this) ?? new Map<string, InFlightIdempotentDispatch>()
+      if (!idempotentDispatches.has(this)) {
+        idempotentDispatches.set(this, operations)
+      }
+      const dispatch = async (): Promise<DispatchTurnResponse> => {
+        return await dispatchPublicSubmission(this, session, intent, body.prompt, {
+          ...plan.options,
+          admissionPlan: plan,
+          ...(runId !== undefined ? { runId } : {}),
+          executionFormat,
+          ...(executionFormat === 'format2'
+            ? {
+                format2RequestHash: format2RequestHash({
+                  hostSessionId: session.hostSessionId,
+                  request: body,
+                }),
+              }
+            : {}),
+          // Accepted requests detach at the durable acceptance boundary. Later
+          // stages first obtain broker submission identity, then wait on its ledger.
+          waitForCompletion: waitFor !== 'accepted',
+          submissionDoor: 'invoke',
+          turnPolicy: 'guarded',
+          responseFormat: body.responseFormat,
+          ...(body.establishedBrokerInvocationId !== undefined
+            ? { establishedBrokerInvocationId: body.establishedBrokerInvocationId }
+            : {}),
+          ...(body.firstTurnTimeoutMs !== undefined
+            ? { firstTurnTimeoutMs: body.firstTurnTimeoutMs }
+            : {}),
+          ...(body.origin !== undefined ? { origin: body.origin } : {}),
+          ...(idempotencyKey !== undefined
+            ? {
+                dispatchIdempotencyKey: idempotencyKey,
+              }
+            : {}),
+          ...(body.repair !== undefined && runId !== undefined
+            ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
+            : {}),
+        })
+      }
+
+      const dispatchPromise = dispatch()
+      if (operationKey !== undefined) {
+        operations.set(operationKey, { promise: dispatchPromise })
+      }
+      try {
+        const receipt = await dispatchPromise
+        const response = await waitForPublicDispatchStage(this, receipt, waitFor, false)
+        return receipt.admission === 'rejected'
+          ? {
+              kind: 'rejected_unlanded',
+              rejection: { source: 'positive-rejection', value: response },
+            }
+          : { kind: 'accepted', value: response }
+      } finally {
+        if (
+          operationKey !== undefined &&
+          operations.get(operationKey)?.promise === dispatchPromise
+        ) {
+          operations.delete(operationKey)
+        }
       }
     }
-  }
-
-  const operationKey =
-    idempotencyKey !== undefined ? `${session.hostSessionId}\u0000${idempotencyKey}` : undefined
-  const operations = idempotentDispatches.get(this) ?? new Map<string, InFlightIdempotentDispatch>()
-  if (!idempotentDispatches.has(this)) {
-    idempotentDispatches.set(this, operations)
-  }
-  const pending = operationKey !== undefined ? operations.get(operationKey) : undefined
-  if (pending !== undefined) {
-    return await waitForPublicDispatchStage(this, await pending.promise, waitFor, true)
-  }
-
-  const dispatch = async (): Promise<DispatchTurnResponse> => {
-    return await dispatchPublicSubmission(this, session, intent, body.prompt, {
-      ...(runId !== undefined ? { runId } : {}),
-      executionFormat,
-      ...(executionFormat === 'format2'
-        ? {
-            format2RequestHash: format2RequestHash({
-              hostSessionId: session.hostSessionId,
-              request: body,
-            }),
-          }
-        : {}),
-      // Accepted requests detach at the durable acceptance boundary. Later
-      // stages first obtain broker submission identity, then wait on its ledger.
-      waitForCompletion: waitFor !== 'accepted',
-      submissionDoor: 'invoke',
-      turnPolicy: 'guarded',
-      responseFormat: body.responseFormat,
-      ...(body.establishedBrokerInvocationId !== undefined
-        ? { establishedBrokerInvocationId: body.establishedBrokerInvocationId }
-        : {}),
-      ...(body.firstTurnTimeoutMs !== undefined
-        ? { firstTurnTimeoutMs: body.firstTurnTimeoutMs }
-        : {}),
-      ...(body.origin !== undefined ? { origin: body.origin } : {}),
-      ...(idempotencyKey !== undefined
-        ? {
-            dispatchIdempotencyKey: idempotencyKey,
-          }
-        : {}),
-      ...(body.repair !== undefined && runId !== undefined
-        ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
-        : {}),
-    })
-  }
-
-  const dispatchPromise = dispatch()
-  if (operationKey !== undefined) {
-    operations.set(operationKey, { promise: dispatchPromise })
-  }
-  try {
-    return await waitForPublicDispatchStage(this, await dispatchPromise, waitFor, false)
-  } finally {
-    if (operationKey !== undefined && operations.get(operationKey)?.promise === dispatchPromise) {
-      operations.delete(operationKey)
-    }
-  }
+  )
+  return submissionResponse(admitted)
 }
 
 export async function openHeadlessBrokerSessionForSession(

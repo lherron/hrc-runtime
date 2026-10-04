@@ -14,6 +14,7 @@ const readServer = (name: string) => readFileSync(join(serverSrc, name), 'utf8')
 const readRepo = (name: string) => readFileSync(join(repoRoot, name), 'utf8')
 // turn-dispatch-handlers.ts is split by responsibility; guards read the whole family in source order.
 const turnDispatchSources = [
+  'turn-admission/steps.ts',
   'turn-dispatch-submission-support.ts',
   'turn-dispatch-submission-handlers.ts',
   'turn-dispatch-runtime-handlers.ts',

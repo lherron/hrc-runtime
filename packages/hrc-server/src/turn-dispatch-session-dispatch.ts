@@ -45,7 +45,11 @@ import type { JsonRepairRunCorrelation } from './turn-dispatch-attached-run-hand
 import { assertBrokerRuntimeExecutionFormat } from './turn-dispatch-runtime-handlers.js'
 import { activeBrokerRuntimeForSession } from './turn-dispatch-submission-support.js'
 
+import type { AdmittedPlan } from './turn-admission/types.js'
+
 export type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
+  /** Phase-1 admitted route: the outer pipeline already owns the drain lease. */
+  admissionPlan?: AdmittedPlan | undefined
   runId?: string | undefined
   ensureInteractiveRuntime?: boolean | undefined
   waitForCompletion?: boolean | undefined
@@ -83,6 +87,9 @@ export async function dispatchTurnForSession(
   prompt: string,
   options: DispatchTurnForSessionOptions = {}
 ): Promise<Response> {
+  if (options.admissionPlan !== undefined) {
+    return await dispatchAdmittedTurnForSession.call(this, session, inputIntent, prompt, options)
+  }
   const executionFormat = options.executionFormat ?? 'format1'
   const liveBrokerRuntime = activeBrokerRuntimeForSession(this, session)
   if (liveBrokerRuntime !== undefined) {

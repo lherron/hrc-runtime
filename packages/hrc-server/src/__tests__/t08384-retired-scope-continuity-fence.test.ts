@@ -337,5 +337,5 @@ describe('T-08384 retired-home continuity fence', () => {
       await oldFixture.cleanup()
       await newFixture.cleanup()
     }
-  })
+  }, 30_000) // Two daemon startups and teardown need room on a loaded verify runner.
 })

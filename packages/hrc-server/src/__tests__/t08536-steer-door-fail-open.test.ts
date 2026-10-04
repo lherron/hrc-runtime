@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { HrcRuntimeIntent, HrcSubmissionResponse } from 'hrc-core'
 
+import { TurnAdmissionGate } from '../turn-admission-gate'
+
 import { handleSubmission, submissionDoorReport } from '../turn-dispatch-handlers'
 
 import {
@@ -46,7 +48,18 @@ describe('T-08536 steer door fail-open', () => {
     calls = []
     fixture.db.sessions.updateIntent(
       HOST_SESSION_ID,
-      { placement: { agentRoot: '/tmp/agent' } } as unknown as HrcRuntimeIntent,
+      {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'compose', compose: [] },
+          dryRun: true,
+        },
+        harness: { provider: 'openai', id: 'codex', interactive: false },
+        execution: { preferredMode: 'headless' },
+      } satisfies HrcRuntimeIntent,
       ts(5)
     )
   })
@@ -72,6 +85,8 @@ describe('T-08536 steer door fail-open', () => {
   const server = () =>
     ({
       db: fixture.db,
+      notifyEvent() {},
+      turnAdmissionGate: new TurnAdmissionGate('/tmp/t08536-no-persisted-gate'),
       dispatchTurnForSession: async (
         _session: unknown,
         _intent: unknown,
