@@ -13,27 +13,6 @@ import {
 
 import { parseFixtureTargetsToml } from './fixture-targets.js'
 
-/**
- * The old engine's own registry read, frozen here with it: hrc-core no longer
- * ships a subprocess reader (T-08783), and this oracle is test-only.
- */
-function readWrkqProjectRegistry(
-  env: Record<string, string | undefined>
-): WrkqProjectRegistryEntry[] {
-  const result = spawnSync('wrkq', ['projects', '--json'], {
-    encoding: 'utf8',
-    env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'ignore'],
-  })
-  if (result.status !== 0 || !result.stdout) return []
-  try {
-    const parsed = JSON.parse(result.stdout) as unknown
-    return Array.isArray(parsed) ? (parsed as WrkqProjectRegistryEntry[]) : []
-  } catch {
-    return []
-  }
-}
-
 export type ProjectOrigin = 'explicit' | 'inferred'
 
 export type ProjectPlacementSource =
@@ -411,7 +390,12 @@ export function resolveHrcAgentPlacementPaths(
     })
   }
 
-  const projects = options.registryProjects ?? readWrkqProjectRegistry(env)
+  // The oracle never consults the operator's wrkq ledger: a spawned `wrkq`
+  // ignores the hermetic HRC_WRKQ_DB, reads the live ledger, and had no
+  // timeout, so a busy ledger hung callers until the runner killed it (mini
+  // run 37233062639, t05113). Every hrc-cli case passes with an empty
+  // registry; cases that need one inject `registryProjects`.
+  const projects = options.registryProjects ?? []
   const registryEntry = findWrkqProjectEntry(projects, options.projectId)
   let canonicalRoot: string | undefined
   let canonicalSource: 'wrkq-registry' | 'marker-scan' | undefined
