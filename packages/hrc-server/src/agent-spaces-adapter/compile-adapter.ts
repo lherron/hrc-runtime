@@ -55,6 +55,7 @@ import type {
   RuntimeOperationId,
   TraceId,
 } from 'spaces-runtime-contracts'
+import { isRecord } from '../parsers/common.js'
 import {
   type PrecompileLaunchTimingContext,
   observePrecompileLaunchSpan,
@@ -442,12 +443,8 @@ export async function compileBrokerRuntimePlan(
 
   return {
     admitted: true,
-    ...((response as unknown as { sessionMetadata?: Record<string, unknown> }).sessionMetadata !==
-    undefined
-      ? {
-          sessionMetadata: (response as unknown as { sessionMetadata: Record<string, unknown> })
-            .sessionMetadata,
-        }
+    ...('sessionMetadata' in response && isRecord(response.sessionMetadata)
+      ? { sessionMetadata: response.sessionMetadata }
       : {}),
     execution: selection.execution,
     hrcPolicy: deepFreeze(request.hrcPolicy),

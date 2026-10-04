@@ -12,6 +12,7 @@ import {
 } from './aspd-headless-start-record.js'
 import type { BirthTimeline } from './birth-timeline.js'
 import type { BrokerControllerStartInput } from './broker/controller/types.js'
+import { isRecord } from './parsers/common.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { type DispatchRunPersistenceOptions, dispatchRunPersistence } from './server-types.js'
@@ -153,13 +154,8 @@ export async function launchAspdPreparedAttempt(
   const result = await controller.start({
     execution: admission.execution,
     plan: admission.plan,
-    ...((record.response as unknown as { sessionMetadata?: Record<string, unknown> })
-      .sessionMetadata !== undefined
-      ? {
-          sessionMetadata: (
-            record.response as unknown as { sessionMetadata: Record<string, unknown> }
-          ).sessionMetadata,
-        }
+    ...('sessionMetadata' in record.response && isRecord(record.response.sessionMetadata)
+      ? { sessionMetadata: record.response.sessionMetadata }
       : {}),
     hrcPolicy: admission.hrcPolicy,
     executionFormat,

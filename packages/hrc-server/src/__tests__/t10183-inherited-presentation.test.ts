@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot } from 'hrc-core'
-import { type HrcServer, createHrcServer } from '../index'
+import { type HrcServer, HrcServerInstance, createHrcServer } from '../index'
 import { assertNoOperatorPresentationConflict } from '../presentation-operator'
 import { omitPersistedSelectionForReuse } from '../selector-message-handlers/selection-request'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context'
@@ -31,7 +31,8 @@ const birthIntent: HrcRuntimeIntent = {
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-t10183-')
   server = await createHrcServer(fixture.serverOpts())
-  internal = server as unknown as HrcServerInstanceForHandlers
+  if (!(server instanceof HrcServerInstance)) throw new Error('expected concrete HRC server')
+  internal = server
   hostSessionId = (await fixture.resolveSession('agent:t10183:project:hrc-runtime:task:probe'))
     .hostSessionId
   internal.db.sessions.updateIntent(hostSessionId, birthIntent, fixture.now())
