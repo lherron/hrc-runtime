@@ -26,7 +26,7 @@ import {
   printBrokerInspect,
   printRuntimeInspect,
 } from './handlers-runtime-inspect.js'
-import { cmdSessionList } from './handlers-server.js'
+import { cmdSessionList } from './handlers-session.js'
 import { createClient, fatal } from './shared.js'
 
 export { formatCaptureState, printBrokerInspect, printRuntimeInspect }

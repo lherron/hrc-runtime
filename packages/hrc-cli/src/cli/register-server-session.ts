@@ -14,15 +14,17 @@ import {
   cmdServerStatus,
   cmdServerStop,
   cmdServerSubscribers,
+  cmdTmuxKill,
+  cmdTmuxStatus,
+} from './handlers-server.js'
+import {
   cmdSessionDropContinuation,
   cmdSessionGet,
   cmdSessionList,
   cmdSessionMeta,
   cmdSessionResolve,
   cmdSessionRetitle,
-  cmdTmuxKill,
-  cmdTmuxStatus,
-} from './handlers-server.js'
+} from './handlers-session.js'
 import { cmdSessionReport } from './runtime-select.js'
 import { fatal } from './shared.js'
 
