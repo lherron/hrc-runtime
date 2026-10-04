@@ -337,7 +337,11 @@ export class RuntimeRepository {
     return updated
   }
 
-  updateStatus(runtimeId: string, status: string, updatedAt: string): HrcRuntimeSnapshot | null {
+  updateStatus(
+    runtimeId: string,
+    status: HrcRuntimeSnapshot['status'],
+    updatedAt: string
+  ): HrcRuntimeSnapshot | null {
     return this.update(runtimeId, { status, statusChangedAt: updatedAt, updatedAt })
   }
 

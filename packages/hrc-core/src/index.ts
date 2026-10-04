@@ -3,6 +3,14 @@ import packageJson from '../package.json' with { type: 'json' }
 export const HRC_API_VERSION = packageJson.version
 
 export {
+  isRunTerminal,
+  parseHrcRunStatus,
+  parseHrcRuntimeStatus,
+  parseHrcSessionStatus,
+} from './status-contracts.js'
+export type { HrcRunStatus, HrcRuntimeStatus, HrcSessionStatus } from './status-contracts.js'
+
+export {
   HRC_LIFECYCLE_BREAK_GLASS,
   HRC_LIFECYCLE_CREDENTIAL_HEADER,
   HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE,

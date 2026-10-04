@@ -1,4 +1,10 @@
-import { HrcBadRequestError, HrcErrorCode, TERMINAL_RUNTIME_STATUSES } from 'hrc-core'
+import {
+  HrcBadRequestError,
+  HrcErrorCode,
+  TERMINAL_RUNTIME_STATUSES,
+  isRunTerminal,
+  parseHrcRunStatus,
+} from 'hrc-core'
 import type {
   HrcRunRecord,
   HrcRuntimeSnapshot,
@@ -53,7 +59,7 @@ export function mapServerRunRow(row: HrcServerRunRow): HrcRunRecord {
     laneRef: row.lane_ref,
     generation: row.generation,
     transport: row.transport,
-    status: row.status,
+    status: parseHrcRunStatus(row.status),
     ...(row.accepted_at ? { acceptedAt: row.accepted_at } : {}),
     ...(row.started_at ? { startedAt: row.started_at } : {}),
     ...(row.completed_at ? { completedAt: row.completed_at } : {}),
@@ -118,8 +124,6 @@ export type RuntimeTmuxManagerFactory = (options: { socketPath: string }) => Pic
   ServerTmuxManager,
   'inspectWindow'
 >
-
-const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'zombie', 'coalesced'])
 
 function runtimeTmuxIdentity(runtime: HrcRuntimeSnapshot): RuntimeTmuxIdentity | undefined {
   const tmux = runtime.tmuxJson
@@ -193,11 +197,7 @@ export async function evaluateRuntimeAgingDisposition(
   if (runtime.activeRunId !== undefined) {
     return { eligible: false, reason: 'active_run' }
   }
-  if (
-    input.db.runs
-      .listByRuntimeId(runtime.runtimeId)
-      .some((run) => !TERMINAL_RUN_STATUSES.has(run.status))
-  ) {
+  if (input.db.runs.listByRuntimeId(runtime.runtimeId).some((run) => !isRunTerminal(run))) {
     return { eligible: false, reason: 'nonterminal_run' }
   }
 

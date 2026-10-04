@@ -21,6 +21,7 @@ import {
   HrcRuntimeUnavailableError,
   type SessionIdentity,
   type StartRuntimeResponse,
+  parseHrcRuntimeStatus,
 } from 'hrc-core'
 
 import type { PeerEntry } from './federation-config.js'
@@ -94,7 +95,7 @@ export function parsePeerClaimStartResult(body: Record<string, unknown>): StartR
     ...(body['identity'] ? { identity: body['identity'] as SessionIdentity } : {}),
     runtimeId: body['runtimeId'],
     hostSessionId: body['hostSessionId'],
-    status: body['status'],
+    status: parseHrcRuntimeStatus(body['status']),
     supportsInFlightInput: body['supportsInFlightInput'],
     claim: {
       ...(claim['identity'] ? { identity: claim['identity'] as SessionIdentity } : {}),

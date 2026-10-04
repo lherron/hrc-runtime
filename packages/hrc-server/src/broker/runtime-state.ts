@@ -234,7 +234,7 @@ export function extractFullRuntimeControlState(
   return result
 }
 
-export function runtimeStatusFromInvocationState(state: string): string {
+export function runtimeStatusFromInvocationState(state: string): HrcRuntimeSnapshot['status'] {
   if (state === 'ready') return 'ready'
   if (state === 'turn_active') return 'busy'
   if (state === 'awaiting_input') return 'awaiting_input'

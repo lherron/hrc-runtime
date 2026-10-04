@@ -1,5 +1,5 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
-import type { HrcErrorCode, HrcRunRecord } from 'hrc-core'
+import { type HrcErrorCode, type HrcRunRecord, isRunTerminal } from 'hrc-core'
 import type { RunRow } from './rows.js'
 import { RunIdOwnershipRegistry } from './runtime-run-id-ownership.js'
 import {
@@ -27,14 +27,6 @@ export {
   type LiveSeatRefRow,
   type RuntimeChangeObserver,
 } from './runtime-repository.js'
-
-/** Statuses that may never overwrite a run that already carries completed_at (T-07656). */
-const NON_TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
-  'queued',
-  'accepted',
-  'started',
-  'running',
-])
 
 const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
   { key: 'hostSessionId', column: 'host_session_id' },
@@ -465,7 +457,7 @@ export class RunRepository {
     let effective: RunUpdatePatch = patch
     if (
       patch.status !== undefined &&
-      NON_TERMINAL_RUN_STATUSES.has(patch.status) &&
+      !isRunTerminal({ status: patch.status }) &&
       patch.completedAt !== null
     ) {
       const current = this.getByRunId(runId)
@@ -485,7 +477,11 @@ export class RunRepository {
     return this.getByRunId(runId)
   }
 
-  updateStatus(runId: string, status: string, updatedAt: string): HrcRunRecord | null {
+  updateStatus(
+    runId: string,
+    status: HrcRunRecord['status'],
+    updatedAt: string
+  ): HrcRunRecord | null {
     return this.update(runId, { status, updatedAt })
   }
 
@@ -503,7 +499,7 @@ export class RunRepository {
   markCompleted(
     runId: string,
     updates: {
-      status: string
+      status: HrcRunRecord['status']
       completedAt: string
       updatedAt: string
       errorCode?: HrcErrorCode | undefined

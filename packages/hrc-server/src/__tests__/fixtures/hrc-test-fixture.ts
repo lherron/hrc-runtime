@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
@@ -18,7 +19,7 @@ export type SeedRuntimeResult = ResolveSessionResult & {
 }
 
 export type SeedTmuxRuntimePatch = {
-  status: string
+  status: HrcRuntimeSnapshot['status']
   activeRunId?: string | undefined
 }
 

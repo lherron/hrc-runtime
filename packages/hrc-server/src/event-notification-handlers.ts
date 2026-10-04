@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isRunTerminal } from 'hrc-core'
 
 import { selectFinalTurnMessage } from 'hrc-core'
 import type { HrcDomainError } from 'hrc-core'
@@ -173,7 +174,7 @@ export function maybeCompleteInteractiveSemanticTurn(
 
   const runId = request.execution.runId
   const run = this.db.runs.getByRunId(runId)
-  if (!run || run.completedAt !== undefined || run.status === 'completed') {
+  if (!run || run.completedAt !== undefined || isRunTerminal(run)) {
     return
   }
   const runtime =

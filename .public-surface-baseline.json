@@ -2887,6 +2887,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcRunStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/status-contracts.ts",
+      "hash": "hrc-core|HrcRunStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcRuntimeArtifactRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-records.ts",
@@ -2987,6 +2995,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-records.ts",
       "hash": "hrc-core|HrcRuntimeSnapshot|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/status-contracts.ts",
+      "hash": "hrc-core|HrcRuntimeStatus|type",
       "count": 1
     },
     {
@@ -3123,6 +3139,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|HrcSessionSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSessionStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/status-contracts.ts",
+      "hash": "hrc-core|HrcSessionStatus|type",
       "count": 1
     },
     {
@@ -3563,6 +3587,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/monitor/index.ts",
       "hash": "hrc-core|isResolutionError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isRunTerminal",
+      "kind": "value",
+      "file": "packages/hrc-core/src/status-contracts.ts",
+      "hash": "hrc-core|isRunTerminal|value",
       "count": 1
     },
     {
@@ -4043,6 +4075,30 @@
       "kind": "value",
       "file": "packages/hrc-core/src/fences.ts",
       "hash": "hrc-core|parseFence|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "parseHrcRunStatus",
+      "kind": "value",
+      "file": "packages/hrc-core/src/status-contracts.ts",
+      "hash": "hrc-core|parseHrcRunStatus|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "parseHrcRuntimeStatus",
+      "kind": "value",
+      "file": "packages/hrc-core/src/status-contracts.ts",
+      "hash": "hrc-core|parseHrcRuntimeStatus|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "parseHrcSessionStatus",
+      "kind": "value",
+      "file": "packages/hrc-core/src/status-contracts.ts",
+      "hash": "hrc-core|parseHrcSessionStatus|value",
       "count": 1
     },
     {

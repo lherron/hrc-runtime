@@ -7,7 +7,7 @@
  * the T-01946 awaiting-input park/resume, the run-mismatch unwedge, and the
  * HRC-derived turn lifecycle event emission.
  */
-import { HrcErrorCode, type HrcLifecycleEvent } from 'hrc-core'
+import { HrcErrorCode, type HrcLifecycleEvent, type HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
@@ -130,7 +130,7 @@ export function markRuntimeInputResumed(
 export function setRuntimeStatus(
   db: HrcDatabase,
   runtimeId: string,
-  status: string,
+  status: HrcRuntimeSnapshot['status'],
   occurredAt: string,
   updatedAt: string
 ): void {

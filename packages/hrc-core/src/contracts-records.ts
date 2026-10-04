@@ -4,6 +4,7 @@ import type { HrcLaunchEnvConfig, HrcRuntimeIntent } from './contracts-intents.j
 import type { HrcErrorCode } from './errors.js'
 import type { HrcSessionRef } from './selectors.js'
 import type { SessionIdentity, SessionMetadata } from './session-metadata.js'
+import type { HrcRunStatus, HrcRuntimeStatus, HrcSessionStatus } from './status-contracts.js'
 
 export type HrcHookBridgeConfig = {
   kind: string
@@ -101,7 +102,7 @@ export type HrcSessionRecord = {
   scopeRef: string
   laneRef: string
   generation: number
-  status: string
+  status: HrcSessionStatus
   priorHostSessionId?: string | undefined
   createdAt: string
   updatedAt: string
@@ -146,7 +147,7 @@ export type HrcRuntimeSnapshot = {
   harness?: HrcHarness | undefined
   /** Legacy adapter identity. Producer-selected v2 executions leave this absent. */
   provider?: HrcProvider | undefined
-  status: string
+  status: HrcRuntimeStatus
   /** Causal timestamp of the most recent runtime status transition. */
   statusChangedAt?: string | undefined
   /** Opaque tmux session metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */
@@ -279,15 +280,7 @@ export type HrcRunRecord = {
   laneRef: string
   generation: number
   transport: string
-  status:
-    | 'accepted'
-    | 'started'
-    | 'running'
-    | 'completed'
-    | 'failed'
-    | 'cancelled'
-    | 'zombie'
-    | string
+  status: HrcRunStatus
   acceptedAt?: string | undefined
   startedAt?: string | undefined
   completedAt?: string | undefined

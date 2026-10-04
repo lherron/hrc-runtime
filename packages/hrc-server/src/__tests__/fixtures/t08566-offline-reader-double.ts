@@ -17,6 +17,7 @@
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcServerTestFixture } from './hrc-test-fixture'
 
@@ -249,7 +250,7 @@ export async function seedOfflineRuntime(
   opts: {
     lastProjectedSeq?: number
     capability?: boolean
-    status?: string
+    status?: HrcRuntimeSnapshot['status']
     exitCode?: 0 | 2
     responseMutations?: ReaderResponseMutation[]
   } = {}

@@ -1,4 +1,4 @@
-import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
+import { HrcBadRequestError, HrcErrorCode, parseHrcSessionStatus } from 'hrc-core'
 import type { HrcLifecycleEvent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import { type HrcDatabase, readSessionIdentity } from 'hrc-store-sqlite'
 
@@ -45,7 +45,7 @@ export function mapSessionRow(row: SessionRow, db?: HrcDatabase): HrcSessionReco
     ...(identity ? { identity } : {}),
     laneRef: row.lane_ref,
     generation: row.generation,
-    status: row.status,
+    status: parseHrcSessionStatus(row.status),
     priorHostSessionId: row.prior_host_session_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

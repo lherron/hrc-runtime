@@ -68,7 +68,7 @@ export type LifecycleContext = {
 function applyTerminalRuntimeState(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
-  params: { status: string; now: string; diagnostic: Record<string, unknown> }
+  params: { status: HrcRuntimeSnapshot['status']; now: string; diagnostic: Record<string, unknown> }
 ): void {
   db.runtimes.update(runtime.runtimeId, {
     status: params.status,

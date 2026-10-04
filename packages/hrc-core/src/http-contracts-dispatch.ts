@@ -1,5 +1,6 @@
 import type { HrcAttachmentRef as AttachmentRef } from './placement-conventions.js'
 import type { SessionIdentity } from './session-metadata.js'
+import type { HrcRuntimeStatus } from './status-contracts.js'
 
 /**
  * Shared HTTP wire request/response DTOs consumed by both hrc-server and hrc-sdk.
@@ -116,7 +117,7 @@ export type EnsureRuntimeResponse = {
   runtimeId: string
   hostSessionId: string
   transport: 'tmux'
-  status: string
+  status: HrcRuntimeStatus
   supportsInFlightInput: boolean
   tmux?: {
     sessionId: string
@@ -231,7 +232,7 @@ export type StartRuntimeResponse = (
       runtimeId: string
       hostSessionId: string
       transport: 'headless'
-      status: string
+      status: HrcRuntimeStatus
       supportsInFlightInput: boolean
     }
 ) & {
@@ -292,7 +293,7 @@ export type OpenBrokerSessionResponse = {
   generation: number
   runtimeId: string
   transport: 'headless'
-  status: string
+  status: HrcRuntimeStatus
   /**
    * Frozen invocation format read from HRC's persisted broker invocation, never
    * echoed from the request. Older HRC servers omit this compatibility field.

@@ -1,6 +1,7 @@
 import type { HrcRuntimePresentationRecord } from './contracts-records.js'
 import type { AspContractPackage } from './contracts-status.js'
 import type { SessionIdentity, SessionMetadata } from './session-metadata.js'
+import type { HrcRuntimeStatus } from './status-contracts.js'
 
 export const HRC_FIRST_TURN_MISSING_EVENT = 'first_turn_missing'
 export const HRC_FIRST_TURN_MISSING_DIAGNOSTICS_EVENT = 'first_turn_missing.diagnostics'
@@ -154,7 +155,7 @@ export type HrcPresentationRuntimeRow = {
   scopeRef: string
   laneRef: string
   generation: number
-  status: string
+  status: HrcRuntimeStatus
   /** Absent for generations created before the record shipped (§5.5). */
   presentation?: HrcRuntimePresentationRecord | undefined
   tmux?: HrcPresentationTmuxTarget | undefined

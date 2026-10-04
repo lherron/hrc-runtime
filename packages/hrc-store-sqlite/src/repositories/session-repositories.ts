@@ -295,7 +295,11 @@ export class SessionRepository {
     return this.listByFilters({ scopeRef, laneRef })
   }
 
-  updateStatus(hostSessionId: string, status: string, updatedAt: string): HrcSessionRecord | null {
+  updateStatus(
+    hostSessionId: string,
+    status: HrcSessionRecord['status'],
+    updatedAt: string
+  ): HrcSessionRecord | null {
     execute(
       this.db,
       'UPDATE sessions SET status = ?, updated_at = ? WHERE host_session_id = ?',

@@ -19,6 +19,7 @@ import type {
   RestartStyle,
   StartRuntimeResponse,
 } from './http-contracts-dispatch.js'
+import type { HrcRuntimeStatus } from './status-contracts.js'
 
 export type OperatorAttachDescriptor = {
   transport: 'tmux'
@@ -286,7 +287,7 @@ export type InspectRuntimeResponse = {
    * `provider` above stays the HRC harness-family label, not the model provider.
    */
   reportedModel: HrcReportedModelIdentity | null
-  status: string
+  status: HrcRuntimeStatus
   createdAt: string
   createdAgeSec: number
   lastActivityAt: string | null
@@ -571,7 +572,7 @@ export type BrokerInspectResponse = {
   transport: string
   /** Legacy adapter identity; absent for producer-selected v2 runtimes. */
   harness?: HrcHarness | undefined
-  status: string
+  status: HrcRuntimeStatus
   lastActivityAt: string | null
   /** Broker read model (broker-backed runtimes only). Passed through verbatim. */
   invocations?: unknown[] | undefined

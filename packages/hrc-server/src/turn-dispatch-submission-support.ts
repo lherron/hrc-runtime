@@ -1,4 +1,4 @@
-import { HrcRuntimeUnavailableError } from 'hrc-core'
+import { type HrcRunStatus, HrcRuntimeUnavailableError, isRunTerminal } from 'hrc-core'
 import type {
   DispatchTurnResponse,
   DispatchTurnTerminalOutcome,
@@ -230,7 +230,7 @@ export async function waitForSubmissionTerminal(
     | Pick<HrcSubmissionResponse, 'disposition' | 'terminal'>
     | undefined => {
     const run = server.db.runs.getByRunId(input.runId)
-    return run !== null && terminalOutcome(run.status) !== undefined ? {} : undefined
+    return run !== null && isRunTerminal(run) ? {} : undefined
   }
 
   return await new Promise((resolve, reject) => {
@@ -327,7 +327,8 @@ export function joinedOutcome(
   return status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'cancelled'
 }
 
-export function terminalOutcome(status: string): DispatchTurnTerminalOutcome | undefined {
+export function terminalOutcome(status: HrcRunStatus): DispatchTurnTerminalOutcome | undefined {
+  if (!isRunTerminal({ status })) return undefined
   return status === 'completed' ||
     status === 'failed' ||
     status === 'cancelled' ||

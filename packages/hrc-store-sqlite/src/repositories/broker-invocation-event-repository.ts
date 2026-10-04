@@ -1,4 +1,5 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
+import { isRunTerminal, parseHrcRunStatus } from 'hrc-core'
 import {
   type HrcBrokerInvocationEventRecord,
   brokerToolResultBlobId,
@@ -35,16 +36,6 @@ import { ToolResultBlobRepository } from './tool-result-blob-repository.js'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isTerminalRunStatus(status: string): boolean {
-  return (
-    status === 'completed' ||
-    status === 'failed' ||
-    status === 'cancelled' ||
-    status === 'reaped' ||
-    status === 'coalesced'
-  )
 }
 
 type BrokerInvocationEventProjectionUpdate = {
@@ -226,7 +217,7 @@ export class BrokerInvocationEventRepository {
         'SELECT status, correlation_json FROM runs WHERE run_id = ?'
       )
       .get(runId)
-    if (!run?.correlation_json || isTerminalRunStatus(run.status)) {
+    if (!run?.correlation_json || isRunTerminal({ status: parseHrcRunStatus(run.status) })) {
       return envelopeJson
     }
 

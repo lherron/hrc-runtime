@@ -253,8 +253,8 @@ export function isCorruptAwaitingRuntime(runtime: HrcRuntimeSnapshot): boolean {
 export function deriveRuntimeStatusWithAwaiting(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
-  baseStatus: string
-): string {
+  baseStatus: HrcRuntimeSnapshot['status']
+): HrcRuntimeSnapshot['status'] {
   // Use any-open-bracket rather than scoping to activeRunId: at reattach the
   // runtime row may not yet carry activeRunId, and a parked TUI shows a question
   // regardless of which run owns it. The reaper guard, separately, scopes to the
