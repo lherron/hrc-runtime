@@ -167,24 +167,32 @@ export async function runBoundedSubprocess(
   let stdoutBytes = 0
   const readStdout =
     proc.stdout instanceof ReadableStream
-      ? readCapped(proc.stdout, (chunk) => {
-          stdoutBytes += chunk.byteLength
-          if (options.maxStdoutBytes !== undefined && stdoutBytes > options.maxStdoutBytes) {
-            rejectLimit(new SubprocessOutputLimitError(argv, options.maxStdoutBytes, stdoutBytes))
-            stopReading.abort()
-            return
-          }
-          stdout += decoder.decode(chunk, { stream: true })
-        }, stopReading.signal)
+      ? readCapped(
+          proc.stdout,
+          (chunk) => {
+            stdoutBytes += chunk.byteLength
+            if (options.maxStdoutBytes !== undefined && stdoutBytes > options.maxStdoutBytes) {
+              rejectLimit(new SubprocessOutputLimitError(argv, options.maxStdoutBytes, stdoutBytes))
+              stopReading.abort()
+              return
+            }
+            stdout += decoder.decode(chunk, { stream: true })
+          },
+          stopReading.signal
+        )
       : Promise.resolve()
   const stderrDecoder = new TextDecoder()
   let stderr = ''
-  const readStderr = readCapped(proc.stderr, (chunk) => {
-    stderr += stderrDecoder.decode(chunk, { stream: true })
-    if (options.stderrTailChars !== undefined && stderr.length > options.stderrTailChars) {
-      stderr = stderr.slice(-options.stderrTailChars)
-    }
-  }, stopReading.signal)
+  const readStderr = readCapped(
+    proc.stderr,
+    (chunk) => {
+      stderr += stderrDecoder.decode(chunk, { stream: true })
+      if (options.stderrTailChars !== undefined && stderr.length > options.stderrTailChars) {
+        stderr = stderr.slice(-options.stderrTailChars)
+      }
+    },
+    stopReading.signal
+  )
 
   let exitCode: number | null
   try {
