@@ -464,11 +464,13 @@ describe('T-07136 EPR durable event, reattach, and detached semantics', () => {
       'established'
     )
     const grant = db.externalRegistrationGrants.getByRegistrationId(REGISTRATION_ID)!
-    markExternalParticipantDetached(server, grant, 25, { reason: 'socket_closed' })
+    // The linger must outlast three probe misses plus one redial even on a loaded
+    // runner; at 25ms a slow tick expired it before the second dial (dials === 1).
+    markExternalParticipantDetached(server, grant, 250, { reason: 'socket_closed' })
     server.options.externalParticipantProbeIntervalMs = 1
     server.options.externalParticipantProbeDeadlineMs = 10
     server.options.externalParticipantProbeFailureThreshold = 3
-    server.options.externalParticipantLingerMs = 25
+    server.options.externalParticipantLingerMs = 250
     server.options.externalParticipantRendezvousRetryMs = 1
     const client = new FailingProbeClient(delivery.invocationId, [])
     let dials = 0
