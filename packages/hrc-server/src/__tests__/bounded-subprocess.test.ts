@@ -48,6 +48,33 @@ describe('runBoundedSubprocess (T-10226)', () => {
     expect(performance.now() - started).toBeLessThan(5_000)
   })
 
+  it('stops reading past maxStdoutBytes, so an orphaned writer dies of a closed pipe', async () => {
+    // Without processGroup the kill reaches only the shell; its background
+    // writer kept the pipe and the reader drained it for the rest of the
+    // process. In the server test tier that leaked `yes` preceded every Bun
+    // SIGTRAP (T-10232 phase 3).
+    const pidFile = join(mkdtempSync(join(tmpdir(), 'bounded-subprocess-')), 'writer.pid')
+    const run = runBoundedSubprocess(['sh', '-c', `yes & echo $! > ${pidFile}; wait`], {
+      timeoutMs: 10_000,
+      maxStdoutBytes: 4096,
+    })
+    await expect(run).rejects.toBeInstanceOf(SubprocessOutputLimitError)
+    const writer = Number(readFileSync(pidFile, 'utf8').trim())
+    expect(writer).toBeGreaterThan(0)
+    const deadline = performance.now() + 2_000
+    let alive = true
+    while (alive && performance.now() < deadline) {
+      await Bun.sleep(50)
+      try {
+        process.kill(writer, 0)
+      } catch {
+        alive = false
+      }
+    }
+    if (alive) process.kill(writer, 'SIGKILL')
+    expect(alive).toBe(false)
+  })
+
   it('kills the whole process group on timeout when processGroup is set', async () => {
     const pidFile = join(mkdtempSync(join(tmpdir(), 'bounded-subprocess-')), 'grandchild.pid')
     const run = runBoundedSubprocess(['sh', '-c', `sleep 30 & echo $! > ${pidFile}; wait`], {

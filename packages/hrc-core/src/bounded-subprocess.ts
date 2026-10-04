@@ -95,11 +95,31 @@ export function killSubprocess(pid: number, processGroup: boolean): void {
   }
 }
 
+/**
+ * Read until EOF or `stop`. Stopping cancels the stream, which closes our end
+ * of the pipe: a writer the kill did not reach (a background grandchild when
+ * processGroup is unset) then dies of SIGPIPE instead of being drained for the
+ * rest of the process's life.
+ */
 async function readCapped(
   stream: ReadableStream<Uint8Array>,
-  onChunk: (chunk: Uint8Array) => void
+  onChunk: (chunk: Uint8Array) => void,
+  stop: AbortSignal
 ): Promise<void> {
-  for await (const chunk of stream) onChunk(chunk)
+  const reader = stream.getReader()
+  const cancel = () => {
+    reader.cancel().catch(() => {})
+  }
+  stop.addEventListener('abort', cancel, { once: true })
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done || stop.aborted) return
+      onChunk(value)
+    }
+  } finally {
+    stop.removeEventListener('abort', cancel)
+  }
 }
 
 export async function runBoundedSubprocess(
@@ -141,6 +161,7 @@ export async function runBoundedSubprocess(
     }
   }
 
+  const stopReading = new AbortController()
   const decoder = new TextDecoder()
   let stdout = ''
   let stdoutBytes = 0
@@ -150,10 +171,11 @@ export async function runBoundedSubprocess(
           stdoutBytes += chunk.byteLength
           if (options.maxStdoutBytes !== undefined && stdoutBytes > options.maxStdoutBytes) {
             rejectLimit(new SubprocessOutputLimitError(argv, options.maxStdoutBytes, stdoutBytes))
+            stopReading.abort()
             return
           }
           stdout += decoder.decode(chunk, { stream: true })
-        })
+        }, stopReading.signal)
       : Promise.resolve()
   const stderrDecoder = new TextDecoder()
   let stderr = ''
@@ -162,7 +184,7 @@ export async function runBoundedSubprocess(
     if (options.stderrTailChars !== undefined && stderr.length > options.stderrTailChars) {
       stderr = stderr.slice(-options.stderrTailChars)
     }
-  })
+  }, stopReading.signal)
 
   let exitCode: number | null
   try {
@@ -174,6 +196,7 @@ export async function runBoundedSubprocess(
     // SIGTERM is what the AbortSignal already sent; escalate rather than leave
     // a wedged child holding the pipes.
     killSubprocess(proc.pid, processGroup)
+    stopReading.abort()
     throw error
   }
 
