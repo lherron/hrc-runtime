@@ -60,7 +60,8 @@ required_tests:
   - T-10232 E0 refusal cells preserve session invocation broker and pane for freshContext plus format mismatch or unauthorized preempt
   - T-10232 same-key changed-format refusal and matching replay without a new run
   - T-10232 drain closure waits through leased routing and refuses new submissions on every door
-  - T-10232 write-then-throw and timeout remain possible_write with protection preserved and subsequent committed landing projectable
+  - T-10232 format2 uncertainty and unfenced projection throws remain possible_write without pipeline terminalization, preserve route protection, and permit subsequent committed landing projection
+  - T-10232 format1 timeout remains possible_write in the pipeline while preserving the route's failed run and timed-out input fence, with late events skipped_fenced as in broker-input-fence.test.ts and no additional pipeline state changes
   - T-10232 cold-launch carry per intent and internal cold-enqueue restart/drain coverage with existing queue identity preserved
   - T-10232 seal check in just check prevents executor bypasses
   - T-10232 each phase preserves just verify and supplies installed per-door admission-event and delivery evidence, including live tmux handoff and literal paste-then-Enter
