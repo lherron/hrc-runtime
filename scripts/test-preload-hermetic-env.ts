@@ -11,16 +11,34 @@
  */
 import { afterEach, beforeEach } from 'bun:test'
 
+import { hermeticTestEnvironment, repositoryRedirectsIn } from './lib/hermetic-test-env.ts'
+
 /**
  * T-08137: tests that spawn a real `hrc server serve` hand it this process's
  * environment, and the daemon's production ledger client resolves wrkq from
  * HRC_WRKQ_DB — which operator shells export as the fleet wrkqd. A fixture
- * daemon then posted `server.*` facts onto the live hrc-runtime timeline. Every
- * test process carries an unreachable locator instead (connection refused, no
- * wait); HRC_WRKQ_DB also overrides any inherited WRKQ_DB_PATH. In-process
- * servers already default to the unreachable ledger and are unaffected.
+ * daemon then posted `server.*` facts onto the live hrc-runtime timeline.
+ *
+ * T-10226: writing process.env here reaches in-process readers and children
+ * spawned with an explicit `env: process.env`, but NOT a child spawned without
+ * one — bun hands those the environment the process started with. So the
+ * environment is fixed before bun starts, by scripts/hermetic-test.ts (every
+ * package `test` script). This preload repeats it for in-process readers and
+ * refuses a run that bypassed the wrapper while git has pointed it at a
+ * repository: under a hook, every unpatched fixture `git` spawn would act on
+ * the shared checkout (1432e482 rewrote hrc-runtime's .git/config that way).
  */
-process.env['HRC_WRKQ_DB'] = 'rpc://127.0.0.1:1'
+const redirects = repositoryRedirectsIn(process.env)
+if (redirects.length > 0) {
+  throw new Error(
+    `test process inherited ${redirects.join(', ')}; run tests through \`bun run test\` (scripts/hermetic-test.ts), which starts bun test without them`
+  )
+}
+const hermetic = hermeticTestEnvironment(process.env)
+for (const key of Object.keys(process.env)) {
+  if (!(key in hermetic)) Reflect.deleteProperty(process.env, key)
+}
+process.env['HRC_WRKQ_DB'] = hermetic['HRC_WRKQ_DB']
 
 // Name mirrors ASP_DEFAULT_TASK_ENV in agent-spaces packages/agent-scope
 // (hardcoded here so the preload stays dependency-free for every package).

@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "bun test --parallel=4",
+    "test": "bun ../../scripts/hermetic-test.ts --parallel=4",
     "prepack": "bun ../../scripts/strip-bun-exports.ts",
     "postpack": "git checkout HEAD -- package.json"
   },

@@ -23,7 +23,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun ../../scripts/hermetic-test.ts"
   },
   "dependencies": {
     "hrc-core": "*",
