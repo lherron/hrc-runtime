@@ -1,0 +1,86 @@
+# Post-push verify (T-10161). `just verify` runs here after a push to main,
+# not in the pre-push hook. The runner is a self-hosted launchd service on mini.
+# A failure becomes a failed check.run {repo: <repo>-postpush, recipe: verify}
+# node, and the resident's post-push-verify watch steers on it.
+name: post-push-verify
+
+on:
+  push:
+    branches: [main]
+
+# Only the newest pushed head runs; a newer push cancels the older run.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: [self-hosted, macOS, praesidium-verify]
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -euo pipefail {0}
+    env:
+      REPO: ${{ github.event.repository.name }}
+      SHA: ${{ github.sha }}
+      BEFORE: ${{ github.event.before }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      # The checkout is a linked worktree of mini's canonical clone, so wrkp
+      # resolves it to the registered project while its directory name keys
+      # check.run as <repo>-postpush. It persists between runs, so build caches survive.
+      CANON: /Users/lherron/praesidium/${{ github.event.repository.name }}
+      WORKTREE: /Users/lherron/praesidium/var/postpush/${{ github.event.repository.name }}-postpush
+      LOCK: /Users/lherron/praesidium/var/state/postpush/verify.lock
+      # A launchd job cannot write mini's wrkq-artifacts (an external volume);
+      # e2e run records go to the internal disk instead.
+      FOUNDRY_ARTIFACTS: /Users/lherron/praesidium/var/postpush/art
+      # Private cargo git deps (cardo) fetch over mini's ssh key.
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: url.git@github.com:lherron/.insteadOf
+      GIT_CONFIG_VALUE_0: https://github.com/lherron/
+    steps:
+      - name: Check out the pushed head
+        run: |
+          git -C "$CANON" fetch --quiet origin
+          [ -d "$WORKTREE" ] || git -C "$CANON" worktree add --detach "$WORKTREE" "$SHA"
+          cd "$WORKTREE"
+          git checkout --quiet --detach --force "$SHA"
+          git clean -fdq
+          echo "verifying $REPO ${BEFORE:0:12}..${SHA:0:12} in $WORKTREE"
+
+      # One verify at a time on mini (it hosts the canonical wrkq DB). A job
+      # waits for the machine-wide lock; it never skips. Verify runs in its own
+      # session: when a newer push cancels this run, the trap SIGKILLs that
+      # session before wrkp can post, so a superseded run never reads as red.
+      # A hang past 45 min gets TERM instead, which wrkp posts as a failure.
+      - name: Verify
+        working-directory: ${{ env.WORKTREE }}
+        run: |
+          mkdir -p "$(dirname "$LOCK")"
+          if ! lockf -t 0 "$LOCK" true; then
+            echo "$(date -u +%FT%TZ) verify lock held by another run; waiting"
+          fi
+          perl -MPOSIX -e 'POSIX::setsid() or die "setsid: $!"; exec @ARGV or die "exec: $!"' \
+            lockf "$LOCK" sh -c 'echo "$(date -u +%FT%TZ) verify lock acquired"; exec nice -n 10 wrkp just verify </dev/null' &
+          verify=$!
+          perl -e 'sleep 2700; print "verify hung for 45 min; terminating\n"; kill "TERM", -$ARGV[0]' "$verify" &
+          watchdog=$!
+          trap 'echo "$(date -u +%FT%TZ) run cancelled; dropping its verify unposted"; kill -KILL -- -"$verify" "$watchdog" 2>/dev/null; exit 1' INT TERM
+          rc=0; wait "$verify" || rc=$?
+          kill "$watchdog" 2>/dev/null || true
+          exit "$rc"
+
+      - name: Record the run
+        if: always()
+        working-directory: ${{ env.WORKTREE }}
+        env:
+          STATUS: ${{ job.status }}
+        run: |
+          wrkp post "$REPO" --type verify.postpush \
+            --key "verify.postpush:${{ github.run_id }}:${{ github.run_attempt }}" \
+            -m "post-push verify $STATUS at ${SHA:0:12}" \
+            --attr source=github-actions --attr node=mini \
+            --attr repo="$REPO-postpush" --attr status="$STATUS" \
+            --attr sha="$SHA" --attr before="$BEFORE" --attr range="$BEFORE..$SHA" \
+            --attr pusher="${{ github.actor }}" --attr run_url="$RUN_URL" || true

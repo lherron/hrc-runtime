@@ -100,7 +100,7 @@ HRC transcript search is a resident hrc-server-maintained, rebuildable bounded p
 
 ## hrc-runtime.verify-gate
 
-The declared verify gate checks architecture records and their generated projections in addition to build, structural checks, lint, types, tests, and the fixture-owned federation loopback corpus. Enforcement note (T-08054): the pre-push path captures stdin once, runs lock-hygiene first under `piped: true`, replays the refs through the unchanged code-validation gate, and posts `git.push` only at the successful tail; tracked executable `.githooks/post-commit` enters the best-effort `git.commit` producer.
+The declared verify gate checks architecture records and their generated projections in addition to build, structural checks, lint, types, tests, and the fixture-owned federation loopback corpus. Enforcement note (T-10161): `just verify` runs after each push to main on mini's self-hosted runner (`.github/workflows/post-push-verify.yml`), not in a git hook. The pre-push path runs lock-hygiene and architecture-records under `piped: true`, then hands the refs to the best-effort `git.push` producer; tracked executable `.githooks/post-commit` enters the best-effort `git.commit` producer.
 
 ## hrc-runtime.viewer-presentation-sidecar
 

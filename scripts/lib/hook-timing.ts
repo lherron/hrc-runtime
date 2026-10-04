@@ -7,7 +7,7 @@
  * hand the result to `scripts/record-hook-timing.ts`; nothing here may change
  * a hook's exit code.
  *
- * The shims never read pre-push stdin (code-validation is its only consumer),
+ * The shims never read pre-push stdin (git-push-fact is its only consumer),
  * so the change classification comes from the gate itself: every
  * `run-if-code-changed.ts` invocation leaves its judgement in a per-run file
  * under the Git common directory, keyed by the run id the shim exported.

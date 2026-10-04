@@ -55,25 +55,13 @@ pre-push:
     architecture-records:
       priority: 2
       run: bun scripts/check-architecture-records.ts
-    code-validation:
+    # `just verify` runs after the push on mini's self-hosted runner (T-10161,
+    # .github/workflows/post-push-verify.yml); the hook only reports the push.
+    # One stdin consumer: Lefthook cannot fan pre-push stdin out to commands.
+    git-push-fact:
       priority: 3
       use_stdin: true
-      # TMPDIR=/tmp is load-bearing on macOS: the default
-      # /var/folders/.../T/ prefix is 49 chars, which puts hrc-server's test
-      # sockets at ~96 of the 104-char sun_path limit. The longest-named
-      # fixtures cross it, so the gate fails on a CLEAN tree (8/2401 on
-      # 2026-08-21) and the failure set drifts as fixtures are renamed.
-      # The fast tiers still contain CLI contract tests that discover a daemon.
-      # Provision and export the same isolated daemon + fixture agent homes as
-      # `just verify`; otherwise the hook silently borrows the operator's live
-      # environment and changes result across hosts (T-07506).
-      # One stdin consumer is intentional: Lefthook cannot fan pre-push stdin out to commands.
-      run: >-
-        sh -c 'refs=$(cat);
-        printf "%s\n" "$refs" | bun scripts/run-if-code-changed.ts pre-push -- sh -c '"'"'bun scripts/install-workspace-deps.ts && bash scripts/dev-env.sh up && eval "$(bash scripts/dev-env.sh env)" && HRC_PRE_PUSH=1 TMPDIR=/tmp bun run test:fast'"'"' {files}; rc=$?;
-        if [ $rc -eq 0 ] && command -v wrkp >/dev/null 2>&1; then
-          printf "%s\n" "$refs" | wrkp git push "$@" || true;
-        fi; exit $rc' sh {0}
+      run: sh -c 'command -v wrkp >/dev/null 2>&1 && wrkp git push "$@" || true' sh {0}
 
 post-commit:
   commands:

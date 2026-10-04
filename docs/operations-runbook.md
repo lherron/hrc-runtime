@@ -235,7 +235,7 @@ three of them were rediscovered by three different agents in a single evening
 
 ### 1. The harness guard: `hrc server serve` refuses inside a coding agent
 
-`just verify` and the pre-push `code-validation` hook both boot an ephemeral
+`just verify` boots an ephemeral
 daemon through `scripts/dev-env.sh`, and `hrc server serve` REFUSES to start
 when it is a descendant of a coding-agent harness. The caller sees a bare
 `exit status 1`; the real message is only in

@@ -43,7 +43,7 @@ fi
 
 # Timed, not exec'd, so the run can post one hook.settled fact (T-09847).
 # Lefthook runs exactly as before, with stdin passed through untouched: the
-# shim never reads it (pre-push's code-validation is its only consumer). The
+# shim never reads it (pre-push's git-push-fact is its only consumer). The
 # hook exits with lefthook's exact status; the recorder is best effort and
 # its status is ignored, so a missing bun or wrkp never changes the result.
 now_ms() {
