@@ -15,6 +15,7 @@ Read `~/praesidium/build_deploy_guide.md` before building, installing, or promot
 - Prefer live-code discovery over static prose: `bun scripts/find-entry-points.ts <topic>`, `bun scripts/explain-area.ts <file|dir>`.
 - Docs index, one line per page: [docs/README.md](docs/README.md) (isolated-daemon smoke: [docs/isolated-daemon-smoke-recipe.md](docs/isolated-daemon-smoke-recipe.md)).
 - Enablement lessons: [docs/agent-enablement-changelog.md](docs/agent-enablement-changelog.md#retro-cadence).
+- Rule → enforcer table (what fails when a rule is broken): [docs/rule-enforcers.md](docs/rule-enforcers.md).
 - Standalone HTML specs go in `docs/html/` (`just serve-docs`).
 - `.hookignore` (gitignore syntax) lists the paths that cannot change what code
   validation proves — `docs/`, `architecture/`, and prose extensions. A change
