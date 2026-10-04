@@ -109,7 +109,14 @@ async function createLiveLease(suffix: string): Promise<Lease> {
   if (!sessionId || !windowId || !paneId) {
     throw new Error(`tmux did not return a complete lease identity: ${identity.stdout}`)
   }
-  const liveness = await createTmuxManager({ socketPath }).inspectPaneLiveness(paneId)
+  // tmux starts `sleep 600` through the default shell, so a loaded runner can
+  // briefly observe the shell before it execs sleep. Wait for the exec.
+  const tmuxManager = createTmuxManager({ socketPath })
+  let liveness = await tmuxManager.inspectPaneLiveness(paneId)
+  for (let attempt = 0; attempt < 50 && liveness?.currentCommand !== 'sleep'; attempt++) {
+    await Bun.sleep(100)
+    liveness = await tmuxManager.inspectPaneLiveness(paneId)
+  }
   expect(liveness).toMatchObject({ alive: true, dead: false, currentCommand: 'sleep' })
   return { socketPath, sessionId, sessionName, windowId, paneId }
 }
