@@ -8,6 +8,7 @@ import {
   spawnAttachDescriptor,
   waitForAttachProcess,
 } from './runtime-select.js'
+import { resumeOptions, startOptions } from './scope-verb-options.js'
 import {
   buildManagedRunIntent,
   buildManagedStartIntent,
@@ -90,21 +91,7 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
   const projectIdOverride = parseFlag(args, '--project-id')
   const projectRootOverride = parseFlag(args, '--project-root')
   const cwdOverride = parseFlag(args, '--cwd')
-  const prompt = await parseScopePrompt(args, {
-    command: 'run',
-    passthroughFlags: [
-      '--no-attach',
-      '--prior',
-      '--host-session',
-      '--dry-run',
-      '--debug',
-      '--no-register',
-      '--json',
-      '--project-id',
-      '--project-root',
-      '--cwd',
-    ],
-  })
+  const prompt = await parseScopePrompt(args, { command: 'run', options: resumeOptions() })
 
   let sessionRef: string | undefined
   try {
@@ -266,26 +253,7 @@ export async function cmdStart(args: string[]): Promise<void> {
   if (onConflict !== undefined && onConflict !== 'suffix' && onConflict !== 'reject') {
     fatal('start --on-conflict accepts "suffix" or "reject"')
   }
-  const prompt = await parseScopePrompt(args, {
-    command: 'start',
-    passthroughFlags: [
-      '--force-restart',
-      '--new-session',
-      '--dry-run',
-      '--debug',
-      '--no-register',
-      '--json',
-      '--wait',
-      '--idempotency-key',
-      '--project-id',
-      '--project-root',
-      '--cwd',
-      '--viewer-window',
-      '--no-viewer',
-      '--app-server-viewer',
-      '--on-conflict',
-    ],
-  })
+  const prompt = await parseScopePrompt(args, { command: 'start', options: startOptions() })
 
   let sessionRef: string | undefined
   try {

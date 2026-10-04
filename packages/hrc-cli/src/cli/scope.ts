@@ -1,6 +1,7 @@
 import { readSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve as resolvePath } from 'node:path'
 
+import type { Option } from 'commander'
 import {
   HrcDomainError,
   HrcErrorCode,
@@ -23,6 +24,7 @@ import {
 import type { ProfileAwareResolvedScopeInput, ResolvedAgentHarness } from 'hrc-sdk'
 
 import { dotEnvProjectNote, dotEnvSource } from '../cli-runtime/dotenv-sources.js'
+import { passthroughFlagArity } from './scope-verb-options.js'
 import { fatal, formatAgentNotFound, writePlacementWarnings } from './shared.js'
 
 export function createDefaultRuntimeIntent(
@@ -467,29 +469,17 @@ export async function buildManagedStartIntent(
 }
 
 /**
- * Passthrough flags that consume the NEXT argv token as their value.
- *
- * Declared once, next to the parser that honours it. A value-taking flag missing
- * from this set does not fail loudly — its value is silently read as a positional
- * prompt, which surfaces as a baffling "accepts at most one positional prompt"
- * (T-07118). Any new `--flag <value>` added to a scope command belongs here.
+ * Find the prompt among a scope verb's legacy argv. Every other flag the verb
+ * declares is stepped over, with its value when it takes one; the arity comes
+ * from the verb's Option declaration, so a new `--flag <value>` cannot have its
+ * value read as the prompt (T-07118, 68508938).
  */
-const VALUE_TAKING_PASSTHROUGH_FLAGS = new Set([
-  '--project-id',
-  '--project-root',
-  '--cwd',
-  '--wait',
-  '--idempotency-key',
-  '--viewer-window',
-  '--on-conflict',
-  '--host-session',
-])
-
 export async function parseScopePrompt(
   args: string[],
   options: {
     command: 'run' | 'start'
-    passthroughFlags: string[]
+    /** The verb's declared options (scope-verb-options.ts); `-p`/`--prompt-file` are read here. */
+    options: readonly Option[]
   }
 ): Promise<string | undefined> {
   let prompt: string | undefined
@@ -509,14 +499,16 @@ export async function parseScopePrompt(
     source = from
   }
 
+  const passthrough = passthroughFlagArity(options.options)
   for (let i = 1; i < args.length; i++) {
     const arg = args[i]
     if (!arg) continue
 
-    if (options.passthroughFlags.includes(arg)) {
+    const takesValue = passthrough.get(arg)
+    if (takesValue !== undefined) {
       // Value-taking passthrough flags must also consume their value, or the
       // value lands in the positional-prompt slot.
-      if (VALUE_TAKING_PASSTHROUGH_FLAGS.has(arg)) {
+      if (takesValue) {
         if (args[i + 1] === undefined) fatal(`${arg} requires a value`)
         i += 1
       }

@@ -11,6 +11,7 @@ import {
   spawnAttachDescriptor,
   waitForAttachProcess,
 } from './runtime-select.js'
+import { runOptions } from './scope-verb-options.js'
 import { buildManagedRunIntent, parseScopePrompt, resolveManagedScopeContext } from './scope.js'
 import { createClient, fatal } from './shared.js'
 
@@ -60,21 +61,7 @@ export async function cmdRun(
   const verbose = hasFlag(args, '--verbose') || hasFlag(args, '-v')
   const projectIdOverride = parseFlag(args, '--project-id')
   const projectRootOverride = parseFlag(args, '--project-root')
-  const prompt = await parseScopePrompt(args, {
-    command: 'run',
-    passthroughFlags: [
-      '--force-restart',
-      '--new-session',
-      '--dry-run',
-      '--debug',
-      '--no-register',
-      '--json',
-      '--verbose',
-      '-v',
-      '--project-id',
-      '--project-root',
-    ],
-  })
+  const prompt = await parseScopePrompt(args, { command: 'run', options: runOptions() })
 
   let sessionRef: string | undefined
   let attachHandoffReached = false

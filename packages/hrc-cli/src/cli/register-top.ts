@@ -34,6 +34,13 @@ import {
 } from './handlers-runtime.js'
 import { cmdAttach, cmdResumeContinuation, cmdRun, cmdStart } from './handlers-scope-cmd.js'
 import { cmdAdminStatus } from './handlers-server.js'
+import {
+  legacyArgvSchema,
+  resumeOptions,
+  runOptions,
+  startOptions,
+  unknownOptionSchema,
+} from './scope-verb-options.js'
 import { createClient } from './shared.js'
 
 function annotateTop(program: Command, name: string, metadata: CommandMetadataInput): void {
@@ -42,160 +49,71 @@ function annotateTop(program: Command, name: string, metadata: CommandMetadataIn
   annotateCommand(command, metadata)
 }
 
+/** Attach a scope verb's declared options (scope-verb-options.ts), keeping the builder chain. */
+function withOptions(command: Command, options: readonly Option[]): Command {
+  for (const option of options) command.addOption(option)
+  return command
+}
+
 export function registerTopLevelCommands(program: Command): void {
   // -- top-level commands (commander, Phase 6 T2b) -----------------------------
 
-  program
-    .command('start')
-    .description('start a managed runtime')
-    .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
-    .allowExcessArguments(true)
-    .allowUnknownOption(true)
-    .option('--force-restart', 'replace runtime with a fresh PTY; preserve the conversation')
-    .option('--new-session', 'rotate to a fresh host session before starting')
-    .option('--dry-run', 'daemon plan preview — no side effects')
-    .option('--debug', 'keep tmux shell alive after harness exits')
-    .option('--no-register', 'do not prompt to register cwd as a project marker')
-    .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
-    .option('--project-id <id>', 'override the inferred project id')
-    .option('--project-root <path>', 'override project root')
-    .option('--cwd <path>', 'set execution cwd without changing the resolved project root')
-    .option('--idempotency-key <key>', 'stable retry identity for the prompt dispatch')
-    .option('--viewer-window <key>', 'place this session viewer tab in the keyed window')
-    .option(
-      '--no-viewer',
-      'run headless with no operator viewer or terminal (codex: prepares through aspd when configured); refused if the scope already has a live viewer or TUI'
+  withOptions(
+    program
+      .command('start')
+      .description('start a managed runtime')
+      .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
+      .allowExcessArguments(true)
+      .allowUnknownOption(true),
+    startOptions()
+  ).action(async (_scope, _opts, cmd: Command) => {
+    // cmdStart/cmdRun use parseScopePrompt which handles positional
+    // prompts, -p, and --prompt-file.  Reconstruct the full legacy
+    // argv from commander's parsed positionals + options.
+    const positionals: string[] = cmd.args
+    const opts = cmd.opts()
+    const rawArgv = rawArgvForVerb(cmd, 'start', { offset: 1 })
+    assertNoUnknownOptions(rawArgv, unknownOptionSchema(cmd.options))
+    const args = toLegacyArgvForScopeCommand(
+      positionals,
+      opts,
+      rawArgv,
+      legacyArgvSchema(cmd.options)
     )
-    .option(
-      '--app-server-viewer',
-      'run codex on the headless app-server with the attachable tmux renderer viewer (prepares through aspd when configured); refused if the scope already has a live runtime without that viewer'
-    )
-    .addOption(
-      new Option(
-        '--on-conflict <policy>',
-        'suffix: claim the next free roster slot instead of hijacking a live :primary; reject: claim exactly this scope or refuse'
-      ).choices(['suffix', 'reject'])
-    )
-    .option('-p <text>', 'initial prompt to send to the harness')
-    .option('--prompt-file <path>', 'read initial prompt from a file')
-    .addOption(
-      new Option('--wait [mode]', 'wait for the prompt turn to start or become terminal')
-        .choices(['started', 'completed'])
-        .preset('completed')
-    )
-    .action(async (_scope, _opts, cmd: Command) => {
-      // cmdStart/cmdRun use parseScopePrompt which handles positional
-      // prompts, -p, and --prompt-file.  Reconstruct the full legacy
-      // argv from commander's parsed positionals + options.
-      const positionals: string[] = cmd.args
-      const opts = cmd.opts()
-      const rawArgv = rawArgvForVerb(cmd, 'start', { offset: 1 })
-      assertNoUnknownOptions(rawArgv, {
-        boolean: [
-          '--force-restart',
-          '--new-session',
-          '--dry-run',
-          '--debug',
-          '--no-register',
-          '--no-viewer',
-          '--app-server-viewer',
-          '--json',
-        ],
-        value: [
-          '--project-id',
-          '--project-root',
-          '--cwd',
-          '--idempotency-key',
-          '--viewer-window',
-          '--on-conflict',
-          '-p',
-          '--prompt-file',
-        ],
-        optionalValue: ['--wait'],
-      })
-      const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
-        strings: [
-          'project-id',
-          'project-root',
-          'cwd',
-          'prompt-file',
-          'idempotency-key',
-          'viewer-window',
-          'on-conflict',
-          'wait',
-        ],
-        booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json', 'app-server-viewer'],
-        negatedBooleans: ['register', 'viewer'],
-      })
-      await cmdStart(args)
-    })
+    await cmdStart(args)
+  })
 
-  const run = program
-    .command('run')
-    .description('launch or reattach and attach')
-    .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
-    .allowExcessArguments(true)
-    .allowUnknownOption(true)
-    .option('--force-restart', 'replace runtime with a fresh PTY; preserve the conversation')
-    .option('--new-session', 'rotate to a fresh host session before starting')
-    .option(
-      '--attach-only',
-      'reattach to the existing runtime without starting one (like `hrc attach`)'
+  const run = withOptions(
+    program
+      .command('run')
+      .description('launch or reattach and attach')
+      .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
+      .allowExcessArguments(true)
+      .allowUnknownOption(true),
+    runOptions()
+  ).action(async (_scope, _opts, cmd: Command) => {
+    const positionals: string[] = cmd.args
+    if (positionals[0] === 'export') {
+      await cmdRunExport(rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) }))
+      return
+    }
+    if (positionals[0] === 'annotate') {
+      await cmdRunAnnotate(
+        rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) })
+      )
+      return
+    }
+    const opts = cmd.opts()
+    const rawArgv = rawArgvForVerb(cmd, 'run', { offset: 1 })
+    assertNoUnknownOptions(rawArgv, unknownOptionSchema(cmd.options))
+    const args = toLegacyArgvForScopeCommand(
+      positionals,
+      opts,
+      rawArgv,
+      legacyArgvSchema(cmd.options)
     )
-    .option('--dry-run', 'daemon plan preview — no side effects')
-    .option('-v, --verbose', 'show the full run phase timeline on stderr')
-    .option('--debug', 'keep tmux shell alive after harness exits')
-    .option('--no-register', 'do not prompt to register cwd as a project marker')
-    .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
-    .option('--project-id <id>', 'override the inferred project id')
-    .option('--project-root <path>', 'override project root')
-    .option('-p <text>', 'initial prompt to send to the harness')
-    .option('--prompt-file <path>', 'read initial prompt from a file')
-    .action(async (_scope, _opts, cmd: Command) => {
-      const positionals: string[] = cmd.args
-      if (positionals[0] === 'export') {
-        await cmdRunExport(
-          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) })
-        )
-        return
-      }
-      if (positionals[0] === 'annotate') {
-        await cmdRunAnnotate(
-          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) })
-        )
-        return
-      }
-      const opts = cmd.opts()
-      const rawArgv = rawArgvForVerb(cmd, 'run', { offset: 1 })
-      assertNoUnknownOptions(rawArgv, {
-        boolean: [
-          '--force-restart',
-          '--new-session',
-          '--attach-only',
-          '--dry-run',
-          '-v',
-          '--verbose',
-          '--debug',
-          '--no-register',
-          '--json',
-        ],
-        value: ['--project-id', '--project-root', '-p', '--prompt-file'],
-      })
-      const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
-        strings: ['project-id', 'project-root', 'prompt-file'],
-        booleans: [
-          'force-restart',
-          'new-session',
-          'attach-only',
-          'dry-run',
-          'verbose',
-          'debug',
-          'json',
-        ],
-        negatedBooleans: ['register'],
-      })
-      await cmdRun(args)
-    })
+    await cmdRun(args)
+  })
 
   // -- run invocation exposure (H-00104 Node C, C-0004) -----------------------
   run
@@ -237,24 +155,15 @@ export function registerTopLevelCommands(program: Command): void {
   // target regardless of HRC status. It is NOT an alias of `run`: it never
   // fresh-launches and never attaches as a substitute for resume. For attach-only
   // behavior use `hrc attach <scope>`; for start/reuse/attach use `hrc run`.
-  program
-    .command('resume')
-    .description('resume the latest stored continuation for a target (regardless of status)')
-    .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
-    .allowExcessArguments(true)
-    .allowUnknownOption(true)
-    .option('--no-attach', 'resume and start without attaching to the tmux session')
-    .option('--prior', "resume the current session's immediate predecessor")
-    .option('--host-session <id>', 'resume an exact historical host session')
-    .option('--dry-run', 'local plan preview — no side effects')
-    .option('--debug', 'keep tmux shell alive after harness exits')
-    .option('--no-register', 'do not prompt to register cwd as a project marker')
-    .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
-    .option('--project-id <id>', 'override the inferred project id')
-    .option('--project-root <path>', 'override project root')
-    .option('--cwd <path>', 'set execution cwd without changing the resolved project root')
-    .option('-p <text>', 'initial prompt to send to the harness')
-    .option('--prompt-file <path>', 'read initial prompt from a file')
+  withOptions(
+    program
+      .command('resume')
+      .description('resume the latest stored continuation for a target (regardless of status)')
+      .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
+      .allowExcessArguments(true)
+      .allowUnknownOption(true),
+    resumeOptions()
+  )
     .addHelpText(
       'after',
       `
@@ -274,15 +183,13 @@ Semantics:
       const positionals: string[] = cmd.args
       const opts = cmd.opts()
       const rawArgv = rawArgvForVerb(cmd, 'resume', { offset: 1 })
-      assertNoUnknownOptions(rawArgv, {
-        boolean: ['--no-attach', '--prior', '--dry-run', '--debug', '--no-register', '--json'],
-        value: ['--host-session', '--project-id', '--project-root', '--cwd', '-p', '--prompt-file'],
-      })
-      const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
-        strings: ['host-session', 'project-id', 'project-root', 'cwd', 'prompt-file'],
-        booleans: ['prior', 'dry-run', 'debug', 'json'],
-        negatedBooleans: ['attach', 'register'],
-      })
+      assertNoUnknownOptions(rawArgv, unknownOptionSchema(cmd.options))
+      const args = toLegacyArgvForScopeCommand(
+        positionals,
+        opts,
+        rawArgv,
+        legacyArgvSchema(cmd.options)
+      )
       await cmdResumeContinuation(args)
     })
 
