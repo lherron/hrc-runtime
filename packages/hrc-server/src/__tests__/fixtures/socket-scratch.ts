@@ -3,6 +3,13 @@ import { join } from 'node:path'
 
 const SOCKET_SCRATCH_PARENT = '/tmp'
 const TEST_SOCKET_PATH_LIMIT = 100
+/**
+ * The daemon refuses a runtime root whose worst-case broker tmux socket
+ * (`<root>/runtime/btmux/<12>-<32>.sock`) cannot fit sun_path (T-10330), so a
+ * long descriptive prefix is truncated rather than allowed to push the fixture
+ * root past it.
+ */
+const SOCKET_SCRATCH_PREFIX_MAX = 20
 
 export type SocketScratch = {
   root: string
@@ -25,7 +32,9 @@ export function assertShortSocketPath(socketPath: string): void {
  * must not inherit the much longer per-user TMPDIR when they bind real sockets.
  */
 export async function createSocketScratch(prefix = 'hrc-t-'): Promise<SocketScratch> {
-  const root = await mkdtemp(join(SOCKET_SCRATCH_PARENT, prefix))
+  const root = await mkdtemp(
+    join(SOCKET_SCRATCH_PARENT, prefix.slice(0, SOCKET_SCRATCH_PREFIX_MAX))
+  )
   return {
     root,
     socketPath(...segments: string[]): string {

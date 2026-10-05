@@ -443,6 +443,16 @@ export type HarnessBrokerControllerDeps = {
   onUnexpectedBrokerClose?:
     | ((input: { runtimeId: string; invocationId: string | null; error: string }) => void)
     | undefined
+  /**
+   * Observes HRC losing its broker attachment to an EXTERNALLY-owned runtime,
+   * after the detachment is recorded (T-10333). The controller cannot tell a
+   * desktop observer from a participant-served host; the server can, from the
+   * participant registration, and decides whether the subject died too. Must
+   * not throw.
+   */
+  onExternalBrokerLost?:
+    | ((input: { runtimeId: string; invocationId: string | undefined; code: string }) => void)
+    | undefined
   brokerCommand?: string | undefined
   /** Resolve immediately before each legacy stdio broker spawn. */
   resolveBrokerCommand?: (() => string) | undefined

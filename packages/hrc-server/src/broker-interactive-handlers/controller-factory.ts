@@ -13,6 +13,7 @@ import { BrokerEventMapper } from '../broker/event-mapper.js'
 import { hasLeasedBrokerSubstrate } from '../broker/runtime-hosting.js'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
 import { resolveBrokerDurableIpcEnabled } from '../option-resolvers.js'
+import { settleParticipantBrokerLoss } from '../participant-broker-gone.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from '../server-util.js'
@@ -163,6 +164,15 @@ export function getHarnessBrokerController(
         failure: error,
       })
       if (resumeFailure?.event !== undefined) this.notifyEvent(resumeFailure.event)
+    },
+    onExternalBrokerLost: (input) => {
+      if (this.stopping) return
+      void settleParticipantBrokerLoss(this, input).catch((error: unknown) => {
+        writeServerLog('WARN', 'participant.broker_lost.settle_failed', {
+          runtimeId: input.runtimeId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
     },
     ...(this.options.testOnlyAfterBrokerProjectionCommitBeforeAck
       ? {

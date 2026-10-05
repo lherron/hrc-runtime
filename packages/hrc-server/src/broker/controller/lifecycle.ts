@@ -47,6 +47,10 @@ export type LifecycleContext = {
    */
   intentionalCloseReason: (runtimeId: string) => string | undefined
   fireBrokerTmuxLeaseReap: (runtimeId: string, reason: string) => void
+  /** See `HarnessBrokerControllerDeps.onExternalBrokerLost` (T-10333). */
+  onExternalBrokerLost?:
+    | ((input: { runtimeId: string; invocationId: string | undefined; code: string }) => void)
+    | undefined
 }
 
 /**
@@ -615,6 +619,22 @@ export function markBrokerCrashTerminal(
       code: error.code,
       message: error.message,
     })
+    // T-10333: "the desktop thread is unaffected" holds only for an observer.
+    // A participant-served broker belongs to its host, so its death may be the
+    // host's. That needs the registration and a fresh dial, which live with
+    // the server; the status decision is made there, never here.
+    try {
+      ctx.onExternalBrokerLost?.({
+        runtimeId,
+        invocationId: ownedRuntime.activeInvocationId,
+        code: error.code,
+      })
+    } catch (hookError) {
+      ctx.logger.warn?.('broker.external_broker_lost.observer_failed', {
+        runtimeId,
+        error: hookError instanceof Error ? hookError.message : String(hookError),
+      })
+    }
     return
   }
   const activeClient = ctx.getActiveClient(runtimeId)

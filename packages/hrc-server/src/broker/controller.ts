@@ -162,6 +162,7 @@ class HarnessBrokerController extends BrokerControllerMethodsBase {
   readonly brokerDbBusyRetryBaseDelayMs: number
   readonly reconcileBrokerTmuxLivenessOnClose: ((runtimeId: string) => Promise<void>) | undefined
   readonly onUnexpectedBrokerClose: HarnessBrokerControllerDeps['onUnexpectedBrokerClose']
+  readonly onExternalBrokerLost: HarnessBrokerControllerDeps['onExternalBrokerLost']
   readonly resolveBrokerCommand: () => string
   readonly brokerArgs: string[]
   readonly env: Record<string, string | undefined> | undefined
@@ -320,6 +321,7 @@ class HarnessBrokerController extends BrokerControllerMethodsBase {
     )
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
     this.onUnexpectedBrokerClose = deps.onUnexpectedBrokerClose
+    this.onExternalBrokerLost = deps.onExternalBrokerLost
     this.metricsStateRoot = deps.metricsStateRoot
     // Preserve brokerCommand as a constant test seam.
     // T-08596 (T-08569A closure): the bundled ASP execution closure is removed.
@@ -376,6 +378,7 @@ class HarnessBrokerController extends BrokerControllerMethodsBase {
       intentionalCloseReason: (runtimeId) => this.intentionalCloseReason(runtimeId),
       fireBrokerTmuxLeaseReap: (runtimeId, reason) =>
         this.fireBrokerTmuxLeaseReap(runtimeId, reason),
+      onExternalBrokerLost: this.onExternalBrokerLost,
     }
   }
 
