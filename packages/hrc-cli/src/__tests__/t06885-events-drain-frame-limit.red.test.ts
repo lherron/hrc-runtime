@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createHrcServer } from 'hrc-server'
@@ -47,7 +46,7 @@ async function runDrain(
 
 describe('T-06885 event drain frame sizing', () => {
   test('CLI drains a dead ledger larger than 1 MiB completely and re-drain is idempotent', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'hrc-t06885-'))
+    const root = await mkdtemp(join('/tmp', 'hrc-t06885-'))
     roots.push(root)
     const deadRoot = join(root, 'dead')
     const hostRoot = join(root, 'host', 'runtime')

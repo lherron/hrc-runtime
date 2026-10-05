@@ -2,7 +2,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createHrcServer } from 'hrc-server'
@@ -30,7 +29,7 @@ let priorShim: string | undefined
 beforeEach(async () => {
   priorShim = process.env['HRC_ALLOW_HARNESS_SHIM']
   Reflect.deleteProperty(process.env, 'HRC_ALLOW_HARNESS_SHIM')
-  root = await mkdtemp(join(tmpdir(), 't08576-mon-'))
+  root = await mkdtemp(join('/tmp', 't08576-mon-'))
   runtimeRoot = join(root, 'run')
   stateRoot = join(root, 'state')
   socketPath = join(runtimeRoot, 'hrc.sock')

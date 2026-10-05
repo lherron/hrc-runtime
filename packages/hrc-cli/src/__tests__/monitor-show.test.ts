@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { formatScopeHandle, formatSessionHandle, resolveScopeInput } from 'agent-scope'
 import { createHrcServer } from 'hrc-server'
@@ -207,9 +206,9 @@ function seedHeadlessRuntime(session: {
 }
 
 beforeEach(async () => {
-  // Keep the nested event-ingest socket below macOS's sockaddr_un limit even
-  // when tmpdir() is the long per-user /var/folders path.
-  tmpDir = await mkdtemp(join(tmpdir(), 'hms-'))
+  // Root under /tmp, not the long per-user /var/folders tmpdir(): the daemon
+  // refuses a root whose worst-case btmux socket cannot fit sun_path (T-10330).
+  tmpDir = await mkdtemp(join('/tmp', 'hms-'))
   runtimeRoot = join(tmpDir, 'runtime')
   stateRoot = join(tmpDir, 'state')
   socketPath = join(runtimeRoot, 'hrc.sock')
