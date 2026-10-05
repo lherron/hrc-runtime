@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
-import { assertSocketPathWithinBudget } from 'spaces-harness-broker-client'
+import { assertSocketPathWithinBudget, socketPathByteBudget } from 'spaces-harness-broker-client'
 
 import { SubprocessTimeoutError, runBoundedSubprocess } from './bounded-subprocess.js'
 import { requireTmuxPane } from './require-helpers.js'
@@ -14,18 +14,83 @@ const MIN_SUPPORTED_TMUX_VERSION = {
   minor: 2,
 }
 
-export function getTmuxSocketPath(options: HrcServerOptions): string {
+export function getTmuxSocketPath(
+  options: Pick<HrcServerOptions, 'runtimeRoot' | 'tmuxSocketPath'>
+): string {
   return options.tmuxSocketPath ?? join(options.runtimeRoot, 'tmux.sock')
 }
 
+const BROKER_TMUX_DRIVER_SEGMENT_MAX = 12
+const BROKER_TMUX_RUNTIME_SEGMENT_MAX = 32
+
 export function getBrokerTmuxSocketPath(
-  options: HrcServerOptions,
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
   brokerDriver: string,
   runtimeId: string
 ): string {
-  const driver = sanitizeBrokerTmuxPathSegment(brokerDriver).slice(0, 12)
-  const runtime = sanitizeBrokerTmuxPathSegment(runtimeId).slice(0, 32)
+  const driver = sanitizeBrokerTmuxPathSegment(brokerDriver).slice(
+    0,
+    BROKER_TMUX_DRIVER_SEGMENT_MAX
+  )
+  const runtime = sanitizeBrokerTmuxPathSegment(runtimeId).slice(0, BROKER_TMUX_RUNTIME_SEGMENT_MAX)
   return join(options.runtimeRoot, 'btmux', `${driver}-${runtime}.sock`)
+}
+
+/**
+ * T-10330 — the daemon refuses at startup a runtime root whose Unix sockets
+ * cannot fit `sockaddr_un.sun_path`, instead of failing every birth later with
+ * a truncated "File name too long". Names the FULL path, its byte length and
+ * the limit.
+ */
+export class RuntimeRootSocketPathTooLongError extends Error {
+  readonly code = 'runtime_root_socket_path_too_long'
+  constructor(
+    readonly socket: 'hrc.sock' | 'tmux.sock' | 'btmux',
+    readonly socketPath: string,
+    readonly byteLength: number,
+    readonly limit: number
+  ) {
+    const label = socket === 'btmux' ? 'worst-case btmux' : socket
+    super(
+      [
+        `runtime root socket path too long: the ${label} socket path ${socketPath} is ${byteLength} bytes;`,
+        `the platform sockaddr_un limit is ${limit} bytes including the trailing NUL, so at most ${limit - 1}.`,
+        'Use a shorter HRC_RUNTIME_DIR.',
+      ].join(' ')
+    )
+    this.name = 'RuntimeRootSocketPathTooLongError'
+  }
+}
+
+/**
+ * Check the daemon socket, the shared tmux socket and the worst-case per-runtime
+ * broker tmux socket (driver and runtime-id segments at their full width)
+ * against the platform budget. Throws {@link RuntimeRootSocketPathTooLongError}
+ * for the first one that cannot fit.
+ */
+export function assertRuntimeRootSocketPathsFit(
+  options: Pick<HrcServerOptions, 'runtimeRoot' | 'socketPath' | 'tmuxSocketPath'>
+): void {
+  const worstBrokerTmux = getBrokerTmuxSocketPath(
+    options,
+    // Real ids at full segment width: the longest driver and a full runtime id
+    // both truncate to the segment caps, so this is the longest path a birth
+    // can derive.
+    'codex-app-server',
+    'rt-00000000-0000-0000-0000-000000000000'
+  )
+  const candidates = [
+    ['hrc.sock', options.socketPath],
+    ['tmux.sock', getTmuxSocketPath(options)],
+    ['btmux', worstBrokerTmux],
+  ] as const
+  const limit = socketPathByteBudget()
+  for (const [socket, socketPath] of candidates) {
+    const byteLength = Buffer.byteLength(socketPath, 'utf8')
+    if (byteLength + 1 > limit) {
+      throw new RuntimeRootSocketPathTooLongError(socket, socketPath, byteLength, limit)
+    }
+  }
 }
 
 export function sanitizeBrokerTmuxPathSegment(value: string): string {

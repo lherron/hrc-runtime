@@ -210,7 +210,7 @@ import {
   type TargetMessageHandlersMethods,
   targetMessageHandlersMethods,
 } from './target-message-handlers.js'
-import { getTmuxSocketPath } from './tmux-socket.js'
+import { assertRuntimeRootSocketPathsFit, getTmuxSocketPath } from './tmux-socket.js'
 import { type TmuxManager as ServerTmuxManager, createTmuxManager } from './tmux.js'
 import { createServerTranscriptIndexer } from './transcript-index-adapter.js'
 import { TurnAdmissionGate } from './turn-admission-gate.js'
@@ -778,6 +778,12 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     tmuxSocketPath: getTmuxSocketPath(resolvedOptions),
   }
   writeServerLog('INFO', 'server.start.begin', logCtx)
+  try {
+    assertRuntimeRootSocketPathsFit(resolvedOptions)
+  } catch (error) {
+    writeServerLog('ERROR', 'server.start.failed', { ...logCtx, error })
+    throw error
+  }
   if (resolvedOptions.localPersonaAllowlist !== undefined) {
     writeServerLog('INFO', 'server.start.local_persona_policy', {
       mode: 'allowlist',
