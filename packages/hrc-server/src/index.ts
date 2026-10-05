@@ -133,6 +133,10 @@ import {
 } from './runtime-inspect-handlers.js'
 import { type RuntimeIoHandlersMethods, runtimeIoHandlersMethods } from './runtime-io-handlers.js'
 import { createRuntimeListRoutes } from './runtime-list-handlers.js'
+import {
+  type RuntimeStartHandlersMethods,
+  runtimeStartHandlersMethods,
+} from './runtime-start-handlers.js'
 import { type SdkTurnHandlersMethods, sdkTurnHandlersMethods } from './sdk-turn-handlers.js'
 import {
   type SeatWithdrawHandlersMethods,
@@ -292,6 +296,7 @@ export interface HrcServerInstance
     SweepHandlersMethods,
     ShadowTeardownHandlersMethods,
     RuntimeIoHandlersMethods,
+    RuntimeStartHandlersMethods,
     RuntimeControlHandlersMethods,
     TargetMessageHandlersMethods,
     EventNotificationHandlersMethods,
@@ -728,6 +733,7 @@ Object.assign(
   sweepHandlersMethods,
   shadowTeardownHandlersMethods,
   runtimeIoHandlersMethods,
+  runtimeStartHandlersMethods,
   runtimeControlHandlersMethods,
   targetMessageHandlersMethods,
   eventNotificationHandlersMethods,

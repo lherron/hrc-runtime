@@ -43,6 +43,7 @@ import type { RosterClaimHandlersMethods } from './roster-claim.js'
 import type { RuntimeControlHandlersMethods } from './runtime-control-handlers.js'
 import type { RuntimeInspectHandlersMethods } from './runtime-inspect-handlers.js'
 import type { RuntimeIoHandlersMethods } from './runtime-io-handlers.js'
+import type { RuntimeStartHandlersMethods } from './runtime-start-handlers.js'
 import type { SdkTurnHandlersMethods } from './sdk-turn-handlers.js'
 import type { SelectorMessageHandlersMethods } from './selector-message-handlers.js'
 import type { SelectorWaitHandlersMethods } from './selector-wait-handlers.js'
@@ -101,6 +102,7 @@ type DecomposedHandlerMethods = AcceptedRunRecoveryHandlersMethods &
   RuntimeControlHandlersMethods &
   RuntimeInspectHandlersMethods &
   RuntimeIoHandlersMethods &
+  RuntimeStartHandlersMethods &
   SdkTurnHandlersMethods &
   SessionIndexHandlersMethods &
   SelectorMessageHandlersMethods &

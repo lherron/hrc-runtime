@@ -119,7 +119,7 @@ test('neutral headless tmux-tui is producer-selected; concrete and observer cont
 
 test('ordinary public start and turn enter producer-selected hosting before any legacy route decision', () => {
   for (const path of [
-    'runtime-io-handlers.ts',
+    'runtime-start-handlers.ts',
     'turn-dispatch-runtime-handlers.ts',
     'turn-dispatch-admitted-turn.ts',
   ]) {
