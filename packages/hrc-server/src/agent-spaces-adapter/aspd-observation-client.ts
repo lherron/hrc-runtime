@@ -39,8 +39,19 @@ export type AspdObservationConnect = (options: {
   socketPath: string
 }) => Promise<AspdObservationClient>
 
+/**
+ * Observation requests are bounded so an aspd that stops answering fails the
+ * route instead of holding it open (an 880s `/v1/federation/bindings` on svc,
+ * R-00277). Hello is bounded by the client's connect deadline.
+ */
+export const ASPD_OBSERVATION_REQUEST_TIMEOUT_MS = 60_000
+
 export const connectObservationUnix: AspdObservationConnect = ({ socketPath }) =>
-  AspcUnixClient.connect({ socketPath, clientInfo: { name: 'hrc-server' } })
+  AspcUnixClient.connect({
+    socketPath,
+    clientInfo: { name: 'hrc-server' },
+    requestTimeoutMs: ASPD_OBSERVATION_REQUEST_TIMEOUT_MS,
+  })
 
 export type AspdObservationSession = {
   service: AspdServiceIdentity

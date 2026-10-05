@@ -22,10 +22,10 @@ import {
 import {
   AspcConnectionClosedError,
   AspcProtocolIncompatibleError,
+  AspcRequestTimeoutError,
   AspcServiceUnavailableError,
   AspcUnixClient,
 } from 'spaces-aspc-protocol/unix-client'
-import { BrokerTransportError, UnixSocketTransport } from 'spaces-harness-broker-client'
 import type { AspReleaseIdentity } from 'spaces-harness-broker-protocol'
 
 export const HRC_ASPD_SOCKET_ENV = 'HRC_ASPD_SOCKET'
@@ -37,7 +37,7 @@ export type AspdPreparationErrorCode =
   | 'aspd_capability_missing'
   | 'aspd_release_unidentified'
   | 'aspd_connection_closed'
-  | 'aspd_probe_timeout'
+  | 'aspd_request_timeout'
 
 export type AspdServiceIdentity = {
   endpoint: string
@@ -64,10 +64,18 @@ export type AspdConnect = (options: {
   timeoutMs?: number | undefined
 }) => Promise<AspdClientLike>
 
+/**
+ * Every request after hello is bounded too: an aspd that accepts and never
+ * answers otherwise holds a birth open forever (R-00277). Generous, because a
+ * compile is real work; the bound exists to end a hang, not to pace aspd.
+ */
+export const ASPD_PREPARATION_REQUEST_TIMEOUT_MS = 120_000
+
 export const connectAspdUnix: AspdConnect = ({ socketPath, timeoutMs }) =>
   AspcUnixClient.connect({
     socketPath,
     clientInfo: { name: 'hrc-server' },
+    requestTimeoutMs: ASPD_PREPARATION_REQUEST_TIMEOUT_MS,
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   })
 
@@ -182,54 +190,27 @@ export async function prepareThroughAspd(
 }
 
 /**
- * The whole status probe, connect AND hello. `AspcUnixClient.connect` bounds
- * only the socket connect; an aspd that accepts and never answers `aspc.hello`
- * hung /v1/status, `hrc doctor` and the deploy preflight with it (R-00277).
- * The probe speaks hello on the transport itself so a missed deadline can
- * close the socket rather than leak one per status call.
+ * The whole status probe, connect AND hello: the client bounds both under one
+ * deadline. An aspd that accepted and never answered hello used to hang
+ * /v1/status, `hrc doctor` and the deploy preflight with it (R-00277).
  */
 const ASPD_PROBE_TIMEOUT_MS = 2_000
 
 /** Bounded hello probe for status readback. Closes its connection. */
-export async function probeAspdService(endpoint: string): Promise<AspdServiceIdentity> {
-  let transport: UnixSocketTransport
+export async function probeAspdService(
+  endpoint: string,
+  connect: AspdConnect = connectAspdUnix
+): Promise<AspdServiceIdentity> {
+  let client: AspdClientLike
   try {
-    transport = await UnixSocketTransport.connect({ socketPath: endpoint, timeoutMs: 1_000 })
-  } catch (error) {
-    throw translateAspdError(
-      endpoint,
-      error instanceof BrokerTransportError
-        ? new AspcServiceUnavailableError(endpoint, error.causeError ?? error)
-        : error
-    )
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    const hello = await Promise.race([
-      transport.request('aspc.hello', {
-        clientInfo: { name: 'hrc-server' },
-        protocolVersions: [ASPC_PROTOCOL_VERSION],
-      }) as Promise<AspcHelloResponse>,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              aspdError(
-                'aspd_probe_timeout',
-                `aspd at ${endpoint} did not answer hello within ${ASPD_PROBE_TIMEOUT_MS}ms`,
-                { endpoint, timeoutMs: ASPD_PROBE_TIMEOUT_MS }
-              )
-            ),
-          ASPD_PROBE_TIMEOUT_MS
-        )
-      }),
-    ])
-    return admitAspdHello(endpoint, hello)
+    client = await connect({ socketPath: endpoint, timeoutMs: ASPD_PROBE_TIMEOUT_MS })
   } catch (error) {
     throw translateAspdError(endpoint, error)
+  }
+  try {
+    return admitAspdHello(endpoint, client.hello)
   } finally {
-    clearTimeout(timer)
-    await transport.close().catch(() => undefined)
+    await client.close().catch(() => undefined)
   }
 }
 
@@ -248,6 +229,13 @@ export function translateAspdError(endpoint: string, error: unknown): unknown {
       { endpoint, offered: error.offered, required: ASPC_PROTOCOL_VERSION }
     )
   }
+  if (error instanceof AspcRequestTimeoutError) {
+    return aspdError(
+      'aspd_request_timeout',
+      `aspd at ${endpoint} did not answer ${error.method} within ${error.timeoutMs}ms`,
+      { endpoint, method: error.method, timeoutMs: error.timeoutMs }
+    )
+  }
   if (error instanceof AspcConnectionClosedError) {
     return aspdError('aspd_connection_closed', error.message, {
       endpoint,
@@ -264,7 +252,8 @@ function describe(value: unknown): string {
 
 /** Status projection of the configured aspd service. Never throws. */
 export async function projectAspdServiceStatus(
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  connect: AspdConnect = connectAspdUnix
 ): Promise<HrcAspdServiceStatus> {
   const probedAt = new Date().toISOString()
   let endpoint: string | undefined
@@ -281,7 +270,7 @@ export async function projectAspdServiceStatus(
   }
   if (endpoint === undefined) return { configured: false }
   try {
-    const service = await probeAspdService(endpoint)
+    const service = await probeAspdService(endpoint, connect)
     return {
       configured: true,
       endpoint,

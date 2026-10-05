@@ -24,6 +24,7 @@ import {
   validateFrozenExecutionRelease,
   workerHelloRefusal,
 } from '../agent-spaces-adapter/aspd-execution-release'
+import { withAspdObservationSession } from '../agent-spaces-adapter/aspd-observation-client'
 import {
   admitAspdHello,
   prepareThroughAspd,
@@ -294,43 +295,61 @@ describe('T-08542 aspd preparation client', () => {
   })
 
   // R-00277: an aspd that accepts the connection but never answers hello hung
-  // /v1/status, `hrc doctor` and the deploy preflight. The probe must report it
-  // unreachable inside its bound instead.
-  it('reports an aspd that accepts but never answers hello as unreachable within the probe bound', async () => {
-    const silentSocket = join(scratch, 'silent.sock')
-    let accepted = 0
-    let closed = 0
-    const silent = Bun.listen({
-      unix: silentSocket,
+  // /v1/status, `hrc doctor` and the deploy preflight. Each door must give up
+  // inside its bound and close the socket rather than collect one per call.
+  function silentAspd(name: string) {
+    const socketPath = join(scratch, name)
+    const counts = { accepted: 0, closed: 0 }
+    const listener = Bun.listen({
+      unix: socketPath,
       socket: {
         open() {
-          accepted += 1
+          counts.accepted += 1
         },
         data() {},
         close() {
-          closed += 1
+          counts.closed += 1
         },
       },
     })
+    return { socketPath, counts, stop: () => listener.stop(true) }
+  }
+
+  it('reports an aspd that accepts but never answers hello as unreachable within the probe bound', async () => {
+    const silent = silentAspd('silent-status.sock')
     try {
       const startedAt = Date.now()
-      const status = await projectAspdServiceStatus({ HRC_ASPD_SOCKET: silentSocket })
+      const status = await projectAspdServiceStatus({ HRC_ASPD_SOCKET: silent.socketPath })
       expect(Date.now() - startedAt).toBeLessThan(4_000)
-      expect(accepted).toBe(1)
       expect(status).toMatchObject({
         configured: true,
-        endpoint: silentSocket,
+        endpoint: silent.socketPath,
         reachable: false,
-        error: { code: 'aspd_probe_timeout' },
+        error: { code: 'aspd_request_timeout' },
       })
-      // The missed deadline closes the socket; a hung aspd must not collect one
-      // open connection per status call.
       await Bun.sleep(50)
-      expect(closed).toBe(1)
+      expect(silent.counts).toEqual({ accepted: 1, closed: 1 })
     } finally {
-      silent.stop(true)
+      silent.stop()
     }
   })
+
+  it('fails an observation session against a silent aspd instead of holding the route open', async () => {
+    const silent = silentAspd('silent-observation.sock')
+    try {
+      const startedAt = Date.now()
+      await expect(
+        withAspdObservationSession(['resolveRuntimeDeclaration'], async () => 'unreachable', {
+          HRC_ASPD_SOCKET: silent.socketPath,
+        })
+      ).rejects.toMatchObject({ detail: { code: 'aspd_request_timeout', method: 'aspc.hello' } })
+      expect(Date.now() - startedAt).toBeLessThan(8_000)
+      await Bun.sleep(50)
+      expect(silent.counts).toEqual({ accepted: 1, closed: 1 })
+    } finally {
+      silent.stop()
+    }
+  }, 15_000)
 })
 
 // ── Server route ──────────────────────────────────────────────────────────────
