@@ -138,10 +138,15 @@ architecture-records *args:
 # and failed the proof — the corpus ran against no daemon and no agents root.
 # The eval is what actually connects the two.
 
+# The recipe shell owns the environment (`--owner $$`): its daemon is stopped
+# once this run ends, however it ends, unless an operator `env-up` also holds
+# it (T-10329).
+
 # Run all verification (env-up + check + lint + typecheck + test)
-verify: env-up
+verify:
     #!/usr/bin/env bash
     set -euo pipefail
+    bash scripts/dev-env.sh up --owner $$
     eval "$(bash scripts/dev-env.sh env)"
     just architecture-records
     just check
@@ -160,9 +165,10 @@ verify: env-up
 # both under one temp root and touches neither of the real ones. See
 # scripts/dev-env.sh for the why in full.
 #
-# `env-up` leaves its daemon running on purpose — a second `env-up` reuses it,
-# so back-to-back `just verify` / `just e2e` do not pay for a restart. Reap it
-# with `just env-down` when you are done for the day.
+# `env-up` leaves its daemon running on purpose — a later `verify` or `e2e`
+# reuses it rather than paying for a restart. Reap it with `just env-down` when
+# you are done for the day. `verify` and `e2e` own their environment instead:
+# without an `env-up`, their daemon stops when the run ends.
 
 # Provision the ephemeral e2e environment (idempotent, self-healing)
 env-up:
@@ -178,9 +184,10 @@ env-down:
 # other way tests a mock of the thing rather than the thing.
 
 # Run the e2e suite against the ephemeral environment
-e2e: env-up
+e2e:
     #!/usr/bin/env bash
     set -euo pipefail
+    bash scripts/dev-env.sh up --owner $$
     eval "$(bash scripts/dev-env.sh env)"
     echo "[e2e] daemon ${HRC_RUNTIME_DIR}/hrc.sock, agents ${ASP_AGENTS_ROOT}"
     bun run test

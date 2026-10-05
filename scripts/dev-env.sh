@@ -32,15 +32,23 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Physical path (-P): the slug below hashes it, and a checkout reached through a
+# symlink must not get a second root.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 # One root per checkout, so two worktrees do not fight over one daemon. Kept
-# under TMPDIR rather than in-tree because the unix socket path underneath it is
-# subject to the ~104-byte sockaddr limit, which a deep repo path can blow.
+# out of the tree because the unix socket path underneath it is subject to the
+# ~104-byte sockaddr limit, which a deep repo path can blow.
+#
+# The base is /tmp, NOT ${TMPDIR}. TMPDIR differs between a login shell, a
+# launchd job and a harness, and keying on it gave one checkout two roots, each
+# with its own daemon that the other's start never saw (T-10329).
+ROOT_BASE="/tmp"
+ROOT_PREFIX="hrc-dev-env-$(id -u)-"
 default_root() {
   local slug
   slug="$(printf '%s' "${REPO_ROOT}" | cksum | cut -d' ' -f1)"
-  printf '%s/hrc-dev-env-%s-%s' "${TMPDIR:-/tmp}" "$(id -u)" "${slug}"
+  printf '%s/%s%s' "${ROOT_BASE}" "${ROOT_PREFIX}" "${slug}"
 }
 
 ROOT="${HRC_DEV_ENV_ROOT:-$(default_root)}"
@@ -54,6 +62,11 @@ LOG_FILE="${ROOT}/daemon.log"
 SOCKET="${RUN_DIR}/hrc.sock"
 WRKQ_DB_FILE="${ROOT}/wrkq.db"
 DAEMON_WRKQ_FILE="${ROOT}/daemon.wrkq"
+OWNERS_FILE="${ROOT}/owners"
+REPO_FILE="${ROOT}/repo"
+WATCHDOG_PID_FILE="${ROOT}/watchdog.pid"
+WATCHDOG_LOG="${ROOT}/watchdog.log"
+WATCH_INTERVAL="${HRC_DEV_ENV_WATCH_INTERVAL:-2}"
 PROJECT_SEARCH_ROOT=""
 
 # Every agent id the suites address. A fixture home is a directory plus an
@@ -188,16 +201,189 @@ daemon_fingerprint() {
   printf '%s\n%s\n' "${WRKQ_DB_FILE}" "${PROJECT_SEARCH_ROOT}"
 }
 
+# -- Ownership (T-10329) -------------------------------------------------------
+#
+# A daemon lives exactly as long as something owns it. Before this, `up` started
+# the daemon with nohup and exited, so every daemon was reparented to launchd and
+# lived until someone ran `down` in the same root. A runner killed mid-gate, or a
+# scratch clone deleted after its run, left one behind for good (five on max3 on
+# 2026-10-05, blocking `hrc admin release sweep` on a 97% disk).
+#
+# <root>/owners holds one line per owner:
+#   pid:<pid> <lstart>   a run that needs the daemon (`up --owner <pid>`; the
+#                        verify/e2e recipes pass their own shell). lstart guards
+#                        against pid reuse.
+#   operator             a bare `up`: deliberately left up until `down`.
+# <root>/repo records the checkout. The daemon is owned while that checkout
+# exists and either an operator line is present or some pid owner is alive.
+#
+# Two mechanisms enforce it. A watchdog, started in its own session beside each
+# daemon, stops the daemon (and its tmux server) within WATCH_INTERVAL of it
+# becoming unowned — normal exit, failure, SIGINT, SIGKILL of the owner, or the
+# checkout being deleted. Every `up` also reaps any dev-env root of this uid
+# whose daemon is unowned, in case a watchdog itself was killed.
+
+proc_start() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//;s/ *$//'; }
+
+# True when the pid is alive AND is still the process that was recorded.
+pid_line_alive() {
+  local pid="$1" lstart="$2"
+  kill -0 "${pid}" 2>/dev/null || return 1
+  [[ "$(proc_start "${pid}")" == "${lstart}" ]]
+}
+
+# root_owned <root>: is anything still entitled to that root's daemon?
+root_owned() {
+  local root="$1" repo line pid lstart
+  [[ -f "${root}/owners" ]] || return 1
+  repo="$(cat "${root}/repo" 2>/dev/null || true)"
+  [[ -n "${repo}" && -d "${repo}" ]] || return 1
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    case "${line}" in
+      operator) return 0 ;;
+      pid:*)
+        line="${line#pid:}"
+        pid="${line%% *}"
+        lstart="${line#* }"
+        pid_line_alive "${pid}" "${lstart}" && return 0
+        ;;
+    esac
+  done < "${root}/owners"
+  return 1
+}
+
+add_owner() {
+  local owner="$1" line
+  if [[ -z "${owner}" ]]; then
+    line="operator"
+  else
+    kill -0 "${owner}" 2>/dev/null || die "--owner ${owner} is not a live process"
+    line="pid:${owner} $(proc_start "${owner}")"
+  fi
+  # repo first: a reap that sees an owners file must also see the checkout.
+  printf '%s\n' "${REPO_ROOT}" > "${REPO_FILE}"
+  grep -qxF "${line}" "${OWNERS_FILE}" 2>/dev/null || printf '%s\n' "${line}" >> "${OWNERS_FILE}"
+}
+
+# Only ever signal a pid that is still an `hrc ... server serve` process: pid
+# files outlive their processes, and the number may since belong to anything.
+is_serve_pid() {
+  [[ -n "$1" ]] && ps -o command= -p "$1" 2>/dev/null | grep -q 'hrc.js server serve'
+}
+
+# stop_root <root>: stop_daemon for an arbitrary root.
+stop_root() {
+  local root="$1" pid wpid
+  pid="$(cat "${root}/daemon.pid" 2>/dev/null || true)"
+  if is_serve_pid "${pid}"; then
+    kill "${pid}" 2>/dev/null || true
+    local waited=0
+    while (( waited < 10 )) && kill -0 "${pid}" 2>/dev/null; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    kill -9 "${pid}" 2>/dev/null || true
+  fi
+  rm -f "${root}/daemon.pid"
+  # The daemon owns a tmux server on its own socket; killing the daemon does not
+  # reap it, and a leaked tmux server keeps panes (and their processes) alive.
+  if [[ -S "${root}/run/tmux.sock" ]]; then
+    tmux -S "${root}/run/tmux.sock" kill-server 2>/dev/null || true
+  fi
+  rm -f "${root}/run/hrc.sock" "${root}/run/server.lock" "${root}/run/server.pid" 2>/dev/null || true
+  # Last, and never ourselves: the watchdog calls this too.
+  wpid="$(cat "${root}/watchdog.pid" 2>/dev/null || true)"
+  if [[ -n "${wpid}" && "${wpid}" != "$$" ]] && ps -o command= -p "${wpid}" 2>/dev/null | grep -q 'dev-env.sh watch'; then
+    kill "${wpid}" 2>/dev/null || true
+  fi
+  rm -f "${root}/watchdog.pid"
+}
+
+# Reap every dev-env root of this uid whose daemon nothing owns. Both bases are
+# scanned: roots made before the base was normalized live under TMPDIR. A root
+# with a daemon.pid but no owners file was made by the pre-T-10329 script, whose
+# daemons nothing ever owned. A root whose checkout is gone is removed outright.
+reap_unowned_roots() {
+  local base root repo
+  for base in "${ROOT_BASE}" "${TMPDIR:-/tmp}"; do
+    base="${base%/}"
+    for root in "${base}/${ROOT_PREFIX}"*; do
+      [[ -d "${root}" ]] || continue
+      [[ "$(cd "${root}" && pwd -P)" == "$(cd "${ROOT}" 2>/dev/null && pwd -P || echo "${ROOT}")" ]] && continue
+      if [[ -f "${root}/owners" ]]; then
+        root_owned "${root}" && continue
+        repo="$(cat "${root}/repo" 2>/dev/null || true)"
+        if [[ -f "${root}/daemon.pid" || -S "${root}/run/tmux.sock" ]]; then
+          log "reaping unowned dev-env daemon in ${root} (checkout ${repo:-unknown})"
+          stop_root "${root}"
+        fi
+        if [[ -z "${repo}" || ! -d "${repo}" ]]; then
+          log "removing dev-env root of a deleted checkout: ${root}"
+          rm -rf "${root}"
+        fi
+      elif [[ -f "${root}/daemon.pid" ]]; then
+        log "reaping pre-ownership dev-env root ${root}"
+        stop_root "${root}"
+        rm -rf "${root}"
+      fi
+    done
+  done
+}
+
+# The watchdog for one daemon. It runs detached in its own session so a process
+# group kill aimed at the runner does not take it down with the daemon, and it
+# only ever acts on the daemon pid it was started for.
+cmd_watch() {
+  local dpid="$1"
+  trap '' INT HUP
+  printf '%s\n' "$$" > "${WATCHDOG_PID_FILE}"
+  log "watching daemon pid ${dpid} for ${ROOT} ($(date -u +%FT%TZ))"
+  while :; do
+    sleep "${WATCH_INTERVAL}"
+    [[ "$(cat "${PID_FILE}" 2>/dev/null || true)" == "${dpid}" ]] || { log "daemon ${dpid} replaced; exiting"; exit 0; }
+    if ! kill -0 "${dpid}" 2>/dev/null; then
+      log "daemon ${dpid} exited; clearing its residue ($(date -u +%FT%TZ))"
+      stop_root "${ROOT}"
+      exit 0
+    fi
+    if ! root_owned "${ROOT}"; then
+      log "daemon ${dpid} is unowned; stopping it ($(date -u +%FT%TZ))"
+      stop_root "${ROOT}"
+      exit 0
+    fi
+  done
+}
+
+watchdog_alive() {
+  local wpid
+  wpid="$(cat "${WATCHDOG_PID_FILE}" 2>/dev/null || true)"
+  [[ -n "${wpid}" ]] && ps -o command= -p "${wpid}" 2>/dev/null | grep -q 'dev-env.sh watch'
+}
+
+start_watchdog() {
+  local dpid="$1" self="${REPO_ROOT}/scripts/dev-env.sh"
+  # perl's setsid is the portable one: macOS ships no setsid(1).
+  HRC_DEV_ENV_ROOT="${ROOT}" nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!"' \
+    bash "${self}" watch "${dpid}" </dev/null >>"${WATCHDOG_LOG}" 2>&1 &
+  local waited=0
+  while (( waited < 50 )) && ! watchdog_alive; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  watchdog_alive || die "dev-env watchdog did not start; see ${WATCHDOG_LOG}"
+}
+
 start_daemon() {
   # A daemon started before it was pointed at the environment's own ledger
   # still reaches the operator's; reusing it would keep half the environment
-  # on production state, so it is replaced rather than reused.
+  # on production state, so it is replaced rather than reused. A daemon is
+  # reused only while its watchdog stands, so ownership stays enforced.
   if daemon_responds; then
-    if [[ "$(cat "${DAEMON_WRKQ_FILE}" 2>/dev/null || true)" == "$(daemon_fingerprint)" ]]; then
+    if [[ "$(cat "${DAEMON_WRKQ_FILE}" 2>/dev/null || true)" == "$(daemon_fingerprint)" ]] && watchdog_alive; then
       log "daemon already healthy on ${SOCKET} (reused)"
       return 0
     fi
-    log "replacing daemon started from another ledger or project root"
+    log "replacing daemon started from another ledger or project root, or without a watchdog"
     stop_daemon
   fi
 
@@ -221,6 +407,8 @@ start_daemon() {
     daemon_fingerprint > "${DAEMON_WRKQ_FILE}"
   )
 
+  start_watchdog "$(cat "${PID_FILE}")"
+
   local waited=0
   while (( waited < 60 )); do
     daemon_responds && { log "daemon healthy (pid $(cat "${PID_FILE}"))"; return 0; }
@@ -234,31 +422,14 @@ start_daemon() {
 # Teardown is unconditional and never fails: it has to work on a half-created
 # root, on a root whose daemon is already gone, and on a root that a previous
 # crashed env-down left behind.
-stop_daemon() {
-  if [[ -f "${PID_FILE}" ]]; then
-    local pid
-    pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
-      kill "${pid}" 2>/dev/null || true
-      local waited=0
-      while (( waited < 10 )) && kill -0 "${pid}" 2>/dev/null; do
-        sleep 1
-        waited=$((waited + 1))
-      done
-      kill -9 "${pid}" 2>/dev/null || true
-    fi
-    rm -f "${PID_FILE}"
-  fi
-  # The daemon owns a tmux server on its own socket; killing the daemon does not
-  # reap it, and a leaked tmux server keeps panes (and their processes) alive.
-  if [[ -S "${RUN_DIR}/tmux.sock" ]]; then
-    tmux -S "${RUN_DIR}/tmux.sock" kill-server 2>/dev/null || true
-  fi
-  rm -f "${SOCKET}" "${RUN_DIR}/server.lock" "${RUN_DIR}/server.pid" 2>/dev/null || true
-}
+stop_daemon() { stop_root "${ROOT}"; }
 
 cmd_up() {
   mkdir -p "${ROOT}" "${RUN_DIR}" "${STATE_DIR}" "${AGENTS_DIR}"
+  # Own the root first, so neither its watchdog nor a reap from another
+  # checkout takes a reusable daemon here for an orphan during the build.
+  add_owner "${OWNER_PID}"
+  reap_unowned_roots
   provision_build
   provision_projects
   provision_agents
@@ -275,6 +446,7 @@ cmd_up() {
   log "  projects     ${PROJECT_SEARCH_ROOT}   (HRC_PROJECT_SEARCH_ROOTS, ${#FIXTURE_PROJECTS[@]} fixture checkouts)"
   log "  daemon       ${SOCKET}  pid $(cat "${PID_FILE}" 2>/dev/null || echo '?')"
   log "  daemon log   ${LOG_FILE}"
+  log "  owners       ${OWNERS_FILE}   ($(paste -sd, "${OWNERS_FILE}"); watchdog pid $(cat "${WATCHDOG_PID_FILE}" 2>/dev/null || echo '?'))"
   log "  env file     ${ENV_FILE}   (source it to point a shell here)"
 }
 
@@ -295,9 +467,22 @@ cmd_env() {
   cat "${ENV_FILE}"
 }
 
+# `up` takes `--owner <pid>`: the daemon then lives only while that process
+# does (or until another owner's lease ends). Without it, `up` is the operator
+# deliberately leaving the daemon up until `down`.
+OWNER_PID=""
 case "${1:-}" in
-  up)   cmd_up ;;
-  down) cmd_down ;;
-  env)  cmd_env ;;
-  *)    die "usage: dev-env.sh <up|down|env>" ;;
+  up)
+    if [[ "${2:-}" == "--owner" ]]; then
+      [[ "${3:-}" =~ ^[0-9]+$ ]] || die "usage: dev-env.sh up [--owner <pid>]"
+      OWNER_PID="$3"
+    elif [[ -n "${2:-}" ]]; then
+      die "usage: dev-env.sh up [--owner <pid>]"
+    fi
+    cmd_up
+    ;;
+  down)  cmd_down ;;
+  env)   cmd_env ;;
+  watch) [[ "${2:-}" =~ ^[0-9]+$ ]] || die "usage: dev-env.sh watch <daemon-pid>"; cmd_watch "$2" ;;
+  *)     die "usage: dev-env.sh <up [--owner <pid>]|down|env>" ;;
 esac
