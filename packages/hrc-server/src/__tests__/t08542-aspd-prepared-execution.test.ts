@@ -292,6 +292,45 @@ describe('T-08542 aspd preparation client', () => {
     expect(aspd.openConnections).toBe(0)
     expect(await projectAspdServiceStatus({})).toEqual({ configured: false })
   })
+
+  // R-00277: an aspd that accepts the connection but never answers hello hung
+  // /v1/status, `hrc doctor` and the deploy preflight. The probe must report it
+  // unreachable inside its bound instead.
+  it('reports an aspd that accepts but never answers hello as unreachable within the probe bound', async () => {
+    const silentSocket = join(scratch, 'silent.sock')
+    let accepted = 0
+    let closed = 0
+    const silent = Bun.listen({
+      unix: silentSocket,
+      socket: {
+        open() {
+          accepted += 1
+        },
+        data() {},
+        close() {
+          closed += 1
+        },
+      },
+    })
+    try {
+      const startedAt = Date.now()
+      const status = await projectAspdServiceStatus({ HRC_ASPD_SOCKET: silentSocket })
+      expect(Date.now() - startedAt).toBeLessThan(4_000)
+      expect(accepted).toBe(1)
+      expect(status).toMatchObject({
+        configured: true,
+        endpoint: silentSocket,
+        reachable: false,
+        error: { code: 'aspd_probe_timeout' },
+      })
+      // The missed deadline closes the socket; a hung aspd must not collect one
+      // open connection per status call.
+      await Bun.sleep(50)
+      expect(closed).toBe(1)
+    } finally {
+      silent.stop(true)
+    }
+  })
 })
 
 // ── Server route ──────────────────────────────────────────────────────────────
