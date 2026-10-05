@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
+
 import { writeFile } from 'node:fs/promises'
+
 import type { HrcRuntimeIntent, HrcSessionRecord, SuffixStartRuntimeRequest } from 'hrc-core'
 import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import {
@@ -20,11 +22,14 @@ import {
   seedAdmissionDriver,
 } from './driver-graph.fixture'
 import { DOORS, DRIVERS, type Driver, EXPECTED, expectedTrace } from './expected-admission'
+import { registerInvokeQueueConformance } from './invoke-queue-conformance.fixture'
+
 let fixture: HrcServerTestFixture
 let server: HrcServer
 let ctx: HrcServerInstanceForHandlers
 let session: HrcSessionRecord
 let currentDriver: Driver = 'format1-headless'
+
 beforeEach(async () => {
   currentDriver = 'format1-headless'
   fixture = await createHrcTestFixture('admission-conformance-')
@@ -51,11 +56,13 @@ beforeEach(async () => {
     updatedAt: fixture.now(),
   })
 })
+
 afterEach(async () => {
   await Promise.allSettled([...ctx.runtimeStartOperations.values()])
   await server.stop()
   await fixture.cleanup()
 })
+
 function runtimeIntent(): HrcRuntimeIntent {
   return {
     placement: {
@@ -70,10 +77,12 @@ function runtimeIntent(): HrcRuntimeIntent {
     execution: { preferredMode: currentDriver === 'tmux-live' ? 'interactive' : 'headless' },
   }
 }
+
 function seedDriver(driver: Driver) {
   currentDriver = driver
   session = seedAdmissionDriver(ctx, fixture, session, driver, runtimeIntent())
 }
+
 function post(door: 'submission' | 'turns', intent: string, patch: object = {}) {
   const base =
     door === 'turns'
@@ -94,6 +103,7 @@ function post(door: 'submission' | 'turns', intent: string, patch: object = {}) 
     ...patch,
   })
 }
+
 function snapshot() {
   return {
     session: ctx.db.sessions.getByHostSessionId(session.hostSessionId),
@@ -104,6 +114,7 @@ function snapshot() {
       .all(session.hostSessionId),
   }
 }
+
 function admission(outcome: string, count = 1) {
   const events = ctx.db.hrcEvents.listByKind('submission.admission')
   expect(events).toHaveLength(count)
@@ -288,71 +299,8 @@ test('preempt without capability refuses before freshContext rotation', async ()
   expect(snapshot()).toEqual(before)
   expect(admission('refused').trace[5]?.outcome).toBe('refused')
 })
-async function expectQueueInvoke(
-  door: 'submission' | 'turns',
-  capabilities: object,
-  codex = false
-) {
-  seedDriver('format1-headless')
-  ctx.db.brokerInvocations.update(invocationId, {
-    capabilitiesJson: JSON.stringify(capabilities),
-    ...(codex ? { brokerDriver: 'codex-app-server' } : {}),
-    updatedAt: fixture.now(),
-  })
-  const client = fakeBrokerClient(ctx, runtimeId, invocationId)
-  let enqueues = 0
-  const enqueue = client.enqueue.bind(client)
-  client.enqueue = async (request) => {
-    enqueues++
-    return enqueue(request)
-  }
-  client.invoke = async () => {
-    throw new Error('unexpected exclusive invoke')
-  }
-  ctx.getHarnessBrokerController().active.set(runtimeId, {
-    runtimeId,
-    invocationId,
-    client,
-    closing: false,
-  })
-  const response = await post(door, 'invoke')
-  if (codex) expect(response.status).toBe(202)
-  else expect([200, 202]).toContain(response.status)
-  expect(enqueues).toBe(1)
-  const receipt = await response.json()
-  expect(receipt.admission).toBe('admitted')
-  const event = ctx.db.hrcEvents.listByKind('submission.admission')[0]
-  expect((event?.payload as { effectiveDoor: string }).effectiveDoor).toBe('enqueue')
-  const diagnostics = ctx.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson?.[
-    'brokerDispatchDiagnostics'
-  ] as { submissions: { admissionClass: string; door: string }[] }
-  expect(diagnostics.submissions[0]?.admissionClass).toBe('queue')
-  expect(diagnostics.submissions[0]?.door).toBe('enqueue')
-  expect(ctx.db.hrcEvents.listByKind('submission.door_downgraded')).toHaveLength(1)
-  expect(receipt).toMatchObject({
-    effectiveDoor: 'enqueue',
-    requestedDoor: 'invoke',
-    downgradeReason: 'invoke_exclusive_not_supported',
-  })
-  await Bun.sleep(30)
-}
-for (const door of ['submission', 'turns'] as const) {
-  test(`${door}/invoke: admission capability agrees with broker queue class`, async () => {
-    await expectQueueInvoke(door, { admission: { classes: ['queue'] } })
-  })
-}
-test('turns/invoke: codex-app-server without exclusive physically enqueues and reports its downgrade', async () => {
-  await expectQueueInvoke(
-    'turns',
-    {
-      admission: { classes: ['steer', 'queue'] },
-      bracketMintingMode: 'observed',
-      queue: { cancelHarnessLocal: false },
-      turns: { concurrency: 'single', interrupt: 'protocol' },
-    },
-    true
-  )
-})
+registerInvokeQueueConformance({ context: () => ctx, getFixture: () => fixture, seedDriver, post })
+
 function postPhase2(door: 'turns-by-selector' | 'dm' | 'prepare-attached', patch: object = {}) {
   const ref = `${session.scopeRef}/lane:${session.laneRef}`
   if (door === 'dm')
