@@ -35,14 +35,23 @@ type ScratchRepo = {
 const scratchRoots: string[] = []
 const savedGitEnvironment = new Map<string, string | undefined>()
 
+/**
+ * Every spawn here is bounded. Twice under the full gate (T-10232 phase 4, max3
+ * and mini) this file's worker spun at 100% CPU beside a defunct git child for
+ * 20 minutes with nothing in the log. A bound turns that into a named failure.
+ */
+const GIT_SPAWN_BOUND = { timeout: 30_000, killSignal: 'SIGKILL' as const }
+
 function git(cwd: string, args: string[]): void {
   const result = spawnSync('git', args, {
     cwd,
     encoding: 'utf8',
     env: environmentWithoutGitOverrides(),
+    ...GIT_SPAWN_BOUND,
   })
   if (result.status !== 0) {
-    throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`)
+    const detail = result.error?.message ?? (result.stderr || result.stdout)
+    throw new Error(`git ${args.join(' ')} failed: ${detail}`)
   }
 }
 
@@ -57,7 +66,16 @@ function createScratchRepo(): ScratchRepo {
   git(mainCheckout, ['init', '--quiet', '--initial-branch=main'])
   git(mainCheckout, ['config', 'user.email', 'isolation@example.test'])
   git(mainCheckout, ['config', 'user.name', 'Isolation Test'])
-  git(mainCheckout, ['commit', '--quiet', '--allow-empty', '-m', 'baseline'])
+  // No detached `git maintenance run --auto` daemon left behind by the commit.
+  git(mainCheckout, [
+    '-c',
+    'maintenance.auto=false',
+    'commit',
+    '--quiet',
+    '--allow-empty',
+    '-m',
+    'baseline',
+  ])
   git(mainCheckout, ['worktree', 'add', '--quiet', '-b', 'linked', linkedWorktree])
   return {
     root,
@@ -129,6 +147,7 @@ describe('fixture git spawns under a poisoned environment', () => {
       cwd: projectRoot,
       encoding: 'utf8',
       env: inheritedEnvironment(),
+      ...GIT_SPAWN_BOUND,
     })
 
     // Exit 0, and it initialized the wrong repository: GIT_DIR outranks cwd.
@@ -149,6 +168,7 @@ describe('fixture git spawns under a poisoned environment', () => {
       cwd: projectRoot,
       encoding: 'utf8',
       env: inheritedEnvironment(),
+      ...GIT_SPAWN_BOUND,
     })
     expect(init.status).toBe(0)
 
@@ -171,6 +191,7 @@ describe('fixture git spawns under a poisoned environment', () => {
       cwd: projectRoot,
       encoding: 'utf8',
       env: environmentWithoutGitOverrides(),
+      ...GIT_SPAWN_BOUND,
     })
 
     expect(init.status).toBe(0)
@@ -198,6 +219,7 @@ describe('fixture git spawns under a poisoned environment', () => {
       cwd: projectRoot,
       encoding: 'utf8',
       env: environmentWithoutGitOverrides(),
+      ...GIT_SPAWN_BOUND,
     })
     expect(gitDir.status).toBe(0)
     expect(gitDir.stdout.trim()).toBe(fixture.gitDir)
