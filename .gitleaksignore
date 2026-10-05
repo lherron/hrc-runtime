@@ -6,3 +6,37 @@
 73408a1f79f0afa0c5ef98063752103c5f17cce8:asp_modules/ralph-build/claude/plugins/000-ralph-build-loop/.asp-cache.json:generic-api-key:5
 73408a1f79f0afa0c5ef98063752103c5f17cce8:asp_modules/ralph-plan/claude/plugins/000-ralph-plan-loop/.asp-cache.json:generic-api-key:5
 73408a1f79f0afa0c5ef98063752103c5f17cce8:asp_modules/ralph-plan/claude/plugins/001-praesidium-defaults/.asp-cache.json:generic-api-key:5
+
+# T-10302 (P-00747): hrc-server/hrc-core test fixtures flagged by generic-api-key.
+# Each value was inspected at its commit; none is a credential.
+
+# test fixture: idempotencyKey label for a public-ingress dispatch request
+11c9ecba70dbd4ef3fce5a437796ae00a2272845:packages/hrc-server/src/__tests__/t08207-public-ingress.test.ts:generic-api-key:344
+# test fixture: idempotencyKey label on a seeded input row
+b8d9e19111390171e9de72813ff26b701ab94498:packages/hrc-server/src/__tests__/t08207-owner-protected-input.test.ts:generic-api-key:65
+# test fixture: codex thread-id continuation key (UUID identifier, not a credential)
+53d72ecc77fdd425dda03bb5098fb13fe93656ca:packages/hrc-core/src/__tests__/t08438-persisted-continuation-provider.contract.ts:generic-api-key:12
+# test fixture: codex thread-id continuation key (UUID identifier, not a credential)
+53d72ecc77fdd425dda03bb5098fb13fe93656ca:packages/hrc-server/src/__tests__/t08438-persisted-continuation-provider.test.ts:generic-api-key:16
+# test fixture: participantKey label in a legacy birth request
+7ff89ea1922712efa2f51de694350c0188af8e5b:packages/hrc-server/src/__tests__/t08395-participant-birth-events.test.ts:generic-api-key:70
+# test fixture: recorded probe reply marker text (turn.token), not an auth token
+aba9ae00a44201ca65fcbfc85f8805cd80358d59:packages/hrc-server/src/__tests__/t07907-envelope-attribution.test.ts:generic-api-key:37
+# test fixture: recorded probe reply marker text (turn.token), not an auth token
+aba9ae00a44201ca65fcbfc85f8805cd80358d59:packages/hrc-server/src/__tests__/t07907-envelope-attribution.test.ts:generic-api-key:54
+# test fixture: recorded probe reply marker text (turn.token), not an auth token
+aba9ae00a44201ca65fcbfc85f8805cd80358d59:packages/hrc-server/src/__tests__/t07907-envelope-attribution.test.ts:generic-api-key:71
+# test fixture: idempotencyKey label for a steer contribution
+fa1d64768d553f00f0585e43b81a7b18ea9cd226:packages/hrc-server/src/__tests__/t07155-urgent-delivery.red.test.ts:generic-api-key:420
+# test fixture: dispatch idempotency key label
+e022336340819c019d52596bcf2e26c2e427bf8b:packages/hrc-server/src/__tests__/t06592-dispatch-ack-contract.red.test.ts:generic-api-key:320
+# test fixture: placeholder ANTHROPIC_API_KEY for a claude shim (worded test value, not sk-ant- format)
+c0db0fca7ec443e1a509ea132f304a05d456fa9c:packages/hrc-server/src/__tests__/t06698-dm-peer-forward-routing.test.ts:generic-api-key:107
+# test fixture: placeholder ANTHROPIC_API_KEY for a claude shim (worded test value, not sk-ant- format)
+c0db0fca7ec443e1a509ea132f304a05d456fa9c:packages/hrc-server/src/__tests__/t06698-dm-peer-forward-routing.test.ts:generic-api-key:148
+# test fixture: worded placeholder tailnet token for the svc/lab pair (absent from real config)
+126ba52eeec5d25b61865bb3dc6cb47e78f5a1be:packages/hrc-server/src/__tests__/t06802-collective-history-e2e.test.ts:generic-api-key:17
+# test fixture: worded placeholder tailnet token for the svc/max3 pair (absent from real config)
+126ba52eeec5d25b61865bb3dc6cb47e78f5a1be:packages/hrc-server/src/__tests__/t06802-collective-history-e2e.test.ts:generic-api-key:18
+# test fixture: anthropic continuation session key label on a seeded session
+0a49974e6f55ac0d76da93b8a887341e98b3e787:packages/hrc-server/src/__tests__/target-selection-archived-dormant.red.test.ts:generic-api-key:87
