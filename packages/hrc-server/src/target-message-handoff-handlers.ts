@@ -11,9 +11,6 @@ import type {
   DispatchTurnResponse,
   HrcMessageAddress,
   HrcMessageRecord,
-  HrcRuntimeSnapshot,
-  HrcSessionRecord,
-  HrcTurnResponseFormat,
   ListMessagesResponse,
   SemanticTurnHandoffRequest,
   SemanticTurnHandoffStartedResponse,
@@ -36,7 +33,6 @@ import { isBrokerRuntimeInputDispatchable } from './require-helpers.js'
 import { findLatestRuntime } from './runtime-select.js'
 import { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { writeServerLog } from './server-log.js'
 import { parseJsonBody, parseSessionRef } from './server-parsers.js'
 import {
   assertDispatchRunId,
@@ -491,8 +487,7 @@ export async function deliverPersistedSemanticTurnHandoff(
           sessionRef,
         })
 
-        const delivered = await this.tryDeliverSemanticTurnToInteractiveRuntime({
-          session,
+        const delivered = await this.tryDeliverSemanticTurnToInteractiveRuntime(plan, {
           runtime: liveTmuxRuntime,
           request: record,
           payload,
@@ -529,9 +524,8 @@ export async function deliverPersistedSemanticTurnHandoff(
       messageId: record.messageId,
       promptLength: payload.length,
     })
-    const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
+    const turnResponse = await this.executeAdmittedTurn(plan, normalizedIntent, payload, {
       ...plan.options,
-      admissionPlan: plan,
       runId,
       waitForCompletion: false,
       submissionDoor: 'enqueue',
@@ -548,7 +542,7 @@ export async function deliverPersistedSemanticTurnHandoff(
     assertDispatchRunId(turnBody)
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
     // T-01770 Phase B/C: a harness-broker tmux turn here means
-    // dispatchTurnForSession admitted an ariadne-class/SDK-shaped Claude intent
+    // executeAdmittedTurn admitted an ariadne-class/SDK-shaped Claude intent
     // into the claude-code-tmux broker (no live runtime existed yet, so this is
     // the first/recreate start). The reply bridge
     // (maybeCompleteInteractiveSemanticTurn) only finalizes a broker turn when
@@ -605,83 +599,4 @@ export async function deliverPersistedSemanticTurnHandoff(
     })
     throw err
   }
-}
-
-export async function tryDeliverSemanticTurnToInteractiveRuntime(
-  this: HrcServerInstanceForHandlers,
-  input: {
-    session: HrcSessionRecord
-    runtime: HrcRuntimeSnapshot
-    request: HrcMessageRecord
-    payload: string
-    runId: string
-    sessionRef: string
-    fromSeq: number
-    responseFormat?: HrcTurnResponseFormat | undefined
-    observeReceipt?: ((receipt: DispatchTurnResponse) => void) | undefined
-  }
-): Promise<SemanticTurnHandoffStartedResponse | undefined> {
-  const { session, runtime, request, payload, runId, sessionRef, fromSeq, responseFormat } = input
-  if (runtime.transport !== 'tmux') {
-    return undefined
-  }
-
-  if (runtime.controllerKind === 'harness-broker' && runtime.activeInvocationId !== undefined) {
-    // Async reply-bridge delivery: do NOT block here. The Claude reply is
-    // bridged back as a separate DM via maybeCompleteInteractiveSemanticTurn
-    // (8a0979b), so the semantic-turn handoff returns 'started' immediately.
-    const turnResponse = await this.executeInteractiveBrokerInputTurn(
-      session,
-      runtime,
-      payload,
-      runId,
-      { waitForCompletion: false, submissionDoor: 'enqueue', responseFormat }
-    )
-    const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-    input.observeReceipt?.(turnBody)
-    assertDispatchRunId(turnBody)
-    const brokerTransport = turnBody.transport as 'tmux'
-
-    const finalizer = this.turnResponseFinalizers.get(runId)
-    if (finalizer) {
-      this.turnResponseFinalizers.set(runId, {
-        ...finalizer,
-        mode: 'interactive',
-      })
-    }
-
-    this.db.messages.updateExecution(request.messageId, {
-      state: turnBody.status === 'completed' ? 'completed' : 'started',
-      mode: 'interactive',
-      sessionRef,
-      hostSessionId: turnBody.hostSessionId,
-      generation: turnBody.generation,
-      runtimeId: requireDispatchRuntimeId(turnBody),
-      runId: turnBody.runId,
-      transport: brokerTransport,
-    })
-
-    writeServerLog('INFO', 'semantic_turn.interactive_broker_selected', {
-      messageId: request.messageId,
-      hostSessionId: session.hostSessionId,
-      runtimeId: runtime.runtimeId,
-      runId,
-    })
-
-    return {
-      messageId: request.messageId,
-      sessionRef,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      hostSessionId: turnBody.hostSessionId,
-      runtimeId: requireDispatchRuntimeId(turnBody),
-      runId: turnBody.runId,
-      generation: turnBody.generation,
-      fromSeq,
-      ...(turnBody.warnings !== undefined ? { warnings: turnBody.warnings } : {}),
-      ...(turnBody.delivery !== undefined ? { delivery: turnBody.delivery } : {}),
-    }
-  }
-
-  return undefined
 }

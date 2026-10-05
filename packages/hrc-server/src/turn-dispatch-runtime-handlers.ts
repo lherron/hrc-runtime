@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { HrcSubmissionDoorReport } from 'hrc-core'
 import {
   HrcConflictError,
   HrcErrorCode,
@@ -58,11 +59,11 @@ import { admitRuntimeStartPrompt } from './turn-admission/start-prompt.js'
 import { submissionResponse, submitThroughAdmission } from './turn-admission/submit.js'
 import { normalizeJsonRepairCorrelation } from './turn-dispatch-attached-run-handlers.js'
 import {
-  dispatchPublicSubmission,
   echoPersistedBrokerExecutionFormat,
   replayDispatchBody,
   waitForPublicDispatchStage,
 } from './turn-dispatch-submission-handlers.js'
+import { publicDoorReport } from './turn-dispatch-submission-support.js'
 import {
   type InFlightIdempotentDispatch,
   format2RequestHash,
@@ -250,6 +251,7 @@ export async function handleDispatchTurn(
   const executionFormat = body.executionFormat ?? 'format1'
   const runId = executionFormat === 'format2' ? undefined : `run-${randomUUID()}`
   const idempotencyKey = body.idempotencyKey
+  let admittedDoorReport: HrcSubmissionDoorReport | undefined
   const admitted = await submitThroughAdmission(
     this,
     {
@@ -286,6 +288,8 @@ export async function handleDispatchTurn(
       replay: async (run) => json(replayDispatchBody(this, run)),
     },
     async (plan) => {
+      admittedDoorReport =
+        plan.doorReport === undefined ? undefined : publicDoorReport('invoke', plan.doorReport)
       const session = plan.session
       const intent = plan.runtimeIntent
       const runId = plan.options.runId
@@ -297,9 +301,8 @@ export async function handleDispatchTurn(
         idempotentDispatches.set(this, operations)
       }
       const dispatch = async (): Promise<DispatchTurnResponse> => {
-        return await dispatchPublicSubmission(this, session, intent, body.prompt, {
+        return await this.dispatchPublicSubmission(plan, intent, body.prompt, {
           ...plan.options,
-          admissionPlan: plan,
           ...(runId !== undefined ? { runId } : {}),
           executionFormat,
           ...(executionFormat === 'format2'
@@ -313,7 +316,7 @@ export async function handleDispatchTurn(
           // Accepted requests detach at the durable acceptance boundary. Later
           // stages first obtain broker submission identity, then wait on its ledger.
           waitForCompletion: waitFor !== 'accepted',
-          submissionDoor: 'invoke',
+          submissionDoor: plan.effectiveDoor,
           turnPolicy: 'guarded',
           responseFormat: body.responseFormat,
           ...(body.establishedBrokerInvocationId !== undefined
@@ -365,7 +368,9 @@ export async function handleDispatchTurn(
     (await receipt.json()) as DispatchTurnResponse,
     waitFor,
     admitted.outcome === 'replayed',
-    request.signal
+    request.signal,
+    false,
+    admittedDoorReport
   )
 }
 

@@ -19,8 +19,8 @@ const turnDispatchSources = [
   'turn-dispatch-submission-handlers.ts',
   'turn-dispatch-runtime-handlers.ts',
   'turn-dispatch-attached-run-handlers.ts',
-  'turn-dispatch-session-dispatch.ts',
-  'turn-dispatch-admitted-turn.ts',
+  'turn-admission/routes/turn-dispatch-session-dispatch.ts',
+  'turn-admission/routes/turn-dispatch-admitted-turn.ts',
 ]
 const readTurnDispatch = () => turnDispatchSources.map(readServer).join('\n')
 
@@ -92,8 +92,8 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
       'packages/hrc-server/src/turn-dispatch-submission-handlers.ts',
       'packages/hrc-server/src/turn-dispatch-runtime-handlers.ts',
       'packages/hrc-server/src/turn-dispatch-attached-run-handlers.ts',
-      'packages/hrc-server/src/turn-dispatch-session-dispatch.ts',
-      'packages/hrc-server/src/turn-dispatch-admitted-turn.ts',
+      'packages/hrc-server/src/turn-admission/routes/turn-dispatch-session-dispatch.ts',
+      'packages/hrc-server/src/turn-admission/routes/turn-dispatch-admitted-turn.ts',
       'packages/hrc-cli/src/cli/register-top.ts',
       'packages/hrc-cli/src/turn/commands/turn.ts',
       'packages/hrc-cli/src/turn/commands/turn-dispatch.ts',

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'bun:test'
+import { withStandaloneTestAdmission } from './admitted-dispatch.fixture'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 
-import { handleInteractiveTmuxBrokerDispatchTurn } from '../broker-interactive-handlers'
 import type { PublishPresentationOptions } from '../presentation-publish'
+import { handleInteractiveTmuxBrokerDispatchTurn } from '../turn-admission/routes/broker-interactive-tmux-dispatch'
 
 function session(): HrcSessionRecord {
   return {
@@ -57,18 +58,20 @@ describe('T-05881 operator attach viewer suppression', () => {
       },
     }
 
-    const response = await handleInteractiveTmuxBrokerDispatchTurn.call(
-      mockThis as Parameters<typeof handleInteractiveTmuxBrokerDispatchTurn.call>[0],
-      session(),
-      intent(),
-      'hi',
-      'run-t05881',
-      {
-        flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER',
-        allowedBrokerDriver: 'claude-code-tmux',
-        waitForCompletion: false,
-        attachBeforeInvocationStart: { pendingStartId: 'attached-t05881' },
-      }
+    const response = await withStandaloneTestAdmission(session(), intent(), 'hi', (plan) =>
+      handleInteractiveTmuxBrokerDispatchTurn.call(
+        mockThis as Parameters<typeof handleInteractiveTmuxBrokerDispatchTurn.call>[0],
+        plan,
+        intent(),
+        'hi',
+        'run-t05881',
+        {
+          flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER',
+          allowedBrokerDriver: 'claude-code-tmux',
+          waitForCompletion: false,
+          attachBeforeInvocationStart: { pendingStartId: 'attached-t05881' },
+        }
+      )
     )
 
     expect(response.status).toBe(200)
@@ -89,17 +92,19 @@ describe('T-05881 operator attach viewer suppression', () => {
       },
     }
 
-    const response = await handleInteractiveTmuxBrokerDispatchTurn.call(
-      mockThis as Parameters<typeof handleInteractiveTmuxBrokerDispatchTurn.call>[0],
-      session(),
-      intent(),
-      'hi',
-      'run-t05881',
-      {
-        flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER',
-        allowedBrokerDriver: 'claude-code-tmux',
-        waitForCompletion: false,
-      }
+    const response = await withStandaloneTestAdmission(session(), intent(), 'hi', (plan) =>
+      handleInteractiveTmuxBrokerDispatchTurn.call(
+        mockThis as Parameters<typeof handleInteractiveTmuxBrokerDispatchTurn.call>[0],
+        plan,
+        intent(),
+        'hi',
+        'run-t05881',
+        {
+          flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER',
+          allowedBrokerDriver: 'claude-code-tmux',
+          waitForCompletion: false,
+        }
+      )
     )
 
     expect(response.status).toBe(200)
@@ -115,21 +120,27 @@ describe('T-05881 operator attach viewer suppression', () => {
     process.on('unhandledRejection', captureUnhandledRejection)
 
     try {
-      const dispatch = handleInteractiveTmuxBrokerDispatchTurn.call(
-        {
-          startInteractiveTmuxBrokerRuntime: async () => {
-            throw startupFailure
-          },
-        } as Parameters<typeof handleInteractiveTmuxBrokerDispatchTurn.call>[0],
+      const dispatch = withStandaloneTestAdmission(
         session(),
         intent(),
         'cold-start failure',
-        'run-t07880-boot-failure',
-        {
-          flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER',
-          allowedBrokerDriver: 'claude-code-tmux',
-          waitForCompletion: true,
-        }
+        (plan) =>
+          handleInteractiveTmuxBrokerDispatchTurn.call(
+            {
+              startInteractiveTmuxBrokerRuntime: async () => {
+                throw startupFailure
+              },
+            } as Parameters<typeof handleInteractiveTmuxBrokerDispatchTurn.call>[0],
+            plan,
+            intent(),
+            'cold-start failure',
+            'run-t07880-boot-failure',
+            {
+              flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER',
+              allowedBrokerDriver: 'claude-code-tmux',
+              waitForCompletion: true,
+            }
+          )
       )
 
       await expect(dispatch).rejects.toBe(startupFailure)

@@ -64,7 +64,7 @@ type Internal = {
     runId: string,
     options: Record<string, unknown>
   ): Promise<HrcRuntimeSnapshot>
-  dispatchTurnForSession(
+  executeAdmittedTurn(
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent | undefined,
     prompt: string,

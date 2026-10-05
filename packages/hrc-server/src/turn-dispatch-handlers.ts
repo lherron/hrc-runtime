@@ -1,4 +1,4 @@
-import { markRuntimeStaleForBrokerReprovision } from './turn-dispatch-admitted-turn.js'
+import { markRuntimeStaleForBrokerReprovision } from './turn-admission/routes/turn-dispatch-admitted-turn.js'
 import {
   handlePrepareAttachedRun,
   handleResumeAttachedRun,
@@ -12,7 +12,6 @@ import {
   reattachDurableBrokerSessionForOpen,
   waitForBrokerSessionOpenReady,
 } from './turn-dispatch-runtime-handlers.js'
-import { dispatchTurnForSession } from './turn-dispatch-session-dispatch.js'
 import { handleSubmission } from './turn-dispatch-submission-handlers.js'
 import { handlePreemptAdmission } from './turn-dispatch-submission-support.js'
 
@@ -43,8 +42,7 @@ export {
   handlePrepareAttachedRun,
   handleResumeAttachedRun,
 } from './turn-dispatch-attached-run-handlers.js'
-export { dispatchTurnForSession } from './turn-dispatch-session-dispatch.js'
-export { markRuntimeStaleForBrokerReprovision } from './turn-dispatch-admitted-turn.js'
+export { markRuntimeStaleForBrokerReprovision } from './turn-admission/routes/turn-dispatch-admitted-turn.js'
 
 export const turnDispatchHandlersMethods = {
   handleEnsureRuntime,
@@ -55,7 +53,6 @@ export const turnDispatchHandlersMethods = {
   handlePreemptAdmission,
   handlePrepareAttachedRun,
   handleResumeAttachedRun,
-  dispatchTurnForSession,
   openHeadlessBrokerSessionForSession,
   reattachDurableBrokerSessionForOpen,
   waitForBrokerSessionOpenReady,

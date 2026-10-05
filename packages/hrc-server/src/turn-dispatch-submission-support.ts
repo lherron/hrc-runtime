@@ -19,6 +19,7 @@ import type {
   PreemptSubmissionRequest,
   SteerSubmissionRequest,
 } from 'hrc-core'
+import { brokerCapabilitiesSupportAdmissionClass } from './broker/capabilities.js'
 import { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import {
   brokerRuntimeRefusesAdmissionClass,
@@ -452,29 +453,40 @@ export function submissionDoorReport(
   session: HrcSessionRecord,
   requestedDoor: SubmissionDoor
 ): HrcSubmissionDoorReport & { runtime?: HrcRuntimeSnapshot | undefined } {
-  if (requestedDoor !== 'steer') return { effectiveDoor: requestedDoor }
+  if (requestedDoor !== 'steer' && requestedDoor !== 'invoke')
+    return { effectiveDoor: requestedDoor }
   const runtime = activeBrokerRuntimeForSession(server, session)
-  if (runtime === undefined || !brokerRuntimeRefusesAdmissionClass(server.db, runtime, 'steer')) {
+  const invocation =
+    runtime?.activeInvocationId === undefined
+      ? null
+      : server.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+  if (
+    runtime === undefined ||
+    (requestedDoor === 'steer'
+      ? !brokerRuntimeRefusesAdmissionClass(server.db, runtime, 'steer')
+      : brokerCapabilitiesSupportAdmissionClass(invocation?.capabilitiesJson, 'exclusive'))
+  ) {
     return { effectiveDoor: requestedDoor }
   }
   return {
     effectiveDoor: 'enqueue',
     requestedDoor,
-    downgradeReason: 'steer_not_supported',
+    downgradeReason:
+      requestedDoor === 'steer' ? 'steer_not_supported' : 'invoke_exclusive_not_supported',
     runtime,
   }
 }
 
 /**
- * Only the steer door reports its door: it is the one door that can change.
- * Every other door's body stays exactly as ratified (T-07880: `/v1/turns` is a
+ * Steer reports its door; invoke adds a report only when downgraded.
+ * An unchanged invoke body stays exactly as ratified (T-07880: `/v1/turns` is a
  * deep-equal alias of the invoke door).
  */
 export function publicDoorReport(
   requestedDoor: SubmissionDoor,
   report: ReturnType<typeof submissionDoorReport>
 ): HrcSubmissionDoorReport | undefined {
-  if (requestedDoor !== 'steer') return undefined
+  if (requestedDoor !== 'steer' && report.requestedDoor === undefined) return undefined
   return report.requestedDoor === undefined
     ? { effectiveDoor: report.effectiveDoor }
     : {

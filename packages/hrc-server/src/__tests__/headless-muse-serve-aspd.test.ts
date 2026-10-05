@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { dispatchTestTurn } from './admitted-dispatch.fixture'
 
 import type { HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -63,7 +64,7 @@ type Internal = {
       runtimeIntent?: HrcRuntimeIntent | undefined
     }
   ): Promise<{ hostSessionId: string }>
-  dispatchTurnForSession(
+  executeAdmittedTurn(
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent | undefined,
     prompt: string,
@@ -208,7 +209,7 @@ async function settle(predicate: () => boolean): Promise<void> {
 
 /** The external injector's exact summons-birth call. */
 async function kickerSummons(s: HrcSessionRecord, prompt = MARK): Promise<Response> {
-  return await internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, prompt, {
+  return await dispatchTestTurn(internal(), s, s.lastAppliedIntentJson, prompt, {
     waitForCompletion: false,
     submissionDoor: 'invoke',
     ttlMs: 60_000,

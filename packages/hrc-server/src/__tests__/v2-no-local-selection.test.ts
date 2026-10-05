@@ -121,7 +121,7 @@ test('ordinary public start and turn enter producer-selected hosting before any 
   for (const path of [
     'runtime-start-handlers.ts',
     'turn-dispatch-runtime-handlers.ts',
-    'turn-dispatch-admitted-turn.ts',
+    'turn-admission/routes/turn-dispatch-admitted-turn.ts',
   ]) {
     const text = source(path)
     const ordinary = text.indexOf('isProducerSelectedOrdinaryBirth(')

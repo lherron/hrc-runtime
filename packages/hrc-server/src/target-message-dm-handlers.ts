@@ -434,10 +434,12 @@ export async function deliverPersistedSemanticDm(
         })
       }
 
-      const result = await this.executeSemanticTurn(session, body, record, respondTo, {
-        waitForCompletion: body.wait?.enabled === true,
-        admissionPlan: plan,
-      })
+      const result =
+        plan === undefined
+          ? {}
+          : await this.executeSemanticTurn(plan, body, record, respondTo, {
+              waitForCompletion: body.wait?.enabled === true,
+            })
       execution = result.execution
       reply = result.reply
       warnings = result.warnings
@@ -503,7 +505,7 @@ export function rejectBusyHeadlessSemanticDm(
 
 export async function executeSemanticTurn(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   body: {
     runtimeIntent?: HrcRuntimeIntent | undefined
     body: string
@@ -515,7 +517,6 @@ export async function executeSemanticTurn(
   respondTo: HrcMessageAddress,
   options: {
     waitForCompletion?: boolean | undefined
-    admissionPlan?: AdmittedPlan | undefined
   } = {}
 ): Promise<{
   execution?: DispatchTurnBySelectorResponse
@@ -523,12 +524,13 @@ export async function executeSemanticTurn(
   warnings?: HrcDeliveryWarning[] | undefined
   delivery?: HrcDeliveryOutcome | undefined
 }> {
+  const session = plan.session
   const baseIntent =
     body.runtimeIntent ??
     (session.lastAppliedIntentJson === undefined
       ? undefined
       : omitPersistedSelectionForReuse(session.lastAppliedIntentJson))
-  if (!baseIntent && options.admissionPlan?.participant == null) return {}
+  if (!baseIntent && plan.participant == null) return {}
 
   try {
     const latestRuntime = this.db.runtimes.listByHostSessionId(session.hostSessionId).at(-1)
@@ -540,7 +542,7 @@ export async function executeSemanticTurn(
       await this.reattachLiveSemanticDmSubstrate(latestRuntime)
     }
 
-    const runId = options.admissionPlan?.options.runId ?? `run-${randomUUID()}`
+    const runId = plan.options.runId ?? `run-${randomUUID()}`
     const payload = formatDmPayload(
       body.from,
       body.to,
@@ -548,13 +550,12 @@ export async function executeSemanticTurn(
       record.messageSeq,
       record.createdAt
     )
-    const turnResponse = await this.dispatchTurnForSession(
-      session,
-      options.admissionPlan?.runtimeIntent ?? baseIntent,
+    const turnResponse = await this.executeAdmittedTurn(
+      plan,
+      plan.runtimeIntent ?? baseIntent,
       payload,
       {
-        ...options.admissionPlan?.options,
-        admissionPlan: options.admissionPlan,
+        ...plan.options,
         runId,
         waitForCompletion: options.waitForCompletion,
         submissionDoor: 'enqueue',
@@ -680,8 +681,7 @@ export async function executeSemanticTurn(
       errorCode: 'semantic_dm_execution_failed',
       errorMessage,
     })
-    if (options.admissionPlan !== undefined) throw err
-    return {}
+    throw err
   }
 }
 

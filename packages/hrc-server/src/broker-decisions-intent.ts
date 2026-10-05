@@ -409,7 +409,7 @@ export function toLiveInteractiveRuntimeReuseView(
 }
 
 /**
- * True when dispatchTurnForSession should SKIP the headless branch and fall
+ * True when executeAdmittedTurn should SKIP the headless branch and fall
  * through to decideInteractiveBrokerAdmission (→ broker-reuse), delivering the
  * turn INTO a live interactive broker runtime rather than spawning a competing
  * headless run on the same continuation thread. Restricted to a harness-broker

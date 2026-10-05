@@ -51,9 +51,9 @@ source:
   - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
   - architecture/records/invariants/hrc-runtime.collaboration-presentation-authority.yaml
   - packages/hrc-server/src/turn-admission-gate.ts
-  - packages/hrc-server/src/turn-dispatch-session-dispatch.ts
+  - packages/hrc-server/src/turn-admission/submit.ts
   - packages/hrc-server/src/turn-dispatch-submission-handlers.ts
-  - packages/hrc-server/src/broker-headless-queue.ts
+  - packages/hrc-server/src/turn-admission/routes/broker-headless-queue.ts
   - packages/hrc-server/src/selector-message-handlers/selector-input.ts
 required_tests:
   - T-10232 exhaustive HTTP door-by-driver conformance with typed production-interface boundary fakes and explicit inapplicable cells

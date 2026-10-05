@@ -207,9 +207,8 @@ export async function handlePrepareAttachedRun(
     const intent = plan?.runtimeIntent ?? body.intent
     if (plan?.participant != null)
       return await dispatchTurnResponseJson(
-        await this.dispatchTurnForSession(session, plan.runtimeIntent, body.prompt ?? '', {
+        await this.executeAdmittedTurn(plan, plan.runtimeIntent, body.prompt ?? '', {
           ...plan.options,
-          admissionPlan: plan,
           waitForCompletion: false,
         })
       )
@@ -246,9 +245,9 @@ export async function handlePrepareAttachedRun(
         : toStartRuntimeResponse(runtime)
     }
     if (body.prompt && body.prompt.length > 0) {
-      const response = await this.dispatchTurnForSession(session, intent, body.prompt, {
+      if (plan === undefined) throw new Error('attached prompt has no admission plan')
+      const response = await this.executeAdmittedTurn(plan, intent, body.prompt, {
         ...plan?.options,
-        ...(plan === undefined ? {} : { admissionPlan: plan }),
         runId: plan?.options.runId ?? `run-${randomUUID()}`,
         waitForCompletion: false,
         attachBeforeInvocationStart: attach,

@@ -6,7 +6,10 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import { assertActuatorSplitRuntimeReuse, prepareActuatorSplitIntent } from './actuator-split.js'
+import {
+  assertActuatorSplitRuntimeReuse,
+  prepareActuatorSplitIntent,
+} from '../../actuator-split.js'
 import {
   aspdInteractiveBrokerEndpoint,
   aspdInteractiveRouteFor,
@@ -15,37 +18,38 @@ import {
   launchAspdPreparedAttempt,
   prepareAspdHeadlessAttempt,
   readAspdPreparation,
-} from './aspd-headless-start.js'
+} from '../../aspd-headless-start.js'
 import {
   decideBrokerDurableInteractiveRoute,
   decideInteractiveTmuxBrokerContinuation,
   toRuntimeContinuationRef,
-} from './broker-decisions.js'
-import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
-import type { DispatchTurnResponseBase } from './broker-interactive-shared.js'
-import { appendHrcEvent } from './hrc-event-helper.js'
-import { waitForLaunchCarriedSubmissionIdentity } from './launch-carried-submission.js'
-import { resolveBrokerDurableIpcEnabled } from './option-resolvers.js'
-import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
+} from '../../broker-decisions.js'
+import type { InteractiveTmuxBrokerDriver } from '../../broker-decisions.js'
+import type { DispatchTurnResponseBase } from '../../broker-interactive-shared.js'
+import { appendHrcEvent } from '../../hrc-event-helper.js'
+import { waitForLaunchCarriedSubmissionIdentity } from '../../launch-carried-submission.js'
+import { resolveBrokerDurableIpcEnabled } from '../../option-resolvers.js'
+import { assertParticipantAddressNotSubstituted } from '../../participant-delivery.js'
 import {
   type RedirectOffBirthJoin,
   assertBirthJoinAdmitted,
   assertBirthJoinRoute,
   recordStartBirth,
   startBirthOfIntent,
-} from './presentation-operator.js'
-import { isRunActive } from './require-helpers.js'
-import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { writeServerLog } from './server-log.js'
+} from '../../presentation-operator.js'
+import { isRunActive } from '../../require-helpers.js'
+import type { HrcServerInstanceForHandlers } from '../../server-instance-context.js'
+import { writeServerLog } from '../../server-log.js'
 import {
   type AttachBeforeInvocationStartOption,
   type DispatchRunPersistenceOptions,
   type InvokeFirstTurnRendezvous,
   dispatchRunPersistence,
   submissionDoorCarriesColdLaunch,
-} from './server-types.js'
-import { aspdUnconfiguredError, json, timestamp } from './server-util.js'
-import { automaticContinuationForSession } from './session-continuation-reuse.js'
+} from '../../server-types.js'
+import { aspdUnconfiguredError, json, timestamp } from '../../server-util.js'
+import { automaticContinuationForSession } from '../../session-continuation-reuse.js'
+import type { AdmittedPlan } from '../types.js'
 
 function cleanupInvokeFirstTurnRendezvous(
   server: HrcServerInstanceForHandlers,
@@ -63,7 +67,7 @@ function cleanupInvokeFirstTurnRendezvous(
 
 export async function handleInteractiveTmuxBrokerDispatchTurn(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   intent: HrcRuntimeIntent,
   prompt: string,
   runId: string,
@@ -79,6 +83,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
+  const session = plan.session
   const { initialPrompt: _initialPrompt, ...turnIntent } = intent
   let promptRodeLaunch = false
   // T-07202: persisted semantic DMs can enter this interactive cold-start
@@ -111,7 +116,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       if (flagOptions.redirectOffBirthJoin !== undefined) {
         assertBirthJoinAdmitted(turnIntent, runtime, flagOptions.redirectOffBirthJoin)
       }
-      return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
+      return await this.executeInteractiveBrokerInputTurn(plan, runtime, prompt, runId, {
         waitForCompletion: flagOptions.waitForCompletion,
         responseFormat: flagOptions.responseFormat,
         ...dispatchRunPersistence(flagOptions),
@@ -258,7 +263,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     void bootOperation
       .then(async (runtime) => {
         if (promptRodeLaunch) return
-        await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
+        await this.executeInteractiveBrokerInputTurn(plan, runtime, prompt, runId, {
           waitForCompletion: false,
           responseFormat: flagOptions.responseFormat,
           ...dispatchRunPersistence(flagOptions),
@@ -310,7 +315,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       ...(submissionId === undefined ? {} : { submissionId, admission: 'admitted' as const }),
     } satisfies DispatchTurnResponseBase)
   }
-  return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
+  return await this.executeInteractiveBrokerInputTurn(plan, runtime, prompt, runId, {
     waitForCompletion: false,
     responseFormat: flagOptions.responseFormat,
     ...dispatchRunPersistence(flagOptions),

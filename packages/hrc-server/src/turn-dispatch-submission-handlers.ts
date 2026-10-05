@@ -5,7 +5,6 @@ import type {
   DispatchTurnTerminalOutcome,
   EnqueueSubmissionRequest,
   HrcRuntimeIntent,
-  HrcSessionRecord,
   HrcSubmissionDoorReport,
   HrcSubmissionResponse,
   InvokeSubmissionRequest,
@@ -15,8 +14,9 @@ import { appendHrcEvent } from './hrc-event-helper.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { parseJsonBody, parseSubmissionRequest } from './server-parsers.js'
 import { assertDispatchRunId, json, timestamp } from './server-util.js'
+import type { DispatchTurnForSessionOptions } from './turn-admission/routes/turn-dispatch-session-dispatch.js'
 import { submissionResponse, submitThroughAdmission } from './turn-admission/submit.js'
-import type { DispatchTurnForSessionOptions } from './turn-dispatch-session-dispatch.js'
+import type { AdmittedPlan } from './turn-admission/types.js'
 import {
   type InFlightIdempotentDispatch,
   type PublicDispatchWaitStage,
@@ -110,9 +110,8 @@ export async function handleSubmission(
       const operations =
         idempotentDispatches.get(this) ?? new Map<string, InFlightIdempotentDispatch>()
       if (!idempotentDispatches.has(this)) idempotentDispatches.set(this, operations)
-      const dispatchPromise = dispatchPublicSubmission(this, session, intent, body.body, {
+      const dispatchPromise = this.dispatchPublicSubmission(plan, intent, body.body, {
         ...plan.options,
-        admissionPlan: plan,
         ...(runId !== undefined ? { runId } : {}),
         executionFormat,
         ...(executionFormat === 'format2'
@@ -128,7 +127,7 @@ export async function handleSubmission(
         // minted its identity. A non-waiting cold invoke instead ends at the
         // durable start graph so provider execution cannot hold the launch RPC.
         waitForCompletion: !allowLaunchReceipt,
-        submissionDoor: door === 'invoke' ? 'invoke' : effectiveDoor,
+        submissionDoor: effectiveDoor,
         submissionOrigin: body.origin,
         origin: runOriginFromSubmission(body.origin),
         responseFormat: body.responseFormat,
@@ -244,15 +243,16 @@ function publicDispatchBody(
 }
 
 export async function dispatchPublicSubmission(
-  server: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  this: HrcServerInstanceForHandlers,
+  plan: AdmittedPlan,
   /** Absent for a participant, which is routed by durable linkage (R7.6). */
   intent: HrcRuntimeIntent | undefined,
   prompt: string,
   options: DispatchTurnForSessionOptions & { requireSubmissionIdentity?: boolean | undefined }
 ): Promise<DispatchTurnResponse> {
+  const session = plan.session
   const { requireSubmissionIdentity = false, ...dispatchOptions } = options
-  const response = await server.dispatchTurnForSession(session, intent, prompt, dispatchOptions)
+  const response = await this.executeAdmittedTurn(plan, intent, prompt, dispatchOptions)
   const dispatched = (await response.json()) as DispatchTurnResponse
   const isFormat2InputReceipt =
     dispatchOptions.executionFormat === 'format2' && dispatched.inputId !== undefined
@@ -268,9 +268,7 @@ export async function dispatchPublicSubmission(
     })
   }
   const run =
-    dispatchOptions.runId !== undefined
-      ? server.db.runs.getByRunId(dispatchOptions.runId)
-      : undefined
+    dispatchOptions.runId !== undefined ? this.db.runs.getByRunId(dispatchOptions.runId) : undefined
   const outcome = run ? terminalOutcome(run.status) : undefined
   return publicDispatchBody(dispatched, outcome === undefined ? 'accepted' : 'terminal', {
     replayed: false,

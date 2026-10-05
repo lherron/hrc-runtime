@@ -20,13 +20,11 @@ import {
   seedAdmissionDriver,
 } from './driver-graph.fixture'
 import { DOORS, DRIVERS, type Driver, EXPECTED, expectedTrace } from './expected-admission'
-
 let fixture: HrcServerTestFixture
 let server: HrcServer
 let ctx: HrcServerInstanceForHandlers
 let session: HrcSessionRecord
 let currentDriver: Driver = 'format1-headless'
-
 beforeEach(async () => {
   currentDriver = 'format1-headless'
   fixture = await createHrcTestFixture('admission-conformance-')
@@ -54,10 +52,10 @@ beforeEach(async () => {
   })
 })
 afterEach(async () => {
+  await Promise.allSettled([...ctx.runtimeStartOperations.values()])
   await server.stop()
   await fixture.cleanup()
 })
-
 function runtimeIntent(): HrcRuntimeIntent {
   return {
     placement: {
@@ -76,7 +74,6 @@ function seedDriver(driver: Driver) {
   currentDriver = driver
   session = seedAdmissionDriver(ctx, fixture, session, driver, runtimeIntent())
 }
-
 function post(door: 'submission' | 'turns', intent: string, patch: object = {}) {
   const base =
     door === 'turns'
@@ -118,7 +115,6 @@ function admission(outcome: string, count = 1) {
   expect(payload.trace.map((entry) => entry.step)).toEqual([...ADMISSION_STEPS])
   return payload
 }
-
 for (const driver of DRIVERS) {
   for (const door of ['submission', 'turns'] as const) {
     for (const intent of DOORS[door]) {
@@ -194,7 +190,6 @@ for (const driver of DRIVERS) {
     }
   }
 }
-
 for (const intent of DOORS.submission) {
   test(`submission/${intent}: participant freshContext preserves E0`, async () => {
     seedDriver('participant')
@@ -219,7 +214,6 @@ for (const intent of DOORS.submission) {
     admission('refused')
   })
 }
-
 test('nonoperator preempt plus freshContext preserves E0', async () => {
   seedDriver('format1-headless')
   const before = snapshot()
@@ -231,13 +225,11 @@ test('nonoperator preempt plus freshContext preserves E0', async () => {
   expect(snapshot()).toEqual(before)
   admission('refused')
 })
-
 test('D5 freshContext is explicitly inapplicable at the wire boundary', async () => {
   expect(EXPECTED.turns.freshContext).toBe('not on the wire contract; parser rejects unknown field')
   expect((await post('turns', 'invoke', { freshContext: true })).status).toBe(422)
   expect(ctx.db.hrcEvents.listByKind('submission.admission')).toHaveLength(0)
 })
-
 for (const driver of ['format1-headless', 'tmux-live', 'participant'] as const) {
   for (const door of ['submission', 'turns'] as const) {
     for (const intent of DOORS[door]) {
@@ -268,7 +260,6 @@ for (const driver of ['format1-headless', 'tmux-live', 'participant'] as const) 
     }
   }
 }
-
 for (const driver of ['format1-headless', 'v2-headless', 'tmux-live', 'participant'] as const) {
   for (const door of ['submission', 'turns'] as const) {
     for (const intent of DOORS[door]) {
@@ -285,7 +276,6 @@ for (const driver of ['format1-headless', 'v2-headless', 'tmux-live', 'participa
     }
   }
 }
-
 test('preempt without capability refuses before freshContext rotation', async () => {
   seedDriver('format1-headless')
   ctx.db.brokerInvocations.update(invocationId, {
@@ -298,36 +288,71 @@ test('preempt without capability refuses before freshContext rotation', async ()
   expect(snapshot()).toEqual(before)
   expect(admission('refused').trace[5]?.outcome).toBe('refused')
 })
-
+async function expectQueueInvoke(
+  door: 'submission' | 'turns',
+  capabilities: object,
+  codex = false
+) {
+  seedDriver('format1-headless')
+  ctx.db.brokerInvocations.update(invocationId, {
+    capabilitiesJson: JSON.stringify(capabilities),
+    ...(codex ? { brokerDriver: 'codex-app-server' } : {}),
+    updatedAt: fixture.now(),
+  })
+  const client = fakeBrokerClient(ctx, runtimeId, invocationId)
+  let enqueues = 0
+  const enqueue = client.enqueue.bind(client)
+  client.enqueue = async (request) => {
+    enqueues++
+    return enqueue(request)
+  }
+  client.invoke = async () => {
+    throw new Error('unexpected exclusive invoke')
+  }
+  ctx.getHarnessBrokerController().active.set(runtimeId, {
+    runtimeId,
+    invocationId,
+    client,
+    closing: false,
+  })
+  const response = await post(door, 'invoke')
+  if (codex) expect(response.status).toBe(202)
+  else expect([200, 202]).toContain(response.status)
+  expect(enqueues).toBe(1)
+  const receipt = await response.json()
+  expect(receipt.admission).toBe('admitted')
+  const event = ctx.db.hrcEvents.listByKind('submission.admission')[0]
+  expect((event?.payload as { effectiveDoor: string }).effectiveDoor).toBe('enqueue')
+  const diagnostics = ctx.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson?.[
+    'brokerDispatchDiagnostics'
+  ] as { submissions: { admissionClass: string; door: string }[] }
+  expect(diagnostics.submissions[0]?.admissionClass).toBe('queue')
+  expect(diagnostics.submissions[0]?.door).toBe('enqueue')
+  expect(ctx.db.hrcEvents.listByKind('submission.door_downgraded')).toHaveLength(1)
+  expect(receipt).toMatchObject({
+    effectiveDoor: 'enqueue',
+    requestedDoor: 'invoke',
+    downgradeReason: 'invoke_exclusive_not_supported',
+  })
+  await Bun.sleep(30)
+}
 for (const door of ['submission', 'turns'] as const) {
   test(`${door}/invoke: admission capability agrees with broker queue class`, async () => {
-    seedDriver('format1-headless')
-    ctx.db.brokerInvocations.update(invocationId, {
-      capabilitiesJson: JSON.stringify({ admission: { classes: ['queue'] } }),
-      updatedAt: fixture.now(),
-    })
-    ctx.getHarnessBrokerController().active.set(runtimeId, {
-      runtimeId,
-      invocationId,
-      client: fakeBrokerClient(ctx, runtimeId, invocationId),
-      closing: false,
-    })
-    const response = await post(door, 'invoke')
-    expect([200, 202]).toContain(response.status)
-    const receipt = await response.json()
-    expect(receipt.admission).toBe('admitted')
-    const event = ctx.db.hrcEvents.listByKind('submission.admission')[0]
-    expect((event?.payload as { effectiveDoor: string }).effectiveDoor).toBe('enqueue')
-    const diagnostics = ctx.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson?.[
-      'brokerDispatchDiagnostics'
-    ] as { submissions: { admissionClass: string; door: string }[] }
-    expect(diagnostics.submissions[0]?.admissionClass).toBe('queue')
-    expect(diagnostics.submissions[0]?.door).toBe('invoke')
-    expect(ctx.db.hrcEvents.listByKind('submission.door_downgraded')).toHaveLength(0)
-    await Bun.sleep(30)
+    await expectQueueInvoke(door, { admission: { classes: ['queue'] } })
   })
 }
-
+test('turns/invoke: codex-app-server without exclusive physically enqueues and reports its downgrade', async () => {
+  await expectQueueInvoke(
+    'turns',
+    {
+      admission: { classes: ['steer', 'queue'] },
+      bracketMintingMode: 'observed',
+      queue: { cancelHarnessLocal: false },
+      turns: { concurrency: 'single', interrupt: 'protocol' },
+    },
+    true
+  )
+})
 function postPhase2(door: 'turns-by-selector' | 'dm' | 'prepare-attached', patch: object = {}) {
   const ref = `${session.scopeRef}/lane:${session.laneRef}`
   if (door === 'dm')
@@ -422,7 +447,6 @@ test('D11 freshContext is inapplicable: its parser has no such request field', (
   })
   expect(Object.hasOwn(parsed, 'freshContext')).toBe(false)
 })
-
 for (const driver of ['format1-headless', 'v2-headless', 'tmux-live', 'participant'] as const) {
   test(`turns-by-selector × ${driver}: carried mismatch preserves E0`, async () => {
     seedDriver(driver)

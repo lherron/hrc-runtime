@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { dispatchTestRoute, dispatchTestTurn } from './admitted-dispatch.fixture'
+import { seedDispatchedBrokerInvocation } from './persisted-invocation.fixture'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -170,7 +172,9 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
     }
     internal.publishPresentation = async () => undefined
 
-    const response = await internal.handleInteractiveTmuxBrokerDispatchTurn(
+    const response = await dispatchTestRoute(
+      internal,
+      'handleInteractiveTmuxBrokerDispatchTurn',
       session,
       claudeIntent(),
       CALLER,
@@ -221,6 +225,16 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
       updatedAt: fixture.now(),
     }
     const { activeRunId: _activeRunId, ...runtimeBeforeRun } = runtime
+    seedDispatchedBrokerInvocation(internal.db, {
+      runtimeId: runtime.runtimeId,
+      invocationId: 'inv-t08012-crossing',
+      executionFormat: 'format1',
+    })
+    internal.db.brokerInvocations.update('inv-t08012-crossing', {
+      capabilitiesJson: JSON.stringify({ admission: { classes: ['exclusive', 'queue'] } }),
+      updatedAt: fixture.now(),
+    })
+    internal.reconcileTmuxRuntimeLiveness = async (value) => value
     internal.db.runtimes.insert(runtimeBeforeRun)
     internal.db.runs.insert({
       runId: firstRunId,
@@ -254,11 +268,13 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
       return runtime
     }
     internal.executeInteractiveBrokerInputTurn = async (
-      submittedSession,
+      plan,
       submittedRuntime,
       _prompt,
       submittedRunId
     ) => {
+      const submittedSession = plan.session
+
       independentSubmissions += 1
       return Response.json({
         runId: submittedRunId,
@@ -271,7 +287,9 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
       })
     }
 
-    await internal.handleInteractiveTmuxBrokerDispatchTurn(
+    await dispatchTestRoute(
+      internal,
+      'handleInteractiveTmuxBrokerDispatchTurn',
       session,
       claudeIntent(),
       'first caller rides launch',
@@ -284,7 +302,8 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
     )
     await Bun.sleep(0)
 
-    const crossing = internal.dispatchTurnForSession(
+    const crossing = dispatchTestTurn(
+      internal,
       session,
       claudeIntent(),
       'second caller crosses birth',
@@ -357,7 +376,10 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
       undefined
     )
     internal.db.brokerInvocations.update(String(identity.invocationId), {
-      capabilitiesJson: JSON.stringify({ bracketMintingMode: 'harness-evidence' }),
+      capabilitiesJson: JSON.stringify({
+        admission: { classes: ['exclusive'] },
+        bracketMintingMode: 'harness-evidence',
+      }),
       updatedAt: fixture.now(),
     })
 

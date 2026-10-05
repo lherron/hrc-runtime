@@ -12,13 +12,6 @@ import { createBirthTimeline } from './birth-timeline.js'
 import { waitForInteractiveBrokerRunCompletion } from './broker-headless-completion.js'
 import { waitForHeadlessBrokerRunCompletion } from './broker-headless-completion.js'
 import { recordDetachedHeadlessTurnFailure } from './broker-headless-completion.js'
-import { executeHeadlessBrokerFormat2DispatchTurn } from './broker-headless-format2.js'
-import { executeHeadlessBrokerInputTurn } from './broker-headless-input-turn.js'
-import { enqueueDurableHeadlessTurnInput } from './broker-headless-queue.js'
-import { dispatchQueuedHeadlessTurnInput } from './broker-headless-queue.js'
-import { drainDurableHeadlessTurnInputs } from './broker-headless-queue.js'
-import { startAspdHeadlessBrokerRuntime } from './broker-headless-start.js'
-import { executeHeadlessBrokerStartTurn } from './broker-headless-start.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import type {
@@ -26,23 +19,22 @@ import type {
   DispatchRunPersistenceOptions,
 } from './server-types.js'
 import { aspdUnconfiguredError } from './server-util.js'
+import { enqueueDurableHeadlessTurnInput } from './turn-admission/routes/broker-headless-queue.js'
+import { drainDurableHeadlessTurnInputs } from './turn-admission/routes/broker-headless-queue.js'
+import { startAspdHeadlessBrokerRuntime } from './turn-admission/routes/broker-headless-start.js'
 
 export {
   disposeColdBootInputContinuationFailure,
   failColdBootInputContinuation,
   settleFailedHeadlessBrokerStart,
-  executeHeadlessBrokerStartTurn,
-} from './broker-headless-start.js'
-export { executeHeadlessBrokerFormat2DispatchTurn } from './broker-headless-format2.js'
-export { executeHeadlessBrokerInputTurn } from './broker-headless-input-turn.js'
+} from './turn-admission/routes/broker-headless-start.js'
 export {
-  dispatchQueuedHeadlessTurnInput,
   drainDurableHeadlessTurnInputs,
   enqueueDurableHeadlessTurnInput,
   formatQueuedDeliveryRemainderTrailer,
   formatQueuedSemanticDmDelivery,
   parseDurableColdBootTurnInput,
-} from './broker-headless-queue.js'
+} from './turn-admission/routes/broker-headless-queue.js'
 export {
   recordDetachedHeadlessTurnFailure,
   waitForCompilerPrimingTerminal,
@@ -132,11 +124,7 @@ export async function startHeadlessBrokerRuntime(
 
 export const brokerHeadlessHandlersMethods = {
   startHeadlessBrokerRuntime,
-  executeHeadlessBrokerFormat2DispatchTurn,
-  executeHeadlessBrokerStartTurn,
-  executeHeadlessBrokerInputTurn,
   enqueueDurableHeadlessTurnInput,
-  dispatchQueuedHeadlessTurnInput,
   drainDurableHeadlessTurnInputs,
   waitForInteractiveBrokerRunCompletion,
   waitForHeadlessBrokerRunCompletion,

@@ -127,7 +127,7 @@ describe('T-07428 directive-only runtime intent contract', () => {
     const dispatched: HrcRuntimeIntent[] = []
     Reflect.set(
       server,
-      'dispatchTurnForSession',
+      'executeAdmittedTurn',
       async (
         session: HrcSessionRecord,
         intent: HrcRuntimeIntent,

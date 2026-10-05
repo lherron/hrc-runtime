@@ -1,32 +1,36 @@
 import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
-import type { HrcRuntimeSnapshot, HrcSessionRecord, HrcTurnResponseFormat } from 'hrc-core'
-import type { DispatchTurnResponseBase, JsonRepairRunCorrelation } from './broker-headless-types.js'
-import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
-import type { BrokerUnixClientFactory } from './broker/controller.js'
-import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
-import { armFirstTurnWatch } from './first-turn-watch.js'
-import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
+import type { HrcRuntimeSnapshot, HrcTurnResponseFormat } from 'hrc-core'
+import type {
+  DispatchTurnResponseBase,
+  JsonRepairRunCorrelation,
+} from '../../broker-headless-types.js'
+import { connectObservedBrokerUnixClient } from '../../broker/client-observability.js'
+import type { BrokerUnixClientFactory } from '../../broker/controller.js'
+import { submissionOrigin, submitThroughBrokerDoor } from '../../broker/submission-doors.js'
+import { armFirstTurnWatch } from '../../first-turn-watch.js'
+import { appendHrcEvent, createUserPromptPayload } from '../../hrc-event-helper.js'
 import {
   classifyBrokerInputFailure,
   isTerminalBrokerInputFailure,
   isTerminalBrokerInvocationState,
   isTransientBrokerInputStateFailure,
   isTransitionalBrokerInvocationState,
-} from './require-helpers.js'
-import { runtimeActivityPatch } from './runtime-activity.js'
-import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { writeServerLog } from './server-log.js'
-import { type DispatchRunPersistenceOptions, dispatchOriginRunFields } from './server-types.js'
-import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
-import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
+} from '../../require-helpers.js'
+import { runtimeActivityPatch } from '../../runtime-activity.js'
+import type { HrcServerInstanceForHandlers } from '../../server-instance-context.js'
+import { writeServerLog } from '../../server-log.js'
+import { type DispatchRunPersistenceOptions, dispatchOriginRunFields } from '../../server-types.js'
+import { isRuntimeUnavailableStatus, json, timestamp } from '../../server-util.js'
+import { reattachDurableBrokerForDispatch } from '../../startup-reconcile.js'
 import {
   assertRuntimeSupportsResponseFormat,
   toBrokerResponseFormat,
-} from './turn-response-format.js'
+} from '../../turn-response-format.js'
+import type { AdmittedPlan } from '../types.js'
 
 export async function executeHeadlessBrokerInputTurn(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   runtime: HrcRuntimeSnapshot,
   prompt: string,
   runId: string,
@@ -36,6 +40,7 @@ export async function executeHeadlessBrokerInputTurn(
     responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
+  const session = plan.session
   const invocationId = runtime.activeInvocationId
   if (invocationId === undefined) {
     throw new HrcUnprocessableEntityError(

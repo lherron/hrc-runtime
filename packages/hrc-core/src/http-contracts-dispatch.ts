@@ -576,13 +576,18 @@ export type HrcSubmissionDoor = 'steer' | 'enqueue' | 'invoke' | 'preempt'
  * Why HRC submitted through a door other than the one requested (T-08536).
  * `steer_not_supported`: the target invocation positively advertised admission
  * classes without `steer`, so the body went through enqueue — "now" became
- * "after". Never silent: the response and `submission.door_downgraded` say so.
+ * "after". `invoke_exclusive_not_supported`: a live invocation cannot serve
+ * exclusive admission, so invoke uses enqueue. Never silent: the response and
+ * `submission.door_downgraded` say so.
  */
-export type HrcSubmissionDoorDowngradeReason = 'steer_not_supported'
+export type HrcSubmissionDoorDowngradeReason =
+  | 'steer_not_supported'
+  | 'invoke_exclusive_not_supported'
 
 /**
- * The door the body actually went through, reported by the steer door (the only
- * door that can change). `requestedDoor` and `downgradeReason` are present
+ * The door the body actually went through, reported by steer and by an invoke
+ * whose live invocation does not support exclusive admission. `requestedDoor`
+ * and `downgradeReason` are present
  * exactly when it differs from the one asked for.
  */
 export type HrcSubmissionDoorReport =

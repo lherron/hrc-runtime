@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { readFile } from 'node:fs/promises'
+import type { HrcServerInstanceForHandlers } from '../server-instance-context'
 
 import type { HrcTargetView, ListMessagesResponse, SemanticDmResponse } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -260,7 +261,21 @@ describe('hrcchat minimal server routes', () => {
   it('threads responseFormat on session-target semantic DMs to semantic turn dispatch', async () => {
     const scopeRef = 'agent:cody:project:agent-spaces:task:T-05142'
     const sessionRef = `${scopeRef}/lane:main`
-    await ctx.fixture.resolveSession(scopeRef)
+    const resolved = await ctx.fixture.resolveSession(scopeRef)
+    ;(ctx.server as HrcServerInstanceForHandlers).db.sessions.updateIntent(
+      resolved.hostSessionId,
+      {
+        placement: {
+          agentRoot: ctx.fixture.tmpDir,
+          projectRoot: ctx.fixture.tmpDir,
+          cwd: ctx.fixture.tmpDir,
+          runMode: 'task',
+          bundle: { kind: 'compose', compose: [] },
+          dryRun: true,
+        },
+      },
+      ctx.fixture.now()
+    )
 
     const schema = {
       type: 'object',

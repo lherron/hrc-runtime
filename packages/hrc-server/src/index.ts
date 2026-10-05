@@ -214,6 +214,7 @@ import { getTmuxSocketPath } from './tmux-socket.js'
 import { type TmuxManager as ServerTmuxManager, createTmuxManager } from './tmux.js'
 import { createServerTranscriptIndexer } from './transcript-index-adapter.js'
 import { TurnAdmissionGate } from './turn-admission-gate.js'
+import { type AdmissionRouteMethods, admissionRouteMethods } from './turn-admission/methods.js'
 import {
   type TurnDispatchHandlersMethods,
   turnDispatchHandlersMethods,
@@ -284,7 +285,8 @@ function recordSqliteSlowStatement(
 }
 
 export interface HrcServerInstance
-  extends AcceptedRunRecoveryHandlersMethods,
+  extends AdmissionRouteMethods,
+    AcceptedRunRecoveryHandlersMethods,
     EventHandlersMethods,
     TurnDispatchHandlersMethods,
     BrokerInteractiveHandlersMethods,
@@ -724,6 +726,7 @@ Object.assign(
   acceptedRunRecoveryHandlersMethods,
   eventHandlersMethods,
   turnDispatchHandlersMethods,
+  admissionRouteMethods,
   brokerInteractiveHandlersMethods,
   brokerHeadlessHandlersMethods,
   presentationPublishMethods,

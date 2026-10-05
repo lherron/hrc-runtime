@@ -176,7 +176,7 @@ function seedBrokerRuntime(
       brokerProtocol: 'harness-broker/0.2',
       brokerDriver: 'codex-app-server',
       invocationState: 'ready', // Non-terminal: getReusableHeadlessRuntimeForSession includes it
-      capabilitiesJson: JSON.stringify({}),
+      capabilitiesJson: JSON.stringify({ admission: { classes: ['exclusive'] } }),
       specHash: 'sha256:spec-dto-test',
       startRequestHash: 'sha256:req-dto-test',
       selectedProfileHash: 'sha256:prof-dto-test',

@@ -7,15 +7,16 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import { CALLER_SURFACE_REUSE_REFUSAL } from './broker-decisions.js'
-import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
-import { appendHrcEventWithinExistingTransaction } from './hrc-event-helper.js'
-import { recordStartBirth, startBirthOfIntent } from './presentation-operator.js'
-import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { writeServerLog } from './server-log.js'
-import { type DispatchRunPersistenceOptions, dispatchRunPersistence } from './server-types.js'
-import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
-import { toBrokerResponseFormat } from './turn-response-format.js'
+import { CALLER_SURFACE_REUSE_REFUSAL } from '../../broker-decisions.js'
+import { submissionOrigin, submitThroughBrokerDoor } from '../../broker/submission-doors.js'
+import { appendHrcEventWithinExistingTransaction } from '../../hrc-event-helper.js'
+import { recordStartBirth, startBirthOfIntent } from '../../presentation-operator.js'
+import type { HrcServerInstanceForHandlers } from '../../server-instance-context.js'
+import { writeServerLog } from '../../server-log.js'
+import { type DispatchRunPersistenceOptions, dispatchRunPersistence } from '../../server-types.js'
+import { isRuntimeUnavailableStatus, json, timestamp } from '../../server-util.js'
+import { toBrokerResponseFormat } from '../../turn-response-format.js'
+import type { AdmittedPlan } from '../types.js'
 
 type Format2HeadlessDispatchOptions = DispatchRunPersistenceOptions & {
   executionFormat: 'format2'
@@ -180,11 +181,12 @@ function reserveWarmFormat2Input(
  */
 export async function executeHeadlessBrokerFormat2DispatchTurn(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   intent: HrcRuntimeIntent,
   prompt: string,
   options: Format2HeadlessDispatchOptions
 ): Promise<Response> {
+  const session = plan.session
   const identity = assertFormat2DispatchIdentity(session, options)
   const existing = this.db.inputs.getByAdmission(session.hostSessionId, identity.idempotencyKey)
   if (existing !== null) {

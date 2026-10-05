@@ -72,7 +72,7 @@ beforeEach(async () => {
     runtimeId: runtime.runtimeId,
   })
   deliveries = 0
-  internal.dispatchTurnForSession = async (_session, intent) => {
+  internal.executeAdmittedTurn = async (_session, intent) => {
     if (!intent) throw new Error('missing intent')
     assertNoOperatorPresentationConflict(intent, [runtime])
     deliveries++

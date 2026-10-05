@@ -9,6 +9,7 @@ import type {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { TranscriptIndexer } from 'hrc-transcript-index'
+import type { AdmissionRouteMethods } from './turn-admission/methods.js'
 
 import type { HrcServerInstanceClassBodyMethods } from './index.js'
 import type { BrokerReattachOutcome } from './startup-reconcile.js'
@@ -84,7 +85,8 @@ export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
  * the previous `(...args: any[]) => any` mirror so cross-handler calls are
  * type-checked.
  */
-type DecomposedHandlerMethods = AcceptedRunRecoveryHandlersMethods &
+type DecomposedHandlerMethods = AdmissionRouteMethods &
+  AcceptedRunRecoveryHandlersMethods &
   BridgeSurfaceHandlersMethods &
   BrokerHeadlessHandlersMethods &
   BrokerInteractiveHandlersMethods &

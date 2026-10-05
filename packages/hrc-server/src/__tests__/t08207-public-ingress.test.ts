@@ -184,7 +184,7 @@ describe('T-08207 public turn dispatch selection', () => {
       const captured: Array<Record<string, unknown>> = []
       Reflect.set(
         server!,
-        'dispatchTurnForSession',
+        'executeAdmittedTurn',
         async (
           _session: unknown,
           _intent: unknown,
@@ -393,7 +393,7 @@ describe('T-08207 public submission-door selection', () => {
       const captured: Array<Record<string, unknown>> = []
       Reflect.set(
         server!,
-        'dispatchTurnForSession',
+        'executeAdmittedTurn',
         async (
           dispatchedSession: { hostSessionId: string; generation: number },
           _intent: unknown,
@@ -467,7 +467,7 @@ describe('T-08207 public submission-door selection', () => {
     } finally {
       db.close()
     }
-    Reflect.set(server!, 'dispatchTurnForSession', async () => {
+    Reflect.set(server!, 'executeAdmittedTurn', async () => {
       throw new Error('selector mismatch must refuse before dispatch')
     })
     const response = await fixture.postJson('/v1/turns', {
@@ -533,7 +533,7 @@ describe('T-08207 public submission-door selection', () => {
     const { hostSessionId } = await fixture.resolveSession(
       'agent:cody:project:hrc-runtime:task:T-08207'
     )
-    Reflect.set(server!, 'dispatchTurnForSession', async () =>
+    Reflect.set(server!, 'executeAdmittedTurn', async () =>
       Response.json({
         hostSessionId,
         generation: 1,

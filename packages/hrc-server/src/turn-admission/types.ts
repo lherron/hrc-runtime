@@ -9,8 +9,8 @@ import type {
 import type { ParticipantDelivery } from '../participant-delivery.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import type { DispatchTurnObservationContext } from '../turn-dispatch-attached-run-handlers.js'
-import type { DispatchTurnForSessionOptions } from '../turn-dispatch-session-dispatch.js'
 import type { SubmissionDoor, submissionDoorReport } from '../turn-dispatch-submission-support.js'
+import type { DispatchTurnForSessionOptions } from './routes/turn-dispatch-session-dispatch.js'
 
 export type SubmissionDoorKind =
   | 'submission'
@@ -77,9 +77,4 @@ export type PartialPlan = {
   observation?: DispatchTurnObservationContext | undefined
   launchCarry?: { intent: SubmissionDoor; carriesBody: true } | undefined
 }
-declare const admittedPlanBrand: unique symbol
-export type AdmittedPlan = Readonly<Omit<PartialPlan, 'target' | 'preparedTarget'>> & {
-  readonly session: HrcSessionRecord
-  readonly [admittedPlanBrand]: true
-  readonly request: Omit<SubmissionRequest, 'target'> & { readonly target: HrcSessionRecord }
-}
+export type { AdmittedPlan } from './plan.js'

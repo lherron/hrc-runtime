@@ -319,12 +319,14 @@ describe('hrcchat minimal server routes', () => {
       generation: number
       continuation: unknown
     }> = []
-    ;(ctx.server as any).dispatchTurnForSession = async (
-      session: { hostSessionId: string; generation: number; continuation?: unknown },
+    ;(ctx.server as any).executeAdmittedTurn = async (
+      plan,
       _intent: unknown,
       _prompt: string,
       options: { runId: string }
     ) => {
+      const session = plan.session
+
       freshDispatches.push({
         hostSessionId: session.hostSessionId,
         generation: session.generation,

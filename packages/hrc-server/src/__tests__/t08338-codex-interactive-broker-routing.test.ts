@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { dispatchTestTurn } from './admitted-dispatch.fixture'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
 
@@ -99,11 +100,13 @@ describe('T-08338 cold dispatch routing', () => {
 
     const routes: Array<{ route: 'interactive' | 'headless'; intent: HrcRuntimeIntent }> = []
     internal.handleInteractiveTmuxBrokerDispatchTurn = async (
-      routedSession,
+      plan,
       routedIntent,
       _prompt,
       runId
     ) => {
+      const routedSession = plan.session
+
       routes.push({ route: 'interactive', intent: routedIntent })
       return Response.json({
         runId,
@@ -115,12 +118,9 @@ describe('T-08338 cold dispatch routing', () => {
         supportsInFlightInput: true,
       })
     }
-    internal.handleHeadlessBrokerDispatchTurn = async (
-      routedSession,
-      routedIntent,
-      _prompt,
-      runId
-    ) => {
+    internal.handleHeadlessBrokerDispatchTurn = async (plan, routedIntent, _prompt, runId) => {
+      const routedSession = plan.session
+
       routes.push({ route: 'headless', intent: routedIntent })
       return Response.json({
         runId,
@@ -134,10 +134,10 @@ describe('T-08338 cold dispatch routing', () => {
     }
 
     const codexIntent = intent({ provider: 'openai', interactive: false, id: 'codex-cli' })
-    await internal.dispatchTurnForSession(session, codexIntent, 'ordinary', {
+    await dispatchTestTurn(internal, session, codexIntent, 'ordinary', {
       waitForCompletion: false,
     })
-    await internal.dispatchTurnForSession(session, codexIntent, 'structured', {
+    await dispatchTestTurn(internal, session, codexIntent, 'structured', {
       waitForCompletion: false,
       responseFormat: {
         kind: 'json_schema',

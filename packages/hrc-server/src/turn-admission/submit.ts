@@ -6,6 +6,7 @@ import {
 } from '../server-lifecycle.js'
 import { timestamp } from '../server-util.js'
 import { type AdmissionResult, type RouteOutcome, runLeasedAdmission } from './admit.js'
+import { createAdmittedPlan } from './plan.js'
 import {
   capabilityAuthority,
   executionPresentation,
@@ -84,12 +85,12 @@ export async function submitThroughAdmission(
         { step: 'rotation', run: () => rotation(ctx, req, partial) },
         { step: 'launch-carry-observation', run: () => launchCarryObservation(ctx, req, partial) },
       ],
-      route: () => {
+      route: async () => {
         // The branded plan exists only here, under the lease; callers never receive it.
         if (partial.session === undefined)
           throw new Error('admission did not materialize its target')
         // Claim materializers never cross the step-8 boundary into the branded route plan.
-        const plan = {
+        const plan = createAdmittedPlan({
           session: partial.session,
           participant: partial.participant,
           runtimeIntent: partial.runtimeIntent,
@@ -99,8 +100,40 @@ export async function submitThroughAdmission(
           observation: partial.observation,
           launchCarry: partial.launchCarry,
           request: { ...req, target: partial.session },
-        } as AdmittedPlan
-        return route(plan)
+        })
+        const routed = await route(plan)
+        // Submission retains its envelope-rich event; other invoke doors use the same decision.
+        if (req.door !== 'submission' && partial.doorReport?.requestedDoor !== undefined) {
+          const response = routed.kind === 'accepted' ? routed.value : routed.rejection.value
+          const receipt = (await response.clone().json()) as {
+            runtimeId?: string
+            submissionId?: string
+            runId?: string
+          }
+          const runtime = partial.doorReport.runtime
+          appendHrcEvent(ctx.db, 'submission.door_downgraded', {
+            ts: timestamp(),
+            hostSessionId: plan.session.hostSessionId,
+            scopeRef: plan.session.scopeRef,
+            laneRef: plan.session.laneRef,
+            generation: plan.session.generation,
+            runId: receipt.runId ?? plan.options.runId,
+            runtimeId: receipt.runtimeId ?? runtime?.runtimeId,
+            payload: {
+              requestedDoor: partial.doorReport.requestedDoor,
+              effectiveDoor: plan.effectiveDoor,
+              reason: partial.doorReport.downgradeReason,
+              ...((receipt.runtimeId ?? runtime?.runtimeId)
+                ? { runtimeId: receipt.runtimeId ?? runtime?.runtimeId }
+                : {}),
+              ...(runtime?.activeInvocationId === undefined
+                ? {}
+                : { invocationId: runtime.activeInvocationId }),
+              ...(receipt.submissionId === undefined ? {} : { submissionId: receipt.submissionId }),
+            },
+          })
+        }
+        return routed
       },
     }
   )

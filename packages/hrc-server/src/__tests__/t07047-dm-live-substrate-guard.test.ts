@@ -32,7 +32,7 @@ type MutableServer = {
     runtime: HrcRuntimeSnapshot,
     deps?: Partial<GuardDeps>
   ) => Promise<boolean>
-  dispatchTurnForSession: (
+  executeAdmittedTurn: (
     session: { hostSessionId: string; generation: number },
     intent: HrcRuntimeIntent,
     prompt: string,
@@ -116,8 +116,10 @@ describe('T-07047 semantic DM duplicate-mint guard', () => {
     server: MutableServer,
     originalRuntimeId: string
   ): () => void {
-    const original = server.dispatchTurnForSession
-    server.dispatchTurnForSession = async (session, _intent, _prompt, options) => {
+    const original = server.executeAdmittedTurn
+    server.executeAdmittedTurn = async (plan, _intent, _prompt, options) => {
+      const session = plan.session
+
       const originalRuntime = server.db.runtimes.getByRuntimeId(originalRuntimeId)
       let selectedRuntimeId = originalRuntimeId
       if (originalRuntime && isRuntimeUnavailableStatus(originalRuntime.status)) {
@@ -151,7 +153,7 @@ describe('T-07047 semantic DM duplicate-mint guard', () => {
       } satisfies DispatchTurnResponse)
     }
     return () => {
-      server.dispatchTurnForSession = original
+      server.executeAdmittedTurn = original
     }
   }
 

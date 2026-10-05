@@ -355,10 +355,10 @@ describe('T-09762 B: every door refuses a retired scope with a typed conflict', 
     server = await createHrcServer(fixture.serverOpts())
     const internal = server as unknown as HrcServerInstanceForHandlers
     dispatched = 0
-    internal.dispatchTurnForSession = (async () => {
+    internal.executeAdmittedTurn = (async () => {
       dispatched += 1
       throw new Error('a retired scope must never reach dispatch')
-    }) as typeof internal.dispatchTurnForSession
+    }) as typeof internal.executeAdmittedTurn
   }
 
   beforeEach(async () => {

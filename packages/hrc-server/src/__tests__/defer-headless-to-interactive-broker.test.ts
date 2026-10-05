@@ -6,7 +6,7 @@
  * is mid-turn. A busy interactive broker queues the input (whenBusy:'queue')
  * and drains it on the next turn.completed.
  *
- * The original defect: dispatchTurnForSession's headless branch fired BEFORE
+ * The original defect: executeAdmittedTurn's headless branch fired BEFORE
  * consulting the live interactive runtime, so a codex DM spawned a headless
  * codex-app-server that resumed the same continuation thread the live TUI owned,
  * found no rollout in its re-derived codex home, and wedged at `starting`

@@ -1,3 +1,4 @@
+import { dispatchTestRoute } from './admitted-dispatch.fixture'
 /**
  * T-07963 criterion 4 — the cold boot's first turn IS the delivery.
  *
@@ -92,16 +93,22 @@ async function refusedColdBirth(prompt: string, runId: string): Promise<unknown>
   }
   const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
   if (session === null) throw new Error('T-07963 fixture session was not persisted')
-  return await internal
-    .executeHeadlessBrokerStartTurn(session, headlessIntent(), prompt, runId, {
+  return await dispatchTestRoute(
+    internal,
+    'executeHeadlessBrokerStartTurn',
+    session,
+    headlessIntent(),
+    prompt,
+    runId,
+    {
       waitForCompletion: false,
-    })
-    .then(
-      () => {
-        throw new Error('cold birth without an aspd endpoint must refuse')
-      },
-      (error: unknown) => error
-    )
+    }
+  ).then(
+    () => {
+      throw new Error('cold birth without an aspd endpoint must refuse')
+    },
+    (error: unknown) => error
+  )
 }
 
 describe('T-07963 criterion 4 — cold birth without an aspd endpoint refuses (T-08596)', () => {

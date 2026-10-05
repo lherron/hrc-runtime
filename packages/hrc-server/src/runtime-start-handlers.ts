@@ -157,7 +157,12 @@ export async function startRuntimeForSession(
     ): Promise<HrcRuntimeSnapshot> => {
       await this.publishPresentation(runtime, { operatorAttachPending: true })
       if (options.attachedRunPrompt !== undefined) {
-        await deliverAttachedRunPrompt(this, runtime, options.attachedRunPrompt)
+        await deliverAttachedRunPrompt(
+          options.attachedRunPrompt.plan,
+          this,
+          runtime,
+          options.attachedRunPrompt
+        )
       }
       return runtime
     }
@@ -223,8 +228,8 @@ export async function startRuntimeForSession(
         if (initialPrompt.length > 0) {
           const runId = options.initialPromptPlan?.options.runId ?? `run-${randomUUID()}`
           const receipt = await executeBrokerInputTurn(
+            requirePromptPlan(options.initialPromptPlan),
             this,
-            session,
             existingRuntime,
             initialPrompt,
             runId,
@@ -355,7 +360,7 @@ export async function startRuntimeForSession(
           let resolvedRuntime = reusableBrokerRuntime
           if (initialPrompt.length > 0) {
             const receipt = await this.executeHeadlessBrokerInputTurn(
-              session,
+              requirePromptPlan(options.initialPromptPlan),
               reusableBrokerRuntime,
               initialPrompt,
               options.initialPromptPlan?.options.runId ?? `run-${randomUUID()}`,
@@ -533,14 +538,15 @@ export type AttachedRunPrompt = {
  * executor. No session-level selection, admission or reprovision runs here.
  */
 async function deliverAttachedRunPrompt(
+  plan: AdmittedPlan,
   server: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
   input: AttachedRunPrompt
 ): Promise<void> {
   // The attached door owns the lease and admission; consume its plan by identity.
   const response = await executeBrokerInputTurn(
+    plan,
     server,
-    input.plan.session,
     requireRuntime(server.db, runtime.runtimeId),
     input.prompt,
     input.runId,
@@ -555,16 +561,16 @@ async function deliverAttachedRunPrompt(
 
 /** One input turn into a selected broker runtime, through its transport's executor. */
 async function executeBrokerInputTurn(
+  plan: AdmittedPlan,
   server: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
   runtime: HrcRuntimeSnapshot,
   prompt: string,
   runId: string,
   options: Parameters<HrcServerInstanceForHandlers['executeHeadlessBrokerInputTurn']>[4]
 ): Promise<Response> {
   return runtime.transport === 'tmux'
-    ? await server.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, options)
-    : await server.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, options)
+    ? await server.executeInteractiveBrokerInputTurn(plan, runtime, prompt, runId, options)
+    : await server.executeHeadlessBrokerInputTurn(plan, runtime, prompt, runId, options)
 }
 
 export function selectInteractiveTmuxBrokerOptions(
@@ -608,3 +614,8 @@ export const runtimeStartHandlersMethods = {
 }
 
 export type RuntimeStartHandlersMethods = typeof runtimeStartHandlersMethods
+
+function requirePromptPlan(plan: AdmittedPlan | undefined): AdmittedPlan {
+  if (plan === undefined) throw new Error('prompt delivery has no admission plan')
+  return plan
+}

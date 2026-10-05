@@ -15,6 +15,7 @@ import { renameSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { dispatchTestRoute } from './admitted-dispatch.fixture'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -414,7 +415,9 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
       resolveBeforeBrokerWrite?.()
     }
 
-    const first = await internal().handleHeadlessBrokerDispatchTurn(
+    const first = await dispatchTestRoute(
+      internal(),
+      'handleHeadlessBrokerDispatchTurn',
       s,
       headlessIntent(),
       'first format-2 input',
@@ -507,7 +510,9 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
       admissionAfterSeq + 2
     )
 
-    const replay = await internal().handleHeadlessBrokerDispatchTurn(
+    const replay = await dispatchTestRoute(
+      internal(),
+      'handleHeadlessBrokerDispatchTurn',
       s,
       headlessIntent(),
       'first format-2 input',
@@ -531,7 +536,9 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
 
   it('T-08207 protects and binds a warm format-2 body before one native broker submission', async () => {
     const s = await session()
-    await internal().handleHeadlessBrokerDispatchTurn(
+    await dispatchTestRoute(
+      internal(),
+      'handleHeadlessBrokerDispatchTurn',
       s,
       headlessIntent(),
       'format-2 launch input',
@@ -548,7 +555,9 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     // Let the real controller publish its active broker binding, then exercise
     // the warm class door through that binding.
     await Bun.sleep(20)
-    const first = await internal().handleHeadlessBrokerDispatchTurn(
+    const first = await dispatchTestRoute(
+      internal(),
+      'handleHeadlessBrokerDispatchTurn',
       s,
       headlessIntent(),
       'format-2 warm body',
@@ -581,7 +590,9 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
         .get(firstBody.runtimeId)?.count
     ).toBe(0)
 
-    const replay = await internal().handleHeadlessBrokerDispatchTurn(
+    const replay = await dispatchTestRoute(
+      internal(),
+      'handleHeadlessBrokerDispatchTurn',
       s,
       headlessIntent(),
       'format-2 warm body',
@@ -602,7 +613,9 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
   it('T-08207 keeps a format-2 input protected when the broker start rejects after reservation', async () => {
     const s = await session()
     ledger.startThrows = new Error('controlled broker start refusal')
-    const response = await internal().handleHeadlessBrokerDispatchTurn(
+    const response = await dispatchTestRoute(
+      internal(),
+      'handleHeadlessBrokerDispatchTurn',
       s,
       headlessIntent(),
       'possibly-written format-2 input',
@@ -652,7 +665,9 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
 
   it('returns the cold launch initial-input admission identity to an injector door', async () => {
     const s = await session()
-    const response = await internal().executeHeadlessBrokerStartTurn(
+    const response = await dispatchTestRoute(
+      internal(),
+      'executeHeadlessBrokerStartTurn',
       s,
       headlessIntent(),
       'injector envelope body',

@@ -408,7 +408,7 @@ export async function handleBrokerLiteralInputBySelector(
         const deliveryRuntime = participant?.runtime ?? runtime
         this.pendingBrokerLiteralInputs.delete(runtime.runtimeId)
         const raw = await this.executeInteractiveBrokerInputTurn(
-          plan.session,
+          plan,
           deliveryRuntime,
           prompt,
           runId,
@@ -540,13 +540,12 @@ export async function handleDispatchTurnBySelector(
       },
       async (plan) => {
         const session = plan.session
-        const turnResponse = await this.dispatchTurnForSession(
-          session,
+        const turnResponse = await this.executeAdmittedTurn(
+          plan,
           plan.runtimeIntent,
           body['prompt'] as string,
           {
             ...plan.options,
-            admissionPlan: plan,
           }
         )
         const turnBody = (await turnResponse.json()) as DispatchTurnResponse

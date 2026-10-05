@@ -7,18 +7,20 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import type { JsonRepairRunCorrelation } from './broker-headless-types.js'
-import { formatDmAddress } from './messages.js'
-import { requireSession } from './require-helpers.js'
-import { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
-import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { writeServerLog } from './server-log.js'
+import type { JsonRepairRunCorrelation } from '../../broker-headless-types.js'
+import { formatDmAddress } from '../../messages.js'
+import { requireSession } from '../../require-helpers.js'
+import { omitPersistedSelectionForReuse } from '../../selector-message-handlers/selection-request.js'
+import type { HrcServerInstanceForHandlers } from '../../server-instance-context.js'
+import { writeServerLog } from '../../server-log.js'
 import {
   type CoalescedQueuedMember,
   type DispatchRunPersistenceOptions,
   dispatchOriginRunFields,
-} from './server-types.js'
-import { timestamp } from './server-util.js'
+} from '../../server-types.js'
+import { timestamp } from '../../server-util.js'
+import { continueAdmittedTurn } from '../continue.js'
+import type { AdmittedPlan } from '../types.js'
 
 type DurableHeadlessTurnInput = {
   kind: string
@@ -183,7 +185,7 @@ export function enqueueDurableHeadlessTurnInput(
 
 export async function dispatchQueuedHeadlessTurnInput(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   runtime: HrcRuntimeSnapshot,
   prompt: string,
   runId: string,
@@ -216,7 +218,7 @@ export async function dispatchQueuedHeadlessTurnInput(
 
   claimQueuedHeadlessTurnInput(this, runtime, runId, inputId, options.coalescedMembers)
 
-  return await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, options)
+  return await this.executeHeadlessBrokerInputTurn(plan, runtime, prompt, runId, options)
 }
 
 /** Atomic claim/coalescing is shared by warm submit and launch-carried continuation. */
@@ -364,13 +366,20 @@ export async function drainDurableHeadlessTurnInputs(
       }
       return { runId: entry.run.runId, sourceMessageId, position }
     })
-    const response = await this.dispatchTurnForSession(session, intent, prompt, {
+    const response = await continueAdmittedTurn(this, {
+      kind: 'queued-snapshot',
       runId: queued.runId,
-      // This is a continuation of admitted work, not a second admission.
-      submissionDoor: delivery.admittedIntent ?? 'enqueue',
-      waitForCompletion: false,
-      responseFormat: delivery.responseFormat,
-      ...(coalescedMembers.length === 0 ? {} : { coalescedMembers }),
+      snapshotId: queued.queueSnapshotId!,
+      prompt,
+      intent,
+      options: {
+        runId: queued.runId,
+        // This is a continuation of admitted work, not a second admission.
+        submissionDoor: delivery.admittedIntent ?? 'enqueue',
+        waitForCompletion: false,
+        responseFormat: delivery.responseFormat,
+        ...(coalescedMembers.length === 0 ? {} : { coalescedMembers }),
+      },
     })
     const result = (await response.json()) as DispatchTurnResponse
     if (delivery.sourceMessageId !== undefined) {

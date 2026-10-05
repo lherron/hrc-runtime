@@ -142,13 +142,18 @@ describe('T-07206 applied intent authority', () => {
       acceptedAt: queuedAt,
       updatedAt: queuedAt,
       queuedInputSeq: 1,
+      dispatchedInputId: 'input-t07206-queued',
     })
     db.runs.setCorrelationJson(
       'run-t07206-queued',
-      JSON.stringify({ kind: 'queued_turn', source: 'test', prompt: 'automatic follow-up' })
+      JSON.stringify({
+        kind: 'durable_headless_turn_input',
+        source: 'test',
+        prompt: 'automatic follow-up',
+      })
     )
     let drainedIntent: HrcRuntimeIntent | undefined
-    ;(server as unknown as Record<string, unknown>)['dispatchTurnForSession'] = async (
+    ;(server as unknown as Record<string, unknown>)['executeAdmittedTurn'] = async (
       _session: unknown,
       intent: HrcRuntimeIntent
     ) => {

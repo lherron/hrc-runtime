@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { dispatchTestRoute } from './admitted-dispatch.fixture'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -151,7 +152,9 @@ describe('T-08531 cold enqueue on claude-code-tmux carries priming and caller in
       }
       internal.publishPresentation = async () => undefined
 
-      const response = await internal.handleInteractiveTmuxBrokerDispatchTurn(
+      const response = await dispatchTestRoute(
+        internal,
+        'handleInteractiveTmuxBrokerDispatchTurn',
         session,
         claudeIntent(),
         CALLER,
@@ -317,7 +320,9 @@ describe('T-09643 non-blocking cold receipt waits for the launch turn identity',
       }
     })
 
-    const response = await internal.handleInteractiveTmuxBrokerDispatchTurn(
+    const response = await dispatchTestRoute(
+      internal,
+      'handleInteractiveTmuxBrokerDispatchTurn',
       session,
       claudeIntent(),
       CALLER,
@@ -345,24 +350,24 @@ describe('T-09643 non-blocking cold receipt waits for the launch turn identity',
     if (session === null) throw new Error('T-09643 fixture session missing')
     stubColdStart(internal, coldRuntime(session, 'nonblocking-timeout'), undefined)
 
-    const outcome = await internal
-      .handleInteractiveTmuxBrokerDispatchTurn(
-        session,
-        claudeIntent(),
-        CALLER,
-        'run-t09643-nonblocking-timeout',
-        {
-          flagEnvName: 'HRC_MUSE_CLI_TMUX_BROKER_ENABLED',
-          allowedBrokerDriver: 'muse-cli-tmux',
-          waitForCompletion: false,
-          submissionDoor: 'enqueue',
-          coldBirthPromptMode: 'append-to-priming',
-        }
-      )
-      .then(
-        () => 'resolved',
-        (error: unknown) => (error instanceof Error ? error.message : String(error))
-      )
+    const outcome = await dispatchTestRoute(
+      internal,
+      'handleInteractiveTmuxBrokerDispatchTurn',
+      session,
+      claudeIntent(),
+      CALLER,
+      'run-t09643-nonblocking-timeout',
+      {
+        flagEnvName: 'HRC_MUSE_CLI_TMUX_BROKER_ENABLED',
+        allowedBrokerDriver: 'muse-cli-tmux',
+        waitForCompletion: false,
+        submissionDoor: 'enqueue',
+        coldBirthPromptMode: 'append-to-priming',
+      }
+    ).then(
+      () => 'resolved',
+      (error: unknown) => (error instanceof Error ? error.message : String(error))
+    )
     expect(outcome).toBe('launch-carried submission identity timed out')
   })
 })

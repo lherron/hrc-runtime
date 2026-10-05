@@ -13,7 +13,8 @@ export function rejectedDispatchReceipt(
   ctx: HrcServerInstanceForHandlers,
   now: string
 ): HrcServerInstanceForHandlers['executeInteractiveBrokerInputTurn'] {
-  return async (target, runtime, _body, runId) => {
+  return async (plan, runtime, _body, runId) => {
+    const target = plan.session
     ctx.db.runs.insert({
       runId,
       hostSessionId: target.hostSessionId,

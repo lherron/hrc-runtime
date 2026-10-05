@@ -267,7 +267,7 @@ describe('T-09237 live-seat terminal closes out a ready invocation', () => {
   })
 })
 
-// F6 on the real admission path: dispatchTurnForSession and
+// F6 on the real admission path: executeAdmittedTurn and
 // decideInteractiveBrokerAdmission run for real; only the seams BELOW admission
 // (tmux liveness, presentation, broker start/delivery) are replaced.
 describe('T-09237 no-reuse dispatch against a dead seat births fresh', () => {
@@ -329,7 +329,9 @@ describe('T-09237 no-reuse dispatch against a dead seat births fresh', () => {
     })
     internal.reconcileTmuxRuntimeLiveness = async (runtime) => runtime
     internal.publishPresentation = async () => undefined
-    internal.handleInteractiveTmuxBrokerDispatchTurn = async (submittedSession, _i, _p, runId) => {
+    internal.handleInteractiveTmuxBrokerDispatchTurn = async (plan, _i, _p, runId) => {
+      const submittedSession = plan.session
+
       births.push(runId)
       return Response.json(
         {

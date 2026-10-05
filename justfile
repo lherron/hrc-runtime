@@ -101,6 +101,7 @@ check:
     bun scripts/check-dependency-pins.ts
     bun scripts/check-lock-coherence.ts
     bun scripts/check-boundaries.ts
+    bun scripts/check-admission-entry.ts
     bun scripts/check-manifest-edges.ts
     bun scripts/check-cli-surface.ts
     bun scripts/check-public-surface.ts

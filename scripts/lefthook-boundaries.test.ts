@@ -58,6 +58,7 @@ const gateLibraries = ['hook-change-scope.ts', 'hook-timing.ts'].map((name) =>
 const scopeIgnoreList = join(repoRoot, '.hookignore')
 const codeOnlyPreCommitCommands = [
   'lint',
+  'admission-entry',
   'boundaries',
   'manifests',
   'dependency-pins',
@@ -236,6 +237,10 @@ describe('lefthook v2 configuration', () => {
 
   test('keeps the unconditional gates unwrapped and wraps every code check', async () => {
     const commands = (await readConfig())['pre-commit'].commands
+
+    expect(commands['admission-entry']?.run).toBe(
+      'bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-admission-entry.ts'
+    )
 
     for (const [name, run] of Object.entries(unconditionalPreCommitCommands)) {
       expect(commands[name]?.run, name).toBe(run)

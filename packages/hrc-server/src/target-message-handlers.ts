@@ -1,6 +1,5 @@
 import {
   deliverPersistedSemanticDm,
-  executeSemanticTurn,
   handleSemanticDm,
   reattachLiveSemanticDmSubstrate,
   rejectBusyHeadlessSemanticDm,
@@ -10,7 +9,6 @@ import {
   handleSemanticTurnHandoff,
   handleTraceMessage,
   persistAndDeliverSemanticTurnHandoff,
-  tryDeliverSemanticTurnToInteractiveRuntime,
 } from './target-message-handoff-handlers.js'
 import {
   handleArchiveAbandonedSessions,
@@ -37,11 +35,9 @@ export {
   handleTraceMessage,
   handleSemanticTurnHandoff,
   persistAndDeliverSemanticTurnHandoff,
-  tryDeliverSemanticTurnToInteractiveRuntime,
   handleSemanticDm,
   deliverPersistedSemanticDm,
   rejectBusyHeadlessSemanticDm,
-  executeSemanticTurn,
   reattachLiveSemanticDmSubstrate,
 }
 
@@ -55,11 +51,9 @@ export const targetMessageHandlersMethods = {
   handleTraceMessage,
   handleSemanticTurnHandoff,
   persistAndDeliverSemanticTurnHandoff,
-  tryDeliverSemanticTurnToInteractiveRuntime,
   handleSemanticDm,
   deliverPersistedSemanticDm,
   rejectBusyHeadlessSemanticDm,
-  executeSemanticTurn,
   reattachLiveSemanticDmSubstrate,
 }
 

@@ -14,8 +14,8 @@ const turnDispatchSources = [
   'turn-dispatch-submission-handlers.ts',
   'turn-dispatch-runtime-handlers.ts',
   'turn-dispatch-attached-run-handlers.ts',
-  'turn-dispatch-session-dispatch.ts',
-  'turn-dispatch-admitted-turn.ts',
+  'turn-admission/routes/turn-dispatch-session-dispatch.ts',
+  'turn-admission/routes/turn-dispatch-admitted-turn.ts',
 ]
 const turnDispatchSource = () => turnDispatchSources.map(source).join('\n')
 

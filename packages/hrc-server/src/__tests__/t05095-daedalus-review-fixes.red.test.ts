@@ -16,8 +16,8 @@ const turnDispatchSources = [
   'packages/hrc-server/src/turn-dispatch-submission-handlers.ts',
   'packages/hrc-server/src/turn-dispatch-runtime-handlers.ts',
   'packages/hrc-server/src/turn-dispatch-attached-run-handlers.ts',
-  'packages/hrc-server/src/turn-dispatch-session-dispatch.ts',
-  'packages/hrc-server/src/turn-dispatch-admitted-turn.ts',
+  'packages/hrc-server/src/turn-admission/routes/turn-dispatch-session-dispatch.ts',
+  'packages/hrc-server/src/turn-admission/routes/turn-dispatch-admitted-turn.ts',
 ]
 const turnDispatchSource = () => turnDispatchSources.map(source).join('\n')
 

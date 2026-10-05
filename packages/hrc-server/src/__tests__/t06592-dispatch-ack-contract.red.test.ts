@@ -329,12 +329,14 @@ describe('T-06592 durable dispatch acknowledgment', () => {
       releaseDispatch = resolve
     })
     let coalescedDispatchCalls = 0
-    ;(server as any).dispatchTurnForSession = async (
-      session: { hostSessionId: string; generation: number },
+    ;(server as any).executeAdmittedTurn = async (
+      plan,
       _intent: unknown,
       _prompt: string,
       options: { runId: string }
     ) => {
+      const session = plan.session
+
       coalescedDispatchCalls += 1
       await dispatchGate
       return Response.json({

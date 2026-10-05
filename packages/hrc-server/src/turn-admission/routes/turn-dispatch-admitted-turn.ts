@@ -10,7 +10,7 @@ import {
   assertActuatorSplitRouteAdmission,
   assertActuatorSplitRuntimeReuse,
   normalizeActuatorSplitPolicy,
-} from './actuator-split.js'
+} from '../../actuator-split.js'
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
@@ -26,17 +26,17 @@ import {
   shouldUseSdkTransport,
   toLatestRuntimeAdmissionView,
   toLiveInteractiveRuntimeReuseView,
-} from './broker-decisions.js'
-import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
-import { normalizeDispatchIntent } from './dispatch-invocation.js'
-import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
-import { appendHrcEvent } from './hrc-event-helper.js'
-import { assertLocalPersonaAllowed } from './local-persona-policy.js'
+} from '../../broker-decisions.js'
+import { hasLeasedBrokerSubstrate } from '../../broker/runtime-hosting.js'
+import { normalizeDispatchIntent } from '../../dispatch-invocation.js'
+import { isExternalLifecycleOwner } from '../../external-participant-lifecycle.js'
+import { appendHrcEvent } from '../../hrc-event-helper.js'
+import { assertLocalPersonaAllowed } from '../../local-persona-policy.js'
 import {
   participantDeliveryUnavailable,
   resolveParticipantDelivery,
-} from './participant-delivery.js'
-import { reconnectParticipantAttachment } from './participant-establishment.js'
+} from '../../participant-delivery.js'
+import { reconnectParticipantAttachment } from '../../participant-establishment.js'
 import {
   assertBirthJoinAdmitted,
   assertBirthJoinRoute,
@@ -44,18 +44,19 @@ import {
   assertOperatorPresentationRoutable,
   requestsOperatorPresentation,
   scopeHasLiveHeadlessBrokerRuntime,
-} from './presentation-operator.js'
-import { isBrokerRuntimeInputDispatchable } from './require-helpers.js'
-import { runtimeActivityPatch } from './runtime-activity.js'
-import { findDispatchInteractiveRuntime } from './runtime-select.js'
-import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { dispatchRunPersistence, submissionDoorCarriesColdLaunch } from './server-types.js'
-import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
+} from '../../presentation-operator.js'
+import { isBrokerRuntimeInputDispatchable } from '../../require-helpers.js'
+import { runtimeActivityPatch } from '../../runtime-activity.js'
+import { findDispatchInteractiveRuntime } from '../../runtime-select.js'
+import type { HrcServerInstanceForHandlers } from '../../server-instance-context.js'
+import { dispatchRunPersistence, submissionDoorCarriesColdLaunch } from '../../server-types.js'
+import { isRuntimeUnavailableStatus, timestamp } from '../../server-util.js'
 import {
   type DispatchTurnObservationContext,
   captureBrokerAfterSeqByInvocation,
   enrichDispatchTurnResponse,
-} from './turn-dispatch-attached-run-handlers.js'
+} from '../../turn-dispatch-attached-run-handlers.js'
+import type { AdmittedPlan } from '../types.js'
 import {
   type DispatchTurnForSessionOptions,
   classifyRedirectOffCodexDispatch,
@@ -66,13 +67,15 @@ import {
   routeFormat2Dispatch,
 } from './turn-dispatch-session-dispatch.js'
 
-export async function dispatchAdmittedTurnForSession(
+export async function executeAdmittedTurn(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   inputIntent: HrcRuntimeIntent | undefined,
   prompt: string,
-  options: DispatchTurnForSessionOptions
+  routeOptions: DispatchTurnForSessionOptions
 ): Promise<Response> {
+  const options = { ...routeOptions, submissionDoor: plan.effectiveDoor }
+  const session = plan.session
   assertLocalPersonaAllowed(this, session.scopeRef)
   const executionFormat = options.executionFormat ?? 'format1'
   if (executionFormat === 'format2') {
@@ -116,7 +119,7 @@ export async function dispatchAdmittedTurnForSession(
         route,
       })
     }
-    return await this.handleHeadlessBrokerDispatchTurn(session, format2Intent, prompt, undefined, {
+    return await this.handleHeadlessBrokerDispatchTurn(plan, format2Intent, prompt, undefined, {
       ...options,
       executionFormat,
       waitForCompletion: options.submissionDoor === undefined ? options.waitForCompletion : false,
@@ -130,7 +133,7 @@ export async function dispatchAdmittedTurnForSession(
   // explicit `wait: true` cannot find the broker selector and fails with
   // "dispatch wait requires broker submission identity" -- which is exactly
   // what my first cut did, because it returned unenriched.
-  const observationContext: DispatchTurnObservationContext = options.admissionPlan?.observation ?? {
+  const observationContext: DispatchTurnObservationContext = plan.observation ?? {
     lifecycleFromSeq: this.db.hrcEvents.maxHrcSeq() + 1,
     brokerAfterSeqByInvocation: captureBrokerAfterSeqByInvocation(this, session.hostSessionId),
   }
@@ -166,7 +169,7 @@ export async function dispatchAdmittedTurnForSession(
       throw participantDeliveryUnavailable(session, participantDelivery)
     }
     return await withObservation(
-      await deliverIntoAttachedParticipant.call(this, session, participantDelivery, prompt, {
+      await deliverIntoAttachedParticipant.call(this, plan, participantDelivery, prompt, {
         ...options,
         runId,
       })
@@ -192,7 +195,7 @@ export async function dispatchAdmittedTurnForSession(
     return await withObservation(
       await dispatchIntoProducerSelectedTmuxRuntime.call(
         this,
-        session,
+        plan,
         producerSelected,
         normalizedInputIntent,
         prompt,
@@ -219,7 +222,7 @@ export async function dispatchAdmittedTurnForSession(
   ) {
     assertActuatorSplitRouteAdmission(normalizedInputIntent, 'broker')
     return await withObservation(
-      await this.handleHeadlessBrokerDispatchTurn(session, normalizedInputIntent, prompt, runId, {
+      await this.handleHeadlessBrokerDispatchTurn(plan, normalizedInputIntent, prompt, runId, {
         // Submission doors wait at the public projection layer after the
         // durable broker admission exists. Do not make the fresh v2 birth wait
         // for the first provider turn merely to mint that receipt.
@@ -357,7 +360,7 @@ export async function dispatchAdmittedTurnForSession(
     assertActuatorSplitRouteAdmission(intent, route)
     if (route === 'broker') {
       return await withObservation(
-        await this.handleHeadlessBrokerDispatchTurn(session, intent, prompt, runId, {
+        await this.handleHeadlessBrokerDispatchTurn(plan, intent, prompt, runId, {
           ...(redirectOffBirthJoin !== undefined ? { redirectOffBirthJoin } : {}),
           waitForCompletion: options.waitForCompletion,
           repairCorrelation: options.repairCorrelation,
@@ -374,7 +377,7 @@ export async function dispatchAdmittedTurnForSession(
         harnessId: intent.harness.id,
       })
       return await withObservation(
-        await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId, {
+        await this.handleHeadlessDispatchTurn(plan, dispatchIntent, prompt, runId, {
           waitForCompletion: options.waitForCompletion,
           ...dispatchRunPersistence(options),
         })
@@ -490,7 +493,7 @@ export async function dispatchAdmittedTurnForSession(
           assertBirthJoinAdmitted(intent, bornRuntime, redirectOffBirthJoin)
         }
         return await withObservation(
-          await this.executeInteractiveBrokerInputTurn(session, bornRuntime, prompt, runId, {
+          await this.executeInteractiveBrokerInputTurn(plan, bornRuntime, prompt, runId, {
             waitForCompletion: options.waitForCompletion,
             repairCorrelation: options.repairCorrelation,
             responseFormat: options.responseFormat,
@@ -576,7 +579,7 @@ export async function dispatchAdmittedTurnForSession(
       operatorAttachPending: options.attachBeforeInvocationStart !== undefined,
     })
     return await withObservation(
-      await this.executeInteractiveBrokerInputTurn(session, latestRuntime, prompt, runId, {
+      await this.executeInteractiveBrokerInputTurn(plan, latestRuntime, prompt, runId, {
         waitForCompletion:
           admission.allowedBrokerDriver === 'codex-cli-tmux' ||
           admission.allowedBrokerDriver === 'pi-tui-tmux' ||
@@ -607,7 +610,7 @@ export async function dispatchAdmittedTurnForSession(
   return await withObservation(
     await runInteractiveTmuxRoute('broker', {
       broker: async () =>
-        this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, prompt, runId, {
+        this.handleInteractiveTmuxBrokerDispatchTurn(plan, intent, prompt, runId, {
           flagEnvName: admission.flagEnvName,
           allowedBrokerDriver: admission.allowedBrokerDriver,
           ...(options.attachBeforeInvocationStart

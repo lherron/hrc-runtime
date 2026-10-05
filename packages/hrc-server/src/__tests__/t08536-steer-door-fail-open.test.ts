@@ -10,6 +10,7 @@
  * Run with: TMPDIR=/tmp bun test packages/hrc-server/src/__tests__/t08536-steer-door-fail-open.test.ts
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { admissionRouteMethods } from '../turn-admission/methods'
 
 import type { HrcRuntimeIntent, HrcSubmissionResponse } from 'hrc-core'
 
@@ -84,10 +85,11 @@ describe('T-08536 steer door fail-open', () => {
 
   const server = () =>
     ({
+      dispatchPublicSubmission: admissionRouteMethods.dispatchPublicSubmission,
       db: fixture.db,
       notifyEvent() {},
       turnAdmissionGate: new TurnAdmissionGate('/tmp/t08536-no-persisted-gate'),
-      dispatchTurnForSession: async (
+      executeAdmittedTurn: async (
         _session: unknown,
         _intent: unknown,
         prompt: string,
@@ -195,11 +197,15 @@ describe('T-08536 steer door fail-open', () => {
     expect(submissionDoorReport(server(), session, 'steer')).toEqual({ effectiveDoor: 'steer' })
   })
 
-  it('never downgrades a door other than steer', () => {
+  it('reports invoke without exclusive capability and leaves enqueue/preempt unchanged', () => {
     seat(CLASSES.agentHarnessTmux)
     const session = fixture.db.sessions.getByHostSessionId(HOST_SESSION_ID)
     if (!session) throw new Error('session missing')
-    expect(submissionDoorReport(server(), session, 'invoke')).toEqual({ effectiveDoor: 'invoke' })
+    expect(submissionDoorReport(server(), session, 'invoke')).toMatchObject({
+      effectiveDoor: 'enqueue',
+      requestedDoor: 'invoke',
+      downgradeReason: 'invoke_exclusive_not_supported',
+    })
     expect(submissionDoorReport(server(), session, 'enqueue')).toEqual({
       effectiveDoor: 'enqueue',
     })

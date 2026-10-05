@@ -22,12 +22,13 @@
  * the next driver routed through this door would inherit the same silence.
  */
 import { describe, expect, it } from 'bun:test'
+import { withStandaloneTestAdmission } from './admitted-dispatch.fixture'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 
 import type { InteractiveTmuxBrokerDriver } from '../broker-decisions'
-import { handleInteractiveTmuxBrokerDispatchTurn } from '../broker-interactive-handlers'
 import type { PublishPresentationOptions } from '../presentation-publish'
+import { handleInteractiveTmuxBrokerDispatchTurn } from '../turn-admission/routes/broker-interactive-tmux-dispatch'
 
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-08456'
 
@@ -83,18 +84,20 @@ async function dispatchAndCapturePublishes(
     },
   }
 
-  const response = await handleInteractiveTmuxBrokerDispatchTurn.call(
-    mockThis as Parameters<typeof handleInteractiveTmuxBrokerDispatchTurn.call>[0],
-    session(),
-    intent(),
-    'do the work',
-    `run-t08456-${allowedBrokerDriver}`,
-    {
-      flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER',
-      allowedBrokerDriver,
-      waitForCompletion: false,
-      ...(attachBeforeInvocationStart ? { attachBeforeInvocationStart } : {}),
-    }
+  const response = await withStandaloneTestAdmission(session(), intent(), 'do the work', (plan) =>
+    handleInteractiveTmuxBrokerDispatchTurn.call(
+      mockThis as Parameters<typeof handleInteractiveTmuxBrokerDispatchTurn.call>[0],
+      plan,
+      intent(),
+      'do the work',
+      `run-t08456-${allowedBrokerDriver}`,
+      {
+        flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER',
+        allowedBrokerDriver,
+        waitForCompletion: false,
+        ...(attachBeforeInvocationStart ? { attachBeforeInvocationStart } : {}),
+      }
+    )
   )
 
   return { status: response.status, publishCalls }

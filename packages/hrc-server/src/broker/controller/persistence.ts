@@ -1,4 +1,4 @@
-import { claimQueuedHeadlessTurnInput } from '../../broker-headless-queue.js'
+import { claimQueuedHeadlessTurnInput } from '../../turn-admission/routes/broker-headless-queue.js'
 /**
  * Pure persistence helpers for HarnessBrokerController.
  *

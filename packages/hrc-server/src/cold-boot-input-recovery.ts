@@ -1,5 +1,6 @@
 import { HrcErrorCode } from 'hrc-core'
 import type { HrcRunRecord } from 'hrc-core'
+import { continueAdmittedTurn } from './turn-admission/continue.js'
 
 import {
   disposeColdBootInputContinuationFailure,
@@ -7,7 +8,6 @@ import {
   parseDurableColdBootTurnInput,
   waitForCompilerPrimingTerminal,
 } from './broker-headless-handlers.js'
-import { requireSession } from './require-helpers.js'
 import { HRC_SERVER_RUN_COLUMNS } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
@@ -114,7 +114,6 @@ async function recoverOne(server: HrcServerInstanceForHandlers, run: HrcRunRecor
   }
 
   try {
-    const session = requireSession(server.db, run.hostSessionId)
     await waitForCompilerPrimingTerminal(server, runtime, server.runtimeStartPresentationSignal)
     writeServerLog('INFO', 'broker.cold_boot_input.rearmed', {
       runId,
@@ -123,10 +122,10 @@ async function recoverOne(server: HrcServerInstanceForHandlers, run: HrcRunRecor
       hostSessionId: run.hostSessionId,
       scopeRef: run.scopeRef,
     })
-    await server.executeHeadlessBrokerInputTurn(session, runtime, delivery.prompt, runId, {
-      ...delivery.dispatch,
-      ...(delivery.responseFormat !== undefined ? { responseFormat: delivery.responseFormat } : {}),
-      waitForCompletion: false,
+    await continueAdmittedTurn(server, {
+      kind: 'accepted-cold-boot',
+      runId,
+      runtimeId: runtime.runtimeId,
     })
   } catch (error) {
     // T-07963: route through the STOP-AWARE disposer, exactly as the original

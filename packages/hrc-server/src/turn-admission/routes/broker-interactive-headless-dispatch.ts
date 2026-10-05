@@ -8,24 +8,23 @@ import type {
   HrcExecutionFormat,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
-  HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
 import {
   assertActuatorSplitRuntimeReuse,
   normalizeActuatorSplitPolicy,
   prepareActuatorSplitIntent,
-} from './actuator-split.js'
-import { shouldUseHeadlessSdkExecutor } from './broker-decisions.js'
-import { waitForCompilerPrimingTerminal } from './broker-headless-handlers.js'
+} from '../../actuator-split.js'
+import { shouldUseHeadlessSdkExecutor } from '../../broker-decisions.js'
+import { waitForCompilerPrimingTerminal } from '../../broker-headless-handlers.js'
 import type {
   DispatchTurnResponseBase,
   JsonRepairRunCorrelation,
-} from './broker-interactive-shared.js'
-import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
-import type { BrokerUnixClientFactory } from './broker/controller.js'
-import { compilerPrimingSubmissionId } from './compiler-priming.js'
-import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
+} from '../../broker-interactive-shared.js'
+import { connectObservedBrokerUnixClient } from '../../broker/client-observability.js'
+import type { BrokerUnixClientFactory } from '../../broker/controller.js'
+import { compilerPrimingSubmissionId } from '../../compiler-priming.js'
+import { appendHrcEvent, createUserPromptPayload } from '../../hrc-event-helper.js'
 import {
   type RedirectOffBirthJoin,
   assertBirthJoinRoute,
@@ -33,24 +32,25 @@ import {
   recordStartBirth,
   requestsOperatorPresentation,
   startBirthOfRuntime,
-} from './presentation-operator.js'
-import { assertRuntimeNotBusy, isTerminalBrokerInvocationState } from './require-helpers.js'
-import { runtimeActivityPatch } from './runtime-activity.js'
+} from '../../presentation-operator.js'
+import { assertRuntimeNotBusy, isTerminalBrokerInvocationState } from '../../require-helpers.js'
+import { runtimeActivityPatch } from '../../runtime-activity.js'
 import {
   assertV2SelectionCompatibleForReuse,
   getDurableHeadlessRuntimeForReattach,
   getReusableHeadlessRuntimeForSession,
-} from './runtime-select.js'
-import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { writeServerLog } from './server-log.js'
+} from '../../runtime-select.js'
+import type { HrcServerInstanceForHandlers } from '../../server-instance-context.js'
+import { writeServerLog } from '../../server-log.js'
 import {
   type CoalescedQueuedMember,
   type DispatchRunPersistenceOptions,
   dispatchOriginRunFields,
-} from './server-types.js'
-import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
-import { automaticContinuationForSession } from './session-continuation-reuse.js'
-import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
+} from '../../server-types.js'
+import { isRuntimeUnavailableStatus, json, timestamp } from '../../server-util.js'
+import { automaticContinuationForSession } from '../../session-continuation-reuse.js'
+import { reattachDurableBrokerForDispatch } from '../../startup-reconcile.js'
+import type { AdmittedPlan } from '../types.js'
 
 type RuntimeStartOwnership = {
   operation: Promise<HrcRuntimeSnapshot>
@@ -94,7 +94,7 @@ function findBrokerRuntimeMissingDescriptor(input: {
 
 export async function handleHeadlessDispatchTurn(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   intent: HrcRuntimeIntent,
   prompt: string,
   runId: string,
@@ -102,6 +102,7 @@ export async function handleHeadlessDispatchTurn(
     waitForCompletion?: boolean | undefined
   } = {}
 ): Promise<Response> {
+  const session = plan.session
   const established = this.db.runtimes
     .listByHostSessionId(session.hostSessionId)
     .filter(
@@ -253,7 +254,7 @@ export async function handleHeadlessDispatchTurn(
 
 export async function handleHeadlessBrokerDispatchTurn(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   intent: HrcRuntimeIntent,
   prompt: string,
   runId: string | undefined,
@@ -268,6 +269,7 @@ export async function handleHeadlessBrokerDispatchTurn(
     redirectOffBirthJoin?: RedirectOffBirthJoin | undefined
   } = {}
 ): Promise<Response> {
+  const session = plan.session
   if (options.executionFormat === 'format2') {
     if (runId !== undefined) {
       throw new HrcConflictError(
@@ -276,7 +278,7 @@ export async function handleHeadlessBrokerDispatchTurn(
         { runId, route: 'broker' }
       )
     }
-    return await this.executeHeadlessBrokerFormat2DispatchTurn(session, intent, prompt, {
+    return await this.executeHeadlessBrokerFormat2DispatchTurn(plan, intent, prompt, {
       ...options,
       executionFormat: 'format2',
     })
@@ -340,7 +342,7 @@ export async function handleHeadlessBrokerDispatchTurn(
       })
     }
     return await this.dispatchQueuedHeadlessTurnInput(
-      session,
+      plan,
       bootedRuntime,
       dispatchPrompt,
       runId,
@@ -400,7 +402,7 @@ export async function handleHeadlessBrokerDispatchTurn(
       })
       if (this.db.runs.getByRunId(runId)?.status === 'queued') {
         return await this.dispatchQueuedHeadlessTurnInput(
-          session,
+          plan,
           reusableRuntime,
           dispatchPrompt,
           runId,
@@ -408,7 +410,7 @@ export async function handleHeadlessBrokerDispatchTurn(
         )
       }
       return await this.executeHeadlessBrokerInputTurn(
-        session,
+        plan,
         reusableRuntime,
         dispatchPrompt,
         runId,
@@ -475,7 +477,7 @@ export async function handleHeadlessBrokerDispatchTurn(
           }
         )
         return await this.executeHeadlessBrokerStartTurn(
-          session,
+          plan,
           dispatchIntent,
           dispatchPrompt,
           runId,
@@ -506,7 +508,7 @@ export async function handleHeadlessBrokerDispatchTurn(
         ownership.resolve(recovered)
         releaseOwnership()
         return await this.executeHeadlessBrokerInputTurn(
-          session,
+          plan,
           recovered,
           dispatchPrompt,
           runId,
@@ -534,7 +536,7 @@ export async function handleHeadlessBrokerDispatchTurn(
       }
 
       return await this.executeHeadlessBrokerStartTurn(
-        session,
+        plan,
         dispatchIntent,
         dispatchPrompt,
         runId,
@@ -549,7 +551,7 @@ export async function handleHeadlessBrokerDispatchTurn(
   }
 
   return await this.executeHeadlessBrokerStartTurn(
-    session,
+    plan,
     dispatchIntent,
     dispatchPrompt,
     runId,

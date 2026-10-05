@@ -6,32 +6,36 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import { prepareActuatorSplitIntent } from './actuator-split.js'
+import { prepareActuatorSplitIntent } from '../../actuator-split.js'
 import {
   assertPreparedAspdAttemptFormat,
   findPreparedAspdAttemptForFormatRetry,
   launchAspdPreparedAttempt,
   prepareAspdHeadlessAttempt,
   readAspdPreparation,
-} from './aspd-headless-start.js'
-import type { createBirthTimeline } from './birth-timeline.js'
-import type { DispatchTurnResponseBase, JsonRepairRunCorrelation } from './broker-headless-types.js'
-import { isClosedDbError } from './broker/controller/internal.js'
-import { submissionOrigin } from './broker/submission-doors.js'
-import { compilerPrimingSubmissionId } from './compiler-priming.js'
-import { appendHrcEvent } from './hrc-event-helper.js'
-import { waitForLaunchCarriedSubmissionIdentity } from './launch-carried-submission.js'
-import { recordStartBirth, startBirthOfIntent } from './presentation-operator.js'
-import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { writeServerLog } from './server-log.js'
+} from '../../aspd-headless-start.js'
+import type { createBirthTimeline } from '../../birth-timeline.js'
+import type {
+  DispatchTurnResponseBase,
+  JsonRepairRunCorrelation,
+} from '../../broker-headless-types.js'
+import { isClosedDbError } from '../../broker/controller/internal.js'
+import { submissionOrigin } from '../../broker/submission-doors.js'
+import { compilerPrimingSubmissionId } from '../../compiler-priming.js'
+import { appendHrcEvent } from '../../hrc-event-helper.js'
+import { waitForLaunchCarriedSubmissionIdentity } from '../../launch-carried-submission.js'
+import { recordStartBirth, startBirthOfIntent } from '../../presentation-operator.js'
+import type { HrcServerInstanceForHandlers } from '../../server-instance-context.js'
+import { writeServerLog } from '../../server-log.js'
 import {
   type AttachBeforeInvocationStartOption,
   type DispatchRunPersistenceOptions,
   dispatchOriginRunFields,
   dispatchRunPersistence,
   isLaunchCarriedInvokeCorrelationJson,
-} from './server-types.js'
-import { json, timestamp } from './server-util.js'
+} from '../../server-types.js'
+import { json, timestamp } from '../../server-util.js'
+import type { AdmittedPlan } from '../types.js'
 
 /**
  * T-08542 — the aspd-prepared headless codex start. A same-host-session,
@@ -266,7 +270,7 @@ async function coldBirthDoorSubmissionId(
 
 export async function executeHeadlessBrokerStartTurn(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   intent: HrcRuntimeIntent,
   prompt: string,
   runId: string,
@@ -284,6 +288,7 @@ export async function executeHeadlessBrokerStartTurn(
       }
     | undefined
 ): Promise<Response> {
+  const session = plan.session
   // Publish the runtime-producing promise before yielding so crossing dispatches
   // join this boot through handleHeadlessBrokerDispatchTurn's deferral branch.
   // A cold-durable recovery may already own the map across its awaited

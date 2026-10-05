@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { dispatchTestRoute } from './admitted-dispatch.fixture'
 
 import type { HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -220,7 +221,9 @@ describe('T-08541 an initialInput-carried cold birth records its broker submissi
     }
     internal.publishPresentation = async () => undefined
 
-    const response = await internal.handleInteractiveTmuxBrokerDispatchTurn(
+    const response = await dispatchTestRoute(
+      internal,
+      'handleInteractiveTmuxBrokerDispatchTurn',
       session,
       codexIntent(),
       CALLER,

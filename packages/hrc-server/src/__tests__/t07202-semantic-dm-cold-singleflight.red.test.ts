@@ -120,11 +120,13 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
       }
     }
     ;(server as any).dispatchQueuedHeadlessTurnInput = async (
-      session: { hostSessionId: string; generation: number },
+      plan,
       runtime: HrcRuntimeSnapshot,
       prompt: string,
       runId: string
     ) => {
+      const session = plan.session
+
       reusedPrompts.push({ prompt, runtimeId: runtime.runtimeId })
       return Response.json({
         runId,

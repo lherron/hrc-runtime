@@ -112,7 +112,10 @@ function seedReusableBrokerRuntime(
       brokerProtocol: 'harness-broker/0.2',
       brokerDriver: 'codex-app-server',
       invocationState: 'ready',
-      capabilitiesJson: JSON.stringify({ turns: 'multi' }),
+      capabilitiesJson: JSON.stringify({
+        turns: 'multi',
+        admission: { classes: ['exclusive', 'queue'] },
+      }),
       continuationJson: JSON.stringify({ provider: PROVIDER, key: 'thread-t05087' }),
       specHash: 'sha256:t05087-spec',
       startRequestHash: 'sha256:t05087-start',
@@ -446,7 +449,10 @@ describe('T-05078/14 between-turn reap and reprovision', () => {
           brokerProtocol: 'harness-broker/0.2',
           brokerDriver: 'codex-app-server',
           invocationState: 'ready',
-          capabilitiesJson: JSON.stringify({ turns: 'multi' }),
+          capabilitiesJson: JSON.stringify({
+            turns: 'multi',
+            admission: { classes: ['exclusive', 'queue'] },
+          }),
           continuationJson: JSON.stringify({ provider: PROVIDER, key: 'thread-t05087' }),
           specHash: 'sha256:t05087-reprovisioned-spec',
           startRequestHash: 'sha256:t05087-reprovisioned-start',

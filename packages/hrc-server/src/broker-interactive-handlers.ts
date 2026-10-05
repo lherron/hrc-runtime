@@ -1,16 +1,6 @@
 import { getHarnessBrokerController } from './broker-interactive-handlers/controller-factory.js'
-import {
-  handleHeadlessBrokerDispatchTurn,
-  handleHeadlessDispatchTurn,
-} from './broker-interactive-headless-dispatch.js'
-import {
-  deliverReassociatedBrokerTmuxInput,
-  executeInteractiveBrokerInputTurn,
-} from './broker-interactive-input-turn.js'
-import {
-  handleInteractiveTmuxBrokerDispatchTurn,
-  startInteractiveTmuxBrokerRuntime,
-} from './broker-interactive-tmux-dispatch.js'
+import { deliverReassociatedBrokerTmuxInput } from './turn-admission/routes/broker-interactive-input-turn.js'
+import { startInteractiveTmuxBrokerRuntime } from './turn-admission/routes/broker-interactive-tmux-dispatch.js'
 
 // Re-exported so the public surface of this module is preserved after the
 // substrate-allocator + controller-factory split (no downstream import changes
@@ -29,20 +19,9 @@ export {
 } from './broker-interactive-handlers/substrate-allocator.js'
 export { getHarnessBrokerController }
 
-export {
-  handleHeadlessDispatchTurn,
-  handleHeadlessBrokerDispatchTurn,
-  handleInteractiveTmuxBrokerDispatchTurn,
-  executeInteractiveBrokerInputTurn,
-  deliverReassociatedBrokerTmuxInput,
-  startInteractiveTmuxBrokerRuntime,
-}
+export { deliverReassociatedBrokerTmuxInput, startInteractiveTmuxBrokerRuntime }
 
 export const brokerInteractiveHandlersMethods = {
-  handleHeadlessDispatchTurn,
-  handleHeadlessBrokerDispatchTurn,
-  handleInteractiveTmuxBrokerDispatchTurn,
-  executeInteractiveBrokerInputTurn,
   deliverReassociatedBrokerTmuxInput,
   startInteractiveTmuxBrokerRuntime,
   getHarnessBrokerController,

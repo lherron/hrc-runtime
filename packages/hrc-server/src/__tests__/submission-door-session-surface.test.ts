@@ -66,7 +66,9 @@ afterEach(async () => {
 // the T-08540 block below, because a double that invented its own refusal let
 // this file pass while live admitted a forged proof.
 function installDispatchDouble(): void {
-  internal.dispatchTurnForSession = async (session, intent, prompt, options) => {
+  internal.executeAdmittedTurn = async (plan, intent, prompt, options) => {
+    const session = plan.session
+
     captures.push({
       hostSessionId: session.hostSessionId,
       intent,
@@ -263,7 +265,7 @@ describe('T-08540 ownership proof is decided by the real admission on every door
 
   // Only the seams BELOW the admission decision are replaced: the tmux liveness
   // probe (no real pane), presentation, and broker input delivery (no real
-  // broker). dispatchTurnForSession and decideInteractiveBrokerAdmission run
+  // broker). executeAdmittedTurn and decideInteractiveBrokerAdmission run
   // for real, so this cannot pass while the live door admits a forged proof.
   beforeEach(() => {
     delivered = []
@@ -299,12 +301,9 @@ describe('T-08540 ownership proof is decided by the real admission on every door
     internal.handleInteractiveTmuxBrokerDispatchTurn = async () => {
       throw new Error('T-08540: admission must not start or reprovision a broker')
     }
-    internal.executeInteractiveBrokerInputTurn = async (
-      submittedSession,
-      runtime,
-      prompt,
-      runId
-    ) => {
+    internal.executeInteractiveBrokerInputTurn = async (plan, runtime, prompt, runId) => {
+      const submittedSession = plan.session
+
       delivered.push({ runtimeId: runtime.runtimeId, runId, prompt })
       return Response.json({
         submissionId: `sub-${runId}`,

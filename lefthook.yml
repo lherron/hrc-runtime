@@ -24,6 +24,8 @@ pre-commit:
     lint:
       run: bun scripts/run-if-code-changed.ts pre-commit -- bun run lint
       stage_fixed: true
+    admission-entry:
+      run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-admission-entry.ts
     boundaries:
       run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-boundaries.ts
     manifests:

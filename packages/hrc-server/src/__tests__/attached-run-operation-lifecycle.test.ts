@@ -69,7 +69,7 @@ describe('attached-run operation lifecycle', () => {
       attachedRunOperations,
       capturedRelease: unmanagedRelease,
       maybeAutoRotateStaleSession: async () => ({ session }),
-      dispatchTurnForSession: async () => {
+      executeAdmittedTurn: async () => {
         await accepted
         return Response.json({
           runId: 'run-attached-run',
@@ -174,7 +174,7 @@ describe('attached-run operation lifecycle', () => {
       capturedRelease: unmanagedRelease,
       maybeAutoRotateStaleSession: async () => ({ session }),
       // The launch pipeline (e.g. its ASP compile) never settles within the wait.
-      dispatchTurnForSession: () => new Promise<never>(() => undefined),
+      executeAdmittedTurn: () => new Promise<never>(() => undefined),
       getHarnessBrokerController: () => ({
         waitForAttachedStartReady: () =>
           Promise.reject(new Error('attached broker start did not become ready: attached-x')),

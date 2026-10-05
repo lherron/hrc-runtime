@@ -4,43 +4,44 @@ import {
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
   shouldBlockForBrokerTurnCompletion,
-} from './broker-decisions.js'
+} from '../../broker-decisions.js'
 import type {
   DispatchTurnResponseBase,
   JsonRepairRunCorrelation,
-} from './broker-interactive-shared.js'
+} from '../../broker-interactive-shared.js'
 import {
   BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
   rejectedBrokerAdoptionPaths,
-} from './broker/adoption-root.js'
-import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
-import type { BrokerUnixClientFactory } from './broker/controller.js'
-import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
-import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
-import { armFirstTurnWatch } from './first-turn-watch.js'
-import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
+} from '../../broker/adoption-root.js'
+import { connectObservedBrokerUnixClient } from '../../broker/client-observability.js'
+import type { BrokerUnixClientFactory } from '../../broker/controller.js'
+import { withDirectTmuxDegradedControlState } from '../../broker/runtime-state.js'
+import { submissionOrigin, submitThroughBrokerDoor } from '../../broker/submission-doors.js'
+import { armFirstTurnWatch } from '../../first-turn-watch.js'
+import { appendHrcEvent, createUserPromptPayload } from '../../hrc-event-helper.js'
 import {
   classifyBrokerInputFailure,
   isTerminalBrokerInputFailure,
   isTerminalBrokerInvocationState,
   isTransientBrokerInputStateFailure,
   isTransitionalBrokerInvocationState,
-} from './require-helpers.js'
-import { runtimeActivityPatch } from './runtime-activity.js'
-import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { writeServerLog } from './server-log.js'
-import { type DispatchRunPersistenceOptions, dispatchOriginRunFields } from './server-types.js'
-import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
-import { brokerLeaseIdsMatch, reattachDurableBrokerForDispatch } from './startup-reconcile.js'
-import { createTmuxManager } from './tmux.js'
+} from '../../require-helpers.js'
+import { runtimeActivityPatch } from '../../runtime-activity.js'
+import type { HrcServerInstanceForHandlers } from '../../server-instance-context.js'
+import { writeServerLog } from '../../server-log.js'
+import { type DispatchRunPersistenceOptions, dispatchOriginRunFields } from '../../server-types.js'
+import { isRuntimeUnavailableStatus, json, timestamp } from '../../server-util.js'
+import { brokerLeaseIdsMatch, reattachDurableBrokerForDispatch } from '../../startup-reconcile.js'
+import { createTmuxManager } from '../../tmux.js'
 import {
   assertRuntimeSupportsResponseFormat,
   toBrokerResponseFormat,
-} from './turn-response-format.js'
+} from '../../turn-response-format.js'
+import type { AdmittedPlan } from '../types.js'
 
 export async function executeInteractiveBrokerInputTurn(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   runtime: HrcRuntimeSnapshot,
   prompt: string,
   runId: string,
@@ -50,6 +51,7 @@ export async function executeInteractiveBrokerInputTurn(
     responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
 ): Promise<Response> {
+  const session = plan.session
   const invocationId = runtime.activeInvocationId
   if (invocationId === undefined) {
     throw new HrcUnprocessableEntityError(
@@ -328,7 +330,7 @@ export async function executeInteractiveBrokerInputTurn(
   // settles it; ACK-completing here fabricates a successful execution terminal.
 
   // T-01770 Phase C: a synchronous caller (ACP/Discord round-trip via
-  // dispatchTurnForSession) blocks until the Claude turn completes; the async
+  // executeAdmittedTurn) blocks until the Claude turn completes; the async
   // reply-bridge callers pass waitForCompletion:false and get status:'started'.
   // A steer never blocks, whatever the caller asked for.
   if (!shouldBlockForBrokerTurnCompletion(options.waitForCompletion, options.submissionDoor)) {

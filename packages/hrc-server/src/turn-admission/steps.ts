@@ -17,10 +17,7 @@ import {
   shouldUseHeadlessTransport,
   shouldUseSdkTransport,
 } from '../broker-decisions.js'
-import {
-  BROKER_PREEMPT_UNSUPPORTED_REASON,
-  brokerCapabilitiesSupportAdmissionClass,
-} from '../broker/capabilities.js'
+import { BROKER_PREEMPT_UNSUPPORTED_REASON } from '../broker/capabilities.js'
 import { normalizeDispatchIntent } from '../dispatch-invocation.js'
 import { assertScopeNotRetired } from '../federation/summon-gate-server.js'
 import { assertLocalPersonaAllowed } from '../local-persona-policy.js'
@@ -232,19 +229,7 @@ export async function capabilityAuthority(
   }
   partial.doorReport = submissionDoorReport(ctx, partial.session, req.intent)
   partial.effectiveDoor = partial.doorReport.effectiveDoor
-  if (req.intent === 'invoke') {
-    const runtime = activeBrokerRuntimeForSession(ctx, partial.session)
-    const invocation =
-      runtime?.activeInvocationId === undefined
-        ? null
-        : ctx.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
-    if (
-      runtime !== undefined &&
-      !brokerCapabilitiesSupportAdmissionClass(invocation?.capabilitiesJson, 'exclusive')
-    )
-      partial.effectiveDoor = 'enqueue'
-  }
-  partial.options.submissionDoor = req.intent === 'invoke' ? 'invoke' : partial.effectiveDoor
+  partial.options.submissionDoor = partial.effectiveDoor
   return passed
 }
 
@@ -424,11 +409,11 @@ export async function rotation(
 
 export async function launchCarryObservation(
   ctx: AdmissionContext,
-  req: SubmissionRequest,
+  _req: SubmissionRequest,
   partial: PartialPlan
 ): Promise<StepOutcome<Response>> {
   if (partial.session === undefined) throw new Error('admission has no launch target')
-  partial.launchCarry = { intent: req.intent, carriesBody: true }
+  partial.launchCarry = { intent: partial.effectiveDoor, carriesBody: true }
   partial.observation = {
     lifecycleFromSeq: ctx.db.hrcEvents.maxHrcSeq() + 1,
     brokerAfterSeqByInvocation: captureBrokerAfterSeqByInvocation(
@@ -437,6 +422,6 @@ export async function launchCarryObservation(
     ),
   }
   // intent is mandatory; routing never derives carry from an absent door.
-  partial.options.submissionDoor = req.intent === 'invoke' ? 'invoke' : partial.effectiveDoor
+  partial.options.submissionDoor = partial.effectiveDoor
   return passed
 }

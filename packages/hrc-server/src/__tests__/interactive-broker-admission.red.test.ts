@@ -1,7 +1,7 @@
 /**
  * T-01753 Wave B cutover — RED acceptance tests (smokey).
  *
- * Wave B makes the interactive-tmux dispatch tail of dispatchTurnForSession
+ * Wave B makes the interactive-tmux dispatch tail of executeAdmittedTurn
  * FAIL CLOSED onto the Harness Broker. Today that tail ends in an UNCONDITIONAL
  * legacy fallback (handleLegacyInteractiveTmuxDispatchTurn @2378 of ../index)
  * plus two now-dead legacyTmux closures, and it can literal-deliver a turn into

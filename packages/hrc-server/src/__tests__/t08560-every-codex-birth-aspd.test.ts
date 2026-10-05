@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { dispatchTestTurn } from './admitted-dispatch.fixture'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -63,7 +64,7 @@ type Internal = {
     runId: string,
     options: Record<string, unknown>
   ): Promise<HrcRuntimeSnapshot>
-  dispatchTurnForSession(
+  executeAdmittedTurn(
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent | undefined,
     prompt: string,
@@ -255,7 +256,7 @@ async function settle(predicate: () => boolean): Promise<void> {
 
 /** The external injector's exact summons-birth call. */
 async function kickerSummons(s: HrcSessionRecord, prompt = MARK): Promise<Response> {
-  return await internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, prompt, {
+  return await dispatchTestTurn(internal(), s, s.lastAppliedIntentJson, prompt, {
     waitForCompletion: false,
     submissionDoor: 'invoke',
     ttlMs: 60_000,
@@ -417,7 +418,7 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
 
   it('DM options (enqueue, joinInFlightRuntimeStart): append-to-priming on the aspd route', async () => {
     const s = await seedInteractive()
-    await internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, MARK, {
+    await dispatchTestTurn(internal(), s, s.lastAppliedIntentJson, MARK, {
       waitForCompletion: false,
       submissionDoor: 'enqueue',
       joinInFlightRuntimeStart: true,
@@ -434,13 +435,15 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
 
   it('selector message (no door): the ordinary v2 compile freezes its initial input without a local post-boot injection', async () => {
     const s = await seedInteractive()
-    await internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, MARK, {
+    await dispatchTestTurn(internal(), s, s.lastAppliedIntentJson, MARK, {
       waitForCompletion: false,
     })
     await settle(() => ledger.startCalls.length === 1)
     const [op] = operations(s.hostSessionId)
     expect(op?.record.dispatch.routeDecision.selectedBy).toBe('producer-selected-execution')
-    expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toBeUndefined()
+    expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toEqual({
+      mode: 'append-to-priming',
+    })
     expect(initialInputText(op?.record.admission.execution.dispatchRequest.startRequest)).toBe(MARK)
     expect(aspd.compileMaterializations[0]?.initialPrompt).toBe(MARK)
     expect(delivered).toEqual([])
@@ -451,7 +454,7 @@ describe('T-08560 launch-carried cold-birth prompt (D1)', () => {
     const s = await seedInteractive()
     await expect(
       (async () => {
-        const response = await internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, MARK, {
+        const response = await dispatchTestTurn(internal(), s, s.lastAppliedIntentJson, MARK, {
           waitForCompletion: true,
           submissionDoor: 'invoke',
           launchPromptOnColdBirth: true,
@@ -712,7 +715,7 @@ describe('T-08560 joins, backstop and durable IPC on the aspd route', () => {
   it('a DM crossing a summons birth joins it: one aspd birth, each prompt delivered once (T-07693/T-07202)', async () => {
     const s = await seedInteractive()
     const first = kickerSummons(s, 'T8560-FIRST')
-    const second = internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, 'T8560-SECOND', {
+    const second = dispatchTestTurn(internal(), s, s.lastAppliedIntentJson, 'T8560-SECOND', {
       waitForCompletion: false,
       submissionDoor: 'enqueue',
       joinInFlightRuntimeStart: true,

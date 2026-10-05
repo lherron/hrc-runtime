@@ -1,3 +1,4 @@
+import { dispatchTestRoute } from './admitted-dispatch.fixture'
 /**
  * RED acceptance test for T-06313.
  *
@@ -243,7 +244,9 @@ describe('headless broker dispatch start single-flight', () => {
     }
 
     const response = await Promise.race([
-      (server as any).executeHeadlessBrokerStartTurn(
+      dispatchTestRoute(
+        server as any,
+        'executeHeadlessBrokerStartTurn',
         session,
         headlessBrokerIntent(),
         'detached turn',
@@ -313,11 +316,13 @@ describe('headless broker dispatch start single-flight', () => {
       }
     }
     ;(server as any).dispatchQueuedHeadlessTurnInput = async (
-      queuedSession: { hostSessionId: string; generation: number },
+      plan,
       runtime: { runtimeId: string },
       _prompt: string,
       runId: string
     ) => {
+      const queuedSession = plan.session
+
       queuedDispatchCalls += 1
       return Response.json({
         runId,
@@ -330,7 +335,9 @@ describe('headless broker dispatch start single-flight', () => {
       })
     }
 
-    const firstDispatch = (server as any).handleHeadlessBrokerDispatchTurn(
+    const firstDispatch = dispatchTestRoute(
+      server as any,
+      'handleHeadlessBrokerDispatchTurn',
       session,
       headlessBrokerIntent(),
       'first crossing DM',
@@ -339,7 +346,9 @@ describe('headless broker dispatch start single-flight', () => {
     ) as Promise<Response>
     await firstStart
 
-    const secondDispatch = (server as any).handleHeadlessBrokerDispatchTurn(
+    const secondDispatch = dispatchTestRoute(
+      server as any,
+      'handleHeadlessBrokerDispatchTurn',
       session,
       headlessBrokerIntent(),
       'second crossing DM',
@@ -348,6 +357,18 @@ describe('headless broker dispatch start single-flight', () => {
     ) as Promise<Response>
     const startsWhileBothDispatchesAreInFlight = startCalls
 
+    const queueDb = openHrcDatabase(fixture.dbPath)
+    try {
+      for (
+        let attempt = 0;
+        attempt < 100 && queueDb.runs.getByRunId('run-t06313-second')?.status !== 'queued';
+        attempt++
+      )
+        await Bun.sleep(1)
+      expect(queueDb.runs.getByRunId('run-t06313-second')?.status).toBe('queued')
+    } finally {
+      queueDb.close()
+    }
     releaseStart()
     const results = await Promise.allSettled([firstDispatch, secondDispatch])
 
@@ -421,7 +442,9 @@ describe('headless broker dispatch start single-flight', () => {
       return Response.json({ ok: true })
     }
 
-    const dispatch = (server as any).handleHeadlessBrokerDispatchTurn(
+    const dispatch = dispatchTestRoute(
+      server as any,
+      'handleHeadlessBrokerDispatchTurn',
       session,
       headlessBrokerIntent(),
       'caller turn joining lifecycle boot',
@@ -499,11 +522,13 @@ describe('headless broker dispatch start single-flight', () => {
       }
     }
     ;(server as any).dispatchQueuedHeadlessTurnInput = async (
-      queuedSession: { hostSessionId: string; generation: number },
+      plan,
       runtime: { runtimeId: string },
       _prompt: string,
       runId: string
     ) => {
+      const queuedSession = plan.session
+
       queuedDispatchCalls += 1
       return Response.json({
         runId,
@@ -516,14 +541,18 @@ describe('headless broker dispatch start single-flight', () => {
       })
     }
 
-    const firstDispatch = (server as any).handleHeadlessBrokerDispatchTurn(
+    const firstDispatch = dispatchTestRoute(
+      server as any,
+      'handleHeadlessBrokerDispatchTurn',
       session,
       headlessBrokerIntent(),
       'first cold durable dispatch',
       'run-t07196-first',
       { waitForCompletion: false }
     ) as Promise<Response>
-    const secondDispatch = (server as any).handleHeadlessBrokerDispatchTurn(
+    const secondDispatch = dispatchTestRoute(
+      server as any,
+      'handleHeadlessBrokerDispatchTurn',
       session,
       headlessBrokerIntent(),
       'second cold durable dispatch',
@@ -613,7 +642,9 @@ describe('headless broker dispatch start single-flight', () => {
       return Response.json({ ok: true })
     }
 
-    const response = await (server as any).handleHeadlessBrokerDispatchTurn(
+    const response = await dispatchTestRoute(
+      server as any,
+      'handleHeadlessBrokerDispatchTurn',
       session,
       headlessBrokerIntent(),
       'fresh turn after exhausted retries',

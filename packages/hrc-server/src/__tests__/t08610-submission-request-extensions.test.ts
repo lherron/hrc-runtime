@@ -13,7 +13,7 @@ import { seedDispatchedBrokerInvocation } from './persisted-invocation.fixture.j
 /**
  * T-08610 contract: `POST /v1/submissions/invoke` gains `ttlMs` and
  * `coldBirth.promptMode`; `POST /v1/targets/ensure` gains `persistIntent`.
- * Dispatch is doubled at `dispatchTurnForSession` (established pattern) so the
+ * Dispatch is doubled at `executeAdmittedTurn` (established pattern) so the
  * request plumbing is asserted without a broker; the double decides nothing.
  *
  * Run with: TMPDIR=/tmp bun run --filter hrc-server test t08610-submission-request-extensions
@@ -59,7 +59,7 @@ function invokeBody(extra: Record<string, unknown> = {}): Record<string, unknown
 }
 
 function installDispatchDouble(): void {
-  internal.dispatchTurnForSession = (async (
+  internal.executeAdmittedTurn = (async (
     session: { hostSessionId: string },
     _intent: unknown,
     _prompt: string,
@@ -102,7 +102,7 @@ function installDispatchDouble(): void {
         },
       },
     })
-  }) as typeof internal.dispatchTurnForSession
+  }) as typeof internal.executeAdmittedTurn
 }
 
 beforeEach(async () => {

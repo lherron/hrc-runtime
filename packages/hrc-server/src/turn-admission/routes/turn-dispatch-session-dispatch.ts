@@ -8,16 +8,16 @@ import type {
   HrcSessionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import { assertActuatorSplitRuntimeReuse } from './actuator-split.js'
+import { assertActuatorSplitRuntimeReuse } from '../../actuator-split.js'
 import {
   CALLER_SURFACE_REUSE_REFUSAL,
   type HeadlessExecutionRoute,
   decideHeadlessExecutionRoute,
   getBrokerRuntimeDriver,
   refusesSurfaceReuse,
-} from './broker-decisions.js'
-import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
-import type { ParticipantDeliveryTarget } from './participant-delivery.js'
+} from '../../broker-decisions.js'
+import { hasLeasedBrokerSubstrate } from '../../broker/runtime-hosting.js'
+import type { ParticipantDeliveryTarget } from '../../participant-delivery.js'
 import {
   type RedirectOffBirthJoin,
   type RedirectOffCodexRoute,
@@ -26,30 +26,25 @@ import {
   decideRedirectOffCodexRoute,
   isOmittedChoiceCodexRequest,
   startBirthOf,
-} from './presentation-operator.js'
-import { isBrokerRuntimeInputDispatchable } from './require-helpers.js'
+} from '../../presentation-operator.js'
+import { isBrokerRuntimeInputDispatchable } from '../../require-helpers.js'
 import {
   assertV2SelectionCompatibleForReuse,
   findDispatchInteractiveRuntime,
-} from './runtime-select.js'
-import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
+} from '../../runtime-select.js'
+import type { HrcServerInstanceForHandlers } from '../../server-instance-context.js'
 import type {
   AttachBeforeInvocationStartOption,
   CoalescedQueuedMember,
   DispatchRunPersistenceOptions,
-} from './server-types.js'
-import { dispatchRunPersistence } from './server-types.js'
-import { isRuntimeUnavailableStatus } from './server-util.js'
-import { dispatchAdmittedTurnForSession } from './turn-dispatch-admitted-turn.js'
-import type { JsonRepairRunCorrelation } from './turn-dispatch-attached-run-handlers.js'
-import { assertBrokerRuntimeExecutionFormat } from './turn-dispatch-runtime-handlers.js'
-import { activeBrokerRuntimeForSession } from './turn-dispatch-submission-support.js'
+} from '../../server-types.js'
+import { dispatchRunPersistence } from '../../server-types.js'
+import { isRuntimeUnavailableStatus } from '../../server-util.js'
+import type { JsonRepairRunCorrelation } from '../../turn-dispatch-attached-run-handlers.js'
 
-import type { AdmittedPlan } from './turn-admission/types.js'
+import type { AdmittedPlan } from '../types.js'
 
 export type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
-  /** Phase-1 admitted route: the outer pipeline already owns the drain lease. */
-  admissionPlan?: AdmittedPlan | undefined
   runId?: string | undefined
   ensureInteractiveRuntime?: boolean | undefined
   waitForCompletion?: boolean | undefined
@@ -77,33 +72,6 @@ export type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
    * on the invoke class method, not an admission-class selector.
    */
   coldBirthPromptMode?: ColdBirthPromptMode | undefined
-}
-
-export async function dispatchTurnForSession(
-  this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
-  /** Absent only for a participant, which is routed by durable linkage (R7.6). */
-  inputIntent: HrcRuntimeIntent | undefined,
-  prompt: string,
-  options: DispatchTurnForSessionOptions = {}
-): Promise<Response> {
-  if (options.admissionPlan !== undefined) {
-    return await dispatchAdmittedTurnForSession.call(this, session, inputIntent, prompt, options)
-  }
-  const executionFormat = options.executionFormat ?? 'format1'
-  const liveBrokerRuntime = activeBrokerRuntimeForSession(this, session)
-  if (liveBrokerRuntime !== undefined) {
-    assertBrokerRuntimeExecutionFormat(this, liveBrokerRuntime, executionFormat)
-  }
-  const existingRun = options.runId ? this.db.runs.getByRunId(options.runId) : null
-  const releaseAdmission = this.turnAdmissionGate.admit({
-    existingAcceptedRun: existingRun?.status === 'accepted',
-  })
-  try {
-    return await dispatchAdmittedTurnForSession.call(this, session, inputIntent, prompt, options)
-  } finally {
-    releaseAdmission()
-  }
 }
 
 /**
@@ -172,13 +140,14 @@ const NON_BLOCKING_TMUX_BROKER_DRIVERS = new Set(['codex-cli-tmux', 'pi-tui-tmux
  */
 export async function dispatchIntoProducerSelectedTmuxRuntime(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   runtime: HrcRuntimeSnapshot,
   intent: HrcRuntimeIntent,
   prompt: string,
   runId: string,
   options: DispatchTurnForSessionOptions
 ): Promise<Response> {
+  const session = plan.session
   assertV2SelectionCompatibleForReuse(runtime, intent)
   assertActuatorSplitRuntimeReuse(intent, runtime)
   assertNoOperatorPresentationConflict(intent, [runtime])
@@ -210,7 +179,7 @@ export async function dispatchIntoProducerSelectedTmuxRuntime(
     operatorAttachPending: options.attachBeforeInvocationStart !== undefined,
   })
   const driver = getBrokerRuntimeDriver(runtime)
-  return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
+  return await this.executeInteractiveBrokerInputTurn(plan, runtime, prompt, runId, {
     waitForCompletion:
       driver !== undefined && NON_BLOCKING_TMUX_BROKER_DRIVERS.has(driver)
         ? false
@@ -232,11 +201,12 @@ export async function dispatchIntoProducerSelectedTmuxRuntime(
  */
 export async function deliverIntoAttachedParticipant(
   this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
+  plan: AdmittedPlan,
   target: ParticipantDeliveryTarget,
   prompt: string,
   options: DispatchTurnForSessionOptions
 ): Promise<Response> {
+  const _session = plan.session
   const runId = options.runId ?? `run-${randomUUID()}`
   const { runtime } = target
   const inputTurnOptions = {
@@ -262,14 +232,8 @@ export async function deliverIntoAttachedParticipant(
     ...dispatchRunPersistence(options),
   }
   return runtime.transport === 'tmux'
-    ? await this.executeInteractiveBrokerInputTurn(
-        session,
-        runtime,
-        prompt,
-        runId,
-        inputTurnOptions
-      )
-    : await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, inputTurnOptions)
+    ? await this.executeInteractiveBrokerInputTurn(plan, runtime, prompt, runId, inputTurnOptions)
+    : await this.executeHeadlessBrokerInputTurn(plan, runtime, prompt, runId, inputTurnOptions)
 }
 
 /**

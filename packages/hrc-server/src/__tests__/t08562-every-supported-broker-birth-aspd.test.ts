@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { dispatchTestTurn } from './admitted-dispatch.fixture'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -71,7 +72,7 @@ type Internal = {
     runId: string,
     options: Record<string, unknown>
   ): Promise<HrcRuntimeSnapshot>
-  dispatchTurnForSession(
+  executeAdmittedTurn(
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent | undefined,
     prompt: string,
@@ -318,7 +319,7 @@ async function settle(predicate: () => boolean): Promise<void> {
 
 /** The external injector's exact summons-birth call. */
 async function kickerSummons(s: HrcSessionRecord, prompt = MARK): Promise<Response> {
-  return await internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, prompt, {
+  return await dispatchTestTurn(internal(), s, s.lastAppliedIntentJson, prompt, {
     waitForCompletion: false,
     submissionDoor: 'invoke',
     ttlMs: 60_000,
@@ -445,13 +446,15 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
   it('a bare selector message is frozen into the producer request, not delivered again after boot', async () => {
     selectTerminalProducer('claude-code-tmux')
     const s = await seedInteractive()
-    await internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, MARK, {
+    await dispatchTestTurn(internal(), s, s.lastAppliedIntentJson, MARK, {
       waitForCompletion: false,
     })
     await settle(() => delivered.length === 1)
     const [op] = operations(s.hostSessionId)
     expect(op?.record.route).toBe('producer-selected-execution')
-    expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toBeUndefined()
+    expect(op?.record.dispatch.routeDecision.launchCarriedPrompt).toEqual({
+      mode: 'append-to-priming',
+    })
     expect(
       launchPrompt(op?.record.admission.execution.dispatchRequest.startRequest)
     ).toBeUndefined()
@@ -877,7 +880,7 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
   it('a DM crossing a Claude summons birth joins it: one aspd birth, each prompt delivered once', async () => {
     const s = await seedInteractive()
     const first = kickerSummons(s, 'T8562-FIRST')
-    const second = internal().dispatchTurnForSession(s, s.lastAppliedIntentJson, 'T8562-SECOND', {
+    const second = dispatchTestTurn(internal(), s, s.lastAppliedIntentJson, 'T8562-SECOND', {
       waitForCompletion: false,
       submissionDoor: 'enqueue',
       joinInFlightRuntimeStart: true,
