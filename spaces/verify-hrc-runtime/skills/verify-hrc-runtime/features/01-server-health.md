@@ -1,8 +1,10 @@
 # 1. Server health
 
 How you tell whether a daemon is up, which build it runs, and whether its node is healthy. Code:
-`packages/hrc-cli/src/cli/handlers-server.ts` (`server status|restart|stop|serve`),
-`packages/hrc-cli/src/target/live-commands.ts` (`doctor`), `packages/hrc-cli/src/harness-guard.ts`,
+`packages/hrc-cli/src/cli/handlers-server.ts` (`server status|restart|stop|serve|subscribers|tmux`),
+`packages/hrc-cli/src/cli/handlers-federation.ts` (`cmdDoctor`, the node rows) and
+`packages/hrc-cli/src/target/live-commands.ts` (`targetDoctorChecks`, the target rows),
+`packages/hrc-cli/src/harness-guard.ts`,
 `packages/hrc-server/src/server-status-methods.ts` and `release-provenance.ts`. Docs: `docs/cli-surface.md`,
 `docs/operations-runbook.md`.
 
@@ -15,8 +17,14 @@ How you tell whether a daemon is up, which build it runs, and whether its node i
 - `hrc doctor [target] [--json] [--strict]`: rows `hrc-daemon`, `node-identity`, `federation-config`,
   `federation-peer:<node>`, `placement-skew`, `placement-policy` (warn per unreadable declaration); with a
   target also `target-lookup`, `dm-capability`, `runtime` (and `target-health`, only when the target is
-  broken). `--json` is an array of `{name, status, detail}`. Exit 0 with warns, 1 with `--strict` and a warn.
+  broken); a target that doesn't resolve gives one `target-resolve` fail row instead, and exit 1. A peer that
+  isn't healthy is a warn, not a fail. An unreachable daemon gives a single `hrc-daemon` fail row and exit 1.
+  `--json` is an array of `{name, status, detail}`. Exit 0 with warns, 1 with `--strict` and a warn.
 - `hrc info`: the agent runbook, including every `server status --json` path.
+- `hrc server subscribers [--json]`: follow-stream admission and consumer-receipt accounting (`active`,
+  `recentlyClosed`; per subscriber `route`, `selector`, `enqueuedCount`, `pendingCount`, `receiptState`).
+- `hrc server tmux status [--json]`: the daemon's tmux socket (`available`, `version`, `running`,
+  `sessions`, broker-tmux `leases`). `server tmux kill` is operator only.
 - The harness guard: `hrc server serve` exits 2 with "refusing to boot in the foreground" when any of
   `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CODEX_SANDBOX` is set. There is deliberately no override flag.
 - `hrc server restart|stop --reason`: operator only (Mable primary). Named here, never driven.
@@ -35,6 +43,9 @@ hrc doctor --json | jq -c '(map(.status)|group_by(.)|map({(.[0]):length})|add)'
 hrc doctor --strict >/dev/null; echo "strict rc=$?"   # 1 while any warn row exists
 hrc doctor clod@hrc-runtime:<task> --json | jq -c '.[] | select(.name|test("target|dm|runtime"))'
 hv run <task> -- hrc doctor                           # single-node: no peers, no bindings
+hv run <task> -- hrc doctor no-such-agent@nowhere:x --json; echo "rc=$?"   # target-resolve fail, rc 1
+hrc server subscribers --json | jq -c '{active: (.active|length), recentlyClosed: (.recentlyClosed|length)}'
+hv run <task> -- hrc server tmux status --json
 HRC_RUNTIME_DIR=/tmp/hv-guard/run HRC_STATE_DIR=/tmp/hv-guard/state hrc server serve; echo "rc=$?"   # guard: rc 2
 hrc info | head -40
 ```
@@ -52,6 +63,11 @@ hrc info | head -40
   (`ENOENT … .Trash/…`), ambiguous (`multiple worktrees match T-…`) or whose project root is not canonical.
   They don't stop a drive; they make `--strict` exit 1.
 - `target-health` appears only for a broken target, despite the help listing it with every target.
+- **Live `server subscribers` lists many idle follows.** 28 active on 2026-10-05: one `broker-events`
+  (`mail`, 11254 accepted) and 27 `events` follows on old scopes and lanes (`…steering-e2e-1778176114`,
+  `discord-…`), each `enqueued=0`, `receipt=awaiting-first-ack` (`T-10350/01-server-health/drive.txt`). That
+  is the steady state of follow consumers on quiet scopes, not a leak this skill has proven; a fresh scratch
+  answers `{"active": [], "recentlyClosed": []}`.
 - `hrc server status` with a scratch's two env vars and no daemon behind them prints nulls rather than
   refusing; `hv scratch up` waits for `.api.socketPath` to be non-null for that reason.
 
@@ -62,5 +78,5 @@ Live `server status --json` names an atomic release whose `hrcBuild.sourceCommit
 `healthy`; the scratch `doctor` shows single-node with no bindings; the guard refuses with rc 2 and names
 the detected variables.
 
-Driven 2026-10-05 (T-10297) on installed 5bdb6c4e (release-20261005161155036-36654), live and scratch
-`t-10297`: `var/wrkq-artifacts/T-10297/01-server-health/drive.txt`.
+Driven 2026-10-05 (T-10350 upkeep) on installed 5bdb6c4e (release-20261005161155036-36654), aspd e5e729af,
+live and scratch `t-10350`: `var/wrkq-artifacts/T-10350/01-server-health/drive.txt`.

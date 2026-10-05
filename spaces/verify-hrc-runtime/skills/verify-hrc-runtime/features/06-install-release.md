@@ -46,7 +46,7 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
 ## Gotchas
 
 - **Installed lagging HEAD is the steady state.** On 2026-10-05 the installed and running release was
-  5bdb6c4e while HEAD and origin/main were 7ffb8e86 (a later chore commit). Compare the claim's commit with
+  5bdb6c4e while HEAD and origin/main were 7ffb8e86, and later 888da726 (a dev-env fix, no package code). Compare the claim's commit with
   `.release.hrcBuild.sourceCommit`, not with HEAD.
 - **`release sweep` refuses while any `hrc server serve` you own is up**, the live daemon included: it
   matches the binary and verb pair from `ps` (`isHrcDaemonArgv`, `packages/hrc-cli/src/release-gc-sweep.ts`),
@@ -54,10 +54,21 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
   daemon (`bun …/hrc-runtime/packages/hrc-cli/bin/hrc.js server serve`, roots under
   `$TMPDIR/hrc-dev-env-501-…`) orphaned since 2026-10-03 (ppid 1). An orphan like that, or an `hv` scratch
   left up, keeps the sweep refusing after the operator stops the live daemon: take scratches down.
+  Since 888da726 (T-10329) a dev-env daemon is leased: `<root>/owners` names its owner (`pid:<pid> <lstart>`
+  for a `just verify`/`e2e` recipe shell, or `operator`), a `dev-env.sh watch <pid>` watchdog stops it within
+  2 s of it becoming unowned, roots live under `/tmp/hrc-dev-env-<uid>-*`, and every `up` reaps unowned ones.
+  It still has ppid 1, and the sweep still refuses while it runs: on 2026-10-05 the sweep named pid 47030, the
+  daemon of a live `just verify` (owner 46004, watchdog 47037), beside another clone's dev-env daemon and the
+  `t-10350` scratch (`T-10350/06-install-release/drive.txt`). Read the root's `owners` before calling one an
+  orphan.
 - `release gc --json` has no top-level eligible list; the counts are in `.summary` (`total`, `kept`,
   `wouldQuarantine`) and the per-release reasons in `.results[]`.
-- The release root sits on a 97%-full volume (sweep's `df` line on 2026-10-05); 150 of 155 releases were
-  quarantine-eligible.
+- The release root sits on a 97%-full volume (sweep's `df` line on 2026-10-05). The operator gc'd and swept
+  between passes: 155 releases (150 eligible) at T-10297, 5 at T-10350 (`kept: 5, wouldQuarantine: 0`, sweep
+  `candidates: 0`).
+- **The dirty guard grades the whole shared tree.** On 2026-10-05 it refused (rc 1) on four hrc-server files
+  other sessions had modified, and ignored a dirty SKILL.md as documentation. Its refusal names the files;
+  a pass that finds others' edits proves the refusal, not the clean pass.
 
 ## Proven when
 
@@ -65,5 +76,7 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
 `runningEqualsInstalled: true`; gc keeps that release with reasons `installed`, `running`; the dirty guard
 passes on a clean tree. The install-then-restart leg is operator-only and is proven on the operator's run.
 
-Driven 2026-10-05 (T-10297), read-only on live max3 (installed 5bdb6c4e):
-`var/wrkq-artifacts/T-10297/06-install-release/drive.txt`. Install and restart not driven: needs operator.
+Driven 2026-10-05 (T-10350 upkeep), read-only on live max3 (installed 5bdb6c4e):
+`var/wrkq-artifacts/T-10350/06-install-release/drive.txt`; the dirty guard's clean-tree pass was not
+reachable (others' edits in the shared checkout), its refusal was. Install and restart not driven: needs
+operator.

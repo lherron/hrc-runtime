@@ -101,7 +101,10 @@ for a path that doesn't exist. `hrc info` lists the paths.
 
 `hv scratch down <name>` terminates every non-terminated runtime on the scratch, stops the daemon it
 started (SIGTERM, then SIGKILL after 5 s), closes its ghostmux tab and removes `run/` and `state/`. It keeps
-`serve.log`, `launch.sh` and `up_at` in `/tmp/hv/<name>/` for a post-mortem. `--dry-run` prints the plan
+the daemon's log (serve.log), the launcher script hv wrote for it and its start time (up_at) in
+`/tmp/hv/<name>/` for a post-mortem; they are scratch files, not repo paths. A terminated harness can still
+name `/tmp/hv/<name>` for a few seconds after `down` returns (a resumed claude for ~3 s on 2026-10-05,
+T-10350), so recheck before calling the scratch clean. `--dry-run` prints the plan
 first. `hv scratch list` shows what is up. Close any other ghostmux tab you opened
 (`ghostmux kill-surface -t <id> --force`) and confirm no process still names the scratch:
 `ps -axo pid,command | grep /tmp/hv/<name>`.

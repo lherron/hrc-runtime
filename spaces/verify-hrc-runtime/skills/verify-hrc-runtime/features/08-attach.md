@@ -55,5 +55,5 @@ client, a detach prints `[detached (from session hrc-…-<rt>)]` with exit 0, th
 with zero clients, and `attach <runtimeId>` without a TTY prints a descriptor whose `argv` names that socket
 and `:tui`.
 
-Driven 2026-10-05 (T-10297) on installed 5bdb6c4e, scratch `t-10297`:
-`var/wrkq-artifacts/T-10297/08-attach/drive.txt`.
+Driven 2026-10-05 (T-10350 upkeep) on installed 5bdb6c4e, scratch `t-10350` (the resumed generation's
+runtime; the terminated one's socket was already gone): `var/wrkq-artifacts/T-10350/08-attach/drive.txt`.

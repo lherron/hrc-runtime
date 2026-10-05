@@ -18,6 +18,8 @@ peers. Code: `packages/hrc-cli/src/cli/handlers-federation.ts`, `register-federa
   `federation-config` (the `federation.json` path, or absent), `federation-peer:<node>` (healthy, latency),
   `placement-skew` (bindings counted, disagreements), `placement-policy` (unreadable declarations).
 - `hrc server status --json` `.node`: nodeId, provenance, mode, peers with endpoints.
+- `hrc target bindings [--json]`: the raw skew sweep doctor's `placement-skew`/`placement-policy` rows render
+  (`federationConfigured`, `gateMode`, `localNodeId`, `scan.{scanned, skewed, unreadable}`), for scripting.
 - `hrc admin registrations gc [--json]` with no scopes: the read-only retirement candidate projection
   (`candidates`, `lingerMs`). With scopes and `--yes` it retires: operator only.
 - Not driven: `hrc federation retire <scope>` (permanent fence + binding delete), the registry rebuild.
@@ -37,6 +39,8 @@ hrc target locate mable@hrc-runtime:minisvc --fail-on-skew >/dev/null; echo "rc=
 hrc server status --json | jq -c .node
 hrc doctor --json | jq -c '.[] | select(.name|test("node|federation|placement-skew"))'
 hrc admin registrations gc --json
+hrc target bindings --json | jq -c '{gateMode, localNodeId, scan: (.scan|{scanned, skewed: (.skewed|length), unreadable: (.unreadable|length)})}'
+hv run <task> -- hrc target bindings --json | jq -c '{federationConfigured, gateMode, scanned: .scan.scanned}'
 hv run <task> -- hrc target locate tabularasa@hrc-runtime:hvprobe --json | jq -c '{authority, observed: .observed.runtimeCount}'
 ```
 
@@ -56,8 +60,10 @@ hv run <task> -- hrc target locate tabularasa@hrc-runtime:hvprobe --json | jq -c
 
 `target locate` shows a local scope bound in the ledger with a live runtime observed, a remote scope bound
 in the registry to its home node with nothing observed here, and `--fail-on-skew` exits 0 where doctor's
-`placement-skew` reports no disagreement; doctor shows every peer healthy; the registrations projection
-answers (empty `candidates` on 2026-10-05); the scratch shows single-node and unbound.
+`placement-skew` reports no disagreement; `target bindings` counts the same bindings and unreadable
+declarations as doctor (3537 and 7 on 2026-10-05, `gateMode: enforce`); doctor shows every peer healthy; the registrations projection
+answers (empty `candidates` on 2026-10-05); the scratch shows single-node and unbound (`target bindings`: `federationConfigured: false`, `gateMode:
+off`, `scanned: 0`).
 
-Driven 2026-10-05 (T-10297) on live max3 (installed 5bdb6c4e) and scratch `t-10297`:
-`var/wrkq-artifacts/T-10297/05-placement-federation/drive.txt`.
+Driven 2026-10-05 (T-10350 upkeep) on live max3 (installed 5bdb6c4e) and scratch `t-10350`:
+`var/wrkq-artifacts/T-10350/05-placement-federation/drive.txt`.
