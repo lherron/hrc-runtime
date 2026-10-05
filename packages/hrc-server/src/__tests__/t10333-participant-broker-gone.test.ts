@@ -10,12 +10,15 @@
 
 import { describe, expect, test } from 'bun:test'
 
+import type { HrcEventEnvelope, HrcLifecycleEvent } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import type { BrokerHelloResponse } from 'spaces-harness-broker-protocol'
 
 import { BrokerControllerError } from '../broker/controller/errors'
 import { markBrokerCrashTerminal } from '../broker/controller/lifecycle'
 import type { LifecycleContext } from '../broker/controller/lifecycle'
+import type { DurableBrokerClientLike } from '../broker/controller/types'
 import {
   PARTICIPANT_BROKER_GONE_REASON,
   type ParticipantBrokerLossOutcome,
@@ -137,12 +140,36 @@ function seed(options: { participantServed: boolean; status?: 'ready' | 'busy' }
   return db
 }
 
-function fakeServer(db: HrcDatabase, dial: Dial, onDial: () => void = () => {}) {
-  const notified: unknown[] = []
-  const server = {
+function fakeServer(
+  db: HrcDatabase,
+  dial: Dial,
+  onDial: () => void = () => {}
+): { server: HrcServerInstanceForHandlers; notified: HrcLifecycleEvent[] } {
+  const notified: HrcLifecycleEvent[] = []
+  // The probe opens a connection, says hello and closes: those two calls are
+  // the whole surface it reaches on the client.
+  const liveClient = {
+    hello: async (): Promise<BrokerHelloResponse> => ({
+      brokerInfo: { name: 'harness-broker', version: '0.0.0-t10333' },
+      protocolVersion: 'harness-broker/0.2',
+      capabilities: {
+        multiInvocation: false,
+        transports: ['unix-jsonrpc-ndjson'],
+        eventNotifications: true,
+        brokerToClientRequests: true,
+      },
+      drivers: [],
+    }),
+    close: async () => {},
+  } satisfies Pick<DurableBrokerClientLike, 'hello' | 'close'>
+  // Exactly the server seams settleParticipantBrokerLoss and the transport
+  // probe read, each checked against the production instance type.
+  const seams = {
     db,
     stopping: false,
-    notifyEvent: (event: unknown) => notified.push(event),
+    notifyEvent: (event: HrcEventEnvelope | HrcLifecycleEvent) => {
+      notified.push(event as HrcLifecycleEvent)
+    },
     brokerUnixClientFactory: async () => {
       onDial()
       if (dial === 'dead') {
@@ -155,13 +182,13 @@ function fakeServer(db: HrcDatabase, dial: Dial, onDial: () => void = () => {}) 
         })
         throw error
       }
-      return {
-        hello: async () => ({ protocolVersion: 'harness-broker/0.2' }),
-        close: async () => {},
-      }
+      return liveClient as unknown as DurableBrokerClientLike
     },
-  } as unknown as HrcServerInstanceForHandlers
-  return { server, notified }
+  } satisfies Pick<
+    HrcServerInstanceForHandlers,
+    'db' | 'stopping' | 'notifyEvent' | 'brokerUnixClientFactory'
+  >
+  return { server: seams as unknown as HrcServerInstanceForHandlers, notified }
 }
 
 /**
