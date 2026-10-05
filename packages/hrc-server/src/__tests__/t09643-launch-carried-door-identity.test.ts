@@ -569,3 +569,53 @@ describe('T-10232 phase 2 cold launch and admitted queue continuation', () => {
     expect(delivered).toEqual([])
   })
 })
+
+describe('T-10232 phase 3 START launch carry', () => {
+  it('D10 body rides the cold launch and completion observation releases admission', async () => {
+    aspd.launchCarriedInitialPrompt = true
+    const s = await seedInteractive()
+    let settled = false
+    const pending = fixture
+      .postJson('/v1/runtimes/start', {
+        hostSessionId: s.hostSessionId,
+        intent: { ...driverIntent('claude-code-tmux'), initialPrompt: MARK },
+      })
+      .then((response) => {
+        settled = true
+        return response
+      })
+    await settle(() => ledger.startCalls.length === 1)
+    const request = ledger.startCalls[0]?.request
+    expect(launchPrompt(request)).toContain('T9643-MARK')
+    expect(initialInputText(request)).toBeUndefined()
+    const invocationId = String(request?.spec.invocationId)
+    expect(internal().db.hrcEvents.listByKind('submission.admission')).toHaveLength(0)
+    observeLaunchTurn(invocationId)
+    await settle(() => internal().db.hrcEvents.listByKind('submission.admission').length === 1)
+    const event = internal().db.hrcEvents.listByKind('submission.admission')[0]
+    expect(event?.payload).toMatchObject({
+      door: 'runtime-start-prompt',
+      intent: 'enqueue',
+      outcome: 'routed',
+    })
+    expect(settled).toBe(false)
+    const ctx = server as unknown as HrcServerInstanceForHandlers
+    await ctx.turnAdmissionGate.close({ operationId: 'd10-cold-receipt' })
+    expect(settled).toBe(false)
+    expect(delivered).toEqual([])
+    const run = internal().db.runs.listRuns()[0]
+    expect(run?.runId).toBe(event?.runId)
+    const mapper = new BrokerEventMapper({ db: internal().db, now: () => new Date().toISOString() })
+    mapper.apply({
+      invocationId,
+      seq: 9003,
+      time: new Date().toISOString(),
+      type: 'turn.completed',
+      payload: { turnId: `turn_${invocationId}_1`, status: 'completed' },
+    } as InvocationEventEnvelope)
+    expect(internal().db.runs.getByRunId(run?.runId ?? '')?.status).toBe('completed')
+    expect((await pending).status).toBe(200)
+    expect(internal().db.runs.listRuns()).toHaveLength(1)
+    expect(ledger.startCalls).toHaveLength(1)
+  })
+})

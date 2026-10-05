@@ -21,6 +21,11 @@ import { projectSemanticTurnResponse } from '../event-notification-handlers.js'
 import { assertScopeNotRetired } from '../federation/summon-gate-server.js'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper.js'
 import { normalizeTargetLane } from '../messages.js'
+import {
+  participantDeliveryUnavailable,
+  resolveParticipantDelivery,
+} from '../participant-delivery.js'
+import { reconnectParticipantAttachment } from '../participant-establishment.js'
 import { requireTmuxPane } from '../require-helpers.js'
 import { runtimeActivityPatch } from '../runtime-activity.js'
 import { findBoundSessionRuntime, findLatestRuntime } from '../runtime-select.js'
@@ -40,6 +45,7 @@ import {
 } from '../server-util.js'
 import { findTargetSession } from '../target-view.js'
 import { submissionResponse, submitThroughAdmission } from '../turn-admission/submit.js'
+import { enrichDispatchTurnResponse } from '../turn-dispatch-attached-run-handlers.js'
 import { omitPersistedSelectionForReuse } from './selection-request.js'
 
 // Broker/SDK buffers are token-stream chunks rather than terminal lines. A
@@ -189,7 +195,11 @@ export async function handleLiteralInputBySelector(
     })
   }
 
-  const runtime = findLatestRuntime(this.db, session.hostSessionId)
+  const participant = resolveParticipantDelivery(this, session)
+  const runtime =
+    participant !== null && participant.outcome !== 'refused'
+      ? participant.runtime
+      : findLatestRuntime(this.db, session.hostSessionId)
   if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
     throw new HrcRuntimeUnavailableError('no live literal-capable runtime is currently bound', {
       sessionRef,
@@ -216,6 +226,7 @@ export async function handleLiteralInputBySelector(
       sessionRef,
       text: body['text'],
       enter: body['enter'] !== false,
+      signal: request.signal,
     })
   }
 
@@ -281,6 +292,7 @@ export async function handleBrokerLiteralInputBySelector(
     sessionRef: string
     text: string
     enter: boolean
+    signal?: AbortSignal | undefined
   }
 ): Promise<Response> {
   const { session, runtime, sessionRef, text, enter } = input
@@ -366,30 +378,64 @@ export async function handleBrokerLiteralInputBySelector(
     })
   }
 
-  this.pendingBrokerLiteralInputs.delete(runtime.runtimeId)
   const runId = `run-${randomUUID()}`
-  const turnResponse = await this.executeInteractiveBrokerInputTurn(
-    session,
-    runtime,
-    prompt,
-    runId,
-    {
-      waitForCompletion: false,
-    }
+  return submissionResponse(
+    await submitThroughAdmission(
+      this,
+      {
+        door: 'literal-flush',
+        intent: 'enqueue',
+        target: session,
+        body: prompt,
+        principal: 'system',
+        executionFormat: 'format1',
+        signal: input.signal,
+        options: { runId, waitForCompletion: false },
+        replay: async () => {
+          throw new Error('literal flush has no idempotency field')
+        },
+      },
+      async (plan) => {
+        let participant = plan.participant
+        if (participant?.outcome === 'reconnect') {
+          await reconnectParticipantAttachment(this, participant.registration, participant.attempt)
+          participant = resolveParticipantDelivery(this, plan.session)
+        }
+        if (participant?.outcome === 'refused')
+          throw participantDeliveryUnavailable(plan.session, participant)
+        if (participant?.outcome === 'reconnect')
+          throw new HrcRuntimeUnavailableError('participant attachment is being restored')
+        const deliveryRuntime = participant?.runtime ?? runtime
+        this.pendingBrokerLiteralInputs.delete(runtime.runtimeId)
+        const raw = await this.executeInteractiveBrokerInputTurn(
+          plan.session,
+          deliveryRuntime,
+          prompt,
+          runId,
+          {
+            ...plan.options,
+            waitForCompletion: false,
+            submissionDoor: 'enqueue',
+          }
+        )
+        if (plan.observation === undefined) throw new Error('literal plan has no observation')
+        const turnResponse = await enrichDispatchTurnResponse(this, raw, plan.observation)
+        const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+        assertDispatchRunId(turnBody)
+        const value = emitLiteralInputAndRespond({
+          ts: timestamp(),
+          payloadLength: prompt.length,
+          enter: true,
+          delivery: 'broker-dispatch-input',
+          runId: turnBody.runId,
+          responseExtra: { runId: turnBody.runId, status: turnBody.status },
+        })
+        return turnBody.admission === 'rejected'
+          ? { kind: 'rejected_unlanded', rejection: { source: 'positive-rejection', value } }
+          : { kind: 'accepted', value }
+      }
+    )
   )
-  const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-  assertDispatchRunId(turnBody)
-  // `ts` is deliberately RECOMPUTED here (not the `now` captured at entry): the
-  // dispatch arm awaits the turn, so the event timestamp reflects post-dispatch
-  // wall-clock. Preserved from the pre-refactor inline block.
-  return emitLiteralInputAndRespond({
-    ts: timestamp(),
-    payloadLength: prompt.length,
-    enter: true,
-    delivery: 'broker-dispatch-input',
-    runId: turnBody.runId,
-    responseExtra: { runId: turnBody.runId, status: turnBody.status },
-  })
 }
 
 export async function handleDispatchTurnBySelector(

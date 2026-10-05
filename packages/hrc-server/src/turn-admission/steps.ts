@@ -55,11 +55,18 @@ const absent = { outcome: 'skipped:not-carried' } as const
 
 export async function retiredPersona(
   ctx: AdmissionContext,
-  _req: SubmissionRequest,
+  req: SubmissionRequest,
   partial: PartialPlan
 ): Promise<StepOutcome<Response>> {
-  assertLocalPersonaAllowed(ctx, partial.session.scopeRef)
-  await assertScopeNotRetired(ctx, { scopeRef: partial.session.scopeRef, path: 'resolve-session' })
+  assertLocalPersonaAllowed(ctx, partial.target.scopeRef)
+  if ('prepare' in req.target) {
+    const selected = await req.target.prepare()
+    partial.preparedTarget = selected
+    partial.target = selected
+    partial.session = selected.session
+    assertLocalPersonaAllowed(ctx, selected.scopeRef)
+  }
+  await assertScopeNotRetired(ctx, { scopeRef: partial.target.scopeRef, path: 'resolve-session' })
   return passed
 }
 
@@ -70,6 +77,7 @@ export function assertFrozenFormat(
   session: PartialPlan['session'],
   recorded?: { format: SubmissionRequest['executionFormat']; source: 'run' | 'preparation' }
 ): void {
+  if (session === undefined) return
   if (recorded !== undefined) {
     assertIdempotencyExecutionFormat(recorded.format, req.executionFormat, {
       hostSessionId: session.hostSessionId,
@@ -87,6 +95,7 @@ export async function fence(
   req: SubmissionRequest,
   partial: PartialPlan
 ): Promise<StepOutcome<Response>> {
+  if (partial.session === undefined) return absent
   if (req.fences !== undefined || req.door === 'turns') {
     const continuity = requireContinuity(ctx.db, partial.session)
     const active = requireSession(ctx.db, continuity.activeHostSessionId)
@@ -140,6 +149,25 @@ export async function participantResolution(
   req: SubmissionRequest,
   partial: PartialPlan
 ): Promise<StepOutcome<Response>> {
+  if (partial.session === undefined) {
+    if (ctx.db.participantRegistrations.getRegistrationByScopeRef(partial.target.scopeRef) !== null)
+      throw new HrcRuntimeUnavailableError(
+        'participant addresses cannot be substituted by a birth',
+        { reason: 'participant_substitution' }
+      )
+    return { outcome: 'skipped:not-applicable' }
+  }
+  if (req.door === 'runtime-start-prompt') {
+    const registration = ctx.db.participantRegistrations.getRegistrationByScopeRef(
+      partial.session.scopeRef
+    )
+    if (registration !== null)
+      throw new HrcRuntimeUnavailableError('participant scope cannot be cold-born', {
+        scopeRef: partial.session.scopeRef,
+        registrationId: registration.registrationId,
+        reason: 'participant_address_reserved',
+      })
+  }
   partial.participant = resolveParticipantDelivery(ctx, partial.session)
   if (partial.participant === null) return { outcome: 'skipped:not-applicable' }
   if (req.carried?.freshContext === true)
@@ -155,6 +183,7 @@ export async function ownershipProof(
   req: SubmissionRequest,
   partial: PartialPlan
 ): Promise<StepOutcome<Response>> {
+  if (partial.session === undefined) return absent
   const carried = req.carried?.ownershipProof
   if (carried === undefined) return absent
   const runtime =
@@ -179,6 +208,7 @@ export async function capabilityAuthority(
   req: SubmissionRequest,
   partial: PartialPlan
 ): Promise<StepOutcome<Response>> {
+  if (partial.session === undefined) return passed
   if (req.intent === 'preempt' && req.preemptRequest !== undefined) {
     const admission = await preemptAdmission(ctx, partial.session, req.preemptRequest)
     if (admission !== 'authorized') {
@@ -223,8 +253,9 @@ export async function executionPresentation(
   req: SubmissionRequest,
   partial: PartialPlan
 ): Promise<StepOutcome<Response>> {
-  assertFrozenFormat(ctx, req, partial.session)
   if (partial.participant != null) {
+    if (partial.participant.outcome !== 'refused')
+      assertBrokerRuntimeExecutionFormat(ctx, partial.participant.runtime, req.executionFormat)
     if (req.executionFormat === 'format2')
       throw new HrcRuntimeUnavailableError('format2 is unsupported for this dispatch target', {
         code: 'execution_format_unsupported_door',
@@ -232,26 +263,41 @@ export async function executionPresentation(
       })
     return passed
   }
+  assertFrozenFormat(ctx, req, partial.session)
+  // Literal flush routes only into its live broker. It has no birth intent on the wire.
+  if (
+    req.door === 'literal-flush' &&
+    req.runtimeIntent === undefined &&
+    partial.session?.lastAppliedIntentJson === undefined
+  ) {
+    if (
+      partial.session === undefined ||
+      activeBrokerRuntimeForSession(ctx, partial.session) === undefined
+    )
+      throw new HrcRuntimeUnavailableError('no live literal-capable runtime is currently bound')
+    return passed
+  }
   partial.runtimeIntent = normalizeDispatchIntent(
-    req.runtimeIntent ?? omitPersistedSelectionForReuse(partial.session.lastAppliedIntentJson),
-    partial.session,
+    req.runtimeIntent ?? omitPersistedSelectionForReuse(partial.session?.lastAppliedIntentJson),
+    partial.session ?? partial.target,
     partial.options.runId
   )
   if (req.attachments !== undefined)
     partial.runtimeIntent = { ...partial.runtimeIntent, attachments: req.attachments }
   const key = req.carried?.idempotencyKey
   const prepared =
-    key === undefined
+    key === undefined || partial.session === undefined
       ? undefined
       : findPreparedAspdAttemptForFormatRetry(ctx, partial.session.hostSessionId, key)
-  if (prepared !== undefined) {
+  if (prepared !== undefined && partial.session !== undefined) {
     assertPreparedAspdAttemptFormat(prepared, req.executionFormat, partial.session.hostSessionId)
     partial.runtimeIntent = withFrozenOperatorPresentation(
       partial.runtimeIntent,
       readAspdPreparation(ctx, prepared.operationId).record.intent
     )
   }
-  const runtime = activeBrokerRuntimeForSession(ctx, partial.session)
+  const runtime =
+    partial.session === undefined ? undefined : activeBrokerRuntimeForSession(ctx, partial.session)
   const ordinary = isProducerSelectedOrdinaryBirth(partial.runtimeIntent)
   assertActuatorSplitRouteAdmission(
     partial.runtimeIntent,
@@ -279,7 +325,9 @@ export async function executionPresentation(
   }
   assertNoOperatorPresentationConflict(
     partial.runtimeIntent,
-    ctx.db.runtimes.listByHostSessionId(partial.session.hostSessionId)
+    partial.session === undefined
+      ? []
+      : ctx.db.runtimes.listByHostSessionId(partial.session.hostSessionId)
   )
   if (!ordinary)
     assertOperatorPresentationRoutable(partial.runtimeIntent, {
@@ -297,7 +345,12 @@ export async function executionPresentation(
             })
           : undefined,
     })
-  if (!ordinary && runtime === undefined && shouldUseSdkTransport(partial.runtimeIntent)) {
+  if (
+    !ordinary &&
+    runtime === undefined &&
+    shouldUseSdkTransport(partial.runtimeIntent) &&
+    partial.session !== undefined
+  ) {
     ctx.failSdkHarnessPath(
       'handleSdkDispatchTurn',
       partial.session,
@@ -318,9 +371,21 @@ export async function rotation(
   req: SubmissionRequest,
   partial: PartialPlan
 ): Promise<StepOutcome<Response>> {
+  if (partial.preparedTarget !== undefined) {
+    partial.session = await partial.preparedTarget.materialize()
+    if (req.door === 'runtime-start-prompt') {
+      partial.runtimeIntent = normalizeDispatchIntent(
+        partial.runtimeIntent,
+        partial.session,
+        partial.options.runId
+      )
+      return passed
+    }
+  }
+  if (partial.session === undefined) throw new Error('admission has no rotation target')
   if (partial.participant != null) return { outcome: 'skipped:not-applicable' }
   if (
-    req.door === 'dm' &&
+    (req.door === 'dm' || req.door === 'turn-handoff') &&
     partial.session.status === 'archived' &&
     partial.session.continuation?.key
   )
@@ -348,11 +413,12 @@ export async function rotation(
     partial.session = requireSession(ctx.db, next.hostSessionId)
   }
   // Correlation follows the successor, but an inherited presentation remains omitted.
-  partial.runtimeIntent = normalizeDispatchIntent(
-    partial.runtimeIntent,
-    partial.session,
-    partial.options.runId
-  )
+  if (partial.runtimeIntent !== undefined)
+    partial.runtimeIntent = normalizeDispatchIntent(
+      partial.runtimeIntent,
+      partial.session,
+      partial.options.runId
+    )
   return passed
 }
 
@@ -361,6 +427,7 @@ export async function launchCarryObservation(
   req: SubmissionRequest,
   partial: PartialPlan
 ): Promise<StepOutcome<Response>> {
+  if (partial.session === undefined) throw new Error('admission has no launch target')
   partial.launchCarry = { intent: req.intent, carriesBody: true }
   partial.observation = {
     lifecycleFromSeq: ctx.db.hrcEvents.maxHrcSeq() + 1,

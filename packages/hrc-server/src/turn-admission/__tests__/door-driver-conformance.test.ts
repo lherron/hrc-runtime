@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { writeFile } from 'node:fs/promises'
-import type { HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
+import type { HrcRuntimeIntent, HrcSessionRecord, SuffixStartRuntimeRequest } from 'hrc-core'
 import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import {
   type HrcServerTestFixture,
@@ -8,10 +8,17 @@ import {
 } from '../../__tests__/fixtures/hrc-test-fixture'
 import { seedDispatchedBrokerInvocation } from '../../__tests__/persisted-invocation.fixture'
 import { type HrcServer, createHrcServer } from '../../index'
+import { suffixStartRequestHash } from '../../roster-claim'
 import type { HrcServerInstanceForHandlers } from '../../server-instance-context'
 import { parsePrepareAttachedRunRequest } from '../../server-parsers'
 import { ADMISSION_STEPS } from '../admit'
 import { fakeBrokerClient } from './broker-boundary.fixture'
+import {
+  CONFORMANCE_INVOCATION_ID as invocationId,
+  rejectedDispatchReceipt,
+  CONFORMANCE_RUNTIME_ID as runtimeId,
+  seedAdmissionDriver,
+} from './driver-graph.fixture'
 import { DOORS, DRIVERS, type Driver, EXPECTED, expectedTrace } from './expected-admission'
 
 let fixture: HrcServerTestFixture
@@ -19,8 +26,6 @@ let server: HrcServer
 let ctx: HrcServerInstanceForHandlers
 let session: HrcSessionRecord
 let currentDriver: Driver = 'format1-headless'
-const invocationId = 'inv-conformance'
-const runtimeId = 'rt-conformance'
 
 beforeEach(async () => {
   currentDriver = 'format1-headless'
@@ -69,103 +74,9 @@ function runtimeIntent(): HrcRuntimeIntent {
 }
 function seedDriver(driver: Driver) {
   currentDriver = driver
-  // Ordinary delivery is fresh; participant delivery deliberately crosses the stale threshold.
-  const createdAt = new Date(Date.now() - (driver === 'participant' ? 120_000 : 0)).toISOString()
-  ctx.db.sqlite
-    .query('UPDATE sessions SET created_at = ? WHERE host_session_id = ?')
-    .run(createdAt, session.hostSessionId)
-  session = { ...session, createdAt }
-  ctx.db.sessions.updateIntent(session.hostSessionId, runtimeIntent(), fixture.now())
-  if (driver === 'tmux-cold' || driver === 'sdk') return
-  seedDispatchedBrokerInvocation(ctx.db, {
-    runtimeId,
-    invocationId,
-    executionFormat: driver === 'v2-headless' ? 'format2' : 'format1',
-  })
-  ctx.db.runtimeOperations.insert({
-    operationId: `op-${invocationId}`,
-    runtimeId,
-    hostSessionId: session.hostSessionId,
-    generation: session.generation,
-    operationKind: 'broker_invocation',
-    controller: 'harness-broker',
-    startupMethod: 'test',
-    status: 'started',
-    routeDecisionJson: '{}',
-    createdAt: fixture.now(),
-    updatedAt: fixture.now(),
-  })
-  ctx.db.brokerInvocations.update(invocationId, {
-    capabilitiesJson: JSON.stringify({
-      admission: { classes: ['exclusive', 'queue', 'preempt', 'steer'] },
-    }),
-    updatedAt: fixture.now(),
-  })
-  ctx.db.runtimes.insert({
-    runtimeId,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    transport: driver === 'tmux-live' ? 'tmux' : 'headless',
-    status: 'ready',
-    controllerKind: 'harness-broker',
-    ...(driver === 'tmux-live'
-      ? {
-          tmuxJson: {
-            socketPath: fixture.tmuxSocketPath,
-            sessionName: 'conformance',
-            windowName: 'main',
-            paneId: '%1',
-            brokerDriver: 'codex-cli-tmux',
-          },
-        }
-      : {}),
-    activeOperationId: `op-${invocationId}`,
-    activeInvocationId: invocationId,
-    harness: 'codex-cli',
-    provider: 'openai',
-    supportsInflightInput: true,
-    createdAt: fixture.now(),
-    updatedAt: fixture.now(),
-  })
-  if (driver === 'participant') {
-    ctx.db.participantRegistrations.insertRegistration({
-      registrationId: 'preg-conformance',
-      join: 'participant-served',
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      hostIncarnationId: 'host-conformance',
-      policy: {
-        addressPolicy: 'selected-scope',
-        continuityPolicy: 'host-incarnation',
-        lifecycleOwner: 'externally-owned',
-        replaySemantics: 'full-source-replay',
-      },
-      createdAt: fixture.now(),
-      updatedAt: fixture.now(),
-    })
-    ctx.db.participantRegistrations.insertAttempt({
-      attemptId: 'patt-conformance',
-      registrationId: 'preg-conformance',
-      attachEpoch: 1,
-      requestId: 'req-conformance',
-      operationId: 'op-conformance',
-      invocationId,
-      runtimeId,
-      state: 'ACTIVE',
-      preparedDescriptorJson: '{}',
-      adapterDispatchEnvJson: '{}',
-      recoveryDisposition: 'unresolved',
-      establishmentWorkState: 'completed',
-      establishmentAttemptCount: 0,
-      createdAt: fixture.now(),
-      updatedAt: fixture.now(),
-    })
-  }
+  session = seedAdmissionDriver(ctx, fixture, session, driver, runtimeIntent())
 }
+
 function post(door: 'submission' | 'turns', intent: string, patch: object = {}) {
   const base =
     door === 'turns'
@@ -624,4 +535,442 @@ for (const door of ['submission', 'turns'] as const) {
       expect((await response.json()).stage).toBe('terminal')
     })
   }
+}
+
+for (const claim of ['exact', 'suffix'] as const) {
+  test(`runtime-start-prompt: draining ${claim} claim allocates nothing`, async () => {
+    await ctx.turnAdmissionGate.close({ operationId: 'phase3-claim-drain' })
+    const config = ctx.options.federationConfig
+    if (config === undefined) throw new Error('missing fixture federation config')
+    config.gate.mode = 'off'
+    const idempotencyKey = `phase3-${claim}-claim`
+    const scope = session.scopeRef
+    createPlacementLedgerRepository(ctx.db.sqlite).installActive({
+      scopeRef: scope,
+      homeNodeId: 'conformance-node',
+      updatedAt: fixture.now(),
+    })
+    if (claim === 'exact') {
+      await expect(
+        ctx.startExactScopeRuntime({
+          sessionRef: `${scope}/lane:main`,
+          conflictPolicy: 'reject',
+          summonIntent: 'implicit',
+          runtimeIntent: { ...runtimeIntent(), initialPrompt: 'phase3 claim admission' },
+          idempotencyKey,
+        })
+      ).rejects.toMatchObject({ code: 'server_draining' })
+    } else {
+      const response = await fixture.postJson('/v1/runtimes/start', {
+        baseSessionRef: `${scope}/lane:main`,
+        conflictPolicy: 'suffix',
+        runtimeIntent: { ...runtimeIntent(), initialPrompt: 'phase3 claim admission' },
+        idempotencyKey,
+      })
+      expect(response.status).toBe(503)
+    }
+    expect(ctx.db.rosterClaims.getByIdempotencyKey(idempotencyKey)).toBeNull()
+    expect(admission('refused').trace[0]?.outcome).toBe('refused')
+  })
+}
+
+for (const cell of ['drain', 'retired'] as const) {
+  test(`literal-flush: ${cell} keeps the pasted buffer and delivery state`, async () => {
+    seedDriver('tmux-live')
+    const ref = `${session.scopeRef}/lane:${session.laneRef}`
+    const paste = await fixture.postJson('/v1/literal-input/by-selector', {
+      selector: { sessionRef: ref },
+      text: 'phase3 pasted body',
+      enter: false,
+    })
+    expect(paste.status).toBe(200)
+    expect(ctx.db.hrcEvents.listByKind('submission.admission')).toHaveLength(0)
+    if (cell === 'drain') await ctx.turnAdmissionGate.close({ operationId: 'phase3-flush' })
+    else {
+      const ledger = createPlacementLedgerRepository(ctx.db.sqlite)
+      ledger.installActive({
+        scopeRef: session.scopeRef,
+        homeNodeId: 'conformance-node',
+        updatedAt: fixture.now(),
+      })
+      ledger.retire({
+        scopeRef: session.scopeRef,
+        expectedHomeNodeId: 'conformance-node',
+        reason: 'phase3 retired',
+        retiredAt: fixture.now(),
+      })
+    }
+    const before = snapshot()
+    const buffered = ctx.pendingBrokerLiteralInputs.get(runtimeId)
+    const flush = await fixture.postJson('/v1/literal-input/by-selector', {
+      selector: { sessionRef: ref },
+      text: '',
+      enter: true,
+    })
+    expect(flush.status).toBe(cell === 'drain' ? 503 : 409)
+    expect(snapshot()).toEqual(before)
+    expect(ctx.pendingBrokerLiteralInputs.get(runtimeId)).toEqual(buffered)
+    expect(admission('refused').trace.map((entry) => entry.outcome)).toEqual(
+      expectedTrace('tmux-live', cell)
+    )
+  })
+}
+
+for (const driver of DRIVERS) {
+  test(`turn-handoff × ${driver}: drain refuses before message persistence`, async () => {
+    seedDriver(driver)
+    await ctx.turnAdmissionGate.close({ operationId: 'phase3-handoff' })
+    const before = snapshot()
+    const messages = ctx.db.sqlite.query('SELECT * FROM messages').all()
+    const response = await fixture.postJson('/v1/messages/turn-handoff', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: `${session.scopeRef}/lane:${session.laneRef}` },
+      body: 'phase3 handoff',
+      runtimeIntent: runtimeIntent(),
+    })
+    expect(response.status).toBe(503)
+    expect(snapshot()).toEqual(before)
+    expect(ctx.db.sqlite.query('SELECT * FROM messages').all()).toEqual(messages)
+    expect(admission('refused').trace.map((entry) => entry.outcome)).toEqual(
+      expectedTrace(driver, 'drain')
+    )
+  })
+}
+test('turn-handoff: participant freshContext refuses before message or rotation', async () => {
+  seedDriver('participant')
+  const before = snapshot()
+  const messages = ctx.db.sqlite.query('SELECT * FROM messages').all()
+  const response = await fixture.postJson('/v1/messages/turn-handoff', {
+    from: { kind: 'entity', entity: 'human' },
+    to: { kind: 'session', sessionRef: `${session.scopeRef}/lane:${session.laneRef}` },
+    body: 'phase3 participant',
+    runtimeIntent: runtimeIntent(),
+    freshContext: true,
+  })
+  expect(response.status).toBe(503)
+  expect(snapshot()).toEqual(before)
+  expect(ctx.db.sqlite.query('SELECT * FROM messages').all()).toEqual(messages)
+  expect(admission('refused').trace[3]?.outcome).toBe('refused')
+})
+
+test('runtime-start-prompt: matching claim-key replay retains a second accepted input run', async () => {
+  seedDriver('format1-headless')
+  const config = ctx.options.federationConfig
+  if (config === undefined) throw new Error('missing fixture config')
+  config.gate.mode = 'off'
+  ctx.publishPresentation = async () => {}
+  ctx.getHarnessBrokerController().active.set(runtimeId, {
+    runtimeId,
+    invocationId,
+    client: fakeBrokerClient(ctx, runtimeId, invocationId),
+    closing: false,
+  })
+  const request: SuffixStartRuntimeRequest = {
+    baseSessionRef: `${session.scopeRef}/lane:${session.laneRef}`,
+    conflictPolicy: 'suffix',
+    idempotencyKey: 'phase3-replayed-claim',
+    runtimeIntent: { ...runtimeIntent(), initialPrompt: 'phase3 replay body' },
+  }
+  ctx.db.rosterClaims.insert({
+    idempotencyKey: request.idempotencyKey,
+    requestHash: suffixStartRequestHash(request),
+    baseScope: session.scopeRef,
+    claimedScope: session.scopeRef,
+    successorHostSessionId: session.hostSessionId,
+    createdAt: fixture.now(),
+  })
+  const first = await fixture.postJson('/v1/runtimes/start', request)
+  expect(first.status).toBe(200)
+  const runs = ctx.db.sqlite.query('SELECT run_id FROM runs').all()
+  expect(runs).toHaveLength(1)
+  const second = await fixture.postJson('/v1/runtimes/start', request)
+  expect(second.status).toBe(200)
+  expect((await second.json()).claim.replayed).toBe(true)
+  // EN-23834: claim keys identify claims, not inputs; replay re-runs START by design.
+  const replayRuns = ctx.db.sqlite.query('SELECT run_id FROM runs').all()
+  expect(replayRuns).toHaveLength(2)
+  expect(replayRuns).toEqual(expect.arrayContaining(runs))
+  expect(new Set(replayRuns.map((row) => (row as { run_id: string }).run_id)).size).toBe(2)
+  expect(admission('routed', 2).trace[2]?.outcome).toBe('skipped:not-carried')
+})
+
+function postPhase3(
+  door: 'literal-flush' | 'turn-handoff' | 'runtime-start-prompt',
+  patch: object = {}
+) {
+  const ref = `${session.scopeRef}/lane:${session.laneRef}`
+  if (door === 'literal-flush')
+    return fixture.postJson('/v1/literal-input/by-selector', {
+      selector: { sessionRef: ref },
+      text: 'phase3 conformance',
+      enter: true,
+      ...patch,
+    })
+  if (door === 'runtime-start-prompt')
+    return fixture.postJson('/v1/runtimes/start', {
+      hostSessionId: session.hostSessionId,
+      intent: { ...runtimeIntent(), initialPrompt: 'phase3 conformance' },
+      ...patch,
+    })
+  return fixture.postJson('/v1/messages/turn-handoff', {
+    from: { kind: 'entity', entity: 'human' },
+    to: { kind: 'session', sessionRef: ref },
+    body: 'phase3 conformance',
+    runtimeIntent: runtimeIntent(),
+    ...patch,
+  })
+}
+function participantTmuxSurface() {
+  ctx.db.runtimes.update(runtimeId, {
+    transport: 'tmux',
+    tmuxJson: {
+      socketPath: fixture.tmuxSocketPath,
+      sessionName: 'conformance',
+      windowName: 'main',
+      paneId: '%1',
+      brokerDriver: 'codex-cli-tmux',
+    },
+  })
+}
+for (const driver of DRIVERS) {
+  test(`runtime-start-prompt × ${driver}: drain refuses before START mutation`, async () => {
+    seedDriver(driver)
+    await ctx.turnAdmissionGate.close({ operationId: 'phase3-start-drain' })
+    const before = snapshot()
+    expect((await postPhase3('runtime-start-prompt')).status).toBe(503)
+    expect(snapshot()).toEqual(before)
+    expect(admission('refused').trace.map((entry) => entry.outcome)).toEqual(
+      expectedTrace(driver, 'drain')
+    )
+  })
+  for (const door of ['turn-handoff', 'runtime-start-prompt'] as const) {
+    test(`${door} × ${driver}: retired refuses before body write or START mutation`, async () => {
+      seedDriver(driver)
+      const ledger = createPlacementLedgerRepository(ctx.db.sqlite)
+      ledger.installActive({
+        scopeRef: session.scopeRef,
+        homeNodeId: 'conformance-node',
+        updatedAt: fixture.now(),
+      })
+      ledger.retire({
+        scopeRef: session.scopeRef,
+        expectedHomeNodeId: 'conformance-node',
+        reason: 'phase3 conformance',
+        retiredAt: fixture.now(),
+      })
+      const before = snapshot()
+      const messages = ctx.db.sqlite.query('SELECT * FROM messages').all()
+      expect((await postPhase3(door)).status).toBe(409)
+      expect(snapshot()).toEqual(before)
+      expect(ctx.db.sqlite.query('SELECT * FROM messages').all()).toEqual(messages)
+      expect(admission('refused').trace.map((entry) => entry.outcome)).toEqual(
+        expectedTrace(driver, 'retired')
+      )
+    })
+  }
+}
+for (const door of ['literal-flush', 'turn-handoff', 'runtime-start-prompt'] as const) {
+  for (const driver of ['tmux-live', 'participant'] as const) {
+    if (door === 'runtime-start-prompt' && driver === 'participant') continue
+    test(`${door} × ${driver}: delivery preserves identity and records one admission`, async () => {
+      seedDriver(driver)
+      if (driver === 'participant') participantTmuxSurface()
+      ctx.reconcileTmuxRuntimeLiveness = async (runtime) => runtime
+      ctx.publishPresentation = async () => {}
+      ctx.getHarnessBrokerController().active.set(runtimeId, {
+        runtimeId,
+        invocationId,
+        client: fakeBrokerClient(ctx, runtimeId, invocationId),
+        closing: false,
+      })
+      const response = await postPhase3(door)
+      expect(response.status).toBe(200)
+      expect(admission('routed').trace.map((entry) => entry.outcome)).toEqual(
+        expectedTrace(driver, 'accepted')
+      )
+      if (door === 'runtime-start-prompt') {
+        const diagnostics = ctx.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson?.[
+          'brokerDispatchDiagnostics'
+        ] as { submissions: { admissionClass: string; door: string }[] }
+        expect(diagnostics.submissions[0]).toMatchObject({
+          door: 'enqueue',
+          admissionClass: 'queue',
+        })
+      }
+      expect(ctx.db.sessions.getByHostSessionId(session.hostSessionId)?.generation).toBe(1)
+      const runs = ctx.db.runs.listRuns()
+      expect(runs).toHaveLength(1)
+      expect(runs[0]?.runtimeId).toBe(runtimeId)
+      await Bun.sleep(30)
+      expect(ctx.db.runs.getByRunId(runs[0]?.runId ?? '')?.status).toBe('completed')
+    })
+  }
+}
+for (const door of ['literal-flush', 'turn-handoff', 'runtime-start-prompt'] as const) {
+  test(`${door}: drain completes while its delivered turn is still running`, async () => {
+    seedDriver('tmux-live')
+    let complete: () => void = () => undefined
+    const completion = new Promise<void>((resolve) => {
+      complete = resolve
+    })
+    ctx.reconcileTmuxRuntimeLiveness = async (runtime) => runtime
+    ctx.publishPresentation = async () => {}
+    ctx.getHarnessBrokerController().active.set(runtimeId, {
+      runtimeId,
+      invocationId,
+      client: fakeBrokerClient(ctx, runtimeId, invocationId, completion),
+      closing: false,
+    })
+    let settled = false
+    const pending = postPhase3(door).then((response) => {
+      settled = true
+      return response
+    })
+    while (ctx.db.runs.listRuns()[0]?.status !== 'running') await Bun.sleep(5)
+    const closing = ctx.turnAdmissionGate.close({ operationId: 'phase3-delivered-drain' })
+    const closed = await Promise.race([closing.then(() => true), Bun.sleep(500).then(() => false)])
+    const settledAtClose = settled
+    const events = ctx.db.hrcEvents.listByKind('submission.admission')
+    complete()
+    const response = await pending
+    await closing
+    expect(closed).toBe(true)
+    expect(events).toHaveLength(1)
+    expect(events[0]?.payload).toMatchObject({ outcome: 'routed' })
+    if (door === 'runtime-start-prompt') expect(settledAtClose).toBe(false)
+    expect(response.status).toBe(200)
+    const run = ctx.db.runs.listRuns()[0]
+    while (ctx.db.runs.getByRunId(run?.runId ?? '')?.status !== 'completed') await Bun.sleep(5)
+  })
+}
+
+test('runtime-start-prompt: participant reservation is a pre-effect refusal', async () => {
+  seedDriver('participant')
+  const before = snapshot()
+  const response = await postPhase3('runtime-start-prompt')
+  expect(response.status).toBe(503)
+  expect((await response.json()).error.detail.reason).toBe('participant_address_reserved')
+  expect(snapshot()).toEqual(before)
+  expect(admission('refused').trace[3]?.outcome).toBe('refused')
+})
+test('turn-handoff: cold unknown target refuses drain before session allocation', async () => {
+  await ctx.turnAdmissionGate.close({ operationId: 'phase3-cold-handoff' })
+  const sessions = ctx.db.sqlite.query('SELECT * FROM sessions').all()
+  const messages = ctx.db.sqlite.query('SELECT * FROM messages').all()
+  const response = await fixture.postJson('/v1/messages/turn-handoff', {
+    from: { kind: 'entity', entity: 'human' },
+    to: { kind: 'session', sessionRef: 'agent:cody:project:hrc-runtime:task:phase3-new/lane:main' },
+    body: 'phase3 cold',
+    runtimeIntent: runtimeIntent(),
+  })
+  expect(response.status).toBe(503)
+  expect(ctx.db.sqlite.query('SELECT * FROM sessions').all()).toEqual(sessions)
+  expect(ctx.db.sqlite.query('SELECT * FROM messages').all()).toEqual(messages)
+  expect(admission('refused').trace[0]?.outcome).toBe('refused')
+})
+
+for (const door of ['literal-flush', 'turn-handoff'] as const) {
+  test(`${door}: participant linkage wins over a newer decoy runtime`, async () => {
+    seedDriver('participant')
+    participantTmuxSurface()
+    const actual = ctx.db.runtimes.getByRuntimeId(runtimeId)
+    if (actual === null) throw new Error('missing participant runtime')
+    seedDispatchedBrokerInvocation(ctx.db, {
+      runtimeId: 'rt-decoy',
+      invocationId: 'inv-decoy',
+      executionFormat: 'format2',
+    })
+    ctx.db.runtimes.insert({
+      ...actual,
+      runtimeId: 'rt-decoy',
+      activeInvocationId: 'inv-decoy',
+      activeOperationId: undefined,
+      createdAt: new Date(Date.now() + 1000).toISOString(),
+      updatedAt: fixture.now(),
+    })
+    ctx.reconcileTmuxRuntimeLiveness = async (runtime) => runtime
+    ctx.publishPresentation = async () => {}
+    ctx.getHarnessBrokerController().active.set(runtimeId, {
+      runtimeId,
+      invocationId,
+      client: fakeBrokerClient(ctx, runtimeId, invocationId),
+      closing: false,
+    })
+    const response = await postPhase3(door)
+    expect(response.status).toBe(200)
+    expect(ctx.db.runs.listRuns()[0]?.runtimeId).toBe(runtimeId)
+    expect(admission('routed').trace[7]?.outcome).toBe('skipped:not-applicable')
+    await Bun.sleep(30)
+  })
+}
+
+for (const door of ['literal-flush', 'turn-handoff'] as const) {
+  test(`${door}: linked live input needs no persisted birth intent`, async () => {
+    seedDriver(door === 'literal-flush' ? 'tmux-live' : 'participant')
+    if (door === 'turn-handoff') participantTmuxSurface()
+    ctx.db.sqlite
+      .query('UPDATE sessions SET last_applied_intent_json = NULL WHERE host_session_id = ?')
+      .run(session.hostSessionId)
+    ctx.reconcileTmuxRuntimeLiveness = async (runtime) => runtime
+    ctx.publishPresentation = async () => {}
+    ctx.getHarnessBrokerController().active.set(runtimeId, {
+      runtimeId,
+      invocationId,
+      client: fakeBrokerClient(ctx, runtimeId, invocationId),
+      closing: false,
+    })
+    expect((await postPhase3(door, { runtimeIntent: undefined })).status).toBe(200)
+    expect(admission('routed').trace[6]?.outcome).toBe('passed')
+    expect(ctx.db.runs.listRuns()[0]?.runtimeId).toBe(runtimeId)
+    await Bun.sleep(30)
+  })
+}
+
+for (const door of ['literal-flush', 'turn-handoff', 'runtime-start-prompt'] as const) {
+  test(`${door}: positive dispatch rejection is rejected_unlanded`, async () => {
+    seedDriver('tmux-live')
+    ctx.reconcileTmuxRuntimeLiveness = async (runtime) => runtime
+    ctx.publishPresentation = async () => {}
+    ctx.executeInteractiveBrokerInputTurn = rejectedDispatchReceipt(ctx, fixture.now())
+    expect((await postPhase3(door)).status).toBe(200)
+    expect(admission('routed')).toMatchObject({ routeOutcome: 'rejected_unlanded' })
+  })
+}
+
+for (const door of ['literal-flush', 'turn-handoff', 'runtime-start-prompt'] as const) {
+  test(`${door}: unfenced response throw stays possible_write and later landing completes`, async () => {
+    seedDriver('tmux-live')
+    let complete: () => void = () => undefined
+    const completion = new Promise<void>((resolve) => {
+      complete = resolve
+    })
+    ctx.reconcileTmuxRuntimeLiveness = async (runtime) => runtime
+    ctx.publishPresentation = async () => {}
+    ctx.getHarnessBrokerController().active.set(runtimeId, {
+      runtimeId,
+      invocationId,
+      client: fakeBrokerClient(ctx, runtimeId, invocationId, completion),
+      closing: false,
+    })
+    const execute = ctx.executeInteractiveBrokerInputTurn.bind(ctx)
+    ctx.executeInteractiveBrokerInputTurn = async (...args) => {
+      await execute(...args)
+      throw new Error('phase3 unfenced response projection lost')
+    }
+    const response = await postPhase3(door)
+    expect(response.status).toBe(500)
+    expect(
+      admission('possible_write').trace.every(
+        (entry) => entry.outcome === 'passed' || entry.outcome.startsWith('skipped:')
+      )
+    ).toBe(true)
+    const run = ctx.db.runs.listRuns()[0]
+    expect(run).toBeDefined()
+    expect(['accepted', 'running']).toContain(run?.status)
+    expect(run?.brokerInputFenceReason).toBeUndefined()
+    complete()
+    while (ctx.db.runs.getByRunId(run?.runId ?? '')?.status !== 'completed') await Bun.sleep(5)
+    expect(ctx.db.runs.getByRunId(run?.runId ?? '')?.brokerInputFenceReason).toBeUndefined()
+    expect(ctx.db.hrcEvents.listByKind('submission.admission')).toHaveLength(1)
+  })
 }

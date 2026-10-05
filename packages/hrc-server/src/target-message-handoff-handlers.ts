@@ -24,7 +24,6 @@ import { createBirthTimeline } from './birth-timeline.js'
 import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
-import { assertScopeNotRetired } from './federation/summon-gate-server.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import { buildMessageTrace } from './message-trace.js'
 import {
@@ -33,7 +32,7 @@ import {
   parseMessageFilter,
   parseSemanticDmRequest,
 } from './messages.js'
-import { isBrokerRuntimeInputDispatchable, requireSession } from './require-helpers.js'
+import { isBrokerRuntimeInputDispatchable } from './require-helpers.js'
 import { findLatestRuntime } from './runtime-select.js'
 import { omitPersistedSelectionForReuse } from './selector-message-handlers/selection-request.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -46,14 +45,14 @@ import {
   requireDispatchRuntimeId,
 } from './server-util.js'
 import {
-  federationOriginNodeId,
   isObjectRecord,
   originDispatchOption,
   requireCompleteRuntimeIntent,
   scopeRefOf,
 } from './target-message-shared.js'
-import { createNotifiedSessionSuccessor } from './target-message-successor-handlers.js'
 import { findTargetSession } from './target-view.js'
+import { submissionResponse, submitThroughAdmission } from './turn-admission/submit.js'
+import type { AdmittedPlan, SubmissionRequest } from './turn-admission/types.js'
 
 export async function handleQueryMessages(
   this: HrcServerInstanceForHandlers,
@@ -232,10 +231,14 @@ export async function handleSemanticTurnHandoff(
 ): Promise<Response> {
   const parsedBody = parseSemanticDmRequest(await parseJsonBody(request))
   return json(
-    await persistAndDeliverSemanticTurnHandoff.call(this, {
-      ...parsedBody,
-      runtimeIntent: requireCompleteRuntimeIntent(parsedBody.runtimeIntent),
-    })
+    await persistAndDeliverSemanticTurnHandoff.call(
+      this,
+      {
+        ...parsedBody,
+        runtimeIntent: requireCompleteRuntimeIntent(parsedBody.runtimeIntent),
+      },
+      { signal: request.signal }
+    )
   )
 }
 
@@ -247,7 +250,8 @@ export async function handleSemanticTurnHandoff(
  */
 export async function persistAndDeliverSemanticTurnHandoff(
   this: HrcServerInstanceForHandlers,
-  body: SemanticTurnHandoffRequest
+  body: SemanticTurnHandoffRequest,
+  options: { signal?: AbortSignal | undefined } = {}
 ): Promise<SemanticTurnHandoffStartedResponse> {
   if (body.to.kind !== 'session') {
     throw new HrcBadRequestError(
@@ -260,24 +264,6 @@ export async function persistAndDeliverSemanticTurnHandoff(
   const sessionBody: SemanticTurnHandoffRequest & {
     to: Extract<HrcMessageAddress, { kind: 'session' }>
   } = { ...body, to: body.to }
-  const targetScopeRef = scopeRefOf(targetSessionRef)
-  // T-07612 §10: the federation MESSAGE path is deleted, so every turn target
-  // this daemon admits is local. Cross-node work travels the wrkq ledger.
-  assertLocalPersonaAllowed(this, targetScopeRef)
-  await assertScopeNotRetired(this, {
-    scopeRef: targetScopeRef,
-    path: 'archived-successor',
-    advisoryCoveredByDownstreamGate: () => {
-      const session = findTargetSession(this.db, targetSessionRef)
-      if (session?.status === 'archived' && session.continuation?.key) return true
-      return (
-        session === undefined &&
-        body.createIfMissing !== false &&
-        body.runtimeIntent !== undefined &&
-        !isCodexAppOwnedScopeRef(targetSessionRef)
-      )
-    },
-  })
 
   const parent =
     body.replyToMessageId !== undefined
@@ -298,43 +284,127 @@ export async function persistAndDeliverSemanticTurnHandoff(
   if (parent) assertReplyScopeMatches(parent, body.to, body.allowCrossScopeReply)
 
   const respondTo = body.respondTo ?? body.from
-  const record = this.insertAndNotifyMessage({
-    messageId: `msg-${randomUUID()}`,
-    kind: 'dm',
-    phase: 'request',
-    from: body.from,
-    to: body.to,
-    body: body.body,
-    ...(body.replyToMessageId !== undefined ? { replyToMessageId: body.replyToMessageId } : {}),
-    ...(parent ? { rootMessageId: parent.rootMessageId } : {}),
-    execution: {
-      state: 'not_applicable',
-      ...(body.mode && body.mode !== 'auto' ? { mode: body.mode } : {}),
-    },
-    // T-04025: the turn-response finalizer lives in an in-memory map that does
-    // not survive a daemon restart, while a durable-broker turn does. This
-    // marker lets finalizeSemanticTurnResponse rebuild the finalizer from the
-    // durable request row, so turn.completed always yields a persisted
-    // response. DM-path requests carry no marker and are never auto-finalized.
-    metadataJson: {
-      semanticTurnHandoff: {
-        respondTo,
-        ...(body.freshContext === true ? { freshContext: true } : {}),
+  let target: SubmissionRequest['target'] | undefined =
+    findTargetSession(this.db, targetSessionRef) ?? undefined
+  if (
+    target === undefined &&
+    body.createIfMissing !== false &&
+    body.runtimeIntent !== undefined &&
+    !isCodexAppOwnedScopeRef(targetSessionRef)
+  ) {
+    const { scopeRef, laneRef } = parseSessionRef(targetSessionRef)
+    const runtimeIntent = body.runtimeIntent
+    target = {
+      scopeRef,
+      laneRef,
+      prepare: async () => ({
+        scopeRef,
+        laneRef,
+        materialize: async () => {
+          const session = await this.ensureTargetSession(targetSessionRef, runtimeIntent)
+          if (session === null)
+            throw new HrcNotFoundError(
+              HrcErrorCode.UNKNOWN_SESSION,
+              `unknown session "${targetSessionRef}"`,
+              { sessionRef: targetSessionRef }
+            )
+          return session
+        },
+      }),
+    }
+  }
+  if (target === undefined)
+    throw new HrcNotFoundError(
+      HrcErrorCode.UNKNOWN_SESSION,
+      `unknown session "${targetSessionRef}"`,
+      { sessionRef: targetSessionRef }
+    )
+  let dispatchReceipt: DispatchTurnResponse | undefined
+  const observeReceipt = (receipt: DispatchTurnResponse) => {
+    dispatchReceipt = receipt
+  }
+  const persistAndDeliver = async (plan: AdmittedPlan): Promise<Response> => {
+    const record = this.insertAndNotifyMessage({
+      messageId: `msg-${randomUUID()}`,
+      kind: 'dm',
+      phase: 'request',
+      from: body.from,
+      to: body.to,
+      body: body.body,
+      ...(body.replyToMessageId !== undefined ? { replyToMessageId: body.replyToMessageId } : {}),
+      ...(parent ? { rootMessageId: parent.rootMessageId } : {}),
+      execution: {
+        state: 'not_applicable',
+        ...(body.mode && body.mode !== 'auto' ? { mode: body.mode } : {}),
       },
-    },
-  })
+      // T-04025: the turn-response finalizer lives in an in-memory map that does
+      // not survive a daemon restart, while a durable-broker turn does. This
+      // marker lets finalizeSemanticTurnResponse rebuild the finalizer from the
+      // durable request row, so turn.completed always yields a persisted
+      // response. DM-path requests carry no marker and are never auto-finalized.
+      metadataJson: {
+        semanticTurnHandoff: {
+          respondTo,
+          ...(body.freshContext === true ? { freshContext: true } : {}),
+        },
+      },
+    })
 
-  return await deliverPersistedSemanticTurnHandoff.call(this, sessionBody, record, respondTo)
+    return json(
+      await deliverPersistedSemanticTurnHandoff.call(
+        this,
+        sessionBody,
+        record,
+        respondTo,
+        plan,
+        observeReceipt
+      )
+    )
+  }
+  const response = submissionResponse(
+    await submitThroughAdmission(
+      this,
+      {
+        door: 'turn-handoff',
+        intent: 'enqueue',
+        target,
+        body: body.body,
+        principal: body.from.kind === 'entity' ? body.from.entity : body.from.sessionRef,
+        runtimeIntent: body.runtimeIntent,
+        executionFormat: 'format1',
+        signal: options.signal,
+        responseFormat: body.responseFormat,
+        allowStaleGeneration: body.allowStaleGeneration,
+        carried: { freshContext: body.freshContext },
+        options: {
+          runId: `run-${randomUUID()}`,
+          waitForCompletion: false,
+          responseFormat: body.responseFormat,
+        },
+        replay: async () => {
+          throw new Error('handoff has no idempotency key')
+        },
+      },
+      async (plan) => {
+        const value = await persistAndDeliver(plan)
+        return dispatchReceipt?.admission === 'rejected'
+          ? { kind: 'rejected_unlanded', rejection: { source: 'positive-rejection', value } }
+          : { kind: 'accepted', value }
+      }
+    )
+  )
+  return (await response.json()) as SemanticTurnHandoffStartedResponse
 }
 
 export async function deliverPersistedSemanticTurnHandoff(
   this: HrcServerInstanceForHandlers,
   body: SemanticTurnHandoffRequest & { to: Extract<HrcMessageAddress, { kind: 'session' }> },
   record: HrcMessageRecord,
-  respondTo: HrcMessageAddress
+  respondTo: HrcMessageAddress,
+  plan: AdmittedPlan,
+  observeReceipt: (receipt: DispatchTurnResponse) => void
 ): Promise<SemanticTurnHandoffStartedResponse> {
   assertLocalPersonaAllowed(this, scopeRefOf(body.to.sessionRef))
-  const summonOrigin = federationOriginNodeId(record) === undefined ? 'local' : 'federated-ingress'
   const { scopeRef: requestedScopeRef, laneRef: requestedLaneRef } = parseSessionRef(
     body.to.sessionRef
   )
@@ -349,52 +419,7 @@ export async function deliverPersistedSemanticTurnHandoff(
     presentation: 'pending',
   })
   birthTimeline.mark('request-received', { messageId: record.messageId })
-  let session = findTargetSession(this.db, body.to.sessionRef)
-  if (
-    !session &&
-    body.createIfMissing !== false &&
-    body.runtimeIntent &&
-    // T-05161: never summon a local runtime for a Codex.app-owned address.
-    !isCodexAppOwnedScopeRef(body.to.sessionRef)
-  ) {
-    birthTimeline.mark('session-lookup-miss')
-    session = await this.ensureTargetSession(body.to.sessionRef, body.runtimeIntent, summonOrigin, {
-      birthTimeline,
-    })
-  }
-
-  if (!session) {
-    this.db.messages.updateExecution(record.messageId, {
-      state: 'failed',
-      errorCode: HrcErrorCode.UNKNOWN_SESSION,
-      errorMessage: `unknown session "${body.to.sessionRef}"`,
-    })
-    throw new HrcNotFoundError(
-      HrcErrorCode.UNKNOWN_SESSION,
-      `unknown session "${body.to.sessionRef}"`,
-      { sessionRef: body.to.sessionRef }
-    )
-  }
-
-  if (session.status === 'archived' && session.continuation?.key) {
-    session = await createNotifiedSessionSuccessor(this, session, body.runtimeIntent, summonOrigin)
-  }
-
-  if (body.freshContext === true) {
-    const rotation = await this.rotateSessionContext(session, {
-      relaunch: false,
-      dropContinuation: true,
-      ...(body.runtimeIntent !== undefined ? { runtimeIntent: body.runtimeIntent } : {}),
-      reason: 'semantic-turn-fresh-context',
-    })
-    session = requireSession(this.db, rotation.hostSessionId)
-  } else {
-    const rotationResult = await this.maybeAutoRotateStaleSession(session, {
-      allowStaleGeneration: body.allowStaleGeneration,
-      trigger: 'semantic-turn-handoff',
-    })
-    session = rotationResult.session
-  }
+  const session = plan.session
 
   const sessionRef = formatSessionRef(session.scopeRef, session.laneRef)
   birthTimeline.enrich({
@@ -413,12 +438,15 @@ export async function deliverPersistedSemanticTurnHandoff(
     (session.lastAppliedIntentJson === undefined
       ? undefined
       : omitPersistedSelectionForReuse(session.lastAppliedIntentJson))
-  const runId = `run-${randomUUID()}`
+  const runId = plan.options.runId
+  if (runId === undefined) throw new Error('handoff plan has no run identity')
   birthTimeline.enrich({ runId })
-  const fromSeq = this.db.hrcEvents.maxHrcSeq() + 1
+  const fromSeq = plan.observation?.lifecycleFromSeq ?? this.db.hrcEvents.maxHrcSeq() + 1
 
   try {
-    const normalizedIntent = normalizeDispatchIntent(intent, session, runId)
+    const participant = plan.participant
+    const normalizedIntent =
+      participant == null ? normalizeDispatchIntent(intent, session, runId) : intent
     const payload = formatDmPayload(
       body.from,
       body.to,
@@ -427,7 +455,10 @@ export async function deliverPersistedSemanticTurnHandoff(
       record.createdAt
     )
 
-    let liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+    let liveTmuxRuntime =
+      participant != null && participant.outcome !== 'refused'
+        ? participant.runtime
+        : findLatestRuntime(this.db, session.hostSessionId)
     // T-01873: route the durable-tmux liveness gate through the runtime-hosting
     // choke point (hasLeasedBrokerSubstrate) instead of the `transport==='tmux'
     // && getBrokerRuntimeTmuxSocketPath` durability proxy. True iff the broker
@@ -439,6 +470,7 @@ export async function deliverPersistedSemanticTurnHandoff(
       liveTmuxRuntime = await this.reconcileTmuxRuntimeLiveness(liveTmuxRuntime)
     }
     if (
+      participant == null &&
       liveTmuxRuntime &&
       liveTmuxRuntime.transport === 'tmux' &&
       !isRuntimeUnavailableStatus(liveTmuxRuntime.status) &&
@@ -468,6 +500,7 @@ export async function deliverPersistedSemanticTurnHandoff(
           sessionRef,
           fromSeq,
           responseFormat: body.responseFormat,
+          observeReceipt,
         })
         if (delivered) {
           return delivered
@@ -485,7 +518,10 @@ export async function deliverPersistedSemanticTurnHandoff(
       requestMessageId: record.messageId,
       from: body.to,
       to: respondTo,
-      mode: shouldUseSdkTransport(normalizedIntent) ? 'nonInteractive' : 'headless',
+      mode:
+        normalizedIntent !== undefined && shouldUseSdkTransport(normalizedIntent)
+          ? 'nonInteractive'
+          : 'headless',
       sessionRef,
     })
 
@@ -494,6 +530,8 @@ export async function deliverPersistedSemanticTurnHandoff(
       promptLength: payload.length,
     })
     const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
+      ...plan.options,
+      admissionPlan: plan,
       runId,
       waitForCompletion: false,
       submissionDoor: 'enqueue',
@@ -506,6 +544,7 @@ export async function deliverPersistedSemanticTurnHandoff(
       ...originDispatchOption(body.from, this.db),
     })
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+    observeReceipt(turnBody)
     assertDispatchRunId(turnBody)
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
     // T-01770 Phase B/C: a harness-broker tmux turn here means
@@ -579,6 +618,7 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
     sessionRef: string
     fromSeq: number
     responseFormat?: HrcTurnResponseFormat | undefined
+    observeReceipt?: ((receipt: DispatchTurnResponse) => void) | undefined
   }
 ): Promise<SemanticTurnHandoffStartedResponse | undefined> {
   const { session, runtime, request, payload, runId, sessionRef, fromSeq, responseFormat } = input
@@ -598,6 +638,7 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
       { waitForCompletion: false, submissionDoor: 'enqueue', responseFormat }
     )
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+    input.observeReceipt?.(turnBody)
     assertDispatchRunId(turnBody)
     const brokerTransport = turnBody.transport as 'tmux'
 

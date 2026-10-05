@@ -1,4 +1,6 @@
 import { formatSessionRef } from './messages.js'
+import { admitRuntimeStartPrompt } from './turn-admission/start-prompt.js'
+import type { PreparedAdmissionTarget } from './turn-admission/types.js'
 /**
  * Exact-scope claim-and-start (T-07302).
  *
@@ -157,6 +159,26 @@ export async function startExactScopeRuntime(
     this,
     scope.mutexKey,
     async () => {
+      // Claim identity is a control-plane fence, distinct from input idempotency (EN-23834).
+      replayRecordedClaim(this, { idempotencyKey: request.idempotencyKey, requestHash })
+      if ((request.runtimeIntent.initialPrompt ?? '').length > 0) {
+        const replayed = this.db.rosterClaims.getByIdempotencyKey(request.idempotencyKey) !== null
+        const delivery = await admitRuntimeStartPrompt(
+          this,
+          {
+            scopeRef: scope.scopeRef,
+            laneRef: scope.laneRef,
+            prepare: () => prepareExactClaimTarget.call(this, request, requestHash),
+          },
+          request.runtimeIntent,
+          restartStyle
+        )
+        const session = this.db.sessions.getByHostSessionId(delivery.runtime.hostSessionId)
+        if (session === null) throw new Error('claimed START receipt has no session')
+        const pending = delivery.waitForCompletion()
+        pending.catch(() => undefined)
+        return { session, replayed, startPromise: pending }
+      }
       const claimed = await resolveExactClaim.call(this, request, requestHash)
       const intent = localizeIntentToSession(request.runtimeIntent, claimed.session)
       const pending = this.startRuntimeForSession(claimed.session, intent, restartStyle)
@@ -187,12 +209,28 @@ async function resolveExactClaim(
   request: ExactStartRuntimeRequest,
   requestHash: string
 ): Promise<{ session: HrcSessionRecord; replayed: boolean }> {
+  const replayed = this.db.rosterClaims.getByIdempotencyKey(request.idempotencyKey) !== null
+  const prepared = await prepareExactClaimTarget.call(this, request, requestHash)
+  return { session: await prepared.materialize(), replayed }
+}
+
+async function prepareExactClaimTarget(
+  this: HrcServerInstanceForHandlers,
+  request: ExactStartRuntimeRequest,
+  requestHash: string
+): Promise<PreparedAdmissionTarget> {
   const scope = exactStartScope(request)
   const replayed = replayRecordedClaim(this, {
     idempotencyKey: request.idempotencyKey,
     requestHash,
   })
-  if (replayed !== null) return { session: replayed.session, replayed: true }
+  if (replayed !== null)
+    return {
+      scopeRef: replayed.session.scopeRef,
+      laneRef: replayed.session.laneRef,
+      session: replayed.session,
+      materialize: async () => replayed.session,
+    }
 
   const claimRecord = {
     idempotencyKey: request.idempotencyKey,
@@ -201,18 +239,22 @@ async function resolveExactClaim(
   }
   const existing = findContinuitySession(this.db, `${scope.scopeRef}/lane:${scope.laneRef}`)
   if (existing === null) {
-    const minted = await mintClaimedSession(this, {
-      ...claimRecord,
+    return {
       scopeRef: scope.scopeRef,
       laneRef: scope.laneRef,
-      reason: 'exact-scope-claim',
-      capabilityHint: {
-        placement: request.runtimeIntent.placement,
-        harness: request.runtimeIntent.harness,
-      },
-      eventDetails: { exactScope: scope.scopeRef },
-    })
-    return { session: minted, replayed: false }
+      materialize: () =>
+        mintClaimedSession(this, {
+          ...claimRecord,
+          scopeRef: scope.scopeRef,
+          laneRef: scope.laneRef,
+          reason: 'exact-scope-claim',
+          capabilityHint: {
+            placement: request.runtimeIntent.placement,
+            harness: request.runtimeIntent.harness,
+          },
+          eventDetails: { exactScope: scope.scopeRef },
+        }),
+    }
   }
 
   if (!isClaimScopeFree(this, existing)) {
@@ -231,8 +273,12 @@ async function resolveExactClaim(
     )
   }
 
-  const successor = await recycleClaimedSession(this, existing, claimRecord, 'exact-scope-claim')
-  return { session: successor, replayed: false }
+  return {
+    scopeRef: existing.scopeRef,
+    laneRef: existing.laneRef,
+    session: existing,
+    materialize: () => recycleClaimedSession(this, existing, claimRecord, 'exact-scope-claim'),
+  }
 }
 
 export const exactClaimHandlersMethods = {

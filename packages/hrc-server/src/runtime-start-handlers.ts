@@ -51,12 +51,29 @@ import { automaticContinuationForSession } from './session-continuation-reuse.js
 import type { AdmittedPlan } from './turn-admission/types.js'
 import { enrichDispatchTurnResponse } from './turn-dispatch-attached-run-handlers.js'
 
+/** The existing START observer is selected at the physical route's receipt. */
+export type InitialPromptDeliveryReceipt = {
+  response?: Response | undefined
+  completionKind?: 'interactive' | 'headless' | undefined
+}
+
+function captureInitialPromptReceipt(
+  receipt: InitialPromptDeliveryReceipt | undefined,
+  completionKind: 'interactive' | 'headless',
+  response?: Response
+): void {
+  if (receipt !== undefined) Object.assign(receipt, { response, completionKind })
+}
+
 export async function startRuntimeForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent,
   restartStyle: RestartStyle,
   options: {
+    /** D10 has already admitted its initial input; completion is observed after its lease. */
+    initialPromptPlan?: AdmittedPlan | undefined
+    initialPromptReceipt?: InitialPromptDeliveryReceipt | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     operatorAttachPending?: boolean | undefined
     /** This start is the attached-run door's operation. */
@@ -204,15 +221,28 @@ export async function startRuntimeForSession(
         await this.publishPresentation(existingRuntime, presentationOptions)
         const initialPrompt = intent.initialPrompt ?? ''
         if (initialPrompt.length > 0) {
-          const runId = `run-${randomUUID()}`
-          await executeBrokerInputTurn(this, session, existingRuntime, initialPrompt, runId, {
-            waitForCompletion: true,
-          })
+          const runId = options.initialPromptPlan?.options.runId ?? `run-${randomUUID()}`
+          const receipt = await executeBrokerInputTurn(
+            this,
+            session,
+            existingRuntime,
+            initialPrompt,
+            runId,
+            {
+              ...options.initialPromptPlan?.options,
+              waitForCompletion: options.initialPromptPlan === undefined,
+            }
+          )
+          captureInitialPromptReceipt(
+            options.initialPromptReceipt,
+            existingRuntime.transport === 'tmux' ? 'interactive' : 'headless',
+            receipt
+          )
         }
         return requireRuntime(this.db, existingRuntime.runtimeId)
       }
 
-      const startRunId = `run-${randomUUID()}`
+      const startRunId = options.initialPromptPlan?.options.runId ?? `run-${randomUUID()}`
       if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
         this.markRuntimeStaleForBrokerReprovision(session, existingRuntime, {
           reason: 'producer-selected-ordinary-start-reprovision',
@@ -226,6 +256,7 @@ export async function startRuntimeForSession(
         initialPrompt,
         startRunId,
         {
+          ...options.initialPromptPlan?.options,
           ...(hasInitialUserTurn(intent) ? {} : { allowCompilerInitialInputWithoutIdentity: true }),
           ...(options.attachBeforeInvocationStart !== undefined
             ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
@@ -234,7 +265,9 @@ export async function startRuntimeForSession(
       )
       await this.publishPresentation(runtime, presentationOptions)
       if (attachedRunDoor) return await attachedRunSelected(runtime)
-      if (initialPrompt.length > 0) {
+      if (initialPrompt.length > 0)
+        captureInitialPromptReceipt(options.initialPromptReceipt, 'headless')
+      if (initialPrompt.length > 0 && options.initialPromptPlan === undefined) {
         await this.waitForHeadlessBrokerRunCompletion(startRunId, runtime.runtimeId)
       }
       return requireRuntime(this.db, runtime.runtimeId)
@@ -321,19 +354,23 @@ export async function startRuntimeForSession(
           const initialPrompt = startIntent.initialPrompt ?? ''
           let resolvedRuntime = reusableBrokerRuntime
           if (initialPrompt.length > 0) {
-            await this.executeHeadlessBrokerInputTurn(
+            const receipt = await this.executeHeadlessBrokerInputTurn(
               session,
               reusableBrokerRuntime,
               initialPrompt,
-              `run-${randomUUID()}`,
-              { waitForCompletion: true }
+              options.initialPromptPlan?.options.runId ?? `run-${randomUUID()}`,
+              {
+                ...options.initialPromptPlan?.options,
+                waitForCompletion: options.initialPromptPlan === undefined,
+              }
             )
+            captureInitialPromptReceipt(options.initialPromptReceipt, 'headless', receipt)
             resolvedRuntime = requireRuntime(this.db, reusableBrokerRuntime.runtimeId)
           }
           this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, timestamp())
           return resolvedRuntime
         }
-        const startRunId = `run-${randomUUID()}`
+        const startRunId = options.initialPromptPlan?.options.runId ?? `run-${randomUUID()}`
         if (reusableBrokerRuntime && !isRuntimeUnavailableStatus(reusableBrokerRuntime.status)) {
           this.markRuntimeStaleForBrokerReprovision(session, reusableBrokerRuntime, {
             reason: 'headless-broker-start-reprovision',
@@ -356,16 +393,21 @@ export async function startRuntimeForSession(
           // priming input, just as broker session-open does. No HRC run/input
           // identity exists in this shape, so attachment-bearing starts remain
           // strict and do not opt in here.
-          hasInitialUserTurn(startIntent)
-            ? undefined
-            : { allowCompilerInitialInputWithoutIdentity: true }
+          {
+            ...options.initialPromptPlan?.options,
+            ...(hasInitialUserTurn(startIntent)
+              ? {}
+              : { allowCompilerInitialInputWithoutIdentity: true }),
+          }
         )
         await this.publishPresentation(brokerRuntime, presentationOptions)
         // Explicit start WITH an initial prompt: wait for the startup turn to
         // complete (continuation established) via broker events, as the old
         // exec.ts start did. With NO initial user turn there is no run to wait
         // on — return once the controller yields the runtime.
-        if (initialPrompt.length > 0) {
+        if (initialPrompt.length > 0)
+          captureInitialPromptReceipt(options.initialPromptReceipt, 'headless')
+        if (initialPrompt.length > 0 && options.initialPromptPlan === undefined) {
           await this.waitForHeadlessBrokerRunCompletion(startRunId, brokerRuntime.runtimeId)
         }
         return requireRuntime(this.db, brokerRuntime.runtimeId)
@@ -421,7 +463,7 @@ export async function startRuntimeForSession(
         await this.publishPresentation(existingRuntime, presentationOptions)
         return existingRuntime
       }
-      const startRunId = `run-${randomUUID()}`
+      const startRunId = options.initialPromptPlan?.options.runId ?? `run-${randomUUID()}`
       if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
         this.markRuntimeStaleForBrokerReprovision(session, existingRuntime, {
           reason: 'interactive-broker-start-reprovision',
@@ -435,6 +477,7 @@ export async function startRuntimeForSession(
         broker: async () =>
           this.startInteractiveTmuxBrokerRuntime(session, normalizedIntent, startRunId, {
             ...interactiveBrokerOptions,
+            ...options.initialPromptPlan?.options,
             ...(options.attachBeforeInvocationStart
               ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
               : {}),
@@ -442,7 +485,12 @@ export async function startRuntimeForSession(
       })
       if (attachedRunDoor) return await attachedRunSelected(runtime)
       await this.publishPresentation(runtime, presentationOptions)
-      if ((normalizedIntent.initialPrompt ?? '').length > 0) {
+      if ((normalizedIntent.initialPrompt ?? '').length > 0)
+        captureInitialPromptReceipt(options.initialPromptReceipt, 'interactive')
+      if (
+        (normalizedIntent.initialPrompt ?? '').length > 0 &&
+        options.initialPromptPlan === undefined
+      ) {
         await this.waitForInteractiveBrokerRunCompletion(startRunId, runtime.runtimeId)
       }
       return runtime

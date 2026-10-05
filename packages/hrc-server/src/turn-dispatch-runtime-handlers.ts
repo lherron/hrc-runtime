@@ -54,6 +54,7 @@ import {
   reattachDurableBrokerForDispatch,
 } from './startup-reconcile.js'
 import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.js'
+import { admitRuntimeStartPrompt } from './turn-admission/start-prompt.js'
 import { submissionResponse, submitThroughAdmission } from './turn-admission/submit.js'
 import { normalizeJsonRepairCorrelation } from './turn-dispatch-attached-run-handlers.js'
 import {
@@ -105,6 +106,21 @@ export async function handleStartRuntime(
     return json(await this.startRoutedExactScopeRuntime(body))
   }
   const requested = requireSession(this.db, body.hostSessionId)
+  if ((body.intent.initialPrompt ?? '').length > 0) {
+    const delivery = await admitRuntimeStartPrompt(
+      this,
+      requested,
+      body.intent,
+      body.restartStyle ?? 'reuse_pty',
+      {
+        allowStaleGeneration: body.allowStaleGeneration,
+        signal: request.signal,
+      }
+    )
+    return json(
+      toStartRuntimeResponse(await delivery.waitForCompletion()) satisfies StartRuntimeResponse
+    )
+  }
   const { session } = await this.maybeAutoRotateStaleSession(requested, {
     allowStaleGeneration: body.allowStaleGeneration,
     trigger: 'runtime-start',

@@ -19,7 +19,8 @@ export function joinShellCommand(argv: string[]): string {
 
 export function normalizeDispatchIntent(
   intent: HrcRuntimeIntent | undefined,
-  session: HrcSessionRecord,
+  session: Pick<HrcSessionRecord, 'scopeRef' | 'laneRef'> &
+    Partial<Pick<HrcSessionRecord, 'hostSessionId' | 'generation'>>,
   runId?: string
 ): HrcRuntimeIntent {
   if (!intent) {

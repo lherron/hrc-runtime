@@ -13,10 +13,10 @@ export const DOORS = {
   submission: ['invoke', 'enqueue', 'preempt', 'steer'],
   turns: ['invoke'],
   'turns-by-selector': ['enqueue'],
-  'literal-flush': [],
+  'literal-flush': ['enqueue'],
   dm: ['enqueue'],
-  'turn-handoff': [],
-  'runtime-start-prompt': [],
+  'turn-handoff': ['enqueue'],
+  'runtime-start-prompt': ['enqueue'],
   'prepare-attached': ['invoke'],
 } as const satisfies Record<SubmissionDoorKind, readonly string[]>
 export const EXPECTED = {
@@ -38,7 +38,16 @@ export const EXPECTED = {
     proof: ['enqueue'],
     replay: 'not on the wire contract; selector door has no idempotency field',
   },
-  'literal-flush': { enabled: false, reason: 'phase 3' },
+  'literal-flush': {
+    enabled: true,
+    freshContext: 'not on the wire contract; literal flush accepts text and enter only',
+    proof: [],
+    replay: 'not on the wire contract; literal flush has no idempotency field',
+    nonTmuxDelivery:
+      'broker literal flush requires a live tmux runtime; headless, cold and SDK rows do not submit',
+    nonSubmitting:
+      'enter:false and empty Enter on an empty buffer remain keystrokes, not submissions',
+  },
   dm: {
     enabled: true,
     freshContext:
@@ -46,8 +55,21 @@ export const EXPECTED = {
     proof: [],
     replay: 'not on the wire contract; semantic DM has no idempotency field',
   },
-  'turn-handoff': { enabled: false, reason: 'phase 3' },
-  'runtime-start-prompt': { enabled: false, reason: 'phase 3' },
+  'turn-handoff': {
+    enabled: true,
+    freshContext: true,
+    proof: [],
+    replay: 'not on the wire contract; turn handoff has no input idempotency field',
+  },
+  'runtime-start-prompt': {
+    enabled: true,
+    freshContext: 'not on the wire contract; START accepts restartStyle instead',
+    proof: [],
+    replay:
+      'claim idempotencyKey identifies the claim, not the input; claim replay re-runs startRuntimeForSession by design (roster-claim.ts:193-197, exact-claim.ts:163-166); input-idempotent claim replay is out of R1 scope.',
+    participantDelivery:
+      'START retains its participant_address_reserved refusal; participants cannot be cold-born',
+  },
   'prepare-attached': {
     enabled: true,
     freshContext: 'not on the wire contract; prepare-attached has no freshContext field',

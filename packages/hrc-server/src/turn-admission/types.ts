@@ -21,10 +21,22 @@ export type SubmissionDoorKind =
   | 'turn-handoff'
   | 'runtime-start-prompt'
   | 'prepare-attached'
+/** A read-only claim selection; its allocation belongs exclusively to step 8. */
+export type PreparedAdmissionTarget = {
+  scopeRef: string
+  laneRef: string
+  session?: HrcSessionRecord | undefined
+  materialize(): Promise<HrcSessionRecord>
+}
+export type UnallocatedAdmissionTarget = {
+  scopeRef: string
+  laneRef: string
+  prepare(): Promise<PreparedAdmissionTarget>
+}
 export type SubmissionRequest = {
   door: SubmissionDoorKind
   intent: SubmissionDoor
-  target: HrcSessionRecord
+  target: HrcSessionRecord | UnallocatedAdmissionTarget
   body: string
   principal: string
   runtimeIntent?: HrcRuntimeIntent | undefined
@@ -54,7 +66,9 @@ export type SubmissionRequest = {
 }
 export type AdmissionContext = HrcServerInstanceForHandlers
 export type PartialPlan = {
-  session: HrcSessionRecord
+  target: Pick<HrcSessionRecord, 'scopeRef' | 'laneRef'>
+  preparedTarget?: PreparedAdmissionTarget | undefined
+  session?: HrcSessionRecord | undefined
   participant?: ParticipantDelivery | null | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   effectiveDoor: SubmissionDoor
@@ -64,7 +78,8 @@ export type PartialPlan = {
   launchCarry?: { intent: SubmissionDoor; carriesBody: true } | undefined
 }
 declare const admittedPlanBrand: unique symbol
-export type AdmittedPlan = Readonly<PartialPlan> & {
+export type AdmittedPlan = Readonly<Omit<PartialPlan, 'target' | 'preparedTarget'>> & {
+  readonly session: HrcSessionRecord
   readonly [admittedPlanBrand]: true
-  readonly request: SubmissionRequest
+  readonly request: Omit<SubmissionRequest, 'target'> & { readonly target: HrcSessionRecord }
 }

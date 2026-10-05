@@ -1,4 +1,9 @@
 import { appendHrcEvent } from '../hrc-event-helper.js'
+import {
+  SERVER_EVENT_HOST_SESSION_ID,
+  SERVER_EVENT_LANE_REF,
+  SERVER_EVENT_SCOPE_REF,
+} from '../server-lifecycle.js'
 import { timestamp } from '../server-util.js'
 import { type AdmissionResult, type RouteOutcome, runLeasedAdmission } from './admit.js'
 import {
@@ -19,7 +24,8 @@ export async function submitThroughAdmission(
   route: (plan: AdmittedPlan) => Promise<RouteOutcome<Response>>
 ): Promise<AdmissionResult<Response>> {
   const partial: PartialPlan = {
-    session: req.target,
+    target: req.target,
+    session: 'hostSessionId' in req.target ? req.target : undefined,
     effectiveDoor: req.intent,
     options: { ...req.options },
   }
@@ -31,17 +37,27 @@ export async function submitThroughAdmission(
         const cause = result.outcome === 'possible_write' ? result.cause : undefined
         const event = appendHrcEvent(ctx.db, 'submission.admission', {
           ts: timestamp(),
-          hostSessionId: session.hostSessionId,
-          scopeRef: session.scopeRef,
-          laneRef: session.laneRef,
-          generation: session.generation,
+          hostSessionId: session?.hostSessionId ?? SERVER_EVENT_HOST_SESSION_ID,
+          scopeRef: session?.scopeRef ?? SERVER_EVENT_SCOPE_REF,
+          laneRef: session?.laneRef ?? SERVER_EVENT_LANE_REF,
+          generation: session?.generation ?? 0,
           runId: partial.options.runId,
           payload: {
+            // A pre-allocation refusal is a daemon fact, using the existing lifecycle sentinel.
+            ...(session === undefined
+              ? {
+                  requestedTarget: {
+                    scopeRef: partial.target.scopeRef,
+                    laneRef: partial.target.laneRef,
+                  },
+                }
+              : {}),
             door: req.door,
             intent: req.intent,
             effectiveDoor: partial.effectiveDoor,
             trace: result.trace,
             outcome: result.outcome,
+            ...(result.outcome === 'routed' ? { routeOutcome: result.routed.kind } : {}),
             ...(result.outcome === 'refused' ? { refusalCode: result.refusal.code } : {}),
             ...(result.outcome === 'possible_write'
               ? {
@@ -70,7 +86,20 @@ export async function submitThroughAdmission(
       ],
       route: () => {
         // The branded plan exists only here, under the lease; callers never receive it.
-        const plan = { ...partial, request: req } as AdmittedPlan
+        if (partial.session === undefined)
+          throw new Error('admission did not materialize its target')
+        // Claim materializers never cross the step-8 boundary into the branded route plan.
+        const plan = {
+          session: partial.session,
+          participant: partial.participant,
+          runtimeIntent: partial.runtimeIntent,
+          effectiveDoor: partial.effectiveDoor,
+          doorReport: partial.doorReport,
+          options: partial.options,
+          observation: partial.observation,
+          launchCarry: partial.launchCarry,
+          request: { ...req, target: partial.session },
+        } as AdmittedPlan
         return route(plan)
       },
     }

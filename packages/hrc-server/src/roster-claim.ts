@@ -11,6 +11,8 @@ import {
 } from 'hrc-core'
 import { ROSTER_SLOT_TOKENS } from 'hrc-core'
 import { formatSessionRef } from './messages.js'
+import { admitRuntimeStartPrompt } from './turn-admission/start-prompt.js'
+import type { PreparedAdmissionTarget } from './turn-admission/types.js'
 
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 
@@ -190,6 +192,29 @@ export async function startSuffixRosterRuntime(
   const restartStyle = request.restartStyle ?? 'reuse_pty'
 
   const { outcome, startPromise } = await withScopeClaimMutex(this, base.mutexKey, async () => {
+    // Claim identity is a control-plane fence, distinct from input idempotency (EN-23834).
+    replayRecordedClaim(this, { idempotencyKey: request.idempotencyKey, requestHash })
+    if ((request.runtimeIntent.initialPrompt ?? '').length > 0) {
+      const replayed = this.db.rosterClaims.getByIdempotencyKey(request.idempotencyKey) !== null
+      const delivery = await admitRuntimeStartPrompt(
+        this,
+        {
+          scopeRef: base.baseScopeRef,
+          laneRef: base.laneRef,
+          prepare: () => prepareClaimTarget.call(this, base, request, requestHash),
+        },
+        request.runtimeIntent,
+        restartStyle
+      )
+      const session = this.db.sessions.getByHostSessionId(delivery.runtime.hostSessionId)
+      if (session === null) throw new Error('claimed START receipt has no session')
+      const pending = delivery.waitForCompletion()
+      pending.catch(() => undefined)
+      return {
+        outcome: { session, slot: slotTokenOf(session.scopeRef, base), replayed },
+        startPromise: pending,
+      }
+    }
     const claimed = await resolveClaim.call(this, base, request, requestHash)
     const session = claimed.session
     const intent = localizeIntentToSession(request.runtimeIntent, session)
@@ -228,15 +253,28 @@ async function resolveClaim(
   request: SuffixStartRuntimeRequest,
   requestHash: string
 ): Promise<ClaimOutcome> {
+  const replayed = this.db.rosterClaims.getByIdempotencyKey(request.idempotencyKey) !== null
+  const prepared = await prepareClaimTarget.call(this, base, request, requestHash)
+  const session = await prepared.materialize()
+  return { session, slot: slotTokenOf(session.scopeRef, base), replayed }
+}
+
+async function prepareClaimTarget(
+  this: HrcServerInstanceForHandlers,
+  base: RosterBase,
+  request: SuffixStartRuntimeRequest,
+  requestHash: string
+): Promise<PreparedAdmissionTarget> {
   const replayed = replayRecordedClaim(this, {
     idempotencyKey: request.idempotencyKey,
     requestHash,
   })
   if (replayed !== null) {
     return {
+      scopeRef: replayed.session.scopeRef,
+      laneRef: replayed.session.laneRef,
       session: replayed.session,
-      slot: slotTokenOf(replayed.claimedScope, base),
-      replayed: true,
+      materialize: async () => replayed.session,
     }
   }
 
@@ -256,30 +294,33 @@ async function resolveClaim(
     // future mail addressed to that conversation. Walk on instead.
     const existing = findContinuitySession(this.db, sessionRef)
     if (existing === null) {
-      const minted = await mintClaimedSession(this, {
-        ...claimRecord,
+      return {
         scopeRef: slotScopeRef(base, slot),
         laneRef: base.laneRef,
-        reason: 'roster-suffix-claim',
-        capabilityHint: {
-          placement: request.runtimeIntent.placement,
-          harness: request.runtimeIntent.harness,
-        },
-        eventDetails: { baseScope: base.baseScopeRef },
-      })
-      return { session: minted, slot, replayed: false }
+        materialize: () =>
+          mintClaimedSession(this, {
+            ...claimRecord,
+            scopeRef: slotScopeRef(base, slot),
+            laneRef: base.laneRef,
+            reason: 'roster-suffix-claim',
+            capabilityHint: {
+              placement: request.runtimeIntent.placement,
+              harness: request.runtimeIntent.harness,
+            },
+            eventDetails: { baseScope: base.baseScopeRef },
+          }),
+      }
     }
     if (!isClaimScopeFree(this, existing)) continue
 
     // Recycle: rotation always drops the continuation, so a claimed slot always
     // starts a FRESH conversation rather than resuming a stranger's.
-    const successor = await recycleClaimedSession(
-      this,
-      existing,
-      claimRecord,
-      'roster-suffix-claim'
-    )
-    return { session: successor, slot, replayed: false }
+    return {
+      scopeRef: existing.scopeRef,
+      laneRef: existing.laneRef,
+      session: existing,
+      materialize: () => recycleClaimedSession(this, existing, claimRecord, 'roster-suffix-claim'),
+    }
   }
 
   throw new HrcConflictError(
