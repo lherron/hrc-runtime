@@ -68,7 +68,8 @@ async function setupTmuxRuntime(
 async function setupHeadlessBrokerPresentationRuntime(
   runtimeId: string,
   presentation: 'tmux-tui' | 'observer' = 'tmux-tui',
-  stateShape: 'flat' | 'normalized' = 'flat'
+  stateShape: 'flat' | 'normalized' = 'flat',
+  transport: 'headless' | 'tmux' = 'headless'
 ) {
   const tmux = new TmuxManager(fixture.tmuxSocketPath)
   await tmux.initialize()
@@ -99,7 +100,7 @@ async function setupHeadlessBrokerPresentationRuntime(
     runtimeId,
     hostSessionId,
     scopeRef: runtimeId,
-    transport: 'headless',
+    transport,
   })
 
   const db = openHrcDatabase(fixture.dbPath)
@@ -122,6 +123,9 @@ async function setupHeadlessBrokerPresentationRuntime(
     }
     db.runtimes.update(runtimeId, {
       controllerKind: 'harness-broker',
+      // A durable broker lease born by `hrc start` records transport tmux and
+      // mirrors its presentation pane into tmuxJson (T-10353).
+      ...(transport === 'tmux' ? { tmuxJson: presentationWindow } : {}),
       runtimeStateJson: {
         broker:
           stateShape === 'flat'
@@ -432,6 +436,42 @@ describe('runtime capture transport branching', () => {
     const body = (await res.json()) as { text: string }
     expect(body.text).toContain('PRESENTATION_WINDOW_CAPTURED')
     expect(body.text).not.toContain('BROKER_WINDOW_MUST_NOT_BE_CAPTURED')
+  })
+
+  it('captures the tui presentation pane of a transport-tmux broker lease (T-10353)', async () => {
+    await setupHeadlessBrokerPresentationRuntime(
+      'rt-capture-broker-tmux-tui',
+      'tmux-tui',
+      'normalized',
+      'tmux'
+    )
+
+    const res = await capture('rt-capture-broker-tmux-tui')
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { text: string }
+    expect(body.text).toContain('PRESENTATION_WINDOW_CAPTURED')
+    expect(body.text).not.toContain('BROKER_WINDOW_MUST_NOT_BE_CAPTURED')
+  })
+
+  it('refuses a transport-tmux broker lease whose tui window really changed (T-10353)', async () => {
+    const { presentationPane } = await setupHeadlessBrokerPresentationRuntime(
+      'rt-capture-broker-tmux-renamed',
+      'tmux-tui',
+      'normalized',
+      'tmux'
+    )
+    const renamed = Bun.spawn(
+      ['tmux', '-S', fixture.tmuxSocketPath, 'rename-window', '-t', presentationPane.windowId, 'x'],
+      { stdout: 'ignore', stderr: 'ignore' }
+    )
+    expect(await renamed.exited).toBe(0)
+
+    const res = await capture('rt-capture-broker-tmux-renamed')
+
+    expect(res.status).toBe(503)
+    const body = (await res.json()) as HrcHttpError
+    expect(body.error.message).toContain('presentation pane is unavailable or changed')
   })
 
   it('fails closed when the persisted presentation pane identity no longer matches tmux', async () => {

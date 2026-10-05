@@ -39,8 +39,12 @@ export async function captureRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot
 ): Promise<Response> {
+  // T-10353: a durable broker lease hosts `broker` + `tui`/`observer` windows and no
+  // `main`, even when its transport is tmux, so resolve its presentation pane first.
+  // Only a legacy hrc tmux runtime (no leased broker substrate) falls back to `main`.
   const pane =
-    runtime.transport === 'tmux' ? requireTmuxPane(runtime) : getBrokerPresentationPane(runtime)
+    getBrokerPresentationPane(runtime) ??
+    (runtime.transport === 'tmux' ? requireTmuxPane(runtime) : undefined)
   if (!pane) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
