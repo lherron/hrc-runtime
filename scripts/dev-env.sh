@@ -125,15 +125,17 @@ EOF
 # reintroduce the finding this recipe was written to close, in a subtler form.
 # It costs ~13s.
 #
-# `bun install` stays conditional: this repo pulls dependencies explicitly via
-# `just pull-deps` and treats bun.lock as something a gate must never advance,
-# so the install here only covers the case it has to — a clone with no
-# node_modules at all.
+# The install is unconditional too, and FROZEN. This repo pulls dependencies
+# explicitly via `just pull-deps` and treats bun.lock as something a gate must
+# never advance; `--frozen-lockfile` installs exactly what the committed lock
+# names and fails rather than rewrite it. Installing only when node_modules was
+# missing let a long-lived checkout keep a copy older than its own lock: the
+# post-push worktree built df296269 against a 2026-10-03 spaces-aspc-protocol
+# while bun.lock named 2026-10-05, and went red on APIs the lock provides
+# (R-00302). An in-sync install is a no-op of about a second.
 provision_build() {
-  if [[ ! -d "${REPO_ROOT}/node_modules" ]]; then
-    log "installing dependencies (bun install)"
-    (cd "${REPO_ROOT}" && bun install)
-  fi
+  log "installing dependencies (bun install --frozen-lockfile)"
+  (cd "${REPO_ROOT}" && bun install --frozen-lockfile)
   log "building workspace (bun run build)"
   (cd "${REPO_ROOT}" && bun run build)
 }
