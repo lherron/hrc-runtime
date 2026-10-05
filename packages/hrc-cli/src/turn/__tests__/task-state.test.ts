@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'bun:test'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-import { readTaskState } from '../task-state.js'
+import { boundedProcess, readTaskState } from '../task-state.js'
 
 type ExecResult = { stdout: string; stderr: string; exitCode: number }
 
@@ -83,5 +86,21 @@ describe('readTaskState', () => {
       fakeExec({ stdout: JSON.stringify([{ id: 'T-1', state: null }]) })
     )
     expect(state).toBeNull()
+  })
+
+  // T-10244: enrichment must not stall the final frame on a slow wrkq.
+  it('counts a wrkq that outlives the bound as no enrichment', async () => {
+    const bin = mkdtempSync(join(tmpdir(), 'slow-wrkq-'))
+    const wrkq = join(bin, 'wrkq')
+    writeFileSync(wrkq, '#!/bin/sh\n/bin/sleep 30\necho \'[{"state":"completed"}]\'\n')
+    chmodSync(wrkq, 0o755)
+    const startedAt = performance.now()
+    try {
+      const state = await readTaskState('T-1', boundedProcess(200, { ...process.env, PATH: bin }))
+      expect(state).toBeNull()
+      expect(performance.now() - startedAt).toBeLessThan(2_000)
+    } finally {
+      rmSync(bin, { recursive: true, force: true })
+    }
   })
 })

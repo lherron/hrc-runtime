@@ -91,6 +91,8 @@ export type TurnOptions = {
 
 export type TurnCommandDependencies = {
   createStackedSummarizer?: typeof createStackedSummarizer
+  /** Final-frame task-state enrichment; production reads wrkq (bounded). */
+  readTaskState?: ((taskId: string) => Promise<string | null>) | undefined
   resolveMessagingScope?: typeof resolveMessagingScope
   resolveLaunchTarget?: typeof resolveLaunchTarget
   /** Test-only clock compression; production always uses the exported constant. */
@@ -509,6 +511,7 @@ export async function cmdTurn(
       targetScope: targetInput,
       handoff,
       summarizer: stackedSummarizer,
+      readTaskState: dependencies.readTaskState,
       ...(catchUpThroughSeq !== undefined ? { catchUpThroughSeq } : {}),
       writeLine(line) {
         process.stdout.write(`${JSON.stringify(line)}\n`)

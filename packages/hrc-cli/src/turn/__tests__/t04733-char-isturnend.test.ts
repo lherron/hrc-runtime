@@ -246,7 +246,9 @@ async function runTurn(
   }) as typeof process.stderr.write
 
   try {
-    await cmdTurn(client, { as: 'human', ...opts }, positionals)
+    await cmdTurn(client, { as: 'human', ...opts }, positionals, {
+      readTaskState: async () => null,
+    })
   } catch (err) {
     if (err instanceof TurnExitError) {
       exitCode = err.exitCode

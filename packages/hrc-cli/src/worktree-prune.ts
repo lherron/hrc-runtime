@@ -86,6 +86,8 @@ export interface WorktreePruneCommandOptions {
   json?: boolean
 }
 
+const WRKQ_TIMEOUT_MS = 15_000
+
 function defaultRun(command: string, args: string[]): CommandResult {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
@@ -97,6 +99,9 @@ function defaultRun(command: string, args: string[]): CommandResult {
     encoding: 'utf8',
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    // A wedged ledger fails the prune instead of hanging it (T-10244); git
+    // removes whole worktrees and keeps its own pace.
+    ...(command === 'wrkq' ? { timeout: WRKQ_TIMEOUT_MS, killSignal: 'SIGKILL' as const } : {}),
   })
   return {
     status: result.status,

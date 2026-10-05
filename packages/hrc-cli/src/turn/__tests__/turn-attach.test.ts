@@ -169,6 +169,7 @@ async function runAttach(
 
 function fakeDependencies(): TurnCommandDependencies {
   return {
+    readTaskState: async () => null,
     createStackedSummarizer() {
       return {
         summarize: async () => 'Summarizes the attached test turn.',

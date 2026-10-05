@@ -1,4 +1,30 @@
-import { type ExecProcess, type ExecProcessResult, execProcess } from './exec-process.js'
+import { runBoundedSubprocess } from 'hrc-core'
+
+export type ExecProcessResult = {
+  stdout: string
+  stderr: string
+  exitCode: number
+}
+
+export type ExecProcess = (argv: string[]) => Promise<ExecProcessResult>
+
+/**
+ * `wrkq cat` answers in well under a second; the bound is for a wedged or
+ * unreachable ledger, which must cost the final frame a few seconds at most
+ * (T-10244).
+ */
+export const TASK_STATE_TIMEOUT_MS = 3_000
+
+/** An ExecProcess that kills the child past `timeoutMs` and rejects. */
+export function boundedProcess(
+  timeoutMs: number,
+  env?: Record<string, string | undefined>
+): ExecProcess {
+  return async (argv) => {
+    const result = await runBoundedSubprocess(argv, { timeoutMs, env, processGroup: true })
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode ?? 1 }
+  }
+}
 
 /**
  * Reads the live wrkq state for a task id (e.g. "T-04216") at terminal-frame
@@ -6,12 +32,12 @@ import { type ExecProcess, type ExecProcessResult, execProcess } from './exec-pr
  * per-turn `result`. Read-only: shells out to `wrkq cat <taskId> --json`.
  *
  * Returns the state string (e.g. "completed" | "in_progress" | "open") or
- * `null` when the task is not found, wrkq is unavailable, or the output cannot
- * be parsed. Never throws — enrichment must not fail the frame.
+ * `null` when the task is not found, wrkq is unavailable or too slow, or the
+ * output cannot be parsed. Never throws — enrichment must not fail the frame.
  */
 export async function readTaskState(
   taskId: string,
-  runProcess: ExecProcess = execProcess
+  runProcess: ExecProcess = boundedProcess(TASK_STATE_TIMEOUT_MS)
 ): Promise<string | null> {
   let result: ExecProcessResult
   try {

@@ -33,10 +33,25 @@ export const REPOSITORY_REDIRECTING_GIT_VARIABLES = [
   'GIT_NAMESPACE',
 ] as const
 
+/**
+ * Path-only wrkq locators. WRKQ_DB outranks them, and wrkq REFUSES a differing
+ * one rather than honouring it, so an operator's WRKQ_DB_PATH would turn every
+ * fast connection-refused into a conflict error. Dropped, not blanked.
+ */
+const WRKQ_PATH_LOCATORS = ['WRKQ_DB_PATH', 'WRKQ_DB_PATH_FILE'] as const
+
+/**
+ * HRC_WRKQ_DB reaches the daemon's ledger client; a `wrkq` CLI child reads
+ * WRKQ_DB and nothing else (T-10244). Both carry the unreachable locator. A
+ * test that wants a fixture ledger names it with WRKQ_DB or `--db`, which
+ * outrank this.
+ */
 export function hermeticTestEnvironment(
   inherited: Record<string, string | undefined> = process.env
 ): Record<string, string> {
-  return { ...environmentWithoutGitOverrides(inherited), HRC_WRKQ_DB: UNREACHABLE_WRKQ_LOCATOR }
+  const env = environmentWithoutGitOverrides(inherited)
+  for (const key of WRKQ_PATH_LOCATORS) delete env[key]
+  return { ...env, HRC_WRKQ_DB: UNREACHABLE_WRKQ_LOCATOR, WRKQ_DB: UNREACHABLE_WRKQ_LOCATOR }
 }
 
 export function repositoryRedirectsIn(env: Record<string, string | undefined>): string[] {

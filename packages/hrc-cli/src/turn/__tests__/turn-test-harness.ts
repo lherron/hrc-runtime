@@ -207,6 +207,7 @@ export async function runTurnCommand(
 
 export function fakeTurnDependencies(cleanups?: string[]): TurnCommandDependencies {
   return {
+    readTaskState: async () => null,
     createStackedSummarizer() {
       return {
         async summarize() {

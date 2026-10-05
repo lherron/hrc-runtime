@@ -1,4 +1,5 @@
 import { CliUsageError } from 'cli-kit'
+import { runBoundedSubprocess } from 'hrc-core'
 
 /**
  * `hrc monitor watch EN-xxxxx` — turn progress for a presented envelope
@@ -34,7 +35,7 @@ type Presentation = {
  */
 export async function resolveEnvelopeSelectors(
   rawSelectors: readonly string[],
-  lookup: (envelopeId: string) => Promise<unknown> = showEnvelope
+  lookup: (envelopeId: string) => Promise<unknown> = wrkqEnvelopeShow(ENVELOPE_SHOW_TIMEOUT_MS)
 ): Promise<string[]> {
   const resolved: string[] = []
   for (const raw of rawSelectors) {
@@ -91,41 +92,40 @@ function presentationsOf(envelope: unknown): Presentation[] {
     )
 }
 
+/** A wedged or unreachable ledger fails the resolve instead of hanging it (T-10244). */
+export const ENVELOPE_SHOW_TIMEOUT_MS = 10_000
+
 /**
  * One-shot `wrkq rpc --stdio` read.
  *
  * The CLI is short-lived and resolves at most a handful of ids, so it spawns
  * per invocation rather than holding the daemon's long-lived transport.
  */
-async function showEnvelope(envelopeId: string): Promise<unknown> {
-  const child = Bun.spawn(['wrkq', 'rpc', '--stdio'], {
-    stdin: 'pipe',
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
-  const sink = child.stdin as import('bun').FileSink
-  sink.write(
-    `${JSON.stringify({
+export function wrkqEnvelopeShow(
+  timeoutMs: number,
+  env?: Record<string, string | undefined>
+): (envelopeId: string) => Promise<unknown> {
+  return async (envelopeId) => {
+    const request = JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
       method: 'wrkq.envelope.show',
       params: { envelope: envelopeId, principalRef: 'agent:hrc' },
-    })}\n`
-  )
-  await sink.flush()
-  void sink.end()
-  const [stdout, stderr] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ])
-  await child.exited
-  const line = stdout.split('\n').find((candidate) => candidate.trim().length > 0)
-  if (line === undefined) {
-    throw new Error(stderr.trim() || 'wrkq returned no response')
+    })
+    const { stdout, stderr } = await runBoundedSubprocess(['wrkq', 'rpc', '--stdio'], {
+      timeoutMs,
+      env,
+      stdin: `${request}\n`,
+      processGroup: true,
+    })
+    const line = stdout.split('\n').find((candidate) => candidate.trim().length > 0)
+    if (line === undefined) {
+      throw new Error(stderr.trim() || 'wrkq returned no response')
+    }
+    const frame = JSON.parse(line) as { result?: unknown; error?: { message?: string } }
+    if (frame.error !== undefined) {
+      throw new Error(frame.error.message ?? 'wrkq rejected the request')
+    }
+    return frame.result
   }
-  const frame = JSON.parse(line) as { result?: unknown; error?: { message?: string } }
-  if (frame.error !== undefined) {
-    throw new Error(frame.error.message ?? 'wrkq rejected the request')
-  }
-  return frame.result
 }

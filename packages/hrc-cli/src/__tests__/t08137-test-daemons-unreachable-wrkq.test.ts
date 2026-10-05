@@ -12,3 +12,16 @@ import { expect, test } from 'bun:test'
 test('a daemon spawned from a test process inherits an unreachable wrkq locator', () => {
   expect(process.env['HRC_WRKQ_DB']).toBe('rpc://127.0.0.1:1')
 })
+
+/**
+ * T-10244: a `wrkq` CLI child ignores HRC_WRKQ_DB and read the operator's live
+ * ledger. WRKQ_DB outranks WRKQ_DB_PATH (a differing WRKQ_DB_PATH is refused,
+ * never honoured), so the hermetic locator lives in WRKQ_DB and the path
+ * aliases are dropped; a test that wants a fixture ledger names it with
+ * WRKQ_DB or --db.
+ */
+test('a wrkq child spawned from a test process inherits an unreachable wrkq locator', () => {
+  expect(process.env['WRKQ_DB']).toBe('rpc://127.0.0.1:1')
+  expect(process.env['WRKQ_DB_PATH']).toBeUndefined()
+  expect(process.env['WRKQ_DB_PATH_FILE']).toBeUndefined()
+})

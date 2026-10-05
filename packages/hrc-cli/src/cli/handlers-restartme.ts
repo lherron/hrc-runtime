@@ -60,10 +60,15 @@ function parseJson(text: string): unknown {
   }
 }
 
+const HANDOFF_READ_TIMEOUT_MS = 15_000
+
 function checkHandoff(handoffId: string, scope: CallerScope): void {
   const result = spawnSync('wrkq', ['handoff', 'get', handoffId, '--json'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    // A wedged ledger refuses the restart instead of hanging it (T-10244).
+    timeout: HANDOFF_READ_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
   })
   if (result.error !== undefined) {
     refuse(

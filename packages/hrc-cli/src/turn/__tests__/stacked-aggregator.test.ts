@@ -409,6 +409,7 @@ describe('stacked turn aggregator', () => {
       now: clock.now,
       setTimeout: clock.setTimeout,
       clearTimeout: clock.clearTimeout,
+      readTaskState: async () => null,
       summarizer: { summarize: async () => 'final summary' },
       writeLine() {
         order.push('write')
@@ -532,6 +533,7 @@ describe('stacked turn aggregator', () => {
       now: clock.now,
       setTimeout: clock.setTimeout,
       clearTimeout: clock.clearTimeout,
+      readTaskState: async () => null,
       summarizer: { summarize: async () => 'catch-up' },
       writeLine(line: StackedLine) {
         lines.push(line)
@@ -594,6 +596,7 @@ describe('stacked turn aggregator', () => {
       now: clock.now,
       setTimeout: clock.setTimeout,
       clearTimeout: clock.clearTimeout,
+      readTaskState: async () => null,
       summarizer: {
         async summarize() {
           throw new Error('haiku timeout')

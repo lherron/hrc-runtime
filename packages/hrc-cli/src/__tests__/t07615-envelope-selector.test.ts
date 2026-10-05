@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'bun:test'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { CliUsageError } from 'cli-kit'
 
-import { isEnvelopeSelector, resolveEnvelopeSelectors } from '../monitor/envelope-selector.js'
+import {
+  isEnvelopeSelector,
+  resolveEnvelopeSelectors,
+  wrkqEnvelopeShow,
+} from '../monitor/envelope-selector.js'
 
 /**
  * `hrc monitor watch EN-xxxxx` (T-07612 §7, T-07615).
@@ -66,5 +73,24 @@ describe('T-07615 — hrc monitor watch EN-xxxxx', () => {
       throw new Error('wrkqd is unreachable')
     })
     await expect(attempt).rejects.toThrow('could not resolve EN-00042')
+  })
+
+  // T-10244: the one-shot `wrkq rpc --stdio` read is bounded.
+  it('refuses, naming the bound, when wrkq outlives it', async () => {
+    const bin = mkdtempSync(join(tmpdir(), 'slow-wrkq-'))
+    const wrkq = join(bin, 'wrkq')
+    writeFileSync(wrkq, '#!/bin/sh\n/bin/sleep 30\n')
+    chmodSync(wrkq, 0o755)
+    const startedAt = performance.now()
+    try {
+      const attempt = resolveEnvelopeSelectors(
+        ['EN-00042'],
+        wrkqEnvelopeShow(200, { ...process.env, PATH: bin })
+      )
+      await expect(attempt).rejects.toThrow('exceeded 200ms')
+      expect(performance.now() - startedAt).toBeLessThan(2_000)
+    } finally {
+      rmSync(bin, { recursive: true, force: true })
+    }
   })
 })

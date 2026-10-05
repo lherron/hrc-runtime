@@ -39,6 +39,7 @@ for (const key of Object.keys(process.env)) {
   if (!(key in hermetic)) Reflect.deleteProperty(process.env, key)
 }
 process.env['HRC_WRKQ_DB'] = hermetic['HRC_WRKQ_DB']
+process.env['WRKQ_DB'] = hermetic['WRKQ_DB']
 
 // Name mirrors ASP_DEFAULT_TASK_ENV in agent-spaces packages/agent-scope
 // (hardcoded here so the preload stays dependency-free for every package).
