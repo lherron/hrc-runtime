@@ -16,6 +16,18 @@ async function withRuntimeRoot(run: (runtimeRoot: string) => Promise<void>): Pro
   }
 }
 
+async function waitUntilDurable(gate: TurnAdmissionGate): Promise<void> {
+  const deadline = Date.now() + 2_000
+  while (!gate.snapshot().durable) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `turn admission marker never became durable: ${JSON.stringify(gate.snapshot())}`
+      )
+    }
+    await Bun.sleep(5)
+  }
+}
+
 describe('TurnAdmissionGate', () => {
   it('closes before its durability await and waits for every prior admission to leave', async () => {
     await withRuntimeRoot(async (runtimeRoot) => {
@@ -32,7 +44,9 @@ describe('TurnAdmissionGate', () => {
           return value
         })
 
-      await Bun.sleep(10)
+      // close() closes memory first and then persists the marker asynchronously;
+      // wait for that durability (not a fixed sleep) before asserting on it.
+      await waitUntilDurable(gate)
       expect(settled).toBe(false)
       expect(gate.snapshot()).toMatchObject({
         state: 'closed',
