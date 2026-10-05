@@ -1,0 +1,21 @@
+schema = 2
+
+# Every agent that changes or operates HRC in this project gets the
+# verify-hrc-runtime skill (spaces/verify-hrc-runtime). compose_mode "merge"
+# appends it to the agent's own base spaces; without it a target's compose
+# replaces them. The foundry resident (com.praesidium.foundry.hrc-runtime) gets
+# it through its target here, not its agent-profile.toml: a `space:project:` ref
+# in the profile makes every scratch root (no spaces/) fail to start a seat
+# (T-09445).
+
+[targets.clod]
+compose_mode = "merge"
+compose = ["space:project:verify-hrc-runtime"]
+
+[targets.cody]
+compose_mode = "merge"
+compose = ["space:project:verify-hrc-runtime"]
+
+[targets.foundry]
+compose_mode = "merge"
+compose = ["space:project:verify-hrc-runtime"]

@@ -1,0 +1,9 @@
+schema = 1
+id = "verify-hrc-runtime"
+version = "0.1.0"
+description = "Launch, check, drive and prove any HRC runtime feature, with evidence that survives"
+
+[plugin]
+name = "verify-hrc-runtime"
+description = "HRC verification: doctor, hv scratch daemons, the feature map, proof standards"
+keywords = ["hrc", "hrc-runtime", "verification", "hv"]

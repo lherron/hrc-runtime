@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# hv — scratch HRC daemons for verify-hrc-runtime.
+#
+# An isolated `hrc server serve` on its own runtime and state roots, launched in a
+# clean ghostmux pane (hrc-server refuses to boot under a coding-agent harness).
+# Every verb prints one JSON object; a refusal prints {error,message,next} and exits 1.
+set -uo pipefail
+
+# Short on purpose: broker sockets live under <root>/run/btmux/ and a macOS unix
+# socket path must fit 104 bytes (a root under var/state overflows: "File name too long").
+HV_HOME="${HV_HOME:-/tmp/hv}"
+LIVE_ASPD_SOCKET="${HV_ASPD_SOCKET:-$HOME/praesidium/var/aspd/run/aspd.sock}"
+
+die() { # error message next
+  jq -cn --arg e "$1" --arg m "$2" --arg n "${3:-}" '{error:$e,message:$m,next:$n}'
+  exit 1
+}
+
+name_dir() { printf '%s/%s' "$HV_HOME" "$(printf '%s' "$1" | tr 'A-Z' 'a-z')"; }
+
+need_name() { [ -n "${1:-}" ] || die usage "a scratch name is required" "hv scratch list"; }
+
+pid_alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
+
+# Run a command against scratch N: only the two roots change, so the CLI finds
+# the scratch socket; everything else (wrkq, ASP_HOME) is the caller's.
+with_env() {
+  local d; d="$(name_dir "$1")"; shift
+  HRC_RUNTIME_DIR="$d/run" HRC_STATE_DIR="$d/state" "$@"
+}
+
+cmd_up() {
+  local name="hv"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      *) die usage "unknown flag $1" "hv scratch up [--name N]" ;;
+    esac
+  done
+  local d; d="$(name_dir "$name")"
+  if [ -f "$d/pid" ] && pid_alive "$(cat "$d/pid")"; then
+    die already_up "scratch $name is up (pid $(cat "$d/pid"))" "hv scratch down $name"
+  fi
+  command -v ghostmux >/dev/null || die no_ghostmux "ghostmux is not on PATH" "install ghostmux"
+  mkdir -p "$d/run" "$d/state"
+  rm -f "$d/pid" "$d/exit"
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$d/up_at"
+  # The launcher sets only what an isolated daemon needs. It omits the live
+  # plist's HRC_ACP_WEBHOOK_URL (would post events to the live ACP),
+  # HRC_EVENT_INGEST_TCP_PORT (port clash with the live daemon) and node identity.
+  cat > "$d/launch.sh" <<SH
+#!/bin/sh
+cd "$d"
+export HRC_RUNTIME_DIR="$d/run" HRC_STATE_DIR="$d/state"
+export ASP_HOME="\${ASP_HOME:-$HOME/praesidium/var/spaces-repo}"
+export HRC_ASPD_SOCKET="$LIVE_ASPD_SOCKET"
+export HRC_HEADLESS_CODEX_BROKER_ENABLED=1 HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED=1 HRC_BROKER_DURABLE_IPC_ENABLED=1
+export HRC_CODEX_CLI_TMUX_BROKER_ENABLED=0 HRC_MAIL_KICKER_ENABLED=0
+unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CODEX_SANDBOX
+echo \$\$ > "$d/pid"
+exec hrc server serve >> "$d/serve.log" 2>&1
+SH
+  chmod +x "$d/launch.sh"
+  local surface
+  surface="$(ghostmux new --tab --title "hv: $name" --cwd "$d" --command "$d/launch.sh" --keep-open --json 2>&1)" \
+    || die ghostmux_failed "$surface" "ghostmux status"
+  printf '%s' "$surface" | jq -r '.id // .uuid // .surface_id // empty' > "$d/surface"
+  local i ok=""
+  for i in $(seq 1 60); do
+    if [ -S "$d/run/hrc.sock" ] && with_env "$name" hrc server status --json 2>/dev/null | jq -e '.api.socketPath' >/dev/null 2>&1; then
+      ok=1; break
+    fi
+    sleep 0.5
+  done
+  [ -n "$ok" ] || die not_ready "scratch $name did not answer status in 30 s; read $d/serve.log" "hv scratch down $name"
+  with_env "$name" hrc server status --json | jq -c --arg n "$name" --arg root "$d" \
+    --arg surface "$(cat "$d/surface")" --arg pid "$(cat "$d/pid" 2>/dev/null)" \
+    '{name:$n, root:$root, pid:($pid|tonumber? // null), surface:$surface, socket:.api.socketPath, stateRoot:.api.stateRoot, sourceCommit:.release.hrcBuild.sourceCommit, runningEqualsInstalled:.release.runningEqualsInstalled}'
+}
+
+cmd_down() {
+  local name="" dry=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry=1; shift ;;
+      *) name="$1"; shift ;;
+    esac
+  done
+  need_name "$name"
+  local d; d="$(name_dir "$name")"
+  [ -d "$d" ] || die not_found "no scratch $name under $HV_HOME" "hv scratch list"
+  local pid surface runtimes
+  pid="$(cat "$d/pid" 2>/dev/null || true)"
+  surface="$(cat "$d/surface" 2>/dev/null || true)"
+  runtimes="[]"
+  if pid_alive "$pid"; then
+    runtimes="$(with_env "$name" hrc runtime list --json 2>/dev/null \
+      | jq -c '[.[]? | select(.status != "terminated" and .status != "dead") | .runtimeId]' 2>/dev/null || echo '[]')"
+  fi
+  if [ -n "$dry" ]; then
+    jq -cn --arg n "$name" --arg root "$d" --arg pid "$pid" --arg s "$surface" --argjson rt "$runtimes" \
+      '{name:$n, dry_run:true, would_terminate:$rt, would_stop_pid:($pid|tonumber? // null), would_kill_surface:$s, would_remove:[$root+"/run",$root+"/state"]}'
+    return 0
+  fi
+  local rt
+  for rt in $(printf '%s' "$runtimes" | jq -r '.[]'); do
+    with_env "$name" hrc runtime terminate "$rt" >/dev/null 2>&1 || true
+  done
+  if pid_alive "$pid"; then
+    kill -TERM "$pid" 2>/dev/null
+    for _ in $(seq 1 20); do pid_alive "$pid" || break; sleep 0.25; done
+    pid_alive "$pid" && kill -KILL "$pid" 2>/dev/null
+  fi
+  [ -n "$surface" ] && ghostmux kill-surface -t "$surface" --force >/dev/null 2>&1
+  rm -rf "$d/run" "$d/state" "$d/pid" "$d/surface"
+  jq -cn --arg n "$name" --argjson rt "$runtimes" --arg pid "$pid" \
+    '{name:$n, terminated:$rt, stopped_pid:($pid|tonumber? // null), removed:true, kept:["serve.log","launch.sh","up_at"]}'
+}
+
+cmd_list() {
+  local d out="[]"
+  for d in "$HV_HOME"/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    local pid alive=false
+    pid="$(cat "$d/pid" 2>/dev/null || true)"
+    pid_alive "$pid" && alive=true
+    out="$(printf '%s' "$out" | jq -c --arg n "$(basename "$d")" --arg pid "$pid" --argjson alive "$alive" \
+      '. + [{name:$n, pid:($pid|tonumber? // null), alive:$alive}]')"
+  done
+  jq -cn --argjson s "$out" '{scratches:$s}'
+}
+
+cmd_env() {
+  need_name "${1:-}"
+  local d; d="$(name_dir "$1")"
+  printf 'export HRC_RUNTIME_DIR=%q HRC_STATE_DIR=%q\n' "$d/run" "$d/state"
+}
+
+cmd_run() {
+  need_name "${1:-}"
+  local name="$1"; shift
+  [ "${1:-}" = "--" ] && shift
+  [ $# -gt 0 ] || die usage "no command" "hv run N -- hrc server status --json"
+  local d; d="$(name_dir "$name")"
+  [ -S "$d/run/hrc.sock" ] || die not_up "scratch $name has no socket" "hv scratch up --name $name"
+  with_env "$name" "$@"
+}
+
+# Append one drive step to FILE in the Evidence layout: a `## <UTC>` line, `$ CMD`,
+# its output and its exit code. CMD runs under bash -c, so pipes work. The
+# command's own output is passed through; the exit code is CMD's.
+cmd_rec() {
+  [ $# -ge 2 ] || die usage "a drive file and a command are required" "hv rec <artifact_dir>/NN-x/drive.txt 'hrc server status --json'"
+  local file="$1"; shift
+  [ "${1:-}" = "--" ] && shift
+  mkdir -p "$(dirname "$file")"
+  local out rc
+  out="$(bash -c "$*" 2>&1)"; rc=$?
+  { printf '## %s\n$ %s\n%s\nexit %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" "$out" "$rc"; } >> "$file"
+  printf '%s\n' "$out"
+  return "$rc"
+}
+
+cmd_evidence() {
+  need_name "${1:-}"
+  [ -n "${2:-}" ] || die usage "an output directory is required" "hv evidence N DIR"
+  local name="$1" out="$2" d; d="$(name_dir "$name")"
+  case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
+  # /tmp is /private/tmp on macOS; refuse either spelling of the scratch root.
+  case "$out/" in
+    "$d"/*|"/private$d"/*) die inside_scratch "evidence must not live inside the scratch root, which down removes" "hv evidence $name <artifact_dir>/evidence/$name" ;;
+  esac
+  mkdir -p "$out"
+  cp "$d/serve.log" "$out/serve.log" 2>/dev/null || true
+  with_env "$name" hrc server status --json > "$out/status.json" 2>&1 || true
+  with_env "$name" hrc runtime list --json > "$out/runtimes.json" 2>&1 || true
+  with_env "$name" hrc session list --json > "$out/sessions.json" 2>&1 || true
+  if [ -f "$d/state/state.sqlite" ]; then
+    sqlite3 -readonly "$d/state/state.sqlite" \
+      "select hrc_seq, ts, event_kind, scope_ref, runtime_id from hrc_events order by hrc_seq" > "$out/hrc_events.tsv" 2>&1 || true
+  fi
+  jq -cn --arg n "$name" --arg o "$out" '{name:$n, evidence:$o, files:($ARGS.positional)}' --args $(cd "$out" && ls)
+}
+
+case "${1:-}" in
+  scratch)
+    shift
+    case "${1:-}" in
+      up) shift; cmd_up "$@" ;;
+      down) shift; cmd_down "$@" ;;
+      list) shift; cmd_list ;;
+      *) die usage "scratch up|down|list" "hv scratch up --name <task>" ;;
+    esac ;;
+  env) shift; cmd_env "$@" ;;
+  run) shift; cmd_run "$@" ;;
+  evidence) shift; cmd_evidence "$@" ;;
+  rec) shift; cmd_rec "$@" ;;
+  *) die usage "hv scratch up|down|list, hv env N, hv run N -- CMD, hv evidence N DIR, hv rec FILE CMD" "hv scratch up --name <task>" ;;
+esac
