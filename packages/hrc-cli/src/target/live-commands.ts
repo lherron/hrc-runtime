@@ -9,10 +9,10 @@ import { resolveLiveTargetToSessionRef, resolveSummonTarget } from './resolve.js
  * The live-runtime verbs, absorbed from `hrcchat` (T-07612 §9.2).
  *
  * `summon` materializes or pre-warms a target. `send` injects literal
- * keystrokes and BYPASSES THE LEDGER — nothing it delivers becomes an envelope,
- * an obligation, or a record anyone can read afterwards, which is exactly why
- * the warning stays attached to it. `peek` reads a pane. `doctor` checks
- * reachability.
+ * keystrokes outside the wrkq ledger — nothing it delivers becomes an envelope
+ * or an obligation, which is exactly why the warning stays attached to it. HRC
+ * still records the delivery as a run in hrc_events. `peek` reads a pane.
+ * `doctor` checks reachability.
  */
 
 export type SummonOptions = { json?: boolean | undefined }
@@ -123,9 +123,11 @@ export async function targetDoctorChecks(
     const target = await client.getTarget(sessionRef)
     checks.push({ name: 'target-lookup', status: 'ok', detail: target.state })
 
-    if (target.state === 'broken') {
-      checks.push({ name: 'target-health', status: 'fail', detail: 'target is in broken state' })
-    }
+    checks.push(
+      target.state === 'broken'
+        ? { name: 'target-health', status: 'fail', detail: 'target is in broken state' }
+        : { name: 'target-health', status: 'ok', detail: target.state }
+    )
 
     if (target.capabilities.dmReady) {
       checks.push({ name: 'dm-capability', status: 'ok' })

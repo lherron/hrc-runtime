@@ -16,8 +16,8 @@ How you tell whether a daemon is up, which build it runs, and whether its node i
   peers) and `api.aspd` (configured, reachable, aspd release).
 - `hrc doctor [target] [--json] [--strict]`: rows `hrc-daemon`, `node-identity`, `federation-config`,
   `federation-peer:<node>`, `placement-skew`, `placement-policy` (warn per unreadable declaration); with a
-  target also `target-lookup`, `dm-capability`, `runtime` (and `target-health`, only when the target is
-  broken); a target that doesn't resolve gives one `target-resolve` fail row instead, and exit 1. A peer that
+  target also `target-lookup`, `target-health` (`ok` with the target state, `fail` when broken),
+  `dm-capability`, `runtime`; a target that doesn't resolve gives one `target-resolve` fail row instead, and exit 1. A peer that
   isn't healthy is a warn, not a fail. An unreachable daemon gives a single `hrc-daemon` fail row and exit 1.
   `--json` is an array of `{name, status, detail}`. Exit 0 with warns, 1 with `--strict` and a warn.
 - `hrc info`: the agent runbook, including every `server status --json` path.
@@ -62,7 +62,6 @@ hrc info | head -40
 - **`~ placement-policy` warns are normal on max3.** Seven on 2026-10-05: task scopes whose worktree is gone
   (`ENOENT … .Trash/…`), ambiguous (`multiple worktrees match T-…`) or whose project root is not canonical.
   They don't stop a drive; they make `--strict` exit 1.
-- `target-health` appears only for a broken target, despite the help listing it with every target.
 - **Live `server subscribers` lists many idle follows.** 28 active on 2026-10-05: one `broker-events`
   (`mail`, 11254 accepted) and 27 `events` follows on old scopes and lanes (`…steering-e2e-1778176114`,
   `discord-…`), each `enqueued=0`, `receipt=awaiting-first-ack` (`T-10350/01-server-health/drive.txt`). That

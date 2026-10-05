@@ -402,6 +402,28 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(result.exitCode).not.toBe(0)
     expect(result.stderr).toContain('mutually exclusive')
   })
+
+  // -- help and handler agree (T-10331) --
+  it('hrc runtime terminate declares --json, since it always prints JSON', async () => {
+    const result = await runCli(['runtime', 'terminate', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('--json')
+  })
+
+  it('hrc ls help marks the noun required, and omitting it is a usage error', async () => {
+    const help = await runCli(['ls', '--help'])
+    expect(help.stdout).toContain('[options] <noun>')
+    const bare = await runCli(['ls'])
+    expect(bare.exitCode).toBe(2)
+    expect(bare.stderr).toContain("missing required argument 'noun'")
+  })
+
+  it('hrc send help says a submitting send is recorded, not that it bypasses everything', async () => {
+    const result = await runCli(['send', '--help'])
+    expect(result.stdout).not.toContain('BYPASSES THE LEDGER')
+    expect(result.stdout).toContain('runId')
+    expect(result.stdout).toContain('--no-enter on a broker-hosted runtime')
+  })
 })
 
 // ===========================================================================

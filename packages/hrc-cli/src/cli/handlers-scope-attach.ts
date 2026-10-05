@@ -11,7 +11,7 @@ import { resolveManagedScopeContext } from './scope.js'
 import { createClient, fatal } from './shared.js'
 
 function printAttachUsage(): void {
-  process.stdout.write(`Usage: hrc attach <scope> [--dry-run]
+  process.stdout.write(`Usage: hrc attach <scope> [--dry-run] [--json]
 
   Resolve a managed session by scope and attach to its latest active runtime.
 
@@ -20,14 +20,34 @@ function printAttachUsage(): void {
 `)
 }
 
-async function printLocalAttachPreview(scope: string, sessionRef: string): Promise<void> {
+const ATTACH_PREVIEW_PLAN = {
+  runtimeLookup: 'latest non-unavailable runtime for the resolved host session',
+  recovery: 'detached OpenAI sessions materialize a fresh tmux runtime on attach',
+  action: 'POST /v1/runtimes/attach for that runtime, then exec returned argv',
+} as const
+
+async function printLocalAttachPreview(
+  scope: string,
+  sessionRef: string,
+  json: boolean
+): Promise<void> {
+  if (json) {
+    printJson({
+      dryRun: true,
+      scope,
+      sessionRef,
+      ...ATTACH_PREVIEW_PLAN,
+      serverConsulted: false,
+    })
+    return
+  }
   const w = (s: string) => process.stdout.write(`${s}\n`)
 
   w(`hrc attach ${scope} --dry-run  (local plan preview — no server state consulted)\n`)
   w(`  sessionRef:    ${sessionRef}`)
-  w('  runtimeLookup: latest non-unavailable runtime for the resolved host session')
-  w('  recovery:      detached OpenAI sessions materialize a fresh tmux runtime on attach')
-  w('  action:        POST /v1/runtimes/attach for that runtime, then exec returned argv')
+  w(`  runtimeLookup: ${ATTACH_PREVIEW_PLAN.runtimeLookup}`)
+  w(`  recovery:      ${ATTACH_PREVIEW_PLAN.recovery}`)
+  w(`  action:        ${ATTACH_PREVIEW_PLAN.action}`)
   w('')
   w('  Note: this preview does not resolve the session or inspect runtime state.')
   w('  Run without --dry-run to execute.')
@@ -59,7 +79,7 @@ export async function cmdAttach(args: string[]): Promise<void> {
     sessionRef = scope.sessionRef
 
     if (dryRun) {
-      await printLocalAttachPreview(target, sessionRef)
+      await printLocalAttachPreview(target, sessionRef, jsonOutput)
       return
     }
 

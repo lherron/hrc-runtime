@@ -18,7 +18,7 @@ server `runtime-start-handlers.ts`, `runtime-control-handlers.ts`, `runtime-list
 - `hrc runtime list --json` (an array of non-terminated runtimes), `hrc runtime inspect <id> --json`
   (`{hrc, broker}` authority views), `hrc session list --json`.
 - `hrc ls <runtimes|sessions|messages> [--json]`: the inventory by noun. The noun is required (exit 2
-  without one, though the help prints `[noun]`: tracked in T-10331).
+  without one; the help prints `<noun>`).
 - `hrc runtime status <target> [--json]`: lifecycle plus broker capture (`capture.state`, `deferredCount`,
   `blockedUnknown[]` per native type).
 - `hrc session resolve --scope <scopeRef> [--json]`: finds the active host session (`found`, `created:
@@ -28,7 +28,9 @@ server `runtime-start-handlers.ts`, `runtime-control-handlers.ts`, `runtime-list
 - `hrc runtime capture <runtimeId>`: the pane text by runtime id. **Broken for broker-hosted runtimes on
   5bdb6c4e** (T-10353, Gotchas); use `peek`.
 - `hrc peek <target> [--lines N]`: the live pane tail.
-- `hrc send <target> <text> [--no-enter] [--json]`: literal keystrokes into the pane, outside the ledger.
+- `hrc send <target> <text> [--no-enter] [--json]`: literal keystrokes into the pane; no envelope or obligation, but a
+  submitting send returns a `runId` and its turn is in `hrc_events`. `--no-enter` on a broker-hosted runtime is
+  held by the daemon, not typed (Gotchas).
 - `hrc summon <target> --json`: ensure-target; on an existing scope it reports `state: bound` and the last
   applied intent without birthing.
 - `hrc runtime terminate <id> [--reason R] [--drop-continuation]`: ends the runtime and, by default, keeps
@@ -82,11 +84,14 @@ hv run <task> -- hrc monitor transcript <new runtimeId> --tail 6   # the recalle
 - **`hrc runtime list --json` is a bare array**, not `{runtimes: […]}`; `.runtimes` on it is a jq error.
   Terminated runtimes drop out of it, and `hrc show <scope>` then refuses "did not match any runtime among 0
   known candidates".
-- **`send --no-enter` is not visible in `peek`.** It answered `delivered: true`, but a `peek` 1 s later showed
-  an empty input line; the text was there, and the next `send` submitted `hv-send-marker` + its own text as
-  one prompt. Prove an unsubmitted `send` by the next submission, not by `peek`.
-- **`send` mints a run.** Its JSON answers `runId` and `status: started` even though the help says it
-  bypasses the ledger: there is no envelope or obligation, but the turn it causes is in `hrc_events`.
+- **`send --no-enter` is not visible in `peek`, by design.** On a broker-hosted runtime the daemon buffers the
+  text in memory (`pendingBrokerLiteralInputs`, event `target.literal-input` with `delivery:
+  broker-buffered-literal`, no `runId`) and prepends it to the next `send` that presses enter. A direct `tmux
+  capture-pane` of the tui pane is empty too, at +0 to +4 s, so it is not a peek timing artifact; a daemon
+  restart drops the held text (2026-10-05, `T-10331/item5/repro.txt`). Prove an unsubmitted `send` by the
+  next submission, not by `peek`.
+- **`send` mints a run.** A submitting send answers `runId` and `status: started`: there is no envelope or
+  obligation, but the turn it causes is in `hrc_events`.
 - **`hrc runtime capture` refuses every broker-hosted runtime.** On a fresh `hrc start` claude runtime it
   answers `[runtime_unavailable] … presentation pane is unavailable or changed` with `expected.windowName:
   main`, `observed.windowName: tui`, every other field equal, while `peek` of the same pane works
@@ -97,8 +102,7 @@ hv run <task> -- hrc monitor transcript <new runtimeId> --tail 6   # the recalle
 - **`monitor wait --until idle` right after `send` races the send.** Armed 0 s after `send` returned, it
   answered `already_true` from the previous idle (`went idle 21:07:28`) before the sent turn went busy
   (2026-10-05). Confirm a send by its `SAYS` line in the transcript or `turn.completed` for its `runId`.
-- `hrc runtime terminate` has no `--json` ("unknown option: --json — did you mean '--reason'?"); it prints
-  JSON anyway.
+- `hrc runtime terminate` always prints its result as JSON; `--json` is accepted and changes nothing.
 - On a single-node scratch, `target locate` shows `authority: unbound` even with a live runtime (feature 5).
 
 ## Proven when

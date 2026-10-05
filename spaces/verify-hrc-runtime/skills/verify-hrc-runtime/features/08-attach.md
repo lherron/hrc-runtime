@@ -44,7 +44,8 @@ ghostmux kill-surface -t <id> --force
   detach-client -t <tty>` (from `list-clients`), as the isolated-daemon recipe says.
 - **Bound every `tmux -S` with `timeout`** and glob only `btmux/*-rt-*.sock`: the same directory can hold
   `codex-app-server-renderer-control.*.sock`, which is not a tmux server and hangs `tmux -S`.
-- `hrc attach --dry-run --json` prints the human plan; `--json` changes nothing there (2026-10-05).
+- `hrc attach --dry-run --json` prints the plan as one JSON object (`dryRun`, `scope`, `sessionRef`,
+  `serverConsulted: false`, …); without `--json` it prints the human plan.
 - The socket name is truncated (`…-rt-fa63c507-774c-45b6-8fc5-9ffb3.sock`) while the session name carries the
   full runtime id; match on the session name.
 

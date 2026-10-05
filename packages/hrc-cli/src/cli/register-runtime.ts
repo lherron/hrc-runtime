@@ -470,6 +470,7 @@ export function registerRuntimeCommands(program: Command): void {
     .option('--no-drop-continuation', 'explicitly preserve continuation')
     .option('--reason <reason>', 'operator intent stamped on the runtime.terminated audit event')
     .option('--source <source>', 'tool/source that initiated the terminate')
+    .option('--json', 'output as JSON (the default; terminate always prints its result as JSON)')
     .action(async (runtimeId, _opts, cmd: Command) => {
       const rawArgv = rawArgvForVerb(cmd, 'terminate')
       await cmdTerminate(
@@ -478,7 +479,7 @@ export function registerRuntimeCommands(program: Command): void {
           cmd.opts(),
           {
             strings: ['reason', 'source'],
-            booleans: [],
+            booleans: ['json'],
             negatedBooleans: ['drop-continuation'],
           },
           rawArgv
@@ -565,7 +566,8 @@ export function registerRuntimeCommands(program: Command): void {
     agentUsage: {
       example: 'hrc runtime terminate runtime:<id> --no-drop-continuation',
       exitCodes: '0 terminated; 2 usage/conflicting flags; 1 termination failure',
-      output: 'mutation result; choose continuation preservation explicitly',
+      output:
+        'JSON mutation result (with or without --json); choose continuation preservation explicitly',
     },
   })
   annotateChild(monitor, 'events', {

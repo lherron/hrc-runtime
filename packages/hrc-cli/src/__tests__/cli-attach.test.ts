@@ -113,6 +113,24 @@ describe('hrc attach <scope>', () => {
     }
   })
 
+  it('emits the dry-run plan as JSON under --json (T-10331)', async () => {
+    const result = await runCli(
+      ['attach', 'rex@agent-spaces', '--dry-run', '--json'],
+      cliEnv({
+        HRC_RUNTIME_DIR: oldEngineDaemon.runtimeDir,
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    const plan = JSON.parse(result.stdout)
+    expect(plan.dryRun).toBe(true)
+    expect(plan.scope).toBe('rex@agent-spaces')
+    expect(plan.sessionRef).toStartWith('agent:rex:project:agent-spaces')
+    expect(plan.serverConsulted).toBe(false)
+  })
+
   // SKIP: drives `hrc start` (headless) first, which hrc-server retired in the
   // broker cutover (startRuntimeForSession hard-fails it). The start step exits 1
   // before attach can be exercised. Requires hrc-server changes; cross-package

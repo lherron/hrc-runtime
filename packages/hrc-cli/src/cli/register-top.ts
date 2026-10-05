@@ -332,11 +332,11 @@ The output always names the resolved kind and the concrete ID(s).
     .command('ls')
     .alias('list')
     .description('list runtimes | sessions | messages')
-    .argument('[noun]', 'runtimes | sessions | messages')
+    .argument('<noun>', 'runtimes | sessions | messages')
     .option('--json', 'output as JSON')
     .allowUnknownOption(true)
     .allowExcessArguments(true)
-    .action(async (noun: string | undefined, _opts, cmd: Command) => {
+    .action(async (noun: string, _opts, cmd: Command) => {
       const rawRest = rawArgvForVerb(cmd, 'ls', { offset: 2, fallback: cmd.args.slice(1) })
       const rest: string[] = []
       for (let index = 0; index < rawRest.length; index += 1) {
@@ -457,12 +457,15 @@ The output always names the resolved kind and the concrete ID(s).
   const sendCmd = program
     .command('send')
     .description(
-      'inject literal input into a live tmux runtime; bypasses the ledger; not for tracked work'
+      'inject literal input into a live tmux runtime; no envelope or obligation; not for tracked work'
     )
     .argument('<target>', 'target handle')
     .argument('[message]', 'text to send (use - for stdin)')
     .option('--enter', 'send enter key after text (default)')
-    .option('--no-enter', 'do not send enter key')
+    .option(
+      '--no-enter',
+      'do not send enter key; on a broker-hosted runtime the text is held by the daemon, not typed (see below)'
+    )
     .option('--file <path>', 'read body from file')
     .option('--json', 'emit the delivery result as JSON')
     .action(async (target, message, opts) => {
@@ -474,7 +477,11 @@ The output always names the resolved kind and the concrete ID(s).
 
   sendCmd.addHelpText(
     'before',
-    'Inject literal text into a live tmux runtime (raw keystrokes).\n\nBYPASSES THE LEDGER: what you send here becomes no envelope, no obligation, and\nno record anyone can read afterwards. Use `wrkc say` for anything that should\nsurvive the runtime.\n'
+    'Inject literal text into a live tmux runtime (raw keystrokes).\n\nNOT A MESSAGE: what you send here becomes no wrkc envelope and no obligation, so\nno one owes a reply and it is not in any room history. HRC still records the\ndelivery: a send that submits returns a runId, and its turn lands in hrc_events,\nbut that is runtime evidence, not tracked work. Use `wrkc say` for anything\nthat should survive the runtime.\n'
+  )
+  sendCmd.addHelpText(
+    'after',
+    '\n--no-enter on a broker-hosted runtime (every `hrc start`/summon birth) does not\ntype into the pane. The daemon holds the text in memory and prepends it to the\nnext send that presses enter, which submits both as one prompt. So `hrc peek`\nshows an empty input line after it, and a daemon restart drops the held text.\nProve an unsubmitted send by the next submission, not by peek.\n'
   )
 
   program
@@ -492,7 +499,10 @@ The output always names the resolved kind and the concrete ID(s).
     .description('attach to a live runtime')
     .argument('[scope]', 'scope or runtime ID to attach to')
     .option('--dry-run', 'local plan preview — no side effects')
-    .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
+    .option(
+      '--json',
+      'emit the --dry-run plan as JSON; on error, emit structured JSON (includes broker rejection detail)'
+    )
     .action(async (scope, _opts, cmd: Command) => {
       const positionals = scope !== undefined ? [scope] : []
       const args = toLegacyArgv(positionals, cmd.opts(), {
@@ -729,7 +739,7 @@ The output always names the resolved kind and the concrete ID(s).
       example: 'hrc send cody@hrc-runtime:T-07011 "y"',
       exitCodes: '0 delivered; 2 usage; 1 no live runtime to inject into',
       output:
-        'raw keystrokes into a live pane; BYPASSES THE LEDGER, so nothing sent here is durable — use `wrkc say` for that',
+        'raw keystrokes into a live pane; returns a runId and lands in hrc_events, but no wrkc envelope or obligation — use `wrkc say` for tracked work',
     },
   })
   annotateTop(program, 'peek', {
