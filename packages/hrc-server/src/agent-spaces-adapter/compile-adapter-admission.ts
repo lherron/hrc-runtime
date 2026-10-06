@@ -130,7 +130,7 @@ function allocatedIdentityMismatches(
 }
 
 function canonicalStartIdentityMismatches(
-  startRequest: Record<string, unknown>,
+  startRequest: { spec?: unknown; initialInput?: unknown },
   identity: RuntimeIdentityAllocation,
   hosting: Record<string, unknown>
 ): IdentityMismatch[] {
@@ -322,7 +322,8 @@ export function admitV2Execution(
       response['plan'] === undefined ? undefined : typeof response['plan']
     )
   }
-  const plan = response['plan'] as V2CompiledPlan
+  const planRecord = response['plan']
+  const plan = planRecord as V2CompiledPlan
   if (plan.schemaVersion !== 'agent-runtime-plan/v2') {
     return admissionRefusal(
       'v2-plan-required',
@@ -332,7 +333,7 @@ export function admitV2Execution(
     )
   }
   if (!hasDurablePlanMetadata(plan)) {
-    const record = plan as unknown as Record<string, unknown>
+    const record = planRecord
     const field = ['planHash', 'compileId', 'createdAt'].find(
       (key) => !isNonEmptyString(record[key])
     )
@@ -381,7 +382,7 @@ export function admitV2Execution(
       `plan.execution.${missingExecutionField}`,
       missingExecutionField === 'dispatchRequest.startRequest'
         ? undefined
-        : (execution as unknown as Record<string, unknown>)[missingExecutionField]
+        : execution[missingExecutionField]
     )
   }
   if (execution.protocol !== 'harness-broker/0.2') {
@@ -393,8 +394,10 @@ export function admitV2Execution(
     )
   }
   if (requestedOperatorPresentation === 'tmux-tui') {
-    const selection = plan.selection as unknown as Record<string, unknown>
-    const provenance = isRecord(selection['provenance']) ? selection['provenance'] : {}
+    const selection = plan.selection
+    const provenance: Record<string, unknown> = isRecord(selection['provenance'])
+      ? selection['provenance']
+      : {}
     const surface: Record<string, unknown> = isRecord(execution['presentationSurface'])
       ? execution['presentationSurface']
       : {}
@@ -455,8 +458,7 @@ export function admitV2Execution(
   }
   const typed = execution as V2SelectedExecution
   const startRequest = typed.dispatchRequest.startRequest
-  const startRequestRecord = startRequest as unknown as Record<string, unknown>
-  const startSpec = startRequestRecord['spec']
+  const startSpec = startRequest['spec']
   const startDriver =
     isRecord(startSpec) && isRecord(startSpec['driver']) ? startSpec['driver']['kind'] : undefined
   if (!isNonEmptyString(startDriver) || startDriver !== typed.driver) {
@@ -468,9 +470,9 @@ export function admitV2Execution(
     )
   }
   const startIdentityMismatches = canonicalStartIdentityMismatches(
-    startRequestRecord,
+    startRequest,
     identity,
-    typed.hosting as unknown as Record<string, unknown>
+    execution.hosting
   )
   if (startIdentityMismatches.length > 0) {
     return identityAdmissionRefusal('start-request-identity', startIdentityMismatches)
@@ -482,12 +484,12 @@ export function admitV2Execution(
   if (
     executionFormat === 'format2' &&
     identity.initialInputId !== undefined &&
-    !isRecord(startRequestRecord['initialInput'])
+    !isRecord(startRequest['initialInput'])
   ) {
     return admissionRefusal(
       'format2_initial_input_undeliverable',
       'startRequest.initialInput',
-      startRequestRecord['initialInput'],
+      startRequest['initialInput'],
       'broker-deliverable initialInput'
     )
   }

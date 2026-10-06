@@ -217,7 +217,7 @@ export function lifecyclePayload(
       const payload = envelope.payload as UserMessagePayload
       // createUserPromptPayload builds the {type:'message_end', role:'user'}
       // shape (with turn-text truncation) consumers already render.
-      return createUserPromptPayload(payload.content) as unknown as Record<string, unknown>
+      return { ...createUserPromptPayload(payload.content) }
     }
     case 'assistant.message.completed': {
       const payload = envelope.payload as AssistantMessageCompletedPayload
@@ -229,44 +229,44 @@ export function lifecyclePayload(
       // assistant message, `final:false` for the mid-turn narration and exactly
       // one `final:true` per run; dropping it here left the reply projection
       // unable to tell an agent notice from the answer.
-      const event: AgentMessageEvent = {
+      const event = {
         type: 'message_end',
         message: { role: 'assistant', content },
         ...(payload.final !== undefined ? { final: payload.final } : {}),
-      }
-      return event as unknown as Record<string, unknown>
+      } satisfies AgentMessageEvent
+      return event
     }
     case 'tool.call.started': {
       const payload = envelope.payload as ToolCallStartedPayload
-      const event: ToolExecutionStartEvent = {
+      const event = {
         type: 'tool_execution_start',
         toolUseId: payload.toolCallId,
         toolName: payload.name,
         input: isRecord(payload.input) ? payload.input : {},
-      }
-      return event as unknown as Record<string, unknown>
+      } satisfies ToolExecutionStartEvent
+      return event
     }
     case 'tool.call.completed': {
       const payload = envelope.payload as ToolCallCompletedPayload
-      const event: ToolExecutionEndEvent = {
+      const event = {
         type: 'tool_execution_end',
         toolUseId: payload.toolCallId,
         toolName: payload.name,
         result: toolResultFromBrokerResult(payload.result),
         ...(payload.isError !== undefined ? { isError: payload.isError } : {}),
-      }
-      return event as unknown as Record<string, unknown>
+      } satisfies ToolExecutionEndEvent
+      return event
     }
     case 'tool.call.failed': {
       const payload = envelope.payload as ToolCallFailedPayload
-      const event: ToolExecutionEndEvent = {
+      const event = {
         type: 'tool_execution_end',
         toolUseId: payload.toolCallId,
         toolName: payload.name,
         result: { content: [{ type: 'text', text: payload.message }] },
         isError: true,
-      }
-      return event as unknown as Record<string, unknown>
+      } satisfies ToolExecutionEndEvent
+      return event
     }
     case 'turn.completed':
       return { success: true, transport, source: 'broker', ...terminalTurnIdentity(envelope) }

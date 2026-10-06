@@ -464,6 +464,6 @@ export async function compileBrokerRuntimePlan(
     ...(selection.execution.dispatchRequest.dispatchEnv
       ? { dispatchEnv: selection.execution.dispatchRequest.dispatchEnv }
       : {}),
-    diagnostics: (response as unknown as V2CompileResponse).diagnostics,
+    diagnostics: response.diagnostics,
   }
 }
