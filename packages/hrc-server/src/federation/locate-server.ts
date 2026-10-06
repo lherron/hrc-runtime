@@ -22,6 +22,7 @@ import type { LocateBindingsReport } from 'hrc-core'
 import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import type { HrcDatabase, PlacementLedgerRecord } from 'hrc-store-sqlite'
 
+import { writeServerLog } from '../server-log.js'
 import { deriveNodeIdFromHostname } from './federation-config.js'
 import type { FederationConfig } from './federation-config.js'
 import {
@@ -48,6 +49,8 @@ export type LocateServerContext = {
   /** Production local-authority client owned by the registry endpoint. */
   readonly bindingRegistryEndpoint?: { readonly registryClient: BindingRegistryClient } | undefined
   readonly policyFor?: ((scopeRef: string) => Promise<PlacementPolicyResolution>) | undefined
+  /** T-09760: total time budget for one ledger skew scan. Tests shorten it. */
+  readonly bindingsScanBudgetMs?: number | undefined
   readonly observedFor?: ((scopeRef: string) => readonly LocateObservedRuntime[]) | undefined
 }
 
@@ -128,6 +131,12 @@ export async function locateScopeOnServer(
   return locateScope({ scopeRef, deps: buildLocateDeps(server) })
 }
 
+/** T-09760: warm, the 3.5k-binding scan on max3 takes ~1.5s; cold, it took 9-11 minutes. */
+export const DEFAULT_BINDINGS_SCAN_BUDGET_MS = 20_000
+/** A scan slower than this logs its slowest bindings even when it finishes. */
+const BINDINGS_SCAN_SLOW_MS = 5_000
+const BINDINGS_SCAN_SLOWEST_LOGGED = 5
+
 /**
  * The whole-ledger skew sweep behind the doctor surface.
  *
@@ -150,14 +159,45 @@ export async function scanServerLedgerForSkew(
   }
 
   const localNodeId = config?.nodeId ?? deriveNodeIdFromHostname()
+  const budgetMs = server.bindingsScanBudgetMs ?? DEFAULT_BINDINGS_SCAN_BUDGET_MS
+  const startedAt = performance.now()
+  const slowest: { scopeRef: string; ms: number }[] = []
+  const scan = await scanLedgerForSkew({
+    bindings,
+    localNodeId,
+    policyFor: server.policyFor ?? (async (scopeRef) => resolvePlacementPolicy(scopeRef)),
+    budgetMs,
+    onResolved: (scopeRef, ms) => {
+      slowest.push({ scopeRef, ms: Math.round(ms) })
+      slowest.sort((left, right) => right.ms - left.ms)
+      slowest.length = Math.min(slowest.length, BINDINGS_SCAN_SLOWEST_LOGGED)
+    },
+  })
+  const durMs = Math.round(performance.now() - startedAt)
+  if (scan.truncated !== undefined || durMs >= BINDINGS_SCAN_SLOW_MS) {
+    writeServerLog(
+      'WARN',
+      scan.truncated !== undefined
+        ? 'federation.bindings.scan_truncated'
+        : 'federation.bindings.scan_slow',
+      {
+        scanned: scan.scanned,
+        durMs,
+        budgetMs,
+        ...(scan.truncated !== undefined
+          ? {
+              notAssessed: scan.truncated.notAssessed,
+              inFlightScopeRef: scan.truncated.inFlightScopeRef,
+            }
+          : {}),
+        slowest,
+      }
+    )
+  }
   return {
     localNodeId,
     federationConfigured: config?.sourceExists === true,
     gateMode: config?.gate.mode ?? 'off',
-    scan: await scanLedgerForSkew({
-      bindings,
-      localNodeId,
-      policyFor: server.policyFor ?? (async (scopeRef) => resolvePlacementPolicy(scopeRef)),
-    }),
+    scan,
   }
 }

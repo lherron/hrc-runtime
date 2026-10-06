@@ -189,6 +189,21 @@ describe('hrc doctor', () => {
     expect(read()).toContain('+ placement-skew')
   })
 
+  test('T-09760: a scan cut at its budget warns instead of reading as clean', async () => {
+    stubBindings(
+      report({
+        scanned: 7,
+        truncated: { budgetMs: 20_000, notAssessed: 3549, inFlightScopeRef: SCOPE },
+      })
+    )
+    const read = captureStdout()
+    await cmdDoctor([])
+    const out = read()
+    expect(out).toContain('scan stopped at its 20000ms budget: 7 binding(s) assessed, 3549 not')
+    expect(out).toContain(SCOPE)
+    expect(out).not.toContain('no placement constraint disagrees')
+  })
+
   test('explains that skew requires retirement followed by fresh establishment', async () => {
     stubBindings(
       report({

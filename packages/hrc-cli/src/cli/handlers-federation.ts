@@ -346,7 +346,14 @@ function placementSkewChecks(report: LocateBindingsReport): DoctorCheck[] {
   const checks: DoctorCheck[] = []
   const { scan } = report
 
-  if (scan.skewed.length === 0) {
+  if (scan.truncated !== undefined) {
+    // T-09760: a partial scan must not read as a clean one.
+    checks.push({
+      name: 'placement-skew',
+      status: 'warn',
+      detail: `scan stopped at its ${scan.truncated.budgetMs}ms budget: ${scan.scanned} binding(s) assessed, ${scan.truncated.notAssessed} not (policy for ${scan.truncated.inFlightScopeRef} was still resolving)`,
+    })
+  } else if (scan.skewed.length === 0) {
     checks.push({
       name: 'placement-skew',
       status: 'ok',

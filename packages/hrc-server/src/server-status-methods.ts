@@ -270,7 +270,13 @@ export const serverStatusMethods = {
 
   /** `GET /v1/federation/bindings` — the whole-ledger skew sweep behind `hrc doctor`. */
   async handleFederationBindings(this: HrcServerInstance): Promise<Response> {
-    return json(await scanServerLedgerForSkew(this))
+    // T-09760: concurrent callers share one scan. On 10-05 four overlapping
+    // `hrc doctor` reads each ran the full serial scan against a cold aspd
+    // (15k declaration resolves in 14 minutes), each slowing the others.
+    this.federationBindingsScanInFlight ??= scanServerLedgerForSkew(this).finally(() => {
+      this.federationBindingsScanInFlight = undefined
+    })
+    return json(await this.federationBindingsScanInFlight)
   },
 
   async handleStatus(this: HrcServerInstance, url?: URL): Promise<Response> {

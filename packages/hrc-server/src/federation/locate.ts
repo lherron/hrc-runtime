@@ -254,21 +254,51 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
   }
 }
 
+const BUDGET_EXCEEDED = Symbol('scan-budget-exceeded')
+
+/**
+ * T-09760: the scan resolves declared policy once per active binding, serially
+ * (3.5k bindings on max3). Warm that is ~1.5s; against a cold or loaded aspd one
+ * scan took 9-11 minutes and pinned its request. `budgetMs` caps the whole scan:
+ * past it the scan stops, and `truncated` says how many bindings went unassessed
+ * and which one was still resolving, so a clean-looking report never hides it.
+ */
 export async function scanLedgerForSkew(options: {
   bindings: readonly PlacementLedgerRecord[]
   localNodeId: string
   policyFor: (scopeRef: string) => Promise<PlacementPolicyResolution>
+  budgetMs?: number | undefined
+  /** Observes each binding's policy resolution time; diagnostics only. */
+  onResolved?: ((scopeRef: string, ms: number) => void) | undefined
 }): Promise<LedgerSkewScan> {
   const skewed: { scopeRef: string; skew: LocateSkew }[] = []
   const unreadable: { scopeRef: string; detail: string }[] = []
+  const active = options.bindings.filter((binding) => binding.state === 'active')
+  const startedAt = performance.now()
   let scanned = 0
-  for (const binding of options.bindings) {
-    if (binding.state !== 'active') continue
+  for (const [index, binding] of active.entries()) {
+    const resolveStartedAt = performance.now()
+    const remainingMs =
+      options.budgetMs === undefined ? undefined : options.budgetMs - (resolveStartedAt - startedAt)
+    const policy =
+      remainingMs === undefined
+        ? await options.policyFor(binding.scopeRef)
+        : await withinBudget(options.policyFor(binding.scopeRef), remainingMs)
+    if (policy === BUDGET_EXCEEDED) {
+      return {
+        scanned,
+        skewed,
+        unreadable,
+        truncated: {
+          budgetMs: options.budgetMs as number,
+          notAssessed: active.length - index,
+          inFlightScopeRef: binding.scopeRef,
+        },
+      }
+    }
+    options.onResolved?.(binding.scopeRef, performance.now() - resolveStartedAt)
     scanned += 1
-    const declared = describeDeclaredPolicy(
-      binding.scopeRef,
-      await options.policyFor(binding.scopeRef)
-    )
+    const declared = describeDeclaredPolicy(binding.scopeRef, policy)
     if (declared.source === 'unavailable') {
       unreadable.push({ scopeRef: binding.scopeRef, detail: declared.detail })
       continue
@@ -282,4 +312,26 @@ export async function scanLedgerForSkew(options: {
     if (skew !== undefined) skewed.push({ scopeRef: binding.scopeRef, skew })
   }
   return { scanned, skewed, unreadable }
+}
+
+async function withinBudget<T>(
+  work: Promise<T>,
+  remainingMs: number
+): Promise<T | typeof BUDGET_EXCEEDED> {
+  if (remainingMs <= 0) {
+    // Never left pending: a rejection after the scan gave up is not an error.
+    work.catch(() => undefined)
+    return BUDGET_EXCEEDED
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<typeof BUDGET_EXCEEDED>((resolve) => {
+        timer = setTimeout(() => resolve(BUDGET_EXCEEDED), remainingMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }

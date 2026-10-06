@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import type {
   HrcRuntimeSnapshot,
   LocateBindingRecord,
+  LocateBindingsReport,
   ReconcileActiveRunsResponse,
   SweepRuntimesResponse,
   SweepZombieRunsResponse,
@@ -405,6 +406,8 @@ export class HrcServerInstance implements HrcServer {
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number
   readonly runtimeListReconcileDeadlineMs: number
+  /** T-09760: the one ledger skew scan concurrent GET /v1/federation/bindings share. */
+  federationBindingsScanInFlight: Promise<LocateBindingsReport> | undefined = undefined
   readonly tmuxAgingEnabled: boolean
   readonly headlessCodexBrokerEnabled: boolean
   readonly headlessMuseBrokerEnabled: boolean

@@ -574,6 +574,18 @@ export type LedgerSkewScan = {
   skewed: readonly { scopeRef: string; skew: LocateSkew }[]
   /** Scopes whose declared policy could not be read, so skew is unknown. */
   unreadable: readonly { scopeRef: string; detail: string }[]
+  /**
+   * T-09760: present when the scan stopped at its time budget. The bindings
+   * counted here were not assessed, so the report is partial.
+   */
+  truncated?:
+    | {
+        budgetMs: number
+        notAssessed: number
+        /** The binding whose policy was still resolving when the budget ran out. */
+        inFlightScopeRef: string
+      }
+    | undefined
 }
 
 /** `GET /v1/federation/bindings` */
