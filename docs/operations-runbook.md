@@ -363,8 +363,8 @@ prepares through the node's persistent aspd (launchd `com.praesidium.aspd`, ns
 - **Two activations, never confused.** An HRC release activates by
   `just install` + `hrc server restart` (daemon-authorized, T-09861:
   only `mable@<project>:primary` (any node), `mable@<project>:minisvc` (svc only), `mable@hrc-runtime:hrcdev` (hrcdev only) or Lance; everyone else asks `mable@<project>:primary`). An ASP preparation release activates by
-  `cd ~/praesidium/agent-spaces && just aspd-activate ~/praesidium/var/aspd
-  <releaseId>` — no HRC restart. Read back both: `hrc server status --json` →
+  `cd ~/praesidium/agent-spaces && just aspd-activate ~/praesidium/var/aspd <releaseId>`
+  — no HRC restart. Read back both: `hrc server status --json` →
   `.api.aspd.release.releaseId`, and `just aspd-status ~/praesidium/var/aspd`
   (one aspd process, running == selected).
 - **One active preparation release per node; bindings are permanent.** Live
