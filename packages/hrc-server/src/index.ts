@@ -8,7 +8,12 @@ import type {
   SweepRuntimesResponse,
   SweepZombieRunsResponse,
 } from 'hrc-core'
-import { type HrcDatabase, type SqliteSlowStatement, openHrcDatabase } from 'hrc-store-sqlite'
+import {
+  type HrcDatabase,
+  type SqliteSlowStatement,
+  observeLifecycleAppends,
+  openHrcDatabase,
+} from 'hrc-store-sqlite'
 import type { TranscriptIndexer } from 'hrc-transcript-index'
 import {
   type AcceptedRunRecoveryHandlersMethods,
@@ -74,6 +79,7 @@ import {
   repairLiveUnboundPlacements,
 } from './federation/summon-gate-server.js'
 import type { FirstTurnEvalSummary } from './first-turn-eval.js'
+import { FollowFanOut } from './follow-fanout.js'
 import { normalizeLocalPersonaAllowlist } from './local-persona-policy.js'
 import {
   resolveClaudeCodeTmuxBrokerEnabled,
@@ -329,6 +335,9 @@ export interface HrcServerInstance
 
 export class HrcServerInstance implements HrcServer {
   readonly followSubscribers = new Set<FollowSubscriber>()
+  /** T-10420: the one door to followSubscribers; also fed by every committed ledger append. */
+  readonly followFanOut: FollowFanOut
+  readonly stopObservingLifecycleAppends: () => void
   readonly rawBrokerSubscribers = new Set<RawBrokerSubscriber>()
   readonly messageSubscribers = new Set<MessageSubscriber>()
   readonly activeStreamClosers = new Set<() => void>()
@@ -463,6 +472,10 @@ export class HrcServerInstance implements HrcServer {
     readonly lockHandle: ServerLockHandle
   ) {
     this.turnAdmissionGate = new TurnAdmissionGate(options.runtimeRoot)
+    this.followFanOut = new FollowFanOut(db.sqlite, this.followSubscribers)
+    this.stopObservingLifecycleAppends = observeLifecycleAppends(db.sqlite, (event) =>
+      this.followFanOut.deliver(event)
+    )
     // T-09861 §3: mint at every launch (store observer) and backfill every live
     // runtime now, so seats born before this incarnation hold a value it minted.
     this.lifecycleCredentials = new LifecycleCredentialStore(options.runtimeRoot)

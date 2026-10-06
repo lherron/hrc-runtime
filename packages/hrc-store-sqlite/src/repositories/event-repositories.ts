@@ -11,6 +11,7 @@ import {
   readToolResultSpillDescriptor,
   toolResultExceedsSpillThreshold,
 } from 'hrc-core'
+import { lifecycleAppendHub } from '../lifecycle-append-hub.js'
 import { canonicalLaneRef, readSessionIdentity } from '../session-identity.js'
 import type { EventRow, HrcEventRow } from './rows.js'
 import {
@@ -359,7 +360,10 @@ export class HrcLifecycleEventRepository {
       throw new Error(`failed to reload hrc event ${inserted.seq}`)
     }
 
-    return this.mapRow(stored)
+    const persisted = this.mapRow(stored)
+    // T-10420: every persisted row is announced to live followers once committed.
+    lifecycleAppendHub(this.db).record(persisted)
+    return persisted
   }
 
   private mapRow(row: HrcEventRow, options: { hydrate?: boolean } = {}): HrcLifecycleEvent {
@@ -424,7 +428,9 @@ export class HrcLifecycleEventRepository {
   }
 
   append(event: HrcLifecycleEventInput): HrcLifecycleEvent {
-    return this.appendInTransaction(event)
+    const appended = this.appendInTransaction(event)
+    lifecycleAppendHub(this.db).flush()
+    return appended
   }
 
   ledgerIncarnationId(): string {
@@ -615,9 +621,13 @@ export class HrcLifecycleEventRepository {
         )
         .get(input.sourceRef, input.originSeq)
       if (!row) throw new Error(`failed to reload imported hrc event ${input.sourceRef}`)
-      return { event: this.mapRow(row), idempotent: false }
+      const event = this.mapRow(row)
+      lifecycleAppendHub(this.db).record(event)
+      return { event, idempotent: false }
     })
-    return append.immediate()
+    const result = append.immediate()
+    lifecycleAppendHub(this.db).flush()
+    return result
   }
 
   listFromHrcSeq(

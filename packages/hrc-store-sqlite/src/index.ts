@@ -1,4 +1,9 @@
 export { openHrcDatabase } from './database.js'
+export {
+  flushLifecycleAppends,
+  observeLifecycleAppends,
+  type LifecycleAppendObserver,
+} from './lifecycle-append-hub.js'
 export type { HrcDatabase, OpenHrcDatabaseOptions } from './database.js'
 export {
   DIRECT_STORE_OPEN_COMMANDS,

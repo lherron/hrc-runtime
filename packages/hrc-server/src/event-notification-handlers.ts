@@ -72,9 +72,8 @@ export function notifyEvent(
   this: HrcServerInstanceForHandlers,
   event: HrcEventEnvelope | HrcLifecycleEvent
 ): void {
-  for (const subscriber of this.followSubscribers) {
-    subscriber(event)
-  }
+  // T-10420: one door, deduplicated with the store's committed-append announcements.
+  this.followFanOut.deliver(event)
   // T-08566 — a retained-origin row is observable history, never current-run
   // authority: it reaches follow subscribers only. Any non-null origin is
   // non-actuating (ACP bridge, session project events, kicker, headless input

@@ -236,6 +236,7 @@ type HrcServerInstanceDataForHandlers = {
   brokerClientFactory?: BrokerClientFactory | undefined
   brokerUnixClientFactory?: BrokerUnixClientFactory | undefined
   readonly followSubscribers: Set<(event: HrcEventEnvelope | HrcLifecycleEvent) => void>
+  readonly followFanOut: { deliver(event: HrcEventEnvelope | HrcLifecycleEvent): void }
   readonly rawBrokerSubscribers: Set<RawBrokerSubscriber>
   readonly messageSubscribers: Set<(record: HrcMessageRecord) => void>
   readonly activeStreamClosers: Set<() => void>

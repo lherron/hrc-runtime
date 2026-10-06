@@ -489,6 +489,7 @@ export const serverStopMethods = {
       }
     }
     this.activeStreamClosers.clear()
+    this.stopObservingLifecycleAppends()
     this.followSubscribers.clear()
     this.rawBrokerSubscribers.clear()
     this.messageSubscribers.clear()

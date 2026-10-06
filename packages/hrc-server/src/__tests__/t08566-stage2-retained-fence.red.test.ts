@@ -174,6 +174,7 @@ describe('T-08566 retained projection fence', () => {
     const finalize = mock(() => undefined)
     const fake = {
       followSubscribers: new Set([follow]),
+      followFanOut: { deliver: (event: unknown) => follow(event as never) },
       acpEventBridge: { observe: acp },
       sessionProjectEvents: { observe: project },
       drainDurableHeadlessTurnInputs: drain,
@@ -218,6 +219,7 @@ describe('T-08566 retained projection fence', () => {
     notifyEvent.call(
       {
         followSubscribers: new Set([follow]),
+        followFanOut: { deliver: (event: unknown) => follow(event as never) },
         acpEventBridge: { observe: acp },
         sessionProjectEvents: { observe: project },
         drainDurableHeadlessTurnInputs: drain,
