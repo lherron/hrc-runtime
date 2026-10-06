@@ -132,7 +132,10 @@ import {
   runtimeInspectHandlersMethods,
 } from './runtime-inspect-handlers.js'
 import { type RuntimeIoHandlersMethods, runtimeIoHandlersMethods } from './runtime-io-handlers.js'
-import { createRuntimeListRoutes } from './runtime-list-handlers.js'
+import {
+  DEFAULT_RUNTIME_LIST_RECONCILE_DEADLINE_MS,
+  createRuntimeListRoutes,
+} from './runtime-list-handlers.js'
 import {
   type RuntimeStartHandlersMethods,
   runtimeStartHandlersMethods,
@@ -401,6 +404,7 @@ export class HrcServerInstance implements HrcServer {
   // `allowStaleGeneration: true`.
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number
+  readonly runtimeListReconcileDeadlineMs: number
   readonly tmuxAgingEnabled: boolean
   readonly headlessCodexBrokerEnabled: boolean
   readonly headlessMuseBrokerEnabled: boolean
@@ -495,6 +499,8 @@ export class HrcServerInstance implements HrcServer {
 
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
+    this.runtimeListReconcileDeadlineMs =
+      options.runtimeListReconcileDeadlineMs ?? DEFAULT_RUNTIME_LIST_RECONCILE_DEADLINE_MS
     this.tmuxAgingEnabled = resolveTmuxAgingEnabled(options)
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
     this.headlessMuseBrokerEnabled = resolveHeadlessMuseBrokerEnabled(options)
@@ -546,6 +552,7 @@ export class HrcServerInstance implements HrcServer {
     for (const route of createRuntimeListRoutes({
       db: this.db,
       staleGenerationThresholdSec: this.staleGenerationThresholdSec,
+      runtimeListReconcileDeadlineMs: this.runtimeListReconcileDeadlineMs,
       reconcileTmuxRuntimeLiveness: (runtime) => this.reconcileTmuxRuntimeLiveness(runtime),
     })) {
       this.exactRouteHandlers[exactRouteKey(route.method, route.pathname)] = route.handler

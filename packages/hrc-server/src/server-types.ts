@@ -419,6 +419,11 @@ export type HrcServerOptions = {
    */
   staleGenerationThresholdSec?: number | undefined
   /**
+   * T-09760: how long one runtime's liveness reconcile may hold a runtime-list
+   * read before the read answers from the stored row. Default 15s.
+   */
+  runtimeListReconcileDeadlineMs?: number | undefined
+  /**
    * Kill-switch for the stale-generation auto-rotation feature. When `false`,
    * sessions are never auto-rotated regardless of age. Default = `true`.
    *

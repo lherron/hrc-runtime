@@ -2,6 +2,7 @@ import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { canonicalLaneRef } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { writeServerLog } from './server-log.js'
 import { parseListRunsFilter, parseListRuntimesFilter } from './server-parsers.js'
 import type { ExactRouteHandler } from './server-types.js'
 import { json } from './server-util.js'
@@ -10,6 +11,14 @@ import { filterRuntimes } from './sweep-helpers.js'
 const DEFAULT_RUNTIME_LIST_LIMIT = 100
 const MAX_RUNTIME_LIST_LIMIT = 500
 const NEXT_CURSOR_HEADER = 'x-hrc-next-cursor'
+/**
+ * T-09760: how long one runtime's liveness reconcile may hold a list read. Every
+ * await inside a reconcile is bounded on paper, yet on max3 one GET /v1/runtimes
+ * stayed pending 4-10h three times and withheld server.stopped each time. The
+ * longest healthy list read in five days of metrics was 4.9s; a reconcile that
+ * misses this answers from the stored row instead of pinning the request.
+ */
+export const DEFAULT_RUNTIME_LIST_RECONCILE_DEADLINE_MS = 15_000
 const TERMINAL_RUNTIME_STATUSES = new Set([
   'archived',
   'crashed',
@@ -26,6 +35,7 @@ const TERMINAL_RUNTIME_STATUSES = new Set([
 export type RuntimeListDependencies = {
   readonly db: HrcDatabase
   readonly staleGenerationThresholdSec: number
+  readonly runtimeListReconcileDeadlineMs?: number | undefined
   reconcileTmuxRuntimeLiveness(runtime: HrcRuntimeSnapshot): Promise<HrcRuntimeSnapshot>
 }
 
@@ -165,7 +175,7 @@ async function queryRuntimesForProjection(
   }
 
   const reconciled = await Promise.all(
-    selected.map((runtime) => deps.reconcileTmuxRuntimeLiveness(runtime))
+    selected.map((runtime) => reconcileWithinDeadline(deps, runtime))
   )
   const reconciledVisible =
     filter.all === true ? reconciled : reconciled.filter(isVisibleInDefaultRuntimeList)
@@ -179,6 +189,53 @@ async function queryRuntimesForProjection(
     runtimes: projectRuntimeHealth(deps.db, projected),
     ...(nextCursor !== undefined ? { nextCursor } : {}),
   }
+}
+
+/**
+ * Race one runtime's reconcile against the list deadline. A miss returns the
+ * stored snapshot (what the row already says) and logs the runtime, so the next
+ * occurrence names its culprit; the reconcile keeps running and logs when, if
+ * ever, it settles. A reconcile that rejects in time still fails the read.
+ */
+async function reconcileWithinDeadline(
+  deps: RuntimeListDependencies,
+  runtime: HrcRuntimeSnapshot
+): Promise<HrcRuntimeSnapshot> {
+  const deadlineMs =
+    deps.runtimeListReconcileDeadlineMs ?? DEFAULT_RUNTIME_LIST_RECONCILE_DEADLINE_MS
+  const startedAt = performance.now()
+  const reconcile = deps.reconcileTmuxRuntimeLiveness(runtime)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const outcome = await Promise.race([
+    reconcile.then((reconciled) => ({ kind: 'settled' as const, reconciled })),
+    new Promise<{ kind: 'deadline' }>((resolve) => {
+      timer = setTimeout(() => resolve({ kind: 'deadline' }), deadlineMs)
+    }),
+  ]).finally(() => clearTimeout(timer))
+  if (outcome.kind === 'settled') return outcome.reconciled
+
+  const context = {
+    runtimeId: runtime.runtimeId,
+    hostSessionId: runtime.hostSessionId,
+    status: runtime.status,
+    transport: runtime.transport,
+    controllerKind: runtime.controllerKind ?? null,
+  }
+  writeServerLog('WARN', 'runtime_list.reconcile_deadline', { ...context, deadlineMs })
+  reconcile.then(
+    () =>
+      writeServerLog('INFO', 'runtime_list.reconcile_settled_late', {
+        ...context,
+        durMs: Math.round(performance.now() - startedAt),
+      }),
+    (error: unknown) =>
+      writeServerLog('WARN', 'runtime_list.reconcile_failed_late', {
+        ...context,
+        durMs: Math.round(performance.now() - startedAt),
+        error,
+      })
+  )
+  return runtime
 }
 
 /**
