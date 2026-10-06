@@ -10,7 +10,7 @@ Proven when. The last lines of each file name the drive that last proved it and 
 | 3 | Turns and monitor (`turn`, `turn --attach`, `monitor show/watch/wait/events/transcript/stats/search/session-report`) | [03-turns-monitor.md](03-turns-monitor.md) | scratch; live read-only |
 | 4 | HTTP API on the daemon socket (`/v1/health`, `/v1/events/tail` paging and refusals, `/v1/events/head`) | [04-http-api.md](04-http-api.md) | scratch |
 | 5 | Placement and federation (`target locate`, `target bindings`, doctor's node/federation/placement rows, `registrations gc` projection) | [05-placement-federation.md](05-placement-federation.md) | live read-only; scratch |
-| 6 | Install and release (atomic release, manifest, `runningEqualsInstalled`, `admin release gc/sweep`, the dirty guard) | [06-install-release.md](06-install-release.md) | live read-only; install needs operator |
+| 6 | Install and release (atomic release, manifest, `runningEqualsInstalled`, release pruning, the dirty guard) | [06-install-release.md](06-install-release.md) | live read-only; install needs operator |
 | 7 | Maintenance (`admin runs`, `admin metrics`, `admin status`, `runtime diagnostics`, `runtime sweep/prune` dry-runs, `capture status`, `broker-verify candidates/run`, `worktrees audit`, the prune-deltas job) | [07-maintenance.md](07-maintenance.md) | scratch; live read-only |
 | 8 | Attach (`hrc attach` in a real TTY through ghostmux, detach, the attach descriptor) | [08-attach.md](08-attach.md) | scratch |
 

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { realpathSync } from 'node:fs'
 import {
   chmod,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rename,
   rm,
@@ -14,7 +16,12 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { CLI_PACKAGES, type InstalledSurfacePaths, installAtomicRelease } from './atomic-install'
+import {
+  CLI_PACKAGES,
+  type InstalledSurfacePaths,
+  type RunningReleaseAnswer,
+  installAtomicRelease,
+} from './atomic-install'
 
 const fixtures: string[] = []
 
@@ -208,6 +215,7 @@ describe('T-06685 installed CLI continuity harness', () => {
       paths: fixture.paths,
       releaseId: 'release-new',
       sourceRoot: fixture.sourceRoot,
+      readRunningRelease: () => ({ answered: true }),
       prepareRelease: async (releasePath) => {
         await writeCliSources(releasePath, 'new')
         signalPreparationStarted()
@@ -256,6 +264,7 @@ describe('T-06685 installed CLI continuity harness', () => {
         paths: fixture.paths,
         releaseId: 'release-broken',
         sourceRoot: fixture.sourceRoot,
+        readRunningRelease: () => ({ answered: true }),
         prepareRelease: async (releasePath) => {
           await writeCliSources(releasePath, 'broken')
           throw new Error('deterministic preparation failure')
@@ -264,6 +273,7 @@ describe('T-06685 installed CLI continuity harness', () => {
     ).rejects.toThrow('deterministic preparation failure')
 
     expect(await realpath(fixture.paths.currentLink)).toBe(await realpath(fixture.oldRelease))
+    expect(await readdir(fixture.paths.releaseRoot)).toEqual(['release-old'])
     expect(invokeInstalled(fixture.binPath)).toMatchObject({
       exitCode: 0,
       stderr: '',
@@ -288,6 +298,7 @@ describe('T-06685 installed CLI continuity harness', () => {
       paths: fixture.paths,
       releaseId: 'release-owner',
       sourceRoot: fixture.sourceRoot,
+      readRunningRelease: () => ({ answered: true }),
       prepareRelease: async (releasePath) => {
         signalOwnerReady()
         await ownerMayFinish
@@ -304,6 +315,7 @@ describe('T-06685 installed CLI continuity harness', () => {
         paths: fixture.paths,
         releaseId: 'release-racer',
         sourceRoot: fixture.sourceRoot,
+        readRunningRelease: () => ({ answered: true }),
         prepareRelease: async (releasePath) => {
           await writeRelease(releasePath, 'racer')
           return fixtureBuilds()
@@ -315,5 +327,68 @@ describe('T-06685 installed CLI continuity harness', () => {
     allowOwnerToFinish()
     await owner
     expect(invokeInstalled(fixture.binPath).stdout).toBe('owner:dependency-ok\n')
+  })
+})
+
+// T-10024: install deletes old releases outright after its cutover.
+describe('T-10024 install prunes old releases', () => {
+  async function installWith(answer: (paths: InstalledSurfacePaths) => RunningReleaseAnswer) {
+    const fixture = await makeAtomicSurface()
+    for (const id of ['release-older', 'release-oldest']) {
+      await writeRelease(join(fixture.paths.releaseRoot, id), id)
+    }
+    await mkdir(join(fixture.paths.releaseRoot, '.gc-quarantine', 'release-quarantined'), {
+      recursive: true,
+    })
+    const installed = await installAtomicRelease({
+      context: 'main',
+      linkMode: 'on',
+      paths: fixture.paths,
+      releaseId: 'release-new',
+      sourceRoot: fixture.sourceRoot,
+      readRunningRelease: (releasePath) => {
+        // The daemon is asked only once the link already names the new release.
+        expect(realpathSync(fixture.paths.currentLink)).toBe(realpathSync(releasePath))
+        return answer(fixture.paths)
+      },
+      prepareRelease: async (releasePath) => {
+        await writeRelease(releasePath, 'new')
+        return fixtureBuilds()
+      },
+    })
+    return { fixture, installed }
+  }
+
+  test('keeps current and the release the running daemon reports', async () => {
+    const { fixture } = await installWith((paths) => ({
+      answered: true,
+      releasePath: join(paths.releaseRoot, 'release-old'),
+    }))
+    expect((await readdir(fixture.paths.releaseRoot)).sort()).toEqual([
+      'release-new',
+      'release-old',
+    ])
+    expect(invokeInstalled(fixture.binPath).stdout).toBe('new:dependency-ok\n')
+  })
+
+  test('a daemon that is not running leaves only current, quarantine debris included', async () => {
+    const { fixture } = await installWith(() => ({ answered: true }))
+    expect(await readdir(fixture.paths.releaseRoot)).toEqual(['release-new'])
+    expect(await realpath(fixture.paths.currentLink)).toBe(
+      await realpath(join(fixture.paths.releaseRoot, 'release-new'))
+    )
+  })
+
+  test('a daemon status with no answer prunes nothing', async () => {
+    // The daemon may be alive and running from any old tree; deleting on a
+    // guess could pull files out from under its lazy imports.
+    const { fixture } = await installWith(() => ({ answered: false, detail: 'timed out' }))
+    expect((await readdir(fixture.paths.releaseRoot)).sort()).toEqual([
+      '.gc-quarantine',
+      'release-new',
+      'release-old',
+      'release-older',
+      'release-oldest',
+    ])
   })
 })

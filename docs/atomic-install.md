@@ -125,9 +125,12 @@ release.
 - Dependency, build, or smoke failure deletes only the incomplete
   uniquely named release and leaves `hrc-runtime-current` unchanged.
 - `hrc --help`, `hrcchat --help`, and `hrcmail --help` run from the prepared image before cutover.
-- Successfully installed release directories are retained, so rollback is an
-  atomic repoint of `~/.bun/install/hrc-runtime-current` to a known-good prior
-  release.
+- Old releases are not retained (T-10024). After the cutover, install deletes
+  every `release-*` directory except the new current one and the one the
+  running daemon reports in `hrc server status`. A daemon that is not running
+  keeps nothing extra; a status that gives no answer prunes nothing. When the
+  daemon next starts from current it deletes every older release, so steady
+  state is one directory. Rollback is a reinstall of a known-good commit.
 - A daemon restart is still required after `just install` when server code has
   changed; the running process does not reload merely because the CLI link moved.
 

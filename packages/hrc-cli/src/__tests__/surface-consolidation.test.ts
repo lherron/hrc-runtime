@@ -82,7 +82,6 @@ describe('consolidated hrc command graph', () => {
       'status',
       'runs',
       'worktrees',
-      'release',
       'surface',
       'bridge',
       'runtime',
@@ -92,9 +91,6 @@ describe('consolidated hrc command graph', () => {
       'metrics',
     ])
     expect(visibleChildren(child(child(program, 'admin'), 'worktrees'))).toEqual(['audit', 'prune'])
-    // `sweep` is the irreversible phase-2 counterpart of `gc` (T-07686); it is a
-    // deliberate surface addition, pinned here so it cannot appear by accident.
-    expect(visibleChildren(child(child(program, 'admin'), 'release'))).toEqual(['gc', 'sweep'])
     expect(visibleChildren(child(child(program, 'admin'), 'registrations'))).toEqual(['gc'])
   })
 

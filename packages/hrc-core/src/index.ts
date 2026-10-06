@@ -32,6 +32,9 @@ export type {
   HrcServerLifecycleResponse,
 } from './server-lifecycle.js'
 
+export { pruneReleaseDirs } from './release-prune.js'
+export type { ReleasePruneOptions, ReleasePruneResult } from './release-prune.js'
+
 export { HRC_RESTART_SELF_PATH, selfRestartResumePrompt } from './self-restart.js'
 export type {
   HrcRestartSelfArmed,

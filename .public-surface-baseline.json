@@ -4255,6 +4255,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "pruneReleaseDirs",
+      "kind": "value",
+      "file": "packages/hrc-core/src/release-prune.ts",
+      "hash": "hrc-core|pruneReleaseDirs|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "PruneRuntimeResult",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-runtime.ts",
@@ -4411,6 +4419,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RegistrationGcResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ReleasePruneOptions",
+      "kind": "type",
+      "file": "packages/hrc-core/src/release-prune.ts",
+      "hash": "hrc-core|ReleasePruneOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ReleasePruneResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/release-prune.ts",
+      "hash": "hrc-core|ReleasePruneResult|type",
       "count": 1
     },
     {

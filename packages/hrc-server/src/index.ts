@@ -115,7 +115,7 @@ import {
   type RegistrationHandlersMethods,
   registrationHandlersMethods,
 } from './registration-handlers.js'
-import { captureServerRelease } from './release-provenance.js'
+import { captureServerRelease, pruneReleasesFromCurrent } from './release-provenance.js'
 import { replaySpool } from './replay-spool.js'
 import { ServerRequestMetricSampler, writeServerMetric } from './request-metrics.js'
 import {
@@ -896,6 +896,13 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     // T-08137: after the store and durable services are initialized.
     server.recordLifecycleStart()
     writeServerLog('INFO', 'server.start.ready', logCtx)
+    // T-10024: off the startup path; a slow delete never delays readiness.
+    pruneReleasesFromCurrent(server.capturedRelease).then(
+      (result) => {
+        if (result !== undefined) writeServerLog('INFO', 'server.start.release_prune', result)
+      },
+      (error) => writeServerLog('WARN', 'server.start.release_prune_failed', { error })
+    )
     return server
   } catch (error) {
     writeServerLog('ERROR', 'server.start.failed', {

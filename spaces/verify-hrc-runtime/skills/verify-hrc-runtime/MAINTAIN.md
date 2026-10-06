@@ -18,7 +18,7 @@ spaces/verify-hrc-runtime | head -1`). Every "since the last pass" below means `
 `ship.txt` (step 6).
 
 **Never** in a pass: `just install`, `just publish`, `just deploy-*`, `hrc server restart|stop`,
-`release gc|sweep --apply`, `federation retire`. A drive that needs one is written down as `needs operator`.
+`federation retire`. A drive that needs one is written down as `needs operator`.
 
 ## 1. Index hygiene
 

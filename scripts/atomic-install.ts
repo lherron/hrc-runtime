@@ -20,6 +20,7 @@ import {
   type PraesidiumBuild,
   type PraesidiumReleaseManifest,
   environmentWithoutGitOverrides,
+  pruneReleaseDirs,
   resolveDatabasePath,
 } from 'hrc-core'
 import { DIRECT_STORE_OPEN_COMMANDS, readStoreSchemaState } from 'hrc-store-sqlite'
@@ -50,11 +51,22 @@ export type InstalledSurfacePaths = {
   releaseRoot: string
 }
 
+/**
+ * What the running daemon says about its own release, read after the cutover.
+ * `answered: false` means status gave no usable answer at all — not the same as
+ * a clean "not running", which arrives as `answered: true` with no path.
+ */
+export type RunningReleaseAnswer =
+  | { answered: true; releasePath?: string }
+  | { answered: false; detail: string }
+
 export type AtomicInstallOptions = {
   context: InstallContext
   linkMode: SideEffectMode
   paths: InstalledSurfacePaths
   prepareRelease: (releasePath: string) => Promise<PreparedReleaseBuilds>
+  /** Asked after the cutover so the running daemon's tree survives the prune. */
+  readRunningRelease: (releasePath: string) => RunningReleaseAnswer
   releaseId?: string
   sourceRoot: string
 }
@@ -333,6 +345,8 @@ export async function installAtomicRelease(options: AtomicInstallOptions): Promi
     await validateReleaseShape(releasePath, releaseId)
     await atomicSymlink(releasePath, options.paths.currentLink)
     cutoverComplete = true
+    // Still under the install lock, so no other install is preparing a release.
+    await pruneAfterCutover(options, releasePath)
     return releasePath
   } finally {
     if (!cutoverComplete && releaseCreated) {
@@ -340,6 +354,78 @@ export async function installAtomicRelease(options: AtomicInstallOptions): Promi
     }
     await releaseLock()
   }
+}
+
+/**
+ * Keep current and the release the running daemon reports; delete every other
+ * release (T-10024). A daemon that cleanly reports "not running" keeps nothing
+ * extra. A status that gives no answer at all prunes nothing: the daemon may be
+ * alive and running from an old tree, and its own startup prune clears the
+ * leftovers once it runs from current. The cutover already succeeded, so a
+ * prune failure is reported and never fails the install.
+ */
+async function pruneAfterCutover(options: AtomicInstallOptions, releasePath: string) {
+  try {
+    const running = options.readRunningRelease(releasePath)
+    if (!running.answered) {
+      console.log(
+        `[install] release prune skipped: daemon status gave no answer (${running.detail}); old releases are left for the daemon's startup prune`
+      )
+      return
+    }
+    const result = await pruneReleaseDirs({
+      releaseRoot: options.paths.releaseRoot,
+      currentLink: options.paths.currentLink,
+      expectedCurrent: releasePath,
+      keep: running.releasePath === undefined ? [] : [running.releasePath],
+    })
+    if (!result.pruned) {
+      console.log(`[install] release prune skipped: ${result.reason}`)
+      return
+    }
+    console.log(
+      `[install] release prune: kept ${result.kept.join(', ')}; removed ${result.removed.length}${
+        result.failed.length > 0 ? `; failed ${result.failed.join(', ')}` : ''
+      }`
+    )
+  } catch (error) {
+    console.log(
+      `[install] release prune failed: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
+
+/** Ask the running daemon, through the just-installed CLI, which release it runs from. */
+export function readRunningReleaseFromDaemon(releasePath: string): RunningReleaseAnswer {
+  const cli = join(releasePath, 'packages', 'hrc-cli', CLI_PACKAGES['hrc-cli'].entrypoint)
+  const result = spawnSync(cli, ['server', 'status', '--json'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 15_000,
+    killSignal: 'SIGKILL',
+  })
+  if (result.error !== undefined) return { answered: false, detail: result.error.message }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(result.stdout ?? '')
+  } catch {
+    return { answered: false, detail: `unparseable status (exit ${result.status})` }
+  }
+  if (parsed === null || typeof parsed !== 'object' || !('running' in parsed)) {
+    return { answered: false, detail: 'status has no running field' }
+  }
+  const status = parsed as { running?: unknown; release?: unknown }
+  if (typeof status.running !== 'boolean') {
+    return { answered: false, detail: 'status running is not a boolean' }
+  }
+  if (!status.running) return { answered: true }
+  const release = status.release as { mode?: unknown; releasePath?: unknown } | null | undefined
+  // From the daemon's own captured identity, never derived from the symlink.
+  if (release?.mode === 'atomic' && typeof release.releasePath === 'string') {
+    return { answered: true, releasePath: release.releasePath }
+  }
+  // A running daemon with no atomic identity runs from a checkout, not a release.
+  return { answered: true }
 }
 
 export function defaultInstalledSurfacePaths(): InstalledSurfacePaths {
@@ -545,6 +631,7 @@ async function main(): Promise<void> {
     linkMode: options.linkMode,
     paths,
     sourceRoot: options.sourceRoot,
+    readRunningRelease: readRunningReleaseFromDaemon,
     prepareRelease: async (path) => {
       builds = await prepareProductionRelease(path, options, publicationSource)
       return builds

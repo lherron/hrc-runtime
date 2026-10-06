@@ -1,6 +1,7 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
+import { type ReleasePruneResult, pruneReleaseDirs } from 'hrc-core'
 import type {
   AspContractPackage,
   HrcReleaseStatus,
@@ -225,4 +226,25 @@ export function projectServerRelease(captured: CapturedServerRelease): HrcReleas
   }
   const { installedLinkPath: _installedLinkPath, ...release } = captured
   return { ...release, runningEqualsInstalled }
+}
+
+/**
+ * Startup half of T-10024: a daemon running from current deletes every older
+ * release, clearing the copy an install kept for the daemon it replaced. Only
+ * ids older than current go, and nothing goes while an install holds its lock,
+ * because this runs without that lock and an install may be preparing a newer
+ * release right now.
+ */
+export async function pruneReleasesFromCurrent(
+  captured: CapturedServerRelease
+): Promise<ReleasePruneResult | undefined> {
+  if (captured.mode !== 'atomic') return undefined
+  const releaseRoot = dirname(captured.releasePath)
+  return pruneReleaseDirs({
+    releaseRoot,
+    currentLink: captured.installedLinkPath,
+    expectedCurrent: captured.releasePath,
+    onlyOlderThanCurrent: true,
+    installLockDir: join(dirname(releaseRoot), 'hrc-runtime-install.lock'),
+  })
 }

@@ -31,7 +31,7 @@ Scratch or live:
 - **Live (read-only).** The launchd daemon (`com.praesidium.hrc-server`, socket
   `~/praesidium/var/run/hrc/hrc.sock`). On it run `hrc server status`, `hrc doctor`, `hrc target locate`,
   `hrc monitor show|watch|events|transcript|stats|search`, `hrc runtime list|inspect|diagnostics`,
-  `hrc admin release gc` (dry-run), `hrc admin metrics report`, `hrc admin registrations gc` (no scopes is
+  `hrc admin metrics report`, `hrc admin registrations gc` (no scopes is
   a read-only projection) and dry-run `admin runs`. Use live when the claim is about the installed node
   itself: its release, its federation, its bindings.
 - **Never** restart or stop the live daemon (`hrc server restart|stop`), run `just install`, publish, deploy

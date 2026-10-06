@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,6 +9,7 @@ import {
   PRAESIDIUM_RELEASE_MANIFEST_BASENAME,
   captureServerRelease,
   projectServerRelease,
+  pruneReleasesFromCurrent,
 } from '../release-provenance'
 
 const fixtures: string[] = []
@@ -139,5 +140,64 @@ describe('T-06958 observable atomic release truth', () => {
       processStartedAt: '2026-07-24T16:00:00.000Z',
       runningEqualsInstalled: false,
     })
+  })
+})
+
+// T-10024: once a daemon runs from current it deletes the older releases.
+describe('T-10024 startup release prune', () => {
+  async function installRootWith(ids: string[], currentId: string) {
+    const root = await mkdtemp(join(tmpdir(), 'hrc-startup-prune-'))
+    fixtures.push(root)
+    const installRoot = join(root, 'install')
+    const releases = new Map<string, { packagePath: string; releasePath: string }>()
+    for (const id of ids) releases.set(id, await writeAtomicRelease(installRoot, id))
+    await symlink(releases.get(currentId)!.releasePath, join(installRoot, 'hrc-runtime-current'))
+    return {
+      installRoot,
+      releases,
+      list: async () => (await readdir(join(installRoot, 'hrc-runtime-releases'))).sort(),
+    }
+  }
+
+  test('a daemon running from current deletes every older release', async () => {
+    const f = await installRootWith(['release-1', 'release-2', 'release-3'], 'release-3')
+    const captured = captureServerRelease(f.releases.get('release-3')!.packagePath, 'now')
+    const result = await pruneReleasesFromCurrent(captured)
+    expect(result).toMatchObject({ pruned: true, removed: ['release-1', 'release-2'] })
+    expect(await f.list()).toEqual(['release-3'])
+  })
+
+  test('a daemon running from a release that is no longer current deletes nothing', async () => {
+    // Install switched the link after this daemon started: its own tree is not
+    // current, and current may be the release another daemon is about to load.
+    const f = await installRootWith(['release-1', 'release-2'], 'release-2')
+    const captured = captureServerRelease(f.releases.get('release-1')!.packagePath, 'now')
+    expect(await pruneReleasesFromCurrent(captured)).toEqual({
+      pruned: false,
+      reason: 'current-link-mismatch',
+    })
+    expect(await f.list()).toEqual(['release-1', 'release-2'])
+  })
+
+  test('nothing is deleted while an install holds its lock, and a newer release survives', async () => {
+    const f = await installRootWith(['release-1', 'release-2', 'release-3'], 'release-2')
+    const captured = captureServerRelease(f.releases.get('release-2')!.packagePath, 'now')
+    const lockDir = join(f.installRoot, 'hrc-runtime-install.lock')
+    await mkdir(lockDir)
+    expect(await pruneReleasesFromCurrent(captured)).toEqual({
+      pruned: false,
+      reason: 'install-in-progress',
+    })
+    await rm(lockDir, { recursive: true })
+    await pruneReleasesFromCurrent(captured)
+    expect(await f.list()).toEqual(['release-2', 'release-3'])
+  })
+
+  test('an unmanaged daemon (source checkout) prunes nothing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hrc-startup-prune-'))
+    fixtures.push(root)
+    const packagePath = join(root, 'checkout', 'packages', 'hrc-server')
+    await mkdir(packagePath, { recursive: true })
+    expect(await pruneReleasesFromCurrent(captureServerRelease(packagePath, 'now'))).toBe(undefined)
   })
 })
