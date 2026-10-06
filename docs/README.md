@@ -32,7 +32,9 @@ Current reference for the HRC runtime. Design records live in
 
 ## Build, install, operations
 
-- [operations-runbook.md](operations-runbook.md) — day-to-day operation: runtime locations, restart doctrine, dependency sync.
+- [operations-runbook.md](operations-runbook.md) — day-to-day operation: runtime locations, restart doctrine, dependency sync, aspd Codex route, event path, mail-kicker location.
+- [fleet-deployment.md](fleet-deployment.md) — `just deploy-*` across svc/max3/hrcdev: node processes, targets, guards, supervisors, and the hrcdev Tart VM.
+- [development-workflow.md](development-workflow.md) — validation scope, dependency pin table, repo-split boundary, pull-deps extras, and cross-repo publishing.
 - [atomic-install.md](atomic-install.md) — how `just install` builds a release image and cuts over atomically.
 - [wave-b-registry.md](wave-b-registry.md) — Verdaccio single-authority contract for package publication.
 - [isolated-daemon-smoke-recipe.md](isolated-daemon-smoke-recipe.md) — when and how to smoke against an isolated HRC daemon.
@@ -46,6 +48,7 @@ Current reference for the HRC runtime. Design records live in
 
 ## Policy and process
 
+- [verification-traps.md](verification-traps.md) — commands that answer confidently while checking nothing, and how to make each one able to fail.
 - [rule-enforcers.md](rule-enforcers.md) — each repo rule and the check, type or test that fails when it is broken (or `judgment`).
 - [test-doubles.md](test-doubles.md) — what counts as a test double, how it is typed against production, and how to capture a producer fixture (R2).
 - [suppression-policy.md](suppression-policy.md) — lint/type suppressions require a ticketed `EXCEPTION(T-…)` justification.

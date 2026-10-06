@@ -142,7 +142,7 @@ State is persisted by the sibling package `hrc-store-sqlite` (not inside hrc-ser
 
 ## 4. Module-shape invariants the repo enforces
 
-**Validation bar (root `package.json` scripts + AGENTS.md "Validation"):**
+**Validation bar (root `package.json` scripts + AGENTS.md "Validation"; detail in [development-workflow.md](development-workflow.md)):**
 - `bun run typecheck` (per-package `tsc --noEmit`)
 - `bun run test` (hrc-server uses `bun test --timeout 10000`; broker tests want `TMPDIR=/tmp` to dodge the macOS Unix-socket path-length limit)
 - `bun run lint` / `bun run lint:fix` (biome)

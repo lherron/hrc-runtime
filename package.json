@@ -5,7 +5,7 @@
   "workspaces": [
     "packages/*"
   ],
-  "//overrides": "The pin table: one exact version per dependency, enforced across every manifest by scripts/check-dependency-pins.ts and swept on disk by scripts/workspace-doctor.ts. See AGENTS.md > Dependency Pins.",
+  "//overrides": "The pin table: one exact version per dependency, enforced across every manifest by scripts/check-dependency-pins.ts and swept on disk by scripts/workspace-doctor.ts. See docs/development-workflow.md > Dependency Pins.",
   "overrides": {
     "@types/bun": "1.3.14"
   },

@@ -348,3 +348,51 @@ viewer restart must adopt matching panes by their `hrc_runtime_id` metadata; it
 must not duplicate them. Viewer reconciliation events belong in
 `~/praesidium/var/logs/hrc-viewer.log`. New `broker_headless_viewer` events in
 `hrc-server.log` indicate that the retired in-daemon actuator is still active.
+
+## aspd-prepared Codex route
+
+Spec: [aspd-headless-codex-integration.md](aspd-headless-codex-integration.md).
+With `HRC_ASPD_SOCKET` in the daemon's plist env, headless codex-app-server
+prepares through the node's persistent aspd (launchd `com.praesidium.aspd`, ns
+`~/praesidium/var/aspd`) and the worker runs from the frozen ASP release.
+
+- **Opt-in per request.** Only `hrc start … --no-viewer` (headless, no viewer) or
+  `--app-server-viewer` (headless with the attachable tmux renderer viewer) put a
+  Codex start on this route. An omitted flag keeps max3's default, the
+  interactive codex-tui redirect.
+- **Two activations, never confused.** An HRC release activates by
+  `just install` + `hrc server restart` (daemon-authorized, T-09861:
+  only `mable@<project>:primary` (any node), `mable@<project>:minisvc` (svc only), `mable@hrc-runtime:hrcdev` (hrcdev only) or Lance; everyone else asks `mable@<project>:primary`). An ASP preparation release activates by
+  `cd ~/praesidium/agent-spaces && just aspd-activate ~/praesidium/var/aspd
+  <releaseId>` — no HRC restart. Read back both: `hrc server status --json` →
+  `.api.aspd.release.releaseId`, and `just aspd-status ~/praesidium/var/aspd`
+  (one aspd process, running == selected).
+- **One active preparation release per node; bindings are permanent.** Live
+  workers and never-submitted preparations stay on the release they were frozen
+  to across activations. Retain retired releases; never GC a release a live
+  worker or prepared operation references. A/B activation is a finite acceptance
+  exercise, not a routing mode.
+- **Attach, don't restart, a viewer.** `hrc attach <scope>` on a live
+  `--app-server-viewer` runtime attaches to its `:tui` pane; detaching leaves the
+  worker and renderer running.
+
+## Runtimes and event path
+
+Runtimes run under the harness broker (from the active aspd release,
+`libexec/harness-broker`). Events reach HRC as broker envelopes. The native
+hook-ingest, launch-callback and OTLP :4318 routes are still registered, but
+nothing produces for them, so they are not an event path. Tmux runtimes drive a
+tmux pane and survive `hrc server restart`. For the zombie sweeper on long tool
+calls, see *Zombie sweeper threshold* under [Restart doctrine](#restart-doctrine).
+
+## Mail kicker (now in agent-control-plane)
+
+The mail kicker is no longer in this repo. It is now `hrc-mail-injector` in
+agent-control-plane (`packages/hrc-mail-injector`, `src/policy/`), running as its
+own launchd job (`com.praesidium.hrc-mail-injector`). Read its log in
+`var/logs/hrc-mail-injector.log` (`wrkq.kicker.*` events) and its private state,
+including `hrcmail_birth_refusals`, `hrcmail_delivery_intents`, `hrcmail_presentations`
+and `hrcmail_failure_notices`, in
+`var/state/acp/hrc-mail-injector.sqlite` (`HRC_MAIL_INJECTOR_STATE_PATH`). The
+`hrcmail_*` tables in HRC's `var/state/hrc/state.sqlite` are pre-split leftovers
+with no writes since 2026-09-18. Reading them for current kicker state finds nothing.
