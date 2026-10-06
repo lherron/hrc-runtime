@@ -351,7 +351,7 @@ must not duplicate them. Viewer reconciliation events belong in
 
 ## aspd-prepared Codex route
 
-Spec: [aspd-headless-codex-integration.md](aspd-headless-codex-integration.md).
+Spec: `docs/aspd-headless-codex-integration.md`.
 With `HRC_ASPD_SOCKET` in the daemon's plist env, headless codex-app-server
 prepares through the node's persistent aspd (launchd `com.praesidium.aspd`, ns
 `~/praesidium/var/aspd`) and the worker runs from the frozen ASP release.
