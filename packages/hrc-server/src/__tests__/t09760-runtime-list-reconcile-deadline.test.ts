@@ -29,6 +29,8 @@ const RUNTIME_ID = 'rt-09760-list'
 const DEADLINE_MS = 300
 
 type Inspectable = HrcServer & {
+  zombieSweepInFlight?: Promise<unknown> | undefined
+  shadowTeardownInFlight?: Promise<unknown> | undefined
   tmux: { inspectSession: (sessionName: string) => Promise<unknown> }
   inFlightRequests: Map<Promise<void>, unknown>
   exactRouteHandlers: Record<string, (request: Request, url: URL) => Promise<Response> | Response>
@@ -162,4 +164,50 @@ describe('T-09760 the in-flight tracker follows the handler, not the client', ()
       .catch(() => undefined)
     expect(await settleAndCount()).toBe(0)
   })
+})
+
+describe('T-09760 stop() bounds every teardown wait and names each step', () => {
+  it('a sweep that never settles costs one step bound, is named, and stop completes', async () => {
+    // Let startup timers run first, so only stop() awaits the injected sweeps.
+    await Bun.sleep(20)
+    server!.zombieSweepInFlight = new Promise(() => undefined)
+    server!.shadowTeardownInFlight = new Promise(() => undefined)
+
+    const startedAt = performance.now()
+    const outcome = await Promise.race([
+      server!.stop().then(() => 'stopped' as const),
+      Bun.sleep(25_000).then(() => 'still pending' as const),
+    ])
+    const elapsedMs = performance.now() - startedAt
+    server = undefined
+
+    expect(outcome).toBe('stopped')
+    // Two wedged waits, each capped at the 5s step bound.
+    expect(elapsedMs).toBeLessThan(12_000)
+    expect(logLines('server.stop.zombie_sweep_wait_timeout')).toHaveLength(1)
+    expect(logLines('server.stop.shadow_teardown_wait_timeout')).toHaveLength(1)
+    expect(logLines('server.stop.complete')).toHaveLength(1)
+
+    const steps = logLines('server.stop.step').map((line) => line['step'])
+    for (const expected of [
+      'listener',
+      'event_forwarder',
+      'zombie_sweep',
+      'active_run_reconcile',
+      'retained_evidence_pass',
+      'tmux_aging',
+      'shadow_teardown',
+      'wrkq_ledger',
+      'request_drain',
+      'store_close',
+      'lock_release',
+    ]) {
+      expect(steps).toContain(expected)
+    }
+    expect(steps.at(-1)).toBe('lock_release')
+    // The step entered after a wedged one starts about one bound later.
+    const at = (name: string) =>
+      logLines('server.stop.step').find((line) => line['step'] === name)?.['sinceBeginMs'] as number
+    expect(at('active_run_reconcile') - at('zombie_sweep')).toBeGreaterThanOrEqual(4_900)
+  }, 30_000)
 })

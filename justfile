@@ -984,6 +984,15 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     done < <(plutil -extract EnvironmentVariables json -o - "$supervisor_plist" 2>/dev/null |
       jq -r 'keys[] | select(startswith("HRC_"))')
     echo "[hrc] ${supervisor_target} owns pid ${server_pid} running ${deployed_sha} with the plist environment"
+    # A launchd bootout SIGKILLs the job ExitTimeOut seconds after SIGTERM, and the
+    # default is ~5s (measured 4.6s, T-09760) — shorter than the daemon's own 30s
+    # stop deadline, so a slow graceful stop dies mid-teardown with no record and
+    # the successor logs server.previous_exit_unattributed. Loud, not fatal: the
+    # injector step below must still run. Repair, then bootout/bootstrap the job.
+    exit_timeout="$(plutil -extract ExitTimeOut raw -o - "$supervisor_plist" 2>/dev/null || echo 0)"
+    if (( exit_timeout <= 30 )); then
+      echo "[hrc] WARNING: ${supervisor_plist} ExitTimeOut=${exit_timeout} (default ~5s) is not above the daemon's 30s stop deadline; a launchd bootout will SIGKILL a graceful stop. Repair: plutil -replace ExitTimeOut -integer 45 ${supervisor_plist} && launchctl bootout ${supervisor_target} && launchctl bootstrap ${supervisor_target%/*} ${supervisor_plist}" >&2
+    fi
 
     # ---- 3. mail injector ---------------------------------------------------
     # After HRC: the injector subscribes to the daemon's streams and must come up

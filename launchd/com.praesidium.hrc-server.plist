@@ -33,6 +33,8 @@
 		<key>PI_PATH</key>
 		<string>/Users/lherron/.local/bin/pi</string>
 	</dict>
+	<key>ExitTimeOut</key>
+	<integer>45</integer>
 	<key>KeepAlive</key>
 	<true/>
 	<key>Label</key>

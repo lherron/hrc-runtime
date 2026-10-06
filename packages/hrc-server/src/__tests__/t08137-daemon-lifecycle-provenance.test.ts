@@ -696,18 +696,30 @@ describe('T-08137 stop() site coverage', () => {
       'request_drain_timeout',
       'peer_protocol_listener_failed',
       'binding_registry_listener_failed',
-      'zombie_sweep_wait_failed',
-      'first_turn_eval_wait_failed',
-      'retained_evidence_pass_wait_failed',
-      'broker_lease_gc_wait_failed',
-      'session_retention_wait_failed',
-      'shadow_teardown_wait_failed',
       'wrkq_ledger_close_failed',
+      'wrkq_ledger_close_timeout',
       'stream_close_failed',
       'external_participant_close_failed',
+      'external_participant_close_timeout',
       'participant_operation_failed',
+      'participant_operation_timeout',
+      'metrics_flush_timeout',
     ]) {
       expect(body).toContain(`'${reason}'`)
+    }
+    // T-09760: bounded waits record `<step>_wait_failed` or `<step>_wait_timeout`.
+    for (const waitStep of [
+      'event_forwarder',
+      'event_ingest_listener',
+      'zombie_sweep',
+      'first_turn_eval',
+      'retained_evidence_pass',
+      'broker_lease_gc',
+      'session_retention',
+      'shadow_teardown',
+      'transcript_indexer',
+    ]) {
+      expect(body).toContain(`stopWaitReason('${waitStep}', error)`)
     }
   })
 

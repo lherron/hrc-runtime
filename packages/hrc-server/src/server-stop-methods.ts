@@ -28,6 +28,47 @@ const SERVER_STOP_REQUEST_DRAIN_TIMEOUT_MS = 3_000
  * sweep loses that guarantee or is wedged somewhere outside the child process.
  */
 const SERVER_STOP_TMUX_SWEEP_DRAIN_TIMEOUT_MS = 5_000
+/**
+ * T-09760: every other teardown wait in `stop()`. Each was unbounded, so one
+ * wedged dependency held the stop until the foreground deadline (30s) or the
+ * supervisor's SIGKILL, and nothing said which step it was. A miss records a
+ * `<step>_wait_timeout` reason (withholding server.stopped) and stop continues.
+ */
+const SERVER_STOP_STEP_TIMEOUT_MS = 5_000
+
+export class StopStepTimeoutError extends Error {
+  constructor(
+    readonly step: string,
+    readonly timeoutMs: number
+  ) {
+    super(`stop step ${step} did not settle within ${timeoutMs}ms`)
+    this.name = 'StopStepTimeoutError'
+  }
+}
+
+/** Await one teardown step, rejecting with StopStepTimeoutError past its bound. */
+export async function awaitStopStep<T>(
+  step: string,
+  work: Promise<T>,
+  timeoutMs: number = SERVER_STOP_STEP_TIMEOUT_MS
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new StopStepTimeoutError(step, timeoutMs)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+/** The reason a failed bounded wait records: `<step>_wait_timeout` or `_wait_failed`. */
+function stopWaitReason(step: string, error: unknown): string {
+  return error instanceof StopStepTimeoutError ? `${step}_wait_timeout` : `${step}_wait_failed`
+}
 
 export const serverStopMethods = {
   /**
@@ -231,15 +272,40 @@ export const serverStopMethods = {
       teardownIncomplete.push(reason)
       writeServerLog('WARN', `server.stop.${reason}`, details)
     }
+    // T-09760: one line as each step begins, so a stop that wedges or is
+    // SIGKILLed by its supervisor leaves the step it was in as its last line.
+    const stopBeganAt = performance.now()
+    const step = (name: string): void => {
+      writeServerLog('INFO', 'server.stop.step', {
+        step: name,
+        sinceBeginMs: Math.round(performance.now() - stopBeganAt),
+      })
+    }
     this.runtimeStartPresentationAbortController.abort()
     writeServerLog('INFO', 'server.stop.begin', {
       socketPath: this.options.socketPath,
       dbPath: this.options.dbPath,
       tmuxSocketPath: getTmuxSocketPath(this.options),
     })
+    step('listener')
     this.server.stop()
-    await this.eventForwarder?.stop()
-    await this.eventIngestListener?.stop()
+    step('event_forwarder')
+    if (this.eventForwarder) {
+      try {
+        await awaitStopStep('event_forwarder', this.eventForwarder.stop())
+      } catch (error) {
+        incomplete(stopWaitReason('event_forwarder', error), { error })
+      }
+    }
+    step('event_ingest_listener')
+    if (this.eventIngestListener) {
+      try {
+        await awaitStopStep('event_ingest_listener', this.eventIngestListener.stop())
+      } catch (error) {
+        incomplete(stopWaitReason('event_ingest_listener', error), { error })
+      }
+    }
+    step('federation_listeners')
     this.collectiveHistory?.stop()
     if (this.peerProtocolEndpoint) {
       try {
@@ -262,17 +328,19 @@ export const serverStopMethods = {
       clearInterval(this.zombieSweepTimer)
       this.zombieSweepTimer = undefined
     }
+    step('zombie_sweep')
     if (this.zombieSweepInFlight) {
       try {
-        await this.zombieSweepInFlight
+        await awaitStopStep('zombie_sweep', this.zombieSweepInFlight)
       } catch (error) {
-        incomplete('zombie_sweep_wait_failed', { error })
+        incomplete(stopWaitReason('zombie_sweep', error), { error })
       }
     }
     if (this.activeRunReconcileTimer) {
       clearInterval(this.activeRunReconcileTimer)
       this.activeRunReconcileTimer = undefined
     }
+    step('active_run_reconcile')
     if (this.activeRunReconcileInFlight) {
       const outcome = await this.drainTmuxSweepForStop(
         this.activeRunReconcileInFlight,
@@ -284,11 +352,12 @@ export const serverStopMethods = {
       clearInterval(this.firstTurnEvalTimer)
       this.firstTurnEvalTimer = undefined
     }
+    step('first_turn_eval')
     if (this.firstTurnEvalInFlight) {
       try {
-        await this.firstTurnEvalInFlight
+        await awaitStopStep('first_turn_eval', this.firstTurnEvalInFlight)
       } catch (error) {
-        incomplete('first_turn_eval_wait_failed', { error })
+        incomplete(stopWaitReason('first_turn_eval', error), { error })
       }
     }
     if (this.brokerLeaseGcTimer) {
@@ -308,24 +377,27 @@ export const serverStopMethods = {
     this.retainedEvidenceTerminalTimers.clear()
     // In-flight offline readers must not outlive the daemon that spawned them.
     killActiveOfflineReaders()
+    step('retained_evidence_pass')
     if (this.retainedEvidencePassInFlight) {
       try {
-        await this.retainedEvidencePassInFlight
+        await awaitStopStep('retained_evidence_pass', this.retainedEvidencePassInFlight)
       } catch (error) {
-        incomplete('retained_evidence_pass_wait_failed', { error })
+        incomplete(stopWaitReason('retained_evidence_pass', error), { error })
       }
     }
+    step('broker_lease_gc')
     if (this.brokerLeaseGcInFlight) {
       try {
-        await this.brokerLeaseGcInFlight
+        await awaitStopStep('broker_lease_gc', this.brokerLeaseGcInFlight)
       } catch (error) {
-        incomplete('broker_lease_gc_wait_failed', { error })
+        incomplete(stopWaitReason('broker_lease_gc', error), { error })
       }
     }
     if (this.tmuxAgingTimer) {
       clearInterval(this.tmuxAgingTimer)
       this.tmuxAgingTimer = undefined
     }
+    step('tmux_aging')
     if (this.tmuxAgingInFlight) {
       const outcome = await this.drainTmuxSweepForStop(this.tmuxAgingInFlight, 'tmux_aging')
       if (outcome !== 'settled') teardownIncomplete.push(`tmux_aging_wait_${outcome}`)
@@ -334,34 +406,53 @@ export const serverStopMethods = {
       clearInterval(this.sessionRetentionTimer)
       this.sessionRetentionTimer = undefined
     }
+    step('session_retention')
     if (this.sessionRetentionInFlight) {
       try {
-        await this.sessionRetentionInFlight
+        await awaitStopStep('session_retention', this.sessionRetentionInFlight)
       } catch (error) {
-        incomplete('session_retention_wait_failed', { error })
+        incomplete(stopWaitReason('session_retention', error), { error })
       }
     }
     if (this.shadowTeardownTimer) {
       clearInterval(this.shadowTeardownTimer)
       this.shadowTeardownTimer = undefined
     }
+    step('shadow_teardown')
     if (this.shadowTeardownInFlight) {
       try {
-        await this.shadowTeardownInFlight
+        await awaitStopStep('shadow_teardown', this.shadowTeardownInFlight)
       } catch (error) {
-        incomplete('shadow_teardown_wait_failed', { error })
+        incomplete(stopWaitReason('shadow_teardown', error), { error })
       }
     }
-    await this.transcriptIndexer.stop()
+    step('transcript_indexer')
+    try {
+      await awaitStopStep('transcript_indexer', this.transcriptIndexer.stop())
+    } catch (error) {
+      incomplete(stopWaitReason('transcript_indexer', error), { error })
+    }
     this.uninstallProjectRegistrySource()
     // The ledger transport is a child process; leaving it behind would strand a
     // `wrkq rpc --stdio` per daemon restart.
-    await this.wrkqLedger.close().catch((error: unknown) => {
-      incomplete('wrkq_ledger_close_failed', { error })
+    step('wrkq_ledger')
+    await awaitStopStep('wrkq_ledger', this.wrkqLedger.close()).catch((error: unknown) => {
+      incomplete(
+        error instanceof StopStepTimeoutError
+          ? 'wrkq_ledger_close_timeout'
+          : 'wrkq_ledger_close_failed',
+        { error }
+      )
     })
+    step('external_participants')
     for (const [id, client] of this.externalParticipantClients) {
-      await client.close().catch((error: unknown) => {
-        incomplete('external_participant_close_failed', { id, error })
+      await awaitStopStep('external_participant', client.close()).catch((error: unknown) => {
+        incomplete(
+          error instanceof StopStepTimeoutError
+            ? 'external_participant_close_timeout'
+            : 'external_participant_close_failed',
+          { id, error }
+        )
       })
     }
     this.externalParticipantClients.clear()
@@ -373,14 +464,23 @@ export const serverStopMethods = {
       ],
       ['participant_establishment', [...this.participantEstablishmentOperations.values()]],
     ] as const
+    step('participant_operations')
     for (const [group, operations] of participantOperationGroups) {
       if (operations.length === 0) continue
-      for (const result of await Promise.allSettled(operations)) {
+      let settled: PromiseSettledResult<unknown>[]
+      try {
+        settled = await awaitStopStep('participant_operations', Promise.allSettled(operations))
+      } catch (error) {
+        incomplete('participant_operation_timeout', { group, error })
+        continue
+      }
+      for (const result of settled) {
         if (result.status === 'rejected') {
           incomplete('participant_operation_failed', { group, error: result.reason })
         }
       }
     }
+    step('streams')
     for (const close of [...this.activeStreamClosers]) {
       try {
         close()
@@ -397,32 +497,44 @@ export const serverStopMethods = {
     // Handlers that were already running when the stop began keep executing
     // after the socket closes; let them finish (bounded) before the store goes
     // away underneath them.
+    step('request_drain')
     if ((await this.drainInFlightRequests()) === 'timeout') {
       teardownIncomplete.push('request_drain_timeout')
     }
     // Stop in-flight broker event consumers from projecting before the backing
     // DB closes underneath them (avoids closed-DB teardown crashes).
+    step('broker_controller')
     this.harnessBrokerController?.shutdown?.()
     let cleanupError: unknown
 
     // T-08137 rev 4: socket unlink and the metrics flush run BEFORE the store
     // closes (the listener is already stopped), so server.stopped can attest
     // every teardown step up to db.close().
+    step('socket_unlink')
     try {
-      await unlinkIfExists(this.options.socketPath)
+      await awaitStopStep('socket_unlink', unlinkIfExists(this.options.socketPath))
     } catch (error) {
       cleanupError ??= error
-      teardownIncomplete.push('socket_unlink_failed')
+      teardownIncomplete.push(
+        error instanceof StopStepTimeoutError ? 'socket_unlink_timeout' : 'socket_unlink_failed'
+      )
     }
 
     // Clean stop loses no buffered metrics (T-08784). Never rejects.
-    await flushServerMetrics(this.options.stateRoot)
+    step('metrics_flush')
+    try {
+      await awaitStopStep('metrics_flush', flushServerMetrics(this.options.stateRoot))
+    } catch (error) {
+      incomplete('metrics_flush_timeout', { error })
+    }
 
+    step('store_close')
     this.appendServerStopped(teardownIncomplete)
     this.db.close()
 
     // Outside the server.stopped attestation: it cannot be recorded durably
     // after the store closes. Failure behavior is unchanged.
+    step('lock_release')
     try {
       await releaseServerLock(this.options.lockPath, this.lockHandle)
     } catch (error) {
