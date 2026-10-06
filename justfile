@@ -991,7 +991,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     # injector step below must still run. Repair, then bootout/bootstrap the job.
     exit_timeout="$(plutil -extract ExitTimeOut raw -o - "$supervisor_plist" 2>/dev/null || echo 0)"
     if (( exit_timeout <= 30 )); then
-      echo "[hrc] WARNING: ${supervisor_plist} ExitTimeOut=${exit_timeout} (default ~5s) is not above the daemon's 30s stop deadline; a launchd bootout will SIGKILL a graceful stop. Repair: plutil -replace ExitTimeOut -integer 45 ${supervisor_plist} && launchctl bootout ${supervisor_target} && launchctl bootstrap ${supervisor_target%/*} ${supervisor_plist}" >&2
+      echo "[hrc] WARNING: ${supervisor_plist} ExitTimeOut=${exit_timeout} (default ~5s) is not above the daemon's 30s stop deadline; a launchd bootout will SIGKILL a graceful stop. Repair: hand-add <key>ExitTimeOut</key><integer>45</integer> to ${supervisor_plist} (not plutil/PlistBuddy: a canonical rewrite disturbs BTM attribution), then launchctl bootout ${supervisor_target} && launchctl bootstrap ${supervisor_target%/*} ${supervisor_plist}" >&2
     fi
 
     # ---- 3. mail injector ---------------------------------------------------
