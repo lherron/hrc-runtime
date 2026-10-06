@@ -133,6 +133,17 @@ export type HrcBoundedEventStreamRecord =
       expectedLedgerIncarnationId: string
       currentLedgerIncarnationId: string
     }
+  /**
+   * T-10418: terminal control from a scope-home relay whose peer stream ended
+   * without its own terminal. Like `ready`, it never advances a cursor; resume
+   * from the last fully received event or gap against the same home ledger.
+   */
+  | {
+      type: 'home_unreachable'
+      homeNodeId: string
+      retryable: true
+      reason: 'disconnected' | 'idle_timeout' | 'malformed' | 'oversize'
+    }
 
 export type HrcEventTail = {
   events: HrcLifecycleEvent[]

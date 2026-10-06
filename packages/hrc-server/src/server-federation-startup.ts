@@ -1,5 +1,6 @@
 import {
   HrcBadRequestError,
+  HrcDomainError,
   HrcErrorCode,
   isExactStartRuntimeRequest,
   isSuffixStartRuntimeRequest,
@@ -27,16 +28,31 @@ import {
 } from './federation/summon-gate-server.js'
 import type { HrcServerInstance } from './index.js'
 import { suffixRosterFamily } from './roster-claim.js'
-import { listRuntimesForProjection } from './runtime-list-handlers.js'
+import { handleListRuns, listRuntimesForProjection } from './runtime-list-handlers.js'
 import { writeServerLog } from './server-log.js'
 import { parseStartRuntimeRequest } from './server-parsers.js'
 import type { HrcServerOptions } from './server-types.js'
+import { errorResponse } from './server-util.js'
 import {
   handleGetSessionContinuity,
   handleGetSessionMetadata,
   handlePatchSessionMetadata,
 } from './session-metadata-handlers.js'
 import { toStartRuntimeResponse } from './status-views.js'
+
+/**
+ * Peer-dispatched local reads answer HRC domain errors as HRC errors
+ * (`cursor_invalid`, unknown continuity, a home refusal), so the origin relays
+ * the home's real answer instead of a generic peer-protocol 500.
+ */
+async function localDomainAnswer(read: () => Response | Promise<Response>): Promise<Response> {
+  try {
+    return await read()
+  } catch (error) {
+    if (error instanceof HrcDomainError) return errorResponse(error)
+    throw error
+  }
+}
 
 export type FederationServices = {
   readonly bindingRegistryEndpoint: BindingRegistryEndpointControl | undefined
@@ -137,6 +153,7 @@ export function startFederationServices(
               collectiveHistory: collectiveHistory?.isAuthority === true,
               semanticTurnHandoff: true,
               serverLifecycle: server.lifecycleController.capable,
+              federatedSessionRead: true,
             },
             ...(includeRuntimes ? { runtimes: await listRuntimesForProjection(server, url) } : {}),
           }),
@@ -223,11 +240,32 @@ export function startFederationServices(
             return { ...toStartRuntimeResponse(runtime), claim }
           },
           sessionMetadata: ({ request, url }) =>
-            url.pathname === '/v1/sessions/get'
-              ? handleGetSessionContinuity(server, url, true)
-              : request.method === 'GET'
-                ? handleGetSessionMetadata(server, url, true)
-                : handlePatchSessionMetadata(server, request, true),
+            localDomainAnswer(() =>
+              url.pathname === '/v1/sessions/get'
+                ? handleGetSessionContinuity(server, url, true)
+                : request.method === 'GET'
+                  ? handleGetSessionMetadata(server, url, true)
+                  : handlePatchSessionMetadata(server, request, true)
+            ),
+          // T-10418: the home answers forwarded reads localOnly (no second hop).
+          sessionRead: (read) =>
+            localDomainAnswer(() => {
+              if (read.route === 'resolve') {
+                return server.handleResolveSession(
+                  new Request(read.url.toString(), {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(read.body),
+                  }),
+                  true
+                )
+              }
+              if (read.route === 'events-tail') return server.handleEventsTail(read.url)
+              if (read.route === 'events-bounded-stream') {
+                return server.handleBoundedEvents(read.url, read.request)
+              }
+              return handleListRuns(server, read.url)
+            }),
           sessionPage: ({ url }) => {
             const localUrl = new URL(url)
             localUrl.searchParams.set('nodes', 'local')

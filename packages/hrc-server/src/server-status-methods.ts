@@ -351,6 +351,7 @@ export const serverStatusMethods = {
         },
         serverLifecycle: this.lifecycleController.capable,
         selfRestart: true,
+        federatedSessionRead: true,
       },
     } satisfies HrcStatusSummaryResponse
     if (includeSessions !== 'true') return json(summary)

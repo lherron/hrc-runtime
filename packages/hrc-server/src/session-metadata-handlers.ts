@@ -1,7 +1,6 @@
 import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import { canonicalLaneRef } from 'hrc-store-sqlite'
-import { locateScopeOnServer } from './federation/locate-server.js'
-import { buildPeerProtocolHeaders } from './federation/peer-request.js'
+import { forwardScopeJson, routeScopeRead } from './federation/scope-read-routing.js'
 import type { HrcServerInstance } from './index.js'
 import { parseJsonBody, parseSessionRef } from './server-parsers.js'
 import { json } from './server-util.js'
@@ -20,6 +19,11 @@ function target(server: HrcServerInstance, scopeRef: unknown, laneRef: unknown) 
     throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_HOST_SESSION, 'unknown continuity', parsed)
   return continuity
 }
+/**
+ * T-10418: home authority decides before any continuity read. A shadow row
+ * here for a scope bound elsewhere is never served, and an unknown or pending
+ * home refuses retryably instead of answering from local state.
+ */
 async function forward(
   server: HrcServerInstance,
   scopeRef: unknown,
@@ -30,30 +34,16 @@ async function forward(
     headers: { get(name: string): string | null }
   }
 ): Promise<Response | undefined> {
-  if (typeof scopeRef !== 'string' || !server.options.federationConfig?.sourceExists)
-    return undefined
-  const location = await locateScopeOnServer(server, scopeRef)
-  if (location.authority.state !== 'bound' || location.authority.isLocal) return undefined
-  const homeNodeId = location.authority.record.homeNodeId
-  const peer = [...server.options.federationConfig.peers.values()].find(
-    (p) => String(p.nodeId) === homeNodeId
-  )
-  if (!peer)
-    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_HOST_SESSION, 'session home peer unavailable')
-  const remote = new URL(url.pathname + url.search, peer.endpoint)
-  const principalRef = request?.headers.get('x-hrc-principal-ref')
-  const response = await fetch(remote, {
-    method: request?.method ?? 'GET',
-    headers: {
-      ...buildPeerProtocolHeaders(peer, { contentType: 'application/json' }),
-      ...(principalRef ? { 'x-hrc-principal-ref': principalRef } : {}),
-    },
+  if (typeof scopeRef !== 'string') return undefined
+  const route = await routeScopeRead(server, scopeRef)
+  if (route.kind === 'local') return undefined
+  return forwardScopeJson(server, {
+    route,
+    scopeRef,
+    url,
+    method: request?.method === 'PATCH' ? 'PATCH' : 'GET',
     ...(request ? { body: await request.text() } : {}),
-    signal: AbortSignal.timeout(10000),
-  })
-  return new Response(await response.text(), {
-    status: response.status,
-    headers: { 'content-type': 'application/json' },
+    principalRef: request?.headers.get('x-hrc-principal-ref'),
   })
 }
 export async function handleGetSessionMetadata(

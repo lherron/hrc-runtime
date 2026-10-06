@@ -68,6 +68,7 @@ import { PeerRuntimeProjectionCache } from './federation/peer-runtime-projection
 import { installProjectRegistrySource } from './federation/project-registry-roots.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { BindingRegistryEndpointControl } from './federation/registry-endpoint.js'
+import { forwardScopedGet } from './federation/scope-read-routing.js'
 import {
   captureLivePlacementRepairCandidates,
   repairLiveUnboundPlacements,
@@ -558,7 +559,13 @@ export class HrcServerInstance implements HrcServer {
       runtimeListReconcileDeadlineMs: this.runtimeListReconcileDeadlineMs,
       reconcileTmuxRuntimeLiveness: (runtime) => this.reconcileTmuxRuntimeLiveness(runtime),
     })) {
-      this.exactRouteHandlers[exactRouteKey(route.method, route.pathname)] = route.handler
+      // T-10418: a scope-filtered run read is answered by the scope's home.
+      this.exactRouteHandlers[exactRouteKey(route.method, route.pathname)] =
+        route.method === 'GET' && route.pathname === '/v1/runs'
+          ? async (request, url) =>
+              (await forwardScopedGet(this, url, { signal: request.signal })) ??
+              route.handler(request, url)
+          : route.handler
     }
     // First, so every recurring job below runs under observation.
     this.eventLoopLag = new EventLoopLagMonitor({

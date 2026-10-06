@@ -214,6 +214,11 @@ export type HrcCapabilityStatus = {
     serverLifecycle?: boolean | undefined
     /** T-09872: this daemon serves `POST /v1/runtimes/restart-self` (`hrc restartme`). */
     selfRestart?: boolean | undefined
+    /**
+     * T-10418: scope-keyed session, event and run reads route by home authority
+     * and relay from a foreign home. ACP gates remote timeline and history on it.
+     */
+    federatedSessionRead?: boolean | undefined
   }
 }
 

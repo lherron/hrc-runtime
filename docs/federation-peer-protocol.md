@@ -23,10 +23,21 @@ availability is discovered from health capabilities and route presence.
 | `GET` | `/v1/sessions/facets` | Read node-local session facets. |
 | `GET` | `/v1/sessions/get` | Read the home-node continuity, identity, facts and resolved metadata without creating a session. |
 | `GET` / `PATCH` | `/v1/sessions/metadata` | Read or patch API metadata on the continuity home; cosmetic writes need no additional authority check. |
+| `POST` | `/v1/sessions/resolve` | Read-only resolve on the scope home (T-10418). The body must be exactly `{ sessionRef, create?: false }`; `create: true`, `summonIntent` or `runtimeIntent` is `403 peer_read_only` before any create path. |
+| `GET` | `/v1/events/tail` | Scope-filtered bounded tail page from the home ledger (T-10418); `scopeRef` required. |
+| `GET` | `/v1/events/bounded-stream` | Scope-filtered bounded follow on the home ledger (T-10418); `scopeRef` required. |
+| `GET` | `/v1/runs` | Scope-filtered run list on the home (T-10418); `scopeRef` required. |
 | `POST` | `/v1/federation/history/replicate` | Replicate one collective-history record. |
 | `POST` | `/v1/federation/history/query` | Query collective history. |
 | `POST` | `/v1/federation/history/checkpoint` | Record a history checkpoint. |
 | `POST` | `/v1/federation/server-lifecycle` | Attested remote HRC restart (T-09861); advertised by the `serverLifecycle` health capability. |
+
+The four T-10418 session-read routes are dispatched `localOnly` on the home, so a
+forwarded read never takes a second hop, and the three event/run routes refuse
+any non-`GET` method with `403 peer_read_only`. The origin relays the bounded
+stream record by record (see `hrc-runtime.bounded-lifecycle-event-observation`)
+and tags forwarded answers with `x-hrc-home-node`. Health advertises the
+`federatedSessionRead` capability.
 
 The old federation message accept routes are deleted. Cross-node agent talk is
 carried by the shared wrkq ledger; the peer surface retains placement, birth,

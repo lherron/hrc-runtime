@@ -18,6 +18,7 @@ import {
 } from './command-run-helpers.js'
 import { validateConfiguredCommandRunTarget } from './command-run-targets-config.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
+import { forwardScopeJson, routeScopeRead } from './federation/scope-read-routing.js'
 import { assertScopeNotRetired, withSummonAuthority } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import type { HrcServerInstance } from './index.js'
@@ -56,13 +57,45 @@ import { dropSessionContinuation } from './session-continuation-reuse.js'
 import { decorateSessionTitles, parseSessionTitleWriteInput } from './session-title-helpers.js'
 import { findContinuitySession } from './target-view.js'
 
+function isFoundResolve(value: unknown): value is Record<string, unknown> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    (value as Record<string, unknown>)['found'] === true
+  )
+}
+
 export const serverSessionMethods = {
-  async handleResolveSession(this: HrcServerInstance, request: Request): Promise<Response> {
+  async handleResolveSession(
+    this: HrcServerInstance,
+    request: Request,
+    localOnly = false
+  ): Promise<Response> {
     const body = await parseJsonBody(request)
     const parsed = parseResolveSessionRequest(body)
     const { scopeRef, laneRef } = parseSessionRef(parsed.sessionRef)
     if (parsed.create === true) {
       assertLocalPersonaAllowed(this, scopeRef)
+    } else if (!localOnly) {
+      // T-10418: a read-only resolve is answered by the scope's home. Only the
+      // read shape crosses; the peer refuses anything that could create.
+      const route = await routeScopeRead(this, scopeRef)
+      if (route.kind === 'forward') {
+        return forwardScopeJson(this, {
+          route,
+          scopeRef,
+          url: new URL(request.url),
+          method: 'POST',
+          body: JSON.stringify({
+            sessionRef: parsed.sessionRef,
+            ...(parsed.create === false ? { create: false } : {}),
+          }),
+          decorate: (answer, status) =>
+            status === 200 && isFoundResolve(answer)
+              ? { ...answer, homeNodeId: route.homeNodeId }
+              : answer,
+        })
+      }
     }
     const existing = findContinuitySession(this.db, parsed.sessionRef)
     if (existing) {

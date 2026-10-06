@@ -36,6 +36,8 @@ export type PeerProtocolHealth = {
     readonly semanticTurnHandoff?: boolean | undefined
     /** T-09861: accepts attested `POST /v1/federation/server-lifecycle`. */
     readonly serverLifecycle?: boolean | undefined
+    /** T-10418: serves read-only resolve, events tail/bounded-stream and runs. */
+    readonly federatedSessionRead?: boolean | undefined
   }
   /** Additive F3 projection, returned only when the caller asks for it. */
   readonly runtimes?: readonly HrcRuntimeSnapshot[] | undefined
@@ -125,6 +127,21 @@ export type PeerProtocolRequestHandlerOptions = {
     | ((request: { readonly request: Request; readonly url: URL }) => Promise<Response>)
     | undefined
   readonly sessionPage?: ((request: { readonly url: URL }) => Promise<Response>) | undefined
+  /**
+   * T-10418 — the read-only session surface, dispatched localOnly. Resolve
+   * arrives here already reduced to `{ sessionRef, create?: false }`.
+   */
+  readonly sessionRead?:
+    | ((
+        request:
+          | { readonly route: 'resolve'; readonly body: SessionReadResolveBody; readonly url: URL }
+          | {
+              readonly route: 'events-tail' | 'events-bounded-stream' | 'runs'
+              readonly request: Request
+              readonly url: URL
+            }
+      ) => Promise<Response> | Response)
+    | undefined
   readonly sessionFacets?: ((request: { readonly url: URL }) => Promise<Response>) | undefined
   readonly establish?: PeerEstablishHandler | undefined
   readonly rosterStart?: PeerRosterStartHandler | undefined
@@ -138,6 +155,11 @@ export type PeerProtocolRequestHandlerOptions = {
   readonly collectiveHistoryCheckpoint?: PeerCollectiveHistoryCheckpointHandler | undefined
   readonly collectiveHistoryQuery?: PeerCollectiveHistoryQueryHandler | undefined
   readonly serverLifecycle?: PeerServerLifecycleHandler | undefined
+}
+
+export type SessionReadResolveBody = {
+  readonly sessionRef: string
+  readonly create?: false | undefined
 }
 
 export type PeerProtocolEndpointControl = {
@@ -313,6 +335,64 @@ async function handleSessionIndexRequest(input: {
   return undefined
 }
 
+const SESSION_READ_GET_ROUTES = {
+  '/v1/events/tail': 'events-tail',
+  '/v1/events/bounded-stream': 'events-bounded-stream',
+  '/v1/runs': 'runs',
+} as const
+
+/** Fields that would make a resolve create or summon. Refused before dispatch. */
+const RESOLVE_CREATE_FIELDS = new Set(['summonIntent', 'runtimeIntent'])
+
+/**
+ * T-10418 §3 — read-only by construction. Resolve admits exactly
+ * `{ sessionRef, create?: false }`; anything that could create is refused with
+ * 403 before the summon/create code exists on the call path. The three
+ * event/run routes are GET-only and must name a scope.
+ */
+async function handleSessionReadRequest(input: {
+  request: Request
+  url: URL
+  options: PeerProtocolRequestHandlerOptions
+}): Promise<Response | undefined> {
+  const { request, url, options } = input
+  if (url.pathname === '/v1/sessions/resolve') {
+    if (request.method !== 'POST') return refusal(403, 'peer_read_only', { retryable: false })
+    const body = await requestRecord(request)
+    if (
+      body['create'] === true ||
+      Object.keys(body).some((key) => RESOLVE_CREATE_FIELDS.has(key))
+    ) {
+      return refusal(403, 'peer_read_only', { retryable: false })
+    }
+    if (
+      Object.keys(body).some((key) => key !== 'sessionRef' && key !== 'create') ||
+      (body['create'] !== undefined && body['create'] !== false)
+    ) {
+      throw new InvalidPeerRequest()
+    }
+    if (options.sessionRead === undefined) {
+      return refusal(404, 'peer_upgrade_required', { retryable: false })
+    }
+    return options.sessionRead({
+      route: 'resolve',
+      body: {
+        sessionRef: requiredString(body, 'sessionRef'),
+        ...(body['create'] === false ? { create: false } : {}),
+      },
+      url,
+    })
+  }
+  const route = SESSION_READ_GET_ROUTES[url.pathname as keyof typeof SESSION_READ_GET_ROUTES]
+  if (route === undefined) return undefined
+  if (request.method !== 'GET') return refusal(403, 'peer_read_only', { retryable: false })
+  if (!url.searchParams.get('scopeRef')?.trim()) throw new InvalidPeerRequest()
+  if (options.sessionRead === undefined) {
+    return refusal(404, 'peer_upgrade_required', { retryable: false })
+  }
+  return options.sessionRead({ route, request, url })
+}
+
 async function handleHealthRequest(input: {
   request: Request
   url: URL
@@ -455,6 +535,9 @@ export function createPeerProtocolRequestHandler(
 
       const sessionIndexResponse = await handleSessionIndexRequest({ request, url, options })
       if (sessionIndexResponse !== undefined) return sessionIndexResponse
+
+      const sessionReadResponse = await handleSessionReadRequest({ request, url, options })
+      if (sessionReadResponse !== undefined) return sessionReadResponse
 
       const locateResponse = await handleLocateRequest({ request, url, options })
       if (locateResponse !== undefined) return locateResponse

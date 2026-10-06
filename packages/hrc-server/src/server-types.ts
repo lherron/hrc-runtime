@@ -24,6 +24,7 @@ import type {
 import type { BirthTimeline } from './birth-timeline.js'
 import type { ExternalParticipantClientFactory } from './external-registration-rendezvous.js'
 import type { FederationConfig } from './federation/federation-config.js'
+import type { ScopeReadTimeouts } from './federation/scope-read-routing.js'
 import type { RegistrationClassConfig } from './registration-classes-config.js'
 import type { ServerLifecycleExecutor } from './server-lifecycle-controller.js'
 import type { ServerShutdownAttribution } from './server-lifecycle.js'
@@ -402,6 +403,8 @@ export type HrcServerOptions = {
    * when omitted; tests and embedders may inject a resolved config directly.
    */
   federationConfig?: FederationConfig | undefined
+  /** T-10418 tests: shorten the scope-home relay connect and idle bounds. */
+  scopeReadTimeouts?: ScopeReadTimeouts | undefined
   /** T-06618 injection seam for durable/idempotent envelope acceptance. */
   /** Test/embedded override; production uses the weeks-scale §6 defaults. */
   /** Test/embedded polling override; production polls once per second. */

@@ -82,6 +82,8 @@ export type ResolveSessionFoundResponse = {
   generation: number
   created: boolean
   session: HrcSessionRecord
+  /** T-10418: present when the resolve was answered by the scope's foreign home. */
+  homeNodeId?: string | undefined
 }
 
 export type ResolveSessionMissResponse = {

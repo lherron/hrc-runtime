@@ -158,11 +158,22 @@ export const HrcErrorCode = {
    */
   COLD_INPUT_CONTINUATION_LOST: 'cold_input_continuation_lost',
   COLD_INPUT_CONTINUATION_FAILED: 'cold_input_continuation_failed',
+  /**
+   * T-10418 scope-home read routing. UNREACHABLE: the scope's foreign home is
+   * absent from federation.json or did not answer before headers. PENDING: an
+   * unbound scope whose local placement is retired (retirement gap). UNKNOWN:
+   * the registry could not say where the scope lives. MALFORMED: the home's
+   * page exceeded the relay byte ceiling. All are retryable; none is found:false.
+   */
+  SESSION_HOME_UNREACHABLE: 'session_home_unreachable',
+  SESSION_HOME_PENDING: 'session_home_pending',
+  SESSION_HOME_UNKNOWN: 'session_home_unknown',
+  SESSION_HOME_MALFORMED: 'session_home_malformed',
 } as const
 
 export type HrcErrorCode = (typeof HrcErrorCode)[keyof typeof HrcErrorCode]
 
-export type HrcHttpStatus = 400 | 403 | 404 | 409 | 422 | 500 | 503
+export type HrcHttpStatus = 400 | 403 | 404 | 409 | 422 | 500 | 502 | 503
 
 export type HrcHttpError = {
   error: {
@@ -247,6 +258,10 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   // an upstream lifecycle loss, not a caller-fixable request fact.
   [HrcErrorCode.COLD_INPUT_CONTINUATION_LOST]: 503,
   [HrcErrorCode.COLD_INPUT_CONTINUATION_FAILED]: 503,
+  [HrcErrorCode.SESSION_HOME_UNREACHABLE]: 503,
+  [HrcErrorCode.SESSION_HOME_PENDING]: 503,
+  [HrcErrorCode.SESSION_HOME_UNKNOWN]: 503,
+  [HrcErrorCode.SESSION_HOME_MALFORMED]: 502,
 }
 
 export function httpStatusForErrorCode(code: HrcErrorCode): HrcHttpStatus {

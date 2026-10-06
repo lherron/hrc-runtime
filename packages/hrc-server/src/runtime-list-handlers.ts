@@ -303,7 +303,7 @@ async function handleListRuntimes(deps: RuntimeListDependencies, url: URL): Prom
   return response
 }
 
-function handleListRuns(deps: RuntimeListDependencies, url: URL): Response {
+export function handleListRuns(deps: Pick<RuntimeListDependencies, 'db'>, url: URL): Response {
   const filter = parseListRunsFilter(url)
   return json(deps.db.runs.listRuns(filter))
 }

@@ -4,6 +4,7 @@ import {
   awaitRetainedRecoveryOwner,
 } from './broker/runtime-exclusive-owner'
 import { handleResolveRuntimeIntent, handleRunPreview } from './declaration-handlers.js'
+import { forwardScopedGet } from './federation/scope-read-routing.js'
 import { handleFirstTurnDiagnostics } from './first-turn-diagnostics-handlers.js'
 import type { HrcServerInstance } from './index.js'
 import { handleResolvePlacement } from './placements-resolve.js'
@@ -50,8 +51,12 @@ export function buildExactRouteHandlers(
     [exactRouteKey('GET', '/v1/sessions/facets')]: (_request, url) =>
       server.handleSessionFacets(url),
     [exactRouteKey('GET', '/v1/events')]: (request, url) => server.handleEvents(url, request),
-    [exactRouteKey('GET', '/v1/events/tail')]: (_request, url) => server.handleEventsTail(url),
-    [exactRouteKey('GET', '/v1/events/bounded-stream')]: (request, url) =>
+    // T-10418: scope-filtered reads are answered by the scope's home.
+    [exactRouteKey('GET', '/v1/events/tail')]: async (request, url) =>
+      (await forwardScopedGet(server, url, { signal: request.signal })) ??
+      server.handleEventsTail(url),
+    [exactRouteKey('GET', '/v1/events/bounded-stream')]: async (request, url) =>
+      (await forwardScopedGet(server, url, { stream: true, signal: request.signal })) ??
       server.handleBoundedEvents(url, request),
     [exactRouteKey('GET', '/v1/broker-events')]: (request, url) =>
       server.handleBrokerEvents(url, request),
