@@ -41,15 +41,22 @@ predicate: >
   resolved title. Metadata changes append one session.metadata.changed event
   per changed stored key/source row in the write transaction; unchanged launch
   replacement emits none. Reads remain store-only projections under the viewer
-  law. During deprecation the existing POST and DELETE host-session title
-  routes, SDK methods and retitle CLI are shims over api title, preserve the
+  law. Scope-keyed sessions/get and sessions/metadata route by home authority
+  before continuity lookup under hrc-runtime.federated-session-read. Unknown
+  authority never falls back locally, and locally retired continuity is never
+  served as current continuity. This routing changes neither cosmetic metadata
+  write authority nor its source precedence. During deprecation the existing
+  POST and DELETE host-session title routes, SDK methods and retitle CLI are
+  shims over api title, preserve the
   existing request body, accept and ignore source, model and force, and retain
   the session.retitled compatibility event. Migration preserves the most
   recently updated title per continuity before removing session_titles and
   its triggers.
-authority: wrkq:T-10148 revision 3 specification etag 6, Daedalus architecture approval, 2026-10-03; Lance Herron overrides of review F1 and F2 relayed in EN-22974 and its subsequent etag correction
+authority: wrkq:T-10148 revision 3 specification etag 6, Daedalus architecture approval, 2026-10-03; Lance Herron overrides of review F1 and F2 relayed in EN-22974 and its subsequent etag correction; home-routing amendment approved by Daedalus under wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06
 source:
   - wrkq:T-10148
+  - wrkq:T-10418
+  - architecture/records/invariants/hrc-runtime.federated-session-read.yaml
   - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
   - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
   - architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml
@@ -65,7 +72,8 @@ required_tests:
   - T-10148 prefix collisions, 129-byte keys, 65-character segments, value and distinct-key limits are enforced on launch and atomic API writes
   - T-10148 installed multi-project viewer, rotation persistence, retitle and actual slugger POST compatibility E2E saves an artifact and reads matching changed events
   - T-10148 metadata reads extend t07594-side-effect-free-reads without lifecycle mutation or probes
-last_verified: 2026-10-03 revision 3 design reviewed against source and Lance overrides; implementation, migration and installed acceptance pending
+  - T-10418 sessions/get and metadata share home routing, unknown-authority refusal and retirement fencing gates
+last_verified: 2026-10-06 T-10418 home-routing amendment reviewed against source; original T-10148 implementation, migration and installed acceptance and T-10418 implementation remain pending evidence
 reopen_when: Continuity identity storage, parser ownership, historical identity absence, wire coverage, metadata grammar or limits, registered keys, source precedence, cosmetic versus lifecycle authority, last-writer launch semantics, envelope/plan placement, home-node writes, title migration or shim compatibility, event atomicity, or read side effects change.
 supersedes: []
 superseded_by: []

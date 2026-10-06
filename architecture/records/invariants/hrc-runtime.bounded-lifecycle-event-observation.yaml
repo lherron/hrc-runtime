@@ -17,17 +17,34 @@ predicate: >
   canonical event records. Replay, seam, and live admission remain within fixed
   row and serialized-byte ceilings and are pulled through a one-record transport
   handoff. Ready is not resumable progress; only a fully received event or gap
-  advances a consumer cursor. Daemon lifecycle facts (category server) ride the
-  same envelope under the non-seat sentinels hostSessionId hrc-server, scopeRef
+  advances a consumer cursor. A scope-home federation relay preserves the home
+  ledger incarnation, exact filters, event and gap records, row and serialized
+  byte ceilings, and a pull-driven one-record handoff. Connecting and receiving
+  headers has a ten-second bound; after headers there is no whole-body timeout.
+  A fifteen-second idle bound runs only while a peer read is outstanding, never
+  while downstream backpressure withholds reads. Keepalive newlines pass through.
+  A relayed ledger_replaced is terminal and closes without another record.
+  Otherwise peer disconnect or clean close, outstanding-read idle expiry,
+  malformed data or oversize data emits exactly one terminal home_unreachable
+  control with homeNodeId, retryable true and reason disconnected, idle_timeout,
+  malformed or oversize. Neither terminal advances a cursor; reconnection uses
+  the last fully received event or gap and its home-ledger incarnation. Client
+  abort cancels the peer fetch. Forwarded tail bodies have a page byte ceiling;
+  overflow refuses with 502 session_home_malformed. Home routing and refusals
+  are owned by hrc-runtime.federated-session-read; this relay does not replicate
+  a ledger or deliver agent messages. Daemon lifecycle facts (category server)
+  ride the same envelope under the non-seat sentinels hostSessionId hrc-server, scopeRef
   server:hrc, lane main, generation 0, so they appear only to unfiltered or
   explicit scopeRef=server:hrc reads; their meaning is owned by
   hrc-runtime.daemon-lifecycle-provenance. This observation contract is distinct
   from and does not amend hrc-runtime.acp-event-bridge.
-authority: daedalus@agent-control-plane:T-07718 P-00454 rev 4 architecture ruling, 2026-08-29; wrkq:T-08137 server-category amendment (Daedalus approval EN-19426, 2026-09-28)
+authority: daedalus@agent-control-plane:T-07718 P-00454 rev 4 architecture ruling, 2026-08-29; wrkq:T-08137 server-category amendment (Daedalus approval EN-19426, 2026-09-28); Daedalus approval of wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06
 source:
   - hrcchat#20461
   - hrcchat#20458
   - wrkq:T-07719
+  - wrkq:T-10418
+  - architecture/records/invariants/hrc-runtime.federated-session-read.yaml
   - packages/hrc-server/src/event-handlers.ts
   - packages/hrc-sdk/src/client.ts
   - packages/hrc-store-sqlite/src/repositories/event-repositories.ts
@@ -39,8 +56,10 @@ required_tests:
   - bounded replay, live-seam, slow-reader, and event-oversize admission gates
   - disconnect-after-ready resume gate
   - ledger replacement before admission and during a pinned stream gates
+  - T-10418 installed peer failure before headers and mid-follow, cursor resume, malformed and oversize relay refusal gates
+  - T-10418 healthy downstream paused over thirty seconds, bounded relay handoff and exactly one ledger-replacement terminal gates
   - bun test packages/hrc-server/src/__tests__/t08137-daemon-lifecycle-provenance.test.ts
-last_verified: 2026-08-23 design approval; implementation gates pending
-reopen_when: The lifecycle envelope, ledger incarnation authority, forward or reverse cursor fence, exact-filter ordering, stream ordering, admission bounds, or replacement behavior changes.
+last_verified: 2026-10-06 T-10418 Spec rev 3 reviewed against source and active records; relay implementation and installed acceptance pending; prior local-stream implementation gates remain pending evidence
+reopen_when: The lifecycle envelope, ledger incarnation authority, forward or reverse cursor fence, exact-filter ordering, stream ordering, admission bounds, relay timeout or backpressure behavior, terminal control semantics, or replacement behavior changes.
 supersedes: []
 superseded_by: []

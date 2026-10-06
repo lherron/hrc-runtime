@@ -1,0 +1,69 @@
+id: hrc-runtime.federated-session-read
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: scope-home session resolution, event observation and run reads for ACP and mobile
+predicate: >
+  HRC alone owns federation routing and peer credentials for session observation.
+  ScopeRef is the placement key; laneRef, hostSessionId and generation remain
+  exact home-node filters and a hostSessionId-only request stays local. Home
+  authority is resolved before scope-keyed continuity lookup, not inferred from
+  a local session or runtime. Bound-local reads are local; bound-foreign reads
+  forward to the named home. An unbound scope with no local placement row retains
+  local read behavior. An unbound scope with a retired local placement row
+  refuses retryably with 503 session_home_pending; retired local continuity is
+  never served as current continuity. Unknown authority refuses retryably with
+  503 session_home_unknown rather than found:false or empty local history. A
+  missing or unreachable home peer refuses retryably with 503
+  session_home_unreachable before stream headers. This routing is shared by
+  sessions/get, sessions/metadata, resolve with create absent or false, and
+  scope-filtered events/tail, events/bounded-stream and runs reads. Resolve with
+  create true keeps its existing local summon and birth path. The authenticated
+  peer resolve route admits exactly sessionRef and optional create false,
+  refuses create true, summonIntent or runtimeIntent with 403 peer_read_only
+  before any creation, and event/run peer routes are GET-only. Peer reads are
+  localOnly and cannot forward a second hop. Resolve exposes homeNodeId and
+  forwarded reads expose x-hrc-home-node. Home-ledger cursors and bounded relay
+  behavior are governed by hrc-runtime.bounded-lifecycle-event-observation.
+  ACP remote timeline and history admission and per-row capabilities depend on
+  HRC's federatedSessionRead declaration; ACP and iOS gain no peer-probe or
+  credential authority. Read-only session lookup uses client sessionRef scope
+  and lane on a local miss and checks the returned hostSessionId against the
+  requested generation's host identity. It does not depend on runtime presence.
+  This remote lookup is confined to timeline and history; input and interrupt
+  retain their local-only lookup regardless of caller sourceKind. Remote
+  snapshot last-event and latest-run reads use the exact scope, lane, host and
+  generation filters on the home. All timeline event pages and follows include
+  scope and lane. ACP exposes home_unreachable as a retryable timeline error
+  and preserves ledger_replaced handling. Updated iOS gates timeline and history
+  on their declared capabilities and sends sessionRef for remote reads; older
+  clients remain safely refusing. Remote input, literal input, interrupt,
+  answerPrompt and diagnostics remain disabled. Federation observation carries
+  lifecycle facts only; agent-message delivery remains on the shared wrkq ledger.
+authority: Daedalus approval of wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06; closes the federation cross-node streaming consult
+source:
+  - wrkq:T-10418
+  - wrkq:T-06801
+  - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
+  - architecture/records/invariants/hrc-runtime.session-identity-metadata.yaml
+  - architecture/records/invariants/hrc-runtime.mobile-session-index.yaml
+  - docs/federation-peer-protocol.md
+  - docs/federation-registry-retirement.md
+  - packages/hrc-server/src/federation/home-authority.ts
+  - packages/hrc-server/src/federation/peer-protocol.ts
+  - packages/hrc-server/src/session-metadata-handlers.ts
+  - packages/hrc-server/src/server-session-methods.ts
+  - packages/hrc-server/src/event-handlers.ts
+  - packages/hrc-server/src/runtime-list-handlers.ts
+required_tests:
+  - just architecture-records
+  - T-10418 installed max3-to-svc taskboard resolve and timeline including a turn starting after attach, and local-seat regression gates
+  - T-10418 unknown registry, missing or unreachable home, shadow continuity and retired-placement gap refusal gates
+  - T-10418 authenticated peer create refusal with no session, registry or placement rows written
+  - T-10418 sourceKind-less remote input and interrupt retain local-only refusals
+  - T-10418 runtime-less remote continuity timeline and history gates
+  - T-10418 new hrc-ios build on Lance's device opens remote timeline and history through declared capabilities
+last_verified: 2026-10-06 Spec rev 3 reviewed against source and active records; implementation, build, installation and live acceptance pending
+reopen_when: Home authority routing, retirement or unknown-authority treatment, peer route admission, forwarding filters, home provenance, capability meaning, remote lookup completeness, observation versus control isolation, or consumer cursor behavior changes.
+supersedes: []
+superseded_by: []
