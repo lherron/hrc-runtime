@@ -8,7 +8,9 @@ Protocol constraint (shipped): `harness-broker/0.1` is decommissioned. Active so
 
 > This document originated as the T-01862 implementation spec and is retained as the canonical broker-substrate spec. Sections framed as "Implementation Plan" / "Migration Strategy" describe the now-shipped design. Where the original spec's intent differs from the shipped code, the shipped behavior is annotated inline (see §8, §11.1, §12.2, §15). Consolidated durable facts from the superseded docs are in Appendix A.
 
-## Governing T-08690 v2 consumer amendment (pending Daedalus review)
+## Governing T-08690 v2 consumer amendment (approved)
+
+Daedalus approved this amendment (EN-16020, T-08690), and it landed in `19b2bb64`.
 
 This amendment supersedes any contradictory statement that HRC selects among
 ASP profiles, resolves harness/provider/model/driver/presentation defaults, or
@@ -855,7 +857,11 @@ export const SUPPORTED_BROKER_PROTOCOL_VERSIONS = [
 ] as const satisfies readonly BrokerProtocolVersion[]
 ```
 
-The protocol method set is v0.2. The original spec proposed removing `BrokerMethodV1` outright; the shipped state keeps `BrokerMethodV1` as a readability grouping alias in the consumed protocol dep — `spaces-harness-broker-protocol` `commands.d.ts:7` defines `BrokerMethodV1 = …` and `BrokerMethodV2 = BrokerMethodV1 | …`. It is a naming grouping, not a live v1/v2 coexistence: only `harness-broker/0.2` is negotiated. A method grouping type for readability looks like:
+The protocol method set is v0.2. The original spec proposed removing `BrokerMethodV1` outright; the shipped state keeps `BrokerMethodV1` as a readability grouping alias in the consumed protocol dep — `spaces-harness-broker-protocol` `commands.d.ts` defines `BrokerMethodV1 = …`, `BrokerMethodV2 = BrokerMethodV1 | …` and `BrokerMethodV3 = BrokerMethodV2 | …` (submission/queue methods). It is a naming grouping, not a live v1/v2 coexistence.
+
+> Note (shipped state): the consumed dep now declares `BrokerProtocolVersion = 'harness-broker/0.2' | 'harness-broker/0.3'`, and its `SUPPORTED_BROKER_PROTOCOL_VERSIONS` lists both. HRC still negotiates only `harness-broker/0.2`: `broker/constants.ts` carries the single `BROKER_PROTOCOL_VERSION`, and `ASPD_SUPPORTED_WORKER_PROTOCOLS` (`agent-spaces-adapter/aspd-execution-release.ts`) refuses any other frozen worker protocol with `unsupported_worker_protocol`. `harness-broker/0.1` stays rejected everywhere.
+
+A method grouping type for readability looks like:
 
 ```ts
 export type BrokerMethod =
@@ -1011,7 +1017,7 @@ This is a starting point, not an exhaustive list.
 
 ```text
 packages/hrc-server/src/startup-reconcile.ts
-packages/hrc-server/src/runtime-list-adopt-handlers.ts
+packages/hrc-server/src/runtime-list-handlers.ts
 packages/hrc-server/src/sweep-reconcile.ts
 packages/hrc-server/src/sweep-helpers.ts
 packages/hrc-server/src/broker/constants.ts
@@ -1027,7 +1033,8 @@ packages/hrc-server/src/selector-message-handlers.ts
 packages/hrc-server/src/target-view.ts
 packages/hrc-server/src/status-views.ts
 packages/hrc-server/src/index.ts
-packages/hrc-server/src/agent-spaces-adapter/compile-profile-selector.ts
+packages/hrc-server/src/agent-spaces-adapter/compile-adapter.ts
+packages/hrc-server/src/agent-spaces-adapter/aspd-execution-release.ts
 packages/hrc-store-sqlite/src/**
 packages/hrc-server/src/__tests__/**
 packages/hrc-store-sqlite/src/__tests__/**
@@ -1285,7 +1292,7 @@ The following operational facts were collapsed from `HEADLESS_TMUX.md`, `broker-
 
 - **ASP** compiles immutable runtime plans (what to run). **HRC** owns sessions, routing, tmux/lease allocation, persistence, reconcile, sweep, reuse, and reaping (where/how to host). **Broker** owns harness execution and normalized event emission over `harness-broker/0.2`.
 - HRC **must not**: import harness packages, parse Codex JSONL directly, or synthesize an `InvocationStartRequest`. HRC consumes only the producer-selected execution and the broker's normalized events.
-- Broker process is resolved as `deps.brokerCommand ?? env HRC_HARNESS_BROKER_CMD ?? 'harness-broker'` (`broker/controller.ts`). *Known limitation:* the originally-speced four-source resolution (bun bin / node_modules binary / spaces snapshot / env) is not implemented; only env+default exist.
+- Production births run the broker from the durable allocation: the leased broker window executes `exec harness-broker run --transport unix --socket <bipc>/b.sock` (`broker/controller/allocation.ts`). The legacy stdio spawn has no resolver: `broker/controller.ts` uses `deps.resolveBrokerCommand ?? deps.brokerCommand` as a test seam and otherwise refuses with `aspdUnconfiguredError('broker-command')`. HRC source no longer reads `HRC_HARNESS_BROKER_CMD`, and T-08596 removed the bundled ASP execution closure.
 - V2 admission **rejects** unsupported selected-execution protocol versions rather than falling back. Default-deny permission posture.
 
 ### A.2 Runtime-hosting choke point & predicate selection (from T-01862-PH2-DELETION-MAP.md)
