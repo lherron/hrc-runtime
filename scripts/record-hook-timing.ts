@@ -1,7 +1,7 @@
 /**
  * Record one whole-hook run and post it as `hook.settled`.
  *
- *   bun scripts/record-hook-timing.ts <hook> <run-id> <started-ms> <finished-ms> <exit-code> <lefthook-bin>
+ *   bun scripts/record-hook-timing.ts <hook> <run-id> <started-ms> <finished-ms> <exit-code> <lefthook-bin> [<load1> <ncpu>]
  *
  * Invoked by the `.githooks` shims after lefthook returns. The shim owns the
  * hook's exit code and ignores this script's; it still always exits 0 and
@@ -39,8 +39,20 @@ function lefthookVersion(lefthookBin: string): string | undefined {
   }
 }
 
+/**
+ * The shim samples load1/ncpu before lefthook starts (T-10466); anything
+ * unparseable drops both rather than posting half a sample.
+ */
+function sampledLoad(load1Arg = '', ncpuArg = ''): { load1?: string; ncpu?: string } {
+  const load1 = /^\d+(\.\d+)?$/.test(load1Arg) ? Number(load1Arg) : Number.NaN
+  const ncpu = /^\d+$/.test(ncpuArg) ? Number(ncpuArg) : 0
+  if (!Number.isFinite(load1) || ncpu < 1) return {}
+  return { load1: load1.toFixed(2), ncpu: String(ncpu) }
+}
+
 function main(): void {
-  const [hook, runId, startedArg, finishedArg, exitArg, lefthookBin = ''] = process.argv.slice(2)
+  const [hook, runId, startedArg, finishedArg, exitArg, lefthookBin = '', load1Arg, ncpuArg] =
+    process.argv.slice(2)
   if ((hook !== 'pre-commit' && hook !== 'pre-push') || !runId) {
     throw new Error(`unexpected arguments: ${process.argv.slice(2).join(' ')}`)
   }
@@ -74,6 +86,7 @@ function main(): void {
     arch: process.arch,
     bunVersion: Bun.version,
     lefthookVersion: lefthookVersion(lefthookBin),
+    ...sampledLoad(load1Arg, ncpuArg),
   }
 
   const path = resolveHookTimingsPath()

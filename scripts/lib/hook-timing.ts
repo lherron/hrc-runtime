@@ -56,6 +56,9 @@ export interface HookTimingRecord {
   arch: string
   bunVersion: string
   lefthookVersion?: string | undefined
+  /** Sampled before the hook body starts; absent on older records (T-10466). */
+  load1?: string | undefined
+  ncpu?: string | undefined
 }
 
 export function hookSettledPostArgs(record: HookTimingRecord): string[] {
@@ -84,6 +87,8 @@ export function hookSettledPostArgs(record: HookTimingRecord): string[] {
     ['branch', record.branch],
     ['run_id', record.runId],
     ['started_at', record.startedAt],
+    ['load1', record.load1],
+    ['ncpu', record.ncpu],
   ]
   for (const [key, value] of attributes) {
     if (value !== undefined) args.push('--attr', `${key}=${value}`)
