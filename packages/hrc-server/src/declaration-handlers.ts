@@ -515,7 +515,7 @@ function previewInspectionContext(
   intent: HrcRuntimeIntent,
   sessionRef: string
 ): AspcRuntimeDeclarationContext {
-  const placement = intent.placement as unknown as Record<string, unknown>
+  const placement = intent.placement
   const scopeRef = sessionRef.includes('/lane:') ? splitSessionRef(sessionRef).scopeRef : sessionRef
   let agentId: string | undefined
   let projectId: string | undefined
@@ -669,8 +669,8 @@ export async function handleRunPreview(
         // PC-1: the inspection carries the correlation and dispatchEnv the same
         // preview compiled — read from the request actually sent, never from
         // the intent. dispatchEnv stays inert.
-        const compiledPlacement =
-          sentPlacement ?? (previewIntent.placement as unknown as Record<string, unknown>)
+        const compiledPlacement: { correlation?: unknown; dispatchEnv?: unknown } =
+          sentPlacement ?? previewIntent.placement
         let inspected: Awaited<ReturnType<typeof client.inspectRuntimePlacement>>
         try {
           inspected = await phases.step('inspect-prompt', async () => {

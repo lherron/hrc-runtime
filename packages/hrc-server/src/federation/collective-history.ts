@@ -83,7 +83,7 @@ export function parseCollectiveHistoryMessage(value: unknown): HrcMessageRecord 
     throw new Error('collective history metadataJson is invalid')
   }
   return structuredClone({
-    ...(value as unknown as HrcMessageRecord),
+    ...value,
     messageSeq: messageSeq as number,
     messageId,
     createdAt,
@@ -97,7 +97,7 @@ export function parseCollectiveHistoryMessage(value: unknown): HrcMessageRecord 
     execution: execution as HrcMessageRecord['execution'],
     ...(replyToMessageId === undefined ? {} : { replyToMessageId }),
     ...(metadataJson === undefined ? {} : { metadataJson }),
-  })
+  } satisfies HrcMessageRecord)
 }
 
 function ingressOriginNodeId(record: HrcMessageRecord): string | undefined {

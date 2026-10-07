@@ -298,7 +298,7 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
   async projectEventPost(params: WrkqProjectEventPostParams): Promise<WrkqProjectEventPostResult> {
     const posted = await this.call<{ uuid?: unknown; created?: unknown }>(
       'wrkq.projectEvent.post',
-      params as unknown as Record<string, unknown>
+      params
     )
     return {
       uuid: typeof posted.uuid === 'string' ? posted.uuid : '',

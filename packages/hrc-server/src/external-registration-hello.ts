@@ -461,7 +461,7 @@ export async function performExternalRegistrationHello(
   const established = await requestExternalParticipantRpc(
     client,
     'epr.established',
-    delivery as unknown as Record<string, unknown>,
+    delivery,
     rpcDeadlineMs
   )
   validateEstablishedResponse(established)
