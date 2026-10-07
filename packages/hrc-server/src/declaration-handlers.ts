@@ -52,7 +52,7 @@ import {
   resolvePreviewIntent,
 } from './broker-run-preview.js'
 import { observedRuntimeBundle } from './observed-runtime-bundle.js'
-import { resolvePlacementInProcess } from './placements-resolve.js'
+import { declarationRefusalSource, resolvePlacementInProcess } from './placements-resolve.js'
 import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
 import { projectHrcReleaseIdentity } from './release-provenance.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -323,14 +323,6 @@ function declarationContext(body: ResolveByPathsBody): AspcRuntimeDeclarationCon
   }
 }
 
-const SOURCE_BY_CODE: Record<string, string> = {
-  agent_not_found: 'agent-profile',
-  agent_profile_invalid: 'agent-profile',
-  project_targets_invalid: 'project-targets',
-  selected_target_invalid: 'selected-target',
-  priming_invalid: 'priming',
-}
-
 function agentInstallIncompleteMessage(agentRoot: string): string {
   return `buildRuntimeBundleRef: agent-profile.toml not found at ${agentRoot}/agent-profile.toml — agent install incomplete`
 }
@@ -356,8 +348,7 @@ function refuseDeclaration(
       )
     }
     return new HrcUnprocessableEntityError(HrcErrorCode.DECLARATION_INVALID, resolution.message, {
-      source:
-        resolution.diagnostics[0]?.source ?? SOURCE_BY_CODE[resolution.code] ?? 'agent-profile',
+      source: declarationRefusalSource(resolution),
       producerCode: resolution.code,
       diagnostics: resolution.diagnostics,
     })

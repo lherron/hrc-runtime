@@ -20,6 +20,7 @@ import {
   type AspdObservationDouble,
   startAspdObservationDouble,
 } from './fixtures/aspd-observation-doubles.js'
+import type { AspdObservationOptions } from './fixtures/aspd-observation-types.js'
 
 let root: string
 let projectRoot: string
@@ -49,8 +50,8 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-function boot(): void {
-  aspd = startAspdObservationDouble(aspdSocket, release, {})
+function boot(options: AspdObservationOptions = {}): void {
+  aspd = startAspdObservationDouble(aspdSocket, release, options)
   process.env['HRC_ASPD_SOCKET'] = aspdSocket
 }
 
@@ -125,5 +126,52 @@ describe('POST /v1/placements/resolve', () => {
 
     expect(status).toBe(503)
     expect(json).toMatchObject({ error: { code: 'runtime_unavailable' } })
+  })
+
+  // T-10485: a peer node with a stale checkout answered project_targets_invalid,
+  // HRC relabelled it agent-profile, and the kicker failed the mail fleet-wide
+  // instead of leaving it to a node that can host the project. The kicker keys
+  // "not placeable here" on source project-targets, so the producer's source
+  // and the project facts must survive the projection.
+  test('a project-targets refusal keeps its producer source and project facts', async () => {
+    boot({ resolve: 'invalid' })
+    const { status, json } = await post({
+      agentId: 'smokey',
+      projectId: 'proj',
+      projectOrigin: 'explicit',
+      cwd: root,
+      runMode: 'task',
+      registryProjects: [{ slug: 'proj', root: projectRoot }],
+    })
+
+    expect(status).toBe(422)
+    expect(json).toMatchObject({
+      error: {
+        code: 'declaration_invalid',
+        detail: {
+          source: 'project-targets',
+          producerCode: 'project_targets_invalid',
+          projectId: 'proj',
+          projectRoot,
+        },
+      },
+    })
+  })
+
+  test('an agent-profile refusal stays agent-profile', async () => {
+    boot({ resolve: 'agent-profile-invalid-live' })
+    const { status, json } = await post({
+      agentId: 'smokey',
+      projectId: 'proj',
+      projectOrigin: 'explicit',
+      cwd: root,
+      runMode: 'task',
+      registryProjects: [{ slug: 'proj', root: projectRoot }],
+    })
+
+    expect(status).toBe(422)
+    expect(json).toMatchObject({
+      error: { code: 'declaration_invalid', detail: { source: 'agent-profile' } },
+    })
   })
 })

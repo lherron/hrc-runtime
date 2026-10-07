@@ -47,6 +47,22 @@ import {
 import { isRecord, parseJsonBody } from './server-parsers.js'
 import { json } from './server-util.js'
 
+const SOURCE_BY_CODE: Record<string, string> = {
+  agent_not_found: 'agent-profile',
+  agent_profile_invalid: 'agent-profile',
+  project_targets_invalid: 'project-targets',
+  selected_target_invalid: 'selected-target',
+  priming_invalid: 'priming',
+}
+
+/** The declaration source a producer refusal blames, as HRC refusals report it. */
+export function declarationRefusalSource(resolution: {
+  code: string
+  diagnostics: readonly { source?: string | undefined }[]
+}): string {
+  return resolution.diagnostics[0]?.source ?? SOURCE_BY_CODE[resolution.code] ?? 'agent-profile'
+}
+
 /** Local view of the provisioning observation: `transport` is required on the
  * ok path since ASP T-08600 (asp-32a8e0d6767f) but typed optional here so this
  * worktree builds against the pre-T-08600 contract package without a lock
@@ -476,9 +492,17 @@ export async function resolvePlacementInProcess(
           'resolution' in declaration ? declaration.resolution.code : declaration.failure.code
         const message =
           'resolution' in declaration ? declaration.resolution.message : declaration.failure.message
+        // T-10485: keep the producer's source. The kicker leaves a
+        // project-targets refusal to a node that can host the project; an
+        // agent-profile label fails the mail for every node.
         throw new HrcUnprocessableEntityError(HrcErrorCode.DECLARATION_INVALID, message, {
-          source: 'agent-profile',
+          source:
+            'resolution' in declaration
+              ? declarationRefusalSource(declaration.resolution)
+              : 'agent-profile',
           producerCode: code,
+          ...(projectId !== undefined ? { projectId } : {}),
+          ...(canonicalRoot !== undefined ? { projectRoot: canonicalRoot } : {}),
         })
       }
 
