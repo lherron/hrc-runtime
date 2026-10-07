@@ -12,7 +12,7 @@ import {
   settleAbsorbedAuxiliary,
   settlePriorAbsorbedAuxiliaries,
 } from '../turn-ownership.js'
-import type { ProjectionContext } from './helpers'
+import { type ProjectionContext, isRecord } from './helpers'
 import {
   claimRuntimeTurnOwnership,
   markRuntimeTurnTerminal,
@@ -231,6 +231,28 @@ export const turnProjectionMethods = {
         const ownerRunId = resolveExactTurnOwner(db, envelope)
         if (ownerRunId !== undefined) {
           settlePriorAbsorbedAuxiliaries(db, envelope, ownerRunId, now)
+          // T-10464: observed drivers (codex-app-server) start the turn without
+          // an inputId, so turn.started could not name its run. The own
+          // attribution is the first envelope that can: claim the turn here,
+          // exactly as a resolved turn.started would. A run already terminal
+          // stays terminal and does not re-claim the runtime.
+          const ownership = isRecord(envelope.payload) ? envelope.payload['ownership'] : undefined
+          const run = db.runs.getByRunId(ownerRunId)
+          if (ownership === 'own' && run !== null && run.completedAt === undefined) {
+            const occurredAt = envelope.time ?? now
+            if (run.status === 'accepted' || run.status === 'started') {
+              db.runs.update(ownerRunId, {
+                status: 'running',
+                startedAt: occurredAt,
+                updatedAt: now,
+              })
+            }
+            claimRuntimeTurnOwnership(db, ctx, ownerRunId, occurredAt, now, this.serverLog)
+            db.brokerInvocations.update(invocationId, {
+              invocationState: 'turn_active',
+              updatedAt: now,
+            })
+          }
         }
         break
       }
