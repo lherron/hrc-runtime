@@ -34,6 +34,12 @@ jobs:
       # A launchd job cannot write mini's wrkq-artifacts (an external volume);
       # e2e run records go to the internal disk instead.
       FOUNDRY_ARTIFACTS: /Users/lherron/praesidium/var/postpush/art
+      # CI builds start from a cached target, never an edited tree, so
+      # incremental state only takes disk.
+      CARGO_INCREMENTAL: "0"
+      # Ignored build output persists between runs; past this many GiB the
+      # worktree's target/ is dropped and the next build warms it again (T-10419).
+      TARGET_CAP_GB: "3"
       # Private cargo git deps (cardo) fetch over mini's ssh key.
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
       GIT_CONFIG_COUNT: "1"
@@ -48,6 +54,20 @@ jobs:
           git checkout --quiet --detach --force "$SHA"
           git clean -fdq
           echo "verifying $REPO ${BEFORE:0:12}..${SHA:0:12} in $WORKTREE"
+
+      # Stale artifacts pile up in target/ because cargo never prunes old hashes.
+      # The trim takes the verify lock so it never races a build.
+      - name: Trim build caches
+        working-directory: ${{ env.WORKTREE }}
+        run: |
+          mkdir -p "$(dirname "$LOCK")"
+          lockf "$LOCK" sh -c '
+            [ -d target ] || exit 0
+            kb=$(du -sk target | cut -f1)
+            if [ "$kb" -gt $((TARGET_CAP_GB * 1048576)) ]; then
+              echo "target/ is $((kb / 1024))M, over the ${TARGET_CAP_GB}G cap; removing it"
+              rm -rf target
+            fi'
 
       # dev-env reuses a running ephemeral daemon, which would serve an earlier
       # push's code. Each post-push verify starts from a fresh environment.
