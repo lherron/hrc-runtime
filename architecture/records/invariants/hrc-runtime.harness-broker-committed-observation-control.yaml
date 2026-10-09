@@ -78,10 +78,21 @@ predicate: >
   and active-invocation holds; read-only observer clients have no acknowledgement
   identity or retention claim and fail typed below the retained floor. HRC may
   read committed normalized envelopes without a fenced control connection only
-  for a runtime whose status is terminated or failed, whose worker endpoint is
-  unreachable, and whose invocation has no active controller client, and only
-  through the exact persisted owning release's read-only evidence reader;
-  crashed, dead, stale, and detached runtimes are refused. Offline recovery and
+  for a runtime whose status is terminated or failed, or whose crashed, dead,
+  stale, or detached status has expired under HRC_BROKER_HOLD_MAX_AGE_MS
+  (default seven days). Expiry uses statusChangedAt alone; an absent, unknown,
+  or unparseable timestamp is not expired. The worker endpoint must be
+  unreachable and the invocation must have no active controller client, and
+  reading uses only the exact persisted owning release's read-only evidence
+  reader. Admission solely by revivable expiry additionally requires successful
+  bounded process enumeration with no argv naming the ledger directory, endpoint
+  socket, or runtime-id marker, and no live broker pane in the recorded leased-tmux
+  session. These checks run inside recovery ownership before reader spawn;
+  process enumeration failure or positive liveness refuses without recording an
+  outcome or moving a cursor. A tmux probe error alone does not refuse when
+  process enumeration proves absence; socket failure alone never establishes
+  death for this admission. Existing-runtime revival only reattaches; no revival
+  door starts a new broker in that runtime's directory. Offline recovery and
   every live attach, reattach, and adopt path of a runtime are mutually exclusive
   under one per-runtime owner, and each live path evaluates the retained-projection
   fact only while holding that ownership. Such reads carry no acknowledgement,
@@ -108,11 +119,21 @@ predicate: >
   recorded in a keep-forever audit store outside the lifecycle event stream,
   distinguishing complete, incomplete, retryable, unbound, and operator-disposed
   evidence. For a bound harness-broker runtime with a persisted ledger path, HRC
-  holds the ledger directory while the status is crashed, dead, stale, or
-  detached, or while any invocation's latest recovery outcome is absent or has
-  class incomplete, retryable, or paused. The hold ends only when the status is not
-  revivable and every invocation's latest outcome is recovered or
-  operator_disposed. Adoption, live reattachment, replay, and acknowledgement
+  holds the ledger directory while its revivable status (crashed, dead, stale,
+  or detached) has not expired, or while any invocation's latest
+  recovery outcome is absent or has class incomplete, retryable, or paused.
+  Expiry removes only the revivable-status hold, never an outcome hold. The hold
+  ends only when the status is not revivable or its hold age has expired, and
+  every invocation's latest outcome is recovered or operator_disposed. Unbound
+  expired revivable runtimes receive their unrecoverable-by-design outcome before
+  sweep removal, as unbound terminated runtimes do. An external lifecycle owner's
+  unavailable runtime stops referencing its endpoint and ledger paths after this
+  same hold age expires only if no participant attempt for any of its invocations
+  is ACTIVE or has establishment work pending or retry_wait. Existing ledger
+  outcome holds, terminal lease TTL, mtime grace, process enumeration and socket
+  safeguards remain independent removal gates. Incomplete and paused held
+  directories are reported by count, bytes and oldest age; age never disposes
+  them. Adoption, live reattachment, replay, and acknowledgement
   neither release a hold nor are blocked by the hold; the retained-projection
   fence remains the independent authority for refusing live return. Sweep, prune
   reason, explicit disposition, recovery API, startup selection, and rollback
@@ -143,8 +164,9 @@ predicate: >
   /v1/internal/desktop/register, T-08567) answers 404; Desktop threads join
   through the generic participant door governed by
   hrc-runtime.participant-session-lifecycle.
-authority: wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, wrkq:T-08201 revision 5 (C-19938), and wrkq:T-08207 revisions 10 and 11 (2026-09-26)
+authority: wrkq:T-10632 spec revision 2 age-bound directory holds and expired-revivable death-evidence admission (Daedalus approval), 2026-10-09; wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, wrkq:T-08201 revision 5 (C-19938), and wrkq:T-08207 revisions 10 and 11 (2026-09-26)
 source:
+  - wrkq:T-10632
   - wrkq:T-08207
   - wrkq:T-08566
   - wrkq:T-08565
@@ -179,7 +201,10 @@ required_tests:
   - T-08201 installed Codex TUI and Claude original-run observers survive two mid-run steers and receive normal or interrupted terminals; raw/direct-wait interruption stays non-success while existing canonical mapping and stacked exit behavior remain unchanged
   - retired launch-wrapper hook, OTEL, and launch-callback ingest refuses without any run, runtime, launch, or event write, and quarantines retired spool entries unapplied, while Desktop registration requests and their spool entries behave unchanged
   - retained turn-start without terminal does not change runtime status, active run, or an operator-written run terminal
-  - crashed, dead, stale, and detached runtimes are refused retained recovery without cursor movement
+  - unexpired crashed, dead, stale, and detached runtimes, including those with missing or unparseable statusChangedAt, are refused retained recovery without cursor movement
+  - expired revivable recovery refuses a live but socket-unreachable broker, matching process argv, failed process enumeration, or a live recorded broker pane without recording an outcome or moving a cursor; dead expired brokers are admitted under recovery ownership
+  - expired revivable holds release only after every invocation is recovered or disposed, while incomplete retryable and paused outcomes remain held and unbound evidence gets its outcome before sweep removal
+  - expired unavailable external runtimes preserve endpoint paths for ACTIVE and pending or retry_wait participant attempts; removal retains process socket mtime and outcome safeguards
   - a live attach crossing an in-flight recovery waits and then refuses if a retained envelope committed, while recovery crossing an in-flight attach refuses without reading
   - attach, reattach, and adopt are refused after retained projection, including after a crash between projection and outcome recording, and are not refused after a read that projected nothing
   - offline read issues no acknowledgement or ledger-directory write, while release mismatch and reader contract violation project nothing
@@ -202,7 +227,8 @@ reopen_when:
   - kicker trigger obligation authority or reminder bound changes
   - explicit-versus-timeout permission decision ownership changes
   - the offline reader gains acknowledgement, mutation, or follow
-  - HRC projects retained evidence from a release other than the persisted owning release or for a runtime outside the terminated-or-failed eligibility boundary
+  - HRC projects retained evidence from a release other than the persisted owning release or outside terminated failed or expired-revivable eligibility with its death-evidence admission
+  - expiry timestamp authority, hold age, death-evidence admission, broker argv markers, existing-runtime revival or external participant reattachability changes
   - the retained-evidence fence admits a runtime-, session-, or control-level write
   - any live attach follows retained projection
   - recovery outcomes enter the lifecycle event stream or automation releases incomplete retained evidence
