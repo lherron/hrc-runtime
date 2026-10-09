@@ -6,11 +6,14 @@ import { join } from 'node:path'
 
 import {
   HEADLESS_PANE_ROLE,
+  PANELESS_MIN_IDLE_MS,
   type PaneStatus,
   classifyReapExec,
   isAlreadyTerminatedError,
   isQuitEligible,
+  panelessCandidatesSql,
   selectHeadlessPanes,
+  selectPanelessTargets,
   skipReasons,
   statusSql,
 } from './reap-headless-ghostmux'
@@ -867,5 +870,76 @@ describe('simulated reap outcome presentation', () => {
     expect(stdout).toContain(
       'Reap eligibility: 2 eligible, 3 skipped (requires scope task!=primary, agent!=chief'
     )
+  })
+})
+
+// Paneless inventory reap (follow-up to the 2026-10-09 idle-runtime report):
+// a live broker whose Ghostty pane is gone is invisible to pane discovery, so
+// the sweep also asks the HRC DB for ready runtimes idle beyond a much longer
+// threshold. The same guards apply; only the idle clock is less aggressive.
+describe('paneless inventory reap', () => {
+  function inventoryFixture(rows: Array<[string, string, string, string]>): string[][] {
+    const db = new Database(':memory:')
+    db.exec(
+      'CREATE TABLE runtimes (runtime_id TEXT PRIMARY KEY, scope_ref TEXT NOT NULL, status TEXT NOT NULL, last_activity_at TEXT)'
+    )
+    for (const row of rows) db.query('INSERT INTO runtimes VALUES (?, ?, ?, ?)').run(...row)
+    try {
+      return db.query(panelessCandidatesSql('2026-10-09T00:00:00.000Z')).values() as string[][]
+    } finally {
+      db.close()
+    }
+  }
+
+  it('selects only ready runtimes whose activity predates the cutoff', () => {
+    const rows = inventoryFixture([
+      ['rt-old-ready', 'agent:a:project:p:task:T-1', 'ready', '2026-10-08T11:00:00.000Z'],
+      ['rt-new-ready', 'agent:b:project:p:task:T-2', 'ready', '2026-10-09T01:00:00.000Z'],
+      ['rt-old-busy', 'agent:c:project:p:task:T-3', 'busy', '2026-10-01T00:00:00.000Z'],
+      ['rt-old-dead', 'agent:d:project:p:task:T-4', 'terminated', '2026-10-01T00:00:00.000Z'],
+      ['rt-no-clock', 'agent:e:project:p:task:T-5', 'ready', null as unknown as string],
+    ])
+    expect(rows).toEqual([['rt-old-ready', 'agent:a:project:p:task:T-1']])
+  })
+
+  it('drops runtimes the pane sweep already resolved', () => {
+    const targets = selectPanelessTargets(
+      [
+        { runtimeId: 'rt-has-pane', scopeRef: 'agent:a:project:p:task:T-1' },
+        { runtimeId: 'rt-paneless', scopeRef: 'agent:b:project:p:task:T-2' },
+      ],
+      new Set(['rt-has-pane'])
+    )
+    expect(targets.map((t) => t.metadata.hrc_runtime_id)).toEqual(['rt-paneless'])
+    expect(targets[0]?.metadata.hrc_scope_ref).toBe('agent:b:project:p:task:T-2')
+  })
+
+  it('requires strictly more than 12 hours idle, not 30 minutes', () => {
+    const realDateNow = Date.now
+    const now = Date.parse('2026-10-09T12:00:00.000Z')
+    Date.now = () => now
+    try {
+      const at = (ms: number) =>
+        eligibleStatus({ lastActivityUtc: new Date(now - ms).toISOString() })
+      expect(isQuitEligible(at(6 * 60 * 60 * 1000), PANELESS_MIN_IDLE_MS)).toBe(false)
+      expect(isQuitEligible(at(PANELESS_MIN_IDLE_MS), PANELESS_MIN_IDLE_MS)).toBe(false)
+      expect(isQuitEligible(at(PANELESS_MIN_IDLE_MS + 1), PANELESS_MIN_IDLE_MS)).toBe(true)
+      expect(
+        skipReasons(at(6 * 60 * 60 * 1000), PANELESS_MIN_IDLE_MS).some((r) =>
+          /more than 12 hours idle/.test(r)
+        )
+      ).toBe(true)
+      // The pane sweep keeps its 30-minute clock.
+      expect(isQuitEligible(at(6 * 60 * 60 * 1000))).toBe(true)
+    } finally {
+      Date.now = realDateNow
+    }
+  })
+
+  it('keeps every other guard: a paneless :primary seat is never reaped', () => {
+    const status = eligibleStatus({
+      identity: { kind: 'project-task', agentId: 'mable', projectId: 'p', taskId: 'primary' },
+    })
+    expect(isQuitEligible(status, PANELESS_MIN_IDLE_MS)).toBe(false)
   })
 })

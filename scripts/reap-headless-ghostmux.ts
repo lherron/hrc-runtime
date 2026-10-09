@@ -17,9 +17,12 @@ import {
   statusColor,
 } from './reap-headless-ghostmux/eligibility'
 import {
+  listPanelessTargets,
   listPanes,
+  panelessCandidatesSql,
   queryStatuses,
   selectHeadlessPanes,
+  selectPanelessTargets,
   statusSql,
 } from './reap-headless-ghostmux/panes'
 import {
@@ -35,7 +38,10 @@ import {
   type DiscoveredPane,
   HEADLESS_PANE_ROLE,
   MIN_IDLE_MINUTES,
+  MIN_IDLE_MS,
   type Options,
+  PANELESS_MIN_IDLE_HOURS,
+  PANELESS_MIN_IDLE_MS,
   type PaneStatus,
   color,
 } from './reap-headless-ghostmux/types'
@@ -44,7 +50,7 @@ import {
 // listing is rendered (e.g. the sweep threw during discovery).
 let timeToListMs = 0
 
-function printStatus(statuses: PaneStatus[], options: Options): void {
+function printHeader(options: Options): void {
   console.log(color.bold('HRC Headless Ghostty Cleanup'))
   const titleNote = options.titleRegex ? `  title=${options.titleRegex}` : ''
   const reapTimeoutNote =
@@ -56,16 +62,23 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
   )
   if (options.dryRun) console.log(color.yellow('Mode: dry run, nothing will be terminated'))
   console.log()
+}
 
+function printStatus(
+  statuses: PaneStatus[],
+  heading: string,
+  emptyNote: string,
+  minIdleMs: number
+): void {
   if (statuses.length === 0) {
-    console.log(color.dim('No matching panes.'))
+    console.log(color.dim(emptyNote))
     return
   }
 
-  console.log(color.bold(`Matched panes (${statuses.length})`))
+  console.log(color.bold(`${heading} (${statuses.length})`))
   statuses.forEach((status, index) => {
     const duration = formatDurationAgo(status.lastActivityUtc)
-    const reasons = skipReasons(status)
+    const reasons = skipReasons(status, minIdleMs)
     const heading = [
       color.dim(`${String(index + 1).padStart(2)}.`),
       color.cyan(status.id),
@@ -97,7 +110,9 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
   })
 }
 
-async function confirm(eligibleStatuses: PaneStatus[], options: Options): Promise<void> {
+type Candidate = { status: PaneStatus; source: string }
+
+async function confirm(eligibleStatuses: Candidate[], options: Options): Promise<void> {
   if (eligibleStatuses.length === 0) return
   if (options.dryRun) {
     console.log()
@@ -271,18 +286,45 @@ async function sweep(options: Options): Promise<number> {
 
   const panes = timePhase('discover', () => listPanes(options))
   const statuses = timePhase('query-status', () => queryStatuses(panes, options))
-  const eligibleStatuses = statuses.filter(isQuitEligible)
-  timePhase('print-status', () => printStatus(statuses, options))
+  // Runtimes whose Ghostty pane is gone never reach pane discovery; find them
+  // in the HRC inventory and hold them to the longer paneless idle clock.
+  const paneRuntimeIds = new Set(statuses.map((status) => status.runtimeId).filter(Boolean))
+  const panelessTargets = timePhase('discover-paneless', () =>
+    listPanelessTargets(options, PANELESS_MIN_IDLE_MS, paneRuntimeIds)
+  )
+  const panelessStatuses = timePhase('query-status-paneless', () =>
+    queryStatuses(panelessTargets, options)
+  )
+  const eligibleStatuses: Candidate[] = [
+    ...statuses
+      .filter((status) => isQuitEligible(status, MIN_IDLE_MS))
+      .map((status) => ({ status, source: 'close-headless-ghostmux' })),
+    ...panelessStatuses
+      .filter((status) => isQuitEligible(status, PANELESS_MIN_IDLE_MS))
+      .map((status) => ({ status, source: 'reap-paneless-inventory' })),
+  ]
+  timePhase('print-status', () => {
+    printHeader(options)
+    printStatus(statuses, 'Matched panes', 'No matching panes.', MIN_IDLE_MS)
+    console.log()
+    printStatus(
+      panelessStatuses,
+      `Paneless runtimes idle >${PANELESS_MIN_IDLE_HOURS}h`,
+      `No paneless runtimes idle >${PANELESS_MIN_IDLE_HOURS}h.`,
+      PANELESS_MIN_IDLE_MS
+    )
+  })
   // The user-perceived "how long until I see the list" figure: everything up to
   // and including the status table hitting stdout. Everything after this point
   // is post-list work the operator is not waiting on to read the listing.
   timeToListMs = phaseStats.reduce((sum, phase) => sum + phase.ms, 0)
-  if (statuses.length > 0) {
-    const skipped = statuses.length - eligibleStatuses.length
+  const examined = statuses.length + panelessStatuses.length
+  if (examined > 0) {
+    const skipped = examined - eligibleStatuses.length
     console.log()
     console.log(
       color.dim(
-        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, agent!=chief, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed (a coalesced turn resolves to its owner run), idle>${MIN_IDLE_MINUTES}m).`
+        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, agent!=chief, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed (a coalesced turn resolves to its owner run), idle>${MIN_IDLE_MINUTES}m with a pane or >${PANELESS_MIN_IDLE_HOURS}h without).`
       )
     )
   }
@@ -295,7 +337,7 @@ async function sweep(options: Options): Promise<number> {
     // Nothing was reaped on this path, so the discovered list is still current —
     // reuse it rather than paying for a second discovery.
     timePhase('print-remaining', () => printRemaining(options, panes))
-    return statuses.length
+    return examined
   }
 
   console.log()
@@ -305,8 +347,8 @@ async function sweep(options: Options): Promise<number> {
   let reapSent = 0
   let reapWarned = 0
   const reapStarted = performance.now()
-  for (const status of eligibleStatuses) {
-    const result = sendReap(status, options)
+  for (const { status, source } of eligibleStatuses) {
+    const result = sendReap(status, options, source)
     const suffix = `${color.dim(handleFromIdentity(status.scopeRef, status.identity))} ${color.dim(shortRuntime(status.runtimeId))}`
     if (result.kind === 'already-terminated') {
       reapWarned += 1
@@ -342,7 +384,7 @@ async function sweep(options: Options): Promise<number> {
   // A dry run issued no terminate, so nothing can have changed; reuse the
   // discovered list. A real sweep must re-discover to show what is left.
   timePhase('print-remaining', () => printRemaining(options, options.dryRun ? panes : undefined))
-  return statuses.length
+  return examined
 }
 
 async function main(): Promise<void> {
@@ -378,7 +420,10 @@ export {
   classifyReapExec,
   isAlreadyTerminatedError,
   isQuitEligible,
+  PANELESS_MIN_IDLE_MS,
+  panelessCandidatesSql,
   selectHeadlessPanes,
+  selectPanelessTargets,
   skipReasons,
   statusSql,
 }

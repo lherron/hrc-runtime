@@ -1,5 +1,5 @@
 import { type SessionIdentity, formatSessionIdentityHandle } from 'hrc-core'
-import { MIN_IDLE_MINUTES, MIN_IDLE_MS, type PaneStatus, color } from './types'
+import { MIN_IDLE_MS, type PaneStatus, color } from './types'
 
 export function sqlQuote(value: string): string {
   return value.replaceAll("'", "''")
@@ -55,9 +55,17 @@ export function eventKindColor(eventKind: string): string {
   return color.yellow(eventKind)
 }
 
-export function isIdleLongerThanThreshold(lastActivityUtc: string): boolean {
+export function isIdleLongerThanThreshold(
+  lastActivityUtc: string,
+  minIdleMs: number = MIN_IDLE_MS
+): boolean {
   const lastActivityMs = Date.parse(lastActivityUtc)
-  return Number.isFinite(lastActivityMs) && Date.now() - lastActivityMs > MIN_IDLE_MS
+  return Number.isFinite(lastActivityMs) && Date.now() - lastActivityMs > minIdleMs
+}
+
+export function formatIdleThreshold(minIdleMs: number): string {
+  const minutes = Math.round(minIdleMs / 60_000)
+  return minutes % 60 === 0 ? `${minutes / 60} hours` : `${minutes} minutes`
 }
 
 // Operator idle-viewer reap invariant (T-04423, daedalus ruling): a reap is
@@ -73,7 +81,7 @@ export function isIdleLongerThanThreshold(lastActivityUtc: string): boolean {
 // line per failed guard (empty array == eligible). `isQuitEligible` is just
 // "no reasons". Add new scenarios here over time; keep each reason actionable
 // (say what state we saw AND why it disqualifies / what to do instead).
-export function skipReasons(status: PaneStatus): string[] {
+export function skipReasons(status: PaneStatus, minIdleMs: number = MIN_IDLE_MS): string[] {
   // Root causes that make every downstream field 'unknown'/'' — report just the
   // root so the operator isn't buried in cascading noise.
   if (status.runtimeId === '') {
@@ -215,16 +223,18 @@ export function skipReasons(status: PaneStatus): string[] {
 
   const lastActivityMs = Date.parse(status.lastActivityUtc)
   if (!Number.isFinite(lastActivityMs)) {
-    reasons.push('latest activity time is missing or invalid — cannot confirm 30 minutes idle')
-  } else if (!isIdleLongerThanThreshold(status.lastActivityUtc)) {
     reasons.push(
-      `latest activity was ${formatDurationAgo(status.lastActivityUtc)} — requires more than ${MIN_IDLE_MINUTES} minutes idle`
+      `latest activity time is missing or invalid — cannot confirm ${formatIdleThreshold(minIdleMs)} idle`
+    )
+  } else if (!isIdleLongerThanThreshold(status.lastActivityUtc, minIdleMs)) {
+    reasons.push(
+      `latest activity was ${formatDurationAgo(status.lastActivityUtc)} — requires more than ${formatIdleThreshold(minIdleMs)} idle`
     )
   }
 
   return reasons
 }
 
-export function isQuitEligible(status: PaneStatus): boolean {
-  return skipReasons(status).length === 0
+export function isQuitEligible(status: PaneStatus, minIdleMs: number = MIN_IDLE_MS): boolean {
+  return skipReasons(status, minIdleMs).length === 0
 }

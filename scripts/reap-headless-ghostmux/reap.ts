@@ -25,7 +25,11 @@ export function isAlreadyTerminatedError(message: string): boolean {
 // Returns a result instead of throwing: one runtime that fails to reap (already
 // terminated, transient RPC error, etc.) must NOT abort the whole sweep — the
 // caller warns and continues to the remaining eligible panes.
-export function sendReap(status: PaneStatus, options: Options): ReapResult {
+export function sendReap(
+  status: PaneStatus,
+  options: Options,
+  source = 'close-headless-ghostmux'
+): ReapResult {
   const argv = [
     'hrc',
     'runtime',
@@ -35,7 +39,7 @@ export function sendReap(status: PaneStatus, options: Options): ReapResult {
     '--reason',
     'operator_reap',
     '--source',
-    'close-headless-ghostmux',
+    source,
   ]
   if (options.dryRun) {
     console.log(color.dim(`  dry-run: ${argv.join(' ')}`))

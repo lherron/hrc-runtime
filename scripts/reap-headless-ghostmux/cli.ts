@@ -1,4 +1,9 @@
-import { HEADLESS_PANE_ROLE, MIN_IDLE_MINUTES, type Options } from './types'
+import {
+  HEADLESS_PANE_ROLE,
+  MIN_IDLE_MINUTES,
+  type Options,
+  PANELESS_MIN_IDLE_HOURS,
+} from './types'
 
 export function usage(): never {
   console.log(`Usage:
@@ -23,6 +28,11 @@ a tmux TUI window (transport=tmux, OR transport=headless with a leased-tmux
 substrate + presentation.kind=tmux-tui — the codex app-server viewer pane),
 scope task is NOT primary, status=ready, NO active run, latest turn=completed,
 and latest runtime activity strictly more than ${MIN_IDLE_MINUTES} minutes ago.
+
+Paneless runtimes: a live broker whose Ghostty pane is gone never shows up in
+pane discovery, so the sweep also reads ready runtimes from the HRC DB that
+have no pane. They pass the same guards, but must be idle strictly more than
+${PANELESS_MIN_IDLE_HOURS} hours, and are reaped with --source reap-paneless-inventory.
 
 Environment:
   PANE_ROLE            Default: ${HEADLESS_PANE_ROLE} (ghostmux hrc_role metadata)

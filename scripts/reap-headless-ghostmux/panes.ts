@@ -1,7 +1,13 @@
 import { existsSync } from 'node:fs'
 import { scopeFromTitle, sqlQuote } from './eligibility'
 import { isRecord, run, tryRun } from './process'
-import { type DiscoveredPane, HEADLESS_PANE_ROLE, type Options, type PaneStatus } from './types'
+import {
+  type DiscoveredPane,
+  HEADLESS_PANE_ROLE,
+  type Options,
+  PANELESS_PANE_ID,
+  type PaneStatus,
+} from './types'
 
 export function simPanes(): DiscoveredPane[] {
   return [
@@ -110,6 +116,59 @@ export function listPanes(options: Options): DiscoveredPane[] {
     options.paneRole,
     options.titleRegex
   )
+}
+
+// Inventory discovery for runtimes with no Ghostty pane. Pane discovery cannot
+// see a live broker whose viewer surface is gone, so these accumulated for days
+// (22 on 2026-10-09). This only nominates candidates; the full statusSql +
+// skipReasons pass still decides, so the cutoff is a pre-filter, not the gate.
+export function panelessCandidatesSql(cutoffIso: string): string {
+  return `
+      SELECT runtime_id, scope_ref
+      FROM runtimes
+      WHERE status = 'ready'
+        AND last_activity_at IS NOT NULL
+        AND last_activity_at < '${sqlQuote(cutoffIso)}'
+      ORDER BY last_activity_at;
+    `
+}
+
+export function selectPanelessTargets(
+  candidates: Array<{ runtimeId: string; scopeRef: string }>,
+  paneRuntimeIds: Set<string>
+): DiscoveredPane[] {
+  return candidates
+    .filter((candidate) => !paneRuntimeIds.has(candidate.runtimeId))
+    .map((candidate) => ({
+      id: PANELESS_PANE_ID,
+      title: '(no Ghostty pane)',
+      metadata: { hrc_scope_ref: candidate.scopeRef, hrc_runtime_id: candidate.runtimeId },
+    }))
+}
+
+export function listPanelessTargets(
+  options: Options,
+  minIdleMs: number,
+  paneRuntimeIds: Set<string>
+): DiscoveredPane[] {
+  if (options.simulate || !existsSync(options.hrcDbPath)) return []
+  const cutoffIso = new Date(Date.now() - minIdleMs).toISOString()
+  const output = run([
+    'sqlite3',
+    '-tabs',
+    '-noheader',
+    options.hrcDbPath,
+    panelessCandidatesSql(cutoffIso),
+  ])
+  const candidates = output
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [runtimeId = '', scopeRef = ''] = line.split('\t')
+      return { runtimeId, scopeRef }
+    })
+    .filter((candidate) => candidate.runtimeId !== '')
+  return selectPanelessTargets(candidates, paneRuntimeIds)
 }
 
 export function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus {
