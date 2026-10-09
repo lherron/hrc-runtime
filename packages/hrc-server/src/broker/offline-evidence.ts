@@ -9,8 +9,9 @@
  *
  * Authority: a recovery attempt owns its runtime exclusively (see
  * runtime-exclusive-owner.ts). Only `terminated`/`failed` harness-broker
- * runtimes with an unreachable endpoint are eligible; everything else is refused
- * before any reader spawns or any cursor moves.
+ * runtimes with an unreachable endpoint are eligible, plus revivable runtimes
+ * past the hold bound whose worker is positively gone (T-10632); everything else
+ * is refused before any reader spawns or any cursor moves.
  */
 
 import { existsSync } from 'node:fs'
@@ -30,11 +31,13 @@ import {
 } from './offline-evidence-attempt'
 import {
   BUDGET_FREE_OUTCOMES,
-  ELIGIBLE_STATUSES,
   OFFLINE_EVIDENCE_RETRY_BUDGET,
   RETAINED_EVIDENCE_OUTCOME_SCHEMA,
+  REVIVABLE_STATUSES,
   classifyRetainedOutcome,
   outcomeHoldsEvidence,
+  retainedEvidenceEligible,
+  revivableHoldExpired,
 } from './offline-evidence-outcomes'
 import { acquireRetainedRecoveryOwnership } from './runtime-exclusive-owner'
 
@@ -325,8 +328,6 @@ export async function recoverRetainedEvidence(
 
 // ── retention hold (SPEC §4.2) ───────────────────────────────────────────────
 
-const REVIVABLE_STATUSES = new Set(['crashed', 'dead', 'stale', 'detached'])
-
 export type RetainedEvidenceHold = {
   held: boolean
   /** Why: `revivable` status, or the latest outcome (`not_attempted` when none). */
@@ -337,7 +338,9 @@ export type RetainedEvidenceHold = {
 /**
  * Whether a bound harness-broker runtime's ledger directory is held. The hold
  * ends only on `recovered` or `operator_disposed`; a retry budget never releases
- * evidence. Unbound runtimes get no new hold (U16).
+ * evidence. Unbound runtimes get no new hold (U16). A revivable status holds
+ * outright only until the hold bound (T-10632 R1); after it, the outcome clause
+ * decides, exactly as for a terminated runtime.
  */
 function currentHold(db: HrcDatabase, runtimeId: string): boolean {
   const current = db.runtimes.getByRuntimeId(runtimeId)
@@ -346,13 +349,14 @@ function currentHold(db: HrcDatabase, runtimeId: string): boolean {
 
 export function retainedEvidenceHold(
   db: HrcDatabase,
-  runtime: HrcRuntimeSnapshot
+  runtime: HrcRuntimeSnapshot,
+  now: number = Date.now()
 ): RetainedEvidenceHold {
   if (runtime.controllerKind !== 'harness-broker') return { held: false }
   if (persistedAspdExecutionRelease(runtime) === undefined) return { held: false }
   const ledgerPath = persistedEventLedgerPath(runtime)
   if (ledgerPath === undefined) return { held: false }
-  if (REVIVABLE_STATUSES.has(runtime.status)) {
+  if (REVIVABLE_STATUSES.has(runtime.status) && !revivableHoldExpired(runtime, now)) {
     return { held: true, reason: 'revivable', ledgerPath }
   }
   // §4.2 (H1 rev 3): the outcome clause applies in every status. A live, adopted
@@ -379,7 +383,7 @@ export function recordUnboundBeforeSweep(
   now: string
 ): string | undefined {
   if (runtime.controllerKind !== 'harness-broker') return undefined
-  if (!ELIGIBLE_STATUSES.has(runtime.status)) return undefined
+  if (!retainedEvidenceEligible(runtime, Date.parse(now))) return undefined
   if (persistedAspdExecutionRelease(runtime) !== undefined) return undefined
   const outcome = 'offline_reader_unsupported_unbound_release'
   for (const invocation of db.brokerInvocations.listByRuntimeId(runtime.runtimeId)) {
@@ -466,7 +470,10 @@ export function recordOperatorDisposition(
 export const RETAINED_EVIDENCE_PASS_LIMIT = 20
 export const RETAINED_EVIDENCE_TERMINAL_DELAY_MS = 1_000
 
-/** Bound terminal runtimes whose evidence is not yet attempted or retryable. */
+/**
+ * Bound terminal (or expired-revivable, T-10632) runtimes whose evidence is not
+ * yet attempted or is retryable.
+ */
 export function retainedEvidencePassCandidates(
   db: HrcDatabase,
   limit: number
@@ -474,15 +481,16 @@ export function retainedEvidencePassCandidates(
   const runtimeIds: string[] = []
   let eligible = 0
   let unboundTerminal = 0
+  const now = Date.now()
   for (const runtime of db.runtimes.listAll()) {
-    if (runtime.controllerKind !== 'harness-broker' || !ELIGIBLE_STATUSES.has(runtime.status)) {
+    if (runtime.controllerKind !== 'harness-broker' || !retainedEvidenceEligible(runtime, now)) {
       continue
     }
     if (persistedAspdExecutionRelease(runtime) === undefined) {
       unboundTerminal += 1
       continue
     }
-    const hold = retainedEvidenceHold(db, runtime)
+    const hold = retainedEvidenceHold(db, runtime, now)
     if (!hold.held || hold.ledgerPath === undefined) continue
     const retryable =
       hold.reason === 'not_attempted' ||

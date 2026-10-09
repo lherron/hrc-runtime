@@ -1,6 +1,8 @@
 /** T-08566 stage 2 — retained-evidence outcome constants and classification (SPEC §4.2). */
 
-import type { RetainedEvidenceOutcomeClass } from 'hrc-core'
+import type { HrcRuntimeSnapshot, RetainedEvidenceOutcomeClass } from 'hrc-core'
+
+import { resolvePositiveMs } from '../startup-reconcile/lease-identity-recovery.js'
 
 export const OFFLINE_EVIDENCE_SCHEMA = 'harness-broker.offline-evidence/v1'
 export const OFFLINE_EVIDENCE_CAPABILITY = OFFLINE_EVIDENCE_SCHEMA
@@ -18,6 +20,43 @@ export const OFFLINE_EVIDENCE_SLICE_MAX_MS = 60_000
 export const OFFLINE_EVIDENCE_RETRY_BUDGET = 5
 
 export const ELIGIBLE_STATUSES = new Set(['terminated', 'failed'])
+/** Statuses a live broker may still be reattached from (SPEC §4.2 revivable hold). */
+export const REVIVABLE_STATUSES = new Set(['crashed', 'dead', 'stale', 'detached'])
+
+/** T-10632: how long a revivable or external-lifecycle hold lasts after the status changed. */
+export const DEFAULT_BROKER_HOLD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+
+export function resolveBrokerHoldMaxAgeMs(): number {
+  return resolvePositiveMs('HRC_BROKER_HOLD_MAX_AGE_MS') ?? DEFAULT_BROKER_HOLD_MAX_AGE_MS
+}
+
+/**
+ * Age past the hold bound, or undefined while the hold stands. Read from
+ * `statusChangedAt` only: a missing, `unknown` or unparseable stamp never
+ * expires, so bad data keeps evidence rather than releasing it.
+ */
+export function holdExpiredAgeMs(runtime: HrcRuntimeSnapshot, now: number): number | undefined {
+  const stamp = runtime.statusChangedAt
+  if (!stamp || stamp === 'unknown') return undefined
+  const changedAt = Date.parse(stamp)
+  if (!Number.isFinite(changedAt)) return undefined
+  const ageMs = now - changedAt
+  return ageMs > resolveBrokerHoldMaxAgeMs() ? ageMs : undefined
+}
+
+/** A revivable runtime whose revivable hold has expired (T-10632 R1). */
+export function revivableHoldExpired(runtime: HrcRuntimeSnapshot, now: number): boolean {
+  return REVIVABLE_STATUSES.has(runtime.status) && holdExpiredAgeMs(runtime, now) !== undefined
+}
+
+/**
+ * Whether the retained-evidence attempt may consider this runtime: terminated
+ * or failed, or revivable past the hold bound. An expired revivable runtime is
+ * still refused at the door without positive evidence that its worker is gone.
+ */
+export function retainedEvidenceEligible(runtime: HrcRuntimeSnapshot, now: number): boolean {
+  return ELIGIBLE_STATUSES.has(runtime.status) || revivableHoldExpired(runtime, now)
+}
 
 const INCOMPLETE_OUTCOMES = new Set([
   'recovered_torn_tail',

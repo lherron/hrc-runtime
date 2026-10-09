@@ -170,6 +170,17 @@ export class ParticipantRegistrationRepository {
     return row === null ? null : mapAttempt(row)
   }
 
+  /** Every attempt naming this runtime, whether or not a broker invocation row exists. */
+  listAttemptsByRuntimeId(runtimeId: string): ParticipantAttempt[] {
+    const rows = this.db
+      .query<ParticipantAttemptRow, [string]>(
+        `SELECT ${ATTEMPT_COLUMNS} FROM participant_registration_attempts
+         WHERE runtime_id = ? ORDER BY attach_epoch ASC, attempt_id ASC`
+      )
+      .all(runtimeId)
+    return rows.map(mapAttempt)
+  }
+
   getAttemptByInvocationId(invocationId: string): ParticipantAttempt | null {
     const row = this.db
       .query<ParticipantAttemptRow, [string]>(

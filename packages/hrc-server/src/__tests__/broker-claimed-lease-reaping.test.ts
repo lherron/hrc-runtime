@@ -541,6 +541,110 @@ describe('broker IPC directory GC', () => {
     expect(result.removedBrokerIpcDirs).toBe(0)
     expect(existsSync(referenced)).toBe(true)
   })
+
+  // T-10632 R2: the external hold has an age bound unless a participant attempt
+  // could still re-read this runtime's endpoint.
+  async function seedExpiredExternal(runtimeId: string): Promise<string> {
+    const dir = join(fixture.runtimeRoot, 'bipc', runtimeId)
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'b.sock'), '')
+    const lease = await createDurableLease(runtimeId)
+    seedRuntime(runtimeId, lease, {
+      status: 'terminated',
+      updatedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+      endpointDir: dir,
+      lifecycleOwner: 'external',
+    })
+    return dir
+  }
+
+  function seedParticipantAttempt(
+    runtimeId: string,
+    state: string,
+    establishmentWorkState: string
+  ): void {
+    const now = new Date().toISOString()
+    db.participantRegistrations.insertRegistration({
+      registrationId: `preg-${runtimeId}`,
+      join: 'participant-served',
+      scopeRef: `agent:cody:project:hrc-runtime:task:T-10632:${runtimeId}`,
+      laneRef: 'main',
+      hostSessionId: `hs-${runtimeId}`,
+      generation: 1,
+      socketPath: join(fixture.runtimeRoot, `${runtimeId}.serve.sock`),
+      policy: {
+        addressPolicy: 'selected-scope',
+        continuityPolicy: 'host-incarnation',
+        lifecycleOwner: 'externally-owned',
+        replaySemantics: 'full-source-replay',
+      },
+      hostIncarnationId: `host-incarnation:${runtimeId}`,
+      createdAt: now,
+      updatedAt: now,
+    } as never)
+    db.participantRegistrations.insertAttempt({
+      attemptId: `patt-${runtimeId}`,
+      registrationId: `preg-${runtimeId}`,
+      attachEpoch: 1,
+      requestId: `req-${runtimeId}`,
+      operationId: `op-${runtimeId}`,
+      invocationId: `inv-${runtimeId}`,
+      runtimeId,
+      state,
+      recoveryDisposition: 'unresolved',
+      establishmentWorkState,
+      establishmentAttemptCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    } as never)
+  }
+
+  it('releases an external-owner IPC dir past the hold bound with a reason (T-10632 R2)', async () => {
+    const abandoned = await seedExpiredExternal('external-expired')
+    seedParticipantAttempt('external-expired', 'DETACHED', 'exhausted')
+    const lines: string[] = []
+    const write = process.stderr.write.bind(process.stderr)
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      lines.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk))
+      return true
+    }) as typeof process.stderr.write
+    let result: Awaited<ReturnType<typeof sweepOrphanedBrokerTmuxLeases>>
+    try {
+      result = await sweepOrphanedBrokerTmuxLeases(
+        db,
+        fixture.runtimeRoot,
+        sweepOptions({ probeBrokerHealth: async () => 'unreachable' })
+      )
+    } finally {
+      process.stderr.write = write
+    }
+
+    expect(result.removedBrokerIpcDirs).toBe(1)
+    expect(existsSync(abandoned)).toBe(false)
+    const removed = lines
+      .join('')
+      .split('\n')
+      .find((line) => line.includes('orphan_ipc_dir_removed'))
+    expect(removed).toContain('"reason":"external_hold_expired"')
+    expect(removed).toContain('"runtimeId":"external-expired"')
+  })
+
+  it('keeps an expired external-owner IPC dir while an attempt can still reattach (T-10632 R2)', async () => {
+    const active = await seedExpiredExternal('external-active')
+    seedParticipantAttempt('external-active', 'ACTIVE', 'completed')
+    const pending = await seedExpiredExternal('external-pending')
+    seedParticipantAttempt('external-pending', 'DETACHED', 'retry_wait')
+
+    const result = await sweepOrphanedBrokerTmuxLeases(
+      db,
+      fixture.runtimeRoot,
+      sweepOptions({ probeBrokerHealth: async () => 'unreachable' })
+    )
+
+    expect(result.removedBrokerIpcDirs).toBe(0)
+    expect(existsSync(active)).toBe(true)
+    expect(existsSync(pending)).toBe(true)
+  })
 })
 
 describe('explicit lifecycle cleanup', () => {

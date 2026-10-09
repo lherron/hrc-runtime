@@ -17,6 +17,7 @@ import type {
 } from 'hrc-core'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
+import { type LiveSubstrateProbeDeps, leasedTmuxBrokerPaneLive } from './broker/live-substrate.js'
 import {
   hasLeasedBrokerSubstrate,
   parseBrokerRuntimeHostingState,
@@ -42,7 +43,6 @@ import {
   HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE,
 } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { isLiveProcess } from './server-lock.js'
 import { writeServerLog } from './server-log.js'
 import { parseJsonBody } from './server-parsers.js'
 import {
@@ -65,7 +65,6 @@ import {
 } from './target-message-shared.js'
 import { createNotifiedSessionSuccessor } from './target-message-successor-handlers.js'
 import { findTargetSession } from './target-view.js'
-import { createTmuxManager } from './tmux.js'
 import { submissionResponse, submitThroughAdmission } from './turn-admission/submit.js'
 import type { AdmittedPlan } from './turn-admission/types.js'
 
@@ -685,14 +684,7 @@ export async function executeSemanticTurn(
   }
 }
 
-type SemanticDmLiveSubstrateGuardDeps = {
-  createTmuxManager(options: { socketPath: string }): {
-    listSessionNames(): Promise<string[]>
-    inspectPaneProcess(
-      paneId: string
-    ): Promise<{ command: string; pid: number; dead: boolean } | null>
-  }
-  isLiveProcess(pid: number): boolean
+type SemanticDmLiveSubstrateGuardDeps = LiveSubstrateProbeDeps & {
   reattach(runtime: HrcRuntimeSnapshot): Promise<DurableBrokerDispatchReattachResult>
   log(level: 'INFO', message: string, fields: Record<string, unknown>): void
 }
@@ -720,20 +712,7 @@ export async function reattachLiveSemanticDmSubstrate(
   }
 
   try {
-    const substrate = hosting.substrate
-    const leaseTmux = (deps.createTmuxManager ?? createTmuxManager)({
-      socketPath: substrate.tmuxSocketPath,
-    })
-    const sessionExists = (await leaseTmux.listSessionNames()).includes(substrate.sessionName)
-    const paneProcess = sessionExists
-      ? await leaseTmux.inspectPaneProcess(substrate.brokerWindow.paneId)
-      : null
-    if (
-      paneProcess === null ||
-      paneProcess.pid <= 0 ||
-      paneProcess.dead ||
-      !(deps.isLiveProcess ?? isLiveProcess)(paneProcess.pid)
-    ) {
+    if (!(await leasedTmuxBrokerPaneLive(hosting.substrate, deps))) {
       return false
     }
 

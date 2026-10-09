@@ -1,7 +1,7 @@
 /** T-08566 stage 2 — retained-evidence eligibility and read-and-project attempt (SPEC §3.4.1, §4). */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import type { HrcLifecycleEvent, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase, RetainedEvidenceOutcomeRecord } from 'hrc-store-sqlite'
@@ -12,9 +12,11 @@ import {
   validateFrozenExecutionRelease,
 } from '../agent-spaces-adapter/aspd-execution-release'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle'
+import { listProcessCommands } from '../process-commands'
 import type { BrokerHealthState } from '../startup-reconcile/types'
 import { persistedAspdExecutionRelease } from './controller/dispatch'
 import { BrokerEventMapper } from './event-mapper'
+import { leasedTmuxBrokerPaneLive } from './live-substrate'
 import {
   ELIGIBLE_STATUSES,
   OFFLINE_EVIDENCE_CAPABILITY,
@@ -25,6 +27,7 @@ import {
   OFFLINE_EVIDENCE_SLICE_MAX_BYTES,
   OFFLINE_EVIDENCE_SLICE_MAX_MS,
   OFFLINE_EVIDENCE_SLICE_MAX_PAGES,
+  revivableHoldExpired,
 } from './offline-evidence-outcomes'
 import { callReader } from './offline-evidence-reader'
 import {
@@ -54,6 +57,10 @@ export type OfflineEvidenceDeps = {
   /** Observation fan-out for committed retained rows (follow subscribers only). */
   notifyEvent: (event: HrcLifecycleEvent) => void
   options?: OfflineEvidenceOptions | undefined
+  /** T-10632 death evidence for an expired revivable runtime; defaults to `ps`. */
+  listProcessCommands?: (() => Promise<string[]>) | undefined
+  /** T-10632: whether the T-07047 live-substrate door could still reattach this runtime. */
+  probeLiveSubstrate?: ((runtime: HrcRuntimeSnapshot) => Promise<boolean>) | undefined
 }
 
 export type Refusal = {
@@ -114,7 +121,9 @@ export async function eligibilityRefusal(
   if (isExternalLifecycleOwner(runtime)) {
     return { outcome: 'offline_read_external_lifecycle', reason: 'external', recorded: false }
   }
-  if (!ELIGIBLE_STATUSES.has(runtime.status)) {
+  const expiredRevivable =
+    !ELIGIBLE_STATUSES.has(runtime.status) && revivableHoldExpired(runtime, Date.now())
+  if (!ELIGIBLE_STATUSES.has(runtime.status) && !expiredRevivable) {
     return { outcome: 'offline_read_runtime_revivable', reason: runtime.status, recorded: false }
   }
   if (deps.activeClientInvocationId(runtime.runtimeId) === invocationId) {
@@ -127,7 +136,63 @@ export async function eligibilityRefusal(
       return { outcome: 'offline_read_worker_live', reason: health, recorded: false }
     }
   }
+  if (expiredRevivable) return await workerGoneRefusal(deps, runtime, socketPath)
   return undefined
+}
+
+/**
+ * T-10632 (daedalus F1): an unreachable socket is not a dead worker — the health
+ * probe maps a slow broker to `unreachable` too. A revivable runtime admitted
+ * only by hold expiry needs positive evidence that no door can revive it: every
+ * revival ends in `broker.hello` on the endpoint inside the ledger directory,
+ * served only by a broker whose argv names that directory, socket and runtime
+ * id; and the T-07047 live-substrate door must be closed. Refusals are never
+ * recorded, so a broker that later dies is admitted on a later pass.
+ */
+async function workerGoneRefusal(
+  deps: OfflineEvidenceDeps,
+  runtime: HrcRuntimeSnapshot,
+  socketPath: string | undefined
+): Promise<Refusal | undefined> {
+  let commands: string[]
+  try {
+    commands = await (deps.listProcessCommands ?? listProcessCommands)()
+  } catch {
+    return {
+      outcome: 'offline_read_worker_live',
+      reason: 'process_table_unavailable',
+      recorded: false,
+    }
+  }
+  const ledgerPath = persistedEventLedgerPath(runtime)
+  const markers = [
+    ...(ledgerPath !== undefined ? [`${dirname(ledgerPath)}/`] : []),
+    ...(socketPath !== undefined ? [socketPath] : []),
+  ]
+  const runtimeIdArg = new RegExp(
+    `--runtime-id[= ]['"]?${escapeRegExp(runtime.runtimeId)}(?![\\w-])`
+  )
+  if (
+    commands.some(
+      (command) => markers.some((marker) => command.includes(marker)) || runtimeIdArg.test(command)
+    )
+  ) {
+    return { outcome: 'offline_read_worker_live', reason: 'process_table', recorded: false }
+  }
+  const substrate = parseBrokerRuntimeHostingState(runtime)?.substrate
+  if (substrate?.kind === 'leased-tmux') {
+    // A probe error mirrors the door, which treats it as "cannot reattach".
+    const probe = deps.probeLiveSubstrate ?? (async () => leasedTmuxBrokerPaneLive(substrate))
+    const live = await probe(runtime).catch(() => false)
+    if (live) {
+      return { outcome: 'offline_read_worker_live', reason: 'substrate_live', recorded: false }
+    }
+  }
+  return undefined
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 // ── attempt ───────────────────────────────────────────────────────────────────
 
