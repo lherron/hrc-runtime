@@ -878,7 +878,7 @@ describe('simulated reap outcome presentation', () => {
 // the sweep also asks the HRC DB for ready runtimes idle beyond a much longer
 // threshold. The same guards apply; only the idle clock is less aggressive.
 describe('paneless inventory reap', () => {
-  function inventoryFixture(rows: Array<[string, string, string, string]>): string[][] {
+  function inventoryFixture(rows: Array<[string, string, string, string | null]>): string[][] {
     const db = new Database(':memory:')
     db.exec(
       'CREATE TABLE runtimes (runtime_id TEXT PRIMARY KEY, scope_ref TEXT NOT NULL, status TEXT NOT NULL, last_activity_at TEXT)'
@@ -897,7 +897,7 @@ describe('paneless inventory reap', () => {
       ['rt-new-ready', 'agent:b:project:p:task:T-2', 'ready', '2026-10-09T01:00:00.000Z'],
       ['rt-old-busy', 'agent:c:project:p:task:T-3', 'busy', '2026-10-01T00:00:00.000Z'],
       ['rt-old-dead', 'agent:d:project:p:task:T-4', 'terminated', '2026-10-01T00:00:00.000Z'],
-      ['rt-no-clock', 'agent:e:project:p:task:T-5', 'ready', null as unknown as string],
+      ['rt-no-clock', 'agent:e:project:p:task:T-5', 'ready', null],
     ])
     expect(rows).toEqual([['rt-old-ready', 'agent:a:project:p:task:T-1']])
   })
