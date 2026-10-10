@@ -186,9 +186,13 @@ provision_projects() {
   PROJECT_SEARCH_ROOT="${ROOT}/projects"
   local project
   for project in "${FIXTURE_PROJECTS[@]}"; do
-    [[ -d "${PROJECT_SEARCH_ROOT}/${project}/.git" ]] && continue
+    # A hook exports GIT_DIR and kin; they would aim git at the outer checkout.
+    # Check repository health, not the .git directory: macOS's periodic /tmp
+    # sweep deletes HEAD, config and objects from a long-lived root while the
+    # directories survive (T-10646). Re-running init on a gutted .git repairs it.
+    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+      git -C "${PROJECT_SEARCH_ROOT}/${project}" rev-parse --git-dir 2>/dev/null | grep -qx .git && continue
     mkdir -p "${PROJECT_SEARCH_ROOT}/${project}"
-    # A hook exports GIT_DIR and kin; they would aim init at the outer checkout.
     env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
       git init -q "${PROJECT_SEARCH_ROOT}/${project}"
   done
