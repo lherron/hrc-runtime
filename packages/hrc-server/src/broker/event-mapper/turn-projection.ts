@@ -11,6 +11,7 @@ import {
   resolveExactTurnOwner,
   settleAbsorbedAuxiliary,
   settlePriorAbsorbedAuxiliaries,
+  settleUnownedTurnAbsorbedSteers,
 } from '../turn-ownership.js'
 import { type ProjectionContext, isRecord } from './helpers'
 import {
@@ -268,6 +269,8 @@ export const turnProjectionMethods = {
             })
           }
           this.nextBufferChunkSeqByRunId.delete(runId)
+        } else {
+          settleUnownedTurnAbsorbedSteers(db, envelope, 'completed', now)
         }
         markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now, {
           exactOwner: this.extractTurnId(envelope) !== undefined,
@@ -290,6 +293,8 @@ export const turnProjectionMethods = {
             })
           }
           this.nextBufferChunkSeqByRunId.delete(runId)
+        } else {
+          settleUnownedTurnAbsorbedSteers(db, envelope, 'failed', now)
         }
         markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now, {
           exactOwner: this.extractTurnId(envelope) !== undefined,
@@ -310,6 +315,8 @@ export const turnProjectionMethods = {
             })
           }
           this.nextBufferChunkSeqByRunId.delete(runId)
+        } else {
+          settleUnownedTurnAbsorbedSteers(db, envelope, 'cancelled', now)
         }
         markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now, {
           exactOwner: this.extractTurnId(envelope) !== undefined,

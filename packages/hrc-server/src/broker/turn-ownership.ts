@@ -387,6 +387,58 @@ export function settlePriorAbsorbedAuxiliaries(
   }
 }
 
+/**
+ * A steer absorbed into a turn HRC never dispatched (an operator prompt or a
+ * harness notification) has no owner run to coalesce into, so that turn's own
+ * terminal is the steer's terminal (T-10686). Without this the steer stayed
+ * accepted until active-run reconcile failed it as abandoned, and a seat whose
+ * every turn completed read as failed.
+ */
+export function settleUnownedTurnAbsorbedSteers(
+  db: HrcDatabase,
+  envelope: InvocationEventEnvelope,
+  outcome: 'completed' | 'failed' | 'cancelled',
+  now: string
+): void {
+  const target = coordinatesForEnvelope(envelope)
+  if (target === undefined) return
+  const invocationId = String(envelope.invocationId)
+  const epoch = historicalEpoch(db, invocationId)
+  if (epoch === undefined) return
+  const completedAt = envelope.time ?? now
+  const absorbed = db.brokerInvocationEvents.listByInvocationIdAndTypes({
+    invocationId,
+    types: ['submission.absorbed'],
+    turnId: target.turnId,
+    throughSeq: envelope.seq,
+  })
+  for (const row of absorbed) {
+    const event = parseStoredEvent(row)
+    if (
+      event === undefined ||
+      !coordinatesMatch(target, event) ||
+      event.submissionId === undefined ||
+      !isSteerSubmission(db, invocationId, event.submissionId)
+    ) {
+      continue
+    }
+    const run = db.runs.getByBrokerSubmissionId(event.submissionId)
+    if (
+      run === null ||
+      run.status !== 'accepted' ||
+      run.startedAt !== undefined ||
+      run.coalescedIntoRunId !== undefined ||
+      run.runtimeId !== epoch.invocation.runtimeId ||
+      run.invocationId !== invocationId ||
+      run.operationId !== epoch.invocation.operationId ||
+      run.generation !== epoch.operation.generation
+    ) {
+      continue
+    }
+    db.runs.markCompleted(run.runId, { status: outcome, completedAt, updatedAt: now })
+  }
+}
+
 function unresolvedMarker(message: string | undefined): boolean {
   return message?.includes(UNRESOLVED_ABSORBED_OWNER_MARKER) === true
 }
@@ -442,10 +494,22 @@ export function hasUnsettledAbsorbedAuxiliary(db: HrcDatabase, runtimeId: string
       run !== null &&
       run.startedAt === undefined &&
       run.coalescedIntoRunId === undefined &&
-      !unresolvedMarker(run.errorMessage)
+      !unresolvedMarker(run.errorMessage) &&
+      !(
+        run.completedAt !== undefined &&
+        turnEndedUnowned(db, row.invocationId, stringField(payload, 'turnId'))
+      )
     ) {
       return true
     }
   }
   return false
+}
+
+/** The absorbing turn reached a terminal that projected onto no owner run (T-10686). */
+function turnEndedUnowned(db: HrcDatabase, invocationId: string, turnId: string | undefined) {
+  if (turnId === undefined) return false
+  return db.brokerInvocationEvents
+    .listByInvocationIdAndTypes({ invocationId, types: TURN_TERMINAL_TYPES, turnId })
+    .some((terminal) => terminal.runId === undefined)
 }
