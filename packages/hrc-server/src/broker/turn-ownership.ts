@@ -2,6 +2,7 @@ import { type HrcBrokerInvocationEventRecord, HrcErrorCode } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
+import { isTerminalBrokerInvocationState } from '../require-helpers.js'
 import { isLaunchCarriedInvokeCorrelationJson } from '../server-types.js'
 
 export const UNRESOLVED_ABSORBED_OWNER_MARKER = 'absorbed_submission_owner_unresolved'
@@ -482,7 +483,35 @@ export function failUnresolvedAbsorbedAuxiliaries(
   }
 }
 
-/** Pruning must retain the graph until every absorbed steer dependency is settled explicitly. */
+/**
+ * An absorbed steer whose invocation is terminal can never learn its owner: no
+ * further broker event will arrive (T-10695). Prune callers settle those runs
+ * with the unresolved-owner marker inside their mutating transaction.
+ */
+export function settleTerminalInvocationAbsorbedAuxiliaries(
+  db: HrcDatabase,
+  runtimeId: string,
+  now: string
+): void {
+  const invocationIds = new Set(absorbedRows(db, runtimeId).map((row) => row.invocationId))
+  for (const invocationId of invocationIds) {
+    if (invocationIsTerminal(db, invocationId)) {
+      failUnresolvedAbsorbedAuxiliaries(db, runtimeId, invocationId, now)
+    }
+  }
+}
+
+function invocationIsTerminal(db: HrcDatabase, invocationId: string): boolean {
+  return isTerminalBrokerInvocationState(
+    db.brokerInvocations.getByInvocationId(invocationId)?.invocationState
+  )
+}
+
+/**
+ * Pruning must retain the graph until every absorbed steer dependency is settled
+ * explicitly. A steer on a terminal invocation counts as settled because every
+ * mutating prune path marks it first (settleTerminalInvocationAbsorbedAuxiliaries).
+ */
 export function hasUnsettledAbsorbedAuxiliary(db: HrcDatabase, runtimeId: string): boolean {
   for (const row of absorbedRows(db, runtimeId)) {
     const payload = record(JSON.parse(row.brokerEventJson) as unknown)
@@ -495,6 +524,7 @@ export function hasUnsettledAbsorbedAuxiliary(db: HrcDatabase, runtimeId: string
       run.startedAt === undefined &&
       run.coalescedIntoRunId === undefined &&
       !unresolvedMarker(run.errorMessage) &&
+      !invocationIsTerminal(db, row.invocationId) &&
       !(
         run.completedAt !== undefined &&
         turnEndedUnowned(db, row.invocationId, stringField(payload, 'turnId'))

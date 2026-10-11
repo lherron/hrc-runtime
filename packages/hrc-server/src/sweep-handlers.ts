@@ -18,6 +18,7 @@ import type {
   SweepRuntimesSummary,
 } from 'hrc-core'
 import { recordOperatorDisposition, retainedEvidenceHold } from './broker/offline-evidence'
+import { settleTerminalInvocationAbsorbedAuxiliaries } from './broker/turn-ownership.js'
 import { timeLoopActivity } from './event-loop-lag.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { runFirstTurnEvaluationOnce } from './first-turn-eval.js'
@@ -420,7 +421,10 @@ export async function handlePruneRuntimes(
     }
 
     try {
-      const removed = this.db.runtimes.pruneRuntime(runtime.runtimeId)
+      const removed = this.db.sqlite.transaction(() => {
+        settleTerminalInvocationAbsorbedAuxiliaries(this.db, runtime.runtimeId, timestamp())
+        return this.db.runtimes.pruneRuntime(runtime.runtimeId)
+      })()
       results.push({
         ...base,
         status: removed ? 'pruned' : 'skipped',
@@ -557,6 +561,7 @@ async function disposeRetainedEvidence(
   const by = typeof raw['by'] === 'string' && raw['by'].length > 0 ? raw['by'] : 'operator'
   const removed = this.db.sqlite.transaction(() => {
     recordOperatorDisposition(this.db, runtime, { by, reason, at })
+    settleTerminalInvocationAbsorbedAuxiliaries(this.db, runtimeId, at)
     return this.db.runtimes.pruneRuntime(runtimeId)
   })()
   return json({
@@ -637,7 +642,13 @@ async function handleLedgerManifestPrune(
 
   const deleteCounts = this.db.runtimes.countPruneRows(runtimeIds, { includeLedgers: true })
   if (mutate) {
-    const removed = this.db.runtimes.pruneRuntimes(runtimeIds, { includeLedgers: true })
+    const removed = this.db.sqlite.transaction(() => {
+      const at = timestamp()
+      for (const runtimeId of runtimeIds) {
+        settleTerminalInvocationAbsorbedAuxiliaries(this.db, runtimeId, at)
+      }
+      return this.db.runtimes.pruneRuntimes(runtimeIds, { includeLedgers: true })
+    })()
     if (removed !== matched.length) {
       throw new HrcConflictError(
         HrcErrorCode.STALE_CONTEXT,
