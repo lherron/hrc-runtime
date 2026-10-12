@@ -357,9 +357,14 @@ export async function attachRuntimeEffectfully(
   }
 
   const refreshedRuntime = requireKnownRuntime(this.db, runtime.runtimeId)
+  // Concurrent attaches for one runtime share one operation, but a Response body
+  // can be read once: every caller, the originator included, returns its own
+  // clone so the shared original is never consumed. Handing waiters the shared
+  // Response served them an empty 200 that the SDK read as a null descriptor
+  // (T-10760).
   const existingOperation = this.runtimeAttachOperations.get(refreshedRuntime.runtimeId)
   if (existingOperation) {
-    return await existingOperation
+    return (await existingOperation).clone() as Response
   }
 
   const operation = (async () => {
@@ -393,7 +398,7 @@ export async function attachRuntimeEffectfully(
   })
 
   this.runtimeAttachOperations.set(refreshedRuntime.runtimeId, operation)
-  return await operation
+  return (await operation).clone() as Response
 }
 
 export const runtimeIoHandlersMethods = {
