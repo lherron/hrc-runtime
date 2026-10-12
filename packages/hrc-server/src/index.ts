@@ -145,6 +145,10 @@ import {
   createRuntimeListRoutes,
 } from './runtime-list-handlers.js'
 import {
+  type RuntimePruneHandlersMethods,
+  runtimePruneHandlersMethods,
+} from './runtime-prune-handlers.js'
+import {
   type RuntimeStartHandlersMethods,
   runtimeStartHandlersMethods,
 } from './runtime-start-handlers.js'
@@ -307,6 +311,7 @@ export interface HrcServerInstance
     SessionIndexHandlersMethods,
     BridgeSurfaceHandlersMethods,
     SweepHandlersMethods,
+    RuntimePruneHandlersMethods,
     ShadowTeardownHandlersMethods,
     RuntimeIoHandlersMethods,
     RuntimeStartHandlersMethods,
@@ -764,6 +769,7 @@ Object.assign(
   sessionIndexHandlersMethods,
   bridgeSurfaceHandlersMethods,
   sweepHandlersMethods,
+  runtimePruneHandlersMethods,
   shadowTeardownHandlersMethods,
   runtimeIoHandlersMethods,
   runtimeStartHandlersMethods,
