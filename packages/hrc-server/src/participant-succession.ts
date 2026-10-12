@@ -326,6 +326,25 @@ function findCommittedResult(
 }
 
 /**
+ * A bridge successor keeps the predecessor's runtime row, so it is only
+ * possible while that row is live. Once HRC has settled the host's death itself
+ * (T-10333 terminates a participant-served runtime whose broker is gone), the
+ * same incarnation reattaching is a new host to HRC: a terminated runtime is
+ * never revived, so the successor takes the host path and gets a fresh
+ * binding, session generation and runtime (T-10741).
+ */
+function replacementKind(
+  server: HrcServerInstanceForHandlers,
+  request: DirectJoinRequest,
+  binding: { hostIncarnationId: string; runtimeId: string }
+): ReplacementKind {
+  return request.hostIncarnationId === binding.hostIncarnationId &&
+    server.db.runtimes.getByRuntimeId(binding.runtimeId)?.status !== 'terminated'
+    ? 'bridge'
+    : 'host'
+}
+
+/**
  * Execute the durable A0 -> TX-D -> gate -> TX-6/TX-6' replacement path.
  * The caller already holds the address mutex via the direct-registration door.
  */
@@ -381,8 +400,7 @@ export async function driveParticipantReplacement(
     )
   }
 
-  const kind: ReplacementKind =
-    request.hostIncarnationId === binding.hostIncarnationId ? 'bridge' : 'host'
+  const kind = replacementKind(server, request, binding)
   if (currentIntent !== null && !sameRequest(currentIntent, request)) {
     return refusal(
       'rejected',
@@ -790,7 +808,8 @@ export async function driveParticipantReplacement(
         updatedAt: timestamp(),
       })
       const priorRuntime = server.db.runtimes.getByRuntimeId(binding.runtimeId)
-      if (priorRuntime !== null) {
+      // An already-terminated predecessor keeps the reason HRC recorded.
+      if (priorRuntime !== null && priorRuntime.status !== 'terminated') {
         server.db.runtimes.update(binding.runtimeId, {
           status: 'terminated',
           statusChangedAt: timestamp(),

@@ -120,6 +120,21 @@ function participantTransport(realized: ParticipantRealizedHosting): 'headless' 
   return realized.presentation.kind === 'tmux-tui' ? 'tmux' : 'headless'
 }
 
+/**
+ * A refusal that no retry can change: the durable rows disagree, and nothing
+ * the scheduler waits for will make them agree. Establishment work fails fast
+ * on it instead of spending its whole budget on the same answer (T-10741).
+ */
+class ParticipantBookkeepingConflictError extends Error {
+  override readonly name = 'ParticipantBookkeepingConflictError'
+}
+
+function bookkeepingConflict(detail: string): ParticipantBookkeepingConflictError {
+  return new ParticipantBookkeepingConflictError(
+    `participant runtime bookkeeping conflicts with the committed attempt: ${detail}`
+  )
+}
+
 function assertExistingParticipantRuntime(
   server: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
@@ -127,13 +142,28 @@ function assertExistingParticipantRuntime(
   attempt: ParticipantAttempt,
   descriptor: ParticipantBrokerDescriptor
 ): 'same' | 'advance' {
-  const stableIdentityConflicts =
-    runtime.hostSessionId !== registration.hostSessionId ||
-    runtime.scopeRef !== registration.scopeRef ||
-    runtime.laneRef !== registration.laneRef ||
-    runtime.generation !== registration.generation
-  if (stableIdentityConflicts) {
-    throw new Error('participant runtime bookkeeping conflicts with the committed attempt')
+  // A terminated runtime is never a candidate for `same` or `advance`.
+  if (runtime.status === 'terminated') {
+    throw bookkeepingConflict(
+      `runtime ${runtime.runtimeId} is terminated (${runtime.lifecycleTerminalReason ?? 'reason unrecorded'})`
+    )
+  }
+  const stableIdentityConflicts = (
+    [
+      ['hostSessionId', runtime.hostSessionId, registration.hostSessionId],
+      ['scopeRef', runtime.scopeRef, registration.scopeRef],
+      ['laneRef', runtime.laneRef, registration.laneRef],
+      ['generation', runtime.generation, registration.generation],
+    ] as const
+  ).filter(([, observed, committed]) => observed !== committed)
+  if (stableIdentityConflicts.length > 0) {
+    throw bookkeepingConflict(
+      stableIdentityConflicts
+        .map(
+          ([field, observed, committed]) => `${field} runtime=${observed} registration=${committed}`
+        )
+        .join('; ')
+    )
   }
   if (
     runtime.activeOperationId === attempt.operationId &&
@@ -162,7 +192,12 @@ function assertExistingParticipantRuntime(
     typeof priorRegistration.attachEpoch !== 'number' ||
     attempt.attachEpoch <= priorRegistration.attachEpoch
   ) {
-    throw new Error('participant runtime bookkeeping conflicts with the committed attempt')
+    throw bookkeepingConflict(
+      priorRegistration?.attemptId === undefined ||
+        typeof priorRegistration.attachEpoch !== 'number'
+        ? `runtime ${runtime.runtimeId} names no prior participant attempt to advance from (activeInvocationId=${runtime.activeInvocationId ?? 'none'})`
+        : `attachEpoch ${attempt.attachEpoch} does not advance the runtime's committed epoch ${priorRegistration.attachEpoch}`
+    )
   }
   const priorAttempt = server.db.participantRegistrations.getAttempt(
     String(priorRegistration.attemptId)
@@ -174,7 +209,9 @@ function assertExistingParticipantRuntime(
     priorAttempt.operationId !== runtime.activeOperationId ||
     !['ABANDONED', 'TERMINAL', 'SUPERSEDED'].includes(priorAttempt.state)
   ) {
-    throw new Error('participant runtime advance lacks an absorbing same-binding predecessor')
+    throw new ParticipantBookkeepingConflictError(
+      'participant runtime advance lacks an absorbing same-binding predecessor'
+    )
   }
   return 'advance'
 }
@@ -783,7 +820,11 @@ export function scheduleParticipantEstablishment(
           Date.parse(failedAt) + participantRetryDelayMs(attempt.establishmentAttemptCount)
         ).toISOString(),
         error: errorMessage,
-        maxAttempts: PARTICIPANT_ESTABLISHMENT_MAX_ATTEMPTS,
+        // A deterministic conflict exhausts on its first answer.
+        maxAttempts:
+          error instanceof ParticipantBookkeepingConflictError
+            ? 1
+            : PARTICIPANT_ESTABLISHMENT_MAX_ATTEMPTS,
       })
       // Failed establishment is deliberately non-terminal and leaves the
       // immutable attempt for durable retry/recovery. Retry exhaustion exhausts
