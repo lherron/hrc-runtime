@@ -24,6 +24,7 @@ import { appendHrcEvent } from './hrc-event-helper.js'
 import type { HrcServerInstance } from './index.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import { resolveSessionProjectionDays } from './option-resolvers.js'
+import { parseSessionLatestGenerationQuery } from './parsers/common.js'
 import {
   isRunActive,
   requireKnownRuntime,
@@ -387,13 +388,17 @@ export const serverSessionMethods = {
    * The rules, in order:
    *
    * - A **scoped** read (`?scopeRef=`) is never bounded. Every generation of
-   *   that scope comes back, always. This is the documented path to history and
-   *   the one that selector resolution and resume depend on, so narrowing it
-   *   would turn a display fix into a correctness bug.
+   *   that scope comes back unless explicitly narrowed. This is the path to
+   *   history that selector resolution and resume depend on, so narrowing it
+   *   by default would turn a display fix into a correctness bug.
    * - `?all=true` opts an unscoped read out of the bound entirely.
    * - `?updatedSince=<iso8601>` sets the window explicitly.
    * - Otherwise the window is `HRC_SESSION_PROJECTION_DAYS` (default 7), plus
    *   every session holding a live runtime regardless of age.
+   *
+   * `?latestGeneration=true` keeps the highest generation per (scopeRef, laneRef)
+   * among those selected rows, including on explicitly narrowed scoped reads.
+   * It runs before `?status=` and `?limit=`; collapsed rows count as withheld.
    *
    * `?status=` and `?limit=` narrow further; they never widen. Nothing here
    * deletes or hides a row from storage — an excluded session is one HTTP
@@ -409,7 +414,21 @@ export const serverSessionMethods = {
       ? this.listSessionsByScope(scopeRef, laneRef)
       : this.listUnscopedSessionsForProjection(url, laneRef)
 
-    const filtered = status === undefined ? rows : rows.filter((row) => row.status === status)
+    let selected = rows
+    if (parseSessionLatestGenerationQuery(url)) {
+      const latest = new Map<string, HrcSessionRecord>()
+      for (const row of rows) {
+        const key = JSON.stringify([row.scopeRef, row.laneRef])
+        const previous = latest.get(key)
+        if (!previous || row.generation > previous.generation) latest.set(key, row)
+      }
+      // Preserve projection ordering so limit still selects from that order.
+      selected = rows.filter(
+        (row) => latest.get(JSON.stringify([row.scopeRef, row.laneRef])) === row
+      )
+    }
+    const filtered =
+      status === undefined ? selected : selected.filter((row) => row.status === status)
     const limited = limit === undefined ? filtered : filtered.slice(0, limit)
 
     // The bound must never be silent: a caller that got 525 of 8,319 rows is

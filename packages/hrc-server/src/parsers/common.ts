@@ -334,7 +334,16 @@ export function parseFenceInput(input: unknown): import('hrc-core').HrcFence {
  * failure this parameter exists to prevent.
  */
 export function parseSessionAllQuery(url: URL): boolean {
-  const raw = normalizeOptionalQuery(url.searchParams.get('all'))
+  return parseSessionBooleanQuery(url, 'all')
+}
+
+/** Keep only the highest generation among the selected rows of each seat. */
+export function parseSessionLatestGenerationQuery(url: URL): boolean {
+  return parseSessionBooleanQuery(url, 'latestGeneration')
+}
+
+function parseSessionBooleanQuery(url: URL, field: string): boolean {
+  const raw = normalizeOptionalQuery(url.searchParams.get(field))
   if (raw === undefined) return false
   const normalized = raw.toLowerCase()
   return normalized === '1' || normalized === 'true' || normalized === 'yes'

@@ -206,6 +206,8 @@ export type SessionFilter = {
    * (selector resolution, resume) pass it; display paths must not.
    */
   all?: boolean | undefined
+  /** Highest generation per seat among the selected rows. Narrows scoped reads too. */
+  latestGeneration?: boolean | undefined
   /** ISO-8601 lower bound on `updatedAt`; overrides the default window. */
   updatedSince?: string | undefined
   /** Persisted `sessions.status`. Narrows the result; never widens it. */
