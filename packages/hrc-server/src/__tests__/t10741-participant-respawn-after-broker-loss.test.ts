@@ -6,7 +6,7 @@ import {
   openHrcDatabase,
 } from 'hrc-store-sqlite'
 
-import { createHrcServer } from '../index.js'
+import { HrcServerInstance, createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
 import {
   PARTICIPANT_BROKER_GONE_REASON,
@@ -19,7 +19,7 @@ import {
   registerDirectParticipant,
 } from '../participant-host-registration.js'
 import { createParticipantHostingIntent } from '../participant-hosting-intent.js'
-import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
+import { externalRegistrationServerDouble } from './external-registration-server.fixture.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import { makeParticipantBrokerDescriptor } from './fixtures/participant-broker-descriptor.fixture.js'
 
@@ -38,7 +38,7 @@ describe('T-10741 participant respawn after a settled broker loss', () => {
     fixture = await createHrcTestFixture('t10741-respawn-')
     server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
     // Every broker the probe reaches is already gone.
-    ;(server as unknown as HrcServerInstanceForHandlers).brokerUnixClientFactory = async () => {
+    handlers().brokerUnixClientFactory = async () => {
       throw Object.assign(new Error('Failed to connect to broker unix socket'), {
         causeError: Object.assign(new Error('connect refused'), { code: 'ECONNREFUSED' }),
       })
@@ -52,7 +52,10 @@ describe('T-10741 participant respawn after a settled broker loss', () => {
 
   const scope = 'agent:foundry:project:hrc-runtime:task:T-10741-respawn'
   const endpoint = () => `${fixture.tmpDir}/primary.brk.sock`
-  const handlers = () => server as unknown as HrcServerInstanceForHandlers
+  function handlers(): HrcServerInstance {
+    if (!(server instanceof HrcServerInstance)) throw new Error('expected a real HRC server')
+    return server
+  }
 
   function register(
     expectedPredecessor?: DirectJoinRequest['expectedPredecessor']
@@ -268,7 +271,7 @@ describe('T-10741 deterministic bookkeeping conflicts fail fast', () => {
   async function runAgainstExistingRuntime(runtimePatch: Record<string, unknown>) {
     const db = openHrcDatabase(':memory:')
     const factory = brokerFactory()
-    const server = {
+    const server = externalRegistrationServerDouble({
       options: { runtimeRoot: '/tmp/t10741-runtime-root' },
       db,
       generateBrokerAttachToken: () => 't10741-token',
@@ -276,7 +279,7 @@ describe('T-10741 deterministic bookkeeping conflicts fail fast', () => {
       harnessBrokerController: { activeClientInvocationId: () => undefined },
       participantEstablishmentOperations: new Map<string, Promise<void>>(),
       stopping: false,
-    } as unknown as HrcServerInstanceForHandlers
+    })
     const reg = registration()
     const attempt: ParticipantAttempt = {
       attemptId: 'attempt-t10741',
