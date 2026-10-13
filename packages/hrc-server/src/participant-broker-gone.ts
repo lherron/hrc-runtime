@@ -21,6 +21,7 @@ import { isActiveBrokerRun } from './broker/controller/internal.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { observeParticipantTransportEvidence } from './participant-transport-evidence.js'
+import { isAbsorbingParticipantAttempt } from './participant-writer-evidence.js'
 import { isTerminalBrokerInvocationState } from './require-helpers.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -134,10 +135,28 @@ export async function settleParticipantBrokerLoss(
         },
       },
     })
+    // The attempt reaches the same conclusion the runtime did. `invocation.exited`
+    // settles it TERMINAL when the producer reports its own exit; a
+    // participant-served host kills its broker on exit, so that event never
+    // arrives and the dead-socket probe is the only witness. Leaving the attempt
+    // ACTIVE would let boot recovery redial a host this row just declared dead.
+    const currentAttempt = server.db.participantRegistrations.getAttempt(attempt.attemptId)
+    if (currentAttempt !== null && !isAbsorbingParticipantAttempt(currentAttempt)) {
+      server.db.participantRegistrations.transitionAttempt(
+        currentAttempt.attemptId,
+        [currentAttempt.state],
+        'TERMINAL',
+        now,
+        PARTICIPANT_BROKER_GONE_REASON
+      )
+    }
+    const attemptState =
+      server.db.participantRegistrations.getAttempt(attempt.attemptId)?.state ?? null
     writeServerLog('WARN', 'participant.broker_lost.terminated', {
       runtimeId: input.runtimeId,
       registrationId: registration.registrationId,
       attemptId: attempt.attemptId,
+      attemptState,
       invocationId,
       endpoint: attempt.attachSocketPath ?? null,
       priorStatus: current.status,
