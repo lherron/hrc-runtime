@@ -494,6 +494,49 @@ _max3-injector-version:
     [[ -n "$version" ]] || fail "could not read a pinned version from injector pid ${pid}"
     printf '%s\n' "$version"
 
+# Install shipped LaunchAgents; pin the injector via its existing deployment installer.
+# A loaded HRC server keeps running until the authorized atomic-release restart.
+launchd-install injector-version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repo="$(git rev-parse --show-toplevel)"
+    domain="gui/$(id -u)"
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs"
+    esc() { printf '%s' "$1" | sed 's/[\/&|]/\\&/g'; }
+    for src in "$repo"/launchd/*.plist; do
+      label="$(basename "$src" .plist)"
+      [[ "$label" == com.praesidium.hrc-mail-injector ]] && continue
+      dst="$HOME/Library/LaunchAgents/${label}.plist"
+      sed -e "s|/Users/lherron|$(esc "$HOME")|g" "$src" > "$dst.next"
+      plutil -lint "$dst.next" >/dev/null
+      install -m 0644 "$dst.next" "$dst"
+      rm "$dst.next"
+      if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$dst"; fi
+      if [[ "$label" == com.praesidium.hrc-server ]] && launchctl print "$domain/$label" >/dev/null 2>&1; then
+        echo "[launchd] ${label} remains loaded; activation belongs to hrc server restart"
+        continue
+      fi
+      launchctl bootout "$domain/$label" 2>/dev/null || true
+      for attempt in 1 2 3 4 5; do
+        launchctl bootstrap "$domain" "$dst" && break
+        [[ "$attempt" == 5 ]] && exit 1
+        sleep 2
+      done
+    done
+    just install-mail-injector-launchd '{{ injector-version }}'
+
+# Unload and remove every shipped LaunchAgent installed on this host.
+launchd-uninstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repo="$(git rev-parse --show-toplevel)"
+    domain="gui/$(id -u)"
+    for src in "$repo"/launchd/*.plist; do
+      label="$(basename "$src" .plist)"
+      launchctl bootout "$domain/$label" 2>/dev/null || true
+      rm -f "$HOME/Library/LaunchAgents/${label}.plist"
+    done
+
 # Install and (re)load the supervised hrc-mail-injector on THIS node, pinned to an
 # exact version (or `latest`, resolved to one here and pinned). Replaces any
 # earlier injector serving this node's HRC socket, supervised or not: two
@@ -571,6 +614,10 @@ install-mail-injector-launchd version:
     plutil -lint "$installed_plist.next" >/dev/null
     ! grep -q '__[A-Z_]*__' "$installed_plist.next" || fail 'unrendered placeholder in plist'
 
+    # Adopt the rendered installed candidate before comparing or unloading jobs.
+    dst="$installed_plist.next"
+    if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$dst"; fi
+
     # Current already: the loaded job runs exactly this rendered plist and pinned
     # version, and nothing else serves this socket. Reloading anyway would drop
     # in-flight mail work for no change.
@@ -588,6 +635,11 @@ install-mail-injector-launchd version:
         exit 0
       fi
     fi
+
+    install -m 0644 "$installed_plist.next" "$installed_plist"
+    rm "$installed_plist.next"
+    dst="$installed_plist"
+    if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$dst"; fi
 
     # Retire every earlier injector for this node before the new one loads:
     # our own job, ad-hoc `launchctl submit` jobs (com.praesidium.hrc-mail-injector.<suffix>),
@@ -618,10 +670,12 @@ install-mail-injector-launchd version:
     done
     (( stray == 0 )) || fail 'an earlier injector for this node would not exit'
 
-    install -m 0644 "$installed_plist.next" "$installed_plist"
-    rm "$installed_plist.next"
     log_offset="$(stat -f %z "$log_path" 2>/dev/null || echo 0)"
-    launchctl bootstrap "gui/${uid}" "$installed_plist" || fail "could not bootstrap ${service_target}"
+    for attempt in 1 2 3 4 5; do
+      launchctl bootstrap "gui/${uid}" "$installed_plist" && break
+      [[ "$attempt" == 5 ]] && fail "could not bootstrap ${service_target}"
+      sleep 2
+    done
 
     # Prove the outcome: the job's pid runs the pinned version, the injector
     # reported itself running, and the same pid is still alive 10s later (a
