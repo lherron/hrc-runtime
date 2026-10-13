@@ -107,6 +107,17 @@ describe('T-10841 idle live seat settles a busy runtime on a completed run', () 
     )
   })
 
+  it('F1b: idle seat drops a stale owner a reattach left on a ready runtime', async () => {
+    await startBusySeat(true)
+    fixture.db.runtimes.update(RUNTIME, { status: 'ready', updatedAt: NOW })
+    await controller!.seatProbe(RUNTIME)
+
+    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME)).toMatchObject({
+      status: 'ready',
+      activeRunId: undefined,
+    })
+  })
+
   it('F2: idle seat leaves an in-flight dispatch alone', async () => {
     await startBusySeat(false)
     await controller!.seatProbe(RUNTIME)

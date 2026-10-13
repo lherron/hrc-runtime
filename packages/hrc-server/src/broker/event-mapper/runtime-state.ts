@@ -219,8 +219,9 @@ export function clearRuntimeTurnOwnership(
 
 /**
  * T-10841: a current idle live seat settles a runtime the event projection left
- * busy on a run that already completed. A completed active run cannot be an
- * in-flight dispatch, so a probe that raced a new dispatch never clears it.
+ * busy (or a reattach left ready) on a run that already completed. A completed
+ * active run cannot be an in-flight dispatch, so a probe that raced a new
+ * dispatch never clears it.
  */
 export function settleRuntimeOnIdleSeat(
   db: HrcDatabase,
@@ -229,7 +230,8 @@ export function settleRuntimeOnIdleSeat(
   observedAt: string
 ): boolean {
   const runtime = db.runtimes.getByRuntimeId(runtimeId)
-  if (runtime?.status !== 'busy' || runtime.activeRunId === undefined) return false
+  if (runtime?.activeRunId === undefined) return false
+  if (runtime.status !== 'busy' && runtime.status !== 'ready') return false
   if (runtime.activeInvocationId !== undefined && runtime.activeInvocationId !== invocationId) {
     return false
   }
