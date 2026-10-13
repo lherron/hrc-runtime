@@ -29,6 +29,7 @@ import { appendHrcEvent } from './hrc-event-helper.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { timestamp } from './server-util.js'
+import { settleTerminalRuntimeRuns } from './terminal-runtime-runs.js'
 
 export type EprAttachment = {
   controllerInstanceId: string
@@ -183,23 +184,29 @@ export function finalizeExternalParticipant(
     lifecycleTerminalReason: reason,
     updatedAt: now,
   })
-  server.db.runtimes.update(grant.runtimeId, {
-    status: 'terminated',
-    statusChangedAt: now,
-    lifecycleTerminalReason: reason,
-    ...runtimeActivityPatch(server.db, grant.runtimeId, {
-      source: 'housekeeping',
-      updatedAt: now,
-    }),
-    runtimeStateJson: {
-      ...(runtime.runtimeStateJson ?? {}),
+  server.db.sqlite.transaction(() => {
+    settleTerminalRuntimeRuns(server.db, grant.runtimeId, {
+      now,
+      errorMessage: `external participant finalized: ${reason}`,
+    })
+    server.db.runtimes.update(grant.runtimeId, {
       status: 'terminated',
-      updatedAt: now,
-      terminalReason: reason,
-      control: { mode: 'epr', brokerAttached: false },
-      externalRegistration: { ...externalRegistration, finalizedAt: now, finalReason: reason },
-    },
-  })
+      statusChangedAt: now,
+      lifecycleTerminalReason: reason,
+      ...runtimeActivityPatch(server.db, grant.runtimeId, {
+        source: 'housekeeping',
+        updatedAt: now,
+      }),
+      runtimeStateJson: {
+        ...(runtime.runtimeStateJson ?? {}),
+        status: 'terminated',
+        updatedAt: now,
+        terminalReason: reason,
+        control: { mode: 'epr', brokerAttached: false },
+        externalRegistration: { ...externalRegistration, finalizedAt: now, finalReason: reason },
+      },
+    })
+  })()
   const event = appendHrcEvent(server.db, 'runtime.terminated', {
     ts: now,
     hostSessionId: runtime.hostSessionId,

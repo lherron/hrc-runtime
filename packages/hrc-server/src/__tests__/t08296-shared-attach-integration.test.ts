@@ -356,9 +356,12 @@ describe('shared attach owner, real controller', () => {
     expect(db.runtimes.getByRuntimeId(RUNTIME_ID)).toMatchObject({
       status: 'terminated',
       lifecycleTerminalReason: 'external_participant_exit',
-      activeRunId: runId,
     })
-    expect(db.runs.getByRunId(runId)?.status).toBe('running')
+    // T-10829: the terminal row releases its run, naming the clean exit; it is
+    // not reported as a crash (no runtime.crashed below).
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)?.activeRunId).toBeUndefined()
+    expect(db.runs.getByRunId(runId)).toMatchObject({ status: 'failed' })
+    expect(db.runs.getByRunId(runId)?.errorMessage).toContain('external_participant_exit')
     expect(client.ackedThrough).toContain(2)
     expect(
       db.hrcEvents

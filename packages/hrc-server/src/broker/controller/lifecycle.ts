@@ -22,6 +22,7 @@ import { appendHrcEvent } from '../../hrc-event-helper'
 import { isTerminalBrokerInvocationState } from '../../require-helpers'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import { isRuntimeUnavailableStatus } from '../../server-util'
+import { settleTerminalRuntimeRuns } from '../../terminal-runtime-runs'
 import { getBrokerDispatchDiagnostics } from '../dispatch-observability'
 import type { BrokerProjectionResult } from '../event-mapper'
 import { failUnresolvedAbsorbedAuxiliaries } from '../turn-ownership.js'
@@ -415,6 +416,14 @@ export function markExternalParticipantInvocationTerminal(
 
   const now = ctx.now()
   const occurredAt = envelope.time ?? now
+  // Not a crash (T-08345, T-08344 §C.9): the external owner's native turn may
+  // go on without HRC. But this row is terminal and can never finish the run,
+  // so the run ends here, saying it was released unobserved rather than failed
+  // by the participant (T-10829).
+  settleTerminalRuntimeRuns(ctx.db, runtimeId, {
+    now,
+    errorMessage: `external_participant_exit: invocation ${String(envelope.invocationId)} exited cleanly; HRC no longer observes this turn, its native outcome is unknown`,
+  })
   ctx.db.runtimes.update(runtimeId, {
     status: 'terminated',
     statusChangedAt: occurredAt,
@@ -703,6 +712,7 @@ export function markBrokerCrashTerminal(
     }
 
     if (runtime) {
+      settleTerminalRuntimeRuns(ctx.db, runtimeId, { now, errorMessage: error.message })
       applyTerminalRuntimeState(ctx.db, runtime, {
         status: 'crashed',
         now,

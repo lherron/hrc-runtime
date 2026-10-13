@@ -14,10 +14,8 @@
  * positive dead-transport observation may assert the host's death.
  */
 
-import { HrcErrorCode } from 'hrc-core'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 
-import { isActiveBrokerRun } from './broker/controller/internal.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { observeParticipantTransportEvidence } from './participant-transport-evidence.js'
@@ -27,6 +25,7 @@ import { runtimeActivityPatch } from './runtime-activity.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
+import { settleTerminalRuntimeRuns } from './terminal-runtime-runs.js'
 
 export const PARTICIPANT_BROKER_GONE_REASON = 'participant_broker_gone'
 
@@ -90,19 +89,10 @@ export async function settleParticipantBrokerLoss(
     }
     const now = timestamp()
     const invocationId = input.invocationId as string
-    const failedRunIds: string[] = []
-    for (const run of server.db.runs.listByRuntimeId(input.runtimeId)) {
-      if (run.completedAt !== undefined) continue
-      if (!isActiveBrokerRun(run) && run.status !== 'queued') continue
-      server.db.runs.markCompleted(run.runId, {
-        status: 'failed',
-        completedAt: now,
-        updatedAt: now,
-        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-        errorMessage: `participant host is gone: ${PARTICIPANT_BROKER_GONE_REASON}`,
-      })
-      failedRunIds.push(run.runId)
-    }
+    const failedRunIds = settleTerminalRuntimeRuns(server.db, input.runtimeId, {
+      now,
+      errorMessage: `participant host is gone: ${PARTICIPANT_BROKER_GONE_REASON}`,
+    })
     const invocation = server.db.brokerInvocations.getByInvocationId(invocationId)
     if (invocation !== null && !isTerminalBrokerInvocationState(invocation.invocationState)) {
       server.db.brokerInvocations.update(invocationId, {

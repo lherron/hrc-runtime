@@ -6,6 +6,7 @@ import { appendHrcEvent } from './hrc-event-helper.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { timestamp } from './server-util.js'
+import { settleTerminalRuntimeRuns } from './terminal-runtime-runs.js'
 
 /**
  * The only behavioral discriminator for an externally-owned runtime.
@@ -69,32 +70,38 @@ export async function evictExternalParticipant(
         })
       }
     }
-    server.db.runtimes.update(runtime.runtimeId, {
-      status: 'terminated',
-      statusChangedAt: now,
-      lifecycleTerminalReason: 'operator_evict',
-      ...runtimeActivityPatch(server.db, runtime.runtimeId, {
-        source: 'housekeeping',
-        updatedAt: now,
-      }),
-      runtimeStateJson: {
-        ...(runtime.runtimeStateJson ?? {}),
+    server.db.sqlite.transaction(() => {
+      settleTerminalRuntimeRuns(server.db, runtime.runtimeId, {
+        now,
+        errorMessage: `runtime ${runtime.runtimeId} was evicted by operator: operator_evict`,
+      })
+      server.db.runtimes.update(runtime.runtimeId, {
         status: 'terminated',
-        updatedAt: now,
-        terminalReason: 'operator_evict',
-        control: { mode: 'epr', brokerAttached: false },
-        externalRegistration: {
-          ...externalRegistration,
-          detachedAt:
-            typeof externalRegistration['detachedAt'] === 'string'
-              ? externalRegistration['detachedAt']
-              : now,
-          finalizedAt: now,
-          finalReason: 'operator_evict',
-          attachTokenRevokedAt: now,
+        statusChangedAt: now,
+        lifecycleTerminalReason: 'operator_evict',
+        ...runtimeActivityPatch(server.db, runtime.runtimeId, {
+          source: 'housekeeping',
+          updatedAt: now,
+        }),
+        runtimeStateJson: {
+          ...(runtime.runtimeStateJson ?? {}),
+          status: 'terminated',
+          updatedAt: now,
+          terminalReason: 'operator_evict',
+          control: { mode: 'epr', brokerAttached: false },
+          externalRegistration: {
+            ...externalRegistration,
+            detachedAt:
+              typeof externalRegistration['detachedAt'] === 'string'
+                ? externalRegistration['detachedAt']
+                : now,
+            finalizedAt: now,
+            finalReason: 'operator_evict',
+            attachTokenRevokedAt: now,
+          },
         },
-      },
-    })
+      })
+    })()
     const event = appendHrcEvent(server.db, 'runtime.terminated', {
       ts: now,
       hostSessionId: runtime.hostSessionId,

@@ -7,6 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { HrcErrorCode } from 'hrc-core'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
 import { HarnessBrokerController } from '../broker/controller'
@@ -258,9 +259,15 @@ describe('HarnessBrokerController', () => {
     expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')).toMatchObject({
       status: 'terminated',
       lifecycleTerminalReason: 'external_participant_exit',
-      activeRunId: 'run_w2',
     })
-    expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('accepted')
+    // T-10829: a terminated runtime owns no run. The exit is not a crash (no
+    // runtime.crashed below), but the run it held cannot finish on this row.
+    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.activeRunId).toBeUndefined()
+    expect(fixture.db.runs.getByRunId('run_w2')).toMatchObject({
+      status: 'failed',
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      errorMessage: expect.stringContaining('external_participant_exit'),
+    })
     expect(
       fixture.db.hrcEvents
         .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })

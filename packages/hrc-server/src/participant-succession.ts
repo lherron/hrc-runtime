@@ -14,6 +14,7 @@ import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { timestamp } from './server-util.js'
 import { detectResumeInvalidationBarrier } from './session-resume-continuation.js'
 import { createSessionSuccessorFromContinuation } from './session-successor.js'
+import { settleTerminalRuntimeRuns } from './terminal-runtime-runs.js'
 
 type ReplacementKind = 'bridge' | 'host'
 
@@ -342,6 +343,35 @@ function replacementKind(
     server.db.runtimes.getByRuntimeId(binding.runtimeId)?.status !== 'terminated'
     ? 'bridge'
     : 'host'
+}
+
+/**
+ * The successor binding retired the predecessor host, so its runtime row ends
+ * `host_replaced` and owns no run (T-10829). An already-terminated predecessor
+ * keeps the reason HRC recorded.
+ */
+function terminateReplacedPredecessorRuntime(
+  server: HrcServerInstanceForHandlers,
+  runtimeId: string
+): void {
+  const priorRuntime = server.db.runtimes.getByRuntimeId(runtimeId)
+  if (priorRuntime === null || priorRuntime.status === 'terminated') return
+  const now = timestamp()
+  settleTerminalRuntimeRuns(server.db, runtimeId, {
+    now,
+    errorMessage: 'participant host was replaced: host_replaced',
+  })
+  server.db.runtimes.update(runtimeId, {
+    status: 'terminated',
+    statusChangedAt: now,
+    lifecycleTerminalReason: 'host_replaced',
+    runtimeStateJson: {
+      ...(priorRuntime.runtimeStateJson ?? {}),
+      status: 'terminated',
+      terminalReason: 'host_replaced',
+    },
+    updatedAt: now,
+  })
 }
 
 /**
@@ -807,21 +837,7 @@ export async function driveParticipantReplacement(
         admittedAt: timestamp(),
         updatedAt: timestamp(),
       })
-      const priorRuntime = server.db.runtimes.getByRuntimeId(binding.runtimeId)
-      // An already-terminated predecessor keeps the reason HRC recorded.
-      if (priorRuntime !== null && priorRuntime.status !== 'terminated') {
-        server.db.runtimes.update(binding.runtimeId, {
-          status: 'terminated',
-          statusChangedAt: timestamp(),
-          lifecycleTerminalReason: 'host_replaced',
-          runtimeStateJson: {
-            ...(priorRuntime.runtimeStateJson ?? {}),
-            status: 'terminated',
-            terminalReason: 'host_replaced',
-          },
-          updatedAt: timestamp(),
-        })
-      }
+      terminateReplacedPredecessorRuntime(server, binding.runtimeId)
     } else if (
       !server.db.participantRegistrations.updateDirectRegistrationForBridgeSuccessor({
         registrationId: registration.registrationId,

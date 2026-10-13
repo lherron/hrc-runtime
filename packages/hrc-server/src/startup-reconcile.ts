@@ -49,6 +49,7 @@ import type {
   BrokerWarmupSummary,
   DurableBrokerReattachDeps,
 } from './startup-reconcile/types.js'
+import { reconcileTerminalRuntimeActiveRuns } from './terminal-runtime-runs.js'
 import type { TmuxManager as ServerTmuxManager } from './tmux.js'
 
 export { reconcileDurableBrokerRuntimeReattach }
@@ -94,6 +95,9 @@ export async function reconcileStartupState(
       count: sealedOrphanedSteers,
     })
   }
+
+  // T-10829: rows written before every terminal transition settled its runs.
+  reconcileTerminalRuntimeActiveRuns(db, timestamp())
 
   for (const runtime of db.runtimes.listAll()) {
     if (isExternalLifecycleOwner(runtime)) {
