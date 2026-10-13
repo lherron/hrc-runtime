@@ -217,6 +217,41 @@ export function clearRuntimeTurnOwnership(
   })
 }
 
+/**
+ * T-10841: a current idle live seat settles a runtime the event projection left
+ * busy on a run that already completed. A completed active run cannot be an
+ * in-flight dispatch, so a probe that raced a new dispatch never clears it.
+ */
+export function settleRuntimeOnIdleSeat(
+  db: HrcDatabase,
+  runtimeId: string,
+  invocationId: string,
+  observedAt: string
+): boolean {
+  const runtime = db.runtimes.getByRuntimeId(runtimeId)
+  if (runtime?.status !== 'busy' || runtime.activeRunId === undefined) return false
+  if (runtime.activeInvocationId !== undefined && runtime.activeInvocationId !== invocationId) {
+    return false
+  }
+  const activeRun = db.runs.getByRunId(runtime.activeRunId)
+  if (activeRun?.completedAt === undefined) return false
+  if (runtimeHasAnyOpenAskBracket(db, runtime)) return false
+
+  clearRuntimeTurnOwnership(db, runtime, observedAt, observedAt)
+  const invocation = db.brokerInvocations.getByInvocationId(invocationId)
+  if (invocation?.invocationState === 'turn_active') {
+    db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: observedAt })
+  }
+  writeServerLog('WARN', 'broker.runtime_settled_on_idle_seat', {
+    runtimeId,
+    invocationId,
+    activeRunId: runtime.activeRunId,
+    activeRunStatus: activeRun.status,
+    activeRunCompletedAt: activeRun.completedAt,
+  })
+  return true
+}
+
 function terminalBelongsToActiveInvocation(
   runtime: RuntimeRecord,
   ctx: ProjectionContext,

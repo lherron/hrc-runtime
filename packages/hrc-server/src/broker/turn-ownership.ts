@@ -243,7 +243,12 @@ function coordinateKey(value: TurnCoordinates): string {
   return JSON.stringify([value.turnId, value.harnessGeneration ?? null, value.turnAttempt ?? null])
 }
 
-/** True when a different native turn bracket is still open at this event's sequence. */
+/**
+ * True when a newer native turn bracket is still open at this event's sequence.
+ * A bracket opened before this turn started cannot be newer: native turns on one
+ * invocation are serial, so a still-open older bracket is one the harness never
+ * terminated, such as a coalesced hook-observed start (T-10841).
+ */
 export function hasOtherOpenTurn(db: HrcDatabase, envelope: InvocationEventEnvelope): boolean {
   const target = coordinatesForEnvelope(envelope)
   if (target === undefined) return false
@@ -257,8 +262,12 @@ export function hasOtherOpenTurn(db: HrcDatabase, envelope: InvocationEventEnvel
     .filter((event): event is ParsedEvent => event !== undefined)
   const terminalTypes = new Set<string>(TURN_TERMINAL_TYPES)
   const targetKey = coordinateKey(target)
+  const targetStartedSeq = events.find(
+    (event) => event.type === 'turn.started' && coordinateKey(event) === targetKey
+  )?.seq
   return events.some((started) => {
     if (started.type !== 'turn.started' || coordinateKey(started) === targetKey) return false
+    if (targetStartedSeq !== undefined && started.seq < targetStartedSeq) return false
     return !events.some(
       (terminal) =>
         terminal.seq > started.seq &&

@@ -28,6 +28,7 @@ import {
   recordUnavailableSeatProbe,
   warnStalledSubmissions,
 } from '../dispatch-observability'
+import { settleRuntimeOnIdleSeat } from '../event-mapper/runtime-state'
 import { BrokerControllerError } from './errors'
 import { isClosedDbError } from './internal'
 import { closeOutTerminalLiveSeat } from './lifecycle'
@@ -359,6 +360,9 @@ export const submissionMethods = {
           closeOutTerminalLiveSeat(this.lifecycleContext(), runtimeId, cause)
         ) {
           return result
+        }
+        if (observation.state === 'idle') {
+          settleRuntimeOnIdleSeat(this.db, runtimeId, active.invocationId, observedAt)
         }
         const invocation = this.db.brokerInvocations.getByInvocationId(active.invocationId)
         warnStalledSubmissions({
