@@ -12,7 +12,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
 import { runtimeHasAnyOpenAskBracket } from '../../ask-bracket'
-import { appendHrcEvent } from '../../hrc-event-helper'
+import { appendHrcEvent, appendHrcEventWithinExistingTransaction } from '../../hrc-event-helper'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import { writeServerLog } from '../../server-log.js'
 import {
@@ -221,7 +221,8 @@ export function clearRuntimeTurnOwnership(
  * T-10841: a current idle live seat settles a runtime the event projection left
  * busy (or a reattach left ready) on a run that already completed. A completed
  * active run cannot be an in-flight dispatch, so a probe that raced a new
- * dispatch never clears it.
+ * dispatch never clears it. Guards, writes and the runtime.settled append share
+ * one transaction (architecture/contracts/runtime-settled.yaml).
  */
 export function settleRuntimeOnIdleSeat(
   db: HrcDatabase,
@@ -229,27 +230,48 @@ export function settleRuntimeOnIdleSeat(
   invocationId: string,
   observedAt: string
 ): boolean {
-  const runtime = db.runtimes.getByRuntimeId(runtimeId)
-  if (runtime?.activeRunId === undefined) return false
-  if (runtime.status !== 'busy' && runtime.status !== 'ready') return false
-  if (runtime.activeInvocationId !== undefined && runtime.activeInvocationId !== invocationId) {
-    return false
-  }
-  const activeRun = db.runs.getByRunId(runtime.activeRunId)
-  if (activeRun?.completedAt === undefined) return false
-  if (runtimeHasAnyOpenAskBracket(db, runtime)) return false
+  const settled = db.sqlite.transaction(() => {
+    const runtime = db.runtimes.getByRuntimeId(runtimeId)
+    if (runtime?.activeRunId === undefined) return undefined
+    if (runtime.status !== 'busy' && runtime.status !== 'ready') return undefined
+    if (runtime.activeInvocationId !== undefined && runtime.activeInvocationId !== invocationId) {
+      return undefined
+    }
+    const activeRun = db.runs.getByRunId(runtime.activeRunId)
+    if (activeRun?.completedAt === undefined) return undefined
+    if (runtimeHasAnyOpenAskBracket(db, runtime)) return undefined
 
-  clearRuntimeTurnOwnership(db, runtime, observedAt, observedAt)
-  const invocation = db.brokerInvocations.getByInvocationId(invocationId)
-  if (invocation?.invocationState === 'turn_active') {
-    db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: observedAt })
-  }
+    clearRuntimeTurnOwnership(db, runtime, observedAt, observedAt)
+    const invocation = db.brokerInvocations.getByInvocationId(invocationId)
+    if (invocation?.invocationState === 'turn_active') {
+      db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: observedAt })
+    }
+    appendHrcEventWithinExistingTransaction(db, 'runtime.settled', {
+      ts: observedAt,
+      hostSessionId: runtime.hostSessionId,
+      scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
+      generation: runtime.generation,
+      runtimeId,
+      payload: {
+        runtimeId,
+        clearedRunId: runtime.activeRunId,
+        previousStatus: runtime.status,
+        status: 'ready',
+        cause: 'idle-seat',
+      },
+    })
+    return { runtime, activeRun }
+  })()
+  if (settled === undefined) return false
+
   writeServerLog('WARN', 'broker.runtime_settled_on_idle_seat', {
     runtimeId,
     invocationId,
-    activeRunId: runtime.activeRunId,
-    activeRunStatus: activeRun.status,
-    activeRunCompletedAt: activeRun.completedAt,
+    activeRunId: settled.runtime.activeRunId,
+    previousStatus: settled.runtime.status,
+    activeRunStatus: settled.activeRun.status,
+    activeRunCompletedAt: settled.activeRun.completedAt,
   })
   return true
 }

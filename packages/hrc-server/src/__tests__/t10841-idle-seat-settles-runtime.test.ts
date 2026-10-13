@@ -93,6 +93,12 @@ async function startBusySeat(runCompleted: boolean): Promise<{
   }
 }
 
+function settledEvents() {
+  return fixture.db.hrcEvents
+    .listFromHrcSeq(1, { runtimeId: RUNTIME })
+    .filter((event) => event.eventKind === 'runtime.settled')
+}
+
 describe('T-10841 idle live seat settles a busy runtime on a completed run', () => {
   it('F1: idle seat clears the stale owner and projects ready', async () => {
     await startBusySeat(true)
@@ -105,6 +111,26 @@ describe('T-10841 idle live seat settles a busy runtime on a completed run', () 
     expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION)?.invocationState).toBe(
       'ready'
     )
+  })
+
+  it('F1: emits exactly one runtime.settled for the cleared owner', async () => {
+    await startBusySeat(true)
+    await controller!.seatProbe(RUNTIME)
+    await controller!.seatProbe(RUNTIME)
+
+    const settled = settledEvents()
+    expect(settled).toHaveLength(1)
+    expect(settled[0]).toMatchObject({
+      category: 'runtime',
+      runtimeId: RUNTIME,
+      payload: {
+        runtimeId: RUNTIME,
+        clearedRunId: RUN,
+        previousStatus: 'busy',
+        status: 'ready',
+        cause: 'idle-seat',
+      },
+    })
   })
 
   it('F1b: idle seat drops a stale owner a reattach left on a ready runtime', async () => {
@@ -126,6 +152,7 @@ describe('T-10841 idle live seat settles a busy runtime on a completed run', () 
       status: 'busy',
       activeRunId: RUN,
     })
+    expect(settledEvents()).toHaveLength(0)
   })
 
   it('F3: a turn-active seat keeps the runtime busy', async () => {

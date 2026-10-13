@@ -28,6 +28,7 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'runtime.crashed': 'runtime',
   'runtime.stale': 'runtime',
   'runtime.reassociated': 'runtime',
+  'runtime.settled': 'runtime',
   // T-07594 §5.2: one invocation's presentation decision. Appended at the exact
   // point the in-daemon viewer spawn happens today — after the `:tui` substrate
   // exists — so a consumer needs no readiness race and no effectful read.

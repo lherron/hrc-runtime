@@ -69,10 +69,19 @@ export function applyLifecycleProjection(
       }
       continue
     }
-    if (event.eventKind === 'runtime.ready') {
-      if (runtime) {
+    if (event.eventKind === 'runtime.settled') {
+      // Contract runtime-settled: apply only to a projection whose owner is
+      // the cleared run; any other owner (or none) keeps owner and status.
+      const payload = event.payload as { clearedRunId?: unknown } | undefined
+      const clearedRunId = payload?.clearedRunId
+      if (typeof clearedRunId !== 'string') continue
+      if (runtime && runtime.activeTurnId === clearedRunId) {
         if (runtime.status !== 'idle') runtime.statusChangedAt = event.ts
+        runtime.activeTurnId = null
         runtime.status = 'idle'
+      }
+      if (session && session.activeTurnId === clearedRunId) {
+        session.activeTurnId = null
       }
       continue
     }
@@ -230,8 +239,6 @@ export function monitorEventName(eventKind: string): string {
   switch (eventKind) {
     case 'turn.completed':
       return 'turn.finished'
-    case 'runtime.ready':
-      return 'runtime.idle'
     case 'runtime.terminated':
       return 'runtime.dead'
     default:
