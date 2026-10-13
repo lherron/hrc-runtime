@@ -1,0 +1,52 @@
+id: hrc-runtime.runtime-settled
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: runtime ownership reconciliation observable through the canonical lifecycle ledger
+predicate: >
+  HRC produces runtime.settled in category runtime when a current idle-seat
+  probe reconciles a busy or ready runtime whose active run already has
+  completedAt, whose active invocation matches the probed invocation when
+  present, and which has no open ask bracket. The producer re-reads the runtime
+  and active run and checks all guards inside the same SQLite transaction that
+  clears runtime ownership and its state mirror, sets runtime status ready,
+  changes invocation turn_active to ready when applicable, and appends the
+  canonical event with appendHrcEventWithinExistingTransaction. An exception
+  rolls back the entire settlement; a later idle probe can retry. A successful
+  settlement emits one event for the cleared owner; repeated probes with no
+  active owner emit none. The event uses the runtime's canonical session,
+  scope, lane, generation and runtime identity. Its payload is runtimeId,
+  clearedRunId, previousStatus (busy or ready), status ready, and cause idle-seat.
+  clearedRunId names the owner removed by this settlement. This event records
+  runtime reconciliation, never another turn terminal or completion of a run.
+  It does not represent every transition to ready. Ledger visibility and live
+  follow publication occur after commit through the store's committed-append
+  hub; the settlement WARN log is also written after commit. For each runtime
+  or session projection independently, the event applies only when its
+  projected activeTurnId equals clearedRunId. Application clears that owner
+  and sets projected status idle where the projection carries runtime status.
+  A non-matching or null owner is a complete no-op, including status. The CLI
+  removes its unregistered runtime.ready branches. HRC owns this event;
+  hrc-ios owns its consumer implementation and receives this contract.
+authority: Daedalus approval of EN-29430 revised design for wrkq:T-10841 (runtime-stuck-busy-after-turn), 2026-10-13; Lance validation scope relayed by Mable in the same review thread
+source:
+  - wrkq:T-10841
+  - wrkc:EN-29430
+  - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
+  - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
+  - packages/hrc-server/src/broker/event-mapper/runtime-state.ts
+  - packages/hrc-server/src/broker/controller/bc-submission.ts
+  - packages/hrc-server/src/hrc-event-helper.ts
+  - packages/hrc-store-sqlite/src/repositories/event-repositories.ts
+  - packages/hrc-store-sqlite/src/lifecycle-append-hub.ts
+  - packages/hrc-server/src/follow-fanout.ts
+  - packages/hrc-cli/src/monitor/wait-projection.ts
+  - packages/hrc-cli/src/monitor/wait-command.ts
+validation_scope: >
+  Requester acceptance covers one live runtime.settled event per stale owner
+  and monitor projection clearing a matching activeTurnId while preserving a
+  non-matching owner and its status. Dedicated crash or append-failure
+  injection, constructed snapshot races, and additional probe interleaving
+  gates are outside the authorized validation scope.
+last_verified: 2026-10-13 source-grounded design approval only; implementation and live acceptance remain the requester's work
+reopen_when: Settlement guards, state/event commit boundary, publication semantics, payload meaning, distinction from turn terminality, or owner-and-status projection rules change.
