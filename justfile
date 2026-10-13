@@ -494,8 +494,9 @@ _max3-injector-version:
     [[ -n "$version" ]] || fail "could not read a pinned version from injector pid ${pid}"
     printf '%s\n' "$version"
 
-# Install shipped LaunchAgents; pin the injector via its existing deployment installer.
 # A loaded HRC server keeps running until the authorized atomic-release restart.
+
+# Install shipped LaunchAgents; pin the injector via its existing deployment installer.
 launchd-install injector-version:
     #!/usr/bin/env bash
     set -euo pipefail
