@@ -33,6 +33,7 @@ import type {
   ExternalRegistrationRendezvousMethods,
 } from './external-registration-rendezvous.js'
 import type { CollectiveHistoryCoordinator } from './federation/collective-history.js'
+import type { PeerReachability } from './federation/peer-reachability.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { ParticipantRegistrationHandlersMethods } from './participant-registration-handlers.js'
@@ -154,6 +155,8 @@ type HrcServerInstanceDataForHandlers = {
   readonly tmux: ServerTmuxManager
   /** T-07214: per-peer default-deny remote-preemption authority (see index.ts). */
   readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
+  /** Peers that just failed at the transport level; session-index reads skip them briefly. */
+  readonly peerReachability: PeerReachability
   readonly federationRegistryClient: BindingRegistryClient | undefined
   /**
    * Scopes this node has learned it does NOT home, keyed by scopeRef (T-07650).

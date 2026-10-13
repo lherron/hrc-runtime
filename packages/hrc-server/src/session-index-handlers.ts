@@ -14,6 +14,7 @@ import type {
   SessionIndexFilters,
 } from 'hrc-store-sqlite'
 import type { PeerEntry } from './federation/federation-config.js'
+import type { PeerReachability } from './federation/peer-reachability.js'
 import { buildPeerProtocolHeaders } from './federation/peer-request.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { normalizeOptionalQuery } from './server-parsers.js'
@@ -314,11 +315,32 @@ function queryParams(filters: SessionIndexFilters): URLSearchParams {
   return params
 }
 
-async function fetchPeerJson(peer: PeerEntry, url: URL): Promise<unknown> {
-  const response = await fetch(url, {
-    headers: buildPeerProtocolHeaders(peer),
-    signal: AbortSignal.timeout(PEER_PAGE_TIMEOUT_MS),
-  })
+async function fetchPeerJson(
+  peer: PeerEntry,
+  url: URL,
+  reachability: PeerReachability
+): Promise<unknown> {
+  const nodeId = String(peer.nodeId)
+  const mark = reachability.unreachable(nodeId)
+  if (mark !== undefined) {
+    throw Object.assign(
+      new Error(
+        `peer unreachable since ${mark.failedAt} (${mark.detail}); next attempt after ${mark.retryAt}`
+      ),
+      { state: 'unreachable' as const }
+    )
+  }
+  let response: Response
+  try {
+    response = await fetch(url, {
+      headers: buildPeerProtocolHeaders(peer),
+      signal: AbortSignal.timeout(PEER_PAGE_TIMEOUT_MS),
+    })
+  } catch (error) {
+    reachability.markUnreachable(nodeId, error instanceof Error ? error.message : String(error))
+    throw error
+  }
+  reachability.markReachable(nodeId)
   let body: unknown
   try {
     body = await response.json()
@@ -360,7 +382,11 @@ function isPageResponse(value: unknown, expectedNodeId: string): value is Sessio
   )
 }
 
-async function peerPage(parsed: ParsedSessionQuery, peer: PeerEntry): Promise<NodePageResult> {
+async function peerPage(
+  parsed: ParsedSessionQuery,
+  peer: PeerEntry,
+  reachability: PeerReachability
+): Promise<NodePageResult> {
   const checkedAt = new Date().toISOString()
   try {
     const params = queryParams(parsed.filters)
@@ -378,7 +404,7 @@ async function peerPage(parsed: ParsedSessionQuery, peer: PeerEntry): Promise<No
     }
     const url = new URL('/v1/sessions/page', peer.endpoint)
     url.search = params.toString()
-    const body = await fetchPeerJson(peer, url)
+    const body = await fetchPeerJson(peer, url, reachability)
     if (!isPageResponse(body, String(peer.nodeId))) {
       return {
         nodeId: String(peer.nodeId),
@@ -435,13 +461,14 @@ function isFacetsResponse(value: unknown): value is SessionFacetsResponse {
 
 async function peerFacets(
   filters: SessionIndexFilters,
-  peer: PeerEntry
+  peer: PeerEntry,
+  reachability: PeerReachability
 ): Promise<NodeFacetsResult> {
   const checkedAt = new Date().toISOString()
   try {
     const url = new URL('/v1/sessions/facets', peer.endpoint)
     url.search = queryParams(filters).toString()
-    const body = await fetchPeerJson(peer, url)
+    const body = await fetchPeerJson(peer, url, reachability)
     if (!isFacetsResponse(body)) {
       return {
         nodeId: String(peer.nodeId),
@@ -488,7 +515,7 @@ export async function handleSessionPage(
       if (nodeId === local) return Promise.resolve(localPage(this, parsed, local))
       const peer = config?.peers.get(nodeId as never)
       if (peer === undefined) badRequest('nodes contains an unknown nodeId', { nodeId })
-      return peerPage(parsed, peer)
+      return peerPage(parsed, peer, this.peerReachability)
     })
   )
   const candidates = results.flatMap((result) => result.items).sort(compareItems)
@@ -551,7 +578,7 @@ export async function handleSessionFacets(
       }
       const peer = config?.peers.get(nodeId as never)
       if (peer === undefined) badRequest('unknown configured peer nodeId', { nodeId })
-      return peerFacets(parsed.filters, peer)
+      return peerFacets(parsed.filters, peer, this.peerReachability)
     })
   )
   const selected = new Set(parsed.selectedNodeIds)

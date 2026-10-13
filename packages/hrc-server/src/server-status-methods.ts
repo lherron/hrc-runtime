@@ -82,6 +82,16 @@ export const serverStatusMethods = {
     return Promise.all(
       [...config.peers.values()].map(async (peer) => {
         const probe = await probePeerHealth(peer, options)
+        // Probes always reach the peer; their answer opens or clears the
+        // session-index skip so a recovered node rejoins without waiting.
+        if (probe.health.state === 'unreachable') {
+          this.peerReachability.markUnreachable(
+            String(peer.nodeId),
+            probe.health.detail ?? 'probe failed'
+          )
+        } else {
+          this.peerReachability.markReachable(String(peer.nodeId))
+        }
         writeServerLog(
           probe.health.state === 'healthy' ? 'INFO' : 'WARN',
           'federation.peer.probe',

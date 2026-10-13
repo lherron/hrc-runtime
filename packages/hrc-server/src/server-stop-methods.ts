@@ -495,6 +495,7 @@ export const serverStopMethods = {
     this.messageSubscribers.clear()
     this.turnResponseFinalizers.clear()
     this.peerRuntimeProjectionCache.clear()
+    this.peerReachability.clear()
     // Handlers that were already running when the stop began keep executing
     // after the socket closes; let them finish (bounded) before the store goes
     // away underneath them.

@@ -250,7 +250,24 @@ describe('T-07221 federated session traversal', () => {
       expect(degraded.eventHighWater).toEqual({ svc: 0 })
       expect(degraded.nextCursor).toEqual(expect.any(String))
 
+      // A peer that just failed is not asked again on the next interactive read:
+      // facets reports it unreachable without waiting out the peer timeout.
+      const skippedFacets = (await (
+        await svc.fetchSocket('/v1/sessions/facets?nodes=svc')
+      ).json()) as SessionFacetsResponse
+      expect(skippedFacets.complete).toBe(false)
+      expect(skippedFacets.peerStatus['lab']).toMatchObject({
+        state: 'unreachable',
+        detail: expect.stringContaining('next attempt after'),
+      })
+
       labServer = await createFederationTestServer(lab, { otelListenerEnabled: false })
+      // A health probe reaches the peer regardless of the skip and clears it.
+      const health = await svc.fetchSocket('/v1/federation/peers')
+      expect(((await health.json()) as Array<{ nodeId: string; state: string }>)[0]).toMatchObject({
+        nodeId: 'lab',
+        state: 'healthy',
+      })
       const titleResponse = await lab.postJson('/v1/sessions/hsid-lab-a/title', {
         title: 'Title from owning lab node',
         source: 'manual',

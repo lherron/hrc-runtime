@@ -69,6 +69,7 @@ import {
   summarizeFederationConfig,
 } from './federation/federation-config.js'
 import type { PeerProtocolEndpointControl } from './federation/peer-protocol.js'
+import { PeerReachability } from './federation/peer-reachability.js'
 import { PeerRuntimeProjectionCache } from './federation/peer-runtime-projection-cache.js'
 import { installProjectRegistrySource } from './federation/project-registry-roots.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
@@ -364,6 +365,8 @@ export class HrcServerInstance implements HrcServer {
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Last successful peer answers are isolated by node and effective runtime filter. */
   readonly peerRuntimeProjectionCache = new PeerRuntimeProjectionCache()
+  /** Peers that just failed at the transport level; session-index reads skip them briefly. */
+  readonly peerReachability = new PeerReachability()
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   readonly externalRegistrationOperations = new Map<string, Promise<void>>()
   readonly externalRegistrationEstablishmentOperations = new Map<string, Promise<void>>()
