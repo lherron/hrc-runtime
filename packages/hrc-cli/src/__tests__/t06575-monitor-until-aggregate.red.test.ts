@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { CliUsageError } from 'cli-kit'
-import type { HrcMonitorState } from 'hrc-core'
+import type { HrcMonitorState, ResolvePlacementResponse } from 'hrc-core'
 import { RUNTIME_STATUS_LEVEL_BY_STATUS } from '../../../hrc-core/src/monitor/status-levels'
 
 import {
@@ -11,17 +11,42 @@ import {
 } from '../../../hrc-server/src/__tests__/broker-event-mapper-fixtures'
 import { MonitorWaitExit, cmdMonitorWait } from '../monitor/wait-command'
 import { cmdMonitorWatch } from '../monitor/watch-command'
-import { installOldEngineDaemon } from './old-engine-daemon.js'
+import { startFakeDaemon } from './fake-daemon.js'
 
-const oldEngineDaemon = installOldEngineDaemon()
-afterAll(() => oldEngineDaemon.stop())
+// This suite owns monitor grammar/state semantics. A bare target still makes
+// the real SDK placement RPC, but needs only a fixed default-role observation.
+// The old local-engine oracle ran synchronous, unbounded `git worktree list`
+// inside this process; a slow child blocked both the 5ms deadline and Bun's
+// test timer (T-10844). Keep placement policy in its own suites.
+const fakePlacement = {
+  agentId: 'cody',
+  projectId: 'hrc-runtime',
+  taskId: 'T-06575',
+  harness: { provider: 'openai', frontend: 'codex-cli', effectiveHarness: 'codex' },
+  provision: { scalars: {} },
+  policy: { claimsTask: false, placement: { pins: {}, homes: {} } },
+  identity: { operator: false },
+  agentSources: { provenance: 'daemon-default' },
+  searchedAgentRoots: [],
+  source: {
+    agentProfile: 'valid',
+    projectTargets: 'valid',
+    selectedTarget: 'absent',
+    priming: 'valid',
+  },
+  resolution: { source: 'inferred', reason: 'fixed monitor fixture placement' },
+  warnings: [],
+  release: { releaseId: 'monitor-fixture', sourceCommit: 'fixture' },
+} satisfies ResolvePlacementResponse
+const monitorDaemon = startFakeDaemon({ placement: fakePlacement })
+afterAll(() => monitorDaemon.stop())
 
 // Scope the ambient daemon per-test: file execution order is not
 // deterministic, so a global install alone cannot guarantee a live socket.
 const runtimeDirKey = 'HRC_RUNTIME_DIR'
 const savedRuntimeDir = process.env[runtimeDirKey]
 beforeEach(() => {
-  process.env[runtimeDirKey] = oldEngineDaemon.runtimeDir
+  process.env[runtimeDirKey] = monitorDaemon.runtimeDir
 })
 afterEach(() => {
   if (savedRuntimeDir === undefined) delete process.env[runtimeDirKey]
@@ -613,6 +638,14 @@ describe('T-06575 suite 5 — exit codes and grammar legality', () => {
       const wait = await invokeWait([selector, ...flags, '--timeout', '5ms', '--json'], state)
       expect(watch.exitCode === 2).toBe(!accepted)
       expect(wait.exitCode === 2).toBe(!accepted)
+      if (flags[0] === '--until' && flags[1] === 'busy') {
+        // A timeout also passes the legality check above. Prove that the
+        // selected busy fixture was actually evaluated by both verbs.
+        expect(watch.exitCode).toBe(10)
+        expect(wait.exitCode).toBe(10)
+        expect(lastEvent(watch)).toMatchObject({ result: 'already_true' })
+        expect(lastEvent(wait)).toMatchObject({ result: 'already_true' })
+      }
     }
   )
 
