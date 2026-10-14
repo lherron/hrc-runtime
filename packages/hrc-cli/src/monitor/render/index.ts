@@ -495,7 +495,7 @@ class TreeMonitorRenderer implements MonitorRenderer {
   }
 
   private renderToolCallHeader(call: PendingToolCall, includeNoResult: boolean): string[] {
-    const title = formatToolTitle(call.toolName, call.input)
+    const title = formatToolTitle(call.toolName, call.input, call.summary)
     const head = this.prefix(call.event, chalk.magenta('$'), chalk.magenta(title))
     const commandLines = formatToolCallBody(call.toolName, call.input)
     const out = [`${head}\n`]

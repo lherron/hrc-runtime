@@ -243,6 +243,7 @@ export function lifecyclePayload(
         toolUseId: payload.toolCallId,
         toolName: payload.name,
         input: isRecord(payload.input) ? payload.input : {},
+        ...(payload.summary !== undefined ? { summary: payload.summary } : {}),
       } satisfies ToolExecutionStartEvent
       return event
     }

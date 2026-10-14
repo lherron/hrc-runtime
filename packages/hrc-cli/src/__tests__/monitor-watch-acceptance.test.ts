@@ -403,6 +403,27 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     expect(result.stdout).not.toContain('"old_string"')
   })
 
+  test('--pretty titles exec calls with the broker summary (T-10932)', async () => {
+    const state = createFixtureState({
+      events: [
+        event(100, 'turn.tool_call', {
+          payload: {
+            type: 'tool_execution_start',
+            toolUseId: 'call-codex',
+            toolName: 'command',
+            input: { command: "/bin/zsh -lc 'git status -sb'", cwd: '/tmp/project' },
+            summary: 'Running git...',
+          },
+        }),
+      ],
+    })
+
+    const result = await invokeWatchText({ selector: SELECTOR, pretty: true }, state)
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('command - Running git...')
+  })
+
   test('--pretty includes event sequence and replay marker', async () => {
     const state = createFixtureState({
       events: [

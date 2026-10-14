@@ -6,6 +6,8 @@ export type PendingToolCall = {
   toolUseId: string
   toolName: string
   input: Record<string, unknown>
+  /** Broker exec summary line (T-10932). */
+  summary?: string | undefined
 }
 
 export type ParsedToolResult = {

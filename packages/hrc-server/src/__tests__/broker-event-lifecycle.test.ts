@@ -38,6 +38,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { ToolExecutionStartEventSchema } from 'hrc-events'
 import { appendHrcEvent } from '../hrc-event-helper'
 
 import {
@@ -346,6 +347,47 @@ describe('emitted lifecycle events', () => {
 
     const rows = db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.tool_call' })
     expect(rows.length).toBe(1)
+  })
+
+  // T-10932 failure 8: the broker's exec summary line must survive the mapper,
+  // and a start without one must not grow an empty field.
+  it('carries the broker summary onto tool_execution_start', () => {
+    const mapper = harness.makeMapper()
+    startOwnedTurn(mapper)
+
+    const withSummary = mapper.apply(
+      envelope(
+        'tool.call.started',
+        10,
+        {
+          toolCallId: TOOL_CALL_ID as never,
+          name: TOOL_NAME,
+          input: { command: '/bin/zsh -lc ls', cwd: '/tmp/project' },
+          summary: 'Running ls...',
+        },
+        { turnId: 'turn_x' as never }
+      )
+    )
+    expect(withSummary.lifecycleEvents[0]!.payload).toEqual({
+      type: 'tool_execution_start',
+      toolUseId: TOOL_CALL_ID,
+      toolName: TOOL_NAME,
+      input: { command: '/bin/zsh -lc ls', cwd: '/tmp/project' },
+      summary: 'Running ls...',
+    })
+    expect(ToolExecutionStartEventSchema.parse(withSummary.lifecycleEvents[0]!.payload)).toEqual(
+      withSummary.lifecycleEvents[0]!.payload as never
+    )
+
+    const withoutSummary = mapper.apply(
+      envelope(
+        'tool.call.started',
+        11,
+        { toolCallId: 'tc-read' as never, name: 'Read', input: { file_path: '/tmp/x' } },
+        { turnId: 'turn_x' as never }
+      )
+    )
+    expect('summary' in (withoutSummary.lifecycleEvents[0]!.payload as object)).toBe(false)
   })
 
   it('projects tool.call.completed into turn.tool_result, normalizing driver result shape', () => {

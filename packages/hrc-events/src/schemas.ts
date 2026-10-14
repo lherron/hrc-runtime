@@ -64,6 +64,7 @@ export const ToolExecutionStartEventSchema = z.object({
   toolUseId: z.string(),
   toolName: z.string(),
   input: z.record(z.unknown()),
+  summary: z.string().optional(),
 })
 
 export const ToolExecutionUpdateEventSchema = z.object({

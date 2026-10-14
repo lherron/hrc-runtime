@@ -22,6 +22,7 @@ export function toolCallFromEvent(event: HrcLifecycleEvent): PendingToolCall {
     toolName:
       stringField(payload ?? {}, 'toolName') ?? stringField(payload ?? {}, 'tool_name') ?? 'tool',
     input: asRecord(payload?.['input']) ?? {},
+    summary: stringField(payload ?? {}, 'summary'),
   }
 }
 
@@ -33,9 +34,13 @@ export function isMatchingToolResult(event: HrcLifecycleEvent, pending: PendingT
   return toolUseId.length > 0 && toolUseId === pending.toolUseId
 }
 
-export function formatToolTitle(toolName: string, input: Record<string, unknown>): string {
+export function formatToolTitle(
+  toolName: string,
+  input: Record<string, unknown>,
+  brokerSummary?: string
+): string {
   const displayName = formatToolDisplayName(toolName)
-  const summary = formatToolSummary(toolName, input)
+  const summary = brokerSummary || formatToolSummary(toolName, input)
   return summary ? `${displayName} - ${summary}` : displayName
 }
 

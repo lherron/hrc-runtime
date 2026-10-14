@@ -63,6 +63,8 @@ export interface ToolExecutionStartEvent {
   toolUseId: string
   toolName: string
   input: Record<string, unknown>
+  /** One-line summary of an exec call, from the broker (T-10932). */
+  summary?: string | undefined
 }
 
 /** Emitted for Notification hooks with a toolUseId */
