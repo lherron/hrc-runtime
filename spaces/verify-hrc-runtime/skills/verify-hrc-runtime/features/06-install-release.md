@@ -40,7 +40,7 @@ jq -c '{releaseId, src: .hrcBuild.sourceCommit, setVersion: .hrcBuild.setVersion
 hrc server status --json | jq -c '{mode: .release.mode, releaseId: .release.releaseId, src: .release.hrcBuild.sourceCommit, runningEqualsInstalled: .release.runningEqualsInstalled}'
 cd ~/praesidium/hrc-runtime && git rev-parse HEAD origin/main       # installed lags HEAD between installs
 ls ~/.bun/install/hrc-runtime-releases                               # 1 dir; 2 only between install and restart
-grep 'server.start.release_prune' ~/praesidium/var/logs/hrc-server.err.log | tail -1
+jq -c 'select(.event == "server.start.release_prune")' ~/praesidium/var/logs/hrc-runtime/hrc-server.log | tail -1
 cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=$PWD; echo "rc=$?"
 ```
 

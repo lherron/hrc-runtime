@@ -502,7 +502,7 @@ launchd-install injector-version:
     set -euo pipefail
     repo="$(git rev-parse --show-toplevel)"
     domain="gui/$(id -u)"
-    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs"
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs/hrc-runtime"
     esc() { printf '%s' "$1" | sed 's/[\/&|]/\\&/g'; }
     for src in "$repo"/launchd/*.plist; do
       label="$(basename "$src" .plist)"
@@ -579,7 +579,7 @@ install-mail-injector-launchd version:
     installed_plist="$HOME/Library/LaunchAgents/${label}.plist"
     hrc_plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
     state_path="$HOME/praesidium/var/state/acp/hrc-mail-injector.sqlite"
-    log_path="$HOME/praesidium/var/logs/hrc-mail-injector.log"
+    log_path="$HOME/praesidium/var/logs/hrc-runtime/hrc-mail-injector.log"
 
     status="$(hrc server status --json 2>/dev/null)" || fail 'HRC daemon is not reachable'
     node_id="$(jq -er '.node.nodeId' <<<"$status")" || fail 'HRC status did not report a node ID'
@@ -602,7 +602,7 @@ install-mail-injector-launchd version:
       fail "${state_path} has no injector_store_imports table"
     (( imports > 0 )) || fail "${state_path} carries no kicker-store import marker"
 
-    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs"
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs/hrc-runtime"
     esc() { printf '%s' "$1" | sed 's/[\/&|]/\\&/g'; }
     sed -e "s|__HOME__|$(esc "$HOME")|g" \
         -e "s|__NODE_ID__|$(esc "$node_id")|g" \

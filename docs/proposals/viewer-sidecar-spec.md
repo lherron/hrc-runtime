@@ -136,7 +136,7 @@ This is the first time viewer panes are reconciled after a daemon restart at all
 - ghostmux timeout / unsupported command / Ghostty absent → log, back off (`0,500,1000,2000,4000` ms), retry on next reconcile. No runtime is ever affected.
 - Viewer absent → no windows. Runtimes unaffected.
 - Daemon absent → viewer idles on reconnect backoff.
-- Viewer logs to `~/praesidium/var/logs/hrc-viewer.log` with the same `broker_headless_viewer.*` / `headless_viewer_reap.*` line vocabulary hrc uses today, so existing grep habits survive.
+- Viewer logs to `~/praesidium/var/logs/agent-control-plane/hrc-viewer.log` with the same `broker_headless_viewer.*` / `headless_viewer_reap.*` line vocabulary hrc uses today, so existing grep habits survive.
 
 ## 5. hrc-server changes (additive; ship dark before Phase 3)
 

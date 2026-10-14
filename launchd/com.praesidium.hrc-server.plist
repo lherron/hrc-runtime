@@ -50,9 +50,9 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>/Users/lherron/praesidium/var/logs/hrc-server.err.log</string>
+	<string>/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-server.err.log</string>
 	<key>StandardOutPath</key>
-	<string>/Users/lherron/praesidium/var/logs/hrc-server.log</string>
+	<string>/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-server.log</string>
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
 	<key>WorkingDirectory</key>

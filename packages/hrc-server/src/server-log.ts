@@ -1,4 +1,4 @@
-type ServerLogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'
+export type ServerLogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'
 
 const SERVER_LOG_REDACT_KEY_PATTERN =
   /token|secret|password|passwd|pwd|auth|cookie|session|credential|api[_-]?key|access[_-]?key|refresh[_-]?token|bearer|oauth|client[_-]?secret/i
@@ -23,24 +23,65 @@ const SERVER_LOG_REDACT_KEY_PATTERN =
  */
 const SERVER_LOG_NEVER_REDACTED_KEYS = new Set(['targetSessionRef', 'hostSessionId'])
 
+/**
+ * The Praesidium logging standard's line shape (L2, `var/agents/references/logging.md`):
+ * one JSON object per line, `{ts, level, component, event, data}`, with `data`
+ * omitted when empty. `component` defaults to the event's first dotted segment.
+ * Server lines go to stdout, so launchd's `hrc-server.log` is the server log and
+ * `hrc-server.err.log` keeps only crash and runtime noise.
+ */
+export function formatServerLogLine(
+  level: ServerLogLevel,
+  event: string,
+  data?: Record<string, unknown> | undefined,
+  component?: string | undefined
+): string {
+  const line: Record<string, unknown> = {
+    ts: new Date().toISOString(),
+    level: level.toLowerCase(),
+    component: component ?? event.split('.', 1)[0],
+    event,
+  }
+  if (data !== undefined && Object.keys(data).length > 0) line['data'] = data
+  try {
+    return `${JSON.stringify(line)}\n`
+  } catch (error) {
+    line['data'] = { serializationError: error instanceof Error ? error.message : String(error) }
+    return `${JSON.stringify(line)}\n`
+  }
+}
+
+// Bound once at load: code that swaps `process.stdout.write` for its own output
+// (in-process CLI capture, cli-metrics byte counting) must not absorb daemon
+// log lines. Tests read the log through `setServerLogWriter` instead.
+const stdoutWrite = process.stdout.write.bind(process.stdout)
+let serverLogWriter: (line: string) => void = (line) => {
+  stdoutWrite(line)
+}
+
+/** Redirects server log lines (tests only); returns a restore function. */
+export function setServerLogWriter(writer: (line: string) => void): () => void {
+  const previous = serverLogWriter
+  serverLogWriter = writer
+  return () => {
+    serverLogWriter = previous
+  }
+}
+
+/** Writes a formatted line to the real stdout, bypassing any `setServerLogWriter`. */
+export function writeServerLogPassthrough(line: string): void {
+  stdoutWrite(line)
+}
+
 export function writeServerLog(
   level: ServerLogLevel,
   event: string,
-  details?: Record<string, unknown> | undefined
+  details?: Record<string, unknown> | undefined,
+  options?: { component?: string | undefined } | undefined
 ): void {
-  const ts = new Date().toISOString()
-  const detailSuffix =
-    details === undefined ? '' : ` ${safeStringifyForServerLog(redactForServerLog(details))}`
-  process.stderr.write(`${ts} [hrc-server] ${level} ${event}${detailSuffix}\n`)
-}
-
-function safeStringifyForServerLog(value: unknown): string {
-  try {
-    return JSON.stringify(value)
-  } catch (error) {
-    const rendered = error instanceof Error ? error.message : String(error)
-    return JSON.stringify({ serializationError: rendered })
-  }
+  const data =
+    details === undefined ? undefined : (redactForServerLog(details) as Record<string, unknown>)
+  serverLogWriter(formatServerLogLine(level, event, data, options?.component))
 }
 
 function redactForServerLog(value: unknown, key?: string): unknown {

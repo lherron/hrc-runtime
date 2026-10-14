@@ -62,7 +62,7 @@ launchctl print gui/$(id -u)/com.praesidium.hrc-prune-deltas | grep -E 'state|la
   table `skipped` (2026-10-05, `T-10297/07-maintenance/drive.txt`). That proves the path runs, not that it
   deletes.
 - **Never point `prune-hrc-event-deltas.ts --apply` at the live DB by hand.** It shares the database with
-  the daemon; launchd's paced run is the one writer. `hrc-prune-deltas.err.log` holds three `database is
+  the daemon; launchd's paced run is the one writer. `hrc-prune-deltas.err.log` (then at `var/logs/`, now `var/logs/hrc-runtime/`) held three `database is
   locked` lines from 2026-07-26; the job's last exit was 0.
 - The dry-run `admin runs` verbs on live answer `matched: 0` in steady state; a non-zero `matched` is the
   signal to look, not to `--yes`. On 2026-10-05 `reconcile-active` matched one: a run on

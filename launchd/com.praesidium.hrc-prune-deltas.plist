@@ -40,9 +40,9 @@
 		<string>100</string>
 	</array>
 	<key>StandardErrorPath</key>
-	<string>/Users/lherron/praesidium/var/logs/hrc-prune-deltas.err.log</string>
+	<string>/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-prune-deltas.err.log</string>
 	<key>StandardOutPath</key>
-	<string>/Users/lherron/praesidium/var/logs/hrc-prune-deltas.log</string>
+	<string>/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-prune-deltas.log</string>
 	<key>StartCalendarInterval</key>
 	<dict>
 		<key>Hour</key>

@@ -46,6 +46,7 @@ import {
   workerClient,
 } from './fixtures/aspd-route-doubles'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import { withServerLog } from './fixtures/server-log'
 
 const SCOPE = 'agent:t08562:project:hrc-runtime:task:T-08562'
 const MARK = 'T8562-MARK reply with exactly this marker'
@@ -825,22 +826,14 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
   it('an HRC admission refusal of a successful compile names the field and logs one WARN', async () => {
     aspd.planIdentityOverride = { traceId: 'trace-forged' }
     const s = await session()
-    const lines: string[] = []
-    const stderrSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
-      lines.push(String(chunk))
-      return true
-    }) as never)
-    let error: unknown
-    try {
-      error = await prepareAspdHeadlessAttempt(server as never, {
+    const { value: error, log } = await withServerLog(() =>
+      prepareAspdHeadlessAttempt(server as never, {
         session: s,
         intent: { ...driverIntent('claude-code-tmux'), initialPrompt: 'T8712-FORCED' },
         runId: 'run-t8712-forced',
         endpoint: aspdSocket,
       }).catch((e: unknown) => e)
-    } finally {
-      stderrSpy.mockRestore()
-    }
+    )
     const detail = (error as { detail?: Record<string, any> }).detail ?? {}
     // T-08713: distinct from ASP's compile-not-ok; the injector classes both
     // as definite pre-launch rejections.
@@ -856,16 +849,16 @@ describe('T-08562 keyless doors, reprovision, continuation, pi-sdk and joins', (
       }),
     ])
     expect(String(detail['diagnostics'][0].expected)).toStartWith('trace-')
-    const warn = lines.filter(
-      (line) =>
-        line.includes('WARN aspd.preparation.admission_rejected') &&
-        line.includes('run-t8712-forced')
-    )
+    const warn = log
+      .events('aspd.preparation.admission_rejected')
+      .filter(
+        (line) => line.level === 'warn' && JSON.stringify(line.data).includes('run-t8712-forced')
+      )
     expect(warn).toHaveLength(1)
-    expect(warn[0]).toContain('plan.identity.traceId')
-    expect(warn[0]).toContain(aspd.serving.releaseId)
+    expect(JSON.stringify(warn[0]?.data)).toContain('plan.identity.traceId')
+    expect(JSON.stringify(warn[0]?.data)).toContain(aspd.serving.releaseId)
     // The rejected compile's identity is retained (bounded) for a post-hoc diff.
-    const logged = JSON.parse(warn[0]!.slice(warn[0]!.indexOf('{')))
+    const logged = warn[0]!.data as Record<string, any>
     expect(logged.rejectedCompile).toMatchObject({
       agentId: 't08562',
       planIdentity: { traceId: 'trace-forged' },

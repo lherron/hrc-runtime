@@ -207,7 +207,7 @@ async function startControllerAttempt(
   // Launch-timing instrumentation (diagnostic). The broker has no log of its
   // own — its stderr is swallowed into a tail buffer by the stdio transport and
   // only surfaced on a transport error. These phase durations are the broker's
-  // first observable timing; they land in hrc-server.err.log via the server
+  // first observable timing; they land in hrc-server.log via the server
   // logger so we can localize the cost of a real (non-dry-run) launch.
   const timingStartMs = performance.now()
   let phaseStartMs = timingStartMs

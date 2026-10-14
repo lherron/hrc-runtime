@@ -18,6 +18,7 @@ import {
   startAspdObservationDouble,
 } from './fixtures/aspd-observation-doubles.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { captureServerLog } from './fixtures/server-log.js'
 
 function registryUnbound(): BindingRegistryClient {
   return {
@@ -32,21 +33,6 @@ function registryUnbound(): BindingRegistryClient {
           updatedAt: request.now,
         },
       }
-    },
-  }
-}
-
-function captureServerLog(): { lines: string[]; restore: () => void } {
-  const lines: string[] = []
-  const original = process.stderr.write.bind(process.stderr)
-  process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
-    lines.push(String(chunk))
-    return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
-  }) as typeof process.stderr.write
-  return {
-    lines,
-    restore: () => {
-      process.stderr.write = original
     },
   }
 }
@@ -118,12 +104,14 @@ describe('T-06665 real placement policy in the live summon gate', () => {
       'declared',
       ['version = 3', '', '[provisioning]', 'node = "max3-test"'].join('\n')
     )
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await startAdvisoryServer()
     try {
       const response = await summon('declared', 'T-DECLARED')
       expect(response.status).toBe(200)
-      const gateLines = captured.lines.filter((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT))
+      const gateLines = captured
+        .rawLines()
+        .filter((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT))
       expect(gateLines).toEqual([])
     } finally {
       await server.stop()
@@ -144,12 +132,13 @@ describe('T-06665 real placement policy in the live summon gate', () => {
         '"hrc-runtime:T-PINNED" = "mini-test"',
       ].join('\n')
     )
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await startAdvisoryServer()
     try {
       const response = await summon('pinned', 'T-PINNED')
       expect(response.status).toBe(200)
-      const event = captured.lines.find((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)) ?? ''
+      const event =
+        captured.rawLines().find((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)) ?? ''
       expect(event).toContain('"reason":"pin-mismatch"')
       expect(event).toContain('"homeNodeId":"mini-test"')
       expect(event).not.toContain('undeclared-placement')
@@ -173,12 +162,13 @@ describe('T-06665 real placement policy in the live summon gate', () => {
    */
   test('a real profile with no placement stanza is born locally, not refused (v3)', async () => {
     await writeProfile('legacy', 'version = 3\n')
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await startAdvisoryServer()
     try {
       const response = await summon('legacy', 'T-UNDECLARED')
       expect(response.status).toBe(200)
-      const event = captured.lines.find((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)) ?? ''
+      const event =
+        captured.rawLines().find((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)) ?? ''
       expect(event).not.toContain('undeclared-placement')
     } finally {
       await server.stop()
@@ -188,12 +178,13 @@ describe('T-06665 real placement policy in the live summon gate', () => {
 
   test('an unreadable profile is policy-unavailable, never undeclared', async () => {
     await writeProfile('broken', 'this is not = = valid toml [[[\n')
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await startAdvisoryServer()
     try {
       const response = await summon('broken', 'T-UNREADABLE')
       expect(response.status).toBe(200)
-      const event = captured.lines.find((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)) ?? ''
+      const event =
+        captured.rawLines().find((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)) ?? ''
       expect(event).toContain('"reason":"policy-unavailable"')
       expect(event).toContain('agent-profile.toml')
       expect(event).not.toContain('undeclared-placement')
@@ -204,12 +195,13 @@ describe('T-06665 real placement policy in the live summon gate', () => {
   })
 
   test('missing agent-profile materialization is policy-unavailable, never undeclared', async () => {
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await startAdvisoryServer()
     try {
       const response = await summon('missing', 'T-MISSING')
       expect(response.status).toBe(200)
-      const event = captured.lines.find((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)) ?? ''
+      const event =
+        captured.rawLines().find((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)) ?? ''
       expect(event).toContain('"reason":"policy-unavailable"')
       expect(event).toContain('No agent root found')
       expect(event).not.toContain('undeclared-placement')
@@ -220,7 +212,7 @@ describe('T-06665 real placement policy in the live summon gate', () => {
   })
 
   test('an unconfigured daemon does no placement resolution work', async () => {
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await createHrcServer(fixture.serverOpts())
     let policyReads = 0
     Object.assign(server, {
@@ -233,7 +225,7 @@ describe('T-06665 real placement policy in the live summon gate', () => {
       const response = await summon('dark', 'T-DARK')
       expect(response.status).toBe(200)
       expect(policyReads).toBe(0)
-      expect(captured.lines.join('')).not.toContain(SUMMON_GATE_REFUSAL_EVENT)
+      expect(captured.rawLines().join('')).not.toContain(SUMMON_GATE_REFUSAL_EVENT)
     } finally {
       await server.stop()
       captured.restore()

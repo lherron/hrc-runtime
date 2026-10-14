@@ -380,8 +380,10 @@ describe('hrc delta-prune LaunchAgent', () => {
     expect(plist).toContain('<key>StartCalendarInterval</key>')
     expect(plist).toContain('<key>HRC_STATE_DIR</key>')
     expect(plist).toContain('<string>/Users/lherron/praesidium/var/state/hrc</string>')
-    expect(plist).toContain('/Users/lherron/praesidium/var/logs/hrc-prune-deltas.log')
-    expect(plist).toContain('/Users/lherron/praesidium/var/logs/hrc-prune-deltas.err.log')
+    expect(plist).toContain('/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-prune-deltas.log')
+    expect(plist).toContain(
+      '/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-prune-deltas.err.log'
+    )
     expect(plist).not.toContain('--vacuum')
     expect(plist).not.toContain('<key>KeepAlive</key>')
   })

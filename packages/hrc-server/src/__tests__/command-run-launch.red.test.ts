@@ -8,6 +8,7 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.ts'
+import { captureServerLog } from './fixtures/server-log.ts'
 
 let fixture: HrcServerTestFixture
 let server: HrcServer
@@ -84,17 +85,7 @@ async function waitForRun(
 describe('POST /v1/command-runs/launch (T-05274 red)', () => {
   it('launches one configured command as a durable run attempt and records success vs failure lifecycle', async () => {
     const client = new HrcClient(fixture.socketPath)
-    const stderrWrites: string[] = []
-    const originalStderrWrite = process.stderr.write
-    process.stderr.write = ((chunk, encodingOrCallback, callback) => {
-      stderrWrites.push(String(chunk))
-      if (typeof encodingOrCallback === 'function') {
-        encodingOrCallback()
-      } else {
-        callback?.()
-      }
-      return true
-    }) as typeof process.stderr.write
+    const serverLog = captureServerLog()
 
     const success = await client.launchCommandScopedRun(requestFor('success', 'idem-success-1'))
     let failure: Awaited<ReturnType<HrcClient['launchCommandScopedRun']>> | undefined
@@ -151,13 +142,13 @@ describe('POST /v1/command-runs/launch (T-05274 red)', () => {
         payload: expect.objectContaining({ exitCode: 42 }),
       })
     } finally {
-      process.stderr.write = originalStderrWrite
+      serverLog.restore()
     }
     if (!failure) {
       throw new Error('expected command-run failure launch response')
     }
 
-    const failureLog = stderrWrites.find((line) => line.includes('command_run.failed'))
+    const failureLog = JSON.stringify(serverLog.events('command_run.failed')[0]?.data)
     expect(failureLog).toContain(`"runId":"${failure.runId}"`)
     expect(failureLog).toContain(`"runtimeId":"${failure.runtimeId}"`)
     expect(failureLog).toContain('"configuredTargetId":"test-command-run-failure"')

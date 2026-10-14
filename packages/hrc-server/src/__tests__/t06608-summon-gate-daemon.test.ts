@@ -15,26 +15,12 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { SUMMON_GATE_REFUSAL_EVENT } from '../federation/summon-gate.js'
 import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { captureServerLog } from './fixtures/server-log.js'
 
 const SESSION_REF = 'agent:gatetest:project:hrc-runtime:task:T-06608/lane:main'
 const SCOPE_REF = 'agent:gatetest:project:hrc-runtime:task:T-06608'
 
 /** Captures daemon stderr so the structured advisory events can be asserted. */
-function captureServerLog(): { lines: string[]; restore: () => void } {
-  const lines: string[] = []
-  const original = process.stderr.write.bind(process.stderr)
-  process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
-    lines.push(String(chunk))
-    return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
-  }) as typeof process.stderr.write
-  return {
-    lines,
-    restore: () => {
-      process.stderr.write = original
-    },
-  }
-}
-
 async function writeFederationConfig(
   fixture: HrcServerTestFixture,
   document: Record<string, unknown>
@@ -56,7 +42,7 @@ describe('summon gate on a live isolated daemon', () => {
   })
 
   test('no federation config: session creation is completely dark', async () => {
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await createHrcServer(fixture.serverOpts())
     try {
       const response = await fixture.postJson('/v1/sessions/resolve', {
@@ -69,7 +55,7 @@ describe('summon gate on a live isolated daemon', () => {
       expect(body.hostSessionId).not.toBeNull()
 
       // Dark means dark: not one gate event on an unconfigured daemon.
-      expect(captured.lines.join('').includes(SUMMON_GATE_REFUSAL_EVENT)).toBe(false)
+      expect(captured.rawLines().join('').includes(SUMMON_GATE_REFUSAL_EVENT)).toBe(false)
     } finally {
       await server.stop()
       captured.restore()
@@ -82,7 +68,7 @@ describe('summon gate on a live isolated daemon', () => {
       gate: { mode: 'advisory' },
     })
 
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await createHrcServer(fixture.serverOpts())
     try {
       const response = await fixture.postJson('/v1/sessions/resolve', {
@@ -96,7 +82,9 @@ describe('summon gate on a live isolated daemon', () => {
       expect(body.created).toBe(true)
       expect(body.hostSessionId).not.toBeNull()
 
-      const gateLines = captured.lines.filter((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT))
+      const gateLines = captured
+        .rawLines()
+        .filter((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT))
       expect(gateLines.length).toBeGreaterThan(0)
 
       const payload = gateLines[0]!
@@ -119,7 +107,7 @@ describe('summon gate on a live isolated daemon', () => {
   test('gate mode off with federation configured stays dark', async () => {
     await writeFederationConfig(fixture, { nodeId: 'max3-test' })
 
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await createHrcServer(fixture.serverOpts())
     try {
       const response = await fixture.postJson('/v1/sessions/resolve', {
@@ -127,7 +115,7 @@ describe('summon gate on a live isolated daemon', () => {
         create: true,
       })
       expect(response.status).toBe(200)
-      expect(captured.lines.join('').includes(SUMMON_GATE_REFUSAL_EVENT)).toBe(false)
+      expect(captured.rawLines().join('').includes(SUMMON_GATE_REFUSAL_EVENT)).toBe(false)
     } finally {
       await server.stop()
       captured.restore()
@@ -144,7 +132,7 @@ describe('summon gate on a live isolated daemon', () => {
     await fixture.postJson('/v1/sessions/resolve', { sessionRef: SESSION_REF, create: true })
     await first.stop()
 
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const second = await createHrcServer(fixture.serverOpts())
     try {
       const response = await fixture.postJson('/v1/sessions/resolve', {

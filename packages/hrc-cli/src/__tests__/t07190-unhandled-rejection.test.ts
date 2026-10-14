@@ -33,23 +33,26 @@ test('a booted foreground server handles rejected promises with deliberate fatal
         stderr: 'pipe',
       }
     )
-    const [exitCode, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()])
+    // Server lines are the stdout half (T-10854); log is drained but unasserted.
+    const [exitCode, log] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ])
 
     expect(exitCode).toBe(1)
-    expect(stderr).toContain('server.listening')
-    expect(stderr).toContain('server.unhandled_rejection')
-    expect(stderr).toContain('"decision":"fail_fast"')
-    expect(stderr).toContain('"decision":"continue_shutdown"')
-    expect(stderr).toContain('T-07190 outer rejection')
-    expect(stderr).toContain('T-07190 inner cause')
+    expect(log).toContain('server.listening')
+    expect(log).toContain('server.unhandled_rejection')
+    expect(log).toContain('"decision":"fail_fast"')
+    expect(log).toContain('"decision":"continue_shutdown"')
+    expect(log).toContain('T-07190 outer rejection')
+    expect(log).toContain('T-07190 inner cause')
     // T-09861: no grant was issued, so the fatal-policy shutdown is ungranted;
     // a caller-written file can no longer attribute it.
-    expect(stderr).toContain('"grant":null')
-    expect(stderr).not.toContain('"requestedBy"')
-    expect(stderr).toContain('server.shutting_down')
-    expect(stderr.indexOf('server.listening')).toBeLessThan(
-      stderr.indexOf('server.unhandled_rejection')
-    )
+    expect(log).toContain('"grant":null')
+    expect(log).not.toContain('"requestedBy"')
+    expect(log).toContain('server.shutting_down')
+    expect(log.indexOf('server.listening')).toBeLessThan(log.indexOf('server.unhandled_rejection'))
     expect(existsSync(join(runtimeRoot, 'server.pid'))).toBe(false)
   } finally {
     await rm(root, { recursive: true, force: true })

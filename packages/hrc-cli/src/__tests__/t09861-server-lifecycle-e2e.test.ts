@@ -19,6 +19,8 @@ import { join } from 'node:path'
 import { lifecycleCredentialPath } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
+import { parseServerLog } from '../../../hrc-server/src/__tests__/fixtures/server-log'
+
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
 const NOW = '2026-09-28T12:00:00.000Z'
 
@@ -450,9 +452,11 @@ describe('T-09861 lifecycle contract against scratch daemons', () => {
           }),
         /bound to a different seat/
       )
-      const log = readFileSync(scratch.daemonLog, 'utf8')
-      expect(log).toContain('WARN server.lifecycle.credential_mismatch')
-      expect(log).toContain('WARN server.lifecycle.refused')
+      const warned = parseServerLog(readFileSync(scratch.daemonLog, 'utf8'))
+        .filter((line) => line.level === 'warn')
+        .map((line) => line.event)
+      expect(warned).toContain('server.lifecycle.credential_mismatch')
+      expect(warned).toContain('server.lifecycle.refused')
 
       // §8.13 every flag, and stop, from a non-mable seat.
       for (const args of [
@@ -585,9 +589,11 @@ describe('T-09861 lifecycle contract against scratch daemons', () => {
         grant: null,
         ungranted: true,
       })
-      expect(readFileSync(scratch.daemonLog, 'utf8')).toContain(
-        'WARN server.lifecycle.ungranted_shutdown'
-      )
+      expect(
+        parseServerLog(readFileSync(scratch.daemonLog, 'utf8')).find(
+          (line) => line.event === 'server.lifecycle.ungranted_shutdown'
+        )?.level
+      ).toBe('warn')
 
       const second = await startDaemon(scratch)
       process.kill(second, 'SIGKILL')

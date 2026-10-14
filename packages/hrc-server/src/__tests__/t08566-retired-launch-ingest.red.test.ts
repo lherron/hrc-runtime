@@ -29,6 +29,7 @@ import { createHrcServer } from '../index'
 import { CORRUPT_SPOOL_DIRNAME, readSpoolEntries, spoolCallback } from '../launch/spool'
 import { RUN_ID, headlessSequence, makeSeededFixture } from './broker-event-mapper-fixtures'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import { type ServerLogCapture, withServerLog } from './fixtures/server-log'
 
 const RETIRED_CODE = 'legacy_launch_ingest_retired'
 
@@ -81,26 +82,11 @@ async function listOrEmpty(path: string): Promise<string[]> {
   }
 }
 
-async function captureStderr<T>(
-  operation: () => Promise<T>
-): Promise<{ value: T; stderr: string }> {
-  const originalWrite = process.stderr.write
-  let stderr = ''
-  process.stderr.write = ((chunk: string | Uint8Array) => {
-    stderr += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')
-    return true
-  }) as typeof process.stderr.write
-  try {
-    return { value: await operation(), stderr }
-  } finally {
-    process.stderr.write = originalWrite
-  }
-}
-
-function retiredWarnLines(stderr: string): string[] {
-  return stderr
-    .split('\n')
-    .filter((line) => line.includes('WARN server.legacy_launch_ingest_refused'))
+function retiredWarnLines(log: ServerLogCapture): string[] {
+  return log
+    .events('server.legacy_launch_ingest_refused')
+    .filter((line) => line.level === 'warn')
+    .map((line) => JSON.stringify(line))
 }
 
 async function unusedTcpPort(): Promise<number> {
@@ -159,7 +145,7 @@ test('R1: unknown-launch Stop is refused without mutating an accepted broker run
       seeded.close()
     }
 
-    const { value: response, stderr } = await captureStderr(() =>
+    const { value: response, log } = await withServerLog(() =>
       fixture.postJson('/v1/internal/hooks/ingest', {
         launchId,
         hostSessionId,
@@ -176,8 +162,8 @@ test('R1: unknown-launch Stop is refused without mutating an accepted broker run
       expect(body).toMatchObject({
         error: { code: RETIRED_CODE, route: '/v1/internal/hooks/ingest' },
       })
-      expect(retiredWarnLines(stderr)).toHaveLength(1)
-      expect(retiredWarnLines(stderr)[0]).toContain('"route":"/v1/internal/hooks/ingest"')
+      expect(retiredWarnLines(log)).toHaveLength(1)
+      expect(retiredWarnLines(log)[0]).toContain('"route":"/v1/internal/hooks/ingest"')
       expect(durableSnapshot(observed)).toEqual(before)
       expect(observed.runs.getByRunId(runId)).toMatchObject({
         status: 'accepted',
@@ -246,7 +232,7 @@ for (const callbackCase of launchCallbackCases) {
         beforeDb.close()
       }
 
-      const { value: response, stderr } = await captureStderr(() =>
+      const { value: response, log } = await withServerLog(() =>
         fixture.postJson(route, callbackCase.body(hostSessionId))
       )
       const responseText = await response.text()
@@ -261,8 +247,8 @@ for (const callbackCase of launchCallbackCases) {
       try {
         expect(response.status).toBe(410)
         expect(body).toMatchObject({ error: { code: RETIRED_CODE, route } })
-        expect(retiredWarnLines(stderr)).toHaveLength(1)
-        expect(retiredWarnLines(stderr)[0]).toContain(`"route":"${route}"`)
+        expect(retiredWarnLines(log)).toHaveLength(1)
+        expect(retiredWarnLines(log)[0]).toContain(`"route":"${route}"`)
         expect(durableSnapshot(observed)).toEqual(before)
       } finally {
         observed.close()
@@ -381,7 +367,7 @@ test('R4: retired spool entries are quarantined while unhandled bytes, reader, a
       },
     ])
 
-    const started = await captureStderr(() =>
+    const started = await withServerLog(() =>
       createHrcServer(fixture.serverOpts({ otelPreferredPort: 0 } as never))
     )
     server = started.value
@@ -394,15 +380,17 @@ test('R4: retired spool entries are quarantined while unhandled bytes, reader, a
     expect(
       await listOrEmpty(join(fixture.spoolDir, CORRUPT_SPOOL_DIRNAME, launchKey))
     ).toHaveLength(1)
-    expect(started.stderr.match(/retired legacy spool entry quarantined/g) ?? []).toHaveLength(2)
-    expect(started.stderr).toContain('/v1/internal/hooks/ingest')
-    expect(started.stderr).toContain(launchRoute)
+    expect(started.log.text().match(/retired legacy spool entry quarantined/g) ?? []).toHaveLength(
+      2
+    )
+    expect(started.log.text()).toContain('/v1/internal/hooks/ingest')
+    expect(started.log.text()).toContain(launchRoute)
 
     expect(await Bun.file(unknownPath).exists()).toBe(true)
     expect(sha256(await readFile(unknownPath))).toBe(sha256(unknownBytesBefore))
     expect(await readSpoolEntries(fixture.spoolDir, unknownKey)).toHaveLength(1)
-    expect(started.stderr).toContain('spool replay failed')
-    expect(started.stderr).toContain('/v1/internal/example/unhandled')
+    expect(started.log.text()).toContain('spool replay failed')
+    expect(started.log.text()).toContain('/v1/internal/example/unhandled')
 
     const observed = openHrcDatabase(fixture.dbPath)
     try {

@@ -17,6 +17,7 @@ import {
   makeSeededFixture,
 } from './broker-event-mapper-fixtures'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import { withServerLog } from './fixtures/server-log'
 import { seedOfflineRuntime } from './fixtures/t08566-offline-reader-double'
 
 const RETAINED_FENCE = 'runtime_retained_evidence_projected'
@@ -184,22 +185,6 @@ function runtimeRow(dbPath: string, runtimeId: string): string {
     )
   } finally {
     db.close()
-  }
-}
-
-async function captureStderr<T>(
-  operation: () => Promise<T>
-): Promise<{ value: T; stderr: string }> {
-  const originalWrite = process.stderr.write
-  let stderr = ''
-  process.stderr.write = ((chunk: string | Uint8Array) => {
-    stderr += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')
-    return true
-  }) as typeof process.stderr.write
-  try {
-    return { value: await operation(), stderr }
-  } finally {
-    process.stderr.write = originalWrite
   }
 }
 
@@ -394,7 +379,7 @@ describe('T-08566 stage 2 authority and ownership', () => {
         db.close()
       }
       const before = durableOwnerRows(serverFixture.dbPath, seeded.runtimeId, seeded.invocationId)
-      const started = await captureStderr(async () => {
+      const started = await withServerLog(async () => {
         const created = await createHrcServer(serverFixture.serverOpts())
         await Bun.sleep(30)
         return created
@@ -402,19 +387,21 @@ describe('T-08566 stage 2 authority and ownership', () => {
       server = started.value
 
       expect(
-        started.stderr
+        started.log
+          .text()
           .split('\n')
           .filter((line) => line.includes(seeded.runtimeId) && line.includes('attach'))
       ).toEqual([])
       expect(durableOwnerRows(serverFixture.dbPath, seeded.runtimeId, seeded.invocationId)).toBe(
         before
       )
-      const live = await captureStderr(async () => ({
+      const live = await withServerLog(async () => ({
         ownership: await operatorOwnershipRequests(serverFixture, seeded),
         dispatch: await sessionDispatchRequests(serverFixture, seeded),
       }))
       expect(
-        live.stderr
+        live.log
+          .text()
           .split('\n')
           .filter((line) => line.includes(seeded.runtimeId) && /attach|ackEvents/.test(line))
       ).toEqual([])
@@ -638,7 +625,7 @@ describe('T-08566 stage 2 authority and ownership', () => {
       const seeded = await seedOfflineRuntime(serverFixture, 'timeout')
       db = openHrcDatabase(serverFixture.dbPath)
       const beforeRuntime = runtimeRow(serverFixture.dbPath, seeded.runtimeId)
-      const crossing = await captureStderr(async () => {
+      const crossing = await withServerLog(async () => {
         const recovery = serverFixture.postJson('/v1/capture/recover', {
           runtimeId: seeded.runtimeId,
           yes: true,
@@ -705,7 +692,8 @@ describe('T-08566 stage 2 authority and ownership', () => {
       })
       expect(runtimeRow(serverFixture.dbPath, seeded.runtimeId)).toBe(beforeRuntime)
       expect(
-        crossing.stderr
+        crossing.log
+          .text()
           .split('\n')
           .filter((line) => line.includes(seeded.runtimeId) && /attach|ackEvents/.test(line))
       ).toEqual([])
@@ -833,16 +821,30 @@ describe('T-08566 stage 2 authority and ownership', () => {
     try {
       const stdout = child.stdout
       if (!(stdout instanceof ReadableStream)) throw new Error('child stdout is not readable')
+      // The child's server log shares stdout with READY (T-10854): read until
+      // the READY line, then keep draining so the log never fills the pipe.
       const reader = stdout.getReader()
+      const decoder = new TextDecoder()
+      let stdoutText = ''
+      const readUntilReady = async (): Promise<boolean> => {
+        while (!/^READY$/m.test(stdoutText)) {
+          const { done, value } = await reader.read()
+          if (done) return false
+          stdoutText += decoder.decode(value, { stream: true })
+        }
+        return true
+      }
       const readiness = await Promise.race([
-        reader.read().then((result) => ({ kind: 'stdout' as const, result })),
+        readUntilReady().then((ready) => ({
+          kind: ready ? ('stdout' as const) : ('eof' as const),
+        })),
         child.exited.then((exitCode) => ({ kind: 'exit' as const, exitCode })),
         Bun.sleep(5_000).then(() => ({ kind: 'timeout' as const })),
       ])
-      reader.releaseLock()
-      const readyText =
-        readiness.kind === 'stdout' ? new TextDecoder().decode(readiness.result.value) : ''
-      if (!readyText.includes('READY')) {
+      void (async () => {
+        while (!(await reader.read().catch(() => ({ done: true }))).done) {}
+      })()
+      if (readiness.kind !== 'stdout') {
         if (child.exitCode === null) child.kill(9)
         const [exitCode, stderr] = await Promise.all([child.exited, childStderr])
         throw new Error(

@@ -29,6 +29,7 @@ import {
   federationTestHost,
   selectLiveTailnetTest,
 } from './fixtures/live-tailnet-test.js'
+import { captureServerLog } from './fixtures/server-log.js'
 
 const SCOPE = 'agent:localgate:project:hrc-runtime:task:T-06668'
 const SESSION = `${SCOPE}/lane:main`
@@ -82,21 +83,6 @@ function localTailnetIpv4(): string | undefined {
     }
   }
   return undefined
-}
-
-function captureServerLog(): { lines: string[]; restore(): void } {
-  const lines: string[] = []
-  const original = process.stderr.write.bind(process.stderr)
-  process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
-    lines.push(String(chunk))
-    return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
-  }) as typeof process.stderr.write
-  return {
-    lines,
-    restore() {
-      process.stderr.write = original
-    },
-  }
 }
 
 describe('registry selection', () => {
@@ -168,7 +154,7 @@ describe('registry-host gate on a live isolated daemon', () => {
       { mode: 0o600 }
     )
 
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await createFederationTestServer(fixture)
     try {
       expect(server.federationRegistryEndpoint).toBe(bind)
@@ -185,7 +171,7 @@ describe('registry-host gate on a live isolated daemon', () => {
       })
       expect(response.status).toBe(200)
 
-      const logs = captured.lines.join('')
+      const logs = captured.rawLines().join('')
       expect(logs).toContain('federation.registry.consult.unbound')
       expect(logs).toContain('"transport":"local"')
       expect(logs).toContain(SUMMON_GATE_REFUSAL_EVENT)

@@ -22,6 +22,7 @@ import {
 import { hashRegistrationCredential } from '../registration-handlers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { withServerLog } from './fixtures/server-log.js'
 
 /**
  * T-10829: a runtime that reaches a terminal status owns no run. A terminal row
@@ -402,26 +403,17 @@ describe('T-10829 gate 3: startup reconcile of rows written before the fix', () 
       await control.stop()
     }
 
-    const lines: string[] = []
-    const originalWrite = process.stderr.write.bind(process.stderr)
-    process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
-      const text = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk)
-      if (text.includes('runtime.terminal_active_run.reconciled')) lines.push(text)
-      return (originalWrite as (...args: unknown[]) => boolean)(chunk, ...rest)
-    }) as typeof process.stderr.write
-    let restarted: HrcServer
-    try {
-      restarted = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
-    } finally {
-      process.stderr.write = originalWrite
-    }
+    const { value: restarted, log } = await withServerLog(() =>
+      createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+    )
+    const lines = log.events('runtime.terminal_active_run.reconciled')
     try {
       const db = (restarted as HrcServerInstance).db
       expect(db.runtimes.getByRuntimeId(runtimeId)?.status).toBe('terminated')
       expect(await projectedIds(fixture)).not.toContain(hostSessionId)
       expectSettled(db, runtimeId, runId, 'terminated')
       expect(lines).toHaveLength(1)
-      const logged = JSON.parse(lines[0]!.slice(lines[0]!.indexOf('{')))
+      const logged = lines[0]!.data
       expect(logged).toMatchObject({
         runtimeId,
         priorStatus: 'terminated',

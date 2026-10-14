@@ -12,6 +12,7 @@ import {
   resolveStateRoot,
   resolveTmuxSocketPath,
 } from 'hrc-core'
+import { formatServerLogLine } from 'hrc-server'
 
 export type ServerPaths = {
   runtimeRoot: string
@@ -28,9 +29,7 @@ export function writeServerProcessLog(
   event: string,
   details?: Record<string, unknown> | undefined
 ): void {
-  const ts = new Date().toISOString()
-  const suffix = details === undefined ? '' : ` ${JSON.stringify(details)}`
-  process.stderr.write(`${ts} [hrc-server] INFO ${event}${suffix}\n`)
+  process.stdout.write(formatServerLogLine('INFO', event, details))
 }
 
 export function resolveServerPaths(): ServerPaths {

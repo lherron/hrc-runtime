@@ -19,23 +19,9 @@ import {
   startAspdObservationDouble,
 } from './fixtures/aspd-observation-doubles.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { captureServerLog } from './fixtures/server-log.js'
 
 const SCOPE_REF = 'agent:probe:project:fixture-project:task:T-06612'
-
-function captureServerLog(): { lines: string[]; restore: () => void } {
-  const lines: string[] = []
-  const original = process.stderr.write.bind(process.stderr)
-  process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
-    lines.push(String(chunk))
-    return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
-  }) as typeof process.stderr.write
-  return {
-    lines,
-    restore: () => {
-      process.stderr.write = original
-    },
-  }
-}
 
 describe('materialization capability on a live isolated daemon', () => {
   let fixture: HrcServerTestFixture
@@ -101,7 +87,7 @@ describe('materialization capability on a live isolated daemon', () => {
     )
     process.env['HRC_ASPD_SOCKET'] = aspdSocket
 
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     try {
       server = await createHrcServer(fixture.serverOpts())
       Object.assign(server, {
@@ -144,7 +130,7 @@ describe('materialization capability on a live isolated daemon', () => {
         state.close()
       }
 
-      const line = captured.lines.find((entry) => entry.includes(SUMMON_GATE_REFUSAL_EVENT))
+      const line = captured.rawLines().find((entry) => entry.includes(SUMMON_GATE_REFUSAL_EVENT))
       expect(line).toBeDefined()
       expect(line).toContain('"reason":"capability-project-checkout-missing"')
       expect(line).toContain('"capability":"project-checkout"')

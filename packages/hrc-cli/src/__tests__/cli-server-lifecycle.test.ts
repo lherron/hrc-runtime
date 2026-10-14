@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { parseServerLog } from '../../../hrc-server/src/__tests__/fixtures/server-log'
 import {
   cliEnv,
   describeDaemonLifecycle,
@@ -173,13 +174,12 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
 
     const readyStatus = await waitForServerStatus((value) => value.running === true, cliEnv())
     expect(readyStatus.running).toBe(true)
-    const log = await waitForServerLog()
-    expect(log).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[hrc-server\] INFO server\.start\.begin /m
-    )
-    expect(log).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[hrc-server\] INFO server\.listening /m
-    )
+    const lines = parseServerLog(await waitForServerLog())
+    for (const event of ['server.start.begin', 'server.listening']) {
+      const line = lines.find((entry) => entry.event === event)
+      expect(line).toMatchObject({ level: 'info', component: 'server' })
+      expect(line?.ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+    }
   })
 
   it('server log records codex launch execution JSON and CODEX_HOME', async () => {

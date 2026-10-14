@@ -21,6 +21,7 @@ import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
+import { type ServerLogCapture, captureServerLog } from './fixtures/server-log'
 
 const BUDGET_MS = 400
 const BINDINGS = 40
@@ -33,8 +34,7 @@ type Inspectable = HrcServer & {
 
 let fixture: HrcServerTestFixture
 let server: Inspectable | undefined
-let stderr: string[]
-let restoreStderr: () => void
+let serverLog: ServerLogCapture
 
 const scopeAt = (index: number) => `agent:clod:project:hrc-runtime:task:T-09760-b${index}`
 
@@ -61,10 +61,7 @@ function seedBindings(count: number): void {
 }
 
 function logLines(event: string): Array<Record<string, unknown>> {
-  return stderr
-    .flatMap((chunk) => chunk.split('\n'))
-    .filter((line) => line.includes(` ${event} `))
-    .map((line) => JSON.parse(line.slice(line.indexOf('{'))) as Record<string, unknown>)
+  return serverLog.events(event).map((line) => line.data ?? {})
 }
 
 async function readBindings(): Promise<{ report: LocateBindingsReport; elapsedMs: number }> {
@@ -81,15 +78,7 @@ async function readBindings(): Promise<{ report: LocateBindingsReport; elapsedMs
 
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-t09760-bind-')
-  stderr = []
-  const original = process.stderr.write.bind(process.stderr)
-  process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
-    stderr.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk))
-    return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
-  }) as typeof process.stderr.write
-  restoreStderr = () => {
-    process.stderr.write = original
-  }
+  serverLog = captureServerLog({ passthrough: true })
   server = (await createHrcServer(
     fixture.serverOpts({ otelListenerEnabled: false })
   )) as Inspectable
@@ -98,7 +87,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  restoreStderr()
+  serverLog.restore()
   if (server) await server.stop().catch(() => undefined)
   server = undefined
   await fixture.cleanup()

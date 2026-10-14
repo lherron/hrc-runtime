@@ -12,6 +12,7 @@ export type { ServerLifecycleExecutor } from './server-lifecycle-controller.js'
 export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
 export type { ServerMetricRecord } from './request-metrics.js'
 export { parseDurationMs } from './parsers/common.js'
+export { formatServerLogLine } from './server-log.js'
 export {
   actuatorSplitRuntimeAuthority,
   assertActuatorSplitAdmission,

@@ -17,6 +17,7 @@ import {
 import { createParticipantHostingIntent } from '../participant-hosting-intent.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import { makeParticipantBrokerDescriptor } from './fixtures/participant-broker-descriptor.fixture.js'
+import { type ServerLogCapture, captureServerLog } from './fixtures/server-log.js'
 
 /**
  * T-10794: settling a participant-served broker loss (T-10333) terminated the
@@ -29,23 +30,18 @@ describe('T-10794 a settled participant broker loss settles the attempt too', ()
   let fixture: HrcServerTestFixture
   let sockDir: string
   let servers: HrcServer[] = []
-  let stderrLines: string[] = []
-  const realStderrWrite = process.stderr.write.bind(process.stderr)
+  let serverLog: ServerLogCapture
 
   beforeEach(async () => {
     fixture = await createHrcTestFixture('t10794-broker-gone-')
     // Unix socket paths are length-bounded; keep the endpoint short.
     sockDir = mkdtempSync(join(tmpdir(), 't10794-'))
     servers = []
-    stderrLines = []
-    process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
-      stderrLines.push(String(chunk))
-      return (realStderrWrite as (...args: unknown[]) => boolean)(chunk, ...rest)
-    }) as typeof process.stderr.write
+    serverLog = captureServerLog({ passthrough: true })
   })
 
   afterEach(async () => {
-    process.stderr.write = realStderrWrite
+    serverLog.restore()
     for (const server of servers) await server.stop()
     await fixture.cleanup()
     rmSync(sockDir, { recursive: true, force: true })
@@ -154,7 +150,10 @@ describe('T-10794 a settled participant broker loss settles the attempt too', ()
   }
 
   function logLines(event: string, attemptId: string): string[] {
-    return stderrLines.filter((line) => line.includes(` ${event} `) && line.includes(attemptId))
+    return serverLog
+      .events(event)
+      .map((line) => JSON.stringify(line))
+      .filter((line) => line.includes(attemptId))
   }
 
   function deliveryFor(server: HrcServerInstance, hostSessionId: string) {

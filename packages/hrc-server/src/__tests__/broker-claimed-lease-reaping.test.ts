@@ -17,6 +17,7 @@ import {
 import { createTmuxManager } from '../tmux'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
+import { withServerLog } from './fixtures/server-log'
 
 let fixture: HrcServerTestFixture
 let db: HrcDatabase
@@ -602,31 +603,19 @@ describe('broker IPC directory GC', () => {
   it('releases an external-owner IPC dir past the hold bound with a reason (T-10632 R2)', async () => {
     const abandoned = await seedExpiredExternal('external-expired')
     seedParticipantAttempt('external-expired', 'DETACHED', 'exhausted')
-    const lines: string[] = []
-    const write = process.stderr.write.bind(process.stderr)
-    process.stderr.write = ((chunk: string | Uint8Array) => {
-      lines.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk))
-      return true
-    }) as typeof process.stderr.write
-    let result: Awaited<ReturnType<typeof sweepOrphanedBrokerTmuxLeases>>
-    try {
-      result = await sweepOrphanedBrokerTmuxLeases(
+    const { value: result, log } = await withServerLog(() =>
+      sweepOrphanedBrokerTmuxLeases(
         db,
         fixture.runtimeRoot,
         sweepOptions({ probeBrokerHealth: async () => 'unreachable' })
       )
-    } finally {
-      process.stderr.write = write
-    }
+    )
 
     expect(result.removedBrokerIpcDirs).toBe(1)
     expect(existsSync(abandoned)).toBe(false)
-    const removed = lines
-      .join('')
-      .split('\n')
-      .find((line) => line.includes('orphan_ipc_dir_removed'))
-    expect(removed).toContain('"reason":"external_hold_expired"')
-    expect(removed).toContain('"runtimeId":"external-expired"')
+    const removed = log.events('broker.orphan_ipc_dir_removed')[0]?.data
+    expect(removed?.['reason']).toBe('external_hold_expired')
+    expect(removed?.['runtimeId']).toBe('external-expired')
   })
 
   it('keeps an expired external-owner IPC dir while an attempt can still reattach (T-10632 R2)', async () => {

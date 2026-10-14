@@ -30,6 +30,7 @@ import {
 } from '../wrkq/server-project-events.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { type ServerLogCapture, captureServerLog } from './fixtures/server-log.js'
 
 type Row = {
   hrc_seq: number
@@ -117,25 +118,16 @@ function rejected(message: string): Promise<never> {
 describe('T-08137 daemon lifecycle provenance', () => {
   let fixture: HrcServerTestFixture
   let ledger: FakeWrkqLedger
-  let stderr: string[]
-  let restoreStderr: () => void
+  let serverLog: ServerLogCapture
 
   beforeEach(async () => {
     fixture = await createHrcTestFixture('hrc-t08137-')
     ledger = new FakeWrkqLedger()
-    stderr = []
-    const original = process.stderr.write.bind(process.stderr)
-    process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
-      stderr.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk))
-      return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
-    }) as typeof process.stderr.write
-    restoreStderr = () => {
-      process.stderr.write = original
-    }
+    serverLog = captureServerLog({ passthrough: true })
   })
 
   afterEach(async () => {
-    restoreStderr()
+    serverLog.restore()
     await fixture.cleanup()
   })
 
@@ -171,13 +163,9 @@ describe('T-08137 daemon lifecycle provenance', () => {
   }
 
   function incompleteReasons(): string[][] {
-    return stderr
-      .flatMap((chunk) => chunk.split('\n'))
-      .filter((line) => line.includes(' server.stop.incomplete '))
-      .map((line) => {
-        const json = line.slice(line.indexOf('{'))
-        return (JSON.parse(json) as { reasons: string[] }).reasons
-      })
+    return serverLog
+      .events('server.stop.incomplete')
+      .map((line) => (line.data as { reasons: string[] }).reasons)
   }
 
   it('records started with sentinel identity and full boot provenance', async () => {
@@ -451,10 +439,7 @@ describe('T-08137 daemon lifecycle provenance', () => {
       expect(kinds()).toEqual(['server.started', 'server.shutting_down'])
       expect(incompleteReasons()[0]).toContain('request_drain_timeout')
       // Instrumented: the drain names every request it could not wait out.
-      const drainLine = stderr
-        .flatMap((chunk) => chunk.split('\n'))
-        .find((line) => line.includes(' server.stop.request_drain '))
-      const drain = JSON.parse(drainLine?.slice(drainLine.indexOf('{')) ?? '{}') as {
+      const drain = (serverLog.events('server.stop.request_drain')[0]?.data ?? {}) as {
         stillRunningRequests?: Array<{ method: string; route: string; ageMs: number }>
       }
       expect(drain.stillRunningRequests?.map((r) => `${r.method} ${r.route}`)).toEqual([
@@ -572,7 +557,7 @@ describe('T-08137 daemon lifecycle provenance', () => {
       const before = first.db.wrkqLedgerCursors.get(SERVER_PROJECT_EVENTS_STREAM)
       await first.serverProjectEvents?.drain()
       expect(first.db.wrkqLedgerCursors.get(SERVER_PROJECT_EVENTS_STREAM)).toBe(before)
-      expect(stderr.join('')).toContain('server_project_event.post_failed')
+      expect(serverLog.events('server_project_event.post_failed')).not.toHaveLength(0)
 
       ledger.unavailable = false
       await first.serverProjectEvents?.drain()

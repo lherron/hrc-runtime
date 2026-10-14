@@ -62,7 +62,7 @@ export type SqliteSlowStatementMetricRecord = {
 
 /**
  * One launch phase span, durably recorded so `hrc admin metrics report` can
- * aggregate startup cost. These spans are ALSO written to hrc-server.err.log as
+ * aggregate startup cost. These spans are ALSO written to hrc-server.log as
  * `broker.timing` lines; the log is the human breadcrumb, this is the
  * population. The log rotates, so a grep over it is a lossy sample - anything
  * that needs a p50/p95 must read these records instead.

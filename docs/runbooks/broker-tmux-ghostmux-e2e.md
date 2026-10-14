@@ -18,7 +18,7 @@ daemon while other agents are active or while Lance is away. The scripts expose
 - Runtime root: `/Users/lherron/praesidium/var/run/hrc`
 - Default tmux socket: `/Users/lherron/praesidium/var/run/hrc/tmux.sock`
 - Lease socket root: `/Users/lherron/praesidium/var/run/hrc/btmux/`
-- Daemon logs: `/Users/lherron/praesidium/var/logs/hrc-server.log` and `/Users/lherron/praesidium/var/logs/hrc-server.err.log`
+- Daemon logs: `/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-server.log` and `/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-server.err.log`
 - Monitor dump selectors require `runtime:<runtimeId>` or `scope:<agent>@<project>:<task>`
 - Monitor dump recipe: record `.eventLog.highWaterSeq` from `hrc monitor show --json`, then dump with `hrc monitor watch runtime:<runtimeId> --from-seq <seq> --json`
 

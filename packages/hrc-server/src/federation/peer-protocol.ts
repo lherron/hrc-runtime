@@ -15,6 +15,7 @@ import type {
 } from 'hrc-core'
 import { writeServerLog } from '../server-log.js'
 import type { PeerEntry } from './federation-config.js'
+import { withRequestLog } from './http-request-log.js'
 import { isTailnetHost } from './registry-bind.js'
 
 export type PeerProtocolListenerConfig = {
@@ -688,7 +689,7 @@ export function startPeerProtocolEndpoint(input: {
   const server = Bun.serve({
     hostname: bind.hostname.replace(/^\[|\]$/g, ''),
     port: Number(bind.port),
-    fetch: createPeerProtocolRequestHandler(input.options),
+    fetch: withRequestLog(createPeerProtocolRequestHandler(input.options)),
   })
   return {
     url: input.listener.bind,

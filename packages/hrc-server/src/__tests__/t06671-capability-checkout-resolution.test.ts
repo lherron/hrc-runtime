@@ -20,6 +20,7 @@ import {
   startAspdObservationDouble,
 } from './fixtures/aspd-observation-doubles.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { captureServerLog } from './fixtures/server-log.js'
 
 const SCOPE_REF = 'agent:probe:project:agent-control-plane:task:jobruns-md'
 const UNRESOLVABLE_SCOPE = 'agent:probe:project:unresolvable-project:task:T-06671'
@@ -130,12 +131,7 @@ describe('capability checkout resolution in a launchd-style isolated daemon', ()
     status: number
     refusalLines: string[]
   }> {
-    const captured: string[] = []
-    const original = process.stderr.write.bind(process.stderr)
-    process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
-      captured.push(String(chunk))
-      return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
-    }) as typeof process.stderr.write
+    const captured = captureServerLog({ passthrough: true })
     try {
       const response = await fixture.postJson('/v1/sessions/resolve', {
         sessionRef: `${scopeRef}/lane:main`,
@@ -144,10 +140,12 @@ describe('capability checkout resolution in a launchd-style isolated daemon', ()
       })
       return {
         status: response.status,
-        refusalLines: captured.filter((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)),
+        refusalLines: captured
+          .rawLines()
+          .filter((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)),
       }
     } finally {
-      process.stderr.write = original
+      captured.restore()
     }
   }
 

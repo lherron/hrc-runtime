@@ -19,7 +19,7 @@ procedure — for architecture background see `hrc-runtime/architecture-overview
 
 - Socket: `/Users/lherron/praesidium/var/run/hrc/hrc.sock`
 - State DB: `/Users/lherron/praesidium/var/state/hrc/state.sqlite`
-- Logs: `/Users/lherron/praesidium/var/logs/hrc-server.{log,err.log}`
+- Logs: `/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-server.log` (one JSON object per line: `ts`, `level`, `component`, `event`, `data`; query with `jq`) and `hrc-server.err.log` (crash and runtime noise only)
 - Launchd label: `com.praesidium.hrc-server`
   (plist: `launchd/com.praesidium.hrc-server.plist`, installed to
   `~/Library/LaunchAgents/com.praesidium.hrc-server.plist`)
@@ -325,7 +325,7 @@ just install                         # install hrc-viewer with the HRC release
 just install-hrc-viewer-launchd      # bootstrap/reload the per-user viewer
 launchctl print gui/$(id -u)/com.praesidium.hrc-viewer
 pgrep -fal hrc-viewer                # exactly one process for this GUI user
-tail -f ~/praesidium/var/logs/hrc-viewer.log
+tail -f ~/praesidium/var/logs/agent-control-plane/hrc-viewer.log
 ```
 
 The plist uses the signed `~/.local/bin/praesidium-launch` shim as
@@ -346,7 +346,7 @@ After activation, verify `ghostmux list-surfaces --json` has one pane for every
 attachable `/v1/presentation/runtimes` row whose `viewerRequested` is true. A
 viewer restart must adopt matching panes by their `hrc_runtime_id` metadata; it
 must not duplicate them. Viewer reconciliation events belong in
-`~/praesidium/var/logs/hrc-viewer.log`. New `broker_headless_viewer` events in
+`~/praesidium/var/logs/agent-control-plane/hrc-viewer.log`. New `broker_headless_viewer` events in
 `hrc-server.log` indicate that the retired in-daemon actuator is still active.
 
 ## aspd-prepared Codex route
@@ -390,7 +390,7 @@ calls, see *Zombie sweeper threshold* under [Restart doctrine](#restart-doctrine
 The mail kicker is no longer in this repo. It is now `hrc-mail-injector` in
 agent-control-plane (`packages/hrc-mail-injector`, `src/policy/`), running as its
 own launchd job (`com.praesidium.hrc-mail-injector`). Read its log in
-`var/logs/hrc-mail-injector.log` (`wrkq.kicker.*` events) and its private state,
+`var/logs/hrc-runtime/hrc-mail-injector.log` (`wrkq.kicker.*` events) and its private state,
 including `hrcmail_birth_refusals`, `hrcmail_delivery_intents`, `hrcmail_presentations`
 and `hrcmail_failure_notices`, in
 `var/state/acp/hrc-mail-injector.sqlite` (`HRC_MAIL_INJECTOR_STATE_PATH`). The

@@ -31,6 +31,7 @@ import {
 } from '../request-metrics'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
+import { withServerLog } from './fixtures/server-log'
 
 type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
 
@@ -148,17 +149,7 @@ describe('server request metrics', () => {
 
   test('writes slow SQLite statements to the server log and metrics outside request timing', async () => {
     process.env['HRC_SQLITE_SLOW_STATEMENT_MS'] = '0'
-    const originalWrite = process.stderr.write
-    const logChunks: string[] = []
-    process.stderr.write = ((chunk: string | Uint8Array) => {
-      logChunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
-      return true
-    }) as typeof process.stderr.write
-    try {
-      await startServer()
-    } finally {
-      process.stderr.write = originalWrite
-    }
+    const { log } = await withServerLog(() => startServer())
 
     const sqliteMetrics = (await readServerMetrics()).filter(
       (record) => record.kind === 'sqlite_slow_statement'
@@ -166,8 +157,9 @@ describe('server request metrics', () => {
     expect(sqliteMetrics.length).toBeGreaterThan(0)
     expect(sqliteMetrics[0]?.sql).toBeString()
     expect(sqliteMetrics[0]?.callerTag).toBeString()
-    expect(logChunks.join('')).toContain('WARN sqlite.slow_statement')
-    expect(logChunks.join('')).toContain('"callerTag"')
+    const [slow] = log.events('sqlite.slow_statement')
+    expect(slow?.level).toBe('warn')
+    expect(slow?.data?.['callerTag']).toBeString()
   })
 
   test('normalizes every dynamic route and never emits a concrete unknown path', () => {

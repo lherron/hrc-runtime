@@ -38,7 +38,7 @@ managed by launchd:
 - Launchd label: `com.praesidium.hrc-server` (`ProgramArguments: hrc server serve`)
 - Unix socket: `/Users/lherron/praesidium/var/run/hrc/hrc.sock`
 - State DB: `/Users/lherron/praesidium/var/state/hrc/state.sqlite`
-- Logs: `/Users/lherron/praesidium/var/logs/hrc-server.{log,err.log}`
+- Logs: `/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-server.{log,err.log}`
 
 The daemon exposes a **Unix-socket HTTP API** (`/v1/*`, roughly 120 exact
 routes) and owns: runtime orchestration (headless and tmux), driving the

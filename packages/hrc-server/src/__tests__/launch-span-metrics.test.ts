@@ -1,6 +1,6 @@
 /**
  * T-07706: launch phase spans must land in the durable metrics store, not only
- * in hrc-server.err.log.
+ * in hrc-server.log.
  *
  * The log is a human breadcrumb and it ROTATES, so any p50/p95 computed by
  * grepping it is a lossy sample of an unknown window. These records are the

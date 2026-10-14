@@ -34,9 +34,9 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>__HOME__/praesidium/var/logs/hrc-mail-injector.err.log</string>
+	<string>__HOME__/praesidium/var/logs/hrc-runtime/hrc-mail-injector.err.log</string>
 	<key>StandardOutPath</key>
-	<string>__HOME__/praesidium/var/logs/hrc-mail-injector.log</string>
+	<string>__HOME__/praesidium/var/logs/hrc-runtime/hrc-mail-injector.log</string>
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
 	<key>WorkingDirectory</key>

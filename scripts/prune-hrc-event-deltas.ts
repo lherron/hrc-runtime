@@ -51,27 +51,23 @@ if (import.meta.main) {
             ? await restubToolResults(options)
             : await pruneStateRetention(options)
     console.log(
-      JSON.stringify(
-        {
-          startedAt: options.now.toISOString(),
-          dbPath: options.dbPath,
-          operation: options.operation,
-          applied: options.apply,
-          batchSize: options.batchSize,
-          checkpoint: options.checkpoint,
-          eventRetentionDays: options.eventRetentionDays,
-          runtimeBufferRetentionDays: options.runtimeBufferRetentionDays,
-          incrementalVacuumPages: options.incrementalVacuumPages,
-          deadlineMinutes: options.deadlineMillis / MILLISECONDS_PER_MINUTE,
-          paceMillis: options.paceMillis,
-          maxWriteHoldMillis: options.maxWriteHoldMillis,
-          maxDutyCycle: options.maxDutyCycle,
-          countedEligible: options.countEligible,
-          ...result,
-        },
-        null,
-        2
-      )
+      JSON.stringify({
+        startedAt: options.now.toISOString(),
+        dbPath: options.dbPath,
+        operation: options.operation,
+        applied: options.apply,
+        batchSize: options.batchSize,
+        checkpoint: options.checkpoint,
+        eventRetentionDays: options.eventRetentionDays,
+        runtimeBufferRetentionDays: options.runtimeBufferRetentionDays,
+        incrementalVacuumPages: options.incrementalVacuumPages,
+        deadlineMinutes: options.deadlineMillis / MILLISECONDS_PER_MINUTE,
+        paceMillis: options.paceMillis,
+        maxWriteHoldMillis: options.maxWriteHoldMillis,
+        maxDutyCycle: options.maxDutyCycle,
+        countedEligible: options.countEligible,
+        ...result,
+      })
     )
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))

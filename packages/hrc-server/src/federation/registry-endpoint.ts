@@ -10,6 +10,7 @@ import {
 import { writeServerLog } from '../server-log.js'
 import type { BirthEnvelopeReader } from './birth-designation.js'
 import { BirthEnvelopeUnavailableError, designateBirthOnHost } from './birth-designation.js'
+import { withRequestLog } from './http-request-log.js'
 import type { RegistryListenerConfig } from './registry-bind.js'
 import type { BindingRegistryClient } from './registry-client.js'
 import { createLocalBindingRegistryClient } from './registry-client.js'
@@ -364,13 +365,15 @@ export function startBindingRegistryEndpoint(input: {
     const server = Bun.serve({
       hostname: bind.hostname.replace(/^\[|\]$/g, ''),
       port: Number(bind.port),
-      fetch: createBindingRegistryRequestHandler({
-        registry,
-        peers: input.peers,
-        ...(input.birthEnvelopeFor === undefined
-          ? {}
-          : { birthEnvelopeFor: input.birthEnvelopeFor }),
-      }),
+      fetch: withRequestLog(
+        createBindingRegistryRequestHandler({
+          registry,
+          peers: input.peers,
+          ...(input.birthEnvelopeFor === undefined
+            ? {}
+            : { birthEnvelopeFor: input.birthEnvelopeFor }),
+        })
+      ),
     })
     return {
       url: input.listener.bind,

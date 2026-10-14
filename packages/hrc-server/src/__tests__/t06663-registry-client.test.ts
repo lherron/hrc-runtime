@@ -24,6 +24,7 @@ import {
   federationTestHost,
   selectLiveTailnetTest,
 } from './fixtures/live-tailnet-test.js'
+import { captureServerLog } from './fixtures/server-log.js'
 
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06663'
 const LOCAL_SCOPE = 'agent:cody:project:hrc-runtime:task:T-06668'
@@ -359,7 +360,30 @@ describe('T-06663 real registry endpoint integration', () => {
         { log: () => {} }
       )
 
-      expect(await client.consult(SCOPE)).toEqual({ outcome: 'unbound' })
+      // T-10854 L3: one `http.request` line per request, path without its query.
+      const serverLog = captureServerLog()
+      try {
+        expect(await client.consult(SCOPE)).toEqual({ outcome: 'unbound' })
+        const unknown = await fetch(
+          new URL('/v1/federation/registry/nope', federationTestConfigUrl(endpoint.url)),
+          {
+            headers: { authorization: `Bearer ${TOKEN}` },
+          }
+        )
+        expect(unknown.status).toBe(404)
+      } finally {
+        serverLog.restore()
+      }
+      const requests = serverLog.events('http.request')
+      expect(requests.map((line) => [line.level, line.component, line.data?.['path']])).toEqual([
+        ['warn', 'http', '/v1/federation/registry/consult'],
+        ['warn', 'http', '/v1/federation/registry/nope'],
+      ])
+      expect(requests[0]?.data).toMatchObject({ method: 'GET', status: 404, code: 'unbound' })
+      expect(requests[0]?.data?.['durationMs']).toBeNumber()
+      expect(requests[0]?.data?.['remote']).toBeString()
+      expect(requests[1]?.data).toMatchObject({ status: 404, code: 'not_found' })
+
       const established = await client.establish({
         ...BINDING,
         now: BINDING.updatedAt,

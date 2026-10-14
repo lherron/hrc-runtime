@@ -23,6 +23,7 @@ import {
 } from '../broker/offline-evidence'
 import { sweepOrphanedBrokerTmuxLeases } from '../startup-reconcile/lease-identity'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import { withServerLog } from './fixtures/server-log'
 import { type OfflineRuntime, seedOfflineRuntime } from './fixtures/t08566-offline-reader-double'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -134,20 +135,6 @@ async function dryRunEligibility(
   }
 }
 
-async function captureServerLog<T>(run: () => Promise<T>): Promise<{ value: T; lines: string[] }> {
-  const lines: string[] = []
-  const original = process.stderr.write.bind(process.stderr)
-  process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
-    lines.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk))
-    return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
-  }) as typeof process.stderr.write
-  try {
-    return { value: await run(), lines: lines.join('').split('\n').filter(Boolean) }
-  } finally {
-    process.stderr.write = original
-  }
-}
-
 function sweepOptions() {
   return {
     graceMs: 0,
@@ -255,23 +242,24 @@ describe('T-10632 sweep: R1 release, R3 visibility', () => {
     })
     const young = await seedRevivable('crashed', 6 * DAY_MS)
 
-    const { value: first, lines } = await captureServerLog(sweepOnce)
-    const { lines: secondLines } = await captureServerLog(sweepOnce)
+    const { value: first, log } = await withServerLog(sweepOnce)
+    const { log: secondLog } = await withServerLog(sweepOnce)
 
     expect(first.removedBrokerIpcDirs).toBe(1)
     expect(existsSync(dirname(released.ledgerPath))).toBe(false)
     expect(existsSync(dirname(young.ledgerPath))).toBe(true)
 
-    const expiredLines = [...lines, ...secondLines].filter((line) =>
-      line.includes('retained_evidence.revivable_expired')
-    )
+    const expiredLines = [
+      ...log.events('retained_evidence.revivable_expired'),
+      ...secondLog.events('retained_evidence.revivable_expired'),
+    ]
     expect(expiredLines).toHaveLength(1)
-    expect(expiredLines[0]).toContain(released.runtimeId)
-    expect(expiredLines[0]).toContain('"status":"crashed"')
+    expect(JSON.stringify(expiredLines[0]?.data)).toContain(released.runtimeId)
+    expect(expiredLines[0]?.data?.['status']).toBe('crashed')
 
-    const removed = lines.find((line) => line.includes('broker.orphan_ipc_dir_removed'))
-    expect(removed).toContain('"reason":"revivable_expired"')
-    expect(removed).toContain(released.runtimeId)
+    const removed = log.events('broker.orphan_ipc_dir_removed')[0]?.data
+    expect(removed?.['reason']).toBe('revivable_expired')
+    expect(JSON.stringify(removed)).toContain(released.runtimeId)
   })
 
   test('incomplete and paused outcomes stay held and are summarised', async () => {
@@ -293,14 +281,14 @@ describe('T-10632 sweep: R1 release, R3 visibility', () => {
       })
     )
 
-    const { value, lines } = await captureServerLog(sweepOnce)
+    const { value, log } = await withServerLog(sweepOnce)
 
     expect(value.removedBrokerIpcDirs).toBe(0)
     expect(existsSync(dirname(incomplete.ledgerPath))).toBe(true)
     expect(existsSync(dirname(paused.ledgerPath))).toBe(true)
-    const summary = lines.find((line) => line.includes('broker.ipc_dirs_held_by_outcome'))
+    const summary = log.events('broker.ipc_dirs_held_by_outcome')[0]
     expect(summary).toBeDefined()
-    const payload = JSON.parse(summary!.slice(summary!.indexOf('{'))) as Record<string, number>
+    const payload = summary!.data as Record<string, number>
     expect(payload['count']).toBe(2)
     expect(payload['bytes']).toBeGreaterThan(0)
     expect(payload['oldestAgeMs']).toBeGreaterThanOrEqual(8 * DAY_MS - 60_000)

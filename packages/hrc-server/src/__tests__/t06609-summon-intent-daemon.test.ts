@@ -21,23 +21,9 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { SUMMON_GATE_REFUSAL_EVENT } from '../federation/summon-gate.js'
 import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { captureServerLog } from './fixtures/server-log.js'
 
 const SESSION_REF = 'agent:intenttest:project:hrc-runtime:task:T-06609/lane:main'
-
-function captureServerLog(): { lines: string[]; restore: () => void } {
-  const lines: string[] = []
-  const original = process.stderr.write.bind(process.stderr)
-  process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
-    lines.push(String(chunk))
-    return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
-  }) as typeof process.stderr.write
-  return {
-    lines,
-    restore: () => {
-      process.stderr.write = original
-    },
-  }
-}
 
 async function writeFederationConfig(
   fixture: HrcServerTestFixture,
@@ -66,7 +52,7 @@ describe('summonIntent on a live isolated daemon', () => {
   test('an operator explicit_local reaches the gate as explicit_local', async () => {
     await writeFederationConfig(fixture, { nodeId: 'max3-test', gate: { mode: 'advisory' } })
 
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await createHrcServer(fixture.serverOpts())
     try {
       const response = await fixture.postJson('/v1/sessions/resolve', {
@@ -76,7 +62,7 @@ describe('summonIntent on a live isolated daemon', () => {
       })
       expect(response.status).toBe(200)
 
-      const events = gateEvents(captured.lines)
+      const events = gateEvents(captured.rawLines())
       expect(events.length).toBeGreaterThan(0)
       // The whole chain: HTTP body -> parser -> handleResolveSession -> gate log.
       expect(events[0]!).toContain('"intent":"explicit_local"')
@@ -93,7 +79,7 @@ describe('summonIntent on a live isolated daemon', () => {
     // handleResolveSession with `create: true`; only one is an operator.
     await writeFederationConfig(fixture, { nodeId: 'max3-test', gate: { mode: 'advisory' } })
 
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await createHrcServer(fixture.serverOpts())
     try {
       const response = await fixture.postJson('/v1/sessions/resolve', {
@@ -102,7 +88,7 @@ describe('summonIntent on a live isolated daemon', () => {
       })
       expect(response.status).toBe(200)
 
-      const events = gateEvents(captured.lines)
+      const events = gateEvents(captured.rawLines())
       expect(events.length).toBeGreaterThan(0)
       expect(events[0]!).toContain('"intent":"implicit"')
       // An omission is never upgraded into a placement declaration (§5).
@@ -162,7 +148,7 @@ describe('summonIntent on a live isolated daemon', () => {
 
   test('a dark daemon still accepts and ignores the field', async () => {
     // No federation config: the field is inert but must not break creation.
-    const captured = captureServerLog()
+    const captured = captureServerLog({ passthrough: true })
     const server = await createHrcServer(fixture.serverOpts())
     try {
       const response = await fixture.postJson('/v1/sessions/resolve', {
@@ -173,7 +159,7 @@ describe('summonIntent on a live isolated daemon', () => {
       expect(response.status).toBe(200)
       const body = (await response.json()) as { created: boolean }
       expect(body.created).toBe(true)
-      expect(gateEvents(captured.lines).length).toBe(0)
+      expect(gateEvents(captured.rawLines()).length).toBe(0)
     } finally {
       await server.stop()
       captured.restore()
