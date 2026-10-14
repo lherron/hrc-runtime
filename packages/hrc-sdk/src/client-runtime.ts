@@ -86,6 +86,8 @@ import type {
   RecoverUnstartedRunResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
+  RestartSessionRequest,
+  RestartSessionResponse,
   ResumeAttachedRunRequest,
   ResumeAttachedRunResponse,
   ResumeContinuationRequest,
@@ -613,6 +615,11 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
 
   async clearContext(request: ClearContextRequest): Promise<ClearContextResponse> {
     return this.postJson<ClearContextResponse>('/v1/clear-context', request)
+  }
+
+  /** T-10850: rotate to a fresh generation (no continuation) and relaunch it. */
+  async restartSession(request: RestartSessionRequest): Promise<RestartSessionResponse> {
+    return this.postJson<RestartSessionResponse>('/v1/sessions/restart', request)
   }
 
   async capture(runtimeId: string): Promise<CaptureResponse> {

@@ -17,6 +17,7 @@ import {
   handleGetSessionMetadata,
   handlePatchSessionMetadata,
 } from './session-metadata-handlers.js'
+import { handleRestartSession } from './session-restart.js'
 import { legacyLaunchIngestRetired } from './session-title-helpers.js'
 import {
   handleTranscriptIndexRebuild,
@@ -172,6 +173,8 @@ export function buildExactRouteHandlers(
     [exactRouteKey('POST', '/v1/clear-context')]: (request) => server.handleClearContext(request),
     [exactRouteKey('POST', '/v1/sessions/clear-context')]: (request) =>
       server.handleClearContext(request),
+    [exactRouteKey('POST', '/v1/sessions/restart')]: (request) =>
+      handleRestartSession(server, request),
     [exactRouteKey('POST', '/v1/sessions/drop-continuation')]: (request) =>
       server.handleDropContinuation(request),
     [exactRouteKey('POST', '/v1/sessions/create-successor')]: (request) =>

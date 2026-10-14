@@ -4591,6 +4591,30 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "RestartSessionLaunch",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
+      "hash": "hrc-core|RestartSessionLaunch|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RestartSessionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
+      "hash": "hrc-core|RestartSessionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RestartSessionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
+      "hash": "hrc-core|RestartSessionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "RestartStyle",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-dispatch.ts",

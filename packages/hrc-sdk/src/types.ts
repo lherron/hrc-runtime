@@ -92,6 +92,8 @@ export type {
   CaptureResponse,
   ClearContextRequest,
   ClearContextResponse,
+  RestartSessionRequest,
+  RestartSessionResponse,
   CloseBridgeRequest,
   DeliverBridgeRequest,
   DeliverBridgeResponse,

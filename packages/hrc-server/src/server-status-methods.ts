@@ -361,6 +361,7 @@ export const serverStatusMethods = {
         },
         serverLifecycle: this.lifecycleController.capable,
         selfRestart: true,
+        sessionRestart: true,
         federatedSessionRead: true,
       },
     } satisfies HrcStatusSummaryResponse

@@ -167,6 +167,30 @@ export type ClearContextResponse = {
   priorHostSessionId: string
 }
 
+/**
+ * T-10850 operator restart: rotate to a fresh generation with no continuation
+ * and relaunch it from the inherited intent. Refusals mutate nothing.
+ */
+export type RestartSessionRequest = {
+  hostSessionId: string
+  /** The generation the caller is looking at; a moved head refuses STALE_CONTEXT. */
+  expectedGeneration: number
+  /** Skip only the idle check. Freshness, eligibility and home authority still apply. */
+  force?: boolean | undefined
+}
+
+export type RestartSessionLaunch =
+  | { status: 'started'; runtimeId: string }
+  | { status: 'failed'; code?: string | undefined; message: string }
+
+/** Returned once the rotation commits, whether or not the successor launched. */
+export type RestartSessionResponse = {
+  priorHostSessionId: string
+  hostSessionId: string
+  generation: number
+  launch: RestartSessionLaunch
+}
+
 export type CaptureResponse = {
   text: string
 }

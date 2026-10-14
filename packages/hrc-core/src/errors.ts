@@ -22,6 +22,8 @@ export const HrcErrorCode = {
   CONFLICT: 'stale_context',
   STALE_CONTEXT: 'stale_context',
   RUNTIME_BUSY: 'runtime_busy',
+  /** T-10850: the broker seat could not be observed, so idle cannot be established. */
+  SEAT_UNOBSERVABLE: 'seat_unobservable',
   RUN_MISMATCH: 'run_mismatch',
   MISSING_RUNTIME_INTENT: 'missing_runtime_intent',
   PROVIDER_MISMATCH: 'provider_mismatch',
@@ -200,6 +202,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.UNKNOWN_BRIDGE]: 404,
   [HrcErrorCode.STALE_CONTEXT]: 409,
   [HrcErrorCode.RUNTIME_BUSY]: 409,
+  [HrcErrorCode.SEAT_UNOBSERVABLE]: 409,
   [HrcErrorCode.RUN_MISMATCH]: 409,
   [HrcErrorCode.MISSING_RUNTIME_INTENT]: 422,
   [HrcErrorCode.PROVIDER_MISMATCH]: 422,
@@ -341,6 +344,7 @@ export class HrcConflictError extends HrcDomainError {
       HrcErrorCode,
       | 'stale_context'
       | 'runtime_busy'
+      | 'seat_unobservable'
       | 'run_mismatch'
       | 'app_session_removed'
       | 'reply_to_scope_mismatch'

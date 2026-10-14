@@ -22,6 +22,7 @@ import {
   cmdSurfaceList,
   cmdSurfaceUnbind,
 } from './handlers-control.js'
+import { cmdRestart } from './handlers-restart.js'
 import { cmdRestartMe } from './handlers-restartme.js'
 import {
   cmdLs,
@@ -411,6 +412,18 @@ The output always names the resolved kind and the concrete ID(s).
     })
 
   program
+    .command('restart')
+    .description(
+      "end a scope's conversation and relaunch it fresh (generation+1, no continuation); refuses a busy seat"
+    )
+    .argument('<scope>', 'agent scope (agent@project[:task])')
+    .option('--force', 'restart even when the seat is busy or cannot be observed')
+    .option('--json', 'output as JSON')
+    .action(async (target, opts) => {
+      await cmdRestart(String(target), { force: opts.force === true, json: opts.json === true })
+    })
+
+  program
     .command('restartme')
     .description(
       'restart this agent into a fresh context when the current turn ends (needs a pending wrkq handoff)'
@@ -718,6 +731,16 @@ The output always names the resolved kind and the concrete ID(s).
       example: 'hrc peek cody@hrc-runtime:T-07011 --lines 40',
       exitCodes: '0 captured; 2 usage; 1 no bound runtime',
       output: 'the pane text as captured; --json wraps it with capture metadata',
+    },
+  })
+  annotateTop(program, 'restart', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc restart clod@hrc-ios:T-10850',
+      exitCodes:
+        '0 restarted and launched; 1 refused (busy, unobservable, stale, not restartable) or launch failed; 2 usage',
+      output:
+        'old → new generation and the launched runtime; a refusal changes nothing; a failed launch prints the hrc start recovery',
     },
   })
   annotateTop(program, 'restartme', {
