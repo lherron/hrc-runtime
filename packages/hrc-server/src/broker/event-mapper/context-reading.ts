@@ -42,6 +42,56 @@ export function projectCompletedTurnContextReading(
   const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
   if (runtime === null || runtime.generation !== ctx.generation) return undefined
 
+  return persistContextReading(db, reading, ctx, now)
+}
+
+/**
+ * Claude's statusline can publish its final reading just after the terminal
+ * envelope. Project that reading from its own durable envelope, but only when
+ * the invocation is between turns; a reading during the next turn remains
+ * durable evidence for that turn's terminal projection.
+ */
+export function projectPostTurnContextReading(
+  db: HrcDatabase,
+  envelope: InvocationEventEnvelope,
+  ctx: ProjectionContext,
+  now: string
+): HrcLifecycleEvent | undefined {
+  if (envelope.type !== 'usage.updated') return undefined
+
+  const invocation = db.brokerInvocations.getByInvocationId(envelope.invocationId)
+  if (invocation === null || invocationHasActiveTurn(invocation.invocationState)) return undefined
+
+  const turnId =
+    typeof envelope.turnId === 'string'
+      ? envelope.turnId
+      : lastCompletedTurnId(db, String(envelope.invocationId), envelope.seq)
+  if (turnId === undefined) return undefined
+
+  const reading = parseReading(
+    JSON.stringify(envelope.payload ?? null),
+    turnId,
+    envelope.time ?? now
+  )
+  if (reading === undefined) return undefined
+
+  const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
+  if (runtime === null || runtime.generation !== ctx.generation) return undefined
+
+  return persistContextReading(db, reading, ctx, now)
+}
+
+function persistContextReading(
+  db: HrcDatabase,
+  reading: RuntimeContextReading,
+  ctx: ProjectionContext,
+  now: string
+): HrcLifecycleEvent {
+  const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
+  if (runtime === null) {
+    throw new Error(`runtime disappeared while persisting context reading: ${ctx.runtimeId}`)
+  }
+
   db.runtimes.update(ctx.runtimeId, {
     runtimeStateJson: {
       ...(runtime.runtimeStateJson ?? {}),
@@ -66,6 +116,53 @@ export function projectCompletedTurnContextReading(
       ...(reading.model !== undefined ? { model: reading.model } : {}),
     },
   })
+}
+
+function invocationHasActiveTurn(invocationState: string): boolean {
+  return invocationState === 'turn_active' || invocationState === 'awaiting_input'
+}
+
+function lastCompletedTurnId(
+  db: HrcDatabase,
+  invocationId: string,
+  beforeSeq: number
+): string | undefined {
+  const completed = db.brokerInvocationEvents
+    .listByInvocationIdAndTypes({
+      invocationId,
+      types: ['turn.completed'],
+      throughSeq: beforeSeq - 1,
+    })
+    .at(-1)
+  if (completed === undefined) return undefined
+
+  return (
+    turnIdFromPersistedEnvelope(completed.brokerEnvelopeJson) ??
+    turnIdFromPayload(completed.brokerEventJson)
+  )
+}
+
+function turnIdFromPersistedEnvelope(brokerEnvelopeJson: string | undefined): string | undefined {
+  if (brokerEnvelopeJson === undefined) return undefined
+  try {
+    const envelope = JSON.parse(brokerEnvelopeJson)
+    return isRecord(envelope) && typeof envelope['turnId'] === 'string'
+      ? envelope['turnId']
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function turnIdFromPayload(brokerEventJson: string): string | undefined {
+  try {
+    const payload = JSON.parse(brokerEventJson)
+    return isRecord(payload) && typeof payload['turnId'] === 'string'
+      ? payload['turnId']
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function terminalTurnId(envelope: InvocationEventEnvelope): string | undefined {
