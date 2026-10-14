@@ -1,0 +1,48 @@
+id: hrc-runtime.runtime-context-reading
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: context readings at completed turns and their persisted runtime projection
+predicate: >
+  During projection of a committed broker turn.completed at sequence T, HRC
+  reads the latest stored usage.updated for that invocation below T whose
+  payload carries normalized context. If such a sample exists, HRC appends
+  one canonical context event carrying turnId, usedTokens, optional
+  windowTokens, and optional model. The turnId names the completed reading
+  boundary, not the sample's originating model call. Sample turn identity
+  need not match, and no sampleSeq is required in the public event. No sample
+  produces no event. Failed and interrupted turns and mid-turn usage produce
+  no context event. In the same projection transaction HRC stores the latest
+  reading with turnId, usedTokens, optional windowTokens, optional model, and
+  observedAt on the runtime record and exposes it through its existing
+  status/session listing. The persisted reading survives HRC restart and
+  broker invocation retirement while that runtime record remains. The event,
+  reading, projection disposition, and cursor commit atomically; duplicate
+  projection leaves the reading unchanged and emits no second event. This
+  projection remains subject to hrc-runtime.harness-broker-committed-observation-control,
+  including existing historical ownership, stale-generation, participant,
+  and retained-evidence fences; it grants no historical recovery authority
+  to write current runtime state. There is no backfill. HRC owns field
+  placement and naming. ASP owns normalized context evidence; ACP pass-through
+  and client presentation remain separate consumer work.
+authority: Daedalus approval of wrkq:T-10927 specification etag 6, resubmitted in EN-29763, 2026-10-14; event reading semantics approved at etag 5 in EN-29759
+source:
+  - wrkq:T-10927
+  - wrkc:EN-29763
+  - wrkc:EN-29759
+  - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
+  - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
+  - packages/hrc-server/src/broker/event-mapper.ts
+  - packages/hrc-server/src/broker/event-mapper/project-envelope.ts
+  - packages/hrc-server/src/broker/event-mapper/state-projection.ts
+  - packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts
+validation_scope: >
+  Requester acceptance covers context events on live codex-app-server and
+  claude-code-tmux seats and the persisted reading appearing for an idle runtime
+  in the status/session listing after an HRC restart. A projection unit test
+  exercises a previously stored sample with no prior in-memory state and
+  repeated terminal projection producing one event with an unchanged persisted
+  reading. A live mid-turn HRC restart is outside this scope. No implementation
+  or service-health result is established by this design review.
+last_verified: 2026-10-14 source-grounded design approval only; implementation and acceptance pending
+reopen_when: Reading semantics, persisted-state lifetime, sample selection, transaction or replay boundary, runtime-write authority, event payload, or consumer authority changes.
