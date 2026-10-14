@@ -377,11 +377,13 @@ describe('lastActivityAt is qualifying agent/turn activity, not row mutation tim
       const inspect = (await response.json()) as InspectRuntimeResponse
       expect(inspect.lastActivityAt).toBe(OLD_ACTIVITY)
       expect(typeof inspect.lastActivityAgeSec).toBe('number')
+      expect(inspect.contextReading).toBeNull()
       expect(Object.keys(inspect).sort()).toEqual(
         [
           'activeInvocationId',
           'activeOperationId',
           'activeRunId',
+          'contextReading',
           'continuation',
           'continuationKey',
           'continuationStale',
