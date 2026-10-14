@@ -44,6 +44,11 @@ function settled(): ProjectionEvents {
   return [
     {
       hrcSeq: 10,
+      streamSeq: 10,
+      scopeRef: 'agent:t10841',
+      laneRef: 'main',
+      generation: 1,
+      replayed: false,
       ts: '2026-10-13T20:00:00.000Z',
       hostSessionId: HOST,
       runtimeId: RUNTIME,
@@ -57,7 +62,7 @@ function settled(): ProjectionEvents {
         cause: 'idle-seat',
       },
     },
-  ] as unknown as ProjectionEvents
+  ]
 }
 
 describe('T-10841 runtime.settled monitor projection', () => {

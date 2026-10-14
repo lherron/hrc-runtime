@@ -20,7 +20,6 @@ import {
   registerDirectParticipant,
 } from '../participant-host-registration.js'
 import { hashRegistrationCredential } from '../registration-handlers.js'
-import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import { withServerLog } from './fixtures/server-log.js'
 
@@ -179,7 +178,8 @@ describe('T-10829 gate 2a: operator evict of an external participant', () => {
   })
 
   test('POST /v1/terminate evicts, fails the run, drops the pointer and leaves the projection', async () => {
-    const internal = server as unknown as HrcServerInstanceForHandlers
+    if (!(server instanceof HrcServerInstance)) throw new Error('expected a real HRC server')
+    const internal = server
     const db = (server as HrcServerInstance).db
     const now = fixture.now()
     const grant: ExternalRegistrationGrant = {

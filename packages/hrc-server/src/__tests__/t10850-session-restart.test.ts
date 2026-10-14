@@ -109,10 +109,15 @@ function seat(
     createdAt: NOW,
     updatedAt: NOW,
     continuation: { provider: 'anthropic', key: 'claude-session-prior' },
-    ...(options.intent === false
-      ? {}
-      : { lastAppliedIntentJson: INTENT as unknown as HrcRuntimeIntent }),
   })
+  // Preserve the incomplete persisted intent this restart fixture exercises;
+  // it is JSON in the store, not a valid intent for a real harness launch.
+  if (options.intent !== false) {
+    node.server.db.sqlite.run(
+      'UPDATE sessions SET last_applied_intent_json = ? WHERE host_session_id = ?',
+      [JSON.stringify(INTENT), hostSessionId]
+    )
+  }
   node.server.db.continuities.upsert({
     scopeRef: SCOPE,
     laneRef: 'main',
