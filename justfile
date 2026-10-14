@@ -504,6 +504,29 @@ launchd-install injector-version:
     domain="gui/$(id -u)"
     mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs/hrc-runtime"
     esc() { printf '%s' "$1" | sed 's/[\/&|]/\\&/g'; }
+    env_keys() { plutil -extract EnvironmentVariables json -o - "$1" 2>/dev/null | jq -r 'keys[]' | sort || true; }
+    # Installed plists can carry node-local env the repo template lacks (max3's
+    # hrc-server holds its aspd socket, node id, ingest port and kicker flag
+    # there). A render would silently drop them and break the node, so refuse
+    # before writing anything and name the keys (T-10854).
+    refused=0
+    for src in "$repo"/launchd/*.plist; do
+      label="$(basename "$src" .plist)"
+      [[ "$label" == com.praesidium.hrc-mail-injector ]] && continue
+      dst="$HOME/Library/LaunchAgents/${label}.plist"
+      [[ -f "$dst" ]] || continue
+      sed -e "s|/Users/lherron|$(esc "$HOME")|g" "$src" > "$dst.next"
+      dropped="$(comm -23 <(env_keys "$dst") <(env_keys "$dst.next") | paste -sd ' ' -)"
+      rm "$dst.next"
+      if [[ -n "$dropped" ]]; then
+        printf '[launchd] REFUSED %s: installed EnvironmentVariables carry keys the repo plist lacks: %s\n' "$label" "$dropped" >&2
+        refused=1
+      fi
+    done
+    if (( refused )); then
+      echo '[launchd] add those keys to launchd/*.plist, or edit the installed plist in place; nothing was changed' >&2
+      exit 1
+    fi
     for src in "$repo"/launchd/*.plist; do
       label="$(basename "$src" .plist)"
       [[ "$label" == com.praesidium.hrc-mail-injector ]] && continue
@@ -514,7 +537,7 @@ launchd-install injector-version:
       rm "$dst.next"
       if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$dst"; fi
       if [[ "$label" == com.praesidium.hrc-server ]] && launchctl print "$domain/$label" >/dev/null 2>&1; then
-        echo "[launchd] ${label} remains loaded; activation belongs to hrc server restart"
+        echo "[launchd] ${label} remains loaded; a restart keeps the loaded definition, so activate the new plist with hrc server stop --reason ... then launchctl bootstrap ${domain} ${dst}"
         continue
       fi
       launchctl bootout "$domain/$label" 2>/dev/null || true

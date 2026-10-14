@@ -29,6 +29,7 @@
 	<array>
 		<string>__BUNX__</string>
 		<string>--bun</string>
+		<string>--silent</string>
 		<string>hrc-mail-injector@__VERSION__</string>
 	</array>
 	<key>RunAtLoad</key>
