@@ -26,6 +26,7 @@ import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
 import { terminalizeWithdrawnAcceptedRun } from '../../accepted-run-recovery.js'
 import { isRetryableInvocationFailure } from '../invocation-failure'
+import { projectCompletedTurnContextReading } from './context-reading'
 import {
   type BrokerProjectionResult,
   type DerivedTurnDescriptor,
@@ -271,6 +272,13 @@ export const projectEnvelopeMethods = {
       stale || isRetryableInvocationFailure(persistedEnvelope)
         ? undefined
         : emitLifecycleEvent(db, persistedEnvelope, ctx, now)
+    // The reading belongs to a successfully committed live terminal projection.
+    // It is intentionally derived from the stored usage sample, never mapper
+    // memory, so a restart between sample and terminal preserves the result.
+    const contextReadingEvent =
+      !stale && !participantFenced && ctx.evidenceOrigin === undefined
+        ? projectCompletedTurnContextReading(db, persistedEnvelope, ctx, now)
+        : undefined
     if (!stale && format2TurnStart?.minted) {
       this.finalizeFormat2TurnStart(format2TurnStart, ctx, lifecycleEvent, now)
     }
@@ -321,6 +329,7 @@ export const projectEnvelopeMethods = {
       events: [],
       lifecycleEvents: [
         ...(lifecycleEvent ? [lifecycleEvent] : []),
+        ...(contextReadingEvent ? [contextReadingEvent] : []),
         ...(withdrawnRecoveryEvent ? [withdrawnRecoveryEvent] : []),
         ...this.pendingInputEvents,
         ...derived,

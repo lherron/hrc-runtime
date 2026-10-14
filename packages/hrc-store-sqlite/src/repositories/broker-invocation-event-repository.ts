@@ -470,6 +470,32 @@ export class BrokerInvocationEventRepository {
   }
 
   /**
+   * Latest normalized context sample before a terminal broker envelope. The
+   * lookup intentionally stays in the durable invocation ledger: a daemon
+   * restart after the usage sample but before turn completion must produce the
+   * same terminal projection without relying on mapper memory.
+   */
+  findLatestUsageWithContextBefore(
+    invocationId: string,
+    beforeSeq: number
+  ): HrcBrokerInvocationEventRecord | null {
+    const row = this.db
+      .query<BrokerInvocationEventRow, [string, number]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+          INDEXED BY idx_broker_invocation_events_invocation_type_seq
+          WHERE invocation_id = ?
+            AND type = 'usage.updated'
+            AND seq < ?
+            AND CASE WHEN json_valid(broker_event_json)
+              THEN json_type(broker_event_json, '$.context') END = 'object'
+          ORDER BY seq DESC
+          LIMIT 1`
+      )
+      .get(invocationId, beforeSeq)
+    return row ? this.mapRow(row) : null
+  }
+
+  /**
    * The invocation's rows of the given types, in seq order, for decisions that
    * read identity fields only (T-08781). Rows are NOT hydrated: a spilled tool
    * result stays a descriptor.
