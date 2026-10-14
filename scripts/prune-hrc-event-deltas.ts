@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { formatServerLogLine } from '../packages/hrc-server/src/server-log.ts'
 import { parsePruneStateRetentionArgs } from './prune-hrc-event-deltas/args.ts'
 import {
   MILLISECONDS_PER_MINUTE,
@@ -39,6 +40,8 @@ export {
   pruneStateRetention,
 } from './prune-hrc-event-deltas/prune-state-retention.ts'
 
+const PRUNE_LOG_COMPONENT = 'hrc-prune-deltas'
+
 if (import.meta.main) {
   try {
     const options = parsePruneStateRetentionArgs(Bun.argv.slice(2))
@@ -50,27 +53,40 @@ if (import.meta.main) {
           : options.operation === RESTUB_TOOL_RESULTS_OPERATION
             ? await restubToolResults(options)
             : await pruneStateRetention(options)
-    console.log(
-      JSON.stringify({
-        startedAt: options.now.toISOString(),
-        dbPath: options.dbPath,
-        operation: options.operation,
-        applied: options.apply,
-        batchSize: options.batchSize,
-        checkpoint: options.checkpoint,
-        eventRetentionDays: options.eventRetentionDays,
-        runtimeBufferRetentionDays: options.runtimeBufferRetentionDays,
-        incrementalVacuumPages: options.incrementalVacuumPages,
-        deadlineMinutes: options.deadlineMillis / MILLISECONDS_PER_MINUTE,
-        paceMillis: options.paceMillis,
-        maxWriteHoldMillis: options.maxWriteHoldMillis,
-        maxDutyCycle: options.maxDutyCycle,
-        countedEligible: options.countEligible,
-        ...result,
-      })
+    // One L2 line per run (logging standard); the report is the `data` object.
+    process.stdout.write(
+      formatServerLogLine(
+        'info',
+        'prune.report',
+        {
+          startedAt: options.now.toISOString(),
+          dbPath: options.dbPath,
+          operation: options.operation,
+          applied: options.apply,
+          batchSize: options.batchSize,
+          checkpoint: options.checkpoint,
+          eventRetentionDays: options.eventRetentionDays,
+          runtimeBufferRetentionDays: options.runtimeBufferRetentionDays,
+          incrementalVacuumPages: options.incrementalVacuumPages,
+          deadlineMinutes: options.deadlineMillis / MILLISECONDS_PER_MINUTE,
+          paceMillis: options.paceMillis,
+          maxWriteHoldMillis: options.maxWriteHoldMillis,
+          maxDutyCycle: options.maxDutyCycle,
+          countedEligible: options.countEligible,
+          ...result,
+        },
+        PRUNE_LOG_COMPONENT
+      )
     )
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error))
+    process.stdout.write(
+      formatServerLogLine(
+        'error',
+        'prune.failed',
+        { message: error instanceof Error ? error.message : String(error) },
+        PRUNE_LOG_COMPONENT
+      )
+    )
     process.exit(1)
   }
 }

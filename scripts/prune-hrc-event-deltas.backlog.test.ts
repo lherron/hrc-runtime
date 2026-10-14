@@ -9,6 +9,7 @@ import {
   insertHrcEvent,
   makeStore,
   parsePruneStateRetentionArgs,
+  parseScriptLog,
   pruneOptions,
   pruneStateRetention,
   runScript,
@@ -84,7 +85,7 @@ describe('prune-hrc-event-deltas keeps non-delta events indefinitely', () => {
 
     const result = runScript(path, '--apply', '--event-retention-days', '0.0001')
     expect(result.exitCode).toBe(0)
-    const report = JSON.parse(result.stdout)
+    const report = parseScriptLog(result.stdout)
     expect(report.tables.events.stopReason).toBe('skipped')
     expect(report.deleted).toBe(0)
 

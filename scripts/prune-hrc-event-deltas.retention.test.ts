@@ -16,6 +16,7 @@ import {
   makeProductStore,
   makeStore,
   parsePruneStateRetentionArgs,
+  parseScriptLog,
   pruneOptions,
   pruneStateRetention,
   runScript,
@@ -300,7 +301,7 @@ describe('prune-hrc-event-deltas bounded state retention', () => {
     )
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
-    const report = JSON.parse(result.stdout)
+    const report = parseScriptLog(result.stdout)
     expect(report.eventRetentionDays).toBe(5)
     expect(report.runtimeBufferRetentionDays).toBe(2)
     expect(report.tables).toHaveProperty('hrc_events')
@@ -308,6 +309,7 @@ describe('prune-hrc-event-deltas bounded state retention', () => {
 
     const missing = runScript(join(tmpdir(), 'hrc-retention-missing', 'state.sqlite'))
     expect(missing.exitCode).not.toBe(0)
-    expect(missing.stderr).toMatch(/does not exist/i)
+    expect(missing.stderr).toBe('')
+    expect(parseScriptLog(missing.stdout, 'prune.failed').message).toMatch(/does not exist/i)
   })
 })

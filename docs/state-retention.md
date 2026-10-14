@@ -14,6 +14,9 @@ the scheduled job (Lance ruling, 2026-07-28). Only completed-run rows in
 runs `scripts/prune-hrc-event-deltas.ts` nightly; the filename and job label are
 retained for installation compatibility even though the script now enforces
 general state retention rather than delta-only retention.
+Each run prints one logging-standard line to `hrc-prune-deltas.log`: event
+`prune.report` with the report fields under `data`, or `prune.failed` (level
+`error`, `data.message`) with exit 1.
 
 The policy is enforced by the tool, not merely by the launchd arguments. The
 script prunes `runtime_buffers` only unless an operator names event tables

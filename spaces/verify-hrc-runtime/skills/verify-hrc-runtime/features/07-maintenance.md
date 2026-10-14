@@ -51,7 +51,7 @@ hv run <task> -- hrc runtime sweep --dry-run --json
 hv run <task> -- hrc runtime prune --dry-run --older-than 1s --status terminated --json   # lists the terminated runtime
 hrc runtime sweep --dry-run --json | tail -1                  # live, read-only
 hrc admin worktrees audit --json | jq -c keys
-cd ~/praesidium/hrc-runtime && bun scripts/prune-hrc-event-deltas.ts --db /tmp/hv/<task>/state/state.sqlite | jq -c .
+cd ~/praesidium/hrc-runtime && bun scripts/prune-hrc-event-deltas.ts --db /tmp/hv/<task>/state/state.sqlite | jq -c .data
 launchctl print gui/$(id -u)/com.praesidium.hrc-prune-deltas | grep -E 'state|last exit|runs'
 ```
 

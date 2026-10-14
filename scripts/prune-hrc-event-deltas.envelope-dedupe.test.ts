@@ -4,6 +4,7 @@ import {
   Database,
   makeStore,
   parsePruneStateRetentionArgs,
+  parseScriptLog,
   runScript,
   stripEnvelopePayloads,
 } from './prune-hrc-event-deltas.fixture'
@@ -74,7 +75,7 @@ describe('prune-hrc-event-deltas envelope payload dedupe', () => {
 
     const dryRun = runScript(path, '--strip-envelope-payloads', '--count-eligible')
     expect(dryRun.exitCode).toBe(0)
-    expect(JSON.parse(dryRun.stdout)).toMatchObject({
+    expect(parseScriptLog(dryRun.stdout)).toMatchObject({
       operation: 'strip-envelope-payloads',
       applied: false,
       eligibleCount: 3,
@@ -93,7 +94,7 @@ describe('prune-hrc-event-deltas envelope payload dedupe', () => {
       '0'
     )
     expect(applied.exitCode).toBe(0)
-    expect(JSON.parse(applied.stdout)).toMatchObject({
+    expect(parseScriptLog(applied.stdout)).toMatchObject({
       operation: 'strip-envelope-payloads',
       eligibleCount: 3,
       stripped: 3,
@@ -127,7 +128,7 @@ describe('prune-hrc-event-deltas envelope payload dedupe', () => {
       '0'
     )
     expect(repeated.exitCode).toBe(0)
-    expect(JSON.parse(repeated.stdout)).toMatchObject({
+    expect(parseScriptLog(repeated.stdout)).toMatchObject({
       stripped: 0,
       remainingEligibleCount: 0,
     })

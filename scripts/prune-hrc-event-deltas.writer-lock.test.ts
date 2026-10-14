@@ -9,6 +9,7 @@ import {
   insertEvent,
   makeStore,
   parsePruneStateRetentionArgs,
+  parseScriptLog,
   pruneOptions,
   pruneStateRetention,
   runScript,
@@ -277,7 +278,7 @@ describe('prune-hrc-event-deltas writer-lock guards', () => {
 
     const result = runScript(path, '--apply', '--pace-millis', '0', '--deadline-minutes', '5')
     expect(result.exitCode).toBe(0)
-    const report = JSON.parse(result.stdout)
+    const report = parseScriptLog(result.stdout)
     expect(report.deadlineMinutes).toBe(5)
     expect(report.paceMillis).toBe(0)
     expect(report.countedEligible).toBe(false)

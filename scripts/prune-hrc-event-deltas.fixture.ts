@@ -6,7 +6,7 @@ import { Database } from 'bun:sqlite'
 import { openHrcDatabase } from '../packages/hrc-store-sqlite/src/database'
 
 export { Database }
-import { afterEach } from 'bun:test'
+import { afterEach, expect } from 'bun:test'
 
 export {
   createPurgePlans,
@@ -254,6 +254,17 @@ export function pruneOptions(path: string, apply: boolean, batchSize = 10_000) {
     firstTurnBundleTtlDays: 14,
     now: NOW,
   }
+}
+
+// The script prints one L2 log line per run; tests read the report from `data`.
+export function parseScriptLog(stdout: string, event = 'prune.report') {
+  const lines = stdout.trimEnd().split('\n')
+  expect(lines).toHaveLength(1)
+  const line = JSON.parse(lines[0] ?? '')
+  expect(line).toMatchObject({ component: 'hrc-prune-deltas', event })
+  expect(typeof line.ts).toBe('string')
+  expect(line.level).toBe(event === 'prune.report' ? 'info' : 'error')
+  return line.data
 }
 
 export function runScript(path: string, ...args: string[]): ScriptResult {
