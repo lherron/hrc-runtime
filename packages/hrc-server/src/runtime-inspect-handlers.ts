@@ -17,6 +17,7 @@ import {
   projectBrokerDispatchInspectView,
   recordAuthorityDisagreement,
 } from './broker/dispatch-observability.js'
+import { readRuntimeContextReading } from './broker/event-mapper/context-reading.js'
 import { canOperatorAttach, projectBrokerHostingState } from './broker/runtime-hosting.js'
 import { extractFullRuntimeControlState } from './broker/runtime-state.js'
 import { readReportedModelIdentity } from './reported-model.js'
@@ -137,6 +138,7 @@ export async function handleInspectRuntime(
     harness: runtime.harness,
     provider: runtime.provider,
     reportedModel: readReportedModelIdentity(runtime.runtimeStateJson),
+    contextReading: readRuntimeContextReading(runtime.runtimeStateJson),
     status: runtime.status,
     createdAt: runtime.createdAt,
     createdAgeSec: Number.isFinite(createdAtMs)

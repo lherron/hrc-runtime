@@ -311,6 +311,14 @@ export type InspectRuntimeResponse = {
    * `provider` above stays the HRC harness-family label, not the model provider.
    */
   reportedModel: HrcReportedModelIdentity | null
+  /** Latest completed-turn context reading persisted on this runtime. */
+  contextReading: {
+    turnId: string
+    usedTokens: number
+    windowTokens?: number | undefined
+    model?: HrcReportedModelIdentity | undefined
+    observedAt: string
+  } | null
   status: HrcRuntimeStatus
   createdAt: string
   createdAgeSec: number

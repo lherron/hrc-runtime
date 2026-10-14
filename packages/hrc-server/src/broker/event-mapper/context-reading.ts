@@ -102,6 +102,27 @@ function parseReading(
   }
 }
 
+/** Read only a validated persisted value; malformed historical JSON is absent. */
+export function readRuntimeContextReading(
+  runtimeStateJson: Record<string, unknown> | undefined
+): RuntimeContextReading | null {
+  const value = runtimeStateJson?.[CONTEXT_READING_STATE_KEY]
+  if (!isRecord(value)) return null
+  if (typeof value['turnId'] !== 'string' || value['turnId'].trim().length === 0) return null
+  if (!isNonNegativeInteger(value['usedTokens'])) return null
+  if (typeof value['observedAt'] !== 'string' || value['observedAt'].trim().length === 0)
+    return null
+  if (value['windowTokens'] !== undefined && !isPositiveInteger(value['windowTokens'])) return null
+  if (value['model'] !== undefined && !isReportedModelIdentity(value['model'])) return null
+  return {
+    turnId: value['turnId'],
+    usedTokens: value['usedTokens'],
+    ...(value['windowTokens'] !== undefined ? { windowTokens: value['windowTokens'] } : {}),
+    ...(value['model'] !== undefined ? { model: value['model'] } : {}),
+    observedAt: value['observedAt'],
+  }
+}
+
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }

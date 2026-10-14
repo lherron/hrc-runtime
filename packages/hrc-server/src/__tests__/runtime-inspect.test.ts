@@ -435,6 +435,35 @@ describe('POST /v1/runtimes/inspect', () => {
     expect(body.reportedModel).toBeNull()
   })
 
+  it('returns the persisted terminal context reading (T-10928)', async () => {
+    fixture.seedSession('hsid-inspect-context-reading', 'inspect-context-reading')
+    seedRuntime({
+      runtimeId: 'rt-inspect-context-reading',
+      hostSessionId: 'hsid-inspect-context-reading',
+      scopeRef: 'inspect-context-reading',
+      transport: 'headless',
+      controllerKind: 'harness-broker',
+      runtimeStateJson: {
+        contextReading: {
+          turnId: 'turn-context-reading',
+          usedTokens: 45_819,
+          windowTokens: 258_400,
+          model: { id: 'gpt-5.6-terra', source: 'provider-response' },
+          observedAt: '2026-10-14T12:58:03.545Z',
+        },
+      },
+    })
+
+    const body = await inspectRuntimeJson('rt-inspect-context-reading')
+    expect(body.contextReading).toEqual({
+      turnId: 'turn-context-reading',
+      usedTokens: 45_819,
+      windowTokens: 258_400,
+      model: { id: 'gpt-5.6-terra', source: 'provider-response' },
+      observedAt: '2026-10-14T12:58:03.545Z',
+    })
+  })
+
   it('returns top-level age fields that increase monotonically', async () => {
     const createdAt = new Date(Date.now() - 30_000).toISOString()
     const lastActivityAt = new Date(Date.now() - 10_000).toISOString()
