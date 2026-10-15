@@ -18,6 +18,7 @@ import type { ParticipantBrokerDescriptor } from 'spaces-runtime-contracts'
 import { runtimeHarness } from './broker/runtime-state.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { parseParticipantBrokerDescriptor } from './participant-broker-descriptor.js'
+import { settleParticipantBrokerLoss } from './participant-broker-gone.js'
 import {
   connectParticipantBroker,
   installAndHelloParticipantBrokerDetails,
@@ -841,6 +842,26 @@ export function scheduleParticipantEstablishment(
       server.participantEstablishmentOperations.delete(attempt.attemptId)
       if (retry?.establishmentWorkState === 'retry_wait' && !server.stopping) {
         scheduleParticipantEstablishment(server, registration, retry)
+      }
+      // T-10980: a reconnect that spent its budget on a participant-served host
+      // gets the T-10333 settle; it re-dials and terminates only a dead socket.
+      if (
+        retry?.establishmentWorkState === 'exhausted' &&
+        retry.state === 'DETACHED' &&
+        retry.initialActivationConfirmedAt !== undefined &&
+        registration.join === 'participant-served' &&
+        !server.stopping
+      ) {
+        void settleParticipantBrokerLoss(server, {
+          runtimeId: retry.runtimeId,
+          invocationId: retry.invocationId,
+          code: 'participant_reconnect_exhausted',
+        }).catch((error: unknown) => {
+          writeServerLog('WARN', 'participant.broker_lost.settle_failed', {
+            runtimeId: retry?.runtimeId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
       }
     })
   server.participantEstablishmentOperations.set(attempt.attemptId, operation)

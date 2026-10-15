@@ -601,6 +601,27 @@ export class ParticipantRegistrationRepository {
    * unreachable across a restart -- the recovery existed and nothing ever
    * handed it the row.
    */
+  /**
+   * T-10980: activated attempts whose reconnect cycle spent its budget. Boot
+   * reconnect arms ACTIVE -> DETACHED before dialing, so a host that died while
+   * HRC was down ends here, current epoch only, with its runtime still live.
+   */
+  listExhaustedReconnects(): ParticipantAttempt[] {
+    return this.db
+      .query<ParticipantAttemptRow, []>(
+        `SELECT ${ATTEMPT_COLUMNS} FROM participant_registration_attempts a
+         WHERE a.state = 'DETACHED' AND a.establishment_work_state = 'exhausted'
+           AND a.initial_activation_confirmed_at IS NOT NULL
+           AND a.attach_epoch = (
+             SELECT MAX(b.attach_epoch) FROM participant_registration_attempts b
+              WHERE b.registration_id = a.registration_id
+           )
+         ORDER BY a.updated_at`
+      )
+      .all()
+      .map(mapAttempt)
+  }
+
   listActivatedAttempts(): ParticipantAttempt[] {
     return this.db
       .query<ParticipantAttemptRow, []>(

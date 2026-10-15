@@ -99,6 +99,7 @@ import {
   type ParticipantAttachHandlersMethods,
   participantAttachHandlersMethods,
 } from './participant-attach-handlers.js'
+import { settleExhaustedParticipantReconnects } from './participant-broker-gone.js'
 import {
   reconnectActivatedParticipants,
   recoverParticipantEstablishmentWork,
@@ -915,6 +916,20 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     // never reaches it; without this its live host stays unreachable until
     // something re-attaches, which nothing did.
     reconnectActivatedParticipants(server)
+    // T-10980: a participant-served host that died while HRC was down left its
+    // runtime ready behind an exhausted reconnect; settle it off the ready path.
+    void settleExhaustedParticipantReconnects(server).then(
+      (outcomes) => {
+        if (Object.keys(outcomes).length > 0) {
+          writeServerLog('INFO', 'server.start.participant_reconnects_settled', outcomes)
+        }
+      },
+      (error: unknown) => {
+        writeServerLog('WARN', 'server.start.participant_reconnects_settle_failed', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    )
     await repairLiveUnboundPlacements(server, livePlacementRepairCandidates)
     if (server.turnAdmissionGate.snapshot().state === 'closed') {
       const prior = server.turnAdmissionGate.snapshot()

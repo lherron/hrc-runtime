@@ -22,6 +22,7 @@ import type { DurableBrokerClientLike } from '../broker/controller/types'
 import {
   PARTICIPANT_BROKER_GONE_REASON,
   type ParticipantBrokerLossOutcome,
+  settleExhaustedParticipantReconnects,
   settleParticipantBrokerLoss,
 } from '../participant-broker-gone'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context'
@@ -35,7 +36,14 @@ const SOCKET = '/tmp/t10333-no-such-dir/broker.sock'
 
 type Dial = 'dead' | 'live'
 
-function seed(options: { participantServed: boolean; status?: 'ready' | 'busy' }): HrcDatabase {
+type SeedOptions = {
+  participantServed: boolean
+  status?: 'ready' | 'busy'
+  /** T-10980: a boot reconnect that dialed the dead host until its budget ran out. */
+  reconnectExhausted?: boolean
+}
+
+function seed(options: SeedOptions): HrcDatabase {
   const db = openHrcDatabase(':memory:')
   db.sessions.insert({
     hostSessionId: 'hsid-t10333',
@@ -95,13 +103,17 @@ function seed(options: { participantServed: boolean; status?: 'ready' | 'busy' }
       invocationId: INVOCATION,
       runtimeId: RUNTIME,
       hostBindingId: 'bind-t10333',
-      state: 'ACTIVE',
+      state: options.reconnectExhausted ? 'DETACHED' : 'ACTIVE',
       preparedDescriptorJson: '{"kind":"participant-broker-descriptor/v1"}',
       adapterDispatchEnvJson: '{}',
       attachSocketPath: SOCKET,
       recoveryDisposition: 'unresolved',
-      establishmentWorkState: 'completed',
-      establishmentAttemptCount: 0,
+      initialActivationConfirmedAt: NOW,
+      establishmentWorkState: options.reconnectExhausted ? 'exhausted' : 'completed',
+      establishmentAttemptCount: options.reconnectExhausted ? 5 : 0,
+      ...(options.reconnectExhausted
+        ? { establishmentLastError: 'Failed to connect to broker unix socket' }
+        : {}),
       createdAt: NOW,
       updatedAt: NOW,
     } as never)
@@ -298,5 +310,54 @@ describe('T-10333 participant-served broker loss', () => {
     expect(row.status).toBe('ready')
     expect(row.activeInvocationId).toBe('inv-successor')
     expect(notified).toHaveLength(0)
+  })
+})
+
+/**
+ * T-10980: the host died while HRC was down, so no close was ever observed.
+ * Boot reconnect armed the attempt (ACTIVE -> DETACHED), dialed a socket with
+ * no listener until the budget ran out, and left the runtime `ready` forever.
+ */
+describe('T-10980 participant-served host that died while HRC was down', () => {
+  test('boot settles an exhausted reconnect whose serving socket is dead', async () => {
+    const db = seed({ participantServed: true, status: 'busy', reconnectExhausted: true })
+    const { server, notified } = fakeServer(db, 'dead')
+
+    expect(await settleExhaustedParticipantReconnects(server)).toEqual({ terminated: 1 })
+
+    const row = db.runtimes.getByRuntimeId(RUNTIME)!
+    expect(row.status).toBe('terminated')
+    expect(row.lifecycleTerminalReason).toBe(PARTICIPANT_BROKER_GONE_REASON)
+    expect(row.activeInvocationId).toBeUndefined()
+    expect(db.runs.getByRunId(RUN)!.status).toBe('failed')
+    expect(db.participantRegistrations.getAttempt('patt-t10333')!.state).toBe('TERMINAL')
+    expect(notified).toHaveLength(1)
+    expect(notified[0]).toMatchObject({ eventKind: 'runtime.terminated', runtimeId: RUNTIME })
+
+    // Idempotent: the next boot finds nothing to settle and dials nothing.
+    let dialed = 0
+    const again = fakeServer(db, 'dead', () => dialed++)
+    expect(await settleExhaustedParticipantReconnects(again.server)).toEqual({})
+    expect(dialed).toBe(0)
+  })
+
+  test('an exhausted reconnect whose host answers hello again stays ready', async () => {
+    const db = seed({ participantServed: true, reconnectExhausted: true })
+    const { server, notified } = fakeServer(db, 'live')
+
+    expect(await settleExhaustedParticipantReconnects(server)).toEqual({ live: 1 })
+
+    expect(db.runtimes.getByRuntimeId(RUNTIME)!.status).toBe('ready')
+    expect(notified).toHaveLength(0)
+  })
+
+  test("an attempt whose reconnect never exhausted is not the sweep's to dial", async () => {
+    const db = seed({ participantServed: true })
+    let dialed = 0
+    const { server } = fakeServer(db, 'dead', () => dialed++)
+
+    expect(await settleExhaustedParticipantReconnects(server)).toEqual({})
+    expect(dialed).toBe(0)
+    expect(db.runtimes.getByRuntimeId(RUNTIME)!.status).toBe('ready')
   })
 })

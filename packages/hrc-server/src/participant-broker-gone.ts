@@ -175,3 +175,30 @@ export async function settleParticipantBrokerLoss(
   server.notifyEvent(event)
   return 'terminated'
 }
+
+/**
+ * T-10980: the same settle for a host that died while HRC was down.
+ *
+ * No close is observed for a broker that exits while the daemon is stopped, so
+ * the crash hook above never fires. Boot reconnect then dials the dead socket
+ * until its budget is spent and stops, leaving the runtime `ready`. Exhaustion
+ * alone is not death evidence; each candidate gets the same fresh dial, and
+ * only a dead transport terminates it.
+ */
+export async function settleExhaustedParticipantReconnects(
+  server: HrcServerInstanceForHandlers
+): Promise<Partial<Record<ParticipantBrokerLossOutcome, number>>> {
+  const outcomes: Partial<Record<ParticipantBrokerLossOutcome, number>> = {}
+  for (const attempt of server.db.participantRegistrations.listExhaustedReconnects()) {
+    const runtime = server.db.runtimes.getByRuntimeId(attempt.runtimeId)
+    if (runtime === null || isSettled(runtime)) continue
+    if (runtime.activeInvocationId !== attempt.invocationId) continue
+    const outcome = await settleParticipantBrokerLoss(server, {
+      runtimeId: attempt.runtimeId,
+      invocationId: attempt.invocationId,
+      code: 'participant_reconnect_exhausted',
+    })
+    outcomes[outcome] = (outcomes[outcome] ?? 0) + 1
+  }
+  return outcomes
+}
