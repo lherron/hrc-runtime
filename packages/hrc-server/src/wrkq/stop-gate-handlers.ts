@@ -50,7 +50,7 @@ function envelopeIdSequence(envelopeId: string): number {
 
 export const MAIL_HINT_TEXT = (heldCount: number): string => {
   const noun = heldCount === 1 ? 'envelope is' : 'envelopes are'
-  return `Mail hint from HRC: ${heldCount} ${noun} waiting for this seat. Run \`wrkc inbox\` to see them and \`wrkc show EN-xxxxx\` to read one. Replying with \`wrkc say <room> --to <sender>\` answers it now; anything unanswered presents at turn end.`
+  return `Mail hint from HRC: ${heldCount} ${noun} waiting for this seat. Run \`wrkc inbox\` to see them and \`wrkc show EN-xxxxx\` to read one. Replying with \`wrkc say <room> --to <sender> - <<'EOF'\` answers it now; anything unanswered presents at turn end.`
 }
 
 export async function handleMailStopDecision(
@@ -235,7 +235,7 @@ function formatStopReason(
     lines.push(`- … and ${decision.unackedCount - decision.envelopes.length} more`)
   }
   lines.push(
-    'Run `wrkc inbox`, then reply (`wrkc say <room> --to <sender>`) or `wrkc defer` every envelope before stopping. Replying IS the ack; deferred envelopes leave this gate.'
+    "Run `wrkc inbox`, then reply (`wrkc say <room> --to <sender> - <<'EOF'`) or `wrkc defer` every envelope before stopping. Replying IS the ack; deferred envelopes leave this gate."
   )
   return clip(lines.join('\n'), STOP_REASON_MAX_CHARS)
 }
