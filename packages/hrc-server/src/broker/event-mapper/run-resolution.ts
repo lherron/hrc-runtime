@@ -28,6 +28,8 @@ import { isRecord } from '../json'
 import type { Format2TurnStart } from './envelope-predicates'
 
 const NONTERMINAL_RUN_STATUSES = new Set(['accepted', 'started', 'running'])
+/** The admission origin of an input the broker took without an HRC dispatch. */
+const BROKER_NATIVE_INPUT_ORIGIN = 'legacy:invocation.input'
 
 export const runResolutionMethods = {
   /**
@@ -61,6 +63,18 @@ export const runResolutionMethods = {
     if (submissionRecord && submissionId !== undefined) {
       const run = this.db.runs.getByBrokerSubmissionId(submissionId)
       if (run?.runId !== undefined) return run.runId
+      // An admission.requested is resolved before it is stored, so it answers
+      // for its own origin.
+      const ownOrigin =
+        envelope.type === 'admission.requested' && isRecord(envelope.payload)
+          ? envelope.payload['origin']
+          : undefined
+      if (
+        (isRecord(ownOrigin) && ownOrigin['principalRef'] === BROKER_NATIVE_INPUT_ORIGIN) ||
+        this.isBrokerNativeInput(envelope.invocationId, submissionId)
+      ) {
+        return this.launchRunOwningNativeInput(fallbackRunId)
+      }
     }
 
     const turnId = this.extractTurnId(envelope)
@@ -82,6 +96,9 @@ export const runResolutionMethods = {
     if (envelopeInputId !== undefined) {
       const run = this.runForInputIdentity(envelopeInputId)
       if (run?.runId) return run.runId
+      if (this.isBrokerNativeInput(envelope.invocationId, envelopeInputId)) {
+        return this.launchRunOwningNativeInput(fallbackRunId)
+      }
       return fallbackRunId
     }
 
@@ -129,6 +146,9 @@ export const runResolutionMethods = {
       if (bracketInput) {
         const run = this.runForInputIdentity(bracketInput.inputId)
         if (run?.runId) return run.runId
+        if (this.isBrokerNativeInput(envelope.invocationId, bracketInput.inputId)) {
+          return this.launchRunOwningNativeInput(fallbackRunId)
+        }
       }
       const fencedInput = this.findPriorFencedInputAccepted(
         envelope.invocationId,
@@ -470,6 +490,45 @@ export const runResolutionMethods = {
     if (this.hasOtherActiveNonterminalRun(runtime.runtimeId, candidate.runId)) return undefined
 
     return candidate.runId
+  },
+
+  /**
+   * T-11306: did the broker admit this input on its own (`invocation.input`,
+   * such as a participant host's own prompt) rather than through an HRC
+   * dispatch? Such an input has no HRC run, and borrowing `invocation.runId`
+   * for it stamped (and bumped) the invocation's first run, completed a day
+   * earlier on rt-6c72fc90.
+   */
+  isBrokerNativeInput(this: BrokerEventMapper, invocationId: string, inputId: string): boolean {
+    return (
+      this.db.sqlite
+        .query<{ found: number }, [string, string, string]>(
+          `SELECT 1 AS found FROM broker_invocation_events
+            WHERE invocation_id = ? AND type = 'admission.requested'
+              AND json_extract(broker_event_json, '$.submissionId') = ?
+              AND json_extract(broker_event_json, '$.origin.principalRef') = ?
+            LIMIT 1`
+        )
+        .get(invocationId, inputId, BROKER_NATIVE_INPUT_ORIGIN) !== null
+    )
+  },
+
+  /**
+   * The one HRC run a broker-native input can belong to: a launch-carried
+   * invoke that is still open, whose prompt rode the start spec as that input.
+   */
+  launchRunOwningNativeInput(
+    this: BrokerEventMapper,
+    fallbackRunId: string | undefined
+  ): string | undefined {
+    if (fallbackRunId === undefined) return undefined
+    const run = this.db.runs.getByRunId(fallbackRunId)
+    if (run === null || run.completedAt !== undefined || run.dispatchedInputId !== undefined) {
+      return undefined
+    }
+    return isLaunchCarriedInvokeCorrelationJson(this.db.runs.getCorrelationJson(fallbackRunId))
+      ? fallbackRunId
+      : undefined
   },
 
   runForInputIdentity(this: BrokerEventMapper, inputId: string) {
