@@ -18,6 +18,7 @@ import {
   getBrokerRuntimeTmuxSocketPath,
 } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
+import { settleUnstartedSubmissionRuns } from './broker/turn-ownership.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { HRC_SERVER_RUN_COLUMNS } from './server-constants.js'
@@ -86,6 +87,12 @@ export async function reconcileActiveRunsOnce(
       })
     }
   }
+
+  // T-11306: accepted submissions that never started (steers above all) settle
+  // from broker evidence before the abandoned-run pass would fail them blind.
+  // Neither transport nor lifecycle owner exempts them: the evidence is the
+  // broker's ledger, not the runtime's claim.
+  results.push(...reconcileUnstartedSubmissionRuns(ctx, cutoffMs, input.dryRun))
 
   // T-07653: runs their runtime already let go of. Also not reconcile
   // candidates — the candidate query requires the runtime to still OWN the run —
@@ -225,6 +232,37 @@ function reconcileRunsAbandonedByTheirRuntime(
     )
   }
   return results
+}
+
+function reconcileUnstartedSubmissionRuns(
+  ctx: ServerContext,
+  cutoffMs: number,
+  dryRun: boolean
+): ReconcileActiveRunResult[] {
+  const now = timestamp()
+  return settleUnstartedSubmissionRuns(ctx.db, { cutoffMs, dryRun, now }).map((settled) => {
+    const run = ctx.db.runs.getByRunId(settled.runId)
+    const runtime = ctx.db.runtimes.getByRuntimeId(settled.runtimeId)
+    if (settled.applied) {
+      writeServerLog('INFO', 'active_run_reconcile.unstarted_submission_settled', settled)
+    }
+    return {
+      type: 'run',
+      runId: settled.runId,
+      hostSessionId: run?.hostSessionId ?? '',
+      runtimeId: settled.runtimeId,
+      transport: run ? reconcileResultTransport(run) : 'headless',
+      status: dryRun ? 'matched' : settled.applied ? 'repaired' : 'skipped',
+      reason: 'unstarted_submission_settled',
+      observedAt: run?.updatedAt ?? now,
+      observedSource: 'updated_at',
+      runtimeStatus: runtime?.status ?? 'unknown',
+      runtimeOwnershipCleared: false,
+      finalizedRunStatus: settled.action,
+      ...(settled.ownerRunId !== undefined ? { coalescedIntoRunId: settled.ownerRunId } : {}),
+      ...(settled.errorMessage !== undefined ? { errorMessage: settled.errorMessage } : {}),
+    } satisfies ReconcileActiveRunResult
+  })
 }
 
 /** Mark an abandoned run `failed` and say so in the lifecycle ledger. */

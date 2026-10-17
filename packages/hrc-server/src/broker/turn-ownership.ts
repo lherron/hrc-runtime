@@ -552,3 +552,288 @@ function turnEndedUnowned(db: HrcDatabase, invocationId: string, turnId: string 
     .listByInvocationIdAndTypes({ invocationId, types: TURN_TERMINAL_TYPES, turnId })
     .some((terminal) => terminal.runId === undefined)
 }
+
+export const SUBMISSION_FATE_MISSING_MARKER = 'submission_fate_missing'
+
+const SUBMISSION_FATE_TYPES = [
+  'submission.executed',
+  'submission.absorbed',
+  'submission.rejected',
+  'submission.expired',
+  'submission.withdrawn',
+  'submission.cancelled',
+  'submission.lost',
+] as const
+
+/** Runtime statuses after which no further broker event can arrive for the run. */
+const SETTLED_RUNTIME_STATUSES = new Set(['terminated', 'crashed', 'dead', 'archived', 'disposed'])
+
+export type UnstartedSubmissionSettlement = {
+  runId: string
+  runtimeId: string
+  invocationId: string
+  submissionId: string
+  action: 'completed' | 'failed' | 'cancelled' | 'coalesced'
+  turnId?: string | undefined
+  ownerRunId?: string | undefined
+  completedAt: string
+  errorMessage?: string | undefined
+  applied: boolean
+}
+
+/** A plan without `completedAt` settles at sweep time: no event dates the missing fate. */
+type SettlementPlan = Omit<UnstartedSubmissionSettlement, 'applied' | 'completedAt'> & {
+  completedAt?: string | undefined
+}
+
+function submissionRows(db: HrcDatabase, invocationId: string, types: readonly string[]) {
+  return db.brokerInvocationEvents.listByInvocationIdAndTypes({ invocationId, types })
+}
+
+function payloadSubmissionId(row: HrcBrokerInvocationEventRecord): string | undefined {
+  const payload = payloadForRow(row)
+  return stringField(payload, 'submissionId') ?? stringField(payload, 'inputId')
+}
+
+/** The turn still open at `seq`: the newest start before it with no terminal before it. */
+function turnOpenAt(db: HrcDatabase, invocationId: string, seq: number): ParsedEvent | undefined {
+  const rows = db.brokerInvocationEvents
+    .listByInvocationIdAndTypes({
+      invocationId,
+      types: ['turn.started', ...TURN_TERMINAL_TYPES],
+      throughSeq: seq,
+    })
+    .map(parseStoredEvent)
+    .filter((event): event is ParsedEvent => event !== undefined)
+  const started = rows.filter((event) => event.type === 'turn.started').at(-1)
+  if (started === undefined) return undefined
+  const closed = rows.some(
+    (event) =>
+      event.type !== 'turn.started' &&
+      event.seq > started.seq &&
+      coordinateKey(event) === coordinateKey(started)
+  )
+  return closed ? undefined : started
+}
+
+function turnTerminal(
+  db: HrcDatabase,
+  invocationId: string,
+  turn: TurnCoordinates
+): HrcBrokerInvocationEventRecord | undefined {
+  return db.brokerInvocationEvents
+    .listByInvocationIdAndTypes({ invocationId, types: TURN_TERMINAL_TYPES, turnId: turn.turnId })
+    .find((row) => {
+      const event = parseStoredEvent(row)
+      return event !== undefined && coordinatesMatch(turn, event)
+    })
+}
+
+function invocationHasOpenTurn(db: HrcDatabase, invocationId: string): boolean {
+  return turnOpenAt(db, invocationId, Number.MAX_SAFE_INTEGER) !== undefined
+}
+
+function envelopeForRow(row: HrcBrokerInvocationEventRecord): InvocationEventEnvelope {
+  let envelope: Record<string, unknown> = {}
+  try {
+    envelope = record(JSON.parse(row.brokerEnvelopeJson ?? '{}') as unknown) ?? {}
+  } catch {
+    envelope = {}
+  }
+  return {
+    ...envelope,
+    invocationId: row.invocationId,
+    seq: row.seq,
+    time: row.time,
+    type: row.type,
+    payload: payloadForRow(row) ?? {},
+    ...(row.harnessGeneration !== undefined ? { harnessGeneration: row.harnessGeneration } : {}),
+    ...(row.turnAttempt !== undefined ? { turnAttempt: row.turnAttempt } : {}),
+  } as InvocationEventEnvelope
+}
+
+const TERMINAL_OUTCOME: Record<string, 'completed' | 'failed' | 'cancelled'> = {
+  'turn.completed': 'completed',
+  'turn.failed': 'failed',
+  'turn.interrupted': 'cancelled',
+}
+
+/**
+ * Decide, from broker evidence alone, how an accepted run that never started
+ * ends (T-11306). The turn it landed in is its own fate's turn
+ * (executed/absorbed), else, for a steer the broker wrote, the turn open at its
+ * admission. That turn's terminal settles it: a steer coalesces into the turn's
+ * exact owner, or takes the terminal's outcome when HRC owns no run for the
+ * turn (as T-10686 does); an executed submission takes its own turn's outcome.
+ * With no turn evidence, or a turn that never ended, the run fails naming the
+ * missing fate, but only once nothing more can arrive. `undefined` means wait.
+ */
+function planUnstartedSubmission(
+  db: HrcDatabase,
+  run: { runId: string; runtimeId: string; invocationId: string; submissionId: string },
+  runtimeSettled: boolean
+): SettlementPlan | undefined {
+  const { invocationId, submissionId } = run
+  const base = { ...run }
+  const fate = submissionRows(db, invocationId, SUBMISSION_FATE_TYPES).find(
+    (row) => payloadSubmissionId(row) === submissionId
+  )
+  if (
+    fate !== undefined &&
+    fate.type !== 'submission.executed' &&
+    fate.type !== 'submission.absorbed'
+  ) {
+    const reason = stringField(payloadForRow(fate), 'reason')
+    const cancelled = fate.type === 'submission.withdrawn' || fate.type === 'submission.cancelled'
+    return {
+      ...base,
+      action: cancelled ? 'cancelled' : 'failed',
+      completedAt: fate.time,
+      ...(cancelled ? {} : { errorMessage: `${fate.type}${reason ? `: ${reason}` : ''}` }),
+    }
+  }
+
+  const steer = isSteerSubmission(db, invocationId, submissionId)
+  let turn: TurnCoordinates | undefined
+  if (fate !== undefined) {
+    turn = parseStoredEvent(fate)
+  } else if (steer) {
+    const admitted = submissionRows(db, invocationId, ['admission.admitted']).find(
+      (row) => payloadSubmissionId(row) === submissionId
+    )
+    const written = submissionRows(db, invocationId, ['input.accepted']).some(
+      (row) =>
+        payloadSubmissionId(row) === submissionId &&
+        payloadForRow(row)?.['disposition'] === 'attempted_steer'
+    )
+    if (admitted !== undefined && written) turn = turnOpenAt(db, invocationId, admitted.seq)
+  }
+
+  const terminal = turn === undefined ? undefined : turnTerminal(db, invocationId, turn)
+  if (turn !== undefined && terminal !== undefined) {
+    const outcome = TERMINAL_OUTCOME[terminal.type] ?? 'failed'
+    const ownerRunId =
+      steer && fate?.type !== 'submission.executed'
+        ? resolveExactTurnOwner(db, envelopeForRow(terminal))
+        : undefined
+    if (ownerRunId !== undefined && ownerRunId !== run.runId) {
+      return {
+        ...base,
+        action: 'coalesced',
+        turnId: turn.turnId,
+        ownerRunId,
+        completedAt: terminal.time,
+      }
+    }
+    return {
+      ...base,
+      action: outcome,
+      turnId: turn.turnId,
+      completedAt: terminal.time,
+      ...(outcome === 'failed'
+        ? { errorMessage: stringField(payloadForRow(terminal), 'message') ?? terminal.type }
+        : {}),
+    }
+  }
+
+  if (!runtimeSettled && invocationHasOpenTurn(db, invocationId)) return undefined
+  const subject =
+    turn === undefined
+      ? `no turn evidence for submission ${submissionId}`
+      : `submission ${submissionId} landed in turn ${turn.turnId}, which never ended`
+  return {
+    ...base,
+    action: 'failed',
+    ...(turn !== undefined ? { turnId: turn.turnId } : {}),
+    errorMessage: `${SUBMISSION_FATE_MISSING_MARKER}: invocation ${invocationId} recorded ${subject}`,
+  }
+}
+
+/**
+ * Backstop door for accepted, never-started broker submission runs on idle or
+ * settled runtimes, whatever their transport or lifecycle owner (T-11306).
+ * `cutoffMs` is a race guard only: the run and a live runtime must both have
+ * been quiet since before it.
+ */
+export function settleUnstartedSubmissionRuns(
+  db: HrcDatabase,
+  input: { cutoffMs: number; dryRun: boolean; now: string }
+): UnstartedSubmissionSettlement[] {
+  const rows = db.sqlite
+    .query<
+      {
+        runId: string
+        runtimeId: string
+        invocationId: string
+        submissionId: string
+        updatedAt: string
+      },
+      []
+    >(
+      `SELECT run_id AS runId, runtime_id AS runtimeId, invocation_id AS invocationId,
+              broker_submission_id AS submissionId, updated_at AS updatedAt
+         FROM runs
+        WHERE status = 'accepted' AND started_at IS NULL AND completed_at IS NULL
+          AND runtime_id IS NOT NULL AND invocation_id IS NOT NULL
+          AND broker_submission_id IS NOT NULL
+        ORDER BY updated_at ASC, run_id ASC`
+    )
+    .all()
+
+  const results: UnstartedSubmissionSettlement[] = []
+  for (const row of rows) {
+    if (!(Date.parse(row.updatedAt) <= input.cutoffMs)) continue
+    const runtime = db.runtimes.getByRuntimeId(row.runtimeId)
+    if (runtime === null) continue
+    const runtimeSettled = SETTLED_RUNTIME_STATUSES.has(runtime.status)
+    if (!runtimeSettled) {
+      if (runtime.activeRunId !== undefined && runtime.activeRunId !== row.runId) {
+        const claimed = db.runs.getByRunId(runtime.activeRunId)
+        if (claimed === null || claimed.completedAt === undefined) continue
+      }
+      const quietSince = Date.parse(runtime.lastActivityAt ?? runtime.updatedAt)
+      if (!(quietSince <= input.cutoffMs)) continue
+    }
+    const epoch = historicalEpoch(db, row.invocationId)
+    const run = db.runs.getByRunId(row.runId)
+    if (
+      epoch === undefined ||
+      run === null ||
+      run.runtimeId !== epoch.invocation.runtimeId ||
+      run.operationId !== epoch.invocation.operationId ||
+      run.generation !== epoch.operation.generation
+    ) {
+      continue
+    }
+    const plan = planUnstartedSubmission(db, row, runtimeSettled)
+    if (plan === undefined) continue
+    const completedAt = plan.completedAt ?? input.now
+    const settlement = { ...plan, completedAt }
+    if (input.dryRun) {
+      results.push({ ...settlement, applied: false })
+      continue
+    }
+    const applied = db.sqlite.transaction(() => {
+      const current = db.runs.getByRunId(row.runId)
+      if (current?.status !== 'accepted' || current.completedAt !== undefined) return false
+      if (current.startedAt !== undefined) return false
+      if (settlement.action === 'coalesced') {
+        const ownerRunId = settlement.ownerRunId as string
+        settleAuxiliary(db, row.invocationId, row.submissionId, ownerRunId, completedAt)
+        return db.runs.getByRunId(row.runId)?.coalescedIntoRunId === ownerRunId
+      }
+      db.runs.markCompleted(row.runId, {
+        status: settlement.action,
+        completedAt,
+        updatedAt: input.now,
+        ...(settlement.errorMessage?.startsWith(SUBMISSION_FATE_MISSING_MARKER)
+          ? { errorCode: HrcErrorCode.RUN_ABANDONED_BY_RUNTIME }
+          : {}),
+        ...(settlement.errorMessage !== undefined ? { errorMessage: settlement.errorMessage } : {}),
+      })
+      return true
+    })()
+    results.push({ ...settlement, applied })
+  }
+  return results
+}

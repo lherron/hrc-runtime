@@ -842,6 +842,10 @@ export type ReconcileActiveRunReason =
   // already let go, so the row is fossil and every reader of it (the mail
   // kicker's drive slot above all) is wedged behind a turn that ended.
   | 'run_abandoned_by_runtime'
+  // T-11306: an accepted, never-started broker submission (a steer above all)
+  // settled from broker evidence: its turn's terminal, its exact turn owner, or
+  // a run failed naming the fate the broker never recorded.
+  | 'unstarted_submission_settled'
 
 export type ReconcileActiveRunResult = {
   type: 'run'
@@ -859,7 +863,9 @@ export type ReconcileActiveRunResult = {
   nextRuntimeStatus?: string | undefined
   runtimeOwnershipCleared: boolean
   // T-04240: the terminal status the run was finalized to on a `repaired` result.
-  finalizedRunStatus?: 'completed' | 'failed' | 'cancelled' | undefined
+  finalizedRunStatus?: 'completed' | 'failed' | 'cancelled' | 'coalesced' | undefined
+  /** T-11306: the run a `coalesced` steer joined. */
+  coalescedIntoRunId?: string | undefined
   launchId?: string | undefined
   launchStatus?: string | undefined
   errorCode?: string | undefined

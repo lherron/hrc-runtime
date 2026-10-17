@@ -293,14 +293,15 @@ export async function cmdRunRecoverUnstarted(args: string[]): Promise<void> {
 function printReconcileActiveHuman(result: ReconcileActiveRunsResponse, dryRun: boolean): void {
   process.stdout.write(`run active reconcile${dryRun ? ' (dry-run)' : ''}\n`)
   for (const row of result.results) {
+    const finalized = row.finalizedRunStatus ? ` finalized=${row.finalizedRunStatus}` : ''
     const suffix = row.errorMessage ? ` ${row.errorMessage}` : ''
     process.stdout.write(
       `  ${row.status.padEnd(8)} ${row.runId} ${row.transport} runtime=${
         row.runtimeStatus
-      } reason=${row.reason} ownershipCleared=${row.runtimeOwnershipCleared}${suffix}\n`
+      } reason=${row.reason}${finalized} ownershipCleared=${row.runtimeOwnershipCleared}${suffix}\n`
     )
   }
   process.stdout.write(
-    `summary matched=${result.summary.matched} reaped=${result.summary.reaped} suspect=${result.summary.suspect} skipped=${result.summary.skipped} errors=${result.summary.errors}\n`
+    `summary matched=${result.summary.matched} reaped=${result.summary.reaped} repaired=${result.summary.repaired} suspect=${result.summary.suspect} skipped=${result.summary.skipped} errors=${result.summary.errors}\n`
   )
 }
