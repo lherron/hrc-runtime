@@ -233,11 +233,12 @@ export function parsePaneLiveness(stdout: string): TmuxPaneLiveness {
 export function parsePaneProcess(
   stdout: string
 ): { command: string; pid: number; dead: boolean } | null {
+  // Trim only the line end: tmux 3.8 renders a dead pane's pid as empty, so the
+  // line starts with the separator, and a leading trim shifts every field.
   const line = stdout
-    .trim()
     .split('\n')
-    .map((entry) => entry.trim())
-    .find((entry) => entry.length > 0)
+    .map((entry) => entry.trimEnd())
+    .find((entry) => entry.trim().length > 0)
 
   if (!line) {
     return null
