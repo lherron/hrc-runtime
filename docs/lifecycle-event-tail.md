@@ -60,6 +60,20 @@ A `cursor_invalid` response carries `expectedLedgerIncarnationId` /
 was replaced, so the cursor addresses a history that no longer exists. Restart
 from the newest page.
 
+## Federation routing
+
+A request whose `scopeRef` filter names a scope homed on another node is
+forwarded to that home (T-10418); the response carries `x-hrc-home-node`, and
+its `ledgerIncarnationId` and cursors belong to the home's ledger. A request
+without `scopeRef` (for example `hostSessionId` only) is always served locally.
+Scope routing adds three retryable refusals, all `503`:
+
+| Condition | Code |
+| --- | --- |
+| The registry cannot say where the scope is homed | `session_home_unknown` |
+| This node retired the scope and no new home is bound | `session_home_pending` |
+| The home peer is undeclared or unreachable | `session_home_unreachable` |
+
 ## SDK
 
 `HrcClient.tailEvents(options: HrcEventTailOptions)` — `beforeHrcSeq` and

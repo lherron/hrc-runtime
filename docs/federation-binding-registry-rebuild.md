@@ -21,7 +21,7 @@ investigate it; selecting a winner would conceal split authority.
    bun scripts/rebuild-binding-registry.ts \
      /tmp/binding-registry.rebuilt.sqlite \
      /tmp/svc-state.sqlite \
-     /tmp/lab-state.sqlite \
+     /tmp/hrcdev-state.sqlite \
      /tmp/max3-state.sqlite
    ```
 

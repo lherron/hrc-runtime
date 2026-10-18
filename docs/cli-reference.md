@@ -1,16 +1,16 @@
-# HRC / hrcchat CLI Reference
+# HRC CLI Reference
 
 Status: CANONICAL
-Date: 2026-07-27
-Applies to: `hrc` and `hrcchat` (hrc-runtime, `apiVersion 0.1.0`)
+Date: 2026-10-18
+Applies to: `hrc` (hrc-runtime, `apiVersion 0.1.0`). The `hrcchat` binary was removed (f77f12b9); agent messaging is `wrkc say`.
 
-`hrc` is the local runtime control plane for agent sessions: it gives a target a stable identity, preserves continuity across launches, manages live runtimes, and lets an operator or another agent inspect/attach/start/interrupt a runtime. `hrcchat` is the semantic messaging interface (dm/turn/messages). Use `hrc` to control HRC itself; use `hrcchat` to message agents.
+`hrc` is the local runtime control plane for agent sessions: it gives a target a stable identity, preserves continuity across launches, manages live runtimes, and lets an operator or another agent inspect/attach/start/interrupt a runtime. Tracked agent work is `hrc turn`; messaging is `wrkc say <ref> --to <agent> -`.
 
-This reference covers the common command surface. For the full flag accounting of any command, run `hrc <group> <cmd> --help` (or `hrcchat <cmd> --help`).
+This reference covers the common command surface. For the full flag accounting of any command, run `hrc <group> <cmd> --help`.
 
-## ASP v2 selection contract (T-08690; pending Daedalus review)
+## ASP v2 selection contract (T-08690)
 
-`hrc` flags and `hrcchat` summons express request intent; they do not select a
+`hrc` flags and summons express request intent; they do not select a
 profile, target, route, worker, driver, or HRC presentation default. For a new
 broker birth HRC preserves missing fields. Explicit request overrides use the
 optional camelCase `requested` fields; raw per-summon overrides remain
@@ -22,11 +22,10 @@ v4 profile, schema-2 project target, summon directives, and request overrides,
 then validates and selects the execution.
 
 The legacy Codex-specific `--no-viewer` / `--app-server-viewer` route narrative
-below is superseded by this v2 contract. A future v2 CLI exposes only the
-producer-supported canonical request fields; removed v1 selector aliases are
-refused rather than mapped. An explicit presentation conflict never replaces a
-live runtime; omission does not request replacement. Exact current flags remain
-descriptive until the v2 spine lands.
+below is superseded by this v2 contract wherever it implies HRC selects a route
+or driver. Removed v1 selector aliases are refused rather than mapped. An
+explicit presentation conflict never replaces a live runtime; omission does not
+request replacement.
 
 `hrc info` and root `hrc --help` are audience projections of the live command
 graph. Selection precedence is explicit `--agent` / `--human`, then an
@@ -41,7 +40,7 @@ cellar.
 
 ### Target handle (shorthand) — what you type
 
-Most user-facing commands (`run`, `start`, `attach`, `hrcchat dm`, monitor selectors) accept a shorthand **target handle**:
+Most user-facing commands (`run`, `start`, `attach`, `turn`, `summon`, `send`, `peek`, monitor selectors) accept a shorthand **target handle**:
 
 ```
 <agentId>
@@ -89,8 +88,13 @@ The monitor commands accept a selector that is either a target handle (resolved 
 
 ```
 <handle>                       e.g. clod@agent-spaces  (session selector)
-msg:<messageId>                a specific durable message (required for response* waits)
+msg:<messageId>                a specific durable message
+seq:<n>                        a durable message by sequence
+scope:<ref> | session:<ref> | host:<id> | runtime:<id>   explicit typed selectors
+scope:<prefix>:* | T-XXXXX     fan-in selectors (need --until-any / --until-all)
 ```
+
+`response` waits need exactly one `msg:` or `seq:` selector.
 
 A bare/empty selector means "all events / aggregate snapshot".
 
@@ -111,12 +115,12 @@ hrc run cody@agent-spaces --prompt-file ./brief.md
 # Start detached (headless), do not attach:
 hrc start cody@agent-spaces
 
-# Attach to an already-running target (or a runtimeId):
+# Attach to an already-running target (a runtimeId prints its attach descriptor JSON instead):
 hrc attach cody@agent-spaces
 hrc attach rt-1c9cb9ec-9538-411a-b3d3-5feb7628bc54
 ```
 
-Shared notable flags (`run`/`start`): `--force-restart` (replace the runtime with a fresh PTY while preserving the conversation), `--new-session` (rotate to a fresh host session and conversation), `--dry-run` (local plan preview, no server calls), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`. `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for non-interactive provisioning. `attach` takes `--dry-run` and `--json`.
+Shared notable flags (`run`/`start`): `--force-restart` (replace the runtime with a fresh PTY while preserving the conversation), `--new-session` (rotate to a fresh host session and conversation), `--dry-run` (daemon plan preview — no side effects; `run --dry-run` is exempt from the TTY gate), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`, `-p <text>`, `--prompt-file <path>`. `run` adds `--attach-only`; `start` adds `--cwd <path>`, `--idempotency-key <key>` and `--wait [started|completed]`. `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for non-interactive provisioning. `attach` takes `--dry-run` and `--json`.
 
 `run` (and `resume`, the same attached door) always asks ASP for presentation: the server sets `selection.presentation: true` in the compile request, which overrides summon directives, the project target, the agent profile and the catalog default. A scope whose live runtime was born without presentation (for example a headless seat woken by mail) is refused `stale_context` (`field: presentation`, `replacementRequired: true`) with the runtime untouched; terminate it first to run fresh.
 
@@ -152,8 +156,9 @@ hrc start cody@hrc-runtime:hrcdev --on-conflict reject --json
   like `--no-viewer`; with `HRC_ASPD_SOCKET` configured it prepares through aspd
   and the renderer runs from the worker's own ASP release. `hrc attach <scope>`
   opens the viewer; a tmux detach leaves the worker running. Refused together
-  with `--no-viewer`, for non-codex, interactive or Claude-redirected starts
-  (`presentation_operator_unsupported`), and when the scope's live runtime does
+  with `--no-viewer`, for interactive or Claude-redirected starts
+  (`presentation_operator_unsupported`; whether the selected execution can
+  present the viewer is ASP's validation), and when the scope's live runtime does
   not already present that viewer (`presentation_conflict`, untouched):
 
   ```bash
@@ -177,7 +182,7 @@ hrc start cody@hrc-runtime:hrcdev --on-conflict reject --json
   under `claim`. Reuse the same `--idempotency-key` to retry a press without
   burning a second slot; every slot occupied returns
   `session_roster_exhausted`. Suffixed slots are ordinary handles —
-  `mable@hrc-runtime:primary-nova` addresses normally over hrcchat.
+  `mable@hrc-runtime:primary-nova` addresses normally over `wrkc`, `hrc turn` and federation.
 - **`--on-conflict reject`** — claim the ONE scope named on the command line or
   refuse; there is no next slot and no reuse. A free scope is rotated (fresh
   conversation) and a virgin scope is minted, both inside one request; an
@@ -217,9 +222,9 @@ ghostmux metadata set -t <surfaceId> '{"hrc_role":"headless-window-anchor","hrc_
 ghostmux metadata set -t <surfaceId> '{"hrc_role":"headless-sessions-window","hrc_window_key":"console"}' --window
 ```
 
-A clean interactive `/quit` ends the run normally (the broker reaps the tmux lease); `hrc run` prints a session-summary block on detach and is not treated as an attach failure.
+A clean interactive `/quit` ends the run normally (the broker reaps the tmux lease); after the tmux client exits, `hrc run` prints the broker-pushed session-summary block if one was recorded at graceful `/quit`; this is not an attach failure.
 
-Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, and `hrc admin worktrees audit|prune [--project <id>] [--root <path>] [--json]`. Worktree pruning refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
+Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, `hrc admin runs recover-unstarted <runId> [--dry-run|--yes] [--json]`, `hrc admin worktrees audit [--project <id>] [--root <path>] [--json]`, and `hrc admin worktrees prune [--project <id>] [--root <path>] [--dry-run|--yes] [--json]` (dry-run is the default). Worktree pruning refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
 
 The ledger-inclusive runtime prune is a fenced, manifest-only administrative
 surface for the T-07598 mneme burst cleanup:
@@ -252,7 +257,7 @@ the permanent old-home fence before conditionally deleting the shared binding;
 an unavailable registry leaves a visible `fenced-registry-pending` result for
 an explicit idempotent retry.
 
-### `monitor show | watch | wait | events | transcript | stats`
+### `monitor show | watch | wait | events | transcript | stats | search`
 
 `monitor` is the single observation noun. `show|watch|wait` read normalized HRC
 events and use global `hrcSeq`; `events|transcript|stats` read the durable broker
@@ -286,15 +291,16 @@ hrc monitor stats <runtimeId|invocationId|scope> --json
 ```
 
 - **`monitor show`** — `[selector]`, `--json`. Point-in-time view only.
-- **`monitor watch`** — `[selector...]`, `--from-seq <n>` / `--last <n>` (mutually exclusive), `--follow`, repeatable `--until`, `--until-any`, or `--until-all`, `--timeout <duration>`, `--stall-after <duration>`, `--json` / `--pretty` / `--format <tree|compact|verbose|json|ndjson>`, `--max-lines <n>`, `--scope-width <n>`. Exactly one condition family is legal. Without `--follow` or an explicit condition it replays then exits.
-- **`monitor wait`** — `<selector...>` with repeatable `--until`, `--until-any`, or `--until-all`, plus `--timeout <duration>`, `--stall-after <duration>`, and `--json`. Valid conditions: `turn-finished`, `idle`, `busy`, `response`, `runtime-dead`. Exact selectors use `--until`; task/prefix/multiple selectors use a quantified family. `response` requires exactly one `msg:` or `seq:` selector. `--until-all` accepts level conditions only.
+- **`monitor watch`** — `[selector...]`, `--from-seq <n>` / `--last <n>` (mutually exclusive), `--follow`, repeatable `--until`, `--until-any`, or `--until-all`, `--timeout <duration>`, `--stall-after <duration>`, `--forever`, `--since <seq|duration>`, `--json` / `--pretty` / `--format <tree|compact|verbose|json|ndjson|invocation-events>`, `--max-lines <n>`, `--scope-width <n>`, `--kind <kinds>`, `--tool <names>`, `--grep <substr>`, `--milestone`, `--all-events`. Exactly one condition family is legal. Without `--follow` or an explicit condition it replays then exits.
+- **`monitor wait`** — `[selectors...]` with repeatable `--until`, `--until-any`, or `--until-all`, plus `--timeout <duration>`, `--stall-after <duration>`, `--since <seq|duration>` (requires a turn-finished condition), and `--json`. Valid conditions: `turn-finished`, `idle`, `busy`, `response`, `runtime-dead`. Exact selectors use `--until`; task/prefix/multiple selectors use a quantified family. `response` requires exactly one `msg:` or `seq:` selector. `--until-all` accepts level conditions only.
 - **`monitor transcript`** — an invocation activity transcript (tool starts/results,
   completed assistant messages, and driver notices), not conversation readback.
   It can include user activity and supports `--previous [n]` plus `--tail <n>`
   for bounded recap.
 - **`monitor session-report`** — viewer-oriented runtime broker summary.
+- **`monitor search <query>`** — search completed transcript turns across runtimes: `--agent`, `--project`, `--task`, `--target`, `--since <duration-or-iso>`, `--until <iso>`, `--limit <n>`, `--candidate-limit <n>`, `--json`.
 
-Blocking/follow mode without explicit conditions uses the visible OR pair `--until turn-finished --until runtime-dead`; plain replay has no implicit conditions. Level truth that predates the arm returns exit 10. Quantified `ANY` admits later members, while `ALL` freezes membership at arm and reports one daemon-owned observation cut.
+Blocking/follow mode without explicit conditions uses the visible OR pair `turn-finished` / `runtime-dead` (as `--until` for one exact selector, `--until-any` for set-shaped selectors); `monitor watch --follow --forever` opts out. Plain replay has no implicit conditions. Level truth that predates the arm returns exit 10. Quantified `ANY` admits later members, while `ALL` freezes membership at arm and reports one daemon-owned observation cut.
 
 Durations accept suffixed forms like `5s`, `10s`, `30m`, `5m`.
 
@@ -307,7 +313,8 @@ hrc server status --json
 
 # Restart the daemon (the daemon authorizes and restarts itself). Allowed callers:
 # mable@<project>:primary (any node), mable@<project>:minisvc (svc only),
-# mable@hrc-runtime:hrcdev (hrcdev only), or Lance. Everyone else is refused.
+# mable@hrc-runtime:hrcdev (hrcdev only). Everyone else, including credential-less
+# operators, is refused (use the break-glass).
 hrc server restart --reason "<why>"
 hrc server restart --node svc --wait --reason "<why>"
 
@@ -315,13 +322,13 @@ hrc server restart --node svc --wait --reason "<why>"
 hrc server stop --reason "<why>"
 ```
 
-Authorization (T-09861): `stop` and `restart` are requests to the daemon, which authorizes them server-side from the lifecycle credential it minted for the caller's runtime (a 0600 file at `<runtime root>/lifecycle/<runtimeId>.credential`, located via `HRC_RUNTIME_ID`); env scope strings are attribution only. Allowed: `mable@<project>:primary` on any node (`--node <id>` reaches a federation peer), and on its own node only `mable@<project>:minisvc` (svc) or `mable@hrc-runtime:hrcdev` (hrcdev). Everyone else, including every credential-less caller, is refused with the node's authorized callers named. `--reason <text>` is required, and `--wait`/`--drain`/`--force` are authorized before anything runs. Against a daemon that predates the contract the CLI fails closed and names the break-glass (`launchctl kickstart -k gui/$UID/com.praesidium.hrc-server`, recorded `unattributed` at the next boot). This stops accidental and doctrinal violations and makes deliberate ones detectable and attributable; it does not stop a determined same-uid actor.
+Authorization (T-09861): `stop` and `restart` are requests to the daemon, which authorizes them server-side from the lifecycle credential it minted for the caller's runtime (a 0600 file at `<runtime root>/lifecycle/<runtimeId>.credential`, located via `HRC_RUNTIME_ID`); env scope strings are attribution only. Allowed: `mable@<project>:primary` on any node (`--node <id>` reaches a federation peer), and on its own node only `mable@<project>:minisvc` (svc) or `mable@hrc-runtime:hrcdev` (hrcdev). Everyone else, including every credential-less caller, is refused with the node's authorized callers named. `--reason <text>` is required, and `--wait`/`--force` (and `restart --drain`) are authorized before anything runs. Against a daemon that predates the contract the CLI fails closed and names the break-glass (`launchctl kickstart -k gui/$UID/com.praesidium.hrc-server`, recorded `unattributed` at the next boot). This stops accidental and doctrinal violations and makes deliberate ones detectable and attributable; it does not stop a determined same-uid actor.
 
-In-flight gating (daemon-side, after authorization): `stop` and `restart` refuse by default when runs are still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`, default 300000) or `--force` to proceed anyway. For `restart`, tmux-transport runs are excluded from the gate (they survive a daemon restart); only headless/sdk runs block it. After the grant, `restart` waits up to `--proof-timeout-ms` (default 30000) for a healthy daemon whose `processStartedAt` differs from the pre-restart process (for `--node`, the peer's federation health); an unproved restart exits nonzero with `[restart_unproven]`.
+In-flight gating (daemon-side, after authorization): `stop` and `restart` refuse by default when runs are still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`, default 300000) or `--force` to proceed anyway. For `restart`, tmux-transport runs are excluded from the gate (they survive a daemon restart); only headless/sdk runs block it. After the grant, `restart` waits up to `--proof-timeout-ms` (default 30000) for a healthy daemon whose `processStartedAt` differs from the pre-restart process (for `--node`, the peer's federation health); an unproved restart exits nonzero with `[restart_unproven]`. `restart --drain` closes daemon turn admission, drains (up to `--drain-timeout-ms`, default 300000), rechecks, then restarts; it is mutually exclusive with `--wait`. `stop` waits up to `--proof-timeout-ms` (default 30000) to observe the daemon gone.
 
 Related backend control: `hrc server tmux status [--json]`, `hrc server tmux kill --yes` (destructive — kills the HRC tmux server and broker-tmux leases, claimed orphans included). Note: `hrc server restart` does **not** reload launchd plist `EnvironmentVariables`.
 
-### `runtime list | inspect | capture | send | interrupt | terminate | sweep | prune`
+### `runtime list | inspect | status | diagnostics | capture | send | interrupt | terminate | sweep | prune`
 
 ```bash
 hrc runtime list
@@ -334,7 +341,8 @@ hrc runtime list --all
 
 `runtime list` filters: `--host-session-id <id>` (or `--session <id>`),
 `--transport <tmux|headless|sdk>`, `--status <csv>`, `--older-than <duration>`,
-`--scope <scopeRef|handle>`, `--stale`, `--json`. The default view excludes
+`--scope <scopeRef|handle>`, `--agent <agent>`, `--task <task>`, `--stale`,
+`--all-nodes` (best-effort node-labeled inventory across peers), `--json`. The default view excludes
 terminal runtime history; `--all` explicitly retrieves it through bounded
 server pages. The `hrc ls runtimes` orientation alias accepts the same filters.
 At the HTTP layer, `GET /v1/runtimes` defaults to 100 rows, accepts
@@ -347,18 +355,20 @@ authority views: `hrc` (the HRC runtime store) and `broker` (whose `source` stay
 apparent field set.
 
 `runtime send <runtimeId> --run-id <id> --input <text>` sends input to an active
-run. Low-level provisioning and adoption live at `hrc admin runtime
-ensure|adopt`.
+run. Low-level provisioning and manifest prune live at `hrc admin runtime
+ensure|prune`.
 
 ### Session continuity
 
 `hrc session rotate <hostSessionId>` archives the active host session, creates
 generation+1, and copies continuation forward by default. This is distinct from
 `hrc session drop-continuation <hostSessionId>`, which removes the continuation
-key in place and records its barrier. The three operator gestures for a fresh
+key in place and records its barrier. The operator gestures for a fresh
 conversation are `/quit` (or `/clear`) inside the harness,
-`hrc session drop-continuation <hostSessionId>`, and
-`hrc run|start <scope> --new-session`.
+`hrc session drop-continuation <hostSessionId>`,
+`hrc run|start <scope> --new-session`, and `hrc restart <scope> [--force]`
+(generation+1, continuation dropped, relaunched; refuses a busy seat without
+`--force`).
 
 ### `hrc restartme` — agent self-restart (T-09872)
 
@@ -376,10 +386,10 @@ hrc restartme --cancel            # disarm
 - Self-only, no target. The daemon identifies the caller from its lifecycle
   credential (`<runtimeRoot>/lifecycle/<runtimeId>.credential`, located by
   `HRC_RUNTIME_ID`, attributed by `HRC_SESSION_REF`). Restarting another seat
-  stays with `hrc turn --fresh-context <target>`.
+  is `hrc restart <scope>` (or `hrc turn --fresh-context <target>`).
 - The CLI refuses unless `wrkq handoff get <id>` shows a **pending** handoff
-  whose agent and project are the caller's. Without `--handoff` it prints the
-  recipe above.
+  whose agent and project are the caller's. Without `--handoff` it refuses
+  `[handoff_required]` (exit 1) with the recipe on stderr.
 - Arming binds to the broker turn active right now (`no_active_turn` otherwise).
   Only that turn's terminal fires it; an older turn's late terminal does not.
 - On that terminal HRC rotates the session (generation+1, continuation
@@ -400,7 +410,7 @@ The pre-consolidation spellings `broker`, `launch`, `inflight`, `surface`,
 `runtime ensure|adopt`, and `run sweep-zombies|reconcile-active` were removed
 after a fleet-wide quiet telemetry week (T-07011 Phase 4). They are no longer
 registered: the group spellings fail as unknown commands, and `hrc run <word>`
-treats the word as a scope like any other.
+treats the word as a scope, except the subcommands `export` and `annotate`.
 
 ### Invocation post-mortem forensics
 
@@ -449,14 +459,14 @@ single admitted run to observe and emits no frame. A prompt, `-`, `--file`, or
 any dispatch/sender option is invalid with `--attach`. `messageId` is omitted
 from `turn_stacked` when the originating input identity is unavailable.
 
-`hrc turn` is registered and executed by `hrc-cli`; it does not spawn
-`hrcchat`. The retained `hrcchat` binary is a redirect-only compatibility shim.
+`hrc turn` is registered and executed by `hrc-cli`. The `hrcchat` package and
+binary have been removed.
 
 ---
 
 ## Deprecated → current migration map
 
-The legacy `hrc status` / `hrc events` / `hrc server health` commands and the `hrcchat status|watch|wait` commands and `hrcchat dm --wait` flag have been **removed**. Removed surfaces now reject (`error: unknown command 'status'`, `error: unknown option '--wait'`, etc.). Use the canonical replacements below.
+The legacy `hrc status` / `hrc events` / `hrc server health` commands have been **removed** and reject as unknown commands (`hrc: unknown command: status — did you mean 'start'?`). The `hrcchat` binary has been removed entirely. Use the canonical replacements below.
 
 | Deprecated (removed) | Current | Notes |
 | --- | --- | --- |
@@ -469,29 +479,7 @@ The legacy `hrc status` / `hrc events` / `hrc server health` commands and the `h
 | `hrcchat status` | `hrc monitor show` | Per-target status moves to monitor selectors. |
 | `hrcchat watch` | `hrc monitor watch` | Use monitor selectors + conditions. |
 | `hrcchat wait` | `hrc monitor wait` | Message waits use `msg:<messageId>` selectors. |
-| `hrcchat dm --wait` | `hrcchat dm --json` then `hrc monitor wait msg:<id> --until response` | Split request creation from response waiting (see below). |
-
-### The `dm --wait` replacement flow (canonical handoff)
-
-```bash
-envelope="$(hrcchat dm --json cody@agent-spaces - <<'EOF'
-Please handle the requested task.
-EOF
-)"
-message_id="$(printf '%s\n' "$envelope" | jq -r '.messageId')"
-hrc monitor wait "msg:${message_id}" --until response --timeout 30m
-```
-
-For scripts that need full dispatch context, persist the envelope and extract `messageId`/`seq`/`sessionRef`/`runtimeId`/`turnId` before waiting:
-
-```bash
-hrcchat dm --json cody@agent-spaces - <<'EOF' > /tmp/dm-envelope.json
-Please handle the requested task.
-EOF
-jq '{messageId, seq, sessionRef, runtimeId, turnId}' /tmp/dm-envelope.json
-hrc monitor wait "msg:$(jq -r '.messageId' /tmp/dm-envelope.json)" \
-  --until response --timeout 30m
-```
+| `hrcchat dm --wait` | `hrc turn <target> - --wait final` (tracked work) or `wrkc say` (messaging) | `hrc turn --wait final` emits one JSON object at the turn's terminal. |
 
 ---
 
@@ -527,13 +515,13 @@ Usage/selector rejection exits 2 before arm and emits no terminal event.
 
 ### `hrc` general
 
-- `2` — CLI usage error (unknown command/option, bad argument, validation failure); also emitted for `unknown command: <x>` / `unknown option '--x'` on removed surfaces.
+- `2` — CLI usage error (unknown command/option, bad argument, validation failure); also emitted for `hrc: unknown command: <x>` / `hrc: unknown option: --x` on removed surfaces.
 - `0` — success / help displayed.
 
 ### `hrc turn`
 
-`hrc turn` uses intentional turn exit codes (`1`, `3`, `4`, `5`, `130`) for dispatch/turn outcomes; see `hrc turn --help` for the full native surface.
+`hrc turn` exit codes: `1` stall or `--wait` timeout, `3` infrastructure, `4` runtime dead or error, `5` permission blocked, `6` nothing to attach (`--attach`), `130` interrupted.
 
 ---
 
-Source of truth: command registration in `packages/hrc-cli/src/cli.ts` and `packages/hrcchat-cli/src/main.ts`; monitor-wait codes in `packages/hrc-core/src/monitor/condition-engine.ts`; migration map collapsed from the former `packages/hrc-cli/MONITOR_REMOVAL_AUDIT.md` (removed in the 2026-06-07 spec cleanup). Verified against the installed `hrc` / `hrcchat` (`/Users/lherron/.bun/bin/`) help output on 2026-06-07. Run `hrc <command> --help` for the complete flag set.
+Source of truth: command registration in `packages/hrc-cli/src/cli/build-program.ts` and `cli/register-*.ts` (scope-verb flags in `cli/scope-verb-options.ts`); monitor exit codes in `packages/hrc-core/src/monitor/exit-codes.ts`; turn exit codes in `packages/hrc-cli/src/turn/commands/turn-terminals.ts`. Checked against checkout `--help` output on 2026-10-18 (T-11318). Run `hrc <command> --help` for the complete flag set.

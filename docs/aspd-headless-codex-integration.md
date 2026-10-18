@@ -19,8 +19,14 @@ selection. Final accepted ASP v2 evidence is source commit
 `0.1.1-dev.20260921215301`, isolated accepted release
 `asp-631e7b246aae-20260922T025351Z-01f30b`. Installed acceptance proved all
 9 harness/presentation/default cases, all 8 invalid-wire refusals, four
-identities, and the `agent-harness` default. HRC has not yet advanced this tuple
-or activated main aspd; those remain the coordinated cutover.
+identities, and the `agent-harness` default. The coordinated cutover has since
+landed (T-08690 completed).
+
+Current state: every broker birth launches only from a frozen aspd preparation
+(§1.6.14). A node without `HRC_ASPD_SOCKET` refuses every birth with
+`aspd_unconfigured`, and every fleet node runs a supervised aspd
+([fleet-deployment.md](fleet-deployment.md)). Per-node readbacks below that name
+`lab`, or say only max3 has `HRC_ASPD_SOCKET`, are historical.
 
 HRC sends omissions as omissions in two source-distinct inputs. Explicit request
 overrides use only the optional camelCase fields under `compileRequest.requested`:

@@ -55,14 +55,15 @@ hrc run cody@agent-spaces --prompt-file ./brief.md
 # Start detached (headless), do not attach:
 hrc start cody@agent-spaces
 
-# Attach to an already-running target (or a runtimeId):
+# Attach to an already-running target (a runtimeId prints its attach descriptor JSON instead of attaching):
 hrc attach cody@agent-spaces
 hrc attach rt-1c9cb9ec-9538-411a-b3d3-5feb7628bc54
 ```
 
 Shared notable flags (`run`/`start`): `--force-restart` (replace runtime
-with a fresh PTY), `--new-session` (`start` only — rotate to a fresh host
-session), `--dry-run` (local plan preview, no server calls), `--debug`,
+with a fresh PTY; conversation preserved), `--new-session` (rotate to a fresh
+host session), `--dry-run` (daemon-compiled plan preview; no session, runtime
+or tmux side effects), `--debug`,
 `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit
 structured JSON including broker admission-rejection detail), `--no-register`.
 `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for
@@ -92,8 +93,9 @@ tmux-tui`). Like `--no-viewer` it exempts the Codex interactive TUI redirect;
 with `HRC_ASPD_SOCKET` configured it prepares through aspd and the renderer runs
 from the worker's own ASP release. Attach with `hrc attach <scope>` (tmux client
 detach to leave; the worker keeps running). Omitting it leaves every node
-default unchanged. Refused with `--no-viewer`, for non-codex or interactive
-starts (`presentation_operator_unsupported`), and against a scope whose live
+default unchanged. Refused with `--no-viewer`, for interactive starts or off
+the headless broker route (`presentation_operator_unsupported`; whether the
+selected execution can present the viewer is ASP's validation), and against a scope whose live
 runtime has no such viewer (`presentation_conflict`, runtime untouched).
 
 Node-default Codex route (T-08555, `docs/aspd-headless-codex-integration.md`
@@ -107,13 +109,15 @@ headless codex-app-server with the presentation ASP selects. ASP defaults
 `--no-viewer` stays the headless opt-out. A scope whose established runtime is a
 TUI or headless worker keeps it: input goes to that transport's own admission. A
 foreign-harness headless runtime refuses `established_runtime_harness_mismatch`.
-`hrc run` and a cold `hrc attach` remain the explicit standalone interactive
-Codex backend, admissible whatever the redirect control says. Nodes that keep the
+`hrc run` remains the explicit standalone interactive Codex backend,
+admissible whatever the redirect control says (`hrc attach` only reattaches a
+live runtime and never births one). Nodes that keep the
 redirect on are unchanged.
 
 A clean interactive `/quit` ends the run normally (the broker reaps the
-tmux lease); `hrc run` prints a session-summary block on detach and this is
-not treated as an attach failure.
+tmux lease); after the tmux client exits, `hrc run` prints the broker-pushed
+session-summary block if one was recorded at graceful `/quit`, and this is not
+treated as an attach failure.
 
 ## `turn` — tracked agent work
 
@@ -132,12 +136,14 @@ Options: `--attach`, `--as`, `--fresh-context` / `--new`, `--dry-run`, `--format
 `--timeout`, `--quiet`, `--reply-to`, `--cross-scope-reply`, `--queue`, `--steer`,
 `--preempt`, `--ttl`, `--file`, and `--response-format-json-schema`.
 
-Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active`,
+Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active|recover-unstarted`,
 operator-only `hrc admin registrations gc [<exact-scope>... --yes]` (no scopes
 is a read-only candidate projection; retirement is never automated), and
 `hrc admin worktrees audit|prune`. The admin cellar also owns low-level
-bridge/surface, runtime ensure/adopt, broker verification, event-drain, and
-metrics-report commands.
+surface/bridge commands, runtime ensure and manifest prune
+(`admin runtime ensure|prune`), `admin broker-verify candidates|run`,
+`admin events drain`, `admin metrics report`, and the ASP toolchain status
+(`admin status`).
 
 ## `monitor show | watch | wait | events | transcript | stats`
 
@@ -187,8 +193,9 @@ hrc monitor stats <runtimeId|invocationId|scope> --json
   accepts level conditions only.
 
 Blocking/follow mode without explicit conditions uses the visible OR pair
-`--until turn-finished --until runtime-dead`; plain replay has no implicit
-conditions. Durations accept suffixed forms like `5s`, `10s`, `30m`, `5m`.
+`turn-finished` / `runtime-dead` (as `--until` for one exact selector,
+`--until-any` for task, prefix or multiple selectors); `watch --follow
+--forever` opts out. Plain replay has no implicit conditions. Durations accept suffixed forms like `5s`, `10s`, `30m`, `5m`.
 
 ## `server status | restart | stop`
 
@@ -201,7 +208,7 @@ hrc server stop --reason "<why>"
 
 Authorization (T-09861): `stop` and `restart` are requests to the daemon, which authorizes them server-side from the lifecycle credential it minted for the caller's runtime (a 0600 file at `<runtime root>/lifecycle/<runtimeId>.credential`, located via `HRC_RUNTIME_ID`); env scope strings are attribution only. Allowed: `mable@<project>:primary` on any node (`--node <id>` reaches a federation peer), and on its own node only `mable@<project>:minisvc` (svc) or `mable@hrc-runtime:hrcdev` (hrcdev). Everyone else, including every credential-less caller, is refused with the node's authorized callers named. `--reason <text>` is required, and `--wait`/`--drain`/`--force` are authorized before anything runs. Against a daemon that predates the contract the CLI fails closed and names the break-glass (`launchctl kickstart -k gui/$UID/com.praesidium.hrc-server`, recorded `unattributed` at the next boot). This stops accidental and doctrinal violations and makes deliberate ones detectable and attributable; it does not stop a determined same-uid actor.
 
-In-flight gating (daemon-side, after authorization): `stop` and `restart` refuse by default when runs are still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`, default 300000) or `--force` to proceed anyway. For `restart`, tmux-transport runs are excluded from the gate (they survive a daemon restart); only headless/sdk runs block it. After the grant, `restart` waits up to `--proof-timeout-ms` (default 30000) for a healthy daemon whose `processStartedAt` differs from the pre-restart process (for `--node`, the peer's federation health); an unproved restart exits nonzero with `[restart_unproven]`.
+In-flight gating (daemon-side, after authorization): `stop` and `restart` refuse by default when runs are still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`, default 300000) or `--force` to proceed anyway. For `restart`, tmux-transport runs are excluded from the gate (they survive a daemon restart); only headless/sdk runs block it. After the grant, `restart` waits up to `--proof-timeout-ms` (default 30000) for a healthy daemon whose `processStartedAt` differs from the pre-restart process (for `--node`, the peer's federation health); an unproved restart exits nonzero with `[restart_unproven]`. `restart --drain` closes daemon turn admission, drains, rechecks, then restarts (`--drain-timeout-ms`, default 300000). `stop --proof-timeout-ms` (default 30000) bounds observing the daemon gone.
 
 Related backend control: `hrc server tmux status [--json]`,
 `hrc server tmux kill --yes` (destructive — kills the HRC tmux server and
@@ -231,59 +238,9 @@ At the HTTP layer, `GET /v1/runtimes` defaults to 100 rows, accepts
 
 `runtime inspect <runtimeId> [--probe] [--json]` preserves nested `hrc` and
 `broker` authority views; the broker view retains its `broker` or `hrc-derived`
-source label. Low-level runtime ensure/adopt live under `hrc admin runtime`.
+source label. Low-level runtime ensure and allowlisted-manifest prune live
+under `hrc admin runtime`.
 `runtime send` sends input to an active run.
-
-## `mail inspect` — what HRC did with an obligation
-
-```bash
-hrc mail inspect EN-03687
-hrc mail inspect EN-03687 --json
-hrc mail inspect cody@agent-spaces:T-07962
-hrc mail inspect rt-ab0029c2-1d3f-4f54-89a4-d77e79978c6a
-```
-
-Read-only. It joins the wrkq envelope row with HRC's own delivery intents,
-presentation records, reminder state and failure notices, and prints a timeline
-plus a one-line verdict — `stranded`, `stalled_delivery`, `awaiting_landing`,
-`reminder_armed`, `reminder_delivered`, `discharged`, `failed`,
-`awaiting_delivery`, `no_hrc_record` or `ledger_unavailable`. `--json` emits one
-document.
-
-The two HRC records it reads are the whole model (T-08094). A DELIVERY INTENT is
-a submission this daemon made and has not seen land: it is written before the
-broker door is called, at most one per envelope, and it is what makes an
-envelope unactionable while a delivery is in flight. A PRESENTATION is a body
-that landed — keyed by (envelope, runtime), carrying the landing sequence, the
-reminder state and the disposition. No run or turn id appears in either.
-
-`stalled_delivery` separates a wedged delivery from a healthy in-flight one: an
-open intent whose submission was admitted more than `STALLED_DELIVERY_THRESHOLD_MS`
-(5 minutes) ago with no landing fact on the broker stream. Below that threshold
-the same shape reads `awaiting_landing`, which is an ordinary in-flight
-delivery. The periodic reconcile clears a stalled intent at its TTL and
-redelivers once — the bounded window of the accepted at-least-once risk.
-
-`stranded` is reserved for a presented obligation whose runtime has gone
-terminal with nothing disposed: on a LIVE runtime the verdict is
-`awaiting_delivery`, because D3 disposes it at that runtime's next turn
-terminal.
-
-The target form is decided by shape: `EN-xxxxx` inspects one envelope, `rt-…` a
-runtime, anything else an addressee (handle or session ref) — the last two
-report on that party's newest presentations plus anything still in flight. A
-wrkq ledger that cannot be reached is reported per envelope rather than failing
-the command: the HRC half is what explains a stranded obligation.
-
-The kicker's own log lines carry the same identities: a delivery writes
-`wrkq.kicker.delivery_intent` (before the door), `wrkq.kicker.delivery_admitted`
-(the door's admission) and `wrkq.kicker.presented` (the landing fact and the
-receipt), all naming the same presentation id; a refused or lost submission
-writes `wrkq.kicker.landing_refused`; a turn terminal writes one
-`wrkq.kicker.runtime_disposal` naming what it decided per envelope; a wedged
-delivery writes one `wrkq.kicker.stalled_delivery` per envelope per process; the
-reconcile writes `wrkq.kicker.intent_reconciled`; and the first sweep after boot
-writes one `wrkq.kicker.boot_reconcile` summary.
 
 ## Session continuity
 
@@ -342,5 +299,7 @@ error. Replacements: `hrc monitor show` (was `hrc status` /
 `hrc server health`). `hrcchat dm` itself is gone; send agent messages with
 `wrkc say`.
 
-Source of truth: command registration in `packages/hrc-cli/src/cli.ts`;
-monitor-wait codes in `packages/hrc-core/src/monitor/condition-engine.ts`.
+Source of truth: command registration in
+`packages/hrc-cli/src/cli/build-program.ts` and `cli/register-*.ts` (scope-verb
+flags in `cli/scope-verb-options.ts`); monitor-wait codes in
+`packages/hrc-core/src/monitor/exit-codes.ts` (applied by `condition-engine.ts`).
