@@ -1,6 +1,6 @@
 # HRC Rust migration
 
-Status: proposal r2, 2026-10-19 (r2: cardo prerequisites renumbered to pre-hrc-cardo-gaps r5; `hrc_events` as a `LedgerSource`, §5.3). Owner mable@hrc-runtime:primary. Campaign P-00862 (cardo/gap-explorations). Nothing is dispatched. Lance's rulings are marked **RULED**.
+Status: proposal r2.1, 2026-10-19 (r2: cardo prerequisites renumbered to pre-hrc-cardo-gaps r5; `hrc_events` as a `LedgerSource`, §5.3. r2.1: the retention fence is cardo C3's, as of r6). Owner mable@hrc-runtime:primary. Campaign P-00862 (cardo/gap-explorations). Nothing is dispatched. Lance's rulings are marked **RULED**.
 
 This page owns the HRC side of the port: the stages, the strangler inside stage 2, the compatibility contract, install and fleet, and the process budget. The cardo work that must land first lives in cardo's `docs/explorations/pre-hrc-cardo-gaps.md`. This page cites it by item number (`cardo P1`, `cardo B7`, and so on) and does not restate it. The material is seeded from cardo's `hrc-acp-library-path.md` r3 (66a5434), §0.1, §1, E5, E6, F7, §7a and §9.
 
@@ -164,7 +164,7 @@ What a `LedgerSource` over `hrc_events` has to state (read-only query of the liv
 - **Payloads are compacted in place.** Spill and restub rewrite `payload_json` after the fact. A replay can see different payload bytes for the same seq.
 - **Use `head` from `sqlite_sequence`, not `max(hrc_seq)`.** Deleting the newest rows would otherwise move the head backwards.
 - **`stream_seq` is a second unique sequence** (`event_stream_cursor`). The record is `hrc_seq`, and nothing new keys on `stream_seq`.
-- **Retention fence (stage 2).** HRC's two delete paths will not remove rows above the slowest registered cursored consumer (cardo S6) on that source. Until then, a cursored consumer of `hrc_events` accepts that a pruned runtime's unconsumed events can vanish.
+- **Retention fence (stage 2).** HRC's two delete paths honour cardo C3's fence: they call `min_consumer_cursor(source)` and never delete rows above the slowest must-see consumer registered in S6. Until then, a cursored consumer of `hrc_events` accepts that a pruned runtime's unconsumed events can vanish.
 
 ## 6. Install, activation and fleet
 
