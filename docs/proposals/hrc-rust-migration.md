@@ -1,6 +1,6 @@
 # HRC Rust migration
 
-Status: proposal r2.1, 2026-10-19 (r2: cardo prerequisites renumbered to pre-hrc-cardo-gaps r5; `hrc_events` as a `LedgerSource`, §5.3. r2.1: the retention fence is cardo C3's, as of r6). Owner mable@hrc-runtime:primary. Campaign P-00862 (cardo/gap-explorations). Nothing is dispatched. Lance's rulings are marked **RULED**.
+Status: proposal r2.2, 2026-10-19 (r2.2: the projector's wake is the real route, `/v1/events/bounded-stream`. r2: cardo prerequisites renumbered to pre-hrc-cardo-gaps r5; `hrc_events` as a `LedgerSource`, §5.3. r2.1: the retention fence is cardo C3's, as of r6). Owner mable@hrc-runtime:primary. Campaign P-00862 (cardo/gap-explorations). Nothing is dispatched. Lance's rulings are marked **RULED**.
 
 This page owns the HRC side of the port: the stages, the strangler inside stage 2, the compatibility contract, install and fleet, and the process budget. The cardo work that must land first lives in cardo's `docs/explorations/pre-hrc-cardo-gaps.md`. This page cites it by item number (`cardo P1`, `cardo B7`, and so on) and does not restate it. The material is seeded from cardo's `hrc-acp-library-path.md` r3 (66a5434), §0.1, §1, E5, E6, F7, §7a and §9.
 
@@ -53,7 +53,7 @@ Numbering is as of cardo d7862d2 (r5).
 
 **Input.**
 - The store is opened under cardo B7's rules: located through `hrc server status --json` → `stateRoot`, opened read-only with a `file:` URI, short read transactions, no fixtures on live roots.
-- The projector implements cardo S1 (`LedgerSource`) read-only over `hrc_events`, under §5.3's semantics. Its wake is `/v1/events/follow`, or a tail by `hrcSeq`, and SQLite rows are the truth. Ingest runs as a cursored subscription (cardo S5).
+- The projector implements cardo S1 (`LedgerSource`) read-only over `hrc_events`, under §5.3's semantics. Its wake is `GET /v1/events/bounded-stream?follow=true&ledgerIncarnationId=…&afterSeq=…`, which refuses `CURSOR_INVALID` and signals `ledgerReplaced` when the incarnation differs. SQLite rows are the truth. An incarnation change resets (cardo B3), and a stream close reconnects from the committed cursor. Ingest runs as a cursored subscription (cardo S5).
 - The cursor is `{incarnation, hrcSeq}`. An incarnation change resets and rebuilds (cardo B3).
 
 **Documents.** One document, `hrc`, rebuildable, with durability `none`.
@@ -114,7 +114,7 @@ Raw keystroke input (`SendWindowLiteralInputRequest`) has neither a fence nor a 
 | S1 reads | sessions, runtimes and runs listing; events tail, head and latest-by-session; health and status; capture reads | none |
 | S2 messages | messages, dm, query, wait and watch; wrkq presentation; the stop-gate and hint-decision internal routes | `messageSubscribers`; the wrkq ledger cursor's consumer |
 | S3 runtime lifecycle | runtimes start, ensure, attach, sweep and prune; capture; bridges; placements and declarations | in-flight start maps; tmux leases |
-| S4 brokers and turns | broker-events and broker-sessions; dispatch, inputs and in-flight input; interrupt; clear-context; runs reconcile and recover; the follow hub (`/v1/events/follow`, `/v1/broker-events/follow`); hook ingest | `harnessBrokerController`, `followSubscribers`, the in-flight idempotent dispatch map, the broker warmup |
+| S4 brokers and turns | broker-events and broker-sessions; dispatch, inputs and in-flight input; interrupt; clear-context; runs reconcile and recover; the follow hub (`GET /v1/events?follow=true`, `/v1/events/bounded-stream`, `/v1/broker-events/follow`); hook ingest | `harnessBrokerController`, `followSubscribers`, the in-flight idempotent dispatch map, the broker warmup |
 | S5 federation | the peer listener, bindings, designations, locate, retire | peer health |
 
 **Rules while split.**
