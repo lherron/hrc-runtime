@@ -14,7 +14,6 @@ Current reference for the HRC runtime. Design records live in
 
 - [cli-surface.md](cli-surface.md) — the `hrc` command surface by task: run/start/attach and the other verbs, with examples.
 - [cli-reference.md](cli-reference.md) — flag-level reference for `hrc`.
-- [hrcchat-spec.md](hrcchat-spec.md) — `hrcchat` spec; now a redirect-only compatibility shim over `hrc-cli`.
 
 ## Runtime and protocols
 
