@@ -45,6 +45,8 @@ All of these are cardo items in `pre-hrc-cardo-gaps.md`.
 
 Numbering is as of cardo d7862d2 (r5).
 
+**Status, 2026-10-19 18:21.** Every "before stage 1" and "before stage 2" item has landed and been graded on cardo branch `pre-hrc` (head 1796e1c, not yet on main). The specs are `docs/cardo-subscriptions-v1.md` (APPROVED r3.1, EN-32431) and `docs/cardo-projections-v1.md` (APPROVED r2.1, EN-32454). `cardo_store::foreign::open_readonly` is B7's safe open. `docs/cardo-embedding-guide.md` §9 implements `LedgerSource` over a product table. Since T-11428, `events.subscribe {after, incarnation}` refuses with `lag` on an incarnation mismatch. Two items wait on the stage-1 projector: A5 (T-11426) and F7 (T-11427). Stage 1 is unblocked on the cardo side. The projector pins cardo by rev on `pre-hrc` until that branch merges.
+
 ## 3. Stage 1: shadow projector
 
 **Purpose.** It puts HRC's live state on the cardo wire for loggia's Development workspace (sessions list, terminal leaves, later the concierge), and it proves the cardo primitives against real HRC data before Rust takes any write.
