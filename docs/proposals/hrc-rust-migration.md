@@ -1,6 +1,6 @@
 # HRC Rust migration
 
-Status: proposal r1, 2026-10-19. Owner mable@hrc-runtime:primary. Campaign P-00862 (cardo/gap-explorations). Nothing is dispatched. Lance's rulings are marked **RULED**.
+Status: proposal r2, 2026-10-19 (r2: cardo prerequisites renumbered to pre-hrc-cardo-gaps r5; `hrc_events` as a `LedgerSource`, §5.3). Owner mable@hrc-runtime:primary. Campaign P-00862 (cardo/gap-explorations). Nothing is dispatched. Lance's rulings are marked **RULED**.
 
 This page owns the HRC side of the port: the stages, the strangler inside stage 2, the compatibility contract, install and fleet, and the process budget. The cardo work that must land first lives in cardo's `docs/explorations/pre-hrc-cardo-gaps.md`. This page cites it by item number (`cardo P1`, `cardo B7`, and so on) and does not restate it. The material is seeded from cardo's `hrc-acp-library-path.md` r3 (66a5434), §0.1, §1, E5, E6, F7, §7a and §9.
 
@@ -39,9 +39,11 @@ All of these are cardo items in `pre-hrc-cardo-gaps.md`.
 
 | before | cardo items |
 |---|---|
-| stage 1 | P1 (restart contract), P3 (supervision scoped), A1 (tokio adapter), A2 (owner panic policy), A4 (bundled SQLite with FTS5), B1–B4 (Rust ingest, waker, reset, live-set sweeps), B6 (projection rules), B7 (safe read-only open), E4 (outside readers), F1, F3 |
-| stage 2 | P2 (delivery promises), C1 (migrations runner), C3 (durable cursors), C4 (idempotency keys), C5 (durable timers and periodic tasks), C7 (retention), D1 (idempotent wire ops), D2 (cause on receipts), B5 (ring quota), F4 |
-| measured on the stage-1 projector | A5 (performance budget), F2 on real data, F5 (`HrcProfile`) |
+| stage 1 | P1 (restart contract), P2 (delivery promises), P3 (supervision scoped); S0–S6 and S9 (subscription model, `LedgerSource`, reference ledger, cursored subscription, live class, ingest on S3, subscription registry, provider shape); A1 (tokio adapter), A2 (owner panic policy), A4 (bundled SQLite with FTS5); B1 (Rust ingest), B3 (reset), B4 (live-set sweeps), B6 (projection rules), B7 (safe read-only open), E4 (outside readers); C3 (durable cursors), C4 (idempotency keys), C7 (retention); F0, F1, F3, F4 |
+| stage 2 | C1 (migrations runner), C5 (durable timers and periodic tasks), D1 (idempotent wire ops), D2 (cause on receipts), S7 (wire replay past the ring), S8 (ring quota), F5, F6 |
+| measured on the stage-1 projector | A5 (performance budget), F2 and F0 on real data, F7 (`HrcProfile`) |
+
+Numbering is as of cardo d7862d2 (r5).
 
 ## 3. Stage 1: shadow projector
 
@@ -51,7 +53,7 @@ All of these are cardo items in `pre-hrc-cardo-gaps.md`.
 
 **Input.**
 - The store is opened under cardo B7's rules: located through `hrc server status --json` → `stateRoot`, opened read-only with a `file:` URI, short read transactions, no fixtures on live roots.
-- The wake is `/v1/events/follow`, or a tail by `hrcSeq`. SQLite rows are the truth (cardo B2).
+- The projector implements cardo S1 (`LedgerSource`) read-only over `hrc_events`, under §5.3's semantics. Its wake is `/v1/events/follow`, or a tail by `hrcSeq`, and SQLite rows are the truth. Ingest runs as a cursored subscription (cardo S5).
 - The cursor is `{incarnation, hrcSeq}`. An incarnation change resets and rebuilds (cardo B3).
 
 **Documents.** One document, `hrc`, rebuildable, with durability `none`.
@@ -59,7 +61,7 @@ All of these are cardo items in `pre-hrc-cardo-gaps.md`.
 | type | natural key | carries | notes |
 |---|---|---|---|
 | `hrc.seat` | sessionRef `(scope_ref, lane_ref)`, the `continuities` primary key | current hostSessionId, generation, runtimeId; agentId, projectId, taskId, lane, displayRef; status and phase; runtime transport, harness and status; latest event kind and time; lastActivityAt; context reading | attachable `tmux-attach`, fence `[hostSessionId, generation, runtimeId]` |
-| `hrc.runtime` | runtimeId | seat sessionRef, transport, harness, provider, status, activeRunId, supportsInflightInput, timestamps | chatty, so it needs cardo B5 before stage 2 |
+| `hrc.runtime` | runtimeId | seat sessionRef, transport, harness, provider, status, activeRunId, supportsInflightInput, timestamps | chatty, so it needs cardo S8 before stage 2 |
 | `hrc.project` | projectId | name | colour stays in a loggia plugin; a kernel row never carries theme data |
 
 - **There is no sessions document.** A sessions row is one generation, so keying on hsid repeats foundry's EN-30664 defect.
@@ -89,10 +91,10 @@ Raw keystroke input (`SendWindowLiteralInputRequest`) has neither a fence nor a 
 **Scope.**
 - Local node only. Rows for other nodes and remote attach wait for G12, which is unsupported in cardo (a remote node's projector is mounted over an ssh-forwarded socket, when that is wanted).
 - Transcripts and history stay out of documents.
-- A per-seat timeline document waits for the concierge design. It must not share the seats document's ring quota (cardo B5).
+- A per-seat timeline document waits for the concierge design. It must not share the seats document's ring quota (cardo S8).
 
 **Gates.** Each one is graded from durable readback.
-1. F5 `HrcProfile` passes discovery, query, replay and resources against the projector.
+1. F7 `HrcProfile` passes discovery, query, replay and resources against the projector.
 2. F2: a rebuilt projection equals the live one on the real store.
 3. A seat restarted through `seat.restart` re-attaches a bound loggia leaf on the same row. Two screenshots: before and after.
 4. An HRC restart leaves the projector's cursor resuming with no rebuild (same incarnation).
@@ -148,9 +150,21 @@ All of the routes on `hrc.sock` (about 110), with the same request and response 
 - After retirement, Rust takes migration ownership through cardo C1.
 - The contract includes the exact columns read from outside the daemon: the `hrc` CLI's monitor reads, the capture verifier, the prune job (`com.praesidium.hrc-prune-deltas`), and **ACP's twelve direct reads** (open item, §10).
 
-### 5.3 Event record
+### 5.3 Event record, and `hrc_events` as a cardo `LedgerSource`
 
-`hrcSeq` plus `ledger_incarnation_id` is unchanged. HRC ports its own ledger code in stage 2: the exact table, triggers, FTS and partial indexes. Cardo's shared append ledger is lifted from that port afterwards, for ACP. It is not adopted during the port.
+`hrcSeq` plus `ledger_incarnation_id` is unchanged. HRC ports its own ledger code in stage 2: the exact table, triggers, FTS and partial indexes. HRC implements cardo S1 over that table and does not adopt cardo's reference ledger (S2) during the port.
+
+What a `LedgerSource` over `hrc_events` has to state (read-only query of the live store, 2026-10-19):
+
+- **The seq is monotonic but holey.** `hrc_seq` is `INTEGER PRIMARY KEY AUTOINCREMENT`, so it is never reused. The live table spans 1,501–3,040,223 with 1,582,444 rows, which is about 1.46 M holes.
+- **Holes are anywhere, not only below a floor.**
+  - `hrc runtime prune` deletes every event of the selected runtimes at any age (`runtime-repository.ts:643`).
+  - Retention deletes by age, except resume-barrier kinds, when it is run with `hrc_events` in `--tables` (`scripts/prune-hrc-event-deltas/`; the nightly job runs `runtime_buffers` only today).
+- **So `retained_from` is a floor, not a promise.** Every row above it may still be missing. `read_after` means "the next existing rows with seq greater than the cursor", and a hole is never a loss signal.
+- **Payloads are compacted in place.** Spill and restub rewrite `payload_json` after the fact. A replay can see different payload bytes for the same seq.
+- **Use `head` from `sqlite_sequence`, not `max(hrc_seq)`.** Deleting the newest rows would otherwise move the head backwards.
+- **`stream_seq` is a second unique sequence** (`event_stream_cursor`). The record is `hrc_seq`, and nothing new keys on `stream_seq`.
+- **Retention fence (stage 2).** HRC's two delete paths will not remove rows above the slowest registered cursored consumer (cardo S6) on that source. Until then, a cursored consumer of `hrc_events` accepts that a pruned runtime's unconsumed events can vanish.
 
 ## 6. Install, activation and fleet
 
@@ -197,7 +211,7 @@ Every stage of the port is a prerequisite for Track G, so none of the port's wor
 ## 9. ACP port (after stage 3)
 
 The ACP port is ACP's own document. What this page fixes:
-- It starts after HRC stage 3, onto the cardo items listed as "after HRC, for ACP" in `pre-hrc-cardo-gaps.md` §7: the append ledger lifted from HRC's Rust ledger, the leased work queue, the action journal on a product connection, and the process worker for any executable.
+- It starts after HRC stage 3, onto the cardo items listed as "after HRC, for ACP" in `pre-hrc-cardo-gaps.md` §8: the reference ledger (S2) and its hub, lifted from HRC's Rust ledger, the leased work queue, the action journal on a product connection, and the process worker for any executable.
 - The mail injector moves with ACP, and its write-ahead intents map onto the action journal lifecycle.
 - gateway-discord stays a standalone bun sidecar talking HTTP.
 
