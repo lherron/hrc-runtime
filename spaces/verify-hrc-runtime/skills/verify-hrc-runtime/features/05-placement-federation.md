@@ -20,6 +20,13 @@ peers. Code: `packages/hrc-cli/src/cli/handlers-federation.ts`, `register-federa
 - `hrc server status --json` `.node`: nodeId, provenance, mode, peers with endpoints.
 - `hrc target bindings [--json]`: the raw skew sweep doctor's `placement-skew`/`placement-policy` rows render
   (`federationConfigured`, `gateMode`, `localNodeId`, `scan.{scanned, skewed, unreadable}`), for scripting.
+  The scan is single-flight with a 20 s budget (d9214d03): concurrent readers share one scan, a cut scan
+  answers `scan.truncated {budgetMs, notAssessed, inFlightScopeRef}` and doctor's `placement-skew` turns warn
+  (source-read; not reproduced), and a slow one logs `federation.bindings.scan_slow` (4305 bindings in 6178 ms on
+  2026-10-19).
+- Scope-homed reads: session, event and run reads for a scope homed on another node are forwarded there
+  (T-10418; the routed tail is driven in feature 4). A peer that just failed its probe is skipped by the
+  session index for 30 s (571c6c56, source-read).
 - `hrc admin registrations gc [--json]` with no scopes: the read-only retirement candidate projection
   (`candidates`, `lingerMs`). With scopes and `--yes` it retires: operator only.
 - Not driven: `hrc federation retire <scope>` (permanent fence + binding delete), the registry rebuild.
@@ -38,8 +45,10 @@ hrc target locate mable@hrc-runtime:minisvc --json | jq -c '{declared, authority
 hrc target locate mable@hrc-runtime:minisvc --fail-on-skew >/dev/null; echo "rc=$?"
 hrc server status --json | jq -c .node
 hrc doctor --json | jq -c '.[] | select(.name|test("node|federation|placement-skew"))'
+hrc doctor --json | jq '[.[] | select(.name == "placement-policy")] | length'     # == scan.unreadable below
 hrc admin registrations gc --json
-hrc target bindings --json | jq -c '{gateMode, localNodeId, scan: (.scan|{scanned, skewed: (.skewed|length), unreadable: (.unreadable|length)})}'
+hrc target bindings --json | jq -c '{gateMode, localNodeId, scan: (.scan|{scanned, skewed: (.skewed|length), unreadable: (.unreadable|length), truncated})}'
+jq -c 'select(.event|test("federation.bindings.scan_"))' ~/praesidium/var/logs/hrc-runtime/hrc-server.log | tail -2 | cut -c1-300
 hv run <task> -- hrc target bindings --json | jq -c '{federationConfigured, gateMode, scanned: .scan.scanned}'
 hv run <task> -- hrc target locate tabularasa@hrc-runtime:hvprobe --json | jq -c '{authority, observed: .observed.runtimeCount}'
 ```
@@ -61,9 +70,9 @@ hv run <task> -- hrc target locate tabularasa@hrc-runtime:hvprobe --json | jq -c
 `target locate` shows a local scope bound in the ledger with a live runtime observed, a remote scope bound
 in the registry to its home node with nothing observed here, and `--fail-on-skew` exits 0 where doctor's
 `placement-skew` reports no disagreement; `target bindings` counts the same bindings and unreadable
-declarations as doctor (3537 and 7 on 2026-10-05, `gateMode: enforce`); doctor shows every peer healthy; the registrations projection
-answers (empty `candidates` on 2026-10-05); the scratch shows single-node and unbound (`target bindings`: `federationConfigured: false`, `gateMode:
-off`, `scanned: 0`).
+declarations as doctor (4305 and 5 on 2026-10-19, `gateMode: enforce`, no `truncated`); doctor shows every
+peer healthy; the registrations projection answers (empty `candidates` on 2026-10-19); the scratch shows
+single-node and unbound (`target bindings`: `federationConfigured: false`, `gateMode: off`, `scanned: 0`).
 
-Driven 2026-10-05 (T-10350 upkeep) on live max3 (installed 5bdb6c4e) and scratch `t-10350`:
-`var/wrkq-artifacts/T-10350/05-placement-federation/drive.txt`.
+Driven 2026-10-19 (T-11363 upkeep) on live max3 (installed d8451409) and scratch `t-11363`:
+`var/wrkq-artifacts/T-11363/05-placement-federation/drive.txt`.

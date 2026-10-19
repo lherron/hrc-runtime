@@ -6,7 +6,7 @@ Proven when. The last lines of each file name the drive that last proved it and 
 | # | Feature | File | Drive on |
 | --- | --- | --- | --- |
 | 1 | Server health (`server status`, `doctor`, `info`, `server subscribers`, `server tmux status`, release block, the harness guard on `server serve`) | [01-server-health.md](01-server-health.md) | live read-only; scratch |
-| 2 | Runtime lifecycle (`start`, `show`, `ls`, `runtime list/inspect/status/capture/terminate`, `session list/resolve/get/meta get`, `peek`, `send`, `summon`, `resume`) | [02-runtime-lifecycle.md](02-runtime-lifecycle.md) | scratch |
+| 2 | Runtime lifecycle (`start`, `show`, `ls`, `runtime list/inspect/status/capture/terminate`, `session list/resolve/get/meta get`, `peek`, `send`, `summon`, `resume`, `restart`) | [02-runtime-lifecycle.md](02-runtime-lifecycle.md) | scratch |
 | 3 | Turns and monitor (`turn`, `turn --attach`, `monitor show/watch/wait/events/transcript/stats/search/session-report`) | [03-turns-monitor.md](03-turns-monitor.md) | scratch; live read-only |
 | 4 | HTTP API on the daemon socket (`/v1/health`, `/v1/events/tail` paging and refusals, `/v1/events/head`) | [04-http-api.md](04-http-api.md) | scratch |
 | 5 | Placement and federation (`target locate`, `target bindings`, doctor's node/federation/placement rows, `registrations gc` projection) | [05-placement-federation.md](05-placement-federation.md) | live read-only; scratch |

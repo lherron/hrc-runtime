@@ -22,7 +22,10 @@ resolve-intent), `packages/hrc-cli/src/monitor/` and `monitor-*.ts`, `transcript
   (`packages/hrc-cli/src/monitor/until-args.ts`). With no condition, a blocking wait arms on
   `turn-finished, runtime-dead`.
 - `hrc monitor watch [selector] [--last N|--from-seq N] [--follow] [--format compact|…]`: the lifecycle
-  events (`broker.submission.milestone`, `turn.user_prompt`, `turn.message`, `turn.completed`, …).
+  events (`broker.submission.milestone`, `turn.user_prompt`, `turn.message`, `turn.completed`,
+  `runtime.context.updated`, …). `runtime.context.updated` follows each turn that reports usage (T-10934)
+  and carries the reading `hrc runtime inspect` shows as `.hrc.contextReading`. `runtime.settled` is written
+  only when an idle seat clears a stale owner (T-10841); a clean drive has none.
 - `hrc monitor events|transcript|stats <runtimeId|invocationId|scope>`: the invocation ledger (`user.message`,
   `assistant.message.*`, `turn.completed`, `driver.notice`, `capture.warning`), a rendered USER/SAYS/NOTE
   transcript, and per-type counts with `turnCount`.
@@ -53,6 +56,8 @@ hv run <task> -- hrc turn --attach $T; echo "rc=$?"                             
 hv run <task> -- hrc monitor wait $T --until bogus --timeout 1s; echo "rc=$?"     # 2
 hv run <task> -- hrc monitor wait $T --until-any idle --timeout 1s; echo "rc=$?"  # 2: exact selectors require --until
 hv run <task> -- hrc monitor wait $T --until idle --until-any busy --timeout 1s; echo "rc=$?"   # 2: mutually exclusive
+hv run <task> -- hrc monitor wait $T tabularasa@hrc-runtime:other --until-all turn-finished --timeout 1s; echo "rc=$?"  # 2: levels only
+hv run <task> -- hrc monitor wait $T $T --until-all idle --timeout 5s --json | tail -1                  # exit 10 already_true
 hv run <task> -- hrc monitor session-report --runtime $R --json
 ```
 
@@ -62,15 +67,20 @@ hv run <task> -- hrc monitor session-report --runtime $R --json
   first turn completed, it sat out the full 120 s and exited 20 (`result: timeout`, `outcome: not_matched`),
   while the transcript already showed `SAYS | OK` (2026-10-05, `T-10297/03-turns-monitor/drive.txt`). A
   timeout here is not "the turn never finished". Wait on `idle` (a level: exit 10 `already_true` when it
-  already holds) or use `hrc turn --wait final`.
-- **A fresh claude birth logs `capture.warning` rows; a resumed one logged none.** `blocked_unknown`,
-  "Unknown Claude attachment type: environment|date|model|instructions|credential_org|prompt_snapshot|
-  session_context", `loadBearing: false`: 8 on a freshly started two-turn runtime (all stamped in its first
-  turn), 0 on the resumed generation's two turns (2026-10-05, aspd e5e729af,
-  `T-10350/03-turns-monitor/drive.txt`). `hrc runtime status <id> --json` `.capture.blockedUnknown` counts them
-  per native type. The parser is ASP's
+  already holds) or use `hrc turn --wait final`. Seen again 2026-10-19: armed 1 s after the first turn went
+  idle, it matched the *next* turn (a `send`) 77 s later with exit 0 (`T-11363/02-runtime-lifecycle/drive.txt`).
+- **Claude births log `capture.warning` rows, and which ones moves with the claude CLI.** `blocked_unknown`,
+  `loadBearing: false`. On 2026-10-05 (aspd e5e729af) they were "Unknown Claude attachment type:
+  environment|date|…", 8 on a fresh runtime and 0 on a resumed one. On 2026-10-19 (aspd 25445c15) they were
+  "Unknown Claude transcript row type: api-request-blob|api-request|api-request-shape", 6 on the fresh
+  two-turn runtime and 6 on the resumed one (`T-11363/03-turns-monitor/drive.txt`). `hrc runtime status <id>
+  --json` `.capture.blockedUnknown` counts them per native type. The parser is ASP's
   (`agent-spaces/harness/harness-broker/src/drivers/claude-code-tmux/hook-transcript.ts`). They are not a
-  turn failure; filter them out before counting warnings, and don't expect them on every runtime.
+  turn failure; filter them out before counting warnings, and don't pin a count or a type list.
+- **A bare word is an agent, not a task.** `hrc monitor wait hvprobe …` resolves `agent:hvprobe/lane:main`
+  (`unknown session`, rc 2). For a set-shaped selector in a drive, pass two selectors.
+- `monitor watch --last 8` now spends a row on `runtime.context.updated` after `turn.completed`; widen
+  `--last` if the run's `turn.user_prompt` falls out of the window.
 - `monitor show --json` has no top-level `status`; the runtime's status is under `.runtime`.
 - `turn --dry-run` resolves locally ("no server state consulted"); it proves the plan, not admission.
 
@@ -79,7 +89,9 @@ hv run <task> -- hrc monitor session-report --runtime $R --json
 `turn --wait final` returns `outcome: completed`, `effectiveDoor: steer` and the expected `finalMessage`;
 `monitor watch` shows that run's `turn.user_prompt`, `turn.message`, `turn.completed`; `events`/`stats` count
 the turns; `search` finds the prompt; `wait --until idle` exits 10; `turn --attach` with nothing in flight
-exits 6; an invalid condition exits 2.
+exits 6; an invalid condition exits 2; `--until-all turn-finished` on a set exits 2 and `--until-all idle`
+exits 10.
 
-Driven 2026-10-05 (T-10350 upkeep) on installed 5bdb6c4e, aspd e5e729af, scratch `t-10350` (the turn ran on
-the resumed generation 2): `var/wrkq-artifacts/T-10350/03-turns-monitor/drive.txt`.
+Driven 2026-10-19 (T-11363 upkeep) on installed d8451409, aspd 25445c15, scratch `t-11363` (the turn ran on
+the resumed generation 2; six `turn.completed`, six `runtime.context.updated`, zero `runtime.settled` over the
+scratch): `var/wrkq-artifacts/T-11363/03-turns-monitor/drive.txt`.

@@ -104,10 +104,14 @@ started (SIGTERM, then SIGKILL after 5 s), closes its ghostmux tab and removes `
 the daemon's log (serve.log), the launcher script hv wrote for it and its start time (up_at) in
 `/tmp/hv/<name>/` for a post-mortem; they are scratch files, not repo paths. A terminated harness can still
 name `/tmp/hv/<name>` for a few seconds after `down` returns (a resumed claude for ~3 s on 2026-10-05,
-T-10350), so recheck before calling the scratch clean. `--dry-run` prints the plan
+T-10350; one process still at +5 s and none at +20 s on 2026-10-19, T-11363), so recheck before calling the
+scratch clean. `--dry-run` prints the plan
 first. `hv scratch list` shows what is up. Close any other ghostmux tab you opened
 (`ghostmux kill-surface -t <id> --force`) and confirm no process still names the scratch:
-`ps -axo pid,command | grep /tmp/hv/<name>`.
+`ps -axo pid,command | grep -c '/tmp/hv/<nam[e]>'` (0 when clean). Bracket one character so the grep doesn't
+count itself, and keep the plain path out of the rest of that command line: `hv rec` runs it under `bash -c`,
+whose argv is in `ps` too. On 2026-10-19 a check recorded in the same `hv rec` as `HV_HOME=<root> hv scratch
+down` counted 4 processes that were only the probe itself; alone, it counted 0 (T-11363).
 
 ## Maintain
 
@@ -123,7 +127,7 @@ refusal prints `{error, message, next}` and exits 1. Put it on your path or call
 
 | Verb | Invocation | Does |
 | --- | --- | --- |
-| `scratch up` | `hv scratch up [--name N]` | Starts the installed `hrc server serve` on `/tmp/hv/N/{run,state}` in a new ghostmux tab, waits up to 30 s for `server status`, prints root, pid, surface, socket, stateRoot, sourceCommit and runningEqualsInstalled. N defaults to `hv` and is lowercased |
+| `scratch up` | `hv scratch up [--name N]` | Starts the installed `hrc server serve` on `/tmp/hv/N/{run,state}` in a new ghostmux tab, waits up to 30 s for `server status`, prints root, pid, surface, socket, stateRoot, sourceCommit and runningEqualsInstalled. A daemon that exits at boot refuses `daemon_exited` with serve.log's last line. N defaults to `hv` and is lowercased |
 | `scratch down` | `hv scratch down N [--dry-run]` | Terminates N's live runtimes, stops its daemon, closes its tab, removes `run/` and `state/` |
 | `scratch list` | `hv scratch list` | Every scratch under `/tmp/hv` with pid and liveness |
 | `run` | `hv run N -- CMD…` | Runs CMD with only `HRC_RUNTIME_DIR` and `HRC_STATE_DIR` pointed at N, so `hrc` and `curl` address the scratch. Refuses `not_up` without a socket |

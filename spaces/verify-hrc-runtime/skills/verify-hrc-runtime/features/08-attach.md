@@ -11,8 +11,10 @@ A human (or ghostmux) joins a live runtime's terminal and leaves it running. Cod
 - `hrc attach <target>` in a TTY: execs `tmux -S <run>/btmux/<driver>--<rt>.sock attach-session -t
   hrc-<driver>-<rt>:tui`. Leaving with a tmux detach prints `[detached (from session …)]` and exits 0; the
   runtime stays `ready`.
-- `hrc attach <runtimeId>` without a TTY (or from a script): prints the attach descriptor JSON (`transport`,
-  `argv`, `bindingFence` with hostSessionId, runtimeId, generation, windowId, paneId) instead of attaching.
+- `hrc attach <runtimeId>`: always prints the attach descriptor JSON (`transport`, `argv`, `bindingFence`
+  with hostSessionId, runtimeId, generation, windowId, paneId) and never attaches, TTY or not (GET
+  `/v1/attach`). Concurrent callers each get their own whole descriptor (b6468220, T-10760). A scope target
+  with no TTY still execs tmux: `open terminal failed: not a terminal`, rc 2.
 - `hrc attach <target> --dry-run`: the local plan (POST `/v1/runtimes/attach`, then exec the argv).
 - `hrc run <target>`: start-or-reattach and attach; interactive only (not driven separately: its attach half
   is this feature, its start half is feature 2).
@@ -34,6 +36,8 @@ timeout 5 tmux -S <sock> detach-client -t <client tty>
 ghostmux capture-pane -t <id> | grep -v '^\s*$' | tail -5                   # [detached …], status 0
 hv run <task> -- hrc runtime list --json | jq -c '.[] | {runtimeId,status}'  # still ready
 hv run <task> -- hrc attach <runtimeId> </dev/null                         # descriptor JSON
+(hv run <task> -- hrc attach <runtimeId> </dev/null | jq -c '.bindingFence|keys' & hv run <task> -- hrc attach <runtimeId> </dev/null | jq -c '.bindingFence|keys' & wait)   # both whole
+hv run <task> -- hrc attach $T </dev/null; echo "rc=$?"                    # scope, no TTY: rc 2
 hv run <task> -- hrc attach $T --dry-run
 ghostmux kill-surface -t <id> --force
 ```
@@ -46,6 +50,9 @@ ghostmux kill-surface -t <id> --force
   `codex-app-server-renderer-control.*.sock`, which is not a tmux server and hangs `tmux -S`.
 - `hrc attach --dry-run --json` prints the plan as one JSON object (`dryRun`, `scope`, `sessionRef`,
   `serverConsulted: false`, …); without `--json` it prints the human plan.
+- Scope attach binds the Ghostty surface when `GHOSTTY_SURFACE_UUID` is set, which every ghostmux tab sets
+  (source-read). `:tui` in the argv holds for a leased-tmux runtime with a tmux-tui presentation, which is
+  what a claude birth is.
 - The socket name is truncated (`…-rt-fa63c507-774c-45b6-8fc5-9ffb3.sock`) while the session name carries the
   full runtime id; match on the session name.
 
@@ -56,5 +63,6 @@ client, a detach prints `[detached (from session hrc-…-<rt>)]` with exit 0, th
 with zero clients, and `attach <runtimeId>` without a TTY prints a descriptor whose `argv` names that socket
 and `:tui`.
 
-Driven 2026-10-05 (T-10350 upkeep) on installed 5bdb6c4e, scratch `t-10350` (the resumed generation's
-runtime; the terminated one's socket was already gone): `var/wrkq-artifacts/T-10350/08-attach/drive.txt`.
+Driven 2026-10-19 (T-11363 upkeep) on installed d8451409, scratch `t-11363` (the resumed generation's
+runtime; two concurrent descriptors both whole; scope attach without a TTY rc 2):
+`var/wrkq-artifacts/T-11363/08-attach/drive.txt`.

@@ -2,9 +2,9 @@
 
 Births, reads and ends a managed runtime for a scope, and carries its conversation across ends. Code:
 `packages/hrc-cli/src/cli/handlers-scope-start.ts`, `handlers-scope-run.ts`, `handlers-runtime.ts`,
-`handlers-runtime-inspect.ts`, `handlers-session.ts`, `handlers-control.ts` (send, peek, summon);
+`handlers-runtime-inspect.ts`, `handlers-session.ts`, `handlers-control.ts` (send, peek, summon), `handlers-restart.ts`;
 server `runtime-start-handlers.ts`, `runtime-control-handlers.ts`, `runtime-list-handlers.ts`,
-`runtime-inspect-handlers.ts`, `session-resume-continuation.ts`. Docs: `docs/cli-surface.md` (run/start/attach),
+`runtime-inspect-handlers.ts`, `session-resume-continuation.ts`, `session-restart.ts`. Docs: `docs/cli-surface.md` (run/start/attach),
 `docs/target-handles.md`.
 
 ## Sub-features
@@ -16,7 +16,8 @@ server `runtime-start-handlers.ts`, `runtime-control-handlers.ts`, `runtime-list
 - `hrc show <selector> [--json]`: resolves runtime, then host session, then message; prints `kind`. For a
   runtime the fields are top-level (`status`, `transport`, `capture`, `broker`, `presentation`, …).
 - `hrc runtime list --json` (an array of non-terminated runtimes), `hrc runtime inspect <id> --json`
-  (`{hrc, broker}` authority views), `hrc session list --json`.
+  (`{hrc, broker}` authority views; `.hrc.contextReading` `{turnId, usedTokens, windowTokens, model,
+  observedAt}` after a turn that reported usage, T-10928, else `null`), `hrc session list --json`.
 - `hrc ls <runtimes|sessions|messages> [--json]`: the inventory by noun. The noun is required (exit 2
   without one; the help prints `<noun>`).
 - `hrc runtime status <target> [--json]`: lifecycle plus broker capture (`capture.state`, `deferredCount`,
@@ -25,8 +26,8 @@ server `runtime-start-handlers.ts`, `runtime-control-handlers.ts`, `runtime-list
   false`); `--create` makes one (not driven). `hrc session get <hostSessionId> --live --json` joins the
   backing runtimes (`{session, runtimes}`). `hrc session meta get <target> --json`: continuity metadata
   (`{metadata, metadataSources}`, empty on a fresh scope).
-- `hrc runtime capture <runtimeId>`: the pane text by runtime id. **Broken for broker-hosted runtimes on
-  5bdb6c4e** (T-10353, Gotchas); use `peek`.
+- `hrc runtime capture <runtimeId>`: the pane text by runtime id, broker-hosted runtimes included since
+  d24cd877 (T-10353). A headless runtime has no pane and refuses (rc 2, source-read).
 - `hrc peek <target> [--lines N]`: the live pane tail.
 - `hrc send <target> <text> [--no-enter] [--json]`: literal keystrokes into the pane; no envelope or obligation, but a
   submitting send returns a `runId` and its turn is in `hrc_events`. `--no-enter` on a broker-hosted runtime is
@@ -37,6 +38,12 @@ server `runtime-start-handlers.ts`, `runtime-control-handlers.ts`, `runtime-list
   the continuation.
 - `hrc resume <scope> [--no-attach] [-p <prompt>]`: re-births from the stored continuation into a new host
   session and generation (`priorHostSessionId` names the old one).
+- `hrc restart <scope> [--force] [--json]` (T-10850, `POST /v1/sessions/restart`): ends the conversation and
+  relaunches fresh: archives the host session, births generation+1 with no continuation (`{ok,
+  priorHostSessionId, hostSessionId, generation, launch: {status, runtimeId}}`) and terminates the old
+  runtime. A busy or unobservable seat is refused with `ok: false`, `code: runtime_busy`, rc 1, nothing
+  changed; `--force` skips that check (not driven). Not `restartme` (self, after a handoff) and not
+  `server restart` (the daemon).
 - Not driven here: `start --force-restart|--new-session|--no-viewer|--app-server-viewer|--on-conflict`,
   `hrc run` (interactive; feature 8 covers the attach half), `hrc restartme`, and the continuity writes
   `session rotate`, `session meta set|clear`, `session retitle` (deprecated alias), `session
@@ -71,14 +78,23 @@ hv run <task> -- hrc runtime terminate $R --reason '<task> drive'
 hv run <task> -- hrc runtime list --json          # [] once terminated
 hv run <task> -- hrc resume $T --no-attach -p 'Which single words did you reply with earlier in this conversation? Answer as a comma-separated list, nothing else. No tools.' --json
 hv run <task> -- hrc monitor transcript <new runtimeId> --tail 6   # the recalled words
+hv run <task> -- hrc runtime capture <new runtimeId> | tail -8         # the pane, rc 0
+hv run <task> -- hrc runtime inspect <new runtimeId> --json | jq -c '.hrc | {status, contextReading}'
+hv run <task> -- hrc restart $T --json                                 # generation+1, launch.started
+hv run <task> -- hrc turn $T 'Which single words did you reply with earlier in this conversation? Answer as a comma-separated list, or NONE if there were none. No tools.' --wait final --timeout 3m --json | jq -c '{generation, final: .terminal.finalMessage}'   # NONE
+hv run <task> -- hrc send $T 'Count slowly from 1 to 40, one number per line. No tools.' --json; sleep 3
+hv run <task> -- hrc restart $T --json; echo "rc=$?"                   # runtime_busy, rc 1
 ```
 
 ## Gotchas
 
-- **Socket paths must fit 104 bytes.** A scratch root under `~/praesidium/var/state/…` failed the birth with
-  `broker_start_failed … btmux/claude-code--rt-…46ffc.sock (File name too long)` (2026-10-05,
-  `T-10297/02-runtime-lifecycle/drive.txt`, `serve-long-root.log`). The broker socket name is truncated before
-  the error, so the message names a path that never existed. That is why `hv` roots live under `/tmp/hv`.
+- **Socket paths must fit 104 bytes, and the daemon now checks at boot.** Since 955416e9 (T-10330) a root
+  whose worst-case btmux socket can't fit refuses to start: "runtime root socket path too long: the
+  worst-case btmux socket path …/run/btmux/codex-app-se-rt-0000….sock is 148 bytes; … at most 103" in
+  `serve.log`; `hv scratch up` refuses `daemon_exited` with that line (~13 s; it waited out 30 s for
+  `not_ready` before T-11363) (2026-10-19, an 84-byte `HV_HOME`, `T-11363/evidence/lr/serve.log`,
+  `10-hv-fix/drive.txt`). Before it, the birth failed with a truncated path that never existed
+  (T-10297). That is why `hv` roots live under `/tmp/hv`.
 - **`hrc start --json` is not turn evidence.** It answers `accepted`; read `turn.completed` and the final
   message from feature 3.
 - **`hrc runtime list --json` is a bare array**, not `{runtimes: […]}`; `.runtimes` on it is a jq error.
@@ -91,12 +107,12 @@ hv run <task> -- hrc monitor transcript <new runtimeId> --tail 6   # the recalle
   restart drops the held text (2026-10-05, `T-10331/item5/repro.txt`). Prove an unsubmitted `send` by the
   next submission, not by `peek`.
 - **`send` mints a run.** A submitting send answers `runId` and `status: started`: there is no envelope or
-  obligation, but the turn it causes is in `hrc_events`.
-- **`hrc runtime capture` refuses every broker-hosted runtime.** On a fresh `hrc start` claude runtime it
-  answers `[runtime_unavailable] … presentation pane is unavailable or changed` with `expected.windowName:
-  main`, `observed.windowName: tui`, every other field equal, while `peek` of the same pane works
-  (2026-10-05, two runtimes, `T-10350/02-runtime-lifecycle/drive.txt`). `captureRuntime` chooses
-  `requireTmuxPane` (hardcoded `main`) for any `transport: tmux` runtime. Product gap T-10353.
+  obligation, but the turn it causes is in `hrc_events`. Still true after e822f2a9 (2026-10-19), which only
+  drops the run from turns the broker takes with no HRC dispatch (typed in the pane).
+- **`restart` and `resume` differ by the continuation.** On 2026-10-19 resume's generation 2 recalled `OK,
+  SENT`; restart's generation 3 answered `NONE` to the same question (`T-11363/02-runtime-lifecycle/drive.txt`).
+- `hrc runtime capture` refused every broker-hosted runtime on 5bdb6c4e (`expected.windowName: main`,
+  `observed: tui`; T-10353). d24cd877 ended it: rc 0 with the pane on 2026-10-19.
 - **`hrc start --json` answers `transport: headless`** at `stage: accepted`; the runtime is `tmux` once it is
   hosted (`runtime list`, `inspect`). Read the transport after the birth, not from the start answer.
 - **`monitor wait --until idle` right after `send` races the send.** Armed 0 s after `send` returned, it
@@ -110,7 +126,9 @@ hv run <task> -- hrc monitor transcript <new runtimeId> --tail 6   # the recalle
 The start's runtime reaches `ready`, `peek` shows the model's one-word answer, `inspect` returns both authority
 views, `terminate` answers `ok: true` and `runtime list` empties, and `resume` births a new generation whose
 transcript recalls every word the earlier turns produced (`OK, SENT` after a start and a send on
-2026-10-05; the `TWO` turn of feature 3 now runs on the resumed generation).
+2026-10-05 and 2026-10-19; the `TWO` turn of feature 3 now runs on the resumed generation); `restart` births
+generation+1 that recalls nothing (`NONE`) and refuses a busy seat with `runtime_busy`.
 
-Driven 2026-10-05 (T-10350 upkeep) on installed 5bdb6c4e, aspd e5e729af, scratch `t-10350` (resume recalled
-`OK, SENT`): `var/wrkq-artifacts/T-10350/02-runtime-lifecycle/drive.txt`, `evidence/t-10350/`.
+Driven 2026-10-19 (T-11363 upkeep) on installed d8451409, aspd 25445c15, scratch `t-11363` (resume recalled
+`OK, SENT`; restart gen 3 answered `NONE`): `var/wrkq-artifacts/T-11363/02-runtime-lifecycle/drive.txt`,
+`evidence/t-11363/`.

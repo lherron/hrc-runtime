@@ -70,6 +70,11 @@ SH
     if [ -S "$d/run/hrc.sock" ] && with_env "$name" hrc server status --json 2>/dev/null | jq -e '.api.socketPath' >/dev/null 2>&1; then
       ok=1; break
     fi
+    # A daemon that refuses to boot (e.g. a root too long for sun_path) exits during startup; say why
+    # instead of waiting out the 30 s.
+    if [ -s "$d/pid" ] && ! pid_alive "$(cat "$d/pid")"; then
+      die daemon_exited "scratch $name exited at boot: $(grep -v '^\s*$' "$d/serve.log" | tail -1 | cut -c1-400)" "hv scratch down $name"
+    fi
     sleep 0.5
   done
   [ -n "$ok" ] || die not_ready "scratch $name did not answer status in 30 s; read $d/serve.log" "hv scratch down $name"
