@@ -8,7 +8,7 @@ import { sessionIdentityMetadata } from './migrations/session-identity-metadata.
 import { sessionStateDeadFieldRemoval } from './migrations/session-state-dead-field-removal.js'
 import { sessionTitleCascadeMigrations } from './migrations/session-title-cascade-migrations.js'
 import { sessionTitleMigrations } from './migrations/session-title-migrations.js'
-import { type HrcMigration, execute } from './migrations/types.js'
+import { type HrcMigration, type HrcStoreLogger, execute } from './migrations/types.js'
 
 export type { HrcMigration } from './migrations/types.js'
 
@@ -219,7 +219,7 @@ export const STORE_EVENT_HOST_SESSION_ID = 'hrc-store'
 export const STORE_EVENT_SCOPE_REF = 'store:sqlite'
 export const STORE_EVENT_LANE_REF = 'main'
 
-export function runMigrations(db: Database): void {
+export function runMigrations(db: Database, logger?: HrcStoreLogger): void {
   ensureMigrationTable(db)
 
   const applied = new Set(listAppliedMigrations(db))
@@ -231,7 +231,7 @@ export function runMigrations(db: Database): void {
 
   const applyPending = db.transaction((migrations: readonly HrcMigration[]) => {
     for (const migration of migrations) {
-      migration.apply(db)
+      migration.apply(db, logger)
       execute(
         db,
         'INSERT INTO hrc_migrations (id, applied_at) VALUES (?, ?)',
@@ -272,10 +272,17 @@ export function runMigrations(db: Database): void {
 
   if (upgradingExistingStore) {
     const actor = resolveMigrationActor()
-    process.stderr.write(
-      `hrc-store: store.migrated applied=${pending.length} version=${pending.at(-1)?.id ?? ''} ` +
-        `pid=${actor.pid} argv0=${actor.argv0} command="${actor.command}" ` +
-        `release=${actor.release} uid=${actor.uid}\n`
-    )
+    if (logger) {
+      logger.info('store.migrated', {
+        applied: pending.length,
+        version: pending.at(-1)?.id ?? '',
+        ...actor,
+      })
+    } else
+      process.stderr.write(
+        `hrc-store: store.migrated applied=${pending.length} version=${pending.at(-1)?.id ?? ''} ` +
+          `pid=${actor.pid} argv0=${actor.argv0} command="${actor.command}" ` +
+          `release=${actor.release} uid=${actor.uid}\n`
+      )
   }
 }

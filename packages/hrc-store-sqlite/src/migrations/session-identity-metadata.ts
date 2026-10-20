@@ -3,7 +3,7 @@ import type { HrcMigration } from './types.js'
 
 export const sessionIdentityMetadata: HrcMigration = {
   id: '0122_session_identity_metadata',
-  apply(db) {
+  apply(db, logger) {
     const view = db
       .query<{ sql: string }, []>(
         "SELECT sql FROM sqlite_master WHERE name='session_index_projection_source'"
@@ -42,9 +42,12 @@ export const sessionIdentityMetadata: HrcMigration = {
         row.lane_ref
       )
     }
-    process.stderr.write(
-      `hrc-store: session.identity.backfill total=${rows.length} unparsed=${unparsed}\n`
-    )
+    if (logger) {
+      logger.info('session.identity.backfill', { total: rows.length, unparsed })
+    } else
+      process.stderr.write(
+        `hrc-store: session.identity.backfill total=${rows.length} unparsed=${unparsed}\n`
+      )
     db.exec(
       `CREATE TABLE session_metadata(scope_ref TEXT NOT NULL,lane_ref TEXT NOT NULL,key TEXT NOT NULL,source TEXT NOT NULL CHECK(source IN ('launch','hrc','api')),value_json TEXT NOT NULL,updated_at TEXT NOT NULL,updated_by TEXT NOT NULL,PRIMARY KEY(scope_ref,lane_ref,key,source))`
     )

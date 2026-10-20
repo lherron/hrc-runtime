@@ -18,6 +18,7 @@ import { HrcMailFederatedOriginRepository } from './mail/federated-origin-reposi
 import { HrcMailStopRefusalRepository } from './mail/stop-refusal-repository.js'
 import { MessageRepository } from './message-repository.js'
 import { appliedMigrationIds, listAppliedMigrations, runMigrations } from './migrations.js'
+import type { HrcStoreLogger } from './migrations/types.js'
 import { ParticipantHostBindingRepository } from './participant-host-binding-repository.js'
 import { ParticipantRegistrationRepository } from './participant-registration-repository.js'
 import { AcpBridgeEmissionRepository } from './repositories/acp-bridge-emission-repository.js'
@@ -60,6 +61,7 @@ import { TranscriptIndexRepository } from './transcript-index-repository.js'
 import { WrkqLedgerCursorRepository } from './wrkq/ledger-cursor-repository.js'
 
 export type OpenHrcDatabaseOptions = {
+  logger?: HrcStoreLogger | undefined
   /**
    * Who owns the schema on this open. The daemon owns the live store and opens
    * with `true`; every other direct open — the CLI commands that read the store
@@ -182,7 +184,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     if (options.migrate === false && !isEphemeralPath(dbPath)) {
       assertStoreSchemaCurrent(sqlite)
     } else {
-      runMigrations(sqlite)
+      runMigrations(sqlite, options.logger)
     }
   } catch (error) {
     // A refused open owns no handle: leaking the sqlite connection would hold a

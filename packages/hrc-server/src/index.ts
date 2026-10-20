@@ -859,6 +859,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     })
     await tmux.initialize()
     db = openHrcDatabase(resolvedOptions.dbPath, {
+      logger: { info: (event, data) => writeServerLog('INFO', event, data) },
       // The daemon owns the store's schema. This is the ONE open that applies
       // migrations to the live store; every CLI direct-open passes
       // `migrate: false` and refuses instead (T-08118).

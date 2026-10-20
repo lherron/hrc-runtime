@@ -238,3 +238,5 @@ export type { SessionTitleRecord, SessionTitleSource } from './session-title-rep
 
 export { SessionMetadataRepository } from './session-metadata-repository.js'
 export { readSessionIdentity, canonicalLaneRef } from './session-identity.js'
+
+export type { HrcStoreLogger } from './migrations/types.js'
