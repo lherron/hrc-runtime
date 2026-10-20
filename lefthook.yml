@@ -57,13 +57,12 @@ pre-push:
     architecture-records:
       priority: 2
       run: bun scripts/check-architecture-records.ts
-    # `just verify` runs after the push on mini's self-hosted runner (T-10161,
-    # .github/workflows/post-push-verify.yml); the hook only reports the push.
-    # One stdin consumer: Lefthook cannot fan pre-push stdin out to commands.
+    # TS verify runs post-push on mini. The stdin owner runs the path-scoped
+    # cargo leg, then reports the push; Lefthook cannot fan stdin out.
     git-push-fact:
       priority: 3
       use_stdin: true
-      run: sh -c 'command -v wrkp >/dev/null 2>&1 && wrkp git push "$@" || true' sh {0}
+      run: bun scripts/pre-push-validation.ts {0}
 
 post-commit:
   commands:

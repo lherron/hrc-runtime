@@ -1,0 +1,16 @@
+# Same gitignore-shaped syntax as .hookignore. Cargo runs only for its inputs
+# and the neutral/shared boundary. Unknown TS paths retain the TS fail-closed leg.
+*
+!crates/
+!contract/
+!conformance/
+!packages/hrc-store-sqlite/src/migrations*
+!justfile
+!lefthook.yml
+!.githooks/
+!.hookignore*
+!scripts/lib/language-scope*
+!scripts/lib/kernel-release*
+!scripts/validation-scope.ts
+!scripts/pre-push-validation.ts
+!scripts/atomic-install.ts

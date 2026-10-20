@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["hrc-domain", "hrc-kernel"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+# All cardo crates share this approved main revision; never use path pins.
+cardo-core = { git = "https://github.com/lherron/cardo", rev = "1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd" }
+cardo-runtime = { git = "https://github.com/lherron/cardo", rev = "1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd" }
+cardo-store = { git = "https://github.com/lherron/cardo", rev = "1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+crossbeam-channel = "0.5"

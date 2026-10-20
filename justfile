@@ -146,14 +146,26 @@ architecture-records *args:
 verify:
     #!/usr/bin/env bash
     set -euo pipefail
-    bash scripts/dev-env.sh up --owner $$
-    eval "$(bash scripts/dev-env.sh env)"
+    eval "$(bun scripts/validation-scope.ts)"
     just architecture-records
-    just check
-    just lint
-    just typecheck
-    just test
-    just test-federation-loopback
+    if [ "$HRC_VERIFY_CARGO" = 1 ]; then just cargo-check; fi
+    if [ "$HRC_VERIFY_TS" = 1 ]; then
+      bash scripts/dev-env.sh up --owner $$
+      eval "$(bash scripts/dev-env.sh env)"
+      just check
+      just lint
+      just typecheck
+      just test
+      just test-federation-loopback
+    fi
+
+# Rust's path-scoped landing leg. No TS build/import is involved.
+cargo-check:
+    cargo fmt --manifest-path crates/Cargo.toml --all -- --check
+    cargo clippy --manifest-path crates/Cargo.toml --workspace --all-targets --locked -- -D warnings
+    cargo test --manifest-path crates/Cargo.toml --workspace --locked
+    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-kernel
+    python3 crates/hrc-kernel/e2e/kernel_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-e2e-$(date +%s)-$$}"
 
 # -- Ephemeral development environment (T-06896) -----------------------------
 #

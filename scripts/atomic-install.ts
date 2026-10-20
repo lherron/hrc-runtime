@@ -27,6 +27,7 @@ import { DIRECT_STORE_OPEN_COMMANDS, readStoreSchemaState } from 'hrc-store-sqli
 
 import type { InstallContext, PublicationMode, SideEffectMode } from './install-policy'
 import { acquireInstallLock } from './lib/install-lock'
+import { prepareKernelRelease } from './lib/kernel-release'
 import { ASP_CONTRACT_PACKAGE_NAMES, readInstalledAspContracts } from './lib/praesidium-build'
 import {
   type PublicationSource,
@@ -471,6 +472,8 @@ async function copySourceSnapshot(sourceRoot: string, releasePath: string): Prom
       '--exclude=node_modules/',
       '--exclude=dist/',
       '--exclude=coverage/',
+      '--exclude=/crates/target/',
+      '--exclude=__pycache__/',
       '--exclude=*.tsbuildinfo',
       '--exclude=default.profraw',
       `${sourceRoot}/`,
@@ -539,6 +542,12 @@ async function prepareProductionRelease(
   await runCommand('bun', ['install', '--frozen-lockfile'], releasePath)
   await runCommand('bun', ['run', 'clean'], releasePath)
   await runCommand('bun', ['run', 'build'], releasePath)
+  await prepareKernelRelease(
+    options.sourceRoot,
+    releasePath,
+    defaultInstalledSurfacePaths().currentLink,
+    runCommand
+  )
 
   for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
     await runCommand(

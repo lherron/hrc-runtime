@@ -1,0 +1,110 @@
+//! The only transport into HRC. The route allowlist prevents accidental use of
+//! reconciling GETs; no SQLite connection exists in this crate.
+use reqwest::blocking::{Client, Response};
+use serde::Deserialize;
+use serde_json::Value;
+use std::{path::Path, time::Duration};
+
+pub const READ_SET: &[&str] = &[
+    "/v1/events/page",
+    "/v1/events/bounded-stream",
+    "/v1/events/latest-by-session",
+    "/v1/presentation/runtimes",
+    "/v1/sessions",
+];
+#[derive(Clone)]
+pub struct HrcApi {
+    client: Client,
+}
+#[derive(Debug)]
+pub struct ApiError {
+    pub code: String,
+    pub message: String,
+}
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code, self.message)
+    }
+}
+impl std::error::Error for ApiError {}
+impl From<reqwest::Error> for ApiError {
+    fn from(e: reqwest::Error) -> Self {
+        Self {
+            code: "hrc_unavailable".into(),
+            message: e.to_string(),
+        }
+    }
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventPage {
+    pub ledger_incarnation_id: String,
+    pub head: i64,
+    pub rows: Vec<Value>,
+    pub scanned_through: i64,
+}
+impl HrcApi {
+    pub fn new(socket: &Path) -> Result<Self, ApiError> {
+        Ok(Self {
+            client: Client::builder()
+                .unix_socket(socket)
+                .connect_timeout(Duration::from_secs(2))
+                .build()?,
+        })
+    }
+    pub fn response(
+        &self,
+        route: &str,
+        query: &[(String, String)],
+        timeout: Duration,
+    ) -> Result<Response, ApiError> {
+        if !READ_SET.contains(&route) {
+            return Err(ApiError {
+                code: "hrc_route_forbidden".into(),
+                message: route.into(),
+            });
+        }
+        let r = self
+            .client
+            .get(format!("http://localhost{route}"))
+            .query(query)
+            .timeout(timeout)
+            .send()?;
+        if !r.status().is_success() {
+            let status = r.status();
+            let body: Value = r.json()?;
+            return Err(ApiError {
+                code: body["error"]["code"]
+                    .as_str()
+                    .or(body["code"].as_str())
+                    .unwrap_or("hrc_refused")
+                    .into(),
+                message: format!("{status}: {body}"),
+            });
+        }
+        Ok(r)
+    }
+    pub fn get(&self, route: &str, query: &[(String, String)]) -> Result<Value, ApiError> {
+        Ok(self
+            .response(route, query, Duration::from_secs(15))?
+            .json()?)
+    }
+    pub fn page(
+        &self,
+        after: i64,
+        limit: usize,
+        incarnation: Option<&str>,
+    ) -> Result<EventPage, ApiError> {
+        let mut q = vec![
+            ("afterSeq".into(), after.to_string()),
+            ("limit".into(), limit.to_string()),
+        ];
+        if let Some(i) = incarnation {
+            q.push(("ledgerIncarnationId".into(), i.into()));
+        }
+        serde_json::from_value(self.get("/v1/events/page", &q)?).map_err(|e| ApiError {
+            code: "hrc_response_invalid".into(),
+            message: e.to_string(),
+        })
+    }
+}

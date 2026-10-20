@@ -30,3 +30,6 @@ architecture/
 *.html
 *.htm
 *.txt
+
+# Rust has its own cargo leg (.hookignore-cargo); no bun suite consumes it.
+/crates/
