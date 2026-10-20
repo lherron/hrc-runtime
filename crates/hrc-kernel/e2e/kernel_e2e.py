@@ -112,6 +112,10 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix='hk-e2e-', dir='/tmp') as root:
         root = pathlib.Path(root)
+        tmux_socket = str(root / 'tmux.sock')
+        subprocess.run(['tmux', '-S', tmux_socket, 'new-session', '-d', '-s', 'seat', '-n', 'tui', 'sleep 600'], check=True)
+        subprocess.run(['tmux', '-S', tmux_socket, 'new-window', '-d', '-t', 'seat', '-n', 'keepalive', 'sleep 600'], check=True)
+        state['runtimes'][0]['tmux']['socketPath'] = tmux_socket
         api = root / 'hrc.sock'
         server = Server(str(api), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -130,10 +134,19 @@ def main():
             row = first['rows'][0]
             assert row['payload']['contextReading']['usedTokens'] == 10, row
             attachment = wire.call('resource.attach', dict(document_id='hrc', id=row['id']))
-            assert attachment['descriptor']['socket'] == '/tmp/absent-hrc-tmux.sock'
+            assert attachment['descriptor']['socket'] == tmux_socket
             assert '-r' in attachment['descriptor']['argv']
             subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name('live_probe.py')),
                             '--socket', ready['socket'], '--artifacts', str(evidence/'probe')], check=True, timeout=20)
+            # A stale presentation row remains projected, but a dead window must
+            # refuse descriptor issuance without reconciling or mutating HRC.
+            subprocess.run(['tmux', '-S', tmux_socket, 'kill-window', '-t', 'seat:tui'], check=True)
+            wire.file.write((json.dumps(dict(id='ended', op='resource.attach', args=dict(document_id='hrc', id=row['id'])))+'\n').encode())
+            ended = json.loads(wire.file.readline())
+            assert not ended['ok'] and ended['error']['code'] == 'resource_unavailable', ended
+            assert ended['error']['details']['reason'] == 'ended', ended
+            assert query()['rows'][0]['id'] == row['id'], 'attach probe changed the projection'
+            subprocess.run(['tmux', '-S', tmux_socket, 'new-window', '-d', '-t', 'seat', '-n', 'tui', 'sleep 600'], check=True)
             duplicate = subprocess.run([binary, '--runtime-root', str(root)], capture_output=True, timeout=3)
             assert duplicate.returncode != 0, 'second kernel took over socket'
             with lock:
@@ -145,6 +158,7 @@ def main():
                 state['sessions'][0].update(hostSessionId='hs-2', generation=2)
                 state['runtimes'][0].update(hostSessionId='hs-2', generation=2, runtimeId='rt-2')
                 state['runtimes'][0]['contextReading']['usedTokens'] = 20
+                state['runtimes'][0]['tmux']['attachTarget'] = 'seat'  # Legacy bare-session target.
                 # Interior holes and a spill stub: never require dense seqs or
                 # hydration to learn which current keys to re-read.
                 for seq in [2, 4, 8]:
@@ -155,6 +169,8 @@ def main():
             after = wait_for(lambda: (r if (r := query())['rows'][0]['payload'].get('generation') == 2 else None), 'replay sparse ledger')
             assert after['rows'][0]['id'] == row['id'], 'seat row changed across generation'
             assert after['rows'][0]['payload']['contextReading']['usedTokens'] == 20
+            legacy = wire.call('resource.attach', dict(document_id='hrc', id=row['id'], mode='normal'))
+            assert legacy['descriptor']['target'] == 'seat' and '-r' not in legacy['descriptor']['argv']
             status = wire.call('ingest.status', dict(document_id='hrc'))['bindings'][0]
             assert status['resync']['every_ms'] == 600000, status
             cursor = status['cursor']
@@ -176,7 +192,7 @@ def main():
             assert set(paths) <= allowed, set(paths)
             report = dict(ready=ready, types=[n['name'] for n in discovery['node_types']],
                           initial=first, replay=after, cursor_before_replace=cursor,
-                          replacement=replaced, resync=resync, paths=sorted(set(paths)), pass_=True)
+                          replacement=replaced, resync=resync, ended=ended, legacy_attach=legacy, paths=sorted(set(paths)), pass_=True)
             (evidence / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
             print('PASS bootstrap, API outage recovery, sparse/spill replay, stable generation row, attach, incarnation reset, subscribe/replay, pinned reads')
             wire.close()
@@ -185,6 +201,7 @@ def main():
             process.wait(timeout=3)
             log.close()
             server.shutdown()
+            subprocess.run(['tmux', '-S', tmux_socket, 'kill-server'], check=False, capture_output=True)
 
 
 if __name__ == '__main__':

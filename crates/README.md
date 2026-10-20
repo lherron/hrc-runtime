@@ -41,6 +41,10 @@ replacement changes the attach fence, not the seat row. Seats carry
 `status`, `summaryStatus`, `latestEvent: {kind, time}`, and validated
 `contextReading`; clients derive their phase text. Presentation fields are
 preserved on runtime nodes, including optional raw `contextReading`.
+Attach descriptors use the presentation's socket and target. A bounded,
+read-only tmux window check refuses `resource_unavailable` / `ended` when
+that target is gone, without reconciling HRC or changing the projected row.
+Legacy bare-session targets remain supported.
 
 The only upstream reads are `/v1/events/page`, `/v1/events/bounded-stream`,
 `/v1/events/latest-by-session`, `/v1/presentation/runtimes`, and `/v1/sessions`.

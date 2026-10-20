@@ -37,9 +37,16 @@ def main():
     assert binding['cursor']['incarnation'] and isinstance(binding['cursor']['seq'], int)
     attached = []
     unavailable = []
+    ended = []
     for row in query['rows']:
         if row['payload'].get('tmux'):
-            answer = wire.call('resource.attach', dict(document_id='hrc', id=row['id']))
+            wire.file.write((json.dumps(dict(id='attach', op='resource.attach', args=dict(document_id='hrc', id=row['id'])))+'\n').encode())
+            reply = json.loads(wire.file.readline())
+            if not reply['ok']:
+                assert reply['error']['code'] == 'resource_unavailable' and reply['error']['details']['reason'] == 'ended', reply
+                ended.append(dict(id=row['id'], error=reply['error']))
+                continue
+            answer = reply['result']
             assert answer['transport'] == 'tmux-attach'
             assert answer['descriptor']['mode'] == 'read-only'
             assert '-r' in answer['descriptor']['argv']
@@ -59,11 +66,11 @@ def main():
     subscribed.close()
     report = dict(at=datetime.datetime.now(datetime.timezone.utc).isoformat(), socket=options.socket,
                   discovery=discovery, seats=query, runtimes=runtime_rows, ingest=status,
-                  attach=attached, unavailable=unavailable, resync=resync,
+                  attach=attached, unavailable=unavailable, ended=ended, resync=resync,
                   events_subscribe=live, query_subscribe=query_sub)
     (target/'probe.json').write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps(dict(pass_=True, seats=len(sessions), runtimes=len(runtime_rows['rows']),
-                          attachable=len(attached), unavailable=len(unavailable), cursor=binding['cursor'],
+                          attachable=len(attached), unavailable=len(unavailable), ended=len(ended), cursor=binding['cursor'],
                           host_incarnation=resync['host_incarnation'], artifact=str(target/'probe.json'))))
     wire.close()
 
