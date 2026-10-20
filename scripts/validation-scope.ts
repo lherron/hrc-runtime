@@ -2,10 +2,16 @@ import { languageScope } from './lib/language-scope'
 
 // Manual verify with no delta runs both. Otherwise inspect committed work and
 // local edits, including new inputs; unknown/broken git scope fails closed.
+// CI's fetched origin/main already equals HEAD. Its explicit push range owns
+// that run's scope; comparing origin/main to HEAD there would check no delta.
 const paths = new Set<string>()
-let valid = true
+const ci = process.env['GITHUB_ACTIONS'] === 'true'
+const base = ci ? process.env['BEFORE'] : 'origin/main'
+const head = ci ? process.env['SHA'] : 'HEAD'
+const oid = /^[0-9a-f]{40}$/
+let valid = !ci || (!!base && !!head && oid.test(base) && oid.test(head) && !/^0+$/.test(base))
 for (const args of [
-  ['diff', '--name-only', 'origin/main...HEAD'],
+  ['diff', '--name-only', `${base}...${head}`],
   ['diff', '--name-only', 'HEAD'],
   ['ls-files', '--others', '--exclude-standard'],
 ]) {
