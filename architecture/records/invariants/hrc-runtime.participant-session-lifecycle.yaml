@@ -117,9 +117,25 @@ predicate: >
   A recovered producer terminal is distinct from broker loss with unknown native
   outcome. Automatic continuation reuse at host succession respects explicit clear
   barriers and disabled reuse using HRC's own records, not an adapter verdict.
+  A direct participant owns its native conversation state and may declare
+  continuation continue or fresh on the request allocating a successor; omission
+  means continue. HRC records that intent without an eligibility, provenance or
+  verification gate. Fresh selects carried false with reason participant_fresh
+  and no selected continuation; H2 allocates its new session without the stored
+  continuation, while H1 preserves its session, generation, runtime and stored
+  history. Fresh requires no clear or discard operation, creates no clearing
+  barrier and does not disable reuse; a later continue succession may carry the
+  fresh conversation's newly stored record under the existing automatic selector.
+  Continue and omission retain that selector and its existing barriers. The
+  normalized declaration is part of durable replacement request identity:
+  matching retries return the allocated selection, while a request differing only
+  in its declaration refuses with host_binding_precondition_failed and cannot
+  return the other declaration's allocation. An allocated selection cannot be
+  silently changed by a retry or a resume-unsupported report.
   The selected continuation and selection reason are durable and returned to the
   participant. Attachment must express that selection in the existing continuation
-  field before descriptor freeze; mismatch cannot silently become a fresh start.
+  field before descriptor freeze; carried false requires that field to be absent,
+  and mismatch cannot silently become a fresh start.
   A newer clearing barrier is rechecked before freeze. Resume request states
   not_requested, requested, unsupported and indeterminate are persisted separately
   from carried history; joining or broker hello never proves native resume success.
@@ -151,8 +167,10 @@ predicate: >
   Legacy `prepared_profile_json` reconnect is drained or retired before v2
   cutover. HRC B precedes ASP B, and main aspd remains on ASP A until that
   coordinated cutover.
-authority: Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15; wrkq:T-08207 revision 11 participant F1 fence, Daedalus approval 2026-09-26
+authority: Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15; wrkq:T-08207 revision 11 participant F1 fence, Daedalus approval 2026-09-26; Lance ruling 2026-10-20 on participant-owned direct-join continuity, T-11435 contract amendment at a0312402d2bdbd156f7db1af8266a2dd6a5de6c8 approved by Daedalus on resubmission EN-32589, contract approval only
 source:
+  - wrkq:T-11435
+  - commit:a0312402d2bdbd156f7db1af8266a2dd6a5de6c8
   - wrkq:T-08207
   - wrkq:T-10146
   - wrkq:T-08344
@@ -172,6 +190,9 @@ required_tests:
   - T-10146 a request without registrationMode direct is refused before any durable effect and the dropped key-scoped registration columns are absent
   - T-08504 unprepared boot consumes no retries and attachment atomically arms establishment without duplicate retry-budget resets
   - T-08504 HRC continuation selection is exposed and bound into the frozen request with mismatch clear-barrier and unsupported-resume proof
+  - T-11435 real participant E2E proves fresh returns carried false participant_fresh and selected null, attaches without continuation and leaves the H2 successor session without a continuation
+  - T-11435 real participant E2E proves continue and omission carry the stored record and a later continue carries the fresh conversation's newly stored record without a fresh-created reuse barrier
+  - T-11435 declaration-aware replacement retries normalize omission to continue and refuse a declaration-only conflict without returning the other allocation
   - T-08504 wrong-home redirect and same-request retry allocate one canonical owner only
   - T-08344 post-join profile validation rejects foreign identity hash mismatches ownership mismatches and runtime or lifecycle-policy fields before effects
   - T-08344 participant presentation discriminator persists actual HRC lease IDs and selected lifecycle policy before ensure while crash retries preserve token bytes full dispatch and ensure digest and missing leases block
@@ -206,6 +227,7 @@ reopen_when:
   - writer-evidence subject axes sufficiency process-inspection boundary or recovery independence changes
   - address reservation availability transfer or explicit-release semantics change
   - bridge replacement or host succession transaction and crash-recovery shape changes
+  - participant continuity intent authority declaration matching selection immutability or fresh barrier semantics change
   - managed stop readbacks host-aware lifecycle guard or queue and steer advertised class set changes
 supersedes: []
 superseded_by: []
