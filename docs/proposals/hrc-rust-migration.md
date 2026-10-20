@@ -1,6 +1,6 @@
 # HRC Rust migration
 
-Status: proposal r3.2, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `/v1/events/page` ledger read, a pinned side-effect-free read set, attach from the presentation read model. r3.2 answers EN-32628 F5: `contextReading` on presentation rows). Owner mable@hrc-runtime:primary. Campaign P-00862. **Stage 1 delivered 2026-10-20:** gate 0 T-11441 (371cc396), kernel T-11442 (8f70c9e8..5f7e1bc9), gates 0–5 graded PASS, live on max3. Cardo F7 is green; A5 (T-11426) measurements are cardo's. Stage 1b and stage 2 are not dispatched. Lance's rulings are marked **RULED**.
+Status: proposal r3.2, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `/v1/events/page` ledger read, a pinned side-effect-free read set, attach from the presentation read model. r3.2 answers EN-32628 F5: `contextReading` on presentation rows. r3.3: §4.6 stage 1b ops are facade calls over existing routes with no TS change, and `seat.summon` is specified first). Owner mable@hrc-runtime:primary. Campaign P-00862. **Stage 1 delivered 2026-10-20:** gate 0 T-11441 (371cc396), kernel T-11442 (8f70c9e8..5f7e1bc9), gates 0–5 graded PASS, live on max3. Cardo F7 is green; A5 (T-11426) measurements are cardo's. Stage 1b and stage 2 are not dispatched. Lance's rulings are marked **RULED**.
 
 r3 replaces r2.2's stage 1 and adds the repository rules:
 - **One stage 1.** It merges clod@loggia's stage 0 (R-00448, EN-32603) into stage 1. The kernel reads HRC through its HTTP API through cardo's own ingest machinery, not through a read-only open of `state.sqlite` (§4).
@@ -15,6 +15,7 @@ This page owns the HRC side of the port: the repository layout, the stages, the 
 - **RULED, port first and consolidate later** (Lance, 2026-10-19). Brokers, aspc and the injector do not move into the port. Brokers survive an HRC restart only because they are separate processes in leased tmux servers that reattach by `eventsSince(lastProjectedSeq)`, and there is no strategy yet for keeping them alive inside the daemon (§9).
 - **RULED, gradual migration with TS fully functional** (Lance, 2026-10-20). There is no big-bang cutover. The TS daemon stays a complete daemon that can serve every route until stage 3. Dual implementation is scoped by slice (§2.2).
 - **RULED, one repository** (Lance, 2026-10-20). Rust lives in hrc-runtime beside the TS packages (§2.1).
+- **RULED, facade first, then native slices** (Lance, 2026-10-20). Rust HRC starts as a facade over the working TS daemon (stages 1 and 1b), then replaces the facade's parts with native Rust implementations one slice at a time (stage 2). **Stage 1b ops add no TS code and no HRC features:** each op is a client of routes that already exist, exactly as the `hrc` CLI, ACP and the mail injector use them. If an op needs something TS HRC does not offer, it waits for that slice's native Rust implementation; TS HRC does not grow to serve the facade. The three additive S1 reads that stage 1 already landed (§4.8 costs) stand.
 - The process-count goal is deferred, and stated as deferred (§8). The mail injector moves with ACP, not HRC (§10).
 
 HRC keeps everything it owns today:
@@ -169,19 +170,50 @@ HRC fills that block with the same resolvers `/v1/attach` uses (`getBrokerRuntim
 
 A runtime whose presentation row has no `tmux` block (not operator-attachable) refuses `resource_unavailable`. That is the same answer HRC's own attachability rule (`canOperatorAttach`) gives.
 
-### 4.6 Ops (stage 1b, after the read-only gates pass)
+### 4.6 Ops (stage 1b): facade calls over existing routes
 
-These are thin calls onto the TS daemon's HTTP API, `fences_on: none`. Row updates arrive back through ingest.
+Kernel ops (`fences_on: none`, no `document_id`) that call the TS daemon's existing HTTP API. They write nothing to the document: row updates arrive back through ingest. **No op adds or changes TS code or HRC routes** (§0). Each op names the existing caller whose request it copies, so the kernel is a third client of a shape HRC already serves, never a new one.
 
-| op | HRC endpoint | fence or key |
-|---|---|---|
-| `seat.summon` | runtimes/ensure | idempotent per scope |
-| `seat.input` | dispatch / active-run contribution | `{expectedHostSessionId, expectedGeneration}` plus idempotencyKey |
-| `seat.interrupt` | `/v1/interrupt` | runtimeId |
-| `seat.restart` | the T-10850 restart | `expectedGeneration` (refuses STALE_CONTEXT) |
-| `seat.reset` | `/v1/clear-context` | no generation fence; a double reset is unsupported |
+| op | existing routes | copies | fence or key |
+|---|---|---|---|
+| `seat.summon` | POST `/v1/declarations/resolve` (by scope), then POST `/v1/runtimes/start` (claim-and-start) | the mail injector's by-scope resolve; ACP `buildMobileStartRequest` | caller `request_id` → idempotencyKey |
+| `seat.input` | dispatch / active-run contribution | ACP mobile input | `{expectedHostSessionId, expectedGeneration}` plus idempotencyKey |
+| `seat.interrupt` | `/v1/interrupt` | ACP mobile interrupt | runtimeId |
+| `seat.restart` | the T-10850 restart | HRCMac restart | `expectedGeneration` (refuses STALE_CONTEXT) |
+| `seat.reset` | `/v1/clear-context` | `hrc` CLI | no generation fence; a double reset is unsupported |
 
-Raw keystroke input (`SendWindowLiteralInputRequest`) has neither a fence nor a key, and is not an op.
+`seat.summon` ships first, because Loggia is not usable day to day without it. The others follow the same pattern and are specified when dispatched. Raw keystroke input (`SendWindowLiteralInputRequest`) has neither a fence nor a key, and is not an op.
+
+#### 4.6.1 `seat.summon`
+
+**Args:** `{session_ref, fresh, request_id}`. `session_ref` is `agent:<a>:project:<p>:task:<t>/lane:main`. `fresh` is false unless the operator asked for a new seat. `request_id` is minted by the caller once per logical summon and reused on every retry of it.
+
+**Steps:**
+1. POST `/v1/declarations/resolve` with `{scopeRef, runMode: 'task', interactive: true, preferredMode: 'headless'}`. This is the by-scope arm (`ResolveRuntimeIntentByScopeRequest`): the daemon resolves placement, agent sources and the declaration itself, as it does for the mail injector. The kernel resolves no paths.
+2. Take the returned `intent`, and set `placement.correlation.sessionRef` to the summoned seat, as the CLI's `buildManagedRuntimeIntent` does.
+3. POST `/v1/runtimes/start`:
+   - `fresh: false` → the exact shape: `{sessionRef, runtimeIntent, conflictPolicy: 'reject', summonIntent: 'implicit', idempotencyKey, restartStyle: 'reuse_pty'}`.
+   - `fresh: true` → the suffix shape: `{baseSessionRef: sessionRef, runtimeIntent, conflictPolicy: 'suffix', summonIntent: 'implicit', idempotencyKey, restartStyle: 'reuse_pty'}`.
+   - `idempotencyKey` is `hrc-kernel-summon-<request_id>`, so a lost-reply retry converges on the same claim.
+   - `summonIntent: 'implicit'` lets HRC decide the seat's home node, so a pinned scope starts on its own node through federation, as it does from ACP.
+
+**Receipt:** `{session_ref, host_session_id, runtime_id, status, replayed}`, with `session_ref` taken from the start response's `claim`, never from the args (a suffix start claims `<task>-<suffix>`).
+
+**Refusals:** HRC's error is returned as the op's error, with `{hrc_code, message}` in details and nothing retried by the kernel. `session_scope_occupied` (exact shape, live seat) is an expected answer, not a fault.
+
+**What the caller does, not the kernel.** The kernel never checks for an existing seat: the caller (Loggia) reads the `hrc.seat` row it already has and attaches if it is live and attachable, and calls `seat.summon` only otherwise. The attach then follows the claimed `session_ref`'s row through ingest (§4.5); summon returns no descriptor.
+
+**Explicitly unsupported in 1b:**
+- attaching a seat that HRC homed on another node. The start succeeds there, no local row appears (§4.7, local node only), and the caller times out with a message that names remote homing as a possible cause;
+- summon while `hrc.sock` is down, beyond returning HRC's transport error;
+- two hosts summoning the same scope at once. HRC's claim and idempotency rules decide; the kernel adds nothing.
+
+**Gates (stage 1b, summon):**
+1. **No TS change:** `git diff <dispatch base>..<landing> -- packages/` is empty.
+2. **Cold seat:** summoning a seat with no live runtime starts it, and its row becomes attachable through ingest. HRC's events show one `runtimes/start` for the `request_id`.
+3. **Retry:** the same `request_id` sent twice yields one runtime and the same claim, the second with `replayed: true`.
+4. **Fresh:** `fresh: true` on a roster lane claims a suffix seat and returns its `session_ref`.
+5. **Parity:** for the gate-2 seat, the started runtime's harness, project root and cwd equal `hrc start <scope> --dry-run --json`'s preview for the same scope.
 
 ### 4.7 Lifecycle and scope
 
