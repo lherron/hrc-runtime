@@ -45,13 +45,18 @@ export function projectCompletedTurnContextReading(
   return persistContextReading(db, reading, ctx, now)
 }
 
+/** How often a long turn's own samples refresh its reading (Lance, T-11448). */
+export const IN_TURN_READING_INTERVAL_MS = 30_000
+
 /**
- * Claude's statusline can publish its final reading just after the terminal
- * envelope. Project that reading from its own durable envelope, but only when
- * the invocation is between turns; a reading during the next turn remains
- * durable evidence for that turn's terminal projection.
+ * Project a usage sample's reading from its own durable envelope. During a
+ * turn, a sample naming that turn is announced when the runtime's stored
+ * reading is at least 30s older (or absent); the rest stay durable evidence
+ * for the terminal projection. Between turns, Claude's statusline publishes
+ * its final reading just after the terminal envelope; that lands once, and
+ * idle redraws that repeat the stored reading announce nothing.
  */
-export function projectPostTurnContextReading(
+export function projectUsageContextReading(
   db: HrcDatabase,
   envelope: InvocationEventEnvelope,
   ctx: ProjectionContext,
@@ -60,12 +65,15 @@ export function projectPostTurnContextReading(
   if (envelope.type !== 'usage.updated') return undefined
 
   const invocation = db.brokerInvocations.getByInvocationId(envelope.invocationId)
-  if (invocation === null || invocationHasActiveTurn(invocation.invocationState)) return undefined
+  if (invocation === null) return undefined
+  const inTurn = invocationHasActiveTurn(invocation.invocationState)
 
   const turnId =
     typeof envelope.turnId === 'string'
       ? envelope.turnId
-      : lastCompletedTurnId(db, String(envelope.invocationId), envelope.seq)
+      : inTurn
+        ? undefined
+        : lastCompletedTurnId(db, String(envelope.invocationId), envelope.seq)
   if (turnId === undefined) return undefined
 
   const reading = parseReading(
@@ -78,7 +86,33 @@ export function projectPostTurnContextReading(
   const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
   if (runtime === null || runtime.generation !== ctx.generation) return undefined
 
+  const previous = readRuntimeContextReading(runtime.runtimeStateJson)
+  if (inTurn ? !inTurnReadingDue(previous, reading) : repeatsReading(previous, reading)) {
+    return undefined
+  }
+
   return persistContextReading(db, reading, ctx, now)
+}
+
+function inTurnReadingDue(
+  previous: RuntimeContextReading | null,
+  reading: RuntimeContextReading
+): boolean {
+  if (previous === null) return true
+  return (
+    Date.parse(reading.observedAt) - Date.parse(previous.observedAt) >= IN_TURN_READING_INTERVAL_MS
+  )
+}
+
+function repeatsReading(
+  previous: RuntimeContextReading | null,
+  reading: RuntimeContextReading
+): boolean {
+  return (
+    previous !== null &&
+    previous.usedTokens === reading.usedTokens &&
+    previous.windowTokens === reading.windowTokens
+  )
 }
 
 function persistContextReading(

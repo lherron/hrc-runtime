@@ -26,10 +26,7 @@ import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
 import { terminalizeWithdrawnAcceptedRun } from '../../accepted-run-recovery.js'
 import { isRetryableInvocationFailure } from '../invocation-failure'
-import {
-  projectCompletedTurnContextReading,
-  projectPostTurnContextReading,
-} from './context-reading'
+import { projectCompletedTurnContextReading, projectUsageContextReading } from './context-reading'
 import {
   type BrokerProjectionResult,
   type DerivedTurnDescriptor,
@@ -281,7 +278,7 @@ export const projectEnvelopeMethods = {
     const contextReadingEvent =
       !stale && !participantFenced && ctx.evidenceOrigin === undefined
         ? (projectCompletedTurnContextReading(db, persistedEnvelope, ctx, now) ??
-          projectPostTurnContextReading(db, persistedEnvelope, ctx, now))
+          projectUsageContextReading(db, persistedEnvelope, ctx, now))
         : undefined
     if (!stale && format2TurnStart?.minted) {
       this.finalizeFormat2TurnStart(format2TurnStart, ctx, lifecycleEvent, now)
