@@ -151,3 +151,21 @@ export type HrcEventTail = {
   headHrcSeq: number
   truncated: boolean
 }
+
+/**
+ * `GET /v1/events/page` (hrc-runtime.rust-migration §4.2): an ascending
+ * covering page of the lifecycle ledger, read in one read transaction.
+ *
+ * `rows` holds every existing row in `(afterSeq, scannedThrough]`, ascending,
+ * at most `limit` of them, with payloads exactly as stored (a spilled tool
+ * result is its stub). `scannedThrough` is the last row's seq for a full page
+ * and `head` for a short one. `head` is the highest seq ever allocated
+ * (`sqlite_sequence`), never `max(hrc_seq)`, so a deleted tail is not a
+ * regression.
+ */
+export type HrcEventPage = {
+  ledgerIncarnationId: string
+  head: number
+  rows: HrcLifecycleEvent[]
+  scannedThrough: number
+}

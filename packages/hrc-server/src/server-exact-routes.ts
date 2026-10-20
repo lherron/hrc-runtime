@@ -56,6 +56,7 @@ export function buildExactRouteHandlers(
     [exactRouteKey('GET', '/v1/events/tail')]: async (request, url) =>
       (await forwardScopedGet(server, url, { signal: request.signal })) ??
       server.handleEventsTail(url),
+    [exactRouteKey('GET', '/v1/events/page')]: (_request, url) => server.handleEventsPage(url),
     [exactRouteKey('GET', '/v1/events/bounded-stream')]: async (request, url) =>
       (await forwardScopedGet(server, url, { stream: true, signal: request.signal })) ??
       server.handleBoundedEvents(url, request),

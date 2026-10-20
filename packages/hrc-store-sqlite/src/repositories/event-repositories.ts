@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite'
 import {
   type HrcEventEnvelope,
+  type HrcEventPage,
   type HrcEventTail,
   type HrcLifecycleEvent,
   type ToolResultBlobKind,
@@ -500,6 +501,50 @@ export class HrcLifecycleEventRepository {
   }
 
   /**
+   * The ascending covering page behind `GET /v1/events/page` (rust-migration
+   * §4.2). The incarnation fence, the head and the rows are read in one
+   * transaction, so `(afterSeq, scannedThrough]` is covered by one snapshot: a
+   * hole in it is a deleted row, never one that commits later. Payloads are
+   * not hydrated — a spilled result is returned as its stored stub — so no row
+   * is ever omitted for its size.
+   */
+  page(input: {
+    afterSeq: number
+    limit: number
+    expectedLedgerIncarnationId?: string | undefined
+  }): HrcEventPage {
+    const read = this.db.transaction(() => {
+      const ledgerIncarnationId = this.ledgerIncarnationId()
+      if (
+        input.expectedLedgerIncarnationId !== undefined &&
+        input.expectedLedgerIncarnationId !== ledgerIncarnationId
+      ) {
+        throw new HrcEventLedgerIncarnationMismatchError(
+          input.expectedLedgerIncarnationId,
+          ledgerIncarnationId
+        )
+      }
+      const head = this.allocatedHrcSeq()
+      const rows = this.db
+        .query<HrcEventRow, [number, number, number]>(
+          `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
+            WHERE hrc_seq > ? AND hrc_seq <= ?
+            ORDER BY hrc_seq ASC
+            LIMIT ?`
+        )
+        .all(input.afterSeq, head, input.limit)
+      const last = rows.at(-1)
+      return {
+        ledgerIncarnationId,
+        head,
+        rows: rows.map((row) => this.mapRow(row, { hydrate: false })),
+        scannedThrough: rows.length === input.limit && last ? last.hrc_seq : head,
+      } satisfies HrcEventPage
+    })
+    return read()
+  }
+
+  /**
    * Visit the newest matching replay suffix inside the same read transaction
    * that validates the expected incarnation and captures the global head.
    * Returning false from `visitNewestFirst` stops SQLite iteration immediately,
@@ -721,6 +766,14 @@ export class HrcLifecycleEventRepository {
     filters: Omit<HrcLifecycleQueryFilters, 'scopeRef'> = {}
   ): HrcLifecycleEvent[] {
     return this.runQuery({ ...filters, scopeRef }, 'hrc_seq')
+  }
+
+  /** The highest `hrc_seq` ever allocated: AUTOINCREMENT's `sqlite_sequence` row. */
+  allocatedHrcSeq(): number {
+    const row = this.db
+      .query<{ seq: number }, []>("SELECT seq FROM sqlite_sequence WHERE name = 'hrc_events'")
+      .get()
+    return row?.seq ?? 0
   }
 
   maxHrcSeq(): number {

@@ -473,6 +473,47 @@ export function handleEventsTail(this: HrcServerInstanceForHandlers, url: URL): 
   }
 }
 
+const HRC_EVENTS_PAGE_MAX_LIMIT = 1000
+
+/**
+ * `GET /v1/events/page` — the ascending covering ledger page (rust-migration
+ * §4.2), the read a `LedgerSource` over the HTTP API is built on.
+ *
+ * `afterSeq` and `limit` are required. An omitted `ledgerIncarnationId`
+ * answers against the current incarnation, which is how a reader discovers
+ * it; a supplied one that no longer matches refuses `cursor_invalid`. A store
+ * read with no side effect: it never reconciles, appends or hydrates.
+ */
+export function handleEventsPage(this: HrcServerInstanceForHandlers, url: URL): Response {
+  const afterSeq = parseRequiredSafeInteger(url.searchParams, 'afterSeq', 0)
+  const limit = parseRequiredSafeInteger(url.searchParams, 'limit', 1)
+  if (limit > HRC_EVENTS_PAGE_MAX_LIMIT) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `limit must be between 1 and ${HRC_EVENTS_PAGE_MAX_LIMIT}`,
+      { field: 'limit', value: limit }
+    )
+  }
+  const expectedLedgerIncarnationId = normalizeOptionalQuery(
+    url.searchParams.get('ledgerIncarnationId')
+  )
+  try {
+    return json(this.db.hrcEvents.page({ afterSeq, limit, expectedLedgerIncarnationId }))
+  } catch (error) {
+    if (error instanceof HrcEventLedgerIncarnationMismatchError) {
+      throw new HrcConflictError(
+        HrcErrorCode.CURSOR_INVALID,
+        'event ledger incarnation is no longer current',
+        {
+          expectedLedgerIncarnationId: error.expectedLedgerIncarnationId,
+          currentLedgerIncarnationId: error.currentLedgerIncarnationId,
+        }
+      )
+    }
+    throw error
+  }
+}
+
 export function handleBoundedEvents(
   this: HrcServerInstanceForHandlers,
   url: URL,
@@ -916,6 +957,7 @@ export const eventHandlersMethods = {
   assertBrokerEventsRuntimeFence,
   handleEvents,
   handleEventsTail,
+  handleEventsPage,
   handleBoundedEvents,
   handleBrokerEvents,
   handleSubscriberReceiptAck,

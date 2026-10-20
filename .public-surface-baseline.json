@@ -1951,6 +1951,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcEventPage",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts-events.ts",
+      "hash": "hrc-core|HrcEventPage|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcEventSource",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-events.ts",

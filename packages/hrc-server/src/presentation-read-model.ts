@@ -25,6 +25,7 @@ import {
   getBrokerRuntimeTmuxAttachTarget,
   getBrokerRuntimeTmuxSocketPath,
 } from './broker-decisions.js'
+import { CONTEXT_READING_STATE_KEY } from './broker/event-mapper/context-reading.js'
 import { canOperatorAttach } from './broker/runtime-hosting.js'
 import { isRuntimeUnavailableStatus, json } from './server-util.js'
 
@@ -39,6 +40,7 @@ export function projectPresentationRuntime(
     ? getBrokerRuntimeTmuxSocketPath(runtime)
     : undefined
   const title = db.sessionTitles.getByHostSessionId(runtime.hostSessionId)?.title
+  const contextReading = runtime.runtimeStateJson?.[CONTEXT_READING_STATE_KEY]
   const operatorSurfaces = db.surfaceBindings
     .findByRuntime(runtime.runtimeId)
     .flatMap((binding) =>
@@ -61,6 +63,9 @@ export function projectPresentationRuntime(
       ? { tmux: { socketPath, attachTarget: getBrokerRuntimeTmuxAttachTarget(runtime) } }
       : {}),
     ...(title !== undefined ? { title } : {}),
+    // Copied exactly as stored, never validated or defaulted here: the reader
+    // owns validation (runtime-context-reading; rust-migration §4.3).
+    ...(contextReading !== undefined ? { contextReading } : {}),
     operatorSurfaces,
   }
 }

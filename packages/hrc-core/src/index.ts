@@ -193,6 +193,7 @@ export type {
   HrcDispatchOrigin,
   HrcDispatchOriginKind,
   HrcEventCategory,
+  HrcEventPage,
   HrcEventTail,
   HrcEventEnvelope,
   HrcEventSource,

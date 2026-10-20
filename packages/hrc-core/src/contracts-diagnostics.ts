@@ -160,6 +160,12 @@ export type HrcPresentationRuntimeRow = {
   presentation?: HrcRuntimePresentationRecord | undefined
   tmux?: HrcPresentationTmuxTarget | undefined
   title?: string | undefined
+  /**
+   * The runtime's persisted `runtimeStateJson.contextReading`, exactly as
+   * stored and unvalidated; absent when none is stored
+   * (hrc-runtime.runtime-context-reading). Consumers validate it themselves.
+   */
+  contextReading?: unknown
   /** Active Ghostty bindings whose controlling terminal was captured at attach. */
   operatorSurfaces: Array<{ surfaceId: string; clientTty: string }>
 }
