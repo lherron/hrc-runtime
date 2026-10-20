@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -40,6 +40,50 @@ const C = 'release-20261003000000000-3'
 const D = 'release-20261004000000000-4'
 
 describe('pruneReleaseDirs', () => {
+  it('keeps the executable release owning the kernel socket across cutover', async () => {
+    const f = await fixture([A, B, C], C)
+    const bin = join(f.path(B), 'bin')
+    await mkdir(bin)
+    const executable = join(bin, 'hrc-kernel')
+    await copyFile(process.execPath, executable)
+    await chmod(executable, 0o755)
+    const socket = join(f.root, 'kernel.sock')
+    const child = Bun.spawn(
+      [
+        executable,
+        '-e',
+        `Bun.serve({unix: ${JSON.stringify(socket)}, fetch: () => new Response('ok')}); console.log('ready')`,
+      ],
+      { stdout: 'pipe', stderr: 'pipe' }
+    )
+    try {
+      const reader = child.stdout.getReader()
+      const ready = await reader.read()
+      expect(new TextDecoder().decode(ready.value)).toContain('ready')
+      reader.releaseLock()
+      const result = await pruneReleaseDirs({
+        releaseRoot: f.releaseRoot,
+        currentLink: f.currentLink,
+        expectedCurrent: f.path(C),
+        kernelSocketPath: socket,
+      })
+      expect(result).toMatchObject({ pruned: true, failed: [] })
+      expect(await f.list()).toEqual([B, C])
+      expect((await fetch('http://localhost', { unix: socket })).status).toBe(200)
+    } finally {
+      child.kill()
+      await child.exited
+    }
+    await rm(socket, { force: true })
+    await pruneReleaseDirs({
+      releaseRoot: f.releaseRoot,
+      currentLink: f.currentLink,
+      expectedCurrent: f.path(C),
+      kernelSocketPath: socket,
+    })
+    expect(await f.list()).toEqual([C])
+  }, 15_000)
+
   it('keeps current and the running release, deletes every other release and gc debris', async () => {
     const f = await fixture([A, B, C], C)
     await mkdir(join(f.releaseRoot, '.gc-quarantine', A), { recursive: true })

@@ -236,7 +236,8 @@ export function projectServerRelease(captured: CapturedServerRelease): HrcReleas
  * release right now.
  */
 export async function pruneReleasesFromCurrent(
-  captured: CapturedServerRelease
+  captured: CapturedServerRelease,
+  runtimeRoot?: string
 ): Promise<ReleasePruneResult | undefined> {
   if (captured.mode !== 'atomic') return undefined
   const releaseRoot = dirname(captured.releasePath)
@@ -245,6 +246,9 @@ export async function pruneReleasesFromCurrent(
     currentLink: captured.installedLinkPath,
     expectedCurrent: captured.releasePath,
     onlyOlderThanCurrent: true,
+    ...(runtimeRoot === undefined
+      ? {}
+      : { kernelSocketPath: join(runtimeRoot, 'hrc-kernel.sock') }),
     installLockDir: join(dirname(releaseRoot), 'hrc-runtime-install.lock'),
   })
 }
