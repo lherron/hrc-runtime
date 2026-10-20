@@ -7,23 +7,23 @@ import { join, relative } from 'node:path'
 async function inputDigest(root: string): Promise<string> {
   const hash = createHash('sha256').update(`${process.platform}/${process.arch}\0`)
   async function visit(path: string): Promise<void> {
-    let entries: Awaited<ReturnType<typeof readdir>>
+    let info: Awaited<ReturnType<typeof stat>>
     try {
-      entries = await readdir(path)
+      info = await stat(path)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
       throw error
     }
-    for (const name of entries.sort()) {
-      if (name === 'target') continue
-      const file = join(path, name)
-      if ((await stat(file)).isDirectory()) await visit(file)
-      else
-        hash
-          .update(relative(root, file))
-          .update('\0')
-          .update(await readFile(file))
-          .update('\0')
+    if (!info.isDirectory()) {
+      hash
+        .update(relative(root, path))
+        .update('\0')
+        .update(await readFile(path))
+        .update('\0')
+      return
+    }
+    for (const name of (await readdir(path)).sort()) {
+      if (name !== 'target') await visit(join(path, name))
     }
   }
   for (const dir of [
@@ -31,6 +31,7 @@ async function inputDigest(root: string): Promise<string> {
     'contract',
     'conformance',
     'packages/hrc-store-sqlite/src/migrations',
+    'packages/hrc-store-sqlite/src/migrations.ts',
   ]) {
     await visit(join(root, dir))
   }
