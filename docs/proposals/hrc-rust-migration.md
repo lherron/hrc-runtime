@@ -1,6 +1,6 @@
 # HRC Rust migration
 
-Status: proposal r3.1, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `/v1/events/page` ledger read, a pinned side-effect-free read set, attach from the presentation read model). Owner mable@hrc-runtime:primary. Campaign P-00862. Nothing is dispatched. Lance's rulings are marked **RULED**.
+Status: proposal r3.2, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `/v1/events/page` ledger read, a pinned side-effect-free read set, attach from the presentation read model. r3.2 answers EN-32628 F5: `contextReading` on presentation rows). Owner mable@hrc-runtime:primary. Campaign P-00862. Nothing is dispatched. Lance's rulings are marked **RULED**.
 
 r3 replaces r2.2's stage 1 and adds the repository rules:
 - **One stage 1.** It merges clod@loggia's stage 0 (R-00448, EN-32603) into stage 1. The kernel reads HRC through its HTTP API through cardo's own ingest machinery, not through a read-only open of `state.sqlite` (§4).
@@ -51,7 +51,7 @@ hrc-runtime/
 ```
 
 - **No cross-imports.** `packages/` and `crates/` meet only through the HTTP API, the cardo wire and the store. Neither builds the other.
-- **`contract/` is owned by neither side.** It holds the route table, request and response schemas, event kinds, and the schema version the store is at. TS and Rust either generate their types from it, or check them against it by example in the conformance suite. It starts empty at stage 1, because the kernel consumes the HTTP API as a client (plus one additive TS read route, §4.2). It fills as slices move.
+- **`contract/` is owned by neither side.** It holds the route table, request and response schemas, event kinds, and the schema version the store is at. TS and Rust either generate their types from it, or check them against it by example in the conformance suite. It starts empty at stage 1, because the kernel consumes the HTTP API as a client (plus two additive TS store reads, §4.2 and §4.3). It fills as slices move.
 - **The route table is the single statement of ownership.** For each route family it names the slice, the daemon that serves it, and whether the slice is ported (§2.2). The Rust front reads it at stage 2.
 - **Hooks are path-scoped** through the existing `hook-scope`/`.hookignore` mechanism:
   - a TS-only change skips cargo;
@@ -145,8 +145,9 @@ A test in the style of `t07594-side-effect-free-reads` pins this set against a d
   3. `/v1/events/latest-by-session`.
   This is one page at the live-set size. Sampling `at` before reading state means anything that changes during the read is replayed after it.
 - **`apply`** maps each row to keys: its sessionRef, and for a runtime-scoped row its runtimeId and that runtime's seat. It removes duplicates within the batch, re-reads each key from the same read set, and emits upserts or `remove_by_key`.
-- **`hrc.runtime` carries what the presentation row carries:** status, generation, the presentation record, the tmux attach target, title, and identity and metadata. Fields only `/v1/runtimes` returns (transport, provider, activeRunId, supportsInflightInput) are left out of stage 1 rather than read through a reconciling route.
-- **Phase and context.** The phase text and context reading follow ACP's `projectSession` (`mobile.ts:537`) as it is today, computed from the latest event and the session record. The port is a translation, not a redesign. Gate 2 diffs the two outputs on the live set.
+- **The presentation row gains `contextReading`.** It is an additive, optional field: the runtime's persisted `runtimeStateJson.contextReading`, exactly as stored, and absent when there is none. That is the reading `hrc-runtime.runtime-context-reading` keeps on the runtime across restart and invocation retirement, and the one ACP's `projectContextReading` (`mobile.ts:107`) reads. The route stays a store read. This is the second TS change, in the same unported S1 slice.
+- **`hrc.runtime` carries what the presentation row carries:** status, generation, the presentation record, the tmux attach target, `contextReading`, title, and identity and metadata. Fields only `/v1/runtimes` returns (transport, provider, activeRunId, supportsInflightInput) are left out of stage 1 rather than read through a reconciling route.
+- **Phase and context.** These follow ACP's `projectSession` (`mobile.ts:537`) as it is today. Phase text comes from the latest event and the session record. The seat's context reading is the seat runtime's persisted `contextReading` from the presentation row, validated as `projectContextReading` validates it. It is never folded from an earlier `runtime.context.updated` event, so a bootstrap after that event has scrolled past still shows it. The port is a translation, not a redesign. Gate 2 diffs the two outputs on the live set.
 
 ### 4.4 Ingest wiring
 
@@ -207,7 +208,7 @@ A `LedgerSource` read directly over `hrc_events` moves to stage 2, where Rust ow
 
 **Costs, stated.**
 - **Phase logic in two copies.** It exists in Rust and in ACP's TS until the ACP port. Gate 2 catches drift.
-- **One HRC TS change.** The additive `/v1/events/page` route and its test (§4.2). Nothing else in TS HRC changes.
+- **Two additive HRC TS changes**, both store reads in slice S1: the `/v1/events/page` route and its test (§4.2), and `contextReading` on `/v1/presentation/runtimes` rows (§4.3). Nothing else in TS HRC changes.
 - **HTTP reads per batch.** Each batch re-reads the seats it names, about two or three calls each. If A5 shows that is too heavy, the fix is one batched seat-read route in TS HRC, not a redesign.
 
 ## 5. Stage 2: the Rust front, sliced by state
