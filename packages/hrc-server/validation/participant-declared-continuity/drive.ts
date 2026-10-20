@@ -10,10 +10,11 @@
  * write the broker's `continuation.updated` projection performs.
  *
  *   bun drive.ts --socket <hrc.sock> --db <state.sqlite> --out <dir>
- *   bun drive.ts --socket <hrc.sock> --out <dir> --smoke
+ *   bun drive.ts --socket <hrc.sock> --out <dir> --smoke [--agent tabularasa]
  *
  * `--smoke` needs no store access: fresh then continue against a scratch
- * address, for the installed live daemon. Each case writes
+ * address, for the installed live daemon. A live node resolves placement from
+ * the agent's root, so pass `--agent` naming a real agent there. Each case writes
  * `<out>/case-<id>.json` (observed requests, responses and checks); the run
  * writes `<out>/summary.json` and exits 1 when any check failed.
  */
@@ -41,6 +42,7 @@ const { values: args } = parseArgs({
     db: { type: 'string' },
     out: { type: 'string' },
     smoke: { type: 'boolean', default: false },
+    agent: { type: 'string', default: 't11435probe' },
   },
 })
 if (args.socket === undefined || args.out === undefined || (!args.smoke && !args.db)) {
@@ -209,7 +211,7 @@ class Case {
 }
 
 function scopeFor(id: string): string {
-  return `agent:t11435probe:project:hrc-runtime:task:T-11435-${id.toLowerCase()}-${RUN}`
+  return `agent:${args.agent}:project:hrc-runtime:task:T-11435-${id.toLowerCase()}-${RUN}`
 }
 
 function continuationOf(result: { body: Json }): unknown {
