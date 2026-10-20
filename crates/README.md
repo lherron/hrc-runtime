@@ -1,8 +1,8 @@
 # HRC stage-1 kernel
 
-`hrc-domain` reads only the pinned HRC HTTP API. `hrc-kernel` embeds cardo at
+`hrc-domain` reads the pinned HRC HTTP API. `hrc-kernel` embeds cardo at
 1796e1c and serves the `hrc` rebuildable, ingest-only document. Neither crate
-opens HRC's store or imports `packages/`. Stage 1 has no owner-API operations.
+opens HRC's store or imports `packages/`. Stage 1b adds `seat.summon` over the existing declaration and start routes.
 
 Build and validate from the repository root:
 
@@ -45,6 +45,15 @@ Attach descriptors use the presentation's socket and target. A bounded,
 read-only tmux window check refuses `resource_unavailable` / `ended` when
 that target is gone, without reconciling HRC or changing the projected row.
 Legacy bare-session targets remain supported.
+
+`seat.summon` is kernel-scoped (`fences_on: none`), accepts
+`{session_ref, fresh, request_id}`, and returns
+`{session_ref, host_session_id, runtime_id, status, replayed}`. The caller reuses
+its request ID on retry; HRC owns durable replay and request-hash conflicts.
+The op calls POST `/v1/declarations/resolve` by scope and then POST
+`/v1/runtimes/start`, with reject or suffix policy according to `fresh`.
+It resolves no paths, retries nothing, and writes no projected rows. Refusals
+retain HRC code/message in error details. Ingest supplies the attachable seat.
 
 The only upstream reads are `/v1/events/page`, `/v1/events/bounded-stream`,
 `/v1/events/latest-by-session`, `/v1/presentation/runtimes`, and `/v1/sessions`.

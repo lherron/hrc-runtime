@@ -106,6 +106,36 @@ impl HrcApi {
         }
         Ok(r.json()?)
     }
+    /// Stage 1b's two existing owner routes. Never retries an HTTP request.
+    pub fn post_owner(&self, route: &str, body: &Value) -> Result<Value, ApiError> {
+        if !["/v1/declarations/resolve", "/v1/runtimes/start"].contains(&route) {
+            return Err(ApiError {
+                code: "hrc_route_forbidden".into(),
+                message: route.into(),
+            });
+        }
+        let response = self
+            .client
+            .post(format!("http://localhost{route}"))
+            .json(body)
+            .timeout(Duration::from_secs(120))
+            .send()?;
+        let status = response.status();
+        let body: Value = response.json()?;
+        if !status.is_success() {
+            return Err(ApiError {
+                code: body["error"]["code"]
+                    .as_str()
+                    .unwrap_or("hrc_refused")
+                    .into(),
+                message: body["error"]["message"]
+                    .as_str()
+                    .unwrap_or("HRC refused the request")
+                    .into(),
+            });
+        }
+        Ok(body)
+    }
     pub fn page(
         &self,
         after: i64,

@@ -1,4 +1,6 @@
-//! Read-only HRC cardo kernel. Loggia owns supervision; no resident is added.
+//! HRC observation and owner-API facade kernel. Loggia owns supervision; no resident is added.
+mod adapter;
+
 use cardo_core::{Format, document::CoreDomain};
 use cardo_runtime::{
     core_adapter::CoreAdapter,
@@ -93,7 +95,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--help" | "-h" => {
                 println!(
-                    "hrc-kernel [--runtime-root PATH] [--hrc-socket PATH]\nRead-only stage-1 kernel at <runtime-root>/hrc-kernel.sock"
+                    "hrc-kernel [--runtime-root PATH] [--hrc-socket PATH]\nHRC kernel at <runtime-root>/hrc-kernel.sock"
                 );
                 return Ok(());
             }
@@ -122,6 +124,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Duration::from_secs(60),
     )
     .with_format(Format::new("hrc", 1));
+    let owner_api = api.clone();
     let worker_source = source.clone();
     adapter.in_process_worker("hrc", move || {
         Box::new(LedgerIngest::new(
@@ -137,7 +140,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         ("hrc".into(), "hrc".into()),
     )?;
     let owner = RuntimeOwner::start(
-        adapter,
+        adapter::HrcAdapter {
+            core: adapter,
+            api: owner_api,
+            pending: Default::default(),
+        },
         Arc::new(NoWork),
         Box::new(Lifecycle),
         RuntimeConfig {

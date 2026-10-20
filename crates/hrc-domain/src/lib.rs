@@ -1,10 +1,11 @@
-//! HRC stage-1 API-fed observation domain. There are no owner mutations.
+//! HRC API-fed observation domain and stage-1b owner-API facade.
 pub mod api;
 pub mod attach;
 pub mod declarations;
 pub mod ledger;
 pub mod projection;
 pub mod projector;
+pub mod summon;
 
 use cardo_core::{CoreEdit, Refusal, decode_core_edit};
 use serde_json::Value;
