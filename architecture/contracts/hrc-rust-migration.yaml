@@ -1,0 +1,109 @@
+id: hrc-runtime.rust-migration
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: Rust migration stages, API-fed kernel projection, and slice-scoped dual implementation
+approved_source:
+  revision: e159381c1524a40921893601f9e858fc8645843e
+  draft: r3.2
+  proposal: docs/proposals/hrc-rust-migration.md
+  task: T-11441
+  task_slug: rust-stage1-kernel-projector
+  cardo_revision: 1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd
+predicate: >
+  HRC embeds cardo-runtime as a library and retains ownership of its durable
+  store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
+  crates and TypeScript packages share one repository and release identity;
+  they meet through explicit API, wire and store contracts, not cross-imports.
+  Stage 1 adds a Rust kernel reading only HRC's pinned side-effect-free HTTP
+  read set. It never opens state.sqlite, reconciles substrate liveness or
+  writes HRC state. Its single hrc document is rebuildable, durability none
+  and ingest_only, with seat, runtime and project observation nodes. Seats
+  are keyed by scope and lane, take the latest selected generation, and
+  follow the live-runtime-or-24-hour-activity membership rule. Runtime fields
+  in stage 1 are narrowed to the presentation read model as specified in
+  section 4.3, including its additive persisted contextReading field.
+  LedgerIngest and SeatProjector re-read current state for event-named keys;
+  events are not folded into a second record. The ten-minute resync repairs
+  keys whose events were deleted unread; live_until handles time expiry.
+  HRC restart resumes the surviving kernel's document cursor within the same
+  ledger incarnation. Kernel restart opens empty and bootstraps. Incarnation
+  replacement resets and rebuilds through cardo ingest. The bounded event
+  stream supplies wake hints only, never ledger content or scan coverage.
+  The additive GET /v1/events/page route requires afterSeq and limit and
+  optionally accepts ledgerIncarnationId. An omitted incarnation discovers
+  the current ledger; a supplied mismatch refuses CURSOR_INVALID. One read
+  transaction returns ledgerIncarnationId, head, rows and scannedThrough.
+  Rows ascend by hrc_seq, number at most limit, and include every existing
+  row in (afterSeq, scannedThrough]. A full page ends at its last row; a
+  short page scans through head. Head comes from sqlite_sequence and never
+  regresses within an incarnation. Payloads are returned as stored, including
+  spill stubs, without dropping a row for size. The adapter uses floor zero
+  and has no must-see retention authority. This page contract is separate
+  from hrc-runtime.bounded-lifecycle-event-observation's bounded tail and
+  lossy live stream; their existing admission and loss semantics are unchanged.
+  The pinned state reads are sessions, latest-by-session and presentation
+  runtimes, plus the page route and bounded-stream wake. Neither /v1/runtimes
+  nor /v1/attach is in that set. Attach descriptors use the presentation row's
+  HRC-resolved socketPath and attachTarget; an absent tmux block refuses
+  resource_unavailable. The kernel does not parse hosting-state variants.
+  Stage 1b owner-API operations remain a separate step after the read-only
+  gates and carry the scope, fencing and unsupported cases in section 4.6.
+  During stage 2 the route table owns slice routing, exactly one process
+  serves each route family and sweep loop, and the TypeScript daemon remains
+  complete until stage 3. Unported slices change in TypeScript; ported slices
+  change in both implementations and are done only after both pass the same
+  black-box conformance. Shared contracts, conformance and schema changes
+  require both validation legs. M1's route-by-state inventory and the S1
+  contract and conformance population remain prerequisites before stage 2
+  starts, as stated in the approved proposal; its slice table is provisional.
+  TypeScript owns schema migrations until retired everywhere, and Rust
+  refuses a store newer than its known schema. Rust takes migration ownership
+  only after retirement. Install, activation, fleet identity and restart
+  authority retain their existing contracts. Broker consolidation and its
+  process-count benefit remain deferred behind the G0 restart finding.
+authority: >
+  Lance's library, gradual migration and one-repository rulings cited in the
+  approved proposal; Daedalus architecture approval of r3.2 submitted in
+  EN-32629, 2026-10-20. F1-F4 were closed by r3.1 and F5 by r3.2.
+source:
+  - docs/proposals/hrc-rust-migration.md
+  - commit:e159381c1524a40921893601f9e858fc8645843e
+  - wrkq:T-11441
+  - wrkc:EN-32623
+  - wrkc:EN-32626
+  - wrkc:EN-32627
+  - wrkc:EN-32628
+  - wrkc:EN-32629
+  - architecture/contracts/runtime-context-reading.yaml
+  - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
+  - architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml
+  - architecture/records/invariants/hrc-runtime.observable-release.yaml
+  - packages/hrc-server/src/presentation-read-model.ts
+  - packages/hrc-server/src/server-session-methods.ts
+  - packages/hrc-server/src/selector-message-handlers.ts
+  - packages/hrc-server/src/bounded-event-stream.ts
+validation_scope: >
+  The requester supplies section 4.8 gates: side-effect-free read-set tests
+  against a dead-substrate seed with the mutating runtime-list control;
+  ascending page coverage through holes and spill stubs with incarnation
+  mismatch refusal; F7 discovery, query, replay and resources; equality of
+  rebuilt and live projections after resync and ACP phase/context parity; stable
+  seat-row reattachment through restart; HRC cursor resume without rebuild;
+  and current live-set recovery after kernel restart. A5 is recorded, not
+  gated, with heavy legs isolated from the live daemon. Stage 2 retains
+  both-daemon conformance per ported slice, installed runtime smoke and
+  broker reattach evidence, plus the proposal's M1 prerequisite. These are
+  future acceptance obligations, not evidence of successful implementation.
+last_verified: >
+  2026-10-20 design approval by source and contract reading against HRC
+  e159381c and cardo main 1796e1c. Reviewed page coverage, presentation and
+  session reads, attach resolvers, persisted context ownership, and cardo
+  subscriptions/projections contracts. No builds, tests, installs, service
+  operations or implementation grades were performed for this ruling.
+reopen_when: >
+  Migration authority, repository or release boundaries, slice ownership or
+  rollback completeness, schema ownership, stage prerequisites, page coverage
+  or incarnation semantics, pinned read set, projection state ownership,
+  context source, attach source, restart behavior or consolidation trigger
+  changes.

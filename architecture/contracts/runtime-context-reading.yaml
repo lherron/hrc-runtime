@@ -28,7 +28,13 @@ predicate: >
   reading with turnId, usedTokens, optional windowTokens, optional model, and
   observedAt on the runtime record and exposes it through its existing
   status/session listing. The persisted reading survives HRC restart and
-  broker invocation retirement while that runtime record remains. The event,
+  broker invocation retirement while that runtime record remains. The
+  store-only presentation runtime row additionally exposes optional
+  contextReading, copied exactly from runtimeStateJson.contextReading and
+  absent when no reading is stored. This additive read does not reconcile
+  runtime liveness or change lifecycle state. The stage-1 Rust kernel derives
+  its seat context from this persisted field using ACP's projectContextReading
+  validation, never by folding an earlier context event. The event,
   reading, projection disposition, and cursor commit atomically; duplicate
   projection leaves the reading unchanged and emits no second event. This
   projection remains subject to hrc-runtime.harness-broker-committed-observation-control,
@@ -43,7 +49,9 @@ authority: >
   Between-turn projection added under Lance's statusline-only direction for
   T-10929, relayed by mable in EN-29863, and its HRC companion T-10934 etag 3;
   record reconciliation requested in EN-29872. No new Daedalus design-review
-  round was requested or performed.
+  round was requested or performed for that reconciliation. Presentation
+  context exposure approved by Daedalus in the HRC Rust migration r3.2
+  review, submitted in EN-32629 at e159381c, 2026-10-20.
 source:
   - wrkq:T-10927
   - wrkc:EN-29763
@@ -59,6 +67,8 @@ source:
   - packages/hrc-server/src/broker/event-mapper/state-projection.ts
   - packages/hrc-server/src/broker/event-mapper/context-reading.ts
   - packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts
+  - architecture/contracts/hrc-rust-migration.yaml
+  - packages/hrc-server/src/presentation-read-model.ts
 validation_scope: >
   Requester acceptance covers context events on live codex-app-server and
   claude-code-tmux seats and the persisted reading appearing for an idle runtime
@@ -73,9 +83,17 @@ validation_scope: >
   and mid-turn arrival emitting nothing. Landing remains coordinated with
   mable@hrc-ios as required by T-10934. A live mid-turn HRC restart is outside
   this scope. Builds, gates, install, restart, and live acceptance remain the
-  requester's work.
+  requester's work. The Rust migration requester additionally verifies the
+  presentation field remains a side-effect-free store projection and that
+  fresh bootstrap and resync match ACP context after a later event has
+  superseded the originating runtime.context.updated as latest-by-session.
 last_verified: >
   2026-10-14 record re-read against Lance's direction in EN-29863, T-10929 rev 4
   etag 12, and T-10934 etag 3; no new design ruling, implementation gate result,
   install result, or service-health result is established by this reconciliation.
+design_review: >
+  2026-10-20 additive presentation exposure approved against Rust migration
+  r3.2 at e159381c and existing producer/ACP source. Existing producer
+  semantics remain unchanged. No implementation gate, install or
+  service-health result is established by this approval.
 reopen_when: Reading semantics, persisted-state lifetime, sample selection, transaction or replay boundary, runtime-write authority, event payload, or consumer authority changes.
