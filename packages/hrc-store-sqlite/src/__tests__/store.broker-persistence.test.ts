@@ -59,7 +59,14 @@ function createLegacyPreBrokerDatabase(): ReturnType<typeof createHrcDatabase> {
     );
   `)
 
-  const preBroker = phase1Migrations.slice(0, phase1Migrations.length - 2)
+  // Everything before the session-state field removal: the seed below writes
+  // the legacy session columns that migration drops.
+  const preBroker = phase1Migrations.slice(
+    0,
+    phase1Migrations.findIndex(
+      (migration) => migration.id === '0121_session_state_dead_field_removal'
+    )
+  )
   for (const migration of preBroker) {
     migration.apply(sqlite)
     sqlite
