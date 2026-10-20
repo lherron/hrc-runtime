@@ -415,6 +415,28 @@ session and records `carried:true`; otherwise it records `carried:false` with
 `no_continuation`, `continuation_invalidated`, or `reuse_disabled` respectively.
 It does not ask the adapter for eligibility and does not infer native lineage.
 
+**Participant-declared continuity (amendment, Lance ruling 2026-10-20, T-11435).**
+For a direct (participant-served) join the participant owns its process and
+native state, so it decides whether the successor *wants* its predecessor's
+conversation. HRC allocates identity and records the declaration. The
+direct register request may carry `continuation: 'continue' | 'fresh'`:
+
+- `fresh`: HRC records `carried:false` with reason `participant_fresh` and
+  carries nothing. An H2 successor session is created without the stored
+  continuation, and attach accepts a descriptor that expresses no continuation
+  (the existing carried:false rule). `fresh` is not a clearing barrier and
+  does not set reuse-disabled: once the fresh conversation stores its own
+  continuation, a later `continue` succession carries that record.
+- `continue`, or the field omitted: the automatic selection above, unchanged.
+
+The declaration is the participant's intent, not an eligibility verdict. HRC
+applies no eligibility or provenance check to it, and it never replaces the
+resume outcome: a `continue` whose driver can't resume native state still
+reports resume-unsupported and is never silently turned into `fresh`. The
+declaration is part of the replacement request identity, so an idempotent
+retry carrying a different declaration does not converge onto the earlier
+allocation (an omitted field compares as `continue`).
+
 Carrying HRC's continuation record is distinct from a driver successfully
 resuming native state. The driver may report that its native continuation cannot
 be resumed; that becomes an explicit attachment/resume outcome with the retained
