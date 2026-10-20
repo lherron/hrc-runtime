@@ -1,6 +1,6 @@
 # HRC Rust migration
 
-Status: proposal r3, 2026-10-20. Owner mable@hrc-runtime:primary. Campaign P-00862. Nothing is dispatched. Lance's rulings are marked **RULED**.
+Status: proposal r3.1, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `/v1/events/page` ledger read, a pinned side-effect-free read set, attach from the presentation read model). Owner mable@hrc-runtime:primary. Campaign P-00862. Nothing is dispatched. Lance's rulings are marked **RULED**.
 
 r3 replaces r2.2's stage 1 and adds the repository rules:
 - **One stage 1.** It merges clod@loggia's stage 0 (R-00448, EN-32603) into stage 1. The kernel reads HRC through its HTTP API through cardo's own ingest machinery, not through a read-only open of `state.sqlite` (§4).
@@ -51,7 +51,7 @@ hrc-runtime/
 ```
 
 - **No cross-imports.** `packages/` and `crates/` meet only through the HTTP API, the cardo wire and the store. Neither builds the other.
-- **`contract/` is owned by neither side.** It holds the route table, request and response schemas, event kinds, and the schema version the store is at. TS and Rust either generate their types from it, or check them against it by example in the conformance suite. It starts empty at stage 1, because the kernel consumes the existing HTTP API as a client. It fills as slices move.
+- **`contract/` is owned by neither side.** It holds the route table, request and response schemas, event kinds, and the schema version the store is at. TS and Rust either generate their types from it, or check them against it by example in the conformance suite. It starts empty at stage 1, because the kernel consumes the HTTP API as a client (plus one additive TS read route, §4.2). It fills as slices move.
 - **The route table is the single statement of ownership.** For each route family it names the slice, the daemon that serves it, and whether the slice is ported (§2.2). The Rust front reads it at stage 2.
 - **Hooks are path-scoped** through the existing `hook-scope`/`.hookignore` mechanism:
   - a TS-only change skips cargo;
@@ -108,26 +108,45 @@ One document, `hrc`: `rebuildable: true`, durability `none`, `ingest_only: true`
 
 The kernel is an ordinary `hrc.sock` client. It never opens `state.sqlite`.
 
+**One new HRC read route: `GET /v1/events/page`.** Today's API has no read that can back a `LedgerSource`:
+- `/v1/events/bounded-stream` requires `follow=true` and an expected `ledgerIncarnationId`. It replays newest-first, keeping only a bounded suffix and reporting the omitted prefix (and oversize or overflow events) as gaps. Those gaps can drop retained rows, not just deleted ones.
+- `GET /v1/events?fromSeq=` without follow is ascending, but has no limit.
+- `/v1/events/tail` pages backwards.
+
+The page route is the missing ledger read. It is additive, in slice S1, which isn't ported, so it is TS only (§2.2).
+- **Request:** `afterSeq` and `limit` are required. `ledgerIncarnationId` is optional. With it, a mismatch refuses `CURSOR_INVALID`. Without it, the route answers against the current incarnation, which is how the kernel initializes.
+- **Answer:** `{ledgerIncarnationId, head, rows, scannedThrough}`, read in one read transaction. `rows` holds every existing row in `(afterSeq, scannedThrough]` in ascending `hrc_seq` order, with at most `limit` rows. `scannedThrough` is the last returned row's seq, or `head` when fewer than `limit` rows remain. `head` comes from `sqlite_sequence`, never `max(hrc_seq)`. A payload is returned as stored, so a spilled payload comes back as its stub and no row is omitted for its size.
+- **Side effects:** none. It is a store read, and it joins the kernel's pinned read set (§4.3).
+
 | `LedgerSource` | HRC call |
 |---|---|
-| `incarnation` | `ledgerIncarnationId` from the bounded stream |
-| `read_after(after, filter, limit)` | `GET /v1/events/bounded-stream?afterSeq=…&limit=…`, without follow. A `CURSOR_INVALID` or `ledgerReplaced` answer is an incarnation change. |
-| `head` | `GET /v1/events/head`. It returns `max(hrc_seq)`, which can move backwards when the newest rows are pruned, so the adapter reports the highest value it has seen in this incarnation. |
-| `floor` | constant 0. HRC's sequence has holes (§6.3), and a hole is never loss. A key whose only event was deleted unread is recovered by the resync pass (§4.4). |
-| `wake` | a thread following `GET /v1/events/bounded-stream?follow=true&ledgerIncarnationId=…&afterSeq=…`. An event only wakes ingest; the row is never treated as truth. |
+| `incarnation`, `head` | `GET /v1/events/page?afterSeq=<head>&limit=1` (or any page): `ledgerIncarnationId` and `head` |
+| `read_after(after, filter, limit)` | `GET /v1/events/page?ledgerIncarnationId=…&afterSeq=<after>&limit=…`. `CURSOR_INVALID` is an incarnation change. The batch covers `(after, scannedThrough]` in one snapshot, as cardo subscriptions v1 requires. |
+| `floor` | constant 0. A hole in `hrc_seq` is a deletion, never a skipped retained row (§6.3). A key whose only event was deleted unread is recovered by the resync pass (§4.4). |
+| `wake` | a thread following `/v1/events/bounded-stream?follow=true&ledgerIncarnationId=…&afterSeq=…`. The stream is used only as a wake: its rows, gaps and windows are never read as ledger content. A refusal or `ledgerReplaced` re-reads the incarnation from the page route. |
 | `fence_database` | `None`. The kernel is never a must-see consumer. |
 
 ### 4.3 Projector: `SeatProjector`
 
 Events name keys, and the projector re-reads their current state (projections v1 §2). It never folds deltas.
 
-- **`bootstrap`** first samples the cursor `at` (incarnation plus head), then reads the live set with the same calls as ACP's dashboard (`acp-server` `handlers/mobile.ts`):
-  1. `listSessions {updatedSince 24 h, latestGeneration}`;
-  2. `listRuntimes`;
+**The read set is side-effect-free and pinned.** "Read-only" means a read can't change HRC's state, not just that it uses `GET`. `/v1/runtimes` and `/v1/attach` reconcile tmux liveness while reading, and can mark a runtime dead or retire a broker substrate (T-07594). The kernel never calls them. It reads only:
+- `/v1/events/page` (§4.2);
+- `/v1/events/bounded-stream` (as a wake);
+- `/v1/events/latest-by-session`;
+- `/v1/presentation/runtimes`, the store-only presentation read model (`hrc-runtime.viewer-presentation-sidecar` §5.3–5.4);
+- `/v1/sessions`.
+
+A test in the style of `t07594-side-effect-free-reads` pins this set against a dead-substrate seed, with the `/v1/runtimes` control, and adds `/v1/events/page` and `/v1/sessions` to the asserted routes (gate 0, §4.8). Presentation rows can name a runtime whose tmux has died until HRC's own sweep marks it. The viewer already accepts that window, and the kernel accepts it too.
+
+- **`bootstrap`** first samples the cursor `at` (incarnation plus head, from the page route), then reads the live set:
+  1. `/v1/sessions` with sessions updated in the last 24 h, latest generation only;
+  2. `/v1/presentation/runtimes`;
   3. `/v1/events/latest-by-session`.
   This is one page at the live-set size. Sampling `at` before reading state means anything that changes during the read is replayed after it.
-- **`apply`** maps each row to keys: its sessionRef, and for a runtime-scoped row its runtimeId and that runtime's seat. It removes duplicates within the batch, re-reads each key with the calls ACP's `projectSessionForDashboardEvent` makes, and emits upserts or `remove_by_key`.
-- **Phase and context.** The phase text and context reading follow ACP's `projectSession` (`mobile.ts:537`) as it is today. The port is a translation, not a redesign. Gate 2 diffs the two outputs on the live set.
+- **`apply`** maps each row to keys: its sessionRef, and for a runtime-scoped row its runtimeId and that runtime's seat. It removes duplicates within the batch, re-reads each key from the same read set, and emits upserts or `remove_by_key`.
+- **`hrc.runtime` carries what the presentation row carries:** status, generation, the presentation record, the tmux attach target, title, and identity and metadata. Fields only `/v1/runtimes` returns (transport, provider, activeRunId, supportsInflightInput) are left out of stage 1 rather than read through a reconciling route.
+- **Phase and context.** The phase text and context reading follow ACP's `projectSession` (`mobile.ts:537`) as it is today, computed from the latest event and the session record. The port is a translation, not a redesign. Gate 2 diffs the two outputs on the live set.
 
 ### 4.4 Ingest wiring
 
@@ -139,7 +158,14 @@ Events name keys, and the projector re-reads their current state (projections v1
 
 ### 4.5 Attach
 
-`resource.attach` on `hrc.seat` builds the cardo descriptor `{socket, target, argv, mode}` from the runtime's `tmux_json`, following foundry-kernel's `attach.rs`. HRC's `HrcAttachDescriptor` is `{kind: exec, argv, fence}`, so this is adapter work with no HRC change. A seat with no live tmux runtime refuses `resource_unavailable`.
+`resource.attach` on `hrc.seat` builds the cardo descriptor `{socket, target, argv, mode}` from the seat runtime's presentation row `tmux: {socketPath, attachTarget}`, following foundry-kernel's `attach.rs` for argv and mode. The kernel never parses `tmux_json` or `runtimeStateJson` itself.
+
+HRC fills that block with the same resolvers `/v1/attach` uses (`getBrokerRuntimeTmuxSocketPath`, `getBrokerRuntimeTmuxAttachTarget`), so every shape HRC supports is covered:
+- legacy `tmux_json` runtimes;
+- durable broker leases with the `:tui` target;
+- the codex-app-server flat shape, whose lease lives in `runtimeStateJson`.
+
+A runtime whose presentation row has no `tmux` block (not operator-attachable) refuses `resource_unavailable`. That is the same answer HRC's own attachability rule (`canOperatorAttach`) gives.
 
 ### 4.6 Ops (stage 1b, after the read-only gates pass)
 
@@ -165,6 +191,7 @@ Raw keystroke input (`SendWindowLiteralInputRequest`) has neither a fence nor a 
 ### 4.8 Gates
 
 Each one is graded from durable readback.
+0. **Side-effect-free reads:** the pinned read-set test (§4.3) passes, with its `/v1/runtimes` control going red on the same seed. The page route's test shows ascending coverage of `(afterSeq, scannedThrough]` over interior holes and spilled payloads, and `CURSOR_INVALID` on an incarnation mismatch.
 1. **F7:** `HrcProfile` passes discovery, query, replay and resources against the kernel (cardo T-11427).
 2. **F2 and parity:** after a resync pass, a rebuilt projection equals the live one, and every seat row's phase and context equal ACP's dashboard projection for the same seat.
 3. **Attach:** a seat restart re-attaches a bound Loggia leaf on the same row. Two screenshots: before and after.
@@ -180,6 +207,7 @@ A `LedgerSource` read directly over `hrc_events` moves to stage 2, where Rust ow
 
 **Costs, stated.**
 - **Phase logic in two copies.** It exists in Rust and in ACP's TS until the ACP port. Gate 2 catches drift.
+- **One HRC TS change.** The additive `/v1/events/page` route and its test (§4.2). Nothing else in TS HRC changes.
 - **HTTP reads per batch.** Each batch re-reads the seats it names, about two or three calls each. If A5 shows that is too heavy, the fix is one batched seat-read route in TS HRC, not a redesign.
 
 ## 5. Stage 2: the Rust front, sliced by state
@@ -310,7 +338,7 @@ The ACP port is ACP's own document. What this page fixes:
 - A change to a ported slice on one side only.
 - Transcripts and history in cardo documents.
 - Rows for other nodes, and remote attach, in stage 1.
-- The stage-1 kernel opening `state.sqlite`.
+- The stage-1 kernel opening `state.sqlite`, or calling a route outside its pinned read set (§4.3).
 - A Rust schema migration before TS is retired everywhere.
 - Two daemons serving one route family, or running one sweep loop.
 - A double `seat.reset`. Raw keystroke input as a wire op.
