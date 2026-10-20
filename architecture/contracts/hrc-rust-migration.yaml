@@ -4,12 +4,15 @@ status: active
 owner_project: hrc-runtime
 scope: Rust migration stages, API-fed kernel projection, and slice-scoped dual implementation
 approved_source:
-  revision: e159381c1524a40921893601f9e858fc8645843e
-  draft: r3.2
+  revision: d04a6f9d
+  draft: r3.3 (section 0 facade-first ruling and sections 4.6/4.6.1 seat.summon only)
   proposal: docs/proposals/hrc-rust-migration.md
   task: T-11441
   task_slug: rust-stage1-kernel-projector
   cardo_revision: 1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd
+  prior_full_approval: e159381c1524a40921893601f9e858fc8645843e (r3.2)
+  amendment_task: T-11452
+  amendment_task_slug: hrc-kernel-seat-summon
 predicate: >
   HRC embeds cardo-runtime as a library and retains ownership of its durable
   store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
@@ -48,7 +51,29 @@ predicate: >
   HRC-resolved socketPath and attachTarget; an absent tmux block refuses
   resource_unavailable. The kernel does not parse hosting-state variants.
   Stage 1b owner-API operations remain a separate step after the read-only
-  gates and carry the scope, fencing and unsupported cases in section 4.6.
+  gates. Stages 1 and 1b are a facade over the complete TypeScript daemon;
+  stage 1b adds no TypeScript code or HRC features. An operation requiring
+  unavailable daemon behavior waits for its native stage-2 slice. The three
+  additive stage-1 reads already landed are retained. The approved first
+  operation is seat.summon in section 4.6.1: a kernel operation with no
+  document_id and fences_on none, accepting a project- and task-qualified
+  main-lane session_ref, fresh and caller-minted request_id. It calls the
+  existing POST /v1/declarations/resolve by-scope arm with task run mode,
+  interactive true and headless preferred mode, retains the returned intent
+  and adds the requested session correlation. It resolves no paths itself.
+  It then calls existing POST /v1/runtimes/start with reject for fresh false
+  or suffix for fresh true, implicit summon intent, reuse_pty restart style
+  and idempotencyKey hrc-kernel-summon-<request_id>. HRC retains placement,
+  federation, claim, occupancy and durable request-hash/replay authority;
+  its refusals, including occupied, conflicting-key and superseded-claim
+  outcomes, remain refusals. The kernel does not retry. The receipt carries
+  session_ref from the returned claim, host_session_id, runtime_id, status
+  and replayed. Summon returns no attach descriptor and writes no projection
+  rows; ingest supplies them. The caller owns the existing-seat attach check
+  and follows the claimed natural key. Remote-homed attachment, socket-down
+  recovery and coordination of concurrent summoners remain unsupported;
+  remote starts can succeed without producing a local attachable row.
+  The other four proposed operations remain outside this approval.
   During stage 2 the route table owns slice routing, exactly one process
   serves each route family and sweep loop, and the TypeScript daemon remains
   complete until stage 3. Unported slices change in TypeScript; ported slices
@@ -66,6 +91,8 @@ authority: >
   Lance's library, gradual migration and one-repository rulings cited in the
   approved proposal; Daedalus architecture approval of r3.2 submitted in
   EN-32629, 2026-10-20. F1-F4 were closed by r3.1 and F5 by r3.2.
+  Lance's facade-first/no-TypeScript-growth ruling and Daedalus approval of
+  the r3.3 seat.summon amendment submitted in EN-32764, 2026-10-20.
 source:
   - docs/proposals/hrc-rust-migration.md
   - commit:e159381c1524a40921893601f9e858fc8645843e
@@ -75,6 +102,9 @@ source:
   - wrkc:EN-32627
   - wrkc:EN-32628
   - wrkc:EN-32629
+  - commit:d04a6f9d
+  - wrkq:T-11452
+  - wrkc:EN-32764
   - architecture/contracts/runtime-context-reading.yaml
   - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
   - architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml
@@ -83,6 +113,11 @@ source:
   - packages/hrc-server/src/server-session-methods.ts
   - packages/hrc-server/src/selector-message-handlers.ts
   - packages/hrc-server/src/bounded-event-stream.ts
+  - packages/hrc-core/src/declaration-contracts.ts
+  - packages/hrc-server/src/declaration-handlers.ts
+  - packages/hrc-server/src/exact-claim.ts
+  - packages/hrc-server/src/roster-claim.ts
+  - packages/hrc-server/src/scope-claim-core.ts
 validation_scope: >
   The requester supplies section 4.8 gates: side-effect-free read-set tests
   against a dead-substrate seed with the mutating runtime-list control;
@@ -91,7 +126,13 @@ validation_scope: >
   rebuilt and live projections after resync and ACP phase/context parity; stable
   seat-row reattachment through restart; HRC cursor resume without rebuild;
   and current live-set recovery after kernel restart. A5 is recorded, not
-  gated, with heavy legs isolated from the live daemon. Stage 2 retains
+  gated, with heavy legs isolated from the live daemon. For seat.summon the
+  requester supplies section 4.6.1's five gates: empty packages/ diff from
+  dispatch base to landing; cold-seat start and ingest attachment with one
+  start for the request identity; same-key retry yielding one runtime, the
+  same claim and replayed true; suffix claim on a roster lane; and harness,
+  project-root and cwd parity with the CLI dry-run for the cold-seat scope.
+  Stage 2 retains
   both-daemon conformance per ported slice, installed runtime smoke and
   broker reattach evidence, plus the proposal's M1 prerequisite. These are
   future acceptance obligations, not evidence of successful implementation.
@@ -101,9 +142,16 @@ last_verified: >
   session reads, attach resolvers, persisted context ownership, and cardo
   subscriptions/projections contracts. No builds, tests, installs, service
   operations or implementation grades were performed for this ruling.
+  2026-10-20 r3.3 scoped amendment approved by reading HRC d04a6f9d's
+  declaration request/parser, daemon placement and intent assembly, route
+  registration, exact/suffix request hashes, claim replay and receipt code;
+  compared ACP buildMobileStartRequest and the mail injector's by-scope call.
+  No build, test, install or service commands were run; the five summon
+  implementation gates remain unverified by this ruling.
 reopen_when: >
   Migration authority, repository or release boundaries, slice ownership or
   rollback completeness, schema ownership, stage prerequisites, page coverage
   or incarnation semantics, pinned read set, projection state ownership,
   context source, attach source, restart behavior or consolidation trigger
-  changes.
+  changes; or the stage-1b no-TypeScript-growth rule, summon request/receipt,
+  daemon authority, retry semantics or unsupported cases change.
