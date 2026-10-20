@@ -44,6 +44,8 @@ type ReplacementIntent = {
     participantKey?: string | undefined
     workspaceCwd?: string | undefined
     socketPath?: string | undefined
+    /** Stored only when `fresh`; an absent field is `continue` (R6.6 amendment). */
+    continuation?: 'fresh' | undefined
   }
   preAttachSupersession?: boolean | undefined
   receipt?: WriterEvidence | undefined
@@ -64,7 +66,12 @@ function parseIntent(value: string | undefined): ReplacementIntent | null {
   }
 }
 
-function sameRequest(intent: ReplacementIntent, request: DirectJoinRequest): boolean {
+function declarationOf(continuation: 'continue' | 'fresh' | undefined): 'continue' | 'fresh' {
+  return continuation ?? 'continue'
+}
+
+/** Same candidate and predecessor, regardless of the continuation declaration. */
+function sameReplacementTarget(intent: ReplacementIntent, request: DirectJoinRequest): boolean {
   return (
     intent.candidate.hostIncarnationId === request.hostIncarnationId &&
     (request.expectedPredecessor === undefined
@@ -73,6 +80,35 @@ function sameRequest(intent: ReplacementIntent, request: DirectJoinRequest): boo
         intent.predecessor.runtimeId === request.expectedPredecessor.runtimeId &&
         intent.predecessor.generation === request.expectedPredecessor.generation)
   )
+}
+
+/**
+ * §5.4 idempotency: the normalized declaration is part of the request
+ * identity, so a retry that changes only `continue`/`fresh` is never answered
+ * with the other declaration's allocation.
+ */
+function sameRequest(intent: ReplacementIntent, request: DirectJoinRequest): boolean {
+  return (
+    sameReplacementTarget(intent, request) &&
+    declarationOf(intent.candidate.continuation) === declarationOf(request.continuation)
+  )
+}
+
+const DECLARATION_MISMATCH_DETAIL =
+  'a replacement intent for this predecessor and host incarnation was made with a different continuation declaration'
+
+/**
+ * A selection already allocated for one declaration cannot answer the other:
+ * `fresh` never yields a carried record, and only `fresh` yields
+ * `participant_fresh`.
+ */
+export function declarationContradictsSelection(
+  request: DirectJoinRequest,
+  selection: ParticipantContinuationSelection | undefined
+): boolean {
+  return declarationOf(request.continuation) === 'fresh'
+    ? selection?.carried === true
+    : selection?.reason === 'participant_fresh'
 }
 
 export function isNeverAttachedDirectAttempt(
@@ -153,6 +189,25 @@ function continuationForSuccessor(
     return { carried: false, reason: 'reuse_disabled' }
   }
   return { carried: true, reason: 'carried', selectedJson: JSON.stringify(prior.continuation) }
+}
+
+/**
+ * R6.6 amendment: `fresh` is the participant's declaration, recorded as is.
+ * `continue` (or omitted) keeps the automatic selection unchanged.
+ */
+function selectionForSuccessor(
+  server: HrcServerInstanceForHandlers,
+  registration: ParticipantRegistration,
+  predecessor: ParticipantAttempt,
+  request: DirectJoinRequest,
+  kind: ReplacementKind,
+  preAttachSupersession: boolean
+): ParticipantContinuationSelection {
+  if (request.continuation === 'fresh') return { carried: false, reason: 'participant_fresh' }
+  if (kind === 'host') return continuationForSuccessor(server, registration)
+  return preAttachSupersession && hasLegacyArrisHostIncarnationSelection(predecessor.continuation)
+    ? continuationForSuccessor(server, registration)
+    : (predecessor.continuation ?? { carried: false, reason: 'no_continuation' })
 }
 
 function identityResult(
@@ -309,7 +364,11 @@ function findCommittedResult(
     registration.registrationId
   )) {
     const intent = parseIntent(prior.replacementIntentJson)
-    if (!intent || !sameRequest(intent, request) || intent.allocatedAttemptId === undefined)
+    if (
+      !intent ||
+      !sameReplacementTarget(intent, request) ||
+      intent.allocatedAttemptId === undefined
+    )
       continue
     const successor = server.db.participantRegistrations.getAttempt(intent.allocatedAttemptId)
     if (
@@ -318,6 +377,9 @@ function findCommittedResult(
       (intent.kind === 'bridge' && successor.brokerIdentityJson !== undefined)
     )
       continue
+    if (!sameRequest(intent, request)) {
+      return refusal('rejected', 'host_binding_precondition_failed', DECLARATION_MISMATCH_DETAIL)
+    }
     const current = server.db.participantRegistrations.getRegistrationById(
       registration.registrationId
     )
@@ -435,7 +497,9 @@ export async function driveParticipantReplacement(
     return refusal(
       'rejected',
       'host_binding_precondition_failed',
-      'a different durable replacement intent already owns this predecessor'
+      sameReplacementTarget(currentIntent, request)
+        ? DECLARATION_MISMATCH_DETAIL
+        : 'a different durable replacement intent already owns this predecessor'
     )
   }
   const now = timestamp()
@@ -470,6 +534,7 @@ export async function driveParticipantReplacement(
       ...(request.participantKey === undefined ? {} : { participantKey: request.participantKey }),
       ...(request.workspaceCwd === undefined ? {} : { workspaceCwd: request.workspaceCwd }),
       ...(request.socketPath === undefined ? {} : { socketPath: request.socketPath }),
+      ...(request.continuation === 'fresh' ? { continuation: 'fresh' as const } : {}),
     },
     createdAt: now,
   }
@@ -739,12 +804,14 @@ export async function driveParticipantReplacement(
   const successorRuntimeId = kind === 'bridge' ? binding.runtimeId : `rt-${randomUUID()}`
   const successorBindingId =
     kind === 'bridge' ? binding.bindingId : `participant-binding-${randomUUID()}`
-  const selection =
-    kind === 'bridge'
-      ? preAttachSupersession && hasLegacyArrisHostIncarnationSelection(attempt.continuation)
-        ? continuationForSuccessor(server, registration)
-        : (attempt.continuation ?? { carried: false, reason: 'no_continuation' as const })
-      : continuationForSuccessor(server, registration)
+  const selection = selectionForSuccessor(
+    server,
+    registration,
+    attempt,
+    request,
+    kind,
+    preAttachSupersession
+  )
   const successor: ParticipantAttempt = {
     attemptId: successorAttemptId,
     registrationId: registration.registrationId,
@@ -938,6 +1005,9 @@ export async function recoverParticipantReplacement(
     ...(intent.candidate.socketPath === undefined
       ? {}
       : { socketPath: intent.candidate.socketPath }),
+    ...(intent.candidate.continuation === undefined
+      ? {}
+      : { continuation: intent.candidate.continuation }),
     expectedPredecessor: {
       hostIncarnationId: intent.predecessor.hostIncarnationId,
       runtimeId: intent.predecessor.runtimeId,

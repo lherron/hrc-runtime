@@ -159,6 +159,7 @@ const DIRECT_FIELDS = [
   'processToken',
   'evidence',
   'expectedPredecessor',
+  'continuation',
 ]
 
 function rejectUnsupportedFields(body: Record<string, unknown>, allowed: readonly string[]): void {
@@ -224,6 +225,10 @@ export function parseRegisterParticipantRequest(input: unknown): RegisterPartici
       generation: predecessor['generation'] as number,
     }
   }
+  const continuation = body['continuation']
+  if (continuation !== undefined && continuation !== 'continue' && continuation !== 'fresh') {
+    malformed('continuation must be "continue" or "fresh" when provided', 'continuation')
+  }
   return {
     mode: 'direct',
     requestedSessionRef,
@@ -242,6 +247,7 @@ export function parseRegisterParticipantRequest(input: unknown): RegisterPartici
       ? {}
       : { socketPath: optionalSocketPath(body['socketPath']) }),
     ...(expectedPredecessor === undefined ? {} : { expectedPredecessor }),
+    ...(continuation === undefined ? {} : { continuation }),
   }
 }
 
@@ -268,6 +274,7 @@ async function handleDirectRegistration(
     ...(body.expectedPredecessor === undefined
       ? {}
       : { expectedPredecessor: body.expectedPredecessor }),
+    ...(body.continuation === undefined ? {} : { continuation: body.continuation }),
   })
 
   if (result.outcome === 'refused' && result.status === 'pending') {

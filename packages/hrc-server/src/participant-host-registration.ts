@@ -13,6 +13,7 @@ import type {
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { claimParticipantAddress } from './participant-address-provisioning.js'
 import {
+  declarationContradictsSelection,
   driveParticipantReplacement,
   hasLegacyArrisHostIncarnationSelection,
   isNeverAttachedDirectAttempt,
@@ -122,6 +123,12 @@ export type DirectJoinRequest = {
     runtimeId: string
     generation: number
   }
+  /**
+   * R6.6 amendment: whether the successor wants its predecessor's
+   * conversation. The participant's intent, recorded without an eligibility
+   * check; omitted means `continue`.
+   */
+  continuation?: 'continue' | 'fresh' | undefined
 }
 
 /**
@@ -239,6 +246,14 @@ async function registerDirectParticipantLocked(
     ) {
       if (hasLegacyArrisHostIncarnationSelection(attempt.continuation)) {
         return driveParticipantReplacement(server, existingByIncarnation, attempt, request)
+      }
+      if (declarationContradictsSelection(request, attempt.continuation)) {
+        return {
+          outcome: 'refused',
+          status: 'rejected',
+          reason: 'host_binding_precondition_failed',
+          detail: `this allocation's continuation selection (${attempt.continuation?.reason}) was made for a different continuation declaration; a selection is fixed once its attempt is allocated`,
+        }
       }
       return {
         outcome: 'registered',

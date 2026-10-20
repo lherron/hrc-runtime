@@ -110,6 +110,8 @@ export type ParticipantContinuationReason =
   | 'no_continuation'
   | 'continuation_invalidated'
   | 'reuse_disabled'
+  /** R6.6 amendment: a direct participant declared `fresh` for its successor. */
+  | 'participant_fresh'
 
 /**
  * R7.3: what the driver was asked for and what it said, never a claim that
