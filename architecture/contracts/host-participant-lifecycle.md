@@ -123,8 +123,13 @@ A direct attach may instead use exact fields `{registrationId, attemptId,
 attachEpoch, resumeUnsupported: true, reason}` with a nonempty reason; persist unsupported, retain the selected record,
 keep addressed input pending, and return a truthful attachment outcome. This is
 not an eligibility veto over the address. A retry cannot silently replace that
-selection with a fresh start. Fresh start requires the existing explicit clear/
-discard operation. Indeterminate broker start remains indeterminate under the
+selection with a fresh start. A selection is fixed once its attempt is
+allocated. The participant chooses a fresh start by declaring `fresh` on the
+direct register request that allocates the successor (R6.6 amendment, T-11435;
+this exception controls over R7's precedence rule). That needs no clear/discard
+operation and sets no barrier. Clearing an already-selected attempt, or a
+non-direct successor, still requires the existing explicit clear/discard
+operation. Indeterminate broker start remains indeterminate under the
 existing durable receipt contract. No native lineage invention is in scope.
 
 ## R7.4 Home-node handoff is a redirect, not forwarding (EN-12457 F4)
@@ -1752,8 +1757,12 @@ before response. All restart without another registration and converge or remain
 truthfully held, with no old-writer reattach, lost candidate, or second successor.
 
 **Idempotency.** A duplicate succession request naming the same
-`expectedPredecessor` and the same `hostIncarnationId` returns the committed
-result rather than repeating TX-6. A request naming a stale `expectedPredecessor`
+`expectedPredecessor`, the same `hostIncarnationId` and the same normalized
+continuation declaration (omitted = `continue`, R6.6 amendment) returns the
+committed result rather than repeating TX-6. A request that differs only in its
+declaration is not a duplicate. It is refused as `rejected /
+host_binding_precondition_failed` and is never answered with the other
+declaration's allocation. A request naming a stale `expectedPredecessor`
 after TX-6 committed returns `rejected / host_binding_precondition_failed` with
 the observed values — never a second succession.
 
