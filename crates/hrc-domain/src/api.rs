@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::{path::Path, time::Duration};
 
 pub const READ_SET: &[&str] = &[
+    "/v1/presentation/seats/read",
     "/v1/events/page",
     "/v1/events/bounded-stream",
     "/v1/events/latest-by-session",
@@ -88,6 +89,22 @@ impl HrcApi {
         Ok(self
             .response(route, query, Duration::from_secs(15))?
             .json()?)
+    }
+    /// The single POST in the read set; it never mutates the HRC store.
+    pub fn seats(&self, session_refs: &Value, runtime_ids: &Value) -> Result<Value, ApiError> {
+        let r = self
+            .client
+            .post("http://localhost/v1/presentation/seats/read")
+            .json(&serde_json::json!({"sessionRefs": session_refs, "runtimeIds": runtime_ids}))
+            .timeout(Duration::from_secs(15))
+            .send()?;
+        if !r.status().is_success() {
+            return Err(ApiError {
+                code: "hrc_read_failed".into(),
+                message: format!("{}: {}", r.status(), r.text()?),
+            });
+        }
+        Ok(r.json()?)
     }
     pub fn page(
         &self,

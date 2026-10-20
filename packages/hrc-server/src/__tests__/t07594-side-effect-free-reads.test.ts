@@ -5,7 +5,7 @@
  * `GET` routes reconcile tmux liveness as a side effect of reading and can mark
  * a runtime dead (`/v1/runtimes`, `/v1/attach`), which would let a cosmetic
  * viewer process change runtime state. The sidecar is therefore permitted
- * exactly five routes, and each one is pinned here.
+ * the routes pinned here, including the stage-1 kernel batched seat read.
  *
  * The seed is a broker runtime whose tmux substrate is ABSENT. That is what
  * makes the test meaningful rather than tautological: the CONTROL at the bottom
@@ -115,6 +115,19 @@ describe('§5.4 permitted routes leave runtime status and the ledger untouched',
     expect(res.status).toBe(200)
     const body = (await res.json()) as ListPresentationRuntimesResponse
     expect(body.runtimes.map((row) => row.runtimeId)).toContain(RUNTIME_ID)
+    expect(runtimeStatus()).toBe('ready')
+    expect(await ledgerHead()).toBe(headBefore)
+  })
+
+  it('POST /v1/presentation/seats/read', async () => {
+    const headBefore = await ledgerHead()
+    const res = await fixture.postJson('/v1/presentation/seats/read', {
+      sessionRefs: [`${SCOPE_REF}/lane:lane:default`],
+      runtimeIds: [RUNTIME_ID],
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { runtimes: Array<{ runtimeId: string }> }
+    expect(body.runtimes.map((row) => row.runtimeId)).toEqual([RUNTIME_ID])
     expect(runtimeStatus()).toBe('ready')
     expect(await ledgerHead()).toBe(headBefore)
   })

@@ -912,6 +912,17 @@ export class HrcLifecycleEventRepository {
     return rows.map((row) => this.mapRow(row))
   }
 
+  /** Point read served by the (host_session_id, generation, hrc_seq) index. */
+  findLatestBySession(hostSessionId: string, generation: number): HrcLifecycleEvent | null {
+    const row = this.db
+      .query<HrcEventRow, [string, number]>(`
+      SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
+      WHERE host_session_id = ? AND generation = ? ORDER BY hrc_seq DESC LIMIT 1
+    `)
+      .get(hostSessionId, generation)
+    return row ? this.mapRow(row) : null
+  }
+
   /**
    * Return the latest HRC lifecycle event per `(host_session_id, generation)` group.
    *

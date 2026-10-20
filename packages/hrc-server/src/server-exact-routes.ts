@@ -8,7 +8,10 @@ import { forwardScopedGet } from './federation/scope-read-routing.js'
 import { handleFirstTurnDiagnostics } from './first-turn-diagnostics-handlers.js'
 import type { HrcServerInstance } from './index.js'
 import { handleResolvePlacement } from './placements-resolve.js'
-import { handleListPresentationRuntimes } from './presentation-read-model.js'
+import {
+  handleListPresentationRuntimes,
+  handleReadPresentationSeats,
+} from './presentation-read-model.js'
 import { handleRestartSelf } from './self-restart.js'
 import { exactRouteKey } from './server-routing.js'
 import type { ExactRouteHandler } from './server-types.js'
@@ -189,6 +192,8 @@ export function buildExactRouteHandlers(
       legacyLaunchIngestRetired(new URL(request.url).pathname),
     [exactRouteKey('GET', '/v1/runtime-diagnostics')]: (_request, url) =>
       handleFirstTurnDiagnostics(server.db, url),
+    [exactRouteKey('POST', '/v1/presentation/seats/read')]: (request) =>
+      handleReadPresentationSeats(server.db, request),
     [exactRouteKey('GET', '/v1/presentation/runtimes')]: () =>
       handleListPresentationRuntimes(server.db),
     [exactRouteKey('GET', '/v1/health')]: () => server.handleHealth(),

@@ -2,10 +2,10 @@
  * T-11441 gate 0 — the stage-1 kernel's read set is SIDE-EFFECT-FREE and
  * pinned (hrc-runtime.rust-migration §4.3).
  *
- * The Rust kernel reads HRC only through these five routes:
+ * The Rust kernel reads HRC only through these six routes:
  * `/v1/events/page`, `/v1/events/bounded-stream` (as a wake),
  * `/v1/events/latest-by-session`, `/v1/presentation/runtimes` and
- * `/v1/sessions`. Each is pinned here with the query shape the kernel sends.
+ * `/v1/sessions` and POST `/v1/presentation/seats/read`. Each is pinned here with the query shape the kernel sends.
  *
  * As in t07594-side-effect-free-reads, the seed is a broker runtime whose tmux
  * substrate is ABSENT, and the CONTROL proves the same seed IS marked dead
@@ -123,6 +123,95 @@ describe('§4.3 the pinned read set leaves runtime state and the ledger untouche
 
   it('GET /v1/events/latest-by-session', async () => {
     await expectUntouched(() => fixture.fetchSocket('/v1/events/latest-by-session'))
+  })
+
+  it('POST /v1/presentation/seats/read is keyed, empty-safe and side-effect-free', async () => {
+    fixture.seedSession('hsid-unrelated', 'agent:clod:project:unrelated')
+    const res = await expectUntouched(() =>
+      fixture.postJson('/v1/presentation/seats/read', {
+        sessionRefs: [],
+        runtimeIds: [RUNTIME_ID, RUNTIME_ID, 'missing'],
+      })
+    )
+    const body = (await res.json()) as {
+      sessions: Array<{ hostSessionId: string }>
+      runtimes: Array<{ runtimeId: string }>
+      events: unknown[]
+    }
+    expect(body.sessions.map((s) => s.hostSessionId)).toEqual([HOST_SESSION_ID])
+    expect(body.runtimes.map((r) => r.runtimeId)).toEqual([RUNTIME_ID])
+    const empty = await fixture.postJson('/v1/presentation/seats/read', {
+      sessionRefs: [],
+      runtimeIds: [],
+    })
+    expect(await empty.json()).toEqual({ sessions: [], runtimes: [], events: [] })
+    const keyed = await fixture.postJson('/v1/presentation/seats/read', {
+      sessionRefs: [`${SCOPE_REF}/lane:lane:default`],
+      runtimeIds: [],
+    })
+    expect(await keyed.json()).toEqual(body)
+  })
+
+  it('keyed reads select the latest live generation and its own latest event', async () => {
+    const now = fixture.now()
+    withDb((db) => {
+      const old = db.sessions.getByHostSessionId(HOST_SESSION_ID)!
+      db.sessions.insert({
+        ...old,
+        hostSessionId: 'hsid-new',
+        generation: 2,
+        createdAt: '2020-01-01T00:00:00.000Z',
+        updatedAt: '2020-01-01T00:00:00.000Z',
+      })
+      db.runtimes.update(RUNTIME_ID, { hostSessionId: 'hsid-new', generation: 2 })
+      for (const [hostSessionId, generation] of [
+        [HOST_SESSION_ID, 1],
+        ['hsid-new', 2],
+      ] as const) {
+        for (let n = 0; n < 2; n++)
+          db.hrcEvents.append({
+            ts: now,
+            hostSessionId,
+            generation,
+            scopeRef: SCOPE_REF,
+            laneRef: 'default',
+            category: 'turn',
+            eventKind: 'turn.tool_result',
+            payload: { n },
+          })
+      }
+    })
+    const res = await expectUntouched(() =>
+      fixture.postJson('/v1/presentation/seats/read', {
+        sessionRefs: [],
+        runtimeIds: [RUNTIME_ID],
+      })
+    )
+    const body = (await res.json()) as {
+      sessions: Array<{ hostSessionId: string; generation: number }>
+      events: Array<{ hostSessionId: string; payload: unknown }>
+    }
+    expect(body.sessions.map((s) => [s.hostSessionId, s.generation])).toEqual([['hsid-new', 2]])
+    expect(body.events.map((e) => [e.hostSessionId, e.payload])).toEqual([['hsid-new', { n: 1 }]])
+    // A terminal runtime still names the seat, but must not appear as live.
+    withDb((db) => db.runtimes.updateStatus(RUNTIME_ID, 'terminated', now))
+    const inactive = await fixture.postJson('/v1/presentation/seats/read', {
+      sessionRefs: [],
+      runtimeIds: [RUNTIME_ID],
+    })
+    expect(((await inactive.json()) as { runtimes: unknown[] }).runtimes).toEqual([])
+  })
+
+  it('POST /v1/presentation/seats/read rejects malformed key lists', async () => {
+    for (const body of [
+      null,
+      {},
+      { sessionRefs: 'all', runtimeIds: [] },
+      { sessionRefs: ['bad'], runtimeIds: [] },
+      { sessionRefs: [], runtimeIds: [1] },
+    ]) {
+      expect((await fixture.postJson('/v1/presentation/seats/read', body)).status).toBe(400)
+    }
   })
 
   it('GET /v1/presentation/runtimes', async () => {

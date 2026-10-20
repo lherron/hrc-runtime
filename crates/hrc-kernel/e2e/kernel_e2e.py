@@ -98,6 +98,26 @@ def main():
             self.end_headers()
             self.wfile.write(body)
 
+        def do_POST(self):
+            assert self.path == '/v1/presentation/seats/read', self.path
+            keys = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            with lock:
+                paths.append(self.path)
+                s = copy.deepcopy(state)
+            wanted = set(keys['sessionRefs'])
+            for r in s['runtimes']:
+                if r['runtimeId'] in keys['runtimeIds']:
+                    wanted.add(r['scopeRef'] + '/lane:' + r['laneRef'])
+            sessions = [r for r in s['sessions'] if r['scopeRef'] + '/lane:' + r['laneRef'] in wanted]
+            runtimes = [r for r in s['runtimes'] if r['scopeRef'] + '/lane:' + r['laneRef'] in wanted]
+            events = [e for e in s['events'][-1:] if any(e['hostSessionId'] == r['hostSessionId'] for r in sessions)]
+            value = dict(sessions=sessions, runtimes=runtimes, events=events)
+            body = json.dumps(value).encode()
+            self.send_response(503 if s['down'] else 200)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def log_message(self, *_):
             pass
 
@@ -188,7 +208,8 @@ def main():
             subscribed = sub.call('events.subscribe', dict(after=resync['cursor'], incarnation=resync['host_incarnation']))
             assert 'cursor' in subscribed
             sub.close()
-            allowed = {'/v1/events/page', '/v1/events/bounded-stream', '/v1/events/latest-by-session', '/v1/presentation/runtimes', '/v1/sessions'}
+            allowed = {'/v1/presentation/seats/read', '/v1/events/page', '/v1/events/bounded-stream', '/v1/events/latest-by-session', '/v1/presentation/runtimes', '/v1/sessions'}
+            assert '/v1/presentation/seats/read' in paths, paths
             assert set(paths) <= allowed, set(paths)
             report = dict(ready=ready, types=[n['name'] for n in discovery['node_types']],
                           initial=first, replay=after, cursor_before_replace=cursor,

@@ -135,7 +135,8 @@ Events name keys, and the projector re-reads their current state (projections v1
 - `/v1/events/bounded-stream` (as a wake);
 - `/v1/events/latest-by-session`;
 - `/v1/presentation/runtimes`, the store-only presentation read model (`hrc-runtime.viewer-presentation-sidecar` §5.3–5.4);
-- `/v1/sessions`.
+- `/v1/sessions`;
+- POST `/v1/presentation/seats/read`, the batched keyed store read adopted after A5 (T-11451).
 
 A test in the style of `t07594-side-effect-free-reads` pins this set against a dead-substrate seed, with the `/v1/runtimes` control, and adds `/v1/events/page` and `/v1/sessions` to the asserted routes (gate 0, §4.8). Presentation rows can name a runtime whose tmux has died until HRC's own sweep marks it. The viewer already accepts that window, and the kernel accepts it too.
 
@@ -144,7 +145,7 @@ A test in the style of `t07594-side-effect-free-reads` pins this set against a d
   2. `/v1/presentation/runtimes`;
   3. `/v1/events/latest-by-session`.
   This is one page at the live-set size. Sampling `at` before reading state means anything that changes during the read is replayed after it.
-- **`apply`** maps each row to keys: its sessionRef, and for a runtime-scoped row its runtimeId and that runtime's seat. It removes duplicates within the batch, re-reads each key from the same read set, and emits upserts or `remove_by_key`.
+- **`apply`** maps each row to keys: its sessionRef, and for a runtime-scoped row its runtimeId and that runtime's seat. It removes duplicates within the batch, re-reads each key in one POST `/v1/presentation/seats/read` with `{sessionRefs, runtimeIds}`, and emits upserts or `remove_by_key`. The response contains the window-selected latest-generation sessions (plus quiet runtime-named seats), presentation runtimes, and latest events for those sessions. The unchanged projection derives the touched project rows. Apply indexes the bounded result once; bootstrap and resync retain the full read.
 - **The presentation row gains `contextReading`.** It is an additive, optional field: the runtime's persisted `runtimeStateJson.contextReading`, exactly as stored, and absent when there is none. That is the reading `hrc-runtime.runtime-context-reading` keeps on the runtime across restart and invocation retirement, and the one ACP's `projectContextReading` (`mobile.ts:107`) reads. The route stays a store read. This is the second TS change, in the same unported S1 slice.
 - **`hrc.runtime` carries what the presentation row carries:** status, generation, the presentation record, the tmux attach target, `contextReading`, title, and identity and metadata. Fields only `/v1/runtimes` returns (transport, provider, activeRunId, supportsInflightInput) are left out of stage 1 rather than read through a reconciling route.
 - **Phase and context.** These follow ACP's `projectSession` (`mobile.ts:537`) as it is today. Phase text comes from the latest event and the session record. The seat's context reading is the seat runtime's persisted `contextReading` from the presentation row, validated as `projectContextReading` validates it. It is never folded from an earlier `runtime.context.updated` event, so a bootstrap after that event has scrolled past still shows it. The port is a translation, not a redesign. Gate 2 diffs the two outputs on the live set.
@@ -208,8 +209,8 @@ A `LedgerSource` read directly over `hrc_events` moves to stage 2, where Rust ow
 
 **Costs, stated.**
 - **Phase logic in two copies.** It exists in Rust and in ACP's TS until the ACP port. Gate 2 catches drift.
-- **Two additive HRC TS changes**, both store reads in slice S1: the `/v1/events/page` route and its test (§4.2), and `contextReading` on `/v1/presentation/runtimes` rows (§4.3). Nothing else in TS HRC changes.
-- **HTTP reads per batch.** Each batch re-reads the seats it names, about two or three calls each. If A5 shows that is too heavy, the fix is one batched seat-read route in TS HRC, not a redesign.
+- **Additive HRC TS changes**, all store reads in slice S1: the `/v1/events/page` route and its test (§4.2), and `contextReading` on `/v1/presentation/runtimes` rows (§4.3), plus the pre-ruled batched seat-read route adopted after A5 (T-11451). Nothing else in TS HRC changes.
+- **HTTP reads per batch.** Each batch re-reads only the seats it names, in one batched seat-read route in TS HRC. A5 exposed the full-state-per-batch deviation; T-11451 applies this pre-ruled remedy without changing delta semantics or the ingest batch size.
 
 ## 5. Stage 2: the Rust front, sliced by state
 
