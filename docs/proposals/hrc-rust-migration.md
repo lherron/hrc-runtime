@@ -1,113 +1,193 @@
 # HRC Rust migration
 
-Status: proposal r2.2, 2026-10-19 (r2.2: the projector's wake is the real route, `/v1/events/bounded-stream`. r2: cardo prerequisites renumbered to pre-hrc-cardo-gaps r5; `hrc_events` as a `LedgerSource`, §5.3. r2.1: the retention fence is cardo C3's, as of r6). Owner mable@hrc-runtime:primary. Campaign P-00862 (cardo/gap-explorations). Nothing is dispatched. Lance's rulings are marked **RULED**.
+Status: proposal r3, 2026-10-20. Owner mable@hrc-runtime:primary. Campaign P-00862. Nothing is dispatched. Lance's rulings are marked **RULED**.
 
-This page owns the HRC side of the port: the stages, the strangler inside stage 2, the compatibility contract, install and fleet, and the process budget. The cardo work that must land first lives in cardo's `docs/explorations/pre-hrc-cardo-gaps.md`. This page cites it by item number (`cardo P1`, `cardo B7`, and so on) and does not restate it. The material is seeded from cardo's `hrc-acp-library-path.md` r3 (66a5434), §0.1, §1, E5, E6, F7, §7a and §9.
+r3 replaces r2.2's stage 1 and adds the repository rules:
+- **One stage 1.** It merges clod@loggia's stage 0 (R-00448, EN-32603) into stage 1. The kernel reads HRC through its HTTP API through cardo's own ingest machinery, not through a read-only open of `state.sqlite` (§4).
+- **One repository**, with dual implementation scoped by slice (§2).
+- **Cardo prerequisites:** all of them are on cardo main at 1796e1c (§3).
+
+This page owns the HRC side of the port: the repository layout, the stages, the strangler inside stage 2, the compatibility contract, install and fleet, and the process budget. The cardo work lives in cardo's `docs/explorations/pre-hrc-cardo-gaps.md`, which this page cites by item number (`cardo B6`) and does not restate.
 
 ## 0. Rulings and scope
 
-- **RULED, Q1 (T-11381): library.** HRC becomes a Rust binary that embeds `cardo-runtime`, as foundry does. It is not a provider inside a shared platform kernel. Cardo hosts nothing that belongs to HRC.
-- **RULED, port first and consolidate later** (Lance, 2026-10-19). The port rewrites today's daemon in Rust. Brokers, aspc and the injector do not move into it. Lance's reason: there is no good strategy yet for restarting HRC with brokers inside it. Brokers survive an HRC restart today only because they are separate processes in leased tmux servers that reattach by `eventsSince(lastProjectedSeq)`.
-- **The process-count goal is deferred, and is stated as deferred** (§7).
-- **The mail injector moves with ACP**, not HRC (§9).
-- **Consolidation is deferred behind a named trigger** (§8).
+- **RULED, Q1 (T-11381): library.** HRC becomes a Rust binary that embeds `cardo-runtime`, as foundry does. Cardo hosts nothing that belongs to HRC.
+- **RULED, port first and consolidate later** (Lance, 2026-10-19). Brokers, aspc and the injector do not move into the port. Brokers survive an HRC restart only because they are separate processes in leased tmux servers that reattach by `eventsSince(lastProjectedSeq)`, and there is no strategy yet for keeping them alive inside the daemon (§9).
+- **RULED, gradual migration with TS fully functional** (Lance, 2026-10-20). There is no big-bang cutover. The TS daemon stays a complete daemon that can serve every route until stage 3. Dual implementation is scoped by slice (§2.2).
+- **RULED, one repository** (Lance, 2026-10-20). Rust lives in hrc-runtime beside the TS packages (§2.1).
+- The process-count goal is deferred, and stated as deferred (§8). The mail injector moves with ACP, not HRC (§10).
 
 HRC keeps everything it owns today:
-- the store (`state.sqlite`, 20 GB, about 100 migrations, a forever ledger `hrc_events`);
-- the event record (`hrcSeq` plus `ledger_incarnation_id`, and the wrkq ledger cursor `wrkq_ledger_cursors` used for presentation);
+- the store: `state.sqlite`, about 20 GB and about 120 migrations, with the forever ledger `hrc_events`;
+- the event record: `hrcSeq` plus `ledger_incarnation_id`, and `wrkq_ledger_cursors`;
 - the HTTP API on `hrc.sock`;
 - federation;
 - brokers in leased tmux servers, launchd supervision, and the restart doctrine.
 
-The cardo wire is an additional socket, the mount surface for loggia and agents. Cardo projection documents are derived views of the store and never a second record.
+The cardo wire is an additional socket, the mount surface for Loggia and agents. Cardo documents are derived views and never a second record.
 
 ## 1. Stages
 
 Each stage is usable on its own and reversible.
 
-| stage | what runs | writes to state.sqlite | reversible by |
+| stage | what runs | writes `state.sqlite` | reversible by |
 |---|---|---|---|
-| 1. Shadow projector | the TS daemon, plus a Rust `hrc-kernel` that reads the store read-only and serves the cardo wire | TS only | stopping the projector |
-| 2. Rust front, sliced by state | the Rust front on `hrc.sock`, and the TS daemon on a private socket for the slices not yet ported | both, one slice each | pointing `hrc.sock` back at TS |
-| 3. TS retired | Rust only | Rust only | (not reversible after the first Rust migration, §5.2) |
+| 1. Kernel projector | the TS daemon, plus a Rust `hrc-kernel` that reads HRC over its HTTP API and serves the cardo wire | TS only | stopping the kernel |
+| 2. Rust front, sliced by state | the Rust front on `hrc.sock`; the TS daemon on a private socket, still complete | both, one slice each | pointing `hrc.sock` back at TS |
+| 3. TS retired | Rust only | Rust only | (not reversible after the first Rust migration, §6.2) |
 
-ACP ports afterwards, onto the same primitives (§9).
+Stage 1 replaces nothing. It is a new reader, so the dual-implementation rule (§2.2) starts at stage 2. ACP ports afterwards (§10).
 
-## 2. Prerequisites from cardo
+## 2. Repository and separation
 
-All of these are cardo items in `pre-hrc-cardo-gaps.md`.
+### 2.1 Layout
 
-| before | cardo items |
+```
+hrc-runtime/
+  packages/        TS: hrc-server, hrc-cli, hrc-core, hrc-sdk, hrc-store-sqlite, … (unchanged)
+  crates/          Rust Cargo workspace: hrc-domain, hrc-kernel; later hrc-front, hrc-store
+  contract/        neutral, consumed by both sides (from stage 2)
+  conformance/     the black-box suite that runs against either daemon's socket (from stage 2)
+```
+
+- **No cross-imports.** `packages/` and `crates/` meet only through the HTTP API, the cardo wire and the store. Neither builds the other.
+- **`contract/` is owned by neither side.** It holds the route table, request and response schemas, event kinds, and the schema version the store is at. TS and Rust either generate their types from it, or check them against it by example in the conformance suite. It starts empty at stage 1, because the kernel consumes the existing HTTP API as a client. It fills as slices move.
+- **The route table is the single statement of ownership.** For each route family it names the slice, the daemon that serves it, and whether the slice is ported (§2.2). The Rust front reads it at stage 2.
+- **Hooks are path-scoped** through the existing `hook-scope`/`.hookignore` mechanism:
+  - a TS-only change skips cargo;
+  - a `crates/`-only change skips the bun suites;
+  - a change under `contract/`, `conformance/`, `packages/hrc-store-sqlite/src/migrations*` or the route table runs both.
+- **Seats.** Rust work runs in its own task seats. One session doesn't do both halves of a dual-implemented change unless the change is small.
+- **Why not a separate repository.** The two daemons share the API contract, the store schema and the release. One commit can change both sides and the conformance suite together, and one release has one `sourceCommit` per node. Two repositories would turn each of those into a cross-repo pin that drifts. The benefits of a separate repository (build speed, clean ownership, agents that never confuse the halves) come here from the path-scoped hooks and separate seats.
+
+### 2.2 Dual implementation, scoped by slice
+
+| slice state | a new feature or change lands in |
 |---|---|
-| stage 1 | P1 (restart contract), P2 (delivery promises), P3 (supervision scoped); S0–S6 and S9 (subscription model, `LedgerSource`, reference ledger, cursored subscription, live class, ingest on S3, subscription registry, provider shape); A1 (tokio adapter), A2 (owner panic policy), A4 (bundled SQLite with FTS5); B1 (Rust ingest), B3 (reset), B4 (live-set sweeps), B6 (projection rules), B7 (safe read-only open), E4 (outside readers); C3 (durable cursors), C4 (idempotency keys), C7 (retention); F0, F1, F3, F4 |
-| stage 2 | C1 (migrations runner), C5 (durable timers and periodic tasks), D1 (idempotent wire ops), D2 (cause on receipts), S7 (wire replay past the ring), S8 (ring quota), F5, F6 |
-| measured on the stage-1 projector | A5 (performance budget), F2 and F0 on real data, F7 (`HrcProfile`) |
+| not ported | TS only. Rust picks it up when the slice ports. |
+| ported (Rust serves it) | both. TS is the rollback target, so it stays current. |
+| soaked on every node | both, until stage 3 retires TS |
 
-Numbering is as of cardo d7862d2 (r5).
+- **Done means the conformance suite passes against both daemons** for a ported slice. A pre-push check refuses a change to a ported slice's routes, schemas or tests that touches only one side.
+- **Schema.** TS owns migrations until stage 3 (§6.2). A migration commit also bumps the schema version in `contract/`, and Rust refuses a store newer than the version it knows. Pre-push checks that the two agree.
+- **Keep the double cost short.** It applies only to the slices in flight, so a slice's soak (§5) is kept short and slices move one at a time.
 
-**Status, 2026-10-19 18:21.** Every "before stage 1" and "before stage 2" item has landed and been graded on cardo branch `pre-hrc` (head 1796e1c, not yet on main). The specs are `docs/cardo-subscriptions-v1.md` (APPROVED r3.1, EN-32431) and `docs/cardo-projections-v1.md` (APPROVED r2.1, EN-32454). `cardo_store::foreign::open_readonly` is B7's safe open. `docs/cardo-embedding-guide.md` §9 implements `LedgerSource` over a product table. Since T-11428, `events.subscribe {after, incarnation}` refuses with `lag` on an incarnation mismatch. Two items wait on the stage-1 projector: A5 (T-11426) and F7 (T-11427). Stage 1 is unblocked on the cardo side. The projector pins cardo by rev on `pre-hrc` until that branch merges.
+## 3. Prerequisites from cardo
 
-## 3. Stage 1: shadow projector
+All of them are on cardo main at **1796e1c** (`pre-hrc` fast-forwarded and deleted, 2026-10-20, R-00450). Pin cardo from main revisions only.
 
-**Purpose.** It puts HRC's live state on the cardo wire for loggia's Development workspace (sessions list, terminal leaves, later the concierge), and it proves the cardo primitives against real HRC data before Rust takes any write.
+| used by | cardo items |
+|---|---|
+| stage 1 | P1–P3; S0–S6, S8, S9; A1, A2, A4; B1 (in-process ingest worker), B3 (reset), B4 (live-set sweeps, `live_until`), B6 (`ingest_only`, `reports_catch_up`, `bootstrapping`); C4; D2; F0–F4 |
+| stage 2 | C1, C3, C5, C7; D1; S7; B7 (safe read-only open, if a Rust reader opens the store before Rust owns it); F5, F6 |
+| measured on the stage-1 kernel | A5 (T-11426), F7 `HrcProfile` (T-11427) |
 
-**Where it lives.** A Cargo workspace in hrc-runtime (`crates/hrc-domain`, `crates/hrc-kernel`), with cardo pinned by git rev (cardo A3). It never lives in cardo/crates.
+The specs are `docs/cardo-subscriptions-v1.md` (APPROVED r3.1) and `docs/cardo-projections-v1.md` (APPROVED r2.1). Projections v1 §2 is the model stage 1 implements: `LedgerIngest<S: LedgerSource, P: Projector>`. Known cardo flake: T-11440, in the wire `subscriptions` class.
 
-**Input.**
-- The store is opened under cardo B7's rules: located through `hrc server status --json` → `stateRoot`, opened read-only with a `file:` URI, short read transactions, no fixtures on live roots.
-- The projector implements cardo S1 (`LedgerSource`) read-only over `hrc_events`, under §5.3's semantics. Its wake is `GET /v1/events/bounded-stream?follow=true&ledgerIncarnationId=…&afterSeq=…`, which refuses `CURSOR_INVALID` and signals `ledgerReplaced` when the incarnation differs. SQLite rows are the truth. An incarnation change resets (cardo B3), and a stream close reconnects from the committed cursor. Ingest runs as a cursored subscription (cardo S5).
-- The cursor is `{incarnation, hrcSeq}`. An incarnation change resets and rebuilds (cardo B3).
+## 4. Stage 1: kernel projector
 
-**Documents.** One document, `hrc`, rebuildable, with durability `none`.
+**Purpose.** It puts HRC's live state on the cardo wire for Loggia's Development workspace: the sessions list, terminal leaves and later the concierge. It also gives cardo the real-data subject that A5 and F7 wait on.
+
+**Where it lives.** `crates/hrc-domain` (types, the projector, the attach builder) and `crates/hrc-kernel` (the binary: cardo owner, wire server, ingest binding, socket). Cardo is pinned by git rev on main (cardo A3).
+
+### 4.1 Document
+
+One document, `hrc`: `rebuildable: true`, durability `none`, `ingest_only: true` (cardo B6). It starts empty at every open, and nothing but ingest writes it.
 
 | type | natural key | carries | notes |
 |---|---|---|---|
-| `hrc.seat` | sessionRef `(scope_ref, lane_ref)`, the `continuities` primary key | current hostSessionId, generation, runtimeId; agentId, projectId, taskId, lane, displayRef; status and phase; runtime transport, harness and status; latest event kind and time; lastActivityAt; context reading | attachable `tmux-attach`, fence `[hostSessionId, generation, runtimeId]` |
-| `hrc.runtime` | runtimeId | seat sessionRef, transport, harness, provider, status, activeRunId, supportsInflightInput, timestamps | chatty, so it needs cardo S8 before stage 2 |
-| `hrc.project` | projectId | name | colour stays in a loggia plugin; a kernel row never carries theme data |
+| `hrc.seat` | sessionRef `(scope_ref, lane_ref)` | current hostSessionId, generation, runtimeId; agentId, projectId, taskId, lane, displayRef; status and phase; latest event kind and time; lastActivityAt; context reading; `live_until` | attachable `tmux-attach`, fence `[hostSessionId, generation, runtimeId]` |
+| `hrc.runtime` | runtimeId | seat sessionRef, transport, harness, provider, status, activeRunId, supportsInflightInput, timestamps; `live_until` | within cardo S8's ring quota |
+| `hrc.project` | projectId | name | colour stays in a Loggia plugin |
 
-- **There is no sessions document.** A sessions row is one generation, so keying on hsid repeats foundry's EN-30664 defect.
-- **The live set** follows T-10833: a live runtime, or activity in the last 24 h, taking the latest generation per seat (cardo B4). Measured 2026-10-19: 9,742 seats ever, against 41 ready or busy runtimes.
+- **There is no sessions document.** A sessions row is one generation, so keying on hostSessionId repeats foundry's EN-30664 defect.
+- **The live set** follows T-10833: seats with a live runtime, or activity in the last 24 h, latest generation per seat. `live_until` is `null` while the seat's runtime is live, and otherwise last activity plus 24 h. Cardo B4's sweep removes expired rows with no event needed. Measured 2026-10-19: 9,742 seats ever, 41 ready or busy runtimes.
 - **Liveness never comes from `runs`.** Since T-11306, broker-native input mints no HRC run.
 
-**Attach.** `resource.attach` on `hrc.seat` builds the cardo descriptor `{socket, target, argv, mode}` from the runtime's `tmux_json`. HRC's own `HrcAttachDescriptor` is `{kind: exec, argv, fence}`, so this is adapter work and needs no HRC change. A seat with no live tmux runtime refuses `resource_unavailable`.
+### 4.2 Source: `HrcApiLedger`, a `LedgerSource` over the HTTP API
 
-**Ops (stage 1b, after the read-only projector is graded).** These are thin calls onto the TS daemon's HTTP API, `fences_on: none`. The row updates come back through ingest (cardo B6).
+The kernel is an ordinary `hrc.sock` client. It never opens `state.sqlite`.
+
+| `LedgerSource` | HRC call |
+|---|---|
+| `incarnation` | `ledgerIncarnationId` from the bounded stream |
+| `read_after(after, filter, limit)` | `GET /v1/events/bounded-stream?afterSeq=…&limit=…`, without follow. A `CURSOR_INVALID` or `ledgerReplaced` answer is an incarnation change. |
+| `head` | `GET /v1/events/head`. It returns `max(hrc_seq)`, which can move backwards when the newest rows are pruned, so the adapter reports the highest value it has seen in this incarnation. |
+| `floor` | constant 0. HRC's sequence has holes (§6.3), and a hole is never loss. A key whose only event was deleted unread is recovered by the resync pass (§4.4). |
+| `wake` | a thread following `GET /v1/events/bounded-stream?follow=true&ledgerIncarnationId=…&afterSeq=…`. An event only wakes ingest; the row is never treated as truth. |
+| `fence_database` | `None`. The kernel is never a must-see consumer. |
+
+### 4.3 Projector: `SeatProjector`
+
+Events name keys, and the projector re-reads their current state (projections v1 §2). It never folds deltas.
+
+- **`bootstrap`** first samples the cursor `at` (incarnation plus head), then reads the live set with the same calls as ACP's dashboard (`acp-server` `handlers/mobile.ts`):
+  1. `listSessions {updatedSince 24 h, latestGeneration}`;
+  2. `listRuntimes`;
+  3. `/v1/events/latest-by-session`.
+  This is one page at the live-set size. Sampling `at` before reading state means anything that changes during the read is replayed after it.
+- **`apply`** maps each row to keys: its sessionRef, and for a runtime-scoped row its runtimeId and that runtime's seat. It removes duplicates within the batch, re-reads each key with the calls ACP's `projectSessionForDashboardEvent` makes, and emits upserts or `remove_by_key`.
+- **Phase and context.** The phase text and context reading follow ACP's `projectSession` (`mobile.ts:537`) as it is today. The port is a translation, not a redesign. Gate 2 diffs the two outputs on the live set.
+
+### 4.4 Ingest wiring
+
+`LedgerIngest<HrcApiLedger, SeatProjector>` is registered with `CoreAdapter::in_process_worker` (cardo B1).
+- It declares `reports_catch_up`, so the document carries `bootstrapping`, which Loggia can show until the first catch-up.
+- `resync_every` is 10 minutes. Each pass is one bootstrap, about a hundred seats.
+- The cursor lives in the document's `cardo.ingest_cursor` node. An incarnation change answers `{"reset": true}` and the binding bootstraps (cardo B3).
+- What cardo supplies and the product doesn't write: never-skip replay, reset, sweeps, resync convergence and `bootstrapping`.
+
+### 4.5 Attach
+
+`resource.attach` on `hrc.seat` builds the cardo descriptor `{socket, target, argv, mode}` from the runtime's `tmux_json`, following foundry-kernel's `attach.rs`. HRC's `HrcAttachDescriptor` is `{kind: exec, argv, fence}`, so this is adapter work with no HRC change. A seat with no live tmux runtime refuses `resource_unavailable`.
+
+### 4.6 Ops (stage 1b, after the read-only gates pass)
+
+These are thin calls onto the TS daemon's HTTP API, `fences_on: none`. Row updates arrive back through ingest.
 
 | op | HRC endpoint | fence or key |
 |---|---|---|
 | `seat.summon` | runtimes/ensure | idempotent per scope |
-| `seat.input` | dispatch / active-run contribution | `{expectedHostSessionId, expectedGeneration}` plus idempotencyKey (both exist today) |
+| `seat.input` | dispatch / active-run contribution | `{expectedHostSessionId, expectedGeneration}` plus idempotencyKey |
 | `seat.interrupt` | `/v1/interrupt` | runtimeId |
 | `seat.restart` | the T-10850 restart | `expectedGeneration` (refuses STALE_CONTEXT) |
-| `seat.reset` | `/v1/clear-context` | no generation fence today; a double reset is listed as unsupported |
+| `seat.reset` | `/v1/clear-context` | no generation fence; a double reset is unsupported |
 
-Raw keystroke input (`SendWindowLiteralInputRequest`) has neither a fence nor a key. It is not exposed as an op in stage 1.
+Raw keystroke input (`SendWindowLiteralInputRequest`) has neither a fence nor a key, and is not an op.
 
-**Lifecycle.**
-- Loggia starts the projector if none is running and supervises it, the cardo-ui pattern. Its socket sits at a fixed path under HRC's `runtimeRoot`, so a launchd resident can replace Loggia later without changing any mount.
-- No new launchd service and no change to restart authority.
-- An HRC restart keeps the ledger incarnation, so the follow reconnects and resumes.
-- A projector restart rebuilds, under the restart contract (cardo P1).
+### 4.7 Lifecycle and scope
 
-**Scope.**
-- Local node only. Rows for other nodes and remote attach wait for G12, which is unsupported in cardo (a remote node's projector is mounted over an ssh-forwarded socket, when that is wanted).
-- Transcripts and history stay out of documents.
-- A per-seat timeline document waits for the concierge design. It must not share the seats document's ring quota (cardo S8).
+- Loggia starts the kernel if none is running and supervises it, the cardo-ui pattern. The socket is at a fixed path under HRC's `runtimeRoot`, so a launchd resident can replace Loggia later without changing a mount. There is no new launchd service and no change to restart authority.
+- **An HRC restart** keeps the ledger incarnation. The follow reconnects and ingest resumes from the document's cursor with no rebuild.
+- **A kernel restart** opens empty and bootstraps, under cardo P1. Loggia's mounts resync on the kernel incarnation change (loggia T-11429, 08584ec).
+- Local node only. Remote nodes wait for cardo G12, which is unsupported. Transcripts and history stay out of documents. A per-seat timeline document waits for the concierge design.
 
-**Gates.** Each one is graded from durable readback.
-1. F7 `HrcProfile` passes discovery, query, replay and resources against the projector.
-2. F2: a rebuilt projection equals the live one on the real store.
-3. A seat restarted through `seat.restart` re-attaches a bound loggia leaf on the same row. Two screenshots: before and after.
-4. An HRC restart leaves the projector's cursor resuming with no rebuild (same incarnation).
-5. A5 is recorded at the live-set size and at 10× it.
+### 4.8 Gates
 
-## 4. Stage 2: the Rust front, sliced by state
+Each one is graded from durable readback.
+1. **F7:** `HrcProfile` passes discovery, query, replay and resources against the kernel (cardo T-11427).
+2. **F2 and parity:** after a resync pass, a rebuilt projection equals the live one, and every seat row's phase and context equal ACP's dashboard projection for the same seat.
+3. **Attach:** a seat restart re-attaches a bound Loggia leaf on the same row. Two screenshots: before and after.
+4. **HRC restart:** the kernel resumes from its cursor with no rebuild (same incarnation, no `bootstrapping: true`).
+5. **Kernel restart:** Loggia shows the current live set after it.
+6. **A5:** recorded, not gated (cardo T-11426). Heavy runs (10× the live set, 50/s bursts, catch-up over 1.58 M rows) run against a dev-env daemon over a `VACUUM INTO` copy of the store, never the live daemon.
+
+**What stage 1 no longer does** (compared with r2.2):
+- no read-only open of `state.sqlite`, no decoy-file handling, and no coupling to the store's columns;
+- no feeder that writes the projection outside ingest.
+
+A `LedgerSource` read directly over `hrc_events` moves to stage 2, where Rust owns the ledger in-process (§6.3).
+
+**Costs, stated.**
+- **Phase logic in two copies.** It exists in Rust and in ACP's TS until the ACP port. Gate 2 catches drift.
+- **HTTP reads per batch.** Each batch re-reads the seats it names, about two or three calls each. If A5 shows that is too heavy, the fix is one batched seat-read route in TS HRC, not a redesign.
+
+## 5. Stage 2: the Rust front, sliced by state
 
 **Shape.**
-- The Rust daemon takes `hrc.sock`. The TS daemon moves to a private socket.
-- The front serves the route families it owns and proxies the rest, byte for byte, including the NDJSON follow streams.
-- Both processes write the one WAL store under `BEGIN IMMEDIATE` with busy timeouts. That isn't new: the prune job already writes beside the daemon.
+- The Rust front takes `hrc.sock`, and the TS daemon moves to a private socket.
+- The front serves the slices marked ported in the route table (§2.1) and proxies the rest byte for byte, including the NDJSON follow streams.
+- Both processes write the one WAL store under `BEGIN IMMEDIATE` with busy timeouts. The prune job already writes beside the daemon today.
 
 **Slices.** A slice moves together with all the in-memory state its routes share, never route by route. Proposed order, from the least in-memory state to the most:
 
@@ -116,132 +196,131 @@ Raw keystroke input (`SendWindowLiteralInputRequest`) has neither a fence nor a 
 | S1 reads | sessions, runtimes and runs listing; events tail, head and latest-by-session; health and status; capture reads | none |
 | S2 messages | messages, dm, query, wait and watch; wrkq presentation; the stop-gate and hint-decision internal routes | `messageSubscribers`; the wrkq ledger cursor's consumer |
 | S3 runtime lifecycle | runtimes start, ensure, attach, sweep and prune; capture; bridges; placements and declarations | in-flight start maps; tmux leases |
-| S4 brokers and turns | broker-events and broker-sessions; dispatch, inputs and in-flight input; interrupt; clear-context; runs reconcile and recover; the follow hub (`GET /v1/events?follow=true`, `/v1/events/bounded-stream`, `/v1/broker-events/follow`); hook ingest | `harnessBrokerController`, `followSubscribers`, the in-flight idempotent dispatch map, the broker warmup |
+| S4 brokers and turns | broker-events and broker-sessions; dispatch, inputs and in-flight input; interrupt; clear-context; runs reconcile and recover; the follow hub; hook ingest | `harnessBrokerController`, `followSubscribers`, the in-flight dispatch map, broker warmup |
 | S5 federation | the peer listener, bindings, designations, locate, retire | peer health |
 
 **Rules while split.**
-1. **One owner per slice.** A route family is served by exactly one daemon. The front's route table is the single statement of which one.
-2. **One process runs each sweep.** HRC has about 13 timer loops (`sweep-handlers.ts`, `first-turn-watch.ts`, …). Each one moves with the slice whose state it reads. Two daemons running the same sweep is a double-reaper hazard, and the front refuses to start if both claim a loop.
-3. **The follow hub is split.** Until S4 moves, the Rust post-commit hub cannot see TS writes, so Rust followers use a seq-poll fallback on `hrc_events`. Once S4 moves, the TS writes it still does (S5 only) are polled the same way.
-4. **No Rust migration** (§5.2). The TS daemon stays the migration owner until it is retired on every node, and Rust refuses a schema newer than it knows.
-5. **Restart doctrine unchanged.** Brokers reattach to whichever daemon owns S4. A front restart is an HRC restart, and Mable primary's authority covers both processes.
+1. **One owner per slice.** A route family is served by exactly one daemon, as stated in the route table.
+2. **One process runs each sweep.** HRC's timer loops (`sweep-handlers.ts`, `first-turn-watch.ts`, …) move with the slice whose state they read. The front refuses to start if both daemons claim a loop.
+3. **The TS daemon stays complete** (§2.2). It keeps every slice's code current, so pointing `hrc.sock` back at it restores full service.
+4. **The follow hub is split.** Until S4 moves, Rust followers use a seq-poll fallback on `hrc_events`.
+5. **No Rust migration** (§6.2).
+6. **Restart doctrine unchanged.** Brokers reattach to whichever daemon owns S4. A front restart is an HRC restart, and Mable primary's authority covers both processes.
+7. **The stage-1 kernel** keeps reading the HTTP API through the front. Once S1 and S4 move, its source can become an in-process `LedgerSource` over `hrc_events`, and the document, types and mounts stay unchanged.
 
-**Gate per slice: F7.** The existing TS end-to-end suites (hrc-server has about 116 k lines of tests) pass against the front as a black box, with the slice served by Rust. Add an installed smoke through `verify-hrc-runtime`, and a broker reattach count after a restart (the baseline is 39/39 and 50/50).
+**Gate per slice.** The conformance suite passes against both daemons for the slice (§2.2). Add an installed smoke through `verify-hrc-runtime`, and a broker reattach count after a restart.
 
-**Owed before the port starts: finding M1.** M1 confirms or rewrites the slice table from a route-by-state inventory of `hrc-server` (method aliases in the server context, subscriber sets, in-flight maps, timer loops). It also checks the seq-poll fallback's latency against the follow consumers: ACP's dashboard, the mail injector and agent-loop.
+**Owed before stage 2 starts:**
+- **Finding M1:** confirm or rewrite the slice table from a route-by-state inventory of `hrc-server` (method aliases, subscriber sets, in-flight maps, timer loops), and check the seq-poll fallback's latency against the follow consumers.
+- **`contract/` and `conformance/` populated for S1:** the existing hrc-server e2e suites run as a black box against a socket.
 
-**Cutover, per node.** hrcdev first, then svc, then max3. Each node runs every slice on Rust for a soak period before the next node starts. Rollback at any point before stage 3 is pointing `hrc.sock` back at the TS daemon.
+**Cutover, per node and per slice:** hrcdev first, then svc, then max3. The soak is short by design (§2.2). Rollback before stage 3 is pointing `hrc.sock` back at TS.
 
-## 5. Compatibility contract (stages 1–2)
+## 6. Compatibility contract
 
-### 5.1 HTTP API
+### 6.1 HTTP API
 
-All of the routes on `hrc.sock` (about 110), with the same request and response shapes, error codes and NDJSON follow semantics. Clients:
-- `hrc-sdk` and the `hrc` CLI;
-- hcs (Go);
-- ACP (gateway, dashboard, injector);
-- agent-loop;
-- the **hook bridges shipped in ASP releases** (`/v1/internal/hooks/ingest`, `/v1/internal/mail/stop-decision`, `/v1/internal/mail/hint-decision`);
-- federation peers.
+All the routes on `hrc.sock` (about 110), with the same request and response shapes, error codes and NDJSON follow semantics. Clients:
+- `hrc-sdk` and the `hrc` CLI; hcs (Go); ACP (gateway, dashboard, injector); agent-loop;
+- the hook bridges shipped in ASP releases;
+- federation peers;
+- **the stage-1 kernel** (§4.2).
 
-**Federation runs mixed-version during cutover.** A Rust max3 may peer with a TS svc, so the peer protocol (`docs/federation-peer-protocol.md`) is part of the contract unchanged until every node is on stage 3.
+From stage 2 the contract is written down in `contract/`. Federation runs mixed-version during cutover, so the peer protocol (`docs/federation-peer-protocol.md`) is unchanged until stage 3.
 
-### 5.2 Schema
+### 6.2 Schema
 
-- Frozen until the TS daemon is retired everywhere. Rust adds no migration, because a rollback would otherwise meet the rule that a reader behind the schema refuses (cardo C1), and the TS daemon would refuse its own database.
+- TS owns migrations until it is retired everywhere. Rust adds none, because a rollback would meet cardo C1's "a reader behind the schema refuses" rule.
+- `contract/` carries the schema version. Rust refuses a newer store, and pre-push checks the two agree (§2.2).
 - After retirement, Rust takes migration ownership through cardo C1.
-- The contract includes the exact columns read from outside the daemon: the `hrc` CLI's monitor reads, the capture verifier, the prune job (`com.praesidium.hrc-prune-deltas`), and **ACP's twelve direct reads** (open item, §10).
+- The contract includes the columns read from outside the daemon: the `hrc` CLI's monitor reads, the capture verifier, the prune job, and ACP's twelve direct reads (§11). The stage-1 kernel adds none.
 
-### 5.3 Event record, and `hrc_events` as a cardo `LedgerSource`
+### 6.3 `hrc_events` as a `LedgerSource` (stage 2)
 
-`hrcSeq` plus `ledger_incarnation_id` is unchanged. HRC ports its own ledger code in stage 2: the exact table, triggers, FTS and partial indexes. HRC implements cardo S1 over that table and does not adopt cardo's reference ledger (S2) during the port.
+`hrcSeq` plus `ledger_incarnation_id` is unchanged. Rust ports the ledger code in stage 2 (table, triggers, FTS, partial indexes), implements cardo S1 over it, and does not adopt cardo's reference ledger (S2). What that source must state, from a read-only query of the live store on 2026-10-19:
 
-What a `LedgerSource` over `hrc_events` has to state (read-only query of the live store, 2026-10-19):
+- **The seq is monotonic but has holes.** It is `INTEGER PRIMARY KEY AUTOINCREMENT`, spans 1,501–3,040,223 with 1,582,444 rows, so about 1.46 M holes.
+- **Holes appear anywhere.** `hrc runtime prune` deletes a runtime's events at any age. Retention deletes by age (except resume-barrier kinds) when run with `hrc_events` in `--tables`.
+- **`retained_from` is a floor, not a promise.** `read_after` means "the next existing rows above the cursor", and a hole is never a loss signal.
+- **Payloads are compacted in place**, so a replay can see different payload bytes for the same seq.
+- **`head` comes from `sqlite_sequence`**, not `max(hrc_seq)`.
+- **`stream_seq` is a second unique sequence**, and nothing new keys on it.
+- **Retention fence:** HRC's delete paths call cardo C3's `min_consumer_cursor(source)`, and never delete above the slowest must-see consumer.
 
-- **The seq is monotonic but holey.** `hrc_seq` is `INTEGER PRIMARY KEY AUTOINCREMENT`, so it is never reused. The live table spans 1,501–3,040,223 with 1,582,444 rows, which is about 1.46 M holes.
-- **Holes are anywhere, not only below a floor.**
-  - `hrc runtime prune` deletes every event of the selected runtimes at any age (`runtime-repository.ts:643`).
-  - Retention deletes by age, except resume-barrier kinds, when it is run with `hrc_events` in `--tables` (`scripts/prune-hrc-event-deltas/`; the nightly job runs `runtime_buffers` only today).
-- **So `retained_from` is a floor, not a promise.** Every row above it may still be missing. `read_after` means "the next existing rows with seq greater than the cursor", and a hole is never a loss signal.
-- **Payloads are compacted in place.** Spill and restub rewrite `payload_json` after the fact. A replay can see different payload bytes for the same seq.
-- **Use `head` from `sqlite_sequence`, not `max(hrc_seq)`.** Deleting the newest rows would otherwise move the head backwards.
-- **`stream_seq` is a second unique sequence** (`event_stream_cursor`). The record is `hrc_seq`, and nothing new keys on `stream_seq`.
-- **Retention fence (stage 2).** HRC's two delete paths honour cardo C3's fence: they call `min_consumer_cursor(source)` and never delete rows above the slowest must-see consumer registered in S6. Until then, a cursored consumer of `hrc_events` accepts that a pruned runtime's unconsumed events can vanish.
+## 7. Install, activation and fleet
 
-## 6. Install, activation and fleet
+What exists today: atomic releases, install then restart, status `sourceCommit`, the release-prune rule (T-10024), `verify-hrc-runtime`, and Mable primary's restart authority. Rust keeps all of these.
 
-What exists today: atomic releases, install then restart, status `sourceCommit`, the release-prune rule (T-10024: keep current plus running), `verify-hrc-runtime`, and Mable primary's restart authority. The Rust daemon keeps every one of these behaviours and changes the artifact:
+- **Build.** `cargo build --release` joins `just install`, path-scoped, so a TS-only change doesn't trigger it. The release directory holds the Rust binaries beside the TS release. `hrc server status` reports one `sourceCommit`, which covers both.
+- **Verify and pre-push.** A cargo leg, path-scoped (§2.1). The cardo pin moves only through an explicit bump commit.
+- **launchd.** Stage 1 adds nothing. At stage 2 the label is the same and the program path changes to the front. The private TS daemon gets its own plist. Edits follow the launchd-control rules: edit the installed plist in place, then bootout and bootstrap.
+- **Fleet.** Build on each node, or ship the binary. The deploy order is the cutover order. Parity is `sourceCommit` per node.
+- **The stage-1 kernel** ships in the same release. Loggia finds it on the fixed socket path.
 
-- **Build.** `cargo build --release` joins `just install`. The release directory holds the binary next to the TS release until stage 3. `status --json` reports `sourceCommit` for the daemon that owns `hrc.sock` and for the private TS daemon.
-- **Verify and pre-push.** A cargo leg in `just verify` and pre-push. The cardo pin moves only through an explicit bump commit (cardo A3).
-- **launchd.** The same label. The program path changes to the front. The private TS daemon gets its own plist while the daemon is split. Edits follow the launchd-control rules: edit the installed plist in place, then bootout and bootstrap, because kickstart never re-reads the plist.
-- **Fleet.** Build on each node, or ship the binary to hrcdev and svc. The deploy order is the cutover order (§4). The parity check is still `sourceCommit` per node.
-- **The projector (stage 1)** ships in the same release. Loggia finds it on the fixed socket path.
-
-## 7. Process budget, consolidation deferred
+## 8. Process budget
 
 | process (per node, max3 2026-10-19) | today | stage 1 | stage 2 (split) | stage 3 |
 |---|---|---|---|---|
-| HRC daemon | 1 (bun) | 1 | 2 (Rust front + TS) | 1 (Rust) |
-| hrc-kernel projector | 0 | 1 | 1, folded into the front once S1 moves | 0, in-process |
-| harness-broker | about 70 (3.5 GB, 6 ASP releases live) | unchanged | unchanged | unchanged |
+| HRC daemon | 1 (bun) | 1 | 2 (Rust front plus TS) | 1 (Rust) |
+| hrc-kernel | 0 | 1 | 1, folded into the front once S1 and S4 move | 0, in-process |
+| harness-broker | about 70 | unchanged | unchanged | unchanged |
 | aspd | 1 | unchanged | unchanged | unchanged |
 | injector | inside acp-server | unchanged | unchanged | moves with the ACP port |
-| HRC's `wrkq rpc --stdio` children | today's count | unchanged | unchanged | wrkq's call: rpc, a linked library, or wrkqd |
+| HRC's `wrkq rpc --stdio` children | today's count | unchanged | unchanged | wrkq's call |
 
-**The port does not reduce the process count, and it says so.** Reducing it is consolidation (§8).
+The port does not reduce the process count, and it says so. Reducing it is consolidation (§9).
 
-## 8. Consolidation (Track G): deferred, with a trigger
+## 9. Consolidation (Track G): deferred, with a trigger
 
-**Trigger: finding G0**, a broker-restart strategy: how an HRC upgrade keeps in-process broker tasks and their harness pipes alive. The candidates:
+**Trigger: finding G0**, a broker-restart strategy: how an HRC upgrade keeps in-process broker tasks and their harness pipes alive. Candidates:
 - exec-in-place with inherited file descriptors;
 - one pipe-holder process per node;
 - a broker reattach protocol that survives losing the pipe.
 
-G0 is the first thing filed when consolidation is picked up. Nothing in Track G is on the critical path before G0 exists.
-
-Then, in order:
+G0 is filed first when consolidation is picked up. Then, in order:
 1. broker tasks in the binary;
 2. aspc in-process;
-3. the provider actor model (cardo G4) and the in-process JS host (cardo G5), so the injector becomes a reloadable provider (install = one reload command);
+3. the provider actor model (cardo G4) and the in-process JS host (cardo G5);
 4. provider subscriptions (cardo G3);
-5. timers that survive reload, on cardo C5;
+5. timers that survive reload (cardo C5);
 6. plugin reach (cardo Q5).
 
-Every stage of the port is a prerequisite for Track G, so none of the port's work is thrown away.
-
-## 9. ACP port (after stage 3)
+## 10. ACP port (after stage 3)
 
 The ACP port is ACP's own document. What this page fixes:
-- It starts after HRC stage 3, onto the cardo items listed as "after HRC, for ACP" in `pre-hrc-cardo-gaps.md` §8: the reference ledger (S2) and its hub, lifted from HRC's Rust ledger, the leased work queue, the action journal on a product connection, and the process worker for any executable.
-- The mail injector moves with ACP, and its write-ahead intents map onto the action journal lifecycle.
-- gateway-discord stays a standalone bun sidecar talking HTTP.
+- It starts after HRC stage 3, onto cardo's "after HRC, for ACP" items: the reference ledger (S2) and its hub, the leased work queue, the action journal, and the process worker.
+- The mail injector moves with ACP.
+- gateway-discord stays a standalone bun sidecar.
+- The dashboard's `projectSession` logic then has one home: the Rust copy in `hrc-domain` (§4.3).
 
-## 10. Open items
+## 11. Open items
 
 | item | owner | recommendation |
 |---|---|---|
-| M1 slice finding (§4) | mable@hrc-runtime | owed before the HRC port starts |
-| ACP's twelve direct reads of `state.sqlite` | ACP | move them onto the API before stage 2; that shrinks §5.2 |
-| HRC's wrkq client in Rust (rpc, a linked library, or wrkqd) | wrkq | decide before S2 moves |
-| Stage-1b ops: include, or stay read-only | Lance | include, after the read-only gates pass |
-| Stage-1 projector supervision: Loggia or launchd | Lance | Loggia, until a second consumer exists |
+| M1 slice finding (§5) | mable@hrc-runtime | owed before stage 2 |
+| ACP's twelve direct reads of `state.sqlite` | ACP | move them onto the API before stage 2 |
+| HRC's wrkq client in Rust | wrkq | decide before S2 moves |
+| `contract/` format: generated types, or by-example checks only | mable@hrc-runtime | decide with M1; by-example is enough for S1 |
+| Stage 1b ops | Lance | include, after the read-only gates pass |
+| Kernel supervision: Loggia or launchd | Lance | Loggia, until a second consumer exists |
 
-## 11. Explicitly unsupported
+## 12. Explicitly unsupported
 
+- Feature work implemented in both daemons for a slice that isn't ported.
+- A change to a ported slice on one side only.
 - Transcripts and history in cardo documents.
-- Rows for other nodes and remote attach in stage 1.
+- Rows for other nodes, and remote attach, in stage 1.
+- The stage-1 kernel opening `state.sqlite`.
 - A Rust schema migration before TS is retired everywhere.
 - Two daemons serving one route family, or running one sweep loop.
-- A double `seat.reset` (clear-context has no generation fence).
-- Raw keystroke input as a wire op.
+- A double `seat.reset`. Raw keystroke input as a wire op.
 - Feature flags.
 
-## 12. Order
+## 13. Order
 
-1. **Now:** cardo findings P1–P5 (cardo's order). On the HRC side: finding M1, and ACP's direct reads.
-2. **Stage 1:** after cardo's stage-1 items (§2), build `crates/hrc-domain` and `crates/hrc-kernel`, graded by §3's gates. Then stage 1b ops.
-3. **Stage 2:** after cardo's stage-2 items and M1, build the Rust front. Port S1 to S5 in order, each gated by F7, with cutover hrcdev, then svc, then max3.
+1. **Now: stage 1** (§4), graded by §4.8. Cardo's F7 and A5 run against it. Then the stage 1b ops.
+2. **Before stage 2:** M1, ACP's direct reads, and `contract/` plus `conformance/` for S1.
+3. **Stage 2:** port S1 to S5 in order. Each slice passes conformance against both daemons, then cuts over hrcdev, svc, max3.
 4. **Stage 3:** retire TS on every node. Rust takes migration ownership.
-5. **ACP port** (§9).
-6. **Track G**, on its trigger (§8).
+5. **ACP port** (§10).
+6. **Track G**, on its trigger (§9).
