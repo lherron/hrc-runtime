@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub const OPERATION: &str = "seat.summon";
+const UNQUALIFIED: &str = "session_ref must name a task-qualified main-lane seat";
 
 pub fn declaration() -> Value {
     json!({"name":OPERATION,"fences":"none","effect":"write",
@@ -36,7 +37,7 @@ impl Summon {
         let scope = args
             .session_ref
             .strip_suffix("/lane:main")
-            .ok_or_else(|| invalid("session_ref must name a task-qualified main-lane seat"))?;
+            .ok_or_else(|| invalid(UNQUALIFIED))?;
         let parts: Vec<_> = scope.split(':').collect();
         // The agent-scope token contract: 1..64 ASCII letters/digits/._-.
         let token = |s: &str| {
@@ -74,10 +75,15 @@ impl Summon {
             code: "hrc_response_invalid".into(),
             message: "HRC omitted required summon response fields".into(),
         };
+        // parse() refuses this already; a directly deserialized Summon must not
+        // reach HRC with an unqualified scope.
         let scope = self
             .session_ref
             .strip_suffix("/lane:main")
-            .expect("validated scope");
+            .ok_or_else(|| ApiError {
+                code: "invalid_input".into(),
+                message: UNQUALIFIED.into(),
+            })?;
         let resolved = api.post_owner(
             "/v1/declarations/resolve",
             &json!({

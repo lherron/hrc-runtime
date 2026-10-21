@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::{
     io::{BufRead, BufReader, Read},
     path::PathBuf,
-    sync::Mutex,
+    sync::{Mutex, MutexGuard, PoisonError},
     time::Duration,
 };
 
@@ -22,6 +22,11 @@ impl HrcApiLedger {
     fn unavailable(e: impl std::fmt::Display) -> SourceError {
         SourceError::Unavailable(e.to_string())
     }
+    /// The last observed incarnation. Every critical section is a single
+    /// clone or store, so a poisoned lock still holds a whole value.
+    fn expected(&self) -> MutexGuard<'_, Option<String>> {
+        self.expected.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 impl LedgerSource for HrcApiLedger {
     fn source(&self) -> &str {
@@ -29,7 +34,7 @@ impl LedgerSource for HrcApiLedger {
     }
     fn incarnation(&self) -> Result<String, SourceError> {
         let p = self.api.page(0, 1, None).map_err(Self::unavailable)?;
-        *self.expected.lock().unwrap() = Some(p.ledger_incarnation_id.clone());
+        *self.expected() = Some(p.ledger_incarnation_id.clone());
         Ok(p.ledger_incarnation_id)
     }
     fn head(&self) -> Result<i64, SourceError> {
@@ -47,7 +52,7 @@ impl LedgerSource for HrcApiLedger {
         if filter.as_object().is_none_or(|o| !o.is_empty()) {
             return Err(SourceError::Filter("only {} is supported".into()));
         }
-        let expected = self.expected.lock().unwrap().clone();
+        let expected = self.expected().clone();
         let p = match self.api.page(after, limit, expected.as_deref()) {
             Ok(p) => p,
             Err(e) if e.code == "cursor_invalid" => {
@@ -55,7 +60,7 @@ impl LedgerSource for HrcApiLedger {
             }
             Err(e) => return Err(Self::unavailable(e)),
         };
-        *self.expected.lock().unwrap() = Some(p.ledger_incarnation_id.clone());
+        *self.expected() = Some(p.ledger_incarnation_id.clone());
         // A replacement returned by the discovery read must reset the driver,
         // never masquerade as coverage of the old cursor.
         if expected
@@ -110,7 +115,7 @@ impl LedgerSource for HrcApiLedger {
     fn wake(&self) -> Wake {
         let (waker, wake) = Wake::pair();
         let api = self.api.clone();
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("hrc-wake".into())
             .spawn(move || {
                 while waker.is_alive() {
@@ -148,11 +153,45 @@ impl LedgerSource for HrcApiLedger {
                     }
                     std::thread::sleep(Duration::from_secs(1));
                 }
-            })
-            .expect("start HRC wake thread");
-        wake
+            });
+        match spawned {
+            Ok(_) => wake,
+            // Wake is only a hint; the subscription's interval poll still
+            // carries every row (LedgerSource::wake contract).
+            Err(e) => {
+                eprintln!("hrc-kernel: HRC wake thread unavailable, polling only: {e}");
+                Wake::never()
+            }
+        }
     }
     fn fence_database(&self) -> Option<PathBuf> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // Failure case: a panic while the incarnation lock is held must not turn
+    // every later read into a panic; reads keep reporting source errors.
+    #[test]
+    fn poisoned_incarnation_lock_still_reads() -> Result<(), crate::api::ApiError> {
+        let ledger = HrcApiLedger::new(HrcApi::new(Path::new(
+            "/nonexistent/hrc-kernel-test/hrc.sock",
+        ))?);
+        let poisoned = std::thread::scope(|s| {
+            s.spawn(|| {
+                let _held = ledger.expected.lock();
+                panic!("poison the incarnation lock");
+            })
+            .join()
+        });
+        assert!(poisoned.is_err());
+        assert!(ledger.expected.is_poisoned());
+        let read = ledger.read_after(0, &serde_json::json!({}), 1);
+        assert_eq!(read.err().map(|e| e.code()), Some("source_unavailable"));
+        Ok(())
     }
 }

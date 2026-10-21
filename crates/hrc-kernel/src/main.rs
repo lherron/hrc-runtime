@@ -76,17 +76,15 @@ fn call(client: &KernelClient, operation: &str, arguments: Value) -> Result<Valu
     }
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut root = std::env::var_os("HRC_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").expect("HOME")).join("praesidium/var/run/hrc")
-        });
+    let mut root = None;
     let mut hrc_socket = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--runtime-root" => {
-                root = PathBuf::from(args.next().ok_or("--runtime-root needs a path")?)
+                root = Some(PathBuf::from(
+                    args.next().ok_or("--runtime-root needs a path")?,
+                ))
             }
             "--hrc-socket" => {
                 hrc_socket = Some(PathBuf::from(
@@ -102,6 +100,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             _ => return Err(format!("unknown argument {arg}").into()),
         }
     }
+    let root = match root.or_else(|| std::env::var_os("HRC_RUNTIME_DIR").map(PathBuf::from)) {
+        Some(root) => root,
+        None => PathBuf::from(
+            std::env::var_os("HOME")
+                .ok_or("HOME is unset; pass --runtime-root or HRC_RUNTIME_DIR")?,
+        )
+        .join("praesidium/var/run/hrc"),
+    };
     std::fs::create_dir_all(&root)?;
     let lock: File = OpenOptions::new()
         .create(true)
@@ -150,7 +156,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         RuntimeConfig {
             command_capacity: 64,
             subscription_capacity: 4096,
-            terminal_tombstone_capacity: NonZeroUsize::new(64).unwrap(),
+            terminal_tombstone_capacity: NonZeroUsize::try_from(64_usize)?,
             control_poll_millis: 10,
             ring_events: 4096,
             ring_bytes: 33_554_432,
