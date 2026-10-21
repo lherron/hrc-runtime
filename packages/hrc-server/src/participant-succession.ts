@@ -1,214 +1,51 @@
-import { randomUUID } from 'node:crypto'
-
 import type {
   ParticipantAttempt,
-  ParticipantContinuationSelection,
+  ParticipantHostBinding,
   ParticipantRegistration,
 } from 'hrc-store-sqlite'
 import type { WriterEvidence } from 'spaces-runtime-contracts'
 
 import type { DirectJoinRequest, DirectJoinResult } from './participant-host-registration.js'
+import {
+  type RetirementDecision,
+  type RetirementEvidenceSource,
+  bindingRetirementReason,
+  disposePredecessor,
+  isNeverAttachedDirectAttempt,
+  preAttachRetirementReceipt,
+  priorRetirementBasis,
+  recoverySatisfied,
+  retirementDecision,
+} from './participant-predecessor-retirement.js'
+import {
+  DECLARATION_MISMATCH_DETAIL,
+  type ReplacementIntent,
+  type ReplacementKind,
+  buildReplacementIntent,
+  joinRequestFromIntent,
+  parseReplacementIntent,
+  sameReplacementRequest,
+  sameReplacementTarget,
+} from './participant-replacement-intent.js'
+import {
+  commitSuccessorAllocation,
+  mintSuccessorAttempt,
+} from './participant-successor-allocation.js'
+import {
+  hasLegacyArrisHostIncarnationSelection,
+  selectionForSuccessor,
+} from './participant-successor-continuation.js'
 import { observeParticipantTransportEvidence } from './participant-transport-evidence.js'
 import { isAbsorbingParticipantAttempt } from './participant-writer-evidence.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { timestamp } from './server-util.js'
-import { detectResumeInvalidationBarrier } from './session-resume-continuation.js'
-import { createSessionSuccessorFromContinuation } from './session-successor.js'
-import { settleTerminalRuntimeRuns } from './terminal-runtime-runs.js'
-
-type ReplacementKind = 'bridge' | 'host'
-
-type ReplacementIntent = {
-  schemaVersion: 'participant-replacement-intent/v1'
-  kind: ReplacementKind
-  operationId: string
-  predecessor: {
-    bindingId: string
-    hostIncarnationId: string
-    hostSessionId: string
-    generation: number
-    runtimeId: string
-    attemptId: string
-    attachEpoch: number
-    invocationId: string
-  }
-  predecessorWork: {
-    state: ParticipantAttempt['establishmentWorkState']
-    attemptCount: number
-    nextAttemptAt?: string | undefined
-    lastError?: string | undefined
-  }
-  candidate: {
-    hostIncarnationId: string
-    classId?: string | undefined
-    participantKey?: string | undefined
-    workspaceCwd?: string | undefined
-    socketPath?: string | undefined
-    /** Stored only when `fresh`; an absent field is `continue` (R6.6 amendment). */
-    continuation?: 'fresh' | undefined
-  }
-  preAttachSupersession?: boolean | undefined
-  receipt?: WriterEvidence | undefined
-  /** First satisfying evidence; retained so freshness is evaluated per axis. */
-  retirementBasis?: WriterEvidence | undefined
-  allocatedAttemptId?: string | undefined
-  renewedRecovery?: { reason: string; recordedAt: string } | undefined
-  createdAt: string
-}
-
-function parseIntent(value: string | undefined): ReplacementIntent | null {
-  if (value === undefined) return null
-  try {
-    const parsed = JSON.parse(value) as ReplacementIntent
-    return parsed.schemaVersion === 'participant-replacement-intent/v1' ? parsed : null
-  } catch {
-    return null
-  }
-}
-
-function declarationOf(continuation: 'continue' | 'fresh' | undefined): 'continue' | 'fresh' {
-  return continuation ?? 'continue'
-}
-
-/** Same candidate and predecessor, regardless of the continuation declaration. */
-function sameReplacementTarget(intent: ReplacementIntent, request: DirectJoinRequest): boolean {
-  return (
-    intent.candidate.hostIncarnationId === request.hostIncarnationId &&
-    (request.expectedPredecessor === undefined
-      ? intent.preAttachSupersession === true
-      : intent.predecessor.hostIncarnationId === request.expectedPredecessor.hostIncarnationId &&
-        intent.predecessor.runtimeId === request.expectedPredecessor.runtimeId &&
-        intent.predecessor.generation === request.expectedPredecessor.generation)
-  )
-}
 
 /**
- * §5.4 idempotency: the normalized declaration is part of the request
- * identity, so a retry that changes only `continue`/`fresh` is never answered
- * with the other declaration's allocation.
+ * Drives one participant replacement through its durable phases:
+ * A0 (intent) -> writer receipt -> TX-D (predecessor disposition) -> recovery
+ * gate -> TX-6/TX-6' (successor allocation). Every phase re-reads the
+ * predecessor and fails closed to `pending` when its gate moved.
  */
-function sameRequest(intent: ReplacementIntent, request: DirectJoinRequest): boolean {
-  return (
-    sameReplacementTarget(intent, request) &&
-    declarationOf(intent.candidate.continuation) === declarationOf(request.continuation)
-  )
-}
-
-const DECLARATION_MISMATCH_DETAIL =
-  'a replacement intent for this predecessor and host incarnation was made with a different continuation declaration'
-
-/**
- * A selection already allocated for one declaration cannot answer the other:
- * `fresh` never yields a carried record, and only `fresh` yields
- * `participant_fresh`.
- */
-export function declarationContradictsSelection(
-  request: DirectJoinRequest,
-  selection: ParticipantContinuationSelection | undefined
-): boolean {
-  return declarationOf(request.continuation) === 'fresh'
-    ? selection?.carried === true
-    : selection?.reason === 'participant_fresh'
-}
-
-export function isNeverAttachedDirectAttempt(
-  server: HrcServerInstanceForHandlers,
-  attempt: ParticipantAttempt
-): boolean {
-  return (
-    attempt.state === 'IDENTITY_MINTED' &&
-    attempt.attachSocketPath === undefined &&
-    attempt.preparedDescriptorJson === undefined &&
-    attempt.brokerIdentityJson === undefined &&
-    server.db.runtimes.getByRuntimeId(attempt.runtimeId) === null
-  )
-}
-
-function isLegacyArrisHostIncarnationContinuation(value: unknown): boolean {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'provider' in value &&
-    value.provider === 'arris' &&
-    'kind' in value &&
-    value.kind === 'host-incarnation'
-  )
-}
-
-export function hasLegacyArrisHostIncarnationSelection(
-  selection: ParticipantContinuationSelection | undefined
-): boolean {
-  if (selection?.carried !== true || selection.selectedJson === undefined) return false
-  try {
-    return isLegacyArrisHostIncarnationContinuation(JSON.parse(selection.selectedJson))
-  } catch {
-    return false
-  }
-}
-
-function preAttachRetirementReceipt(
-  registration: ParticipantRegistration,
-  attempt: ParticipantAttempt,
-  hostIncarnationId: string
-): WriterEvidence {
-  const detail = { basis: 'pre_attach_superseded', attemptId: attempt.attemptId }
-  return {
-    schemaVersion: 'writer-evidence/v1',
-    writerRef: {
-      subject: 'host',
-      classId: registration.classId ?? 'hrc-direct-registration',
-      participantKey: registration.participantKey ?? registration.registrationId,
-      attemptId: attempt.attemptId,
-      invocationId: attempt.invocationId as WriterEvidence['writerRef']['invocationId'],
-      attachEpoch: attempt.attachEpoch,
-      hostIncarnationId,
-    },
-    observedAt: timestamp(),
-    writePath: { state: 'retired', reason: 'pre_attach_superseded', detail },
-    liveness: { state: 'unknown', reason: 'host_liveness_not_observed', detail },
-    priorRecovery: { state: 'unknown', reason: 'no_broker_ever_attached', detail },
-  }
-}
-
-function continuationForSuccessor(
-  server: HrcServerInstanceForHandlers,
-  registration: ParticipantRegistration
-): ParticipantContinuationSelection {
-  const prior = server.db.sessions.getByHostSessionId(registration.hostSessionId)
-  if (prior?.continuation === undefined) return { carried: false, reason: 'no_continuation' }
-  // The old Arris broker stored its host-incarnation marker as a continuation.
-  // It names the process that is being retired, not native state the successor
-  // driver can resume. Migrate that legacy selection at the HRC decision point.
-  if (isLegacyArrisHostIncarnationContinuation(prior.continuation)) {
-    return { carried: false, reason: 'continuation_invalidated' }
-  }
-  if (detectResumeInvalidationBarrier(server.db, prior) !== undefined) {
-    return { carried: false, reason: 'continuation_invalidated' }
-  }
-  if (server.db.sessions.isContinuationReuseDisabled(prior.hostSessionId)) {
-    return { carried: false, reason: 'reuse_disabled' }
-  }
-  return { carried: true, reason: 'carried', selectedJson: JSON.stringify(prior.continuation) }
-}
-
-/**
- * R6.6 amendment: `fresh` is the participant's declaration, recorded as is.
- * `continue` (or omitted) keeps the automatic selection unchanged.
- */
-function selectionForSuccessor(
-  server: HrcServerInstanceForHandlers,
-  registration: ParticipantRegistration,
-  predecessor: ParticipantAttempt,
-  request: DirectJoinRequest,
-  kind: ReplacementKind,
-  preAttachSupersession: boolean
-): ParticipantContinuationSelection {
-  if (request.continuation === 'fresh') return { carried: false, reason: 'participant_fresh' }
-  if (kind === 'host') return continuationForSuccessor(server, registration)
-  return preAttachSupersession && hasLegacyArrisHostIncarnationSelection(predecessor.continuation)
-    ? continuationForSuccessor(server, registration)
-    : (predecessor.continuation ?? { carried: false, reason: 'no_continuation' })
-}
 
 function identityResult(
   registration: ParticipantRegistration,
@@ -246,6 +83,12 @@ function refusal(status: 'pending' | 'rejected', reason: string, detail: string)
   return { outcome: 'refused', status, reason, detail }
 }
 
+function gateChanged(detail: string): DirectJoinResult {
+  return refusal('pending', 'participant_successor_gate_changed', detail)
+}
+
+const PRE_ATTACH_PREDECESSOR_CHANGED = 'pre-attach predecessor changed'
+
 function pauseOrCancelReplacement(
   server: HrcServerInstanceForHandlers,
   attempt: ParticipantAttempt,
@@ -279,69 +122,23 @@ function pauseOrCancelReplacement(
   })
 }
 
-function dispositionReason(
-  kind: ReplacementKind,
-  evidence: WriterEvidence,
-  attempt: ParticipantAttempt,
-  evidenceSource: 'transport' | 'pre-attach'
-): string {
-  if (evidenceSource === 'pre-attach') return `pre_attach_superseded:${attempt.attemptId}`
-  if (evidenceSource === 'transport' && evidence.liveness.state === 'dead') {
-    return `transport_dead:${evidence.observedAt}:${JSON.stringify(evidence.liveness.detail)}`
+/** After a lost pre-attach gate, pause only if the predecessor still holds this intent. */
+function pauseChangedPreAttachPredecessor(
+  server: HrcServerInstanceForHandlers,
+  attemptId: string,
+  intent: ReplacementIntent,
+  expectedIntentJson: string
+): void {
+  const changed = server.db.participantRegistrations.getAttempt(attemptId)
+  if (changed !== null && changed.replacementIntentJson === expectedIntentJson) {
+    pauseOrCancelReplacement(
+      server,
+      changed,
+      intent,
+      expectedIntentJson,
+      PRE_ATTACH_PREDECESSOR_CHANGED
+    )
   }
-  if (attempt.initialActivationConfirmedAt === undefined) {
-    return `establishment_abandoned_before_activation:${kind}:${evidence.observedAt}:${JSON.stringify(evidence.writerRef)}`
-  }
-  const reason =
-    evidence.writePath.state === 'retired'
-      ? kind === 'host'
-        ? 'host_incarnation_write_path_retired'
-        : 'bridge_write_path_retired'
-      : kind === 'host'
-        ? 'host_incarnation_writer_dead'
-        : 'bridge_writer_dead'
-  return `${reason}:${evidence.observedAt}:${JSON.stringify(evidence.writerRef)}`
-}
-
-function recoverySatisfied(attempt: ParticipantAttempt, evidence: WriterEvidence): boolean {
-  return (
-    (evidence.priorRecovery.state === 'recovered' &&
-      attempt.recoveryDisposition === 'reconciled') ||
-    (attempt.recoveryDisposition === 'abandoned' && Boolean(attempt.recoveryReason?.trim()))
-  )
-}
-
-type RetirementDecision = 'satisfied' | 'hold' | 'refused'
-
-function directRetirementDecision(evidence: WriterEvidence): RetirementDecision {
-  if (evidence.writePath.state === 'retired' || evidence.liveness.state === 'dead') {
-    return 'satisfied'
-  }
-  return evidence.writePath.state === 'writable' && evidence.liveness.state === 'live'
-    ? 'refused'
-    : 'hold'
-}
-
-/**
- * A satisfying observation is durable, but a later observation may void the
- * still-uncommitted succession only on the axis that supplied that fact.
- * Contradiction returns to pending; it never turns a previously authorized
- * TX-D into a forced conflict.
- */
-function retirementDecision(
-  current: WriterEvidence,
-  basis: WriterEvidence | undefined
-): RetirementDecision {
-  if (basis === undefined) return directRetirementDecision(current)
-  if (basis.writePath.state === 'retired') {
-    if (current.writePath.state !== 'writable') return 'satisfied'
-    return current.liveness.state === 'dead' ? 'satisfied' : 'hold'
-  }
-  if (basis.liveness.state === 'dead') {
-    if (current.liveness.state !== 'live') return 'satisfied'
-    return current.writePath.state === 'retired' ? 'satisfied' : 'hold'
-  }
-  return directRetirementDecision(current)
 }
 
 /**
@@ -363,7 +160,7 @@ function findCommittedResult(
   for (const prior of server.db.participantRegistrations.listAttemptsByRegistrationId(
     registration.registrationId
   )) {
-    const intent = parseIntent(prior.replacementIntentJson)
+    const intent = parseReplacementIntent(prior.replacementIntentJson)
     if (
       !intent ||
       !sameReplacementTarget(intent, request) ||
@@ -377,7 +174,7 @@ function findCommittedResult(
       (intent.kind === 'bridge' && successor.brokerIdentityJson !== undefined)
     )
       continue
-    if (!sameRequest(intent, request)) {
+    if (!sameReplacementRequest(intent, request)) {
       return refusal('rejected', 'host_binding_precondition_failed', DECLARATION_MISMATCH_DETAIL)
     }
     const current = server.db.participantRegistrations.getRegistrationById(
@@ -407,54 +204,29 @@ function replacementKind(
     : 'host'
 }
 
-/**
- * The successor binding retired the predecessor host, so its runtime row ends
- * `host_replaced` and owns no run (T-10829). An already-terminated predecessor
- * keeps the reason HRC recorded.
- */
-function terminateReplacedPredecessorRuntime(
-  server: HrcServerInstanceForHandlers,
-  runtimeId: string
-): void {
-  const priorRuntime = server.db.runtimes.getByRuntimeId(runtimeId)
-  if (priorRuntime === null || priorRuntime.status === 'terminated') return
-  const now = timestamp()
-  settleTerminalRuntimeRuns(server.db, runtimeId, {
-    now,
-    errorMessage: 'participant host was replaced: host_replaced',
-  })
-  server.db.runtimes.update(runtimeId, {
-    status: 'terminated',
-    statusChangedAt: now,
-    lifecycleTerminalReason: 'host_replaced',
-    runtimeStateJson: {
-      ...(priorRuntime.runtimeStateJson ?? {}),
-      status: 'terminated',
-      terminalReason: 'host_replaced',
-    },
-    updatedAt: now,
-  })
+type AdmittedReplacement = {
+  binding: ParticipantHostBinding
+  kind: ReplacementKind
+  preAttachSupersession: boolean
+  /** The predecessor as re-read after its intent was stored. */
+  attempt: ParticipantAttempt
+  intent: ReplacementIntent
+  /** The intent exactly as stored on the predecessor; the next write CASes on it. */
+  intentJson: string
 }
 
-/**
- * Execute the durable A0 -> TX-D -> gate -> TX-6/TX-6' replacement path.
- * The caller already holds the address mutex via the direct-registration door.
- */
-export async function driveParticipantReplacement(
+/** A0: check the exact predecessor binding, then store (or match) the durable intent. */
+function admitReplacementIntent(
   server: HrcServerInstanceForHandlers,
-  registration: ParticipantRegistration,
   initialAttempt: ParticipantAttempt,
   request: DirectJoinRequest
-): Promise<DirectJoinResult> {
-  const committed = findCommittedResult(server, registration, request)
-  if (committed !== null) return committed
-
+): AdmittedReplacement | DirectJoinResult {
   const expected = request.expectedPredecessor
   const binding =
     initialAttempt.hostBindingId === undefined
       ? null
       : server.db.participantHostBindings.getBindingById(initialAttempt.hostBindingId)
-  const currentIntent = parseIntent(initialAttempt.replacementIntentJson)
+  const currentIntent = parseReplacementIntent(initialAttempt.replacementIntentJson)
   const preAttachSupersession =
     (request.hostIncarnationId !== binding?.hostIncarnationId ||
       hasLegacyArrisHostIncarnationSelection(initialAttempt.continuation)) &&
@@ -493,7 +265,7 @@ export async function driveParticipantReplacement(
   }
 
   const kind = replacementKind(server, request, binding)
-  if (currentIntent !== null && !sameRequest(currentIntent, request)) {
+  if (currentIntent !== null && !sameReplacementRequest(currentIntent, request)) {
     return refusal(
       'rejected',
       'host_binding_precondition_failed',
@@ -502,261 +274,171 @@ export async function driveParticipantReplacement(
         : 'a different durable replacement intent already owns this predecessor'
     )
   }
-  const now = timestamp()
-  const freshIntent: ReplacementIntent = {
-    schemaVersion: 'participant-replacement-intent/v1',
-    kind,
-    ...(preAttachSupersession ? { preAttachSupersession: true } : {}),
-    operationId: `participant-replacement-${randomUUID()}`,
-    predecessor: {
-      bindingId: binding.bindingId,
-      hostIncarnationId: binding.hostIncarnationId,
-      hostSessionId: binding.hostSessionId,
-      generation: binding.generation,
-      runtimeId: binding.runtimeId,
-      attemptId: initialAttempt.attemptId,
-      attachEpoch: initialAttempt.attachEpoch,
-      invocationId: initialAttempt.invocationId,
-    },
-    predecessorWork: {
-      state: initialAttempt.establishmentWorkState,
-      attemptCount: initialAttempt.establishmentAttemptCount,
-      ...(initialAttempt.establishmentNextAttemptAt === undefined
-        ? {}
-        : { nextAttemptAt: initialAttempt.establishmentNextAttemptAt }),
-      ...(initialAttempt.establishmentLastError === undefined
-        ? {}
-        : { lastError: initialAttempt.establishmentLastError }),
-    },
-    candidate: {
-      hostIncarnationId: request.hostIncarnationId,
-      ...(request.classId === undefined ? {} : { classId: request.classId }),
-      ...(request.participantKey === undefined ? {} : { participantKey: request.participantKey }),
-      ...(request.workspaceCwd === undefined ? {} : { workspaceCwd: request.workspaceCwd }),
-      ...(request.socketPath === undefined ? {} : { socketPath: request.socketPath }),
-      ...(request.continuation === 'fresh' ? { continuation: 'fresh' as const } : {}),
-    },
-    createdAt: now,
-  }
   if (currentIntent === null) {
+    const now = timestamp()
+    const intent = buildReplacementIntent({
+      kind,
+      preAttachSupersession,
+      binding,
+      predecessor: initialAttempt,
+      request,
+      createdAt: now,
+    })
     const stored = server.db.participantRegistrations.storeReplacementIntent({
       attemptId: initialAttempt.attemptId,
       attachEpoch: initialAttempt.attachEpoch,
-      replacementIntentJson: JSON.stringify(freshIntent),
+      replacementIntentJson: JSON.stringify(intent),
       updatedAt: now,
     })
-    if (stored === 'conflict') {
-      return refusal('pending', 'participant_successor_gate_changed', 'replacement intent raced')
-    }
+    if (stored === 'conflict') return gateChanged('replacement intent raced')
   }
 
-  let attempt = server.db.participantRegistrations.getAttempt(initialAttempt.attemptId)
-  if (attempt === null)
+  const attempt = server.db.participantRegistrations.getAttempt(initialAttempt.attemptId)
+  if (attempt === null) {
     return refusal('pending', 'participant_attempt_unavailable', 'predecessor disappeared')
-  let intent = parseIntent(attempt.replacementIntentJson)
-  if (intent === null || !sameRequest(intent, request)) {
-    return refusal('pending', 'participant_successor_gate_changed', 'replacement intent changed')
   }
+  const intentJson = attempt.replacementIntentJson
+  const intent = parseReplacementIntent(intentJson)
+  if (intentJson === undefined || intent === null || !sameReplacementRequest(intent, request)) {
+    return gateChanged('replacement intent changed')
+  }
+  return { binding, kind, preAttachSupersession, attempt, intent, intentJson }
+}
 
-  const evidenceSource: 'transport' | 'pre-attach' = preAttachSupersession
+type ReceiptedReplacement = AdmittedReplacement & {
+  source: RetirementEvidenceSource
+  evidence: WriterEvidence
+  /** The satisfying evidence carried from an earlier receipt, if any. */
+  priorBasis: WriterEvidence | undefined
+  decision: RetirementDecision
+  /** The first satisfying evidence, now recorded on the intent. */
+  retirementBasis: WriterEvidence | undefined
+  /** The predecessor's intent with this receipt, exactly as persisted. */
+  intentJson: string
+}
+
+/** Observe the predecessor's writer and persist that receipt on the intent and attempt. */
+async function recordRetirementReceipt(
+  server: HrcServerInstanceForHandlers,
+  registration: ParticipantRegistration,
+  admitted: AdmittedReplacement
+): Promise<ReceiptedReplacement | DirectJoinResult> {
+  const { attempt, binding, kind } = admitted
+  const source: RetirementEvidenceSource = admitted.preAttachSupersession
     ? 'pre-attach'
     : 'transport'
-  const evidence = preAttachSupersession
-    ? preAttachRetirementReceipt(registration, attempt, binding.hostIncarnationId)
-    : (await observeParticipantTransportEvidence(server, registration, attempt, kind)).evidence
-  const persistedAttempt = attempt
-  const priorIntentJson = persistedAttempt.replacementIntentJson
-  if (priorIntentJson === undefined) {
-    return refusal(
-      'pending',
-      'participant_successor_gate_changed',
-      'replacement intent disappeared'
-    )
-  }
+  const evidence =
+    source === 'pre-attach'
+      ? preAttachRetirementReceipt(registration, attempt, binding.hostIncarnationId)
+      : (await observeParticipantTransportEvidence(server, registration, attempt, kind)).evidence
+  const priorIntentJson = admitted.intentJson
   if (
-    evidenceSource === 'pre-attach' &&
-    !isAbsorbingParticipantAttempt(persistedAttempt) &&
-    !isNeverAttachedDirectAttempt(server, persistedAttempt)
+    source === 'pre-attach' &&
+    !isAbsorbingParticipantAttempt(attempt) &&
+    !isNeverAttachedDirectAttempt(server, attempt)
   ) {
-    pauseOrCancelReplacement(
-      server,
-      persistedAttempt,
-      intent,
-      priorIntentJson,
-      'pre-attach predecessor changed'
-    )
-    return refusal(
-      'pending',
-      'participant_successor_gate_changed',
-      'pre-attach predecessor changed'
-    )
-  }
-  const priorBasis =
-    intent.retirementBasis ??
-    (intent.receipt !== undefined && directRetirementDecision(intent.receipt) === 'satisfied'
-      ? intent.receipt
-      : undefined)
-  const currentDecision = retirementDecision(evidence, priorBasis)
-  const retirementBasis = priorBasis ?? (currentDecision === 'satisfied' ? evidence : undefined)
-  intent = {
-    ...intent,
-    receipt: evidence,
-    ...(retirementBasis === undefined ? {} : { retirementBasis }),
-  }
-  const intentWithReceiptJson = JSON.stringify(intent)
-  if (
-    !server.db.sqlite.transaction(() => {
-      const current = server.db.participantRegistrations.getAttempt(persistedAttempt.attemptId)
-      if (
-        evidenceSource === 'pre-attach' &&
-        (current === null ||
-          (!isAbsorbingParticipantAttempt(current) &&
-            !isNeverAttachedDirectAttempt(server, current)))
-      )
-        return false
-      const intentUpdated = server.db.participantRegistrations.replaceReplacementIntent({
-        attemptId: persistedAttempt.attemptId,
-        attachEpoch: persistedAttempt.attachEpoch,
-        expectedJson: priorIntentJson,
-        replacementJson: intentWithReceiptJson,
-        updatedAt: timestamp(),
-      })
-      if (!intentUpdated) return false
-      return server.db.participantRegistrations.recordWriterEvidence(
-        persistedAttempt.attemptId,
-        persistedAttempt.attachEpoch,
-        JSON.stringify(evidence),
-        timestamp()
-      )
-    })()
-  ) {
-    if (evidenceSource === 'pre-attach') {
-      const changed = server.db.participantRegistrations.getAttempt(persistedAttempt.attemptId)
-      if (changed !== null && changed.replacementIntentJson === priorIntentJson) {
-        pauseOrCancelReplacement(
-          server,
-          changed,
-          intent,
-          priorIntentJson,
-          'pre-attach predecessor changed'
-        )
-      }
-    }
-    return refusal(
-      'pending',
-      'participant_successor_gate_changed',
-      'writer receipt persistence raced'
-    )
-  }
-
-  if (currentDecision !== 'satisfied') {
     pauseOrCancelReplacement(
       server,
       attempt,
-      intent,
-      intentWithReceiptJson,
-      currentDecision === 'refused'
-        ? 'host_binding_conflict: predecessor remains writable and live'
-        : evidenceSource === 'transport'
-          ? 'host_retirement_unproven: transport_indeterminate'
-          : 'host_retirement_unproven: predecessor retirement remains unknown'
+      admitted.intent,
+      priorIntentJson,
+      PRE_ATTACH_PREDECESSOR_CHANGED
     )
-    return refusal(
-      currentDecision === 'refused' ? 'rejected' : 'pending',
-      currentDecision === 'refused' ? 'host_binding_conflict' : 'host_retirement_unproven',
-      currentDecision === 'refused'
-        ? 'the exact predecessor remains writable and live'
-        : evidenceSource === 'transport'
-          ? persistedAttempt.attachSocketPath === undefined
-            ? 'transport_indeterminate: predecessor has no durable attach socket path'
-            : 'transport_indeterminate: predecessor broker hello did not complete within the bounded probe'
-          : priorBasis === undefined
-            ? 'predecessor retirement is unknown'
-            : 'later evidence voided the uncommitted succession on its satisfying axis'
-    )
+    return gateChanged(PRE_ATTACH_PREDECESSOR_CHANGED)
   }
-  const authorizingEvidence = retirementBasis ?? evidence
-
-  // TX-D: disposition is committed separately and therefore independently recoverable.
-  const disposingAttemptId = attempt.attemptId
-  const disposed = server.db.sqlite.transaction(() => {
-    const current = server.db.participantRegistrations.getAttempt(disposingAttemptId)
-    if (current === null) throw new Error('predecessor disappeared before disposition')
+  const priorBasis = priorRetirementBasis(admitted.intent)
+  const decision = retirementDecision(evidence, priorBasis)
+  const retirementBasis = priorBasis ?? (decision === 'satisfied' ? evidence : undefined)
+  const intent: ReplacementIntent = {
+    ...admitted.intent,
+    receipt: evidence,
+    ...(retirementBasis === undefined ? {} : { retirementBasis }),
+  }
+  const intentJson = JSON.stringify(intent)
+  const persisted = server.db.sqlite.transaction(() => {
+    const current = server.db.participantRegistrations.getAttempt(attempt.attemptId)
     if (
-      evidenceSource === 'pre-attach' &&
-      !isAbsorbingParticipantAttempt(current) &&
-      (!isNeverAttachedDirectAttempt(server, current) ||
-        server.db.participantHostBindings.getBindingById(binding.bindingId)?.state !== 'BINDING')
+      source === 'pre-attach' &&
+      (current === null ||
+        (!isAbsorbingParticipantAttempt(current) && !isNeverAttachedDirectAttempt(server, current)))
     )
       return false
-    if (!isAbsorbingParticipantAttempt(current)) {
-      if (
-        !server.db.participantRegistrations.transitionAttempt(
-          current.attemptId,
-          [current.state],
-          'ABANDONED',
-          timestamp(),
-          dispositionReason(kind, authorizingEvidence, current, evidenceSource)
-        )
-      ) {
-        throw new Error('predecessor disposition raced')
-      }
-    }
-    if (
-      ((evidenceSource === 'transport' && authorizingEvidence.liveness.state === 'dead') ||
-        evidenceSource === 'pre-attach') &&
-      current.recoveryDisposition === 'unresolved'
-    ) {
-      if (
-        !server.db.participantRegistrations.recordRecoveryDisposition(
-          current.attemptId,
-          'abandoned',
-          evidenceSource === 'pre-attach' ? 'pre_attach_superseded' : 'transport_dead',
-          timestamp()
-        )
-      ) {
-        throw new Error('predecessor transport-dead recovery disposition raced')
-      }
-    }
-    const currentBinding = server.db.participantHostBindings.getBindingById(binding.bindingId)
-    if (
-      kind === 'host' &&
-      currentBinding !== null &&
-      (currentBinding.state === 'BOUND' || currentBinding.state === 'DETACHED')
-    ) {
-      if (
-        !server.db.participantHostBindings.transitionBinding({
-          bindingId: currentBinding.bindingId,
-          from: [currentBinding.state],
-          to: 'RETIRING',
-          now: timestamp(),
-          retirementReceiptJson: JSON.stringify(authorizingEvidence),
-        })
-      ) {
-        throw new Error('predecessor binding retirement raced')
-      }
-    }
-    return true
-  })()
-  if (!disposed) {
-    const changed = server.db.participantRegistrations.getAttempt(disposingAttemptId)
-    if (changed !== null && changed.replacementIntentJson === intentWithReceiptJson) {
-      pauseOrCancelReplacement(
-        server,
-        changed,
-        intent,
-        intentWithReceiptJson,
-        'pre-attach predecessor changed'
-      )
-    }
-    return refusal(
-      'pending',
-      'participant_successor_gate_changed',
-      'pre-attach predecessor changed'
+    const intentUpdated = server.db.participantRegistrations.replaceReplacementIntent({
+      attemptId: attempt.attemptId,
+      attachEpoch: attempt.attachEpoch,
+      expectedJson: priorIntentJson,
+      replacementJson: intentJson,
+      updatedAt: timestamp(),
+    })
+    if (!intentUpdated) return false
+    return server.db.participantRegistrations.recordWriterEvidence(
+      attempt.attemptId,
+      attempt.attachEpoch,
+      JSON.stringify(evidence),
+      timestamp()
     )
+  })()
+  if (!persisted) {
+    if (source === 'pre-attach') {
+      pauseChangedPreAttachPredecessor(server, attempt.attemptId, intent, priorIntentJson)
+    }
+    return gateChanged('writer receipt persistence raced')
   }
+  return {
+    ...admitted,
+    intent,
+    source,
+    evidence,
+    priorBasis,
+    decision,
+    retirementBasis,
+    intentJson,
+  }
+}
 
-  attempt = server.db.participantRegistrations.getAttempt(attempt.attemptId)
+/** An unproven or contradicted retirement parks the intent and answers why. */
+function holdUnsatisfiedRetirement(
+  server: HrcServerInstanceForHandlers,
+  receipted: ReceiptedReplacement
+): DirectJoinResult {
+  const { attempt, decision, source } = receipted
+  const refused = decision === 'refused'
+  pauseOrCancelReplacement(
+    server,
+    attempt,
+    receipted.intent,
+    receipted.intentJson,
+    refused
+      ? 'host_binding_conflict: predecessor remains writable and live'
+      : source === 'transport'
+        ? 'host_retirement_unproven: transport_indeterminate'
+        : 'host_retirement_unproven: predecessor retirement remains unknown'
+  )
+  return refusal(
+    refused ? 'rejected' : 'pending',
+    refused ? 'host_binding_conflict' : 'host_retirement_unproven',
+    refused
+      ? 'the exact predecessor remains writable and live'
+      : source === 'transport'
+        ? attempt.attachSocketPath === undefined
+          ? 'transport_indeterminate: predecessor has no durable attach socket path'
+          : 'transport_indeterminate: predecessor broker hello did not complete within the bounded probe'
+        : receipted.priorBasis === undefined
+          ? 'predecessor retirement is unknown'
+          : 'later evidence voided the uncommitted succession on its satisfying axis'
+  )
+}
+
+/**
+ * After TX-D the predecessor must be durably absorbing with its recovery
+ * reconciled or explicitly abandoned before any successor is allocated.
+ */
+function gatePredecessorRecovery(
+  server: HrcServerInstanceForHandlers,
+  attemptId: string,
+  evidence: WriterEvidence
+): ParticipantAttempt | DirectJoinResult {
+  let attempt = server.db.participantRegistrations.getAttempt(attemptId)
   if (
     attempt === null ||
     !isAbsorbingParticipantAttempt(attempt) ||
@@ -782,7 +464,7 @@ export async function driveParticipantReplacement(
   }
   if (attempt === null || !recoverySatisfied(attempt, evidence)) {
     if (attempt !== null && attempt.replacementIntentJson !== undefined) {
-      const heldIntent = parseIntent(attempt.replacementIntentJson)
+      const heldIntent = parseReplacementIntent(attempt.replacementIntentJson)
       if (heldIntent !== null) {
         pauseOrCancelReplacement(
           server,
@@ -799,140 +481,68 @@ export async function driveParticipantReplacement(
       'predecessor recovery is neither reconciled nor explicitly abandoned'
     )
   }
+  return attempt
+}
 
-  const successorAttemptId = `participant-attempt-${randomUUID()}`
-  const successorRuntimeId = kind === 'bridge' ? binding.runtimeId : `rt-${randomUUID()}`
-  const successorBindingId =
-    kind === 'bridge' ? binding.bindingId : `participant-binding-${randomUUID()}`
+/**
+ * Execute the durable A0 -> TX-D -> gate -> TX-6/TX-6' replacement path.
+ * The caller already holds the address mutex via the direct-registration door.
+ */
+export async function driveParticipantReplacement(
+  server: HrcServerInstanceForHandlers,
+  registration: ParticipantRegistration,
+  initialAttempt: ParticipantAttempt,
+  request: DirectJoinRequest
+): Promise<DirectJoinResult> {
+  const committed = findCommittedResult(server, registration, request)
+  if (committed !== null) return committed
+
+  const admitted = admitReplacementIntent(server, initialAttempt, request)
+  if ('outcome' in admitted) return admitted
+  const receipted = await recordRetirementReceipt(server, registration, admitted)
+  if ('outcome' in receipted) return receipted
+  if (receipted.decision !== 'satisfied') return holdUnsatisfiedRetirement(server, receipted)
+
+  const { binding, kind, source, evidence, intent, intentJson } = receipted
+  const authorizingEvidence = receipted.retirementBasis ?? evidence
+  const predecessorAttemptId = receipted.attempt.attemptId
+  const disposed = disposePredecessor(server, {
+    attemptId: predecessorAttemptId,
+    bindingId: binding.bindingId,
+    kind,
+    source,
+    authorizingEvidence,
+  })
+  if (!disposed) {
+    pauseChangedPreAttachPredecessor(server, predecessorAttemptId, intent, intentJson)
+    return gateChanged(PRE_ATTACH_PREDECESSOR_CHANGED)
+  }
+
+  const predecessor = gatePredecessorRecovery(server, predecessorAttemptId, evidence)
+  if ('outcome' in predecessor) return predecessor
+
   const selection = selectionForSuccessor(
     server,
     registration,
-    attempt,
+    predecessor,
     request,
     kind,
-    preAttachSupersession
+    receipted.preAttachSupersession
   )
-  const successor: ParticipantAttempt = {
-    attemptId: successorAttemptId,
-    registrationId: registration.registrationId,
-    attachEpoch: attempt.attachEpoch + 1,
-    requestId: `req-${randomUUID()}`,
-    operationId: `op-${randomUUID()}`,
-    invocationId: `inv-${randomUUID()}`,
-    runtimeId: successorRuntimeId,
-    hostBindingId: successorBindingId,
-    state: 'IDENTITY_MINTED',
-    recoveryDisposition: 'unresolved',
-    establishmentWorkState: 'pending',
-    establishmentAttemptCount: 0,
-    continuation: selection,
-    // Selection is not a native-resume result. The attach call changes this to
-    // requested only when a profile actually expresses the selected value.
-    resumeState: 'not_requested',
-    createdAt: timestamp(),
-    updatedAt: timestamp(),
-  }
-  const completedIntent = { ...intent, allocatedAttemptId: successorAttemptId }
-  const priorAttemptId = attempt.attemptId
-  const allocated = server.db.sqlite.transaction(() => {
-    const currentPrior = server.db.participantRegistrations.getAttempt(priorAttemptId)
-    const currentBinding = server.db.participantHostBindings.getBindingById(binding.bindingId)
-    if (
-      currentPrior === null ||
-      currentPrior.replacementIntentJson !== intentWithReceiptJson ||
-      !isAbsorbingParticipantAttempt(currentPrior) ||
-      !currentPrior.dispositionReason?.trim() ||
-      !recoverySatisfied(currentPrior, evidence) ||
-      currentBinding === null
-    ) {
-      return false
-    }
-
-    if (kind === 'host') {
-      if (currentBinding.state !== 'RETIRING' && currentBinding.state !== 'BINDING') return false
-      const priorSession = server.db.sessions.getByHostSessionId(registration.hostSessionId)
-      if (priorSession === null) return false
-      const nextGeneration = registration.generation + 1
-      const successorSource = selection.carried
-        ? priorSession
-        : (({ continuation: _continuation, ...withoutContinuation }) => withoutContinuation)(
-            priorSession
-          )
-      const nextSession = createSessionSuccessorFromContinuation(server.db, successorSource, {
-        generation: nextGeneration,
-      })
-      if (
-        !server.db.participantHostBindings.transitionBinding({
-          bindingId: currentBinding.bindingId,
-          from: [currentBinding.state],
-          to: 'RETIRED',
-          now: timestamp(),
-          dispositionReason:
-            evidenceSource === 'pre-attach'
-              ? 'pre_attach_superseded'
-              : evidenceSource === 'transport' && authorizingEvidence.liveness.state === 'dead'
-                ? 'transport_dead'
-                : 'host_replaced',
-        })
-      ) {
-        throw new Error('predecessor binding final retirement raced')
-      }
-      if (
-        !server.db.participantRegistrations.updateDirectRegistrationForHostSuccessor({
-          registrationId: registration.registrationId,
-          expectedHostSessionId: registration.hostSessionId,
-          hostSessionId: nextSession.hostSessionId,
-          generation: nextGeneration,
-          hostIncarnationId: request.hostIncarnationId,
-          ...(request.workspaceCwd === undefined ? {} : { workspaceCwd: request.workspaceCwd }),
-          ...(request.socketPath === undefined ? {} : { socketPath: request.socketPath }),
-          updatedAt: timestamp(),
-        })
-      ) {
-        throw new Error('successor registration ownership update raced')
-      }
-      server.db.participantHostBindings.insertBinding({
-        bindingId: successorBindingId,
-        reservationId: binding.reservationId,
-        registrationId: registration.registrationId,
-        hostIncarnationId: request.hostIncarnationId,
-        hostSessionId: nextSession.hostSessionId,
-        generation: nextGeneration,
-        runtimeId: successorRuntimeId,
-        state: 'BINDING',
-        predecessorBindingId: binding.bindingId,
-        admittedAt: timestamp(),
-        updatedAt: timestamp(),
-      })
-      terminateReplacedPredecessorRuntime(server, binding.runtimeId)
-    } else if (
-      !server.db.participantRegistrations.updateDirectRegistrationForBridgeSuccessor({
-        registrationId: registration.registrationId,
-        expectedHostSessionId: registration.hostSessionId,
-        expectedHostIncarnationId: binding.hostIncarnationId,
-        ...(request.workspaceCwd === undefined ? {} : { workspaceCwd: request.workspaceCwd }),
-        ...(request.socketPath === undefined ? {} : { socketPath: request.socketPath }),
-        updatedAt: timestamp(),
-      })
-    ) {
-      throw new Error('bridge successor endpoint update raced')
-    }
-    server.db.participantRegistrations.insertAttempt(successor)
-    return server.db.participantRegistrations.completeReplacementWork({
-      attemptId: currentPrior.attemptId,
-      attachEpoch: currentPrior.attachEpoch,
-      expectedIntentJson: intentWithReceiptJson,
-      completedIntentJson: JSON.stringify(completedIntent),
-      updatedAt: timestamp(),
-    })
-  })()
-  if (!allocated) {
-    return refusal(
-      'pending',
-      'participant_successor_gate_changed',
-      'successor allocation gate changed'
-    )
-  }
+  const successor = mintSuccessorAttempt({ registration, predecessor, binding, kind, selection })
+  const allocated = commitSuccessorAllocation(server, {
+    registration,
+    request,
+    binding,
+    kind,
+    successor,
+    priorAttemptId: predecessor.attemptId,
+    gateIntentJson: intentJson,
+    completedIntentJson: JSON.stringify({ ...intent, allocatedAttemptId: successor.attemptId }),
+    recoveryEvidence: evidence,
+    bindingRetirementReason: bindingRetirementReason(source, authorizingEvidence),
+  })
+  if (!allocated) return gateChanged('successor allocation gate changed')
   const currentRegistration = server.db.participantRegistrations.getRegistrationById(
     registration.registrationId
   )
@@ -980,7 +590,7 @@ export async function recoverParticipantReplacement(
   server: HrcServerInstanceForHandlers,
   attempt: ParticipantAttempt
 ): Promise<DirectJoinResult> {
-  const intent = parseIntent(attempt.replacementIntentJson)
+  const intent = parseReplacementIntent(attempt.replacementIntentJson)
   const registration = server.db.participantRegistrations.getRegistrationById(
     attempt.registrationId
   )
@@ -991,27 +601,10 @@ export async function recoverParticipantReplacement(
       'replacement recovery input is missing'
     )
   }
-  return driveParticipantReplacement(server, registration, attempt, {
-    requestedSessionRef: registration.scopeRef,
-    hostIncarnationId: intent.candidate.hostIncarnationId,
-    laneRef: registration.laneRef,
-    ...(intent.candidate.classId === undefined ? {} : { classId: intent.candidate.classId }),
-    ...(intent.candidate.participantKey === undefined
-      ? {}
-      : { participantKey: intent.candidate.participantKey }),
-    ...(intent.candidate.workspaceCwd === undefined
-      ? {}
-      : { workspaceCwd: intent.candidate.workspaceCwd }),
-    ...(intent.candidate.socketPath === undefined
-      ? {}
-      : { socketPath: intent.candidate.socketPath }),
-    ...(intent.candidate.continuation === undefined
-      ? {}
-      : { continuation: intent.candidate.continuation }),
-    expectedPredecessor: {
-      hostIncarnationId: intent.predecessor.hostIncarnationId,
-      runtimeId: intent.predecessor.runtimeId,
-      generation: intent.predecessor.generation,
-    },
-  })
+  return driveParticipantReplacement(
+    server,
+    registration,
+    attempt,
+    joinRequestFromIntent(registration, intent)
+  )
 }

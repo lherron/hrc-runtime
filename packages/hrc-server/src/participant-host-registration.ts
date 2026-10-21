@@ -12,12 +12,12 @@ import type {
 
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { claimParticipantAddress } from './participant-address-provisioning.js'
+import { isNeverAttachedDirectAttempt } from './participant-predecessor-retirement.js'
+import { driveParticipantReplacement } from './participant-succession.js'
 import {
   declarationContradictsSelection,
-  driveParticipantReplacement,
   hasLegacyArrisHostIncarnationSelection,
-  isNeverAttachedDirectAttempt,
-} from './participant-succession.js'
+} from './participant-successor-continuation.js'
 import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { createHostSessionId, timestamp } from './server-util.js'
