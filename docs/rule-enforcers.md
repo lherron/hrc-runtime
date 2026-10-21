@@ -4,8 +4,12 @@ One row per repo rule an agent can break, naming what fails when it does
 (docs-are-true §6). `judgment` means nothing fails; the rule is guidance. When a
 `judgment` rule is broken again, move it up to a check, type or test rather than
 adding prose. Where each gate runs: `pre-commit` (lefthook, blocks the commit),
-`check` (`just check`, inside `just verify`), `verify` (`just verify`, after the
-push on mini, catches but does not block).
+`pre-push` (lefthook, blocks the push), `check` (`just check`, inside
+`just verify`'s TS leg), `verify` (`just verify`, which also runs after the
+push on mini, where it catches but does not block). `just verify` is
+path-scoped by `scripts/validation-scope.ts`: its TS leg and its cargo leg each
+run only when their inputs changed (`.hookignore`, `.hookignore-cargo`), and
+both run when the scope cannot be read.
 
 ## Enforced
 
@@ -15,7 +19,7 @@ push on mini, catches but does not block).
 | Every test root registers the preload, runs through the hermetic runner, and sits in one verify tier | `scripts/check-test-hermetic.ts` | check |
 | Daemon code runs subprocesses only through `runBoundedSubprocess`; no synchronous spawn in hrc-server or its workspace deps | `scripts/check-daemon-subprocess.ts` (raw-spawn baseline is `{}`: any raw spawn fails) | check |
 | A test double is typed against the production interface it stands in for and type-checks; a new or changed double for a cross-project producer (wrkq ledger, aspd, ghostmux) cites a captured wire fixture | `scripts/check-test-doubles.ts` (ratchet: `scripts/test-double-baseline.json` only goes down); see [test-doubles.md](test-doubles.md) | check |
-| A scope verb's flags (`start`/`run`/`resume`) are declared once | architecture: `packages/hrc-cli/src/cli/scope-verb-options.ts`; `scope-verb-options.test.ts` | pre-commit (typecheck), verify |
+| A scope verb's flags (`start`/`run`/`resume`) are declared once | architecture: `packages/hrc-cli/src/cli/scope-verb-options.ts`; `packages/hrc-cli/src/__tests__/scope-verb-options.test.ts` | pre-commit (typecheck), verify |
 | Delivery executors require an `AdmittedPlan` first; handlers cannot import executors or the plan constructor, or call legacy dispatch entries | `scripts/check-admission-entry.ts` (no baseline) | pre-commit, check |
 | HRC source does not import ACP-owned packages | `scripts/check-boundaries.ts` | pre-commit, check |
 | Member dependency specifiers match the root `overrides` pin table | `scripts/check-dependency-pins.ts` | pre-commit, check |
@@ -27,7 +31,8 @@ push on mini, catches but does not block).
 | A lint/type suppression carries `EXCEPTION(T-…)` | `scripts/check-suppressions.ts` | pre-commit, check |
 | No credential-class key in an auto-loaded `.env*` | `scripts/check-env-hygiene.ts` | check |
 | Test files stay under 1000 lines | `scripts/check-test-source-size.ts --enforce` | verify |
-| Architecture records are well-formed and projections current | `scripts/check-architecture-records.ts` | pre-commit, pre-push |
+| Architecture records are well-formed and projections current | `scripts/check-architecture-records.ts` | pre-commit, pre-push, verify |
+| Rust crates are rustfmt- and clippy-clean (`-D warnings`), their tests pass, and the `hrc-kernel` E2Es pass | `just cargo-check`, run by `scripts/pre-push-validation.ts` when a push touches Rust or shared inputs (or its scope is ambiguous) | pre-push, verify |
 | `just install` refuses tracked modifications | `scripts/install-dirty-guard.ts` | install |
 | Only a canonical, pushed release is published | `scripts/publish-local-verdaccio.ts` containment proof | publish |
 | A deploy target is contained by origin/main, ahead of the checkout, and reported back by the running process | `_deploy-node` (justfile) | deploy |

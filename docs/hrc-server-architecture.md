@@ -1,170 +1,200 @@
 # hrc-server Architecture
 
-**Date:** 2026-06-07
-**Status:** CANONICAL (current, shipped architecture)
-**Scope:** `packages/hrc-server` within `/Users/lherron/praesidium/hrc-runtime`
+**Scope:** `packages/hrc-server`, the HRC daemon.
 
-This document describes the architecture **as shipped today**. It records only current facts. It deliberately omits any forward-looking vocabulary or routing redesign that has not landed.
-
-## Governing v2 migration boundary (T-08690; pending Daedalus review)
-
-The implementation description below is v1-era observation, not authority for
-the v2 cutover. The target HRC seam accepts one ASP producer-selected execution;
-it does not select an execution profile, resolve profile/target defaults, choose
-a driver, or classify presentation into a local route. It preserves omitted
-optional camelCase `requested` fields and forwards source-distinct raw summon
-directives only as `harness`, `model_provider`, `model`, `reasoning_effort`, and
-boolean `presentation` under `selectionContext.summonDirectives`. ASP owns
-strict-v4 profile and schema-2
-target merging, validation and selection; HRC atomically persists the completed
-response before generic hosting from `execution.hosting`.
-
-External participant attachment is separate from ordinary compile. Its sole v2
-carrier is `ParticipantBrokerDescriptor`, frozen with allocated participant
-identity and endpoint; HRC neither accepts nor translates an
-`agent-runtime-profile/v1` `BrokerExecutionProfile`. The legacy
-`prepared_profile_json` reconnect path is drained or retired before cutover.
-
-At cutover, v1 plans and old `lastAppliedIntentJson` selectors are not parsed.
-Only contract-neutral persisted endpoint/lease/runtime/invocation identity may
-reattach a v1 broker; its historical hashes are opaque fences. Any path needing
-compile or reprovision births v2. ACTIVE external participant attempts are
-drained or retired because reconnect reads `prepared_profile_json`. This is a
-design contract for the successor implementation, not a claim that current source
-already implements it.
-
----
+This page maps the daemon's source as shipped. It names modules and seams, not
+line counts or version pins, because those go stale within days. The normative
+laws (admission, boundaries, retention, release provenance) are the records
+under [`architecture/`](../architecture/README.md); the platform-facing summary
+is [architecture-overview.md](architecture-overview.md).
 
 ## 1. What hrc-server is
 
-`hrc-server` is the HRC daemon. It exposes a **Unix-socket HTTP API** and owns runtime orchestration: launching/controlling agent runtimes (headless and tmux), driving the Harness Broker, tmux/ghostmux pane management, hook/OTEL event ingestion, message persistence, and the directed-messaging (`hrcchat`) selector surface.
+`hrc-server` is a Bun TypeScript process exposing a **Unix-socket HTTP API**
+(`Bun.serve({ unix })`). It owns runtime orchestration: launching and
+controlling agent runtimes (headless and tmux), driving Harness Broker
+processes, broker-event projection, session/run/message state, the
+`hrc_events` ledger, federation with peer nodes, and HRC's door onto the wrkq
+collaboration ledger.
 
-Package facts (`package.json`):
-- `name: hrc-server`, `version: 0.1.0`, `type: module`.
-- Exports map serves **TypeScript source under the `bun` condition** (`"bun": "./src/index.ts"`) and `dist` for the standard `import`/`types` conditions. This is why the daemon runs worktree source under bun — no build/install step is required for source edits to take effect on the next daemon restart.
-- Depends on the HRC layer (`hrc-core`, `hrc-events`, `hrc-store-sqlite`) and the pinned ASP `spaces-*` / `agent-spaces` / `agent-scope` packages (currently `0.1.1-dev.20260606225727`), resolved via Verdaccio at install time.
-- Scripts: `build` (`tsc`), `typecheck` (`tsc --noEmit`), `test` (`bun test --timeout 10000`), plus `prepack`/`postpack` that strip the bun export condition for packaging.
+- The package `exports` serve TypeScript source under the `bun` condition
+  (`"bun": "./src/index.ts"`) and `dist` for `import`/`types`.
+- The launchd daemon runs from the **installed atomic release**, not from the
+  checkout: `hrc server status --json` reports `.release.releasePath` and
+  `.release.hrcBuild.sourceCommit`. A source edit reaches the daemon only
+  through `just install` followed by a restart
+  ([atomic-install.md](atomic-install.md)).
+- `bun run test` here goes through `scripts/hermetic-test.ts --timeout 10000`.
 
----
+## 2. Module topology under `src/`
 
-## 2. Module topology under `packages/hrc-server/src`
+Most behavior lives in flat domain modules under `src/`. Larger domains have
+their own subdirectory.
 
-The tree is a **flat domain-module layout** at `src/` plus four cohesive subdirectories: `broker/`, `parsers/`, `launch/`, and `agent-spaces-adapter/`. The daemon entrypoint is `index.ts`.
+### 2.1 `index.ts`: construction, lifecycle and handler composition
 
-### 2.1 `index.ts` — aggregation, bootstrap, handler registration (NOT business ownership)
+- `createHrcServer(options)` prepares the filesystem, takes the server lock
+  (`server-lock.ts`), opens the SQLite store (`hrc-store-sqlite`), replays the
+  launch spool (`replay-spool.ts`), reconciles startup state
+  (`startup-reconcile.ts`) and returns a `HrcServerInstance`.
+- The `HrcServerInstance` constructor starts the socket server and federation
+  services (`startFederationServices`), wires the wrkq ledger client (a real
+  one only from `hrc server serve`, otherwise `UnreachableWrkqLedger`), and
+  starts the recurring jobs: zombie-run sweep, active-run reconcile, broker
+  lease GC, the retained-evidence pass, tmux aging, session retention, the
+  first-turn watchdog, the transcript indexer, foreign-home shadow teardown and
+  the lifecycle-credential sweep. It then eagerly warms the broker controller
+  (`brokerWarmupComplete`).
+- Handlers are not defined in `index.ts`. Each domain module exports a
+  `…HandlersMethods` (or `…Methods`) bag, and a single
+  `Object.assign(HrcServerInstance.prototype, …)` composes them all.
 
-`index.ts` (≈1,518 lines) is no longer the monolith. Its current, confirmed role is:
+### 2.2 Routing
 
-- **Construction / lifecycle.** `createHrcServer(options)` prepares the filesystem, acquires the server lock (`server-lock.ts`), prepares the socket, creates the tmux manager (`tmux.ts`) and ghostmux manager (`ghostmux.ts`), opens the SQLite DB (`hrc-store-sqlite`), replays the launch spool (`replay-spool.ts`), reconciles startup state (`startup-reconcile.ts`), and returns a `HrcServerInstance`.
-- **Class shell.** `class HrcServerInstance implements HrcServer` holds the in-flight operation maps (`runtimeAttachOperations`, `runtimeStartOperations`, `attachedRunOperations`, `turnResponseFinalizers`, `pendingBrokerLiteralInputs`), the broker controller handle, subscriber sets, and the recurring-sweep timers.
-- **Route aggregation.** It builds `exactRouteHandlers: Record<string, ExactRouteHandler>` keyed by `exactRouteKey(method, pathname)`, registers `route.handler`s into that map, and dispatches in `handleRequest(request)` by exact-route lookup followed by a small set of prefix matches (e.g. `GET /v1/sessions/by-host/…`, `GET /v1/active-run-contributions/…`, several `POST` prefixes). Routing is **aggregation here, not per-domain route ownership** — the route table lives in `index.ts`.
-- **Handler registration.** The concrete handler implementations are **not** defined in `index.ts`. They live in per-domain modules and are attached onto the instance prototype via a single `Object.assign(HrcServerInstance.prototype, …)` that composes the exported method bags: `appSessionHandlersMethods`, `eventHandlersMethods`, `turnDispatchHandlersMethods`, `brokerInteractiveHandlersMethods`, `brokerHeadlessHandlersMethods`, `sdkTurnHandlersMethods`, `bridgeSurfaceHandlersMethods`, `sweepHandlersMethods`, `runtimeIoHandlersMethods`, `runtimeControlHandlersMethods`, `targetMessageHandlersMethods`, `eventNotificationHandlersMethods`, `selectorMessageHandlersMethods`, `selectorWaitHandlersMethods`. (Note: `runtimeListAdoptRoutes` are registered via a route factory, `createRuntimeListAdoptRoutes`, rather than prototype attachment.)
+- `server-exact-routes.ts` builds `exactRouteHandlers`, keyed by
+  `exactRouteKey(method, pathname)` (`server-routing.ts`). Runtime-list routes
+  come from the `createRuntimeListRoutes` factory and are added in the
+  constructor.
+- `server-request-methods.ts` owns `handleRequest` (request metrics) and
+  `dispatchRequest`. It refuses sealed execution formats first
+  (`refuseExecutionFormatAtSealedDoor`), tries the exact-route map, then a
+  small set of pattern matchers from `server-routing.ts` (input watch, session
+  title, runtime seat, retired launch subroutes, …).
 
-So `index.ts` owns **aggregation, bootstrap, and handler registration**; the domain modules own the behavior.
+### 2.3 The shared handler context
 
-### 2.2 `server-instance-context.ts` — the shared handler context with `HandlerMethod` aliases
+`server-instance-context.ts` defines `HrcServerInstanceForHandlers`, the `this`
+type every handler module is written against. It is derived from the real
+method-bag types plus the instance's data fields, so handlers call each other
+with checked signatures. `never`-returning failure helpers are re-asserted
+there to keep control-flow narrowing.
 
-This module defines `HrcServerInstanceForHandlers` — the broad context type every split handler module is typed against. Confirmed shape:
-- Concrete owned state: `options`, `db`, `tmux`, `ghostmux`, `ctx`, the in-flight maps, the sweep/reconcile/idle timers, broker feature flags (`headlessCodexBrokerEnabled`, `claudeCodeTmuxBrokerEnabled`, `codexCliTmuxBrokerEnabled`, stale-generation knobs), the `harnessBrokerController` handle, the post-restart `brokerWarmupComplete` promise, optional broker factory hooks, and the `followSubscribers` / `messageSubscribers` notifier sets.
-- A large block of method aliases declared as `HandlerMethod = (...args: any[]) => any` (with `HandlerNever` and `HandlerSessionRecord` variants). These aliases (e.g. `dispatchTurnForSession`, `executeHeadlessBrokerInputTurn`, `handleDispatchTurn`, `handleStartRuntime`, `getHarnessBrokerController`, `maybeAutoRotateStaleSession`, …) are how the prototype-attached handlers are made visible to one another and to `index.ts` under a single context type. The `any`-typed aliases are an intentional, biome-suppressed seam that preserves the original monolith method signatures across the split. It also exports the compat constants `COMMAND_RUNTIME_COMPAT_HARNESS = 'codex-cli'` and `COMMAND_RUNTIME_COMPAT_PROVIDER = 'openai'`.
+### 2.4 Domains
 
-This context is the current coupling surface between `index.ts` and the domain handler modules.
+- **Turn admission**, `turn-admission/`: admit, plan, submit, continue and the
+  admission routes. Delivery executors need an `AdmittedPlan`, and only the
+  admission implementation may construct one (`createAdmittedPlan`, enforced
+  by `scripts/check-admission-entry.ts`).
+- **Turn execution**: `turn-dispatch-handlers.ts`, `broker-decisions.ts`
+  (headless route `sdk` / `broker` / `legacy-exec`; interactive tmux route
+  `broker` / `legacy-tmux`), `broker-headless-handlers.ts`,
+  `broker-interactive-handlers.ts` (+ `broker-interactive-handlers/`),
+  `sdk-turn-handlers.ts`, `accepted-run-recovery-handlers.ts`.
+- **Runtime lifecycle**: `runtime-start-handlers.ts`,
+  `runtime-control-handlers.ts` (+ `runtime-control-handlers/`: interrupt and
+  terminate, broker dispose, session rotation), `runtime-io-handlers.ts`,
+  `runtime-inspect-handlers.ts`, `runtime-prune-handlers.ts`,
+  `seat-withdraw-handlers.ts`, `sweep-handlers.ts` / `sweep-helpers.ts`.
+- **Events**: `event-handlers.ts`, `event-notification-handlers.ts`,
+  `event-ingest.ts`, follow fan-out.
+- **Messaging and selectors**: `target-message-handlers.ts`,
+  `selector-message-handlers.ts` (+ `selector-message-handlers/`),
+  `selector-wait-handlers.ts`, `messages.ts`.
+- **External participants**: `external-registration-rendezvous.ts`,
+  `registration-handlers.ts`, `registration-gc-handlers.ts`,
+  `participant-registration-handlers.ts`, `participant-attach-handlers.ts`,
+  `participant-establishment.ts`, `roster-claim.ts`, `exact-claim.ts`.
+- **Federation**, `federation/`: node identity and config, the binding registry
+  client and endpoint, placement policy, the peer protocol and reachability,
+  the summon gate, collective history, scope-read routing.
+- **wrkq**, `wrkq/`: `ledger-client.ts` (the only door HRC reads or writes
+  rooms and envelopes through), the session and server project-event
+  publishers, and stop-gate handlers.
+- **Server lifecycle and status**: the server-stop, server-status and
+  server-session method bags, `server-lifecycle-credentials.ts` and the
+  restart-authority controller (T-09861), `release-provenance.ts`.
+- **Startup**, `startup-reconcile.ts` (+ `startup-reconcile/`): classifies
+  persisted runtimes, recovers lease identity and reattaches durable brokers.
+  It logs `broker.warmup.runtime` per runtime and `broker.warmup.complete` with
+  `total`, `attached` and `byCategory`.
+- **Awaiting input**: `ask-bracket.ts` keeps a durable bracket around a turn
+  parked on a user question, so the active-run reaper never kills it.
 
-### 2.3 Domain handler modules (flat `src/`)
+### 2.5 `parsers/`
 
-Each domain is a `*-handlers.ts` module exporting a `…HandlersMethods` bag (and its `…HandlersMethods` type) that is `Object.assign`-ed onto the prototype. The current set:
+Shape validation for request bodies and queries: `common.ts`, `runtime.ts`,
+`runtime-dispatch.ts`, `runtime-intent.ts`, `provision.ts`,
+`command-runs.ts`, `bridges.ts`, `messages.ts`, `sweeps.ts`.
+`runtime-harness-resolver.ts` holds the parsing helper that does filesystem
+IO, kept apart from the pure parsers. `server-parsers.ts` is a re-export
+barrel that keeps the historical import path.
 
-- `app-session-handlers.ts` — managed app-session apply/ensure/dispatch/interrupt/terminate (≈867 lines).
-- `event-handlers.ts` / `event-notification-handlers.ts` — event append, follow/notify, subscriber fan-out.
-- `turn-dispatch-handlers.ts` — semantic turn dispatch.
-- `broker-interactive-handlers.ts` (≈1,399 lines) / `broker-headless-handlers.ts` — interactive-tmux vs headless broker turn execution.
-- `sdk-turn-handlers.ts` — headless SDK executor turns.
-- `bridge-surface-handlers.ts` — bridge target/deliver/close + surface bind/unbind.
-- `sweep-handlers.ts` (+ `sweep-helpers.ts`, `sweep-reconcile.ts`) — runtime sweep, zombie-run sweep, active-run reconcile.
-- `runtime-io-handlers.ts`, `runtime-control-handlers.ts` (≈1,054 lines), `runtime-list-adopt-handlers.ts` — runtime lifecycle (ensure/start/inspect/attach/interrupt/terminate, list/adopt).
-- `target-message-handlers.ts`, `selector-message-handlers.ts` (≈1,091 lines), `selector-wait-handlers.ts` — `hrcchat` directed-messaging surface (target/by-selector dispatch, blocking waits, watch streams).
+### 2.6 `broker/`: the Harness Broker control surface
 
-Supporting flat modules: `broker-decisions.ts` (route choice between interactive-tmux / headless-broker / headless-SDK transports), `ask-bracket.ts` (durable composite-identity "awaiting user input" bracket that is the reaper authority), `hrc-event-helper.ts`, `hook-lifecycle.ts`, `otel-ingest.ts`, `messages.ts`, `dispatch-invocation.ts`, `option-resolvers.ts`, `require-helpers.ts`, `runtime-select.ts`, `status-views.ts`, `target-view.ts`, `local-bridge-helpers.ts`, `brain-enricher*`, `startup-reconcile.ts` (≈1,563 lines), `tmux.ts`, `tmux-socket.ts`, `ghostmux.ts`, `replay-spool.ts`, `server-context.ts`, `server-types.ts`, `server-constants.ts`, `server-lock.ts`, `server-log.ts`, `server-util.ts`, `server-misc.ts`.
+- `controller.ts` exports `HarnessBrokerController`
+  (`HarnessBrokerController.createProduction(deps)` in production). The class
+  is composed from method bags under `broker/controller/` (`bc-attach`,
+  `bc-close`, `bc-events`, `bc-projection`, `bc-rpc`, `bc-submission`) plus
+  allocation, dispatch, lifecycle and persistence helpers.
+- `event-mapper.ts` (+ `event-mapper/`) contains `BrokerEventMapper`, which
+  projects committed broker envelopes into HRC events and runtime, run and
+  message state. Harness evidence reaches HRC only this way: the old hook, OTEL
+  and launch-callback ingest was retired in T-08566 stage 1, and
+  `/v1/internal/hooks/ingest` and `/v1/internal/launches/:launchId/*` answer
+  410 `legacy_launch_ingest_retired`.
+- Other modules: capabilities, runtime hosting and runtime state, the
+  lifecycle overlay, submission doors, turn ownership, live substrate,
+  adoption root, observability.
+- `offline-evidence*.ts` handles retained-evidence recovery for a terminated or
+  failed broker runtime whose endpoint is gone. It runs the owning release's
+  `evidence-read` mode (`harness-broker.offline-evidence/v1`), validates each
+  page and projects through the mapper with `evidence_origin = 'retained'`.
+  Outcomes go to `retained_evidence_outcomes`. Entry points are
+  `POST /v1/capture/recover` (`hrc capture recover`) and the server's own
+  passes. Operator disposal is
+  `hrc runtime prune --dispose-retained-evidence --reason`.
+- `runtime-exclusive-owner.ts` gives each runtime one owner shared by every live
+  attach path and retained recovery. Once a retained projection has committed,
+  attach refuses with `runtime_retained_evidence_projected`.
 
-### 2.4 `parsers/` — the request-parsing layer, and `server-parsers.ts` as a thin barrel
+### 2.7 `launch/` and `agent-spaces-adapter/`
 
-**Confirmed: the parser split is already done.** `server-parsers.ts` is now a **67-line thin barrel** that contains only `export { … } from './parsers/*.js'` re-exports (no logic). It exists solely to preserve the historical import path. The real parsing lives in `parsers/`:
+- `launch/`: callback client, spool and environment hygiene (`env.ts`).
+- `agent-spaces-adapter/`: the seam to ASP. `compile-adapter.ts` (+ its
+  admission and types modules) sends the runtime intent, including
+  `selectionContext.summonDirectives`, to `aspd` and consumes the selected
+  execution. `aspd-preparation-client.ts`, `aspd-observation-client.ts`,
+  `aspd-execution-release.ts` and `cli-adapter.ts` are the other ASP-facing
+  clients.
 
-- `parsers/common.ts` (≈258) — `isRecord`, `parseJsonBody`, `parseFromSeq`, `normalizeOptionalQuery`, primitive field/query helpers.
-- `parsers/runtime.ts` (≈530) — runtime ensure/start/inspect/attach/action/terminate, in-flight input, list-runs/list-runtimes filters, broker-inspect, drop-continuation, prepare/resume attached-run parsing; exports the `InFlightInputRequest`, `ListRunsFilter`, `ListRuntimesFilter` types.
-- `parsers/app-sessions.ts` (≈557) — app-session specs/selectors, managed-session apply, dispatch/in-flight/clear-context/literal-input/interrupt/terminate requests, with the parsed-request types.
-- `parsers/bridges.ts` (≈206) — bridge selectors, target/deliver/close requests, surface bind/unbind.
-- `parsers/messages.ts` (≈53) — `parseSessionRef`, `parseResolveSessionRequest`.
-- `parsers/sweeps.ts` (≈167) — sweep-runtimes, sweep-zombie-runs, reconcile-active-runs parsing.
-- `parsers/runtime-harness-resolver.ts` (≈59) — the filesystem/profile harness-resolution that performs IO, kept **separate from shape-validation parsers** (parsing validates shape; the resolver does IO).
+### 2.8 Persistence
 
-Total parser layer ≈1,830 lines across cohesive modules; the largest parser file is well under the repo's 1,000-line parser ceiling (see §4).
+The sibling package `hrc-store-sqlite` owns the store: `database.ts`,
+`migrations.ts` + `migrations/`, `repositories/` and the per-domain
+repositories (messages, sessions, participants, federation, collective
+history, transcript index). hrc-server opens it with `openHrcDatabase` and
+passes the `HrcDatabase` handle through the handler context and the broker
+controller deps. Locate the live DB with `hrc server status --json`
+(`.api.dbPath`); never type the path in.
 
-### 2.5 `broker/` — the Harness Broker control surface
+## 3. Request and runtime flow
 
-**Confirmed: `broker/controller.ts` is a single large class** (`export class HarnessBrokerController`, ≈2,462 lines) — the broker control surface. It is the broadest-responsibility module in the package and owns:
-- broker client/session lifecycle and the RPC method surface (`hello`, `health`, `startInvocationFromRequest`, `input`, `interrupt`, `stop`, `status`, `dispose`, permission/close handlers), via the `BrokerClientLike` / `DurableBrokerClientLike` (adds `attach`, `snapshot`, `eventsSince`, `ackEvents`, `permissionRespond`) abstractions;
-- admission/capability checks, start-graph persistence (compiled runtime plans, runtimes, runs, invocations, lifecycle policies into the SQLite DB), tmux/headless substrate allocation (`BrokerTmuxAllocator`, lease serialization), and terminal/crash transition handling.
-- It is constructed with an explicit `HarnessBrokerControllerDeps` dependency object (db, event mapper, broker client factories, permission channel, agentchat lifecycle, tmux allocators, reap/reconcile hooks, command/args/env, clock, server-instance id). Its public surface is `HarnessBrokerController` plus the `Broker*` types and `BrokerControllerError`.
+1. A client hits the Unix socket. `dispatchRequest` resolves an exact route,
+   then the pattern matchers.
+2. The handler parses with `parsers/*`. A turn goes through `turn-admission/`,
+   which yields an `AdmittedPlan`.
+3. `broker-decisions.ts` picks the transport. Broker routes go through
+   `HarnessBrokerController`, which persists the start graph and drives the
+   broker. Envelopes come back through `BrokerEventMapper` into
+   `hrc-store-sqlite`.
+4. On `hrc server restart`, tmux and broker runtimes survive. Startup reconcile
+   classifies them and warmup reattaches the durable brokers.
 
-The rest of `broker/` are cohesive collaborators, already extracted:
-- `event-mapper.ts` (≈1,191) — `BrokerEventMapper`: broker invocation events → HRC events/state.
-- `runtime-hosting.ts` (≈528) — `projectBrokerHostingState` and hosting projection.
-- `runtime-state.ts` (≈349) — `extractFullRuntimeControlState` and runtime-state helpers.
-- `capabilities.ts` (≈321) — admission/capability checks.
-- `lifecycle-overlay.ts` (≈116) — lifecycle overlay projection.
-- `constants.ts` (≈13).
-- `offline-evidence.ts` — T-08566 stage 2 retained-evidence recovery. For a `terminated`/`failed` harness-broker runtime whose endpoint is unreachable, it runs the persisted owning release's `evidence-read` mode (manifest capability `harness-broker.offline-evidence/v1`), validates each page whole (identity, contiguous seqs, strict progress, stable snapshot), and projects through `BrokerEventMapper.applyRetained`. That is an allowlist fence: mirror rows and canonical rows carry `evidence_origin = 'retained'`, and no runtime, session or control state is written. Each committed envelope also sets `broker_invocations.retained_projected_through_seq`. Outcomes go to the keep-forever `retained_evidence_outcomes` table, never to `hrc_events`. Triggers: `POST /v1/capture/recover` (`hrc capture recover`), O2 on `runtime.terminated`, a bounded startup/lease-GC pass (≤20), O1 report summaries, and O3 terminal gap repair. Bound ledger directories stay held until recovered or operator-disposed (`hrc runtime prune --dispose-retained-evidence --reason`).
-- `runtime-exclusive-owner.ts` — one per-runtime owner shared by every live attach path (the `brokerReattachOperations` flights) and retained recovery. Operator attach, adopt, the shared dispatch reattach seam and `controller.attachAndReplay` refuse `runtime_retained_evidence_projected` once a retained projection has committed. The fence is runtime-scoped: turns and DMs to the session still birth a new runtime by the ordinary paths.
+## 4. Invariants and where they are enforced
 
-Note (cross-cutting, shipped): the controller participates in the durable-broker model — eager warm of the serving controller after a daemon restart (`brokerWarmupComplete`), `broker.health` liveness, per-runtime liveness probing for the reaper, and the `classifyBrokerInputFailure` messaging path for cold-controller/probe races.
+- **Boundaries** (`scripts/check-boundaries.ts`): HRC packages must not import
+  `acp-*`, `gateway-discord`, `gateway-ios`, `coordination-substrate`,
+  `wrkq-lib` or `wlearn`. HRC talks to wrkq through its ledger client, not the
+  library.
+- **Admission** (`scripts/check-admission-entry.ts`): handlers cannot import
+  executors or the plan constructor.
+- **Daemon subprocesses** (`scripts/check-daemon-subprocess.ts`): run only
+  through `runBoundedSubprocess`, with no synchronous spawn.
+- **File size**: test files are capped at 1,000 lines
+  (`scripts/check-test-source-size.ts`). No check caps source files.
+- The full rule-to-enforcer table is [rule-enforcers.md](rule-enforcers.md).
+  The validation commands are in [development-workflow.md](development-workflow.md).
 
-### 2.6 `launch/` and `agent-spaces-adapter/`
-
-- `launch/` — callback spooling and environment hygiene: `env.ts` (tmux/inherited env scrubbing), `callback-client.ts`, `spool.ts`, `index.ts`. The Codex Desktop registration helper (`desktop-hook.ts`/`desktop-hook-cli.ts`, the installed `hrc-desktop-hook` bin) was retired in T-08567. The former launch-wrapper hook, OTEL and launch-callback ingest (`hook.ts`, `hook-cli.ts`, `codex-otel.ts`, `launch-artifact.ts`, `hook-lifecycle.ts`, `otel-ingest.ts`, `launch-lifecycle-handlers.ts`) was retired in T-08566 stage 1: `/v1/internal/hooks/ingest` and `/v1/internal/launches/:launchId/*` answer 410 `legacy_launch_ingest_retired`, no OTLP listener is bound, and startup quarantines spooled entries for those routes. Harness evidence arrives only as committed broker envelopes through `broker/event-mapper.ts`.
-- `agent-spaces-adapter/` — the seam onto the pinned ASP `spaces-*` packages: `compile-adapter.ts` (`compileBrokerRuntimePlan`), `compile-profile-selector.ts`, `cli-adapter.ts`, `sdk-adapter.ts`, `aspc-facade-client.ts`, `index.ts`.
-
-### 2.7 Persistence
-
-State is persisted by the sibling package `hrc-store-sqlite` (not inside hrc-server): `database.ts`, `migrations.ts`, `repositories.ts`, `message-repository.ts`, `index.ts`. hrc-server opens it via `openHrcDatabase(options.dbPath)` and threads the `HrcDatabase` handle through `HrcServerInstanceForHandlers` and `HarnessBrokerControllerDeps`. Canonical DB path: `/Users/lherron/praesidium/var/state/hrc/state.sqlite`.
-
----
-
-## 3. Request and runtime flow (current)
-
-1. A client hits the Unix socket (`/Users/lherron/praesidium/var/run/hrc/hrc.sock`). `handleRequest` resolves the handler via the exact-route map (then prefix fallbacks).
-2. The handler (a prototype-attached domain method) parses the body via `parsers/*` (imported through the `server-parsers.ts` barrel), validates shape, and resolves IO-bound harness/profile data via `parsers/runtime-harness-resolver.ts`.
-3. Turn dispatch chooses a transport via `broker-decisions.ts`: interactive-tmux broker, headless broker, or headless SDK executor. Broker routes go through `HarnessBrokerController`; the controller persists the start graph and drives the broker client; broker invocation events are mapped back through `broker/event-mapper.ts` into HRC events/state and persisted via `hrc-store-sqlite`.
-4. "Awaiting user input" is modeled as a first-class durable bracket (`ask-bracket.ts`) so the active-run reaper never kills a turn parked on a user question.
-5. tmux runtimes survive `hrc server restart`; on restart, `startup-reconcile.ts` + `replay-spool.ts` reconcile and the durable broker controller is eager-warmed.
-
----
-
-## 4. Module-shape invariants the repo enforces
-
-**Validation bar (root `package.json` scripts + AGENTS.md "Validation"; detail in [development-workflow.md](development-workflow.md)):**
-- `bun run typecheck` (per-package `tsc --noEmit`)
-- `bun run test` (hrc-server uses `bun test --timeout 10000`; broker tests want `TMPDIR=/tmp` to dodge the macOS Unix-socket path-length limit)
-- `bun run lint` / `bun run lint:fix` (biome)
-- `bun run check:boundaries` and `bun run check:manifests`
-- `bun run build` (`tsc`)
-- Installed-binary bar: `just install`, restart the real launchd daemon, and smoke `hrc --help`, `hrc server status`, and at least one real read-only API/CLI command. `just install` prepares an immutable release and atomically advances the shared `hrc`/`hrcchat` indirection; see [Atomic HRC CLI installs](atomic-install.md). After source changes, install before restarting the launchd service.
-
-**Boundary invariant (`scripts/check-boundaries.ts`):** the repo is split into an **ASP layer** and an **HRC layer**. HRC source (`hrc-*`, `agent-action-render`, `hrc-frame-render`) **must not** import `acp-*`, `gateway-discord`, `gateway-ios`, `coordination-substrate`, `wrkq-lib`, or `wlearn`. HRC may import ASP `spaces-*`/`agent-*` packages by name, pinned to exact versions in `package.json`. The ASP layer must not import HRC. A cross-layer import (or an HRC test asserting an ASP-source invariant) is a split violation.
-
-**File-size ceilings (enforced as the package's refactor bar):**
-- No parser file exceeds **1,000 lines** (largest current parser, `parsers/runtime.ts`, ≈530 — satisfied).
-- No newly-created hrc-server source file exceeds **1,500 lines**. Pre-existing modules above this — `broker/controller.ts` (≈2,462), `startup-reconcile.ts` (≈1,563), `index.ts` (≈1,518) — are the known large surfaces that predate the ceiling; the ceiling constrains new files, not these legacy ones.
-
-**Command set (CLIs that drive this daemon):** `hrc` (operator CLI, `packages/hrc-cli`) and `hrcchat` (directed-messaging CLI, `packages/hrcchat-cli`). The daemon's own surface is the Unix-socket HTTP API enumerated by the exact-route map in `index.ts`.
-
----
-
-## 5. Current coupling seams (factual, not aspirational)
-
-These are the seams that exist today, recorded as current state:
-- Domain handlers are attached to a single `HrcServerInstance.prototype` via `Object.assign` and are typed against the broad `HrcServerInstanceForHandlers` context with `any`-typed `HandlerMethod` aliases. This is the working split.
-- Route ownership lives in `index.ts`'s `exactRouteHandlers` map (route aggregation is centralized, not domain-owned), with `runtime-list-adopt-handlers.ts` as the one domain registered via a route factory.
-- `broker/controller.ts` remains a single multi-responsibility class and is the broker control surface.
-
-These seams are stated as facts of the shipped system; this document does not prescribe their evolution.
+**CLIs:** `hrc` (`packages/hrc-cli`) is the operator CLI. The `hrcchat` CLI is
+retired: its runtime verbs moved into `hrc`, and agent messaging moved to
+`wrkc`.

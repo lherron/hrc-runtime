@@ -44,8 +44,10 @@ one.
   `active_invocation_id`, and `runtime_state_json.broker.brokerPid`.
 - **A warmup count hides which brokers failed.** `broker.warmup.complete`
   reporting the same `attached`/`total` after a restart says nothing about
-  whether the SAME runtimes are unreachable. Diff the `ipc_unreachable` runtime
-  ids against the known set; a new id at an unchanged count is a regression.
+  whether the SAME runtimes are unreachable, and its `byCategory` counts name no
+  runtimes. Read the per-runtime `broker.warmup.runtime` lines and diff the ids
+  in category `ipc_unreachable_nonterminal` against the known set; a new id at
+  an unchanged count is a regression.
 - **The start response is not turn evidence.** On the headless route
   `hrc start --wait completed --json` returned `runtime.terminal: null` and no
   `finalMessage` for a turn that completed. Grade a turn from `hrc_events`: the

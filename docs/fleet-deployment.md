@@ -11,7 +11,7 @@ on `mini` (user `lherron`), **max3** a separate workstation, and **hrcdev** a Ta
 guest VM hosted on max3. (lab was retired 2026-09-22 and is no longer a deploy
 target.) One recipe per node — `just deploy-svc`, `deploy-max3`, `deploy-hrcdev`
 — plus `just fleet-status` for a read-only parity table and `just deploy-fleet`
-to bring svc and hrcdev to max3 in a single pass.
+to bring svc and hrcdev to the builds max3 is running, in a single pass.
 
 **A node is three processes, deployed in dependency order**, each under its own
 gui LaunchAgent and each with its own target:
@@ -49,12 +49,23 @@ live probe (`DOWN` when unreachable) and `INJECTOR` as the running pinned versio
 argv — read on the driver and handed to the node as literals. `deploy-max3`
 defaults to `origin/main` (both repos) and `latest` (injector, resolved to a
 version and pinned). Any ref works: `just deploy-svc origin/main origin/main
-0.1.0-dev.…`. `deploy-fleet` resolves `@max3` **once** for both nodes; letting
-each resolve it races a concurrent max3 install. Bring max3 to latest first, then
-`deploy-fleet`.
+0.1.0-dev.…`. `deploy-fleet` resolves `@max3` **once** and passes the literals to every
+node. Letting each node resolve it would race a concurrent max3 install. It
+runs max3 first, which re-proves max3's running target and publishes it, and
+then svc and hrcdev. To move the fleet forward, bring max3 to latest first
+(`deploy-max3`), then run `deploy-fleet`.
 
-**Restart mode.** Busy runtimes do not block a deploy — brokers reattach across
-an HRC restart. `restart=wait` (default) drains in-flight runs first;
+**Only max3 publishes.** `deploy-max3`, and the max3 leg of `deploy-fleet`,
+publish the selected release to the fleet registry after the restart readback
+(`just _publish-selected-release`). The svc and hrcdev legs are `no-publish`.
+The recipe refuses canonical publication from any node other than max3.
+
+**Restart mode and authority.** The ssh phase only installs. The restart runs
+in the invoking seat as `hrc server restart --node <node> --reason …`, through
+the daemon's lifecycle endpoint (T-09861). An ssh shell has no runtime identity
+to authorize it. Running the recipe grants nothing: an unauthorized caller gets
+the install and then a non-zero exit carrying the daemon's refusal. Busy
+runtimes do not block a deploy, because brokers reattach across an HRC restart. `restart=wait` (default) drains in-flight runs first;
 `restart=force` restarts through them and is the only mode that completes from a
 live agent turn on the node being deployed.
 
@@ -114,8 +125,10 @@ stray copy or plist. Bump bun fleet-wide in one pass (same version and revision
 on every node, `bun --revision`), never with a node-local `bun upgrade`.
 
 **Supervisors.** Every node runs its three processes as console user `lherron`
-under **gui LaunchAgents** in `gui/<uid>`. `hrc server restart` detects and
-kickstarts the hrc-server job. Changing plist env = edit `EnvironmentVariables`
+under **gui LaunchAgents** in `gui/<uid>`. `hrc server stop|restart` is a thin
+client of the daemon's lifecycle endpoint: the daemon decides authority from
+the credential it minted, and the CLI never signals or kickstarts a running
+daemon (T-09861). Changing plist env = edit `EnvironmentVariables`
 **and reload the job** (`launchctl bootout gui/<uid>/<label>`, then `bootstrap
 gui/<uid> <plist>`) — `restart`/`kickstart` do NOT re-read the plist.
 
@@ -124,8 +137,12 @@ plist, orphaned to PID 1, was wrong and is what let T-07957 pass as a green depl
 over a detached daemon carrying none of the plist's environment. Until T-07958 it
 also declared a second, root `/Library/LaunchDaemons` job for the same label; that
 is retired (`.retired-T07958`). Its gui LaunchAgent carries
-`VERDACCIO_REGISTRY=http://127.0.0.1:4873/`, the guest's only live
-publish-containment guard, which daemon-spawned seats inherit. If a node ever
+`VERDACCIO_REGISTRY=http://127.0.0.1:4873/`, but that value never reaches an
+agent shell. Publish containment is enforced at the publish boundary instead,
+keyed on node identity: `scripts/lib/publish-containment.ts` lists `hrcdev` in
+`CONTAINED_NODE_IDS` and refuses any non-loopback publish from it, with no
+override flag (T-07959). `deploy-hrcdev` names the loopback registry explicitly
+for its `just install`. If a node ever
 declares two jobs for one label again, pick one — `hrc server restart` refuses
 to self-daemonize past an unloaded LaunchAgent (T-07957), so the deploy lane
 stays red until it is resolved.
