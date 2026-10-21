@@ -88,9 +88,10 @@ def main():
                         self.wfile.flush()
                     except (BrokenPipeError, ConnectionResetError):
                         return
-                    # Retain the original fixture's EOF/reconnect exercise once;
-                    # subsequent state changes use the live stream, not backoff.
-                    if s['stream_opens'] == 1:
+                    # Exercise EOF during the outage: reconnect and failed-read
+                    # backoff can overlap, just as they can against real HRC.
+                    # Subsequent state changes use the live stream.
+                    if s['down'] and s['stream_opens'] == 1:
                         return
                     with wake:
                         wake.wait_for(lambda: state['wake_revision'] != s['wake_revision'] or state['stopping'])
