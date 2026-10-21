@@ -87,7 +87,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='hk-summon-', dir='/tmp') as root:
         root = pathlib.Path(root)
         server = Server(str(root/'hrc.sock'), Handler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        threading.Thread(target=lambda: server.serve_forever(poll_interval=.01), daemon=True).start()
         with open(evidence/'stderr.log', 'w') as log:
             process = subprocess.Popen([binary, '--runtime-root', str(root)], stdout=subprocess.PIPE, stderr=log, text=True)
             try:

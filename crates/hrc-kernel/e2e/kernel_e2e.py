@@ -59,9 +59,12 @@ def main():
                    runtimeId='rt-1', status='busy', metadata={}, operatorSurfaces=[],
                    contextReading=dict(turnId='turn-1', usedTokens=10, observedAt=now),
                    tmux=dict(socketPath='/tmp/absent-hrc-tmux.sock', attachTarget='seat:tui'))
-    state = dict(incarnation='ledger-1', head=0, events=[], sessions=[record], runtimes=[runtime], down=False)
+    state = dict(incarnation='ledger-1', head=0, events=[], sessions=[record], runtimes=[runtime], down=False,
+                 wake_revision=0, stream_opens=0, stopping=False)
     paths = []
     lock = threading.Lock()
+    wake = threading.Condition(lock)
+    outage_read = threading.Event()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -69,7 +72,30 @@ def main():
             q = urllib.parse.parse_qs(u.query)
             with lock:
                 paths.append(u.path)
+                if u.path == '/v1/events/bounded-stream':
+                    state['stream_opens'] += 1
                 s = copy.deepcopy(state)
+            if u.path == '/v1/events/bounded-stream':
+                # Keep the stream open, as HRC does. Mutations send deliberately
+                # lying wakes immediately; only the subsequent page may certify
+                # state. EOF/reconnect backoff must not be the fixture's clock.
+                self.send_response(200)
+                self.end_headers()
+                while not s['stopping']:
+                    try:
+                        self.wfile.write((json.dumps(dict(type='gap', ledgerIncarnationId=s['incarnation'],
+                                                         afterHrcSeq=0, beforeHrcSeq=999999))+'\n').encode())
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+                    # Retain the original fixture's EOF/reconnect exercise once;
+                    # subsequent state changes use the live stream, not backoff.
+                    if s['stream_opens'] == 1:
+                        return
+                    with wake:
+                        wake.wait_for(lambda: state['wake_revision'] != s['wake_revision'] or state['stopping'])
+                        s = copy.deepcopy(state)
+                return
             status = 200
             if s['down']:
                 status, value = 503, dict(error=dict(code='unavailable'))
@@ -87,9 +113,6 @@ def main():
                 value = dict(ok=True, runtimes=s['runtimes'])
             elif u.path == '/v1/events/latest-by-session':
                 value = s['events'][-1:]
-            elif u.path == '/v1/events/bounded-stream':
-                # Lying/omitted content is only a wake; it must not become state.
-                value = dict(type='gap', ledgerIncarnationId=s['incarnation'], afterHrcSeq=0, beforeHrcSeq=999999)
             else:
                 status, value = 500, dict(error=dict(code='forbidden_read'))
             body = json.dumps(value).encode() + b'\n'
@@ -97,6 +120,8 @@ def main():
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            if s['down']:
+                outage_read.set()
 
         def do_POST(self):
             assert self.path == '/v1/presentation/seats/read', self.path
@@ -138,7 +163,7 @@ def main():
         state['runtimes'][0]['tmux']['socketPath'] = tmux_socket
         api = root / 'hrc.sock'
         server = Server(str(api), Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=.01), daemon=True)
         thread.start()
         log = open(evidence / 'kernel.stderr.log', 'w')
         process = subprocess.Popen([binary, '--runtime-root', str(root)], stdin=subprocess.DEVNULL,
@@ -169,11 +194,13 @@ def main():
             subprocess.run(['tmux', '-S', tmux_socket, 'new-window', '-d', '-t', 'seat', '-n', 'tui', 'sleep 600'], check=True)
             duplicate = subprocess.run([binary, '--runtime-root', str(root)], capture_output=True, timeout=3)
             assert duplicate.returncode != 0, 'second kernel took over socket'
-            with lock:
+            with wake:
                 state['down'] = True
-            time.sleep(1.2)
+                state['wake_revision'] += 1
+                wake.notify_all()
+            assert outage_read.wait(20), 'kernel never observed the API outage'
             assert process.poll() is None and query()['rows'][0]['id'] == row['id']
-            with lock:
+            with wake:
                 state['down'] = False
                 state['sessions'][0].update(hostSessionId='hs-2', generation=2)
                 state['runtimes'][0].update(hostSessionId='hs-2', generation=2, runtimeId='rt-2')
@@ -186,6 +213,8 @@ def main():
                                                 eventKind='turn.tool_result', ts=now, runtimeId='rt-2',
                                                 payload=dict(result=dict(details=dict(spill=dict(blobId='blob'))))))
                 state['head'] = 10
+                state['wake_revision'] += 1
+                wake.notify_all()
             after = wait_for(lambda: (r if (r := query())['rows'][0]['payload'].get('generation') == 2 else None), 'replay sparse ledger')
             assert after['rows'][0]['id'] == row['id'], 'seat row changed across generation'
             assert after['rows'][0]['payload']['contextReading']['usedTokens'] == 20
@@ -194,10 +223,12 @@ def main():
             status = wire.call('ingest.status', dict(document_id='hrc'))['bindings'][0]
             assert status['resync']['every_ms'] == 600000, status
             cursor = status['cursor']
-            with lock:
+            with wake:
                 state['incarnation'] = 'ledger-2'
                 state['events'] = []
                 state['head'] = 0
+                state['wake_revision'] += 1
+                wake.notify_all()
             replaced = wait_for(lambda: (s if (s := wire.call('ingest.status', dict(document_id='hrc'))['bindings'][0])['cursor'] and s['cursor'].get('incarnation') == 'ledger-2' and s['caught_up'] else None), 'replacement reset/rebuild')
             assert replaced['last_reset_reason'] == 'incarnation_changed', replaced
             current = query()
@@ -211,6 +242,7 @@ def main():
             allowed = {'/v1/presentation/seats/read', '/v1/events/page', '/v1/events/bounded-stream', '/v1/events/latest-by-session', '/v1/presentation/runtimes', '/v1/sessions'}
             assert '/v1/presentation/seats/read' in paths, paths
             assert set(paths) <= allowed, set(paths)
+            assert state['stream_opens'] >= 2, 'wake stream never reconnected after EOF'
             report = dict(ready=ready, types=[n['name'] for n in discovery['node_types']],
                           initial=first, replay=after, cursor_before_replace=cursor,
                           replacement=replaced, resync=resync, ended=ended, legacy_attach=legacy, paths=sorted(set(paths)), pass_=True)
@@ -221,7 +253,11 @@ def main():
             process.terminate()
             process.wait(timeout=3)
             log.close()
+            with wake:
+                state['stopping'] = True
+                wake.notify_all()
             server.shutdown()
+            server.server_close()
             subprocess.run(['tmux', '-S', tmux_socket, 'kill-server'], check=False, capture_output=True)
 
 
