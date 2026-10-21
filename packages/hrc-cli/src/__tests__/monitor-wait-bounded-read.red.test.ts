@@ -36,6 +36,11 @@ const COMPETING_WRITER_SOURCE = String.raw`
   import { Database } from 'bun:sqlite'
 
   const db = new Database(process.env.T08679_DB_PATH)
+  // The wait's refresh is often the only connection, so its open (WAL
+  // recovery) and close (last-connection checkpoint) briefly lock the file.
+  // Wait those out like every store connection does; once LOCKED prints, this
+  // writer holds the exclusive lock the wait must ride out.
+  db.exec('PRAGMA busy_timeout = 5000')
   db.exec('PRAGMA journal_mode = WAL; BEGIN EXCLUSIVE')
   db.query('UPDATE runtimes SET updated_at = updated_at WHERE runtime_id = ?').run(
     process.env.T08679_RUNTIME_ID
@@ -180,11 +185,17 @@ async function holdCompetingWrite(holdMs: number): Promise<ReturnType<typeof Bun
       T08679_HOLD_MS: String(holdMs),
     },
     stdout: 'pipe',
+    stderr: 'pipe',
   })
   const reader = writer.stdout.getReader()
   const first = await reader.read()
   reader.releaseLock()
-  expect(new TextDecoder().decode(first.value)).toContain('LOCKED')
+  const locked = new TextDecoder().decode(first.value)
+  if (!locked.includes('LOCKED')) {
+    const exitCode = await writer.exited
+    const stderr = await new Response(writer.stderr).text()
+    throw new Error(`competing writer never locked (exit ${exitCode}): ${stderr}`)
+  }
   return writer
 }
 
