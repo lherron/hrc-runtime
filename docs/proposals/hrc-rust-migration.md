@@ -217,6 +217,33 @@ Kernel ops (`fences_on: none`, no `document_id`) that call the TS daemon's exist
 4. **Fresh:** `fresh: true` on a roster lane claims a suffix seat and returns its `session_ref`.
 5. **Parity:** for the gate-2 seat, the started runtime's harness, project root and cwd equal `hrc start <scope> --dry-run --json`'s preview for the same scope.
 
+#### 4.6.2 `seat.restart` (T-11496)
+
+Architecture: APPROVED by Daedalus, 2026-10-22, EN-33147; recorded in
+`architecture/contracts/hrc-rust-migration.yaml` (`hrc-runtime.rust-migration`).
+
+Kernel-scoped, `fences_on: none`, no Cardo idempotency receipt or document fence.
+Input is `{host_session_id, expected_generation}` from the selected seat row;
+unknown fields (including `force`) and empty IDs or negative/noninteger generations
+refuse before HTTP. The generation is an HRC semantic fence, not a document revision.
+Call existing POST `/v1/sessions/restart` once with
+`{hostSessionId, expectedGeneration}`. No resolve, server change or retry.
+HRC owns freshness, home authority, idle probing, rotation and relaunch. Busy,
+unobservable and stale refusals retain the HRC code/message in typed op errors.
+Return `{prior_host_session_id, host_session_id, generation, launch}` from HRC.
+`launch` preserves the existing `{status: started, runtimeId}` or
+`{status: failed, code?, message}` shape: failed launch is a committed rotation,
+not a refusal or permission to retry the old generation. Ingest updates the same
+scope/lane natural key; the op never writes projected rows or returns a descriptor.
+Cancellation cannot undo an owner mutation; its outcome is unknown until readback.
+
+Acceptance: cargo tests first against captured real restart request/response,
+including malformed input, response mapping and committed launch failure; black-box
+wire tests for typed refusal, stale fence, no caching/retry and responsive reads.
+Installed Loggia discovery must list the op; a throwaway-seat restart must advance
+the generation on the same seat row, and a real busy-seat refusal must be captured.
+Only the Loggia-supervised kernel is stopped for activation; HRC is not restarted.
+
 ### 4.7 Lifecycle and scope
 
 - Loggia starts the kernel if none is running and supervises it, the cardo-ui pattern. The socket is at a fixed path under HRC's `runtimeRoot`, so a launchd resident can replace Loggia later without changing a mount. There is no new launchd service and no change to restart authority.

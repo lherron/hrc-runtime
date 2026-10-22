@@ -5,7 +5,7 @@ owner_project: hrc-runtime
 scope: Rust migration stages, API-fed kernel projection, and slice-scoped dual implementation
 approved_source:
   revision: d04a6f9d
-  draft: r3.3 (section 0 facade-first ruling and sections 4.6/4.6.1 seat.summon only)
+  draft: r3.3 (facade-first ruling, seat.summon, and scoped preview and seat.restart amendments)
   proposal: docs/proposals/hrc-rust-migration.md
   task: T-11441
   task_slug: rust-stage1-kernel-projector
@@ -15,6 +15,8 @@ approved_source:
   amendment_task_slug: hrc-kernel-seat-summon
   preview_amendment_task: T-11490
   preview_amendment_task_slug: kernel-latest-event-preview
+  restart_amendment_task: T-11496
+  restart_amendment_task_slug: kernel-seat-restart-op
 predicate: >
   HRC embeds cardo-runtime as a library and retains ownership of its durable
   store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
@@ -88,7 +90,17 @@ predicate: >
   and follows the claimed natural key. Remote-homed attachment, socket-down
   recovery and coordination of concurrent summoners remain unsupported;
   remote starts can succeed without producing a local attachable row.
-  The other four proposed operations remain outside this approval.
+  The seat.restart amendment in section 4.6.2 adds a kernel-scoped operation
+  with fences_on none, accepting host_session_id and expected_generation.
+  It calls existing POST /v1/sessions/restart once with hostSessionId and
+  expectedGeneration, never force. HRC owns the semantic generation fence,
+  idle/busy check, rotation and launch. Refusals preserve HRC code/message.
+  The receipt carries prior_host_session_id, host_session_id, generation and
+  launch, including committed rotation with launch.status failed. No retry,
+  Cardo idempotency receipt, attach descriptor or projection writes occur;
+  ingest updates the existing scope/lane seat natural key. Cancellation
+  cannot undo the mutation and requires readback. The other three proposed
+  operations remain outside this approval.
   During stage 2 the route table owns slice routing, exactly one process
   serves each route family and sweep loop, and the TypeScript daemon remains
   complete until stage 3. Unported slices change in TypeScript; ported slices
@@ -110,6 +122,8 @@ authority: >
   the r3.3 seat.summon amendment submitted in EN-32764, 2026-10-20.
   Daedalus approval of the section 4.3 bounded preview-context read amendment
   submitted in EN-33112 and wrkq:T-11490 specification etag 5, 2026-10-22.
+  Daedalus approval of the section 4.6.2 seat.restart facade amendment
+  submitted in EN-33147 and wrkq:T-11496 specification etag 4, 2026-10-22.
 source:
   - docs/proposals/hrc-rust-migration.md
   - commit:e159381c1524a40921893601f9e858fc8645843e
@@ -125,6 +139,8 @@ source:
   - wrkq:T-11451
   - wrkq:T-11490
   - wrkc:EN-33112
+  - wrkq:T-11496
+  - wrkc:EN-33147
   - architecture/contracts/runtime-context-reading.yaml
   - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
   - architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml
@@ -146,6 +162,11 @@ source:
   - packages/hrc-server/src/exact-claim.ts
   - packages/hrc-server/src/roster-claim.ts
   - packages/hrc-server/src/scope-claim-core.ts
+  - packages/hrc-server/src/session-restart.ts
+  - packages/hrc-server/src/runtime-control-handlers/session-rotation.ts
+  - packages/hrc-core/src/http-contracts-runtime.ts
+  - crates/hrc-kernel/src/adapter.rs
+  - crates/hrc-domain/src/declarations.rs
 validation_scope: >
   The requester supplies section 4.8 gates: side-effect-free read-set tests
   against a dead-substrate seed with the mutating runtime-list control;
@@ -166,6 +187,12 @@ validation_scope: >
   tail request and projected preview, including bootstrap recovery. Live
   query and Development Sessions screenshot establish the product claim.
   The side-effect-free read-set obligation includes this tail read.
+  For T-11496 the requester supplies section 4.6.2's captured real restart
+  request/response fixtures, malformed-input and committed-launch-failure
+  mapping, black-box typed-refusal and stale-fence checks, no caching or
+  retry, responsive reads, installed discovery, same-seat generation advance
+  on a throwaway seat and captured real busy-seat refusal. Activation stops
+  only the Loggia-supervised kernel, not HRC.
   Stage 2 retains
   both-daemon conformance per ported slice, installed runtime smoke and
   broker reattach evidence, plus the proposal's M1 prerequisite. These are
@@ -190,10 +217,19 @@ last_verified: >
   formatting and HRCMac's exact-generation recent-event lookup. No build,
   test, install or service commands were run for this design ruling;
   implementation acceptance remains the requester's work.
+  2026-10-22 T-11496 seat.restart amendment approved by reading section
+  4.6.2 and task specification etag 4 against existing route registration,
+  request/response types, freshness and broker-idle refusals, rotation and
+  post-commit launch handling, owner-HTTP error mapping, asynchronous adapter
+  work and scope/lane projection keys. The existing endpoint's probe-to-dispose
+  and concurrent-rotation risks are inherited unchanged; this ruling grants
+  no serialization guarantee. No builds, tests, installs or service commands
+  were run; implementation acceptance remains the requester's work.
 reopen_when: >
   Migration authority, repository or release boundaries, slice ownership or
   rollback completeness, schema ownership, stage prerequisites, page coverage
   or incarnation semantics, pinned read set, projection state ownership,
   context source, attach source, restart behavior or consolidation trigger
   changes; or the stage-1b no-TypeScript-growth rule, summon request/receipt,
-  daemon authority, retry semantics or unsupported cases change.
+  restart request/receipt, daemon authority, retry or cancellation semantics
+  or unsupported cases change.
