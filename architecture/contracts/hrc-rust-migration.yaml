@@ -13,6 +13,8 @@ approved_source:
   prior_full_approval: e159381c1524a40921893601f9e858fc8645843e (r3.2)
   amendment_task: T-11452
   amendment_task_slug: hrc-kernel-seat-summon
+  preview_amendment_task: T-11490
+  preview_amendment_task_slug: kernel-latest-event-preview
 predicate: >
   HRC embeds cardo-runtime as a library and retains ownership of its durable
   store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
@@ -45,11 +47,24 @@ predicate: >
   and has no must-see retention authority. This page contract is separate
   from hrc-runtime.bounded-lifecycle-event-observation's bounded tail and
   lossy live stream; their existing admission and loss semantics are unchanged.
-  The pinned state reads are sessions, latest-by-session and presentation
-  runtimes, plus the page route and bounded-stream wake. Neither /v1/runtimes
-  nor /v1/attach is in that set. Attach descriptors use the presentation row's
-  HRC-resolved socketPath and attachTarget; an absent tmux block refuses
-  resource_unavailable. The kernel does not parse hosting-state variants.
+  The pinned state reads are sessions, latest-by-session, presentation
+  runtimes and the keyed presentation seats read, plus the page route and
+  bounded-stream wake. For selected seats whose newest event is a tool result,
+  the kernel may also read the existing GET /v1/events/tail with that exact
+  hostSessionId and generation and limit 10. This bounded window supplies
+  preview formatting context only, never selected event identity, activity,
+  membership or cursor progress. Newest-by-hrcSeq selection, including
+  bookkeeping events, is unchanged. Optional nonempty latestEvent.preview
+  for turn events follows HRCMac HrcEventPreview formatting: matching tool-use
+  ID aliases, nearest preceding same-run call when the ID is absent, payload
+  and tool-name fallback when no matching call is in the window, whitespace
+  collapse, result prefixes and 180-character truncation. Context is read
+  during bootstrap, apply and resync, never retained as projection state.
+  The window is bounded context, not a promise to recover calls outside it.
+  No HRC server behavior or activation changes with this extension.
+  Neither /v1/runtimes nor /v1/attach is in that set. Attach descriptors use
+  the presentation row's HRC-resolved socketPath and attachTarget; an absent
+  tmux block refuses resource_unavailable. The kernel does not parse hosting-state variants.
   Stage 1b owner-API operations remain a separate step after the read-only
   gates. Stages 1 and 1b are a facade over the complete TypeScript daemon;
   stage 1b adds no TypeScript code or HRC features. An operation requiring
@@ -93,6 +108,8 @@ authority: >
   EN-32629, 2026-10-20. F1-F4 were closed by r3.1 and F5 by r3.2.
   Lance's facade-first/no-TypeScript-growth ruling and Daedalus approval of
   the r3.3 seat.summon amendment submitted in EN-32764, 2026-10-20.
+  Daedalus approval of the section 4.3 bounded preview-context read amendment
+  submitted in EN-33112 and wrkq:T-11490 specification etag 5, 2026-10-22.
 source:
   - docs/proposals/hrc-rust-migration.md
   - commit:e159381c1524a40921893601f9e858fc8645843e
@@ -105,6 +122,9 @@ source:
   - commit:d04a6f9d
   - wrkq:T-11452
   - wrkc:EN-32764
+  - wrkq:T-11451
+  - wrkq:T-11490
+  - wrkc:EN-33112
   - architecture/contracts/runtime-context-reading.yaml
   - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
   - architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml
@@ -113,6 +133,14 @@ source:
   - packages/hrc-server/src/server-session-methods.ts
   - packages/hrc-server/src/selector-message-handlers.ts
   - packages/hrc-server/src/bounded-event-stream.ts
+  - packages/hrc-server/src/server-exact-routes.ts
+  - packages/hrc-server/src/event-handlers.ts
+  - packages/hrc-server/src/federation/scope-read-routing.ts
+  - packages/hrc-store-sqlite/src/repositories/event-repositories.ts
+  - packages/hrc-store-sqlite/src/repositories/shared.ts
+  - crates/hrc-domain/src/api.rs
+  - crates/hrc-domain/src/projector.rs
+  - crates/hrc-domain/src/projection.rs
   - packages/hrc-core/src/declaration-contracts.ts
   - packages/hrc-server/src/declaration-handlers.ts
   - packages/hrc-server/src/exact-claim.ts
@@ -132,6 +160,12 @@ validation_scope: >
   start for the request identity; same-key retry yielding one runtime, the
   same claim and replayed true; suffix claim on a roster lane; and harness,
   project-root and cwd parity with the CLI dry-run for the cold-seat scope.
+  For T-11490 the requester supplies real-payload preview fixtures, matching
+  and absent-context fallbacks, wrong-ID and generation isolation, bookkeeping
+  precedence, truncation, and a black-box kernel check of the exact bounded
+  tail request and projected preview, including bootstrap recovery. Live
+  query and Development Sessions screenshot establish the product claim.
+  The side-effect-free read-set obligation includes this tail read.
   Stage 2 retains
   both-daemon conformance per ported slice, installed runtime smoke and
   broker reattach evidence, plus the proposal's M1 prerequisite. These are
@@ -148,6 +182,14 @@ last_verified: >
   compared ACP buildMobileStartRequest and the mail injector's by-scope call.
   No build, test, install or service commands were run; the five summon
   implementation gates remain unverified by this ruling.
+  2026-10-22 T-11490 bounded preview-context amendment approved by reading
+  section 4.3 and task specification etag 5 against route dispatch, the
+  no-scope local routing path, event filter parsing, SQL filter-before-limit
+  tail transaction, and kernel selection/bootstrap/apply code. Compared
+  hrc-ios HRCMobile/Sources/GatewayClient/HrcEventPreview.swift matching and
+  formatting and HRCMac's exact-generation recent-event lookup. No build,
+  test, install or service commands were run for this design ruling;
+  implementation acceptance remains the requester's work.
 reopen_when: >
   Migration authority, repository or release boundaries, slice ownership or
   rollback completeness, schema ownership, stage prerequisites, page coverage
