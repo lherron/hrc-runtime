@@ -6,7 +6,7 @@ Date: 2026-06-07 (originated 2026-06-04 as the T-01862 implementation spec)
 Primary systems: HRC runtime control plane, agent-spaces compiler/contracts, Harness Broker protocol/runtime  
 Protocol constraint (shipped): `harness-broker/0.1` is decommissioned. Active source/test code carries only `harness-broker/0.2`.
 
-> This document originated as the T-01862 implementation spec and is retained as the canonical broker-substrate spec. Sections framed as "Implementation Plan" / "Migration Strategy" describe the now-shipped design. Where the original spec's intent differs from the shipped code, the shipped behavior is annotated inline (see §8, §11.1, §12.2, §15). Consolidated durable facts from the superseded docs are in Appendix A.
+> This document originated as the T-01862 implementation spec and is retained as the canonical broker-substrate spec. Sections framed as "Implementation Plan" / "Migration Strategy" describe the now-shipped design. Where the original spec's intent differs from the shipped code, the shipped behavior is annotated inline (see §8, §10.5, §11.1, §12.2, §15). Consolidated durable facts from the superseded docs are in Appendix A.
 
 ## Governing T-08690 v2 consumer amendment (approved)
 
@@ -677,6 +677,8 @@ broker_ipc_unavailable
 broker_event_retention_gap
 broker_legacy_no_durable_endpoint_on_restart
 ```
+
+> Note (shipped state): the list above is the original proposal. The shipped reattach code (`startup-reconcile/durable-broker-reattach.ts`, `startup-reconcile/lease-identity.ts`, `broker/controller/dispatch*.ts`) emits `broker_protocol_unsupported`, `broker_attach_token_missing`, `broker_lease_identity_mismatch`, `broker_ipc_unavailable`, `broker_event_retention_gap` and `broker_legacy_no_durable_endpoint_on_restart` from it, and never emits `broker_attach_rejected`, `broker_attach_token_invalid`, `broker_lease_socket_missing`, `broker_window_missing` or `broker_presentation_missing`. In their place it reports `broker_lease_substrate_gone`, `broker_attach_replay_failed` / `broker_attach_replay_failed_recoverable`, `broker_replay_retention_gap`, the `broker_claimed_lease_*` lease-identity family, and `broker_tmux_lease_stale_on_restart` / `broker_tmux_lease_reassociated_on_restart` for the startup lease pass.
 
 ### 10.6 Lazy Reattach on Dispatch
 
