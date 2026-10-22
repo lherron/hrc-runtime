@@ -15,6 +15,7 @@ import { runtimeHasAnyOpenAskBracket } from '../../ask-bracket'
 import { appendHrcEvent, appendHrcEventWithinExistingTransaction } from '../../hrc-event-helper'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import { writeServerLog } from '../../server-log.js'
+import { runsSupersededByTerminal } from '../turn-ownership.js'
 import {
   type ProjectionContext,
   type RuntimeRecord,
@@ -311,6 +312,41 @@ function hasOpenTurnBracketAtSeq(db: HrcDatabase, invocationId: string, seq: num
   return (row?.count ?? 0) > 0
 }
 
+/**
+ * T-11508: end the runs whose turns this terminal superseded, with the
+ * terminator's outcome. A harness that opened two brackets for one prompt
+ * closes only one; the other's run would otherwise stay running and pin the
+ * runtime busy through every later turn.
+ */
+function endSupersededTurnRuns(
+  db: HrcDatabase,
+  envelope: InvocationEventEnvelope,
+  terminalRunId: string | undefined,
+  occurredAt: string,
+  updatedAt: string
+): Set<string> {
+  const status =
+    envelope.type === 'turn.completed'
+      ? 'completed'
+      : envelope.type === 'turn.failed'
+        ? 'failed'
+        : 'cancelled'
+  const ended = new Set<string>()
+  for (const supersededRunId of runsSupersededByTerminal(db, envelope)) {
+    if (supersededRunId === terminalRunId) continue
+    db.runs.markCompleted(supersededRunId, { status, completedAt: occurredAt, updatedAt })
+    writeServerLog('WARN', 'broker.event_mapper.superseded_turn_run_ended', {
+      invocationId: envelope.invocationId,
+      seq: envelope.seq,
+      supersededRunId,
+      terminalRunId,
+      status,
+    })
+    ended.add(supersededRunId)
+  }
+  return ended
+}
+
 export function markRuntimeTurnTerminal(
   db: HrcDatabase,
   ctx: ProjectionContext,
@@ -326,7 +362,14 @@ export function markRuntimeTurnTerminal(
   const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
   if (!runtime) return
   if (runtime.generation !== ctx.generation) return
+  const endedRunIds = endSupersededTurnRuns(db, envelope, runId, occurredAt, updatedAt)
   if (options.newerTurnActive === true) return
+  if (runtime.activeRunId !== undefined && endedRunIds.has(runtime.activeRunId)) {
+    if (!terminalBelongsToActiveInvocation(runtime, ctx, envelope.invocationId)) return
+    if (runtimeHasAnyOpenAskBracket(db, runtime)) return
+    clearRuntimeTurnOwnership(db, runtime, occurredAt, updatedAt)
+    return
+  }
   if (runId === undefined) {
     // An observed native bracket can be real runtime work even when its run
     // owner is deliberately unresolved. Keep the runtime state truthful, but

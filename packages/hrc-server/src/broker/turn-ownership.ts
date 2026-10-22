@@ -277,6 +277,52 @@ export function hasOtherOpenTurn(db: HrcDatabase, envelope: InvocationEventEnvel
   })
 }
 
+/**
+ * T-11508 (Lance ruling 2026-10-22): a turn terminal ends every turn on its
+ * invocation that started before the terminating turn did. Returns the
+ * unfinished runs those superseded brackets name. A turn that started after the
+ * terminating one is a live next turn and is never returned.
+ */
+export function runsSupersededByTerminal(
+  db: HrcDatabase,
+  envelope: InvocationEventEnvelope
+): string[] {
+  const target = coordinatesForEnvelope(envelope)
+  if (target === undefined) return []
+  const invocationId = String(envelope.invocationId)
+  const events = db.brokerInvocationEvents
+    .listByInvocationIdAndTypes({
+      invocationId,
+      types: ['turn.started', ...TURN_TERMINAL_TYPES],
+      throughSeq: envelope.seq,
+    })
+    .map(parseStoredEvent)
+    .filter((event): event is ParsedEvent => event !== undefined)
+  const terminalTypes = new Set<string>(TURN_TERMINAL_TYPES)
+  const targetKey = coordinateKey(target)
+  const targetStartedSeq = events.find(
+    (event) => event.type === 'turn.started' && coordinateKey(event) === targetKey
+  )?.seq
+  if (targetStartedSeq === undefined) return []
+  const runIds = new Set<string>()
+  for (const started of events) {
+    if (started.type !== 'turn.started' || started.seq >= targetStartedSeq) continue
+    if (started.inputId === undefined) continue
+    const closed = events.some(
+      (terminal) =>
+        terminal.seq > started.seq &&
+        terminalTypes.has(terminal.type) &&
+        coordinateKey(terminal) === coordinateKey(started)
+    )
+    if (closed) continue
+    const run = runForInput(db, started.inputId)
+    if (run == null || run.completedAt !== undefined) continue
+    const runId = validCandidate(db, invocationId, run.runId)
+    if (runId !== undefined) runIds.add(runId)
+  }
+  return [...runIds]
+}
+
 function payloadForRow(row: HrcBrokerInvocationEventRecord): Record<string, unknown> | undefined {
   try {
     return record(JSON.parse(row.brokerEventJson) as unknown)
