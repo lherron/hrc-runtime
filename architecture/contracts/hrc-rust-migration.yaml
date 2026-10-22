@@ -51,14 +51,27 @@ predicate: >
   lossy live stream; their existing admission and loss semantics are unchanged.
   The pinned state reads are sessions, latest-by-session, presentation
   runtimes and the keyed presentation seats read, plus the page route and
-  bounded-stream wake. For selected seats whose newest event is a tool result,
-  the kernel may also read the existing GET /v1/events/tail with that exact
-  hostSessionId and generation and limit 10. This bounded window supplies
-  preview formatting context only, never selected event identity, activity,
-  membership or cursor progress. Newest-by-hrcSeq selection, including
-  bookkeeping events, is unchanged. Optional nonempty latestEvent.preview
-  for turn events follows HRCMac HrcEventPreview formatting: matching tool-use
-  ID aliases, nearest preceding same-run call when the ID is absent, payload
+  bounded-stream wake. latestEvent selects the newest turn.* event by hrcSeq
+  in the selected hostSessionId and generation, at or below the newest raw
+  owner event's seq. Bookkeeping cannot displace that display event. A
+  generation without a turn has no latestEvent and inherits no older preview.
+  lastHrcSeq, lastActivityAt, membership and cursor progress retain their
+  existing raw-event sources and freshness exclusions. Bootstrap, apply and
+  resync may recover display selection through GET /v1/events/tail with exact
+  hostSessionId and generation, category turn and limit 10 per page. Since
+  that category includes broker.turn.origin and command_run.*, filter the
+  turn. eventKind prefix locally and ignore candidates newer than the raw
+  event. Select the newest eligible turn on the first page containing one.
+  If none exists and truncated is true, request an older page using the
+  minimum admitted seq as beforeHrcSeq and the returned ledgerIncarnationId.
+  The reverse cursor strictly decreases; stop on a real turn or exhausted
+  history. Incarnation mismatch fails the read, never proves no turn.
+  Ten bounds each page, not the complete search. For a selected tool result,
+  a separate unfiltered tail with that exact hostSessionId and generation
+  and limit 10 supplies formatting context only, fenced at the selected
+  turn's seq; it changes no display selection, activity, membership or cursor.
+  Optional nonempty latestEvent.preview follows HRCMac HrcEventPreview
+  formatting: matching tool-use ID aliases, nearest preceding same-run call when the ID is absent, payload
   and tool-name fallback when no matching call is in the window, whitespace
   collapse, result prefixes and 180-character truncation. Context is read
   during bootstrap, apply and resync, never retained as projection state.
@@ -122,6 +135,9 @@ authority: >
   the r3.3 seat.summon amendment submitted in EN-32764, 2026-10-20.
   Daedalus approval of the section 4.3 bounded preview-context read amendment
   submitted in EN-33112 and wrkq:T-11490 specification etag 5, 2026-10-22.
+  Mable's bookkeeping-suppression correction in EN-33155 and Daedalus
+  approval of the revised display-selection amendment in EN-33174,
+  wrkq:T-11490 specification etag 13, 2026-10-22; closes F1 from EN-33162.
   Daedalus approval of the section 4.6.2 seat.restart facade amendment
   submitted in EN-33147 and wrkq:T-11496 specification etag 4, 2026-10-22.
 source:
@@ -139,6 +155,9 @@ source:
   - wrkq:T-11451
   - wrkq:T-11490
   - wrkc:EN-33112
+  - wrkc:EN-33155
+  - wrkc:EN-33162
+  - wrkc:EN-33174
   - wrkq:T-11496
   - wrkc:EN-33147
   - architecture/contracts/runtime-context-reading.yaml
@@ -151,6 +170,7 @@ source:
   - packages/hrc-server/src/bounded-event-stream.ts
   - packages/hrc-server/src/server-exact-routes.ts
   - packages/hrc-server/src/event-handlers.ts
+  - packages/hrc-server/src/hrc-event-helper.ts
   - packages/hrc-server/src/federation/scope-read-routing.ts
   - packages/hrc-store-sqlite/src/repositories/event-repositories.ts
   - packages/hrc-store-sqlite/src/repositories/shared.ts
@@ -183,8 +203,12 @@ validation_scope: >
   project-root and cwd parity with the CLI dry-run for the cold-seat scope.
   For T-11490 the requester supplies real-payload preview fixtures, matching
   and absent-context fallbacks, wrong-ID and generation isolation, bookkeeping
-  precedence, truncation, and a black-box kernel check of the exact bounded
-  tail request and projected preview, including bootstrap recovery. Live
+  suppression, truncation, and black-box kernel checks of the exact bounded
+  tail requests and projected preview, including bootstrap/apply recovery,
+  more than ten category-turn bookkeeping rows requiring reverse pagination,
+  raw freshness preservation and generation clearing. Before/after 60-second
+  busy-seat samples compare projected previews with keyed owner raw-kind
+  and seq observations as requested in EN-33155. Live
   query and Development Sessions screenshot establish the product claim.
   The side-effect-free read-set obligation includes this tail read.
   For T-11496 the requester supplies section 4.6.2's captured real restart
@@ -225,6 +249,14 @@ last_verified: >
   and concurrent-rotation risks are inherited unchanged; this ruling grants
   no serialization guarantee. No builds, tests, installs or service commands
   were run; implementation acceptance remains the requester's work.
+  2026-10-22 T-11490 display-selection amendment in EN-33174 and task
+  specification etag 13 approved by source/contract reading. F1 from
+  EN-33162 is closed: prefix filtering plus incarnation-fenced reverse
+  paging no longer mistakes category turn for eventKind turn.*. Reviewed
+  the category map, exact filter parsing, tail limit-plus-one/truncated and
+  exclusive-before query, mismatch refusal, and current raw freshness sources.
+  No build, test, install or service commands were run; the new black-box
+  cases and live before/after samples remain implementation acceptance.
 reopen_when: >
   Migration authority, repository or release boundaries, slice ownership or
   rollback completeness, schema ownership, stage prerequisites, page coverage
