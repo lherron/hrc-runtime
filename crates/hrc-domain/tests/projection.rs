@@ -55,7 +55,7 @@ fn seat_with_events(events: &[serde_json::Value]) -> serde_json::Value {
 }
 
 #[test]
-fn real_command_preview_survives_result_and_newest_bookkeeping_wins() {
+fn real_command_preview_survives_result_and_bookkeeping() {
     // Captured from max3 /v1/events/latest-by-session before implementation.
     let call: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/preview-tool-call.json")).unwrap();
@@ -82,8 +82,8 @@ fn real_command_preview_survives_result_and_newest_bookkeeping_wins() {
     );
     result["eventKind"] = json!("broker.seat.transition");
     let seat = seat_with_events(&[call, result]);
-    assert_eq!(seat["latestEvent"]["kind"], "broker.seat.transition");
-    assert!(seat["latestEvent"].get("preview").is_none());
+    assert_eq!(seat["latestEvent"]["kind"], "turn.tool_call");
+    assert_eq!(seat["latestEvent"]["preview"], expected);
 }
 
 #[test]
@@ -152,4 +152,21 @@ fn truncation_counts_swift_characters_including_combined_emoji() {
         seat_with_events(&[event])["latestEvent"]["preview"],
         format!("{}...", grapheme.repeat(177))
     );
+}
+
+#[test]
+fn bookkeeping_preserves_turn_display_but_advances_raw_freshness_and_generation_clears_it() {
+    let turn = json!({"hostSessionId":"h","generation":1,"hrcSeq":3075358,"eventKind":"turn.tool_result","ts":"2026-10-22T13:04:08.848Z","payload":{"toolName":"Bash","command":"git status -sb"}});
+    let bookkeeping = json!({"hostSessionId":"h","generation":1,"hrcSeq":3075359,"eventKind":"runtime.context.updated","ts":"2026-10-22T13:04:08.980Z","payload":{"usedTokens":123}});
+    let seat = seat_with_events(&[turn.clone(), bookkeeping.clone()]);
+    assert_eq!(seat["latestEvent"]["kind"], "turn.tool_result");
+    assert_eq!(seat["latestEvent"]["preview"], "ran: git status -sb");
+    assert_eq!(seat["lastHrcSeq"], 3075359);
+    assert_eq!(seat["lastActivityAt"], bookkeeping["ts"]);
+    let mut next_generation = bookkeeping;
+    next_generation["generation"] = json!(2);
+    next_generation["hrcSeq"] = json!(3075360);
+    let new_seat = seat_with_events(&[next_generation, turn]);
+    assert!(new_seat.get("latestEvent").is_none());
+    assert_eq!(new_seat["lastHrcSeq"], 3075360);
 }

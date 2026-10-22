@@ -20,6 +20,85 @@ impl SeatProjector {
             .cloned()
             .ok_or_else(|| Self::error("expected array"))
     }
+    /// Recover a display turn without treating category=turn as eventKind=turn.*.
+    /// Owner pagination is incarnation-fenced and strictly decreases.
+    fn latest_turn(&self, raw: &Value) -> Result<Option<Value>, ProjectorError> {
+        if text(raw, "eventKind").starts_with("turn.") {
+            return Ok(Some(raw.clone()));
+        }
+        let upper = raw["hrcSeq"]
+            .as_i64()
+            .ok_or_else(|| Self::error("latest event lacks hrcSeq"))?;
+        let query = vec![
+            (
+                "hostSessionId".into(),
+                text(raw, "hostSessionId").to_owned(),
+            ),
+            ("generation".into(), raw["generation"].to_string()),
+            ("category".into(), "turn".into()),
+            ("limit".into(), "10".into()),
+        ];
+        let mut before = None;
+        let mut incarnation: Option<String> = None;
+        loop {
+            let mut page_query = query.clone();
+            if let Some(seq) = before {
+                page_query.push(("beforeHrcSeq".into(), format!("{seq}")));
+            }
+            if let Some(ref id) = incarnation {
+                page_query.push(("ledgerIncarnationId".into(), id.clone()));
+            }
+            let page = self
+                .api
+                .get("/v1/events/tail", &page_query)
+                .map_err(Self::error)?;
+            let id = page["ledgerIncarnationId"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| Self::error("tail lacks ledger incarnation"))?;
+            if incarnation.as_deref().is_some_and(|old| old != id) {
+                return Err(Self::error("tail ledger incarnation changed"));
+            }
+            incarnation = Some(id.to_owned());
+            let events = Self::array(page["events"].clone())?;
+            if events.len() > 10 {
+                return Err(Self::error("tail exceeds requested limit"));
+            }
+            let mut minimum = None;
+            for e in &events {
+                let seq = e["hrcSeq"]
+                    .as_i64()
+                    .filter(|seq| *seq > 0)
+                    .ok_or_else(|| Self::error("tail event lacks positive hrcSeq"))?;
+                if before.is_some_and(|before| seq >= before)
+                    || e["hostSessionId"] != raw["hostSessionId"]
+                    || e["generation"] != raw["generation"]
+                {
+                    return Err(Self::error("tail event outside scoped reverse page"));
+                }
+                minimum = Some(minimum.map_or(seq, |old: i64| old.min(seq)));
+            }
+            if let Some(turn) = events
+                .iter()
+                .filter(|e| {
+                    text(e, "eventKind").starts_with("turn.")
+                        && e["hrcSeq"].as_i64().is_some_and(|seq| seq <= upper)
+                })
+                .max_by_key(|e| e["hrcSeq"].as_i64())
+            {
+                return Ok(Some(turn.clone()));
+            }
+            match page["truncated"].as_bool() {
+                Some(false) => return Ok(None),
+                Some(true) => {
+                    before = Some(
+                        minimum.ok_or_else(|| Self::error("truncated tail made no progress"))?,
+                    )
+                }
+                None => return Err(Self::error("tail lacks truncated flag")),
+            }
+        }
+    }
     fn project_state(
         &self,
         sessions: &[Value],
@@ -37,6 +116,7 @@ impl SeatProjector {
             }
         }
         let mut context = Vec::new();
+        let mut turns = Vec::new();
         for s in selected.values() {
             let latest = events
                 .iter()
@@ -44,7 +124,8 @@ impl SeatProjector {
                     e["hostSessionId"] == s["hostSessionId"] && e["generation"] == s["generation"]
                 })
                 .max_by_key(|e| e["hrcSeq"].as_i64());
-            if let Some(e) = latest.filter(|e| crate::preview::is_result(e)) {
+            let turn = latest.map(|e| self.latest_turn(e)).transpose()?.flatten();
+            if let Some(e) = turn.as_ref().filter(|e| crate::preview::is_result(e)) {
                 let tail = self
                     .api
                     .get(
@@ -66,8 +147,9 @@ impl SeatProjector {
                     },
                 ));
             }
+            turns.extend(turn);
         }
-        project_with_context(sessions, runtimes, events, &context, Utc::now())
+        project_with_context(sessions, runtimes, events, &turns, &context, Utc::now())
     }
     fn state(&self) -> Result<Vec<Value>, ProjectorError> {
         let since = (Utc::now() - Duration::hours(24)).to_rfc3339();

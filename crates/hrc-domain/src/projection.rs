@@ -87,15 +87,16 @@ pub fn project(
     events: &[Value],
     now: DateTime<Utc>,
 ) -> Result<Vec<Value>, ProjectorError> {
-    project_with_context(sessions, runtimes, events, events, now)
+    project_with_context(sessions, runtimes, events, events, events, now)
 }
 
-/// Context is formatting evidence only. It cannot change selected events,
-/// membership, freshness, or the ledger sequence projected on a seat.
+/// Display turns and formatting context are separate from raw activity events.
+/// Neither can change membership, freshness, or the ledger sequence of a seat.
 pub fn project_with_context(
     sessions: &[Value],
     runtimes: &[Value],
     events: &[Value],
+    turns: &[Value],
     context: &[Value],
     now: DateTime<Utc>,
 ) -> Result<Vec<Value>, ProjectorError> {
@@ -161,7 +162,16 @@ pub fn project_with_context(
                 seat[field] = v.clone();
             }
         }
-        if let Some(e) = event {
+        let display = turns
+            .iter()
+            .filter(|e| {
+                e["hostSessionId"] == s["hostSessionId"]
+                    && e["generation"] == s["generation"]
+                    && text(e, "eventKind").starts_with("turn.")
+                    && event.is_some_and(|raw| e["hrcSeq"].as_i64() <= raw["hrcSeq"].as_i64())
+            })
+            .max_by_key(|e| e["hrcSeq"].as_i64());
+        if let Some(e) = display {
             seat["latestEvent"] = json!({"kind":e["eventKind"],"time":e["ts"]});
             if let Some(preview) = crate::preview::preview(e, context) {
                 seat["latestEvent"]["preview"] = json!(preview);

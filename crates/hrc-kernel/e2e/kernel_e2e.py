@@ -61,13 +61,16 @@ def main():
                    tmux=dict(socketPath='/tmp/absent-hrc-tmux.sock', attachTarget='seat:tui'))
     state = dict(incarnation='ledger-1', head=0, events=[], sessions=[record], runtimes=[runtime], down=False,
                  wake_revision=0, stream_opens=0, stopping=False)
-    # Bootstrap from a tool result, so success requires owner-read call context.
-    preview_call = dict(record, hrcSeq=1, eventKind='turn.tool_call', ts=now,
+    # Bootstrap with a tool result hidden behind category-turn bookkeeping.
+    preview_call = dict(record, hrcSeq=1, category='turn', eventKind='turn.tool_call', ts=now,
                         payload=dict(toolUseId='call-1', toolName='Bash', input=dict(command='git status -sb')))
-    preview_result = dict(record, hrcSeq=2, eventKind='turn.tool_result', ts=now,
+    preview_result = dict(record, hrcSeq=2, category='turn', eventKind='turn.tool_result', ts=now,
                           payload=dict(toolUseId='call-1', toolName='Bash'))
-    state['events'] = [preview_call, preview_result]
-    state['head'] = 2
+    bookkeeping = dict(record, hrcSeq=3, category='runtime', eventKind='runtime.context.updated', ts=now, payload=dict(usedTokens=10))
+    # category=turn contains bookkeeping too. Force recovery beyond one page.
+    category_bookkeeping = [dict(bookkeeping, hrcSeq=seq, category='turn', eventKind='broker.turn.origin') for seq in range(3, 15)]
+    state['events'] = [preview_call, preview_result] + category_bookkeeping
+    state['head'] = 14
     paths = []
     tail_queries = []
     lock = threading.Lock()
@@ -120,16 +123,26 @@ def main():
                 assert q.get('limit') == ['10'], q
                 assert q.get('hostSessionId') and q.get('generation'), q
                 tail_queries.append(q)
-                events = [e for e in s['events'] if e['hostSessionId'] == q['hostSessionId'][0]
-                          and e['generation'] == int(q['generation'][0])][-10:]
-                # A concurrent later call must not become the selected event.
-                future = dict(preview_call, hrcSeq=999999, payload=dict(toolUseId='future', input=dict(command='wrong future command')))
-                value = dict(events=events + [future], ledgerIncarnationId=s['incarnation'], headHrcSeq=s['head'], truncated=False)
+                if q.get('ledgerIncarnationId', [s['incarnation']])[0] != s['incarnation']:
+                    status, value = 409, dict(error=dict(code='cursor_invalid'))
+                else:
+                    events = [e for e in s['events'] if e['hostSessionId'] == q['hostSessionId'][0]
+                              and e['generation'] == int(q['generation'][0])
+                              and (not q.get('category') or e.get('category') == q['category'][0])
+                              and (not q.get('beforeHrcSeq') or e['hrcSeq'] < int(q['beforeHrcSeq'][0]))]
+                    truncated = len(events) > 10
+                    events = events[-10:]
+                    if not q.get('category'):
+                        # A concurrent later call must not become selected.
+                        future = dict(preview_call, hrcSeq=999999, payload=dict(toolUseId='future', input=dict(command='wrong future command')))
+                        events.append(future)
+                    value = dict(events=events, ledgerIncarnationId=s['incarnation'], headHrcSeq=s['head'], truncated=truncated)
             elif u.path == '/v1/sessions':
                 value = s['sessions']
             elif u.path == '/v1/presentation/runtimes':
                 value = dict(ok=True, runtimes=s['runtimes'])
             elif u.path == '/v1/events/latest-by-session':
+                assert not q.get('category'), 'category cannot select the newest turn.* event'
                 value = s['events'][-1:]
             else:
                 status, value = 500, dict(error=dict(code='forbidden_read'))
@@ -196,8 +209,9 @@ def main():
             first = wait_for(lambda: (r if (r := query())['rows'] and not r['bootstrapping'] else None), 'bootstrap')
             row = first['rows'][0]
             assert row['payload']['contextReading']['usedTokens'] == 10, row
-            assert row['payload']['latestEvent']['preview'] == 'ran: git status -sb', row
-            assert row['payload']['lastHrcSeq'] == 2, row
+            assert row['payload']['latestEvent']['preview'] == 'ran: Bash', row
+            assert row['payload']['lastHrcSeq'] == 14, row
+            assert any(q.get('category') == ['turn'] and q.get('beforeHrcSeq') for q in tail_queries), tail_queries
             attachment = wire.call('resource.attach', dict(document_id='hrc', id=row['id']))
             assert attachment['descriptor']['socket'] == tmux_socket
             assert '-r' in attachment['descriptor']['argv']
@@ -228,12 +242,13 @@ def main():
                 state['runtimes'][0]['tmux']['attachTarget'] = 'seat'  # Legacy bare-session target.
                 # Interior holes and a spill stub: never require dense seqs or
                 # hydration to learn which current keys to re-read.
-                state['events'].append(dict(preview_call, hostSessionId='hs-2', generation=2, hrcSeq=4))
-                for seq in [6, 8]:
+                state['events'].append(dict(preview_call, hostSessionId='hs-2', generation=2, hrcSeq=20))
+                for seq in [22, 24]:
                     state['events'].append(dict(record, hostSessionId='hs-2', generation=2, hrcSeq=seq,
-                                                eventKind='turn.tool_result', ts=now, runtimeId='rt-2',
+                                                category='turn', eventKind='turn.tool_result', ts=now, runtimeId='rt-2',
                                                 payload=dict(toolUseId='call-1', toolName='Bash', result=dict(details=dict(spill=dict(blobId='blob'))))))
-                state['head'] = 10
+                state['events'].append(dict(bookkeeping, hostSessionId='hs-2', generation=2, hrcSeq=25))
+                state['head'] = 26
                 state['wake_revision'] += 1
                 wake.notify_all()
             after = wait_for(lambda: (r if (r := query())['rows'][0]['payload'].get('generation') == 2 else None), 'replay sparse ledger')
@@ -241,11 +256,23 @@ def main():
             assert after['rows'][0]['payload']['contextReading']['usedTokens'] == 20
             assert after['rows'][0]['payload']['latestEvent']['preview'] == 'ran: git status -sb', after
             assert any(q['generation'] == ['2'] for q in tail_queries), tail_queries
+            assert after['rows'][0]['payload']['lastHrcSeq'] == 25, after
+            assert any(q.get('category') == ['turn'] and q['generation'] == ['2'] for q in tail_queries), tail_queries
             legacy = wire.call('resource.attach', dict(document_id='hrc', id=row['id'], mode='normal'))
             assert legacy['descriptor']['target'] == 'seat' and '-r' not in legacy['descriptor']['argv']
             status = wire.call('ingest.status', dict(document_id='hrc'))['bindings'][0]
             assert status['resync']['every_ms'] == 600000, status
             cursor = status['cursor']
+            with wake:
+                state['sessions'][0].update(hostSessionId='hs-3', generation=3)
+                state['runtimes'][0].update(hostSessionId='hs-3', generation=3, runtimeId='rt-3')
+                state['events'].append(dict(bookkeeping, hostSessionId='hs-3', generation=3, hrcSeq=30, runtimeId='rt-3'))
+                state['head'] = 30
+                state['wake_revision'] += 1
+                wake.notify_all()
+            new_generation = wait_for(lambda: (r if (r := query())['rows'][0]['payload'].get('generation') == 3 else None), 'new generation clears turn preview')
+            assert 'latestEvent' not in new_generation['rows'][0]['payload'], new_generation
+            assert new_generation['rows'][0]['payload']['lastHrcSeq'] == 30, new_generation
             with wake:
                 state['incarnation'] = 'ledger-2'
                 state['events'] = []
@@ -256,6 +283,7 @@ def main():
             assert replaced['last_reset_reason'] == 'incarnation_changed', replaced
             current = query()
             assert len(current['rows']) == 1
+            assert 'latestEvent' not in current['rows'][0]['payload'], current
             resync = wire.call('resync')
             # Replay and subscribe are served even though client edits are disallowed.
             sub = Wire(ready['socket'])
@@ -268,7 +296,7 @@ def main():
             assert state['stream_opens'] >= 2, 'wake stream never reconnected after EOF'
             report = dict(ready=ready, types=[n['name'] for n in discovery['node_types']],
                           initial=first, replay=after, cursor_before_replace=cursor,
-                          replacement=replaced, resync=resync, ended=ended, legacy_attach=legacy, tail_queries=tail_queries, paths=sorted(set(paths)), pass_=True)
+                          replacement=replaced, new_generation=new_generation, resync=resync, ended=ended, legacy_attach=legacy, tail_queries=tail_queries, paths=sorted(set(paths)), pass_=True)
             (evidence / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
             print('PASS bootstrap, API outage recovery, sparse/spill replay, stable generation row, attach, incarnation reset, subscribe/replay, pinned reads')
             wire.close()

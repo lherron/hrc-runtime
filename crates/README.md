@@ -44,8 +44,11 @@ preserved on runtime nodes, including optional raw `contextReading`.
 Turn previews follow HRCMac: command previews use tool input, and results match
 their tool-use ID against an exact-session/generation ten-event tail. Missing
 context falls back to the result payload. Whitespace collapses and text is
-limited to 180 grapheme clusters. Bookkeeping events still win newest-event
-selection and carry no turn preview.
+limited to 180 grapheme clusters. Bookkeeping advances raw activity and sequence
+while the displayed latest event remains the newest `turn.*` in the same generation. Recovery walks exact-seat
+category-turn tail pages (ten rows each, incarnation-fenced and strictly backward)
+until it finds a real turn or exhausts history; category-turn bookkeeping cannot
+hide the last line. A generation without turns carries no latest event.
 Attach descriptors use the presentation's socket and target. A bounded,
 read-only tmux window check refuses `resource_unavailable` / `ended` when
 that target is gone, without reconciling HRC or changing the projected row.
