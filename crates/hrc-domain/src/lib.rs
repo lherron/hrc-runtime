@@ -3,6 +3,7 @@ pub mod api;
 pub mod attach;
 pub mod declarations;
 pub mod ledger;
+mod preview;
 pub mod projection;
 pub mod projector;
 pub mod summon;

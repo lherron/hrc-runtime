@@ -87,6 +87,18 @@ pub fn project(
     events: &[Value],
     now: DateTime<Utc>,
 ) -> Result<Vec<Value>, ProjectorError> {
+    project_with_context(sessions, runtimes, events, events, now)
+}
+
+/// Context is formatting evidence only. It cannot change selected events,
+/// membership, freshness, or the ledger sequence projected on a seat.
+pub fn project_with_context(
+    sessions: &[Value],
+    runtimes: &[Value],
+    events: &[Value],
+    context: &[Value],
+    now: DateTime<Utc>,
+) -> Result<Vec<Value>, ProjectorError> {
     let mut selected: BTreeMap<String, &Value> = BTreeMap::new();
     for s in sessions {
         if text(s, "scopeRef").is_empty() || !s["generation"].is_u64() {
@@ -151,6 +163,9 @@ pub fn project(
         }
         if let Some(e) = event {
             seat["latestEvent"] = json!({"kind":e["eventKind"],"time":e["ts"]});
+            if let Some(preview) = crate::preview::preview(e, context) {
+                seat["latestEvent"]["preview"] = json!(preview);
+            }
         }
         if let Some(r) = rt {
             seat["runtimeId"] = r["runtimeId"].clone();

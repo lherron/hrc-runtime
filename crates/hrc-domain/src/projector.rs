@@ -1,6 +1,6 @@
 use crate::{
     api::HrcApi,
-    projection::{project, remove, session_ref, text},
+    projection::{project_with_context, remove, session_ref, text},
 };
 use cardo_runtime::ingest::{Applied, BootstrapPage, Projector, ProjectorError};
 use cardo_store::ledger::{Cursor, LedgerRow};
@@ -19,6 +19,55 @@ impl SeatProjector {
         v.as_array()
             .cloned()
             .ok_or_else(|| Self::error("expected array"))
+    }
+    fn project_state(
+        &self,
+        sessions: &[Value],
+        runtimes: &[Value],
+        events: &[Value],
+    ) -> Result<Vec<Value>, ProjectorError> {
+        let mut selected = BTreeMap::new();
+        for s in sessions {
+            let key = session_ref(s);
+            if selected
+                .get(&key)
+                .is_none_or(|old: &&Value| old["generation"].as_u64() < s["generation"].as_u64())
+            {
+                selected.insert(key, s);
+            }
+        }
+        let mut context = Vec::new();
+        for s in selected.values() {
+            let latest = events
+                .iter()
+                .filter(|e| {
+                    e["hostSessionId"] == s["hostSessionId"] && e["generation"] == s["generation"]
+                })
+                .max_by_key(|e| e["hrcSeq"].as_i64());
+            if let Some(e) = latest.filter(|e| crate::preview::is_result(e)) {
+                let tail = self
+                    .api
+                    .get(
+                        "/v1/events/tail",
+                        &[
+                            ("hostSessionId".into(), text(s, "hostSessionId").to_owned()),
+                            ("generation".into(), s["generation"].to_string()),
+                            ("limit".into(), "10".into()),
+                        ],
+                    )
+                    .map_err(Self::error)?;
+                // The owner may advance between reads. No future context may
+                // supply a command to the already selected result.
+                context.extend(Self::array(tail["events"].clone())?.into_iter().filter(
+                    |candidate| {
+                        candidate["hostSessionId"] == e["hostSessionId"]
+                            && candidate["generation"] == e["generation"]
+                            && candidate["hrcSeq"].as_i64() <= e["hrcSeq"].as_i64()
+                    },
+                ));
+            }
+        }
+        project_with_context(sessions, runtimes, events, &context, Utc::now())
     }
     fn state(&self) -> Result<Vec<Value>, ProjectorError> {
         let since = (Utc::now() - Duration::hours(24)).to_rfc3339();
@@ -72,7 +121,7 @@ impl SeatProjector {
                 .get("/v1/events/latest-by-session", &[])
                 .map_err(Self::error)?,
         )?;
-        project(&sessions, &runtimes, &events, Utc::now())
+        self.project_state(&sessions, &runtimes, &events)
     }
 }
 fn edit_id(e: &Value) -> String {
@@ -120,11 +169,10 @@ impl Projector for SeatProjector {
             .api
             .seats(&json!(keys), &json!(runtime_ids))
             .map_err(Self::error)?;
-        let state = project(
+        let state = self.project_state(
             &Self::array(batch["sessions"].clone())?,
             &Self::array(batch["runtimes"].clone())?,
             &Self::array(batch["events"].clone())?,
-            Utc::now(),
         )?;
         apply_indexed(state, rows, limit)
     }

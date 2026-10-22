@@ -1,0 +1,31 @@
+{
+  "hrcSeq": 3073880,
+  "streamSeq": 17338959,
+  "ts": "2026-10-22T12:53:56.057Z",
+  "hostSessionId": "hsid-c51721b3-3178-402b-a19b-a3203d81d5b7",
+  "scopeRef": "agent:cody:project:hrc-runtime:task:T-11490",
+  "laneRef": "main",
+  "generation": 1,
+  "runtimeId": "rt-d68d8dfa-9ceb-49c9-aab8-0a67aa03d31a",
+  "runId": "run-1755a8b3-b0bc-452d-a915-a7de03a2a8ec",
+  "category": "turn",
+  "eventKind": "turn.tool_call",
+  "transport": "tmux",
+  "replayed": false,
+  "payload": {
+    "type": "tool_execution_start",
+    "toolUseId": "exec-8be73354-3791-4eae-a09d-3c08496e89cc",
+    "toolName": "command",
+    "input": {
+      "command": "/bin/zsh -lc \"mkdir -p /Users/lherron/praesidium/var/wrkq-artifacts/T-11490; curl -fsS --unix-socket /Users/lherron/praesidium/var/run/hrc/hrc.sock http://localhost/v1/events/latest-by-session -o /Users/lherron/praesidium/var/wrkq-artifacts/T-11490/events-real.json; python3 - <<'PY'\nimport json\nx=json.load(open('/Users/lherron/praesidium/var/wrkq-artifacts/T-11490/events-real.json'))\nprint(type(x),len(x)); print(json.dumps(x[:4],indent=2)[:8000])\nPY\"",
+      "cwd": "/Users/lherron/praesidium/hrc-runtime"
+    },
+    "summary": "Running mkdir..."
+  },
+  "identity": {
+    "kind": "project-task",
+    "agentId": "cody",
+    "projectId": "hrc-runtime",
+    "taskId": "T-11490"
+  }
+}

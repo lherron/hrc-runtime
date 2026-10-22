@@ -61,7 +61,15 @@ def main():
                    tmux=dict(socketPath='/tmp/absent-hrc-tmux.sock', attachTarget='seat:tui'))
     state = dict(incarnation='ledger-1', head=0, events=[], sessions=[record], runtimes=[runtime], down=False,
                  wake_revision=0, stream_opens=0, stopping=False)
+    # Bootstrap from a tool result, so success requires owner-read call context.
+    preview_call = dict(record, hrcSeq=1, eventKind='turn.tool_call', ts=now,
+                        payload=dict(toolUseId='call-1', toolName='Bash', input=dict(command='git status -sb')))
+    preview_result = dict(record, hrcSeq=2, eventKind='turn.tool_result', ts=now,
+                          payload=dict(toolUseId='call-1', toolName='Bash'))
+    state['events'] = [preview_call, preview_result]
+    state['head'] = 2
     paths = []
+    tail_queries = []
     lock = threading.Lock()
     wake = threading.Condition(lock)
     outage_read = threading.Event()
@@ -108,6 +116,15 @@ def main():
                     rows = [e for e in s['events'] if e['hrcSeq'] > after][:limit]
                     value = dict(ledgerIncarnationId=s['incarnation'], head=s['head'], rows=rows,
                                  scannedThrough=rows[-1]['hrcSeq'] if len(rows) == limit else s['head'])
+            elif u.path == '/v1/events/tail':
+                assert q.get('limit') == ['10'], q
+                assert q.get('hostSessionId') and q.get('generation'), q
+                tail_queries.append(q)
+                events = [e for e in s['events'] if e['hostSessionId'] == q['hostSessionId'][0]
+                          and e['generation'] == int(q['generation'][0])][-10:]
+                # A concurrent later call must not become the selected event.
+                future = dict(preview_call, hrcSeq=999999, payload=dict(toolUseId='future', input=dict(command='wrong future command')))
+                value = dict(events=events + [future], ledgerIncarnationId=s['incarnation'], headHrcSeq=s['head'], truncated=False)
             elif u.path == '/v1/sessions':
                 value = s['sessions']
             elif u.path == '/v1/presentation/runtimes':
@@ -179,6 +196,8 @@ def main():
             first = wait_for(lambda: (r if (r := query())['rows'] and not r['bootstrapping'] else None), 'bootstrap')
             row = first['rows'][0]
             assert row['payload']['contextReading']['usedTokens'] == 10, row
+            assert row['payload']['latestEvent']['preview'] == 'ran: git status -sb', row
+            assert row['payload']['lastHrcSeq'] == 2, row
             attachment = wire.call('resource.attach', dict(document_id='hrc', id=row['id']))
             assert attachment['descriptor']['socket'] == tmux_socket
             assert '-r' in attachment['descriptor']['argv']
@@ -209,16 +228,19 @@ def main():
                 state['runtimes'][0]['tmux']['attachTarget'] = 'seat'  # Legacy bare-session target.
                 # Interior holes and a spill stub: never require dense seqs or
                 # hydration to learn which current keys to re-read.
-                for seq in [2, 4, 8]:
+                state['events'].append(dict(preview_call, hostSessionId='hs-2', generation=2, hrcSeq=4))
+                for seq in [6, 8]:
                     state['events'].append(dict(record, hostSessionId='hs-2', generation=2, hrcSeq=seq,
                                                 eventKind='turn.tool_result', ts=now, runtimeId='rt-2',
-                                                payload=dict(result=dict(details=dict(spill=dict(blobId='blob'))))))
+                                                payload=dict(toolUseId='call-1', toolName='Bash', result=dict(details=dict(spill=dict(blobId='blob'))))))
                 state['head'] = 10
                 state['wake_revision'] += 1
                 wake.notify_all()
             after = wait_for(lambda: (r if (r := query())['rows'][0]['payload'].get('generation') == 2 else None), 'replay sparse ledger')
             assert after['rows'][0]['id'] == row['id'], 'seat row changed across generation'
             assert after['rows'][0]['payload']['contextReading']['usedTokens'] == 20
+            assert after['rows'][0]['payload']['latestEvent']['preview'] == 'ran: git status -sb', after
+            assert any(q['generation'] == ['2'] for q in tail_queries), tail_queries
             legacy = wire.call('resource.attach', dict(document_id='hrc', id=row['id'], mode='normal'))
             assert legacy['descriptor']['target'] == 'seat' and '-r' not in legacy['descriptor']['argv']
             status = wire.call('ingest.status', dict(document_id='hrc'))['bindings'][0]
@@ -240,13 +262,13 @@ def main():
             subscribed = sub.call('events.subscribe', dict(after=resync['cursor'], incarnation=resync['host_incarnation']))
             assert 'cursor' in subscribed
             sub.close()
-            allowed = {'/v1/presentation/seats/read', '/v1/events/page', '/v1/events/bounded-stream', '/v1/events/latest-by-session', '/v1/presentation/runtimes', '/v1/sessions'}
+            allowed = {'/v1/events/tail', '/v1/presentation/seats/read', '/v1/events/page', '/v1/events/bounded-stream', '/v1/events/latest-by-session', '/v1/presentation/runtimes', '/v1/sessions'}
             assert '/v1/presentation/seats/read' in paths, paths
             assert set(paths) <= allowed, set(paths)
             assert state['stream_opens'] >= 2, 'wake stream never reconnected after EOF'
             report = dict(ready=ready, types=[n['name'] for n in discovery['node_types']],
                           initial=first, replay=after, cursor_before_replace=cursor,
-                          replacement=replaced, resync=resync, ended=ended, legacy_attach=legacy, paths=sorted(set(paths)), pass_=True)
+                          replacement=replaced, resync=resync, ended=ended, legacy_attach=legacy, tail_queries=tail_queries, paths=sorted(set(paths)), pass_=True)
             (evidence / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
             print('PASS bootstrap, API outage recovery, sparse/spill replay, stable generation row, attach, incarnation reset, subscribe/replay, pinned reads')
             wire.close()

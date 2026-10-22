@@ -38,9 +38,14 @@ Logs go to stderr; stdin EOF is ignored.
 
 Seats use ACP's `scopeRef/lane:laneRef` sessionRef as their natural key. Runtime
 replacement changes the attach fence, not the seat row. Seats carry
-`status`, `summaryStatus`, `latestEvent: {kind, time}`, and validated
+`status`, `summaryStatus`, `latestEvent: {kind, time, preview?}`, and validated
 `contextReading`; clients derive their phase text. Presentation fields are
 preserved on runtime nodes, including optional raw `contextReading`.
+Turn previews follow HRCMac: command previews use tool input, and results match
+their tool-use ID against an exact-session/generation ten-event tail. Missing
+context falls back to the result payload. Whitespace collapses and text is
+limited to 180 grapheme clusters. Bookkeeping events still win newest-event
+selection and carry no turn preview.
 Attach descriptors use the presentation's socket and target. A bounded,
 read-only tmux window check refuses `resource_unavailable` / `ended` when
 that target is gone, without reconciling HRC or changing the projected row.
@@ -56,7 +61,8 @@ It resolves no paths, retries nothing, and writes no projected rows. Refusals
 retain HRC code/message in error details. Ingest supplies the attachable seat.
 
 The only upstream reads are `/v1/events/page`, `/v1/events/bounded-stream`,
-`/v1/events/latest-by-session`, `/v1/presentation/runtimes`, and `/v1/sessions`.
+`/v1/events/latest-by-session`, `/v1/events/tail` (bounded tool-result context),
+`/v1/presentation/runtimes`, POST `/v1/presentation/seats/read`, and `/v1/sessions`.
 The bounded stream supplies wake hints only. Cardo owns replay/cursors,
 bootstrapping, expiry and the ten-minute resync. Owner outage retries in place;
 owner ledger replacement resets the document; kernel restart opens it empty.

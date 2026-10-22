@@ -10,6 +10,7 @@ pub const READ_SET: &[&str] = &[
     "/v1/events/page",
     "/v1/events/bounded-stream",
     "/v1/events/latest-by-session",
+    "/v1/events/tail",
     "/v1/presentation/runtimes",
     "/v1/sessions",
 ];
