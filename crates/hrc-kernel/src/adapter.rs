@@ -4,10 +4,15 @@ use cardo_runtime::{core_adapter::CoreAdapter, service::*};
 use crossbeam_channel::Sender;
 use hrc_domain::{
     api::HrcApi,
+    restart::{self, Restart},
     summon::{self, Summon},
 };
 use serde_json::json;
 use std::{collections::BTreeSet, sync::Arc};
+
+fn owner_operation(operation: &str) -> bool {
+    matches!(operation, summon::OPERATION | restart::OPERATION)
+}
 
 pub struct HrcAdapter {
     pub core: CoreAdapter<CoreDomain>,
@@ -32,7 +37,7 @@ impl DispatchAdapter for HrcAdapter {
     }
     fn idempotency(&self, command: &KernelCommand) -> Option<IdempotencyKey> {
         // Do not cache a receipt in Cardo: HRC must decide replay/conflict.
-        if command.operation == summon::OPERATION {
+        if owner_operation(&command.operation) {
             None
         } else {
             self.core.idempotency(command)
@@ -41,7 +46,7 @@ impl DispatchAdapter for HrcAdapter {
     fn cancelled_command_outcome(&self) -> CommandOutcome {
         // Cancellation cannot roll back an owner-API mutation.
         CommandOutcome::Unavailable { failure: DispatchFailure {
-            code: "cancelled".into(), message: "Work suppressed; an HRC summon may still complete. Retry with the same request_id.".into(), details: json!({}),
+            code: "cancelled".into(), message: "Work suppressed; the HRC mutation may still complete. Read back the seat before acting; restart must not be retried blindly.".into(), details: json!({}),
         }}
     }
     fn interrupt_handle(&self) -> Option<Arc<dyn Fn(CommandId) -> bool + Send + Sync>> {
@@ -59,17 +64,24 @@ impl DispatchAdapter for HrcAdapter {
         id: CommandId,
         command: KernelCommand,
     ) -> Result<AdapterDispatchReport, DispatchFailure> {
-        if command.operation != summon::OPERATION {
+        if !owner_operation(&command.operation) {
             return self.core.dispatch(id, command);
         }
-        Summon::parse(command.arguments.clone())?;
+        match command.operation.as_str() {
+            restart::OPERATION => {
+                Restart::parse(command.arguments.clone())?;
+            }
+            _ => {
+                Summon::parse(command.arguments.clone())?;
+            }
+        }
         // A work ID shares the already unique command UUID, but no document lane.
         self.pending.insert(id);
         Ok(AdapterDispatchReport {
             disposition: AdapterDisposition::Pending(WorkRequest {
                 work_id: id,
                 command_id: id,
-                kind: summon::OPERATION.into(),
+                kind: command.operation,
                 input: command.arguments,
                 fence: None,
             }),
@@ -83,9 +95,9 @@ impl DispatchAdapter for HrcAdapter {
         fence: TargetFence,
         command: KernelCommand,
     ) -> Result<AdapterDispatchReport, DispatchFailure> {
-        if command.operation == summon::OPERATION {
+        if owner_operation(&command.operation) {
             return Err(summon::invalid(
-                "seat.summon accepts no fence or document_id",
+                "seat owner operations accept no fence or document_id",
             ));
         }
         self.core.dispatch_guarded(id, fence, command)
@@ -96,19 +108,29 @@ impl DispatchAdapter for HrcAdapter {
         completion: Sender<WorkCompletion>,
         executor: &dyn WorkExecutor,
     ) -> Result<(), ExecutorFailure> {
-        if work.kind != summon::OPERATION {
+        if !owner_operation(&work.kind) {
             return self.core.start_work(work, completion, executor);
         }
-        let args = Summon::parse(work.input).map_err(|e| ExecutorFailure {
-            code: e.code,
-            message: e.message,
-        })?;
         let api = self.api.clone();
+        let run: Box<dyn FnOnce() -> Result<serde_json::Value, DispatchFailure> + Send> =
+            if work.kind == restart::OPERATION {
+                let args = Restart::parse(work.input).map_err(|e| ExecutorFailure {
+                    code: e.code,
+                    message: e.message,
+                })?;
+                Box::new(move || args.run(&api))
+            } else {
+                let args = Summon::parse(work.input).map_err(|e| ExecutorFailure {
+                    code: e.code,
+                    message: e.message,
+                })?;
+                Box::new(move || args.run(&api))
+            };
         std::thread::spawn(move || {
             let _ = completion.send(WorkCompletion {
                 work_id: work.work_id,
                 command_id: work.command_id,
-                result: args.run(&api),
+                result: run(),
             });
         });
         Ok(())

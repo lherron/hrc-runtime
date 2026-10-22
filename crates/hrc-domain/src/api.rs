@@ -107,9 +107,15 @@ impl HrcApi {
         }
         Ok(r.json()?)
     }
-    /// Stage 1b's two existing owner routes. Never retries an HTTP request.
+    /// Stage 1b's existing owner routes. Never retries an HTTP request.
     pub fn post_owner(&self, route: &str, body: &Value) -> Result<Value, ApiError> {
-        if !["/v1/declarations/resolve", "/v1/runtimes/start"].contains(&route) {
+        if ![
+            "/v1/declarations/resolve",
+            "/v1/runtimes/start",
+            "/v1/sessions/restart",
+        ]
+        .contains(&route)
+        {
             return Err(ApiError {
                 code: "hrc_route_forbidden".into(),
                 message: route.into(),

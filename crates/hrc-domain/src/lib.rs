@@ -6,6 +6,7 @@ pub mod ledger;
 mod preview;
 pub mod projection;
 pub mod projector;
+pub mod restart;
 pub mod summon;
 
 use cardo_core::{CoreEdit, Refusal, decode_core_edit};
