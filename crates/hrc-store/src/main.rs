@@ -71,6 +71,7 @@ fn run() -> Result<serde_json::Value, StoreError> {
         "repository-contract"=>repository_contract(store),
         "transcript-contract"=>transcript_contract(store),
         "execution-contract"=>execution_contract(store),
+        "consumer-reload"=>{let value=store.read_snapshot(|tx|Ok(serde_json::json!({"run":tx.run_by_id("p1-app")?,"correlationJson":tx.run_correlation_json("p1-app")?})))?;store.close()?;Ok(value)},
         "input-contract"=>input_contract(store),
         "broker-contract"=>broker_contract(store),
         "recovery-contract"=>recovery_contract(store),
@@ -120,6 +121,21 @@ fn run() -> Result<serde_json::Value, StoreError> {
     }
 }
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("mail-schema-values") {
+        use std::io::BufRead;
+        for line in std::io::stdin().lock().lines() {
+            let input = serde_json::parse(&line.expect("input line")).expect("valid JSON input");
+            let schema = input.get("schema").expect("schema input");
+            let response = input.get("response").expect("response input");
+            match hrc_store::CompiledMailReplySchema::compile(schema)
+                .and_then(|compiled| compiled.validate(response))
+            {
+                Ok(result) => println!("{}", serde_json::json!({"result":result})),
+                Err(error) => println!("{}", serde_json::json!({"error":error})),
+            }
+        }
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("mail-json-values") {
         use std::io::BufRead;
         for line in std::io::stdin().lock().lines() {
