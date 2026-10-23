@@ -63,6 +63,7 @@ fn run() -> Result<serde_json::Value, StoreError> {
                 || command == "placement-registry-contract"
                 || command == "index-contract"
                 || command == "serialization-contract"
+                || command == "json-depth-contract"
                 || command == "replication-contract"
                 || command == "outbox-contract"
                 || command == "collective-contract"
@@ -120,6 +121,8 @@ fn run() -> Result<serde_json::Value, StoreError> {
         "ledgers-contract"=>ledgers_contract(store),
         "edges-contract"=>edges_contract(store),
         "serialization-contract"=>serialization_contract(store),
+        "json-depth-contract"=>json_depth_contract(store),
+        "json-depth-observe"=>json_depth_observe(store),
         "replication-contract"=>replication_contract(store),
         "outbox-contract"=>outbox_contract(store),
         "collective-contract"=>collective_contract(store),
@@ -4449,4 +4452,30 @@ fn blob_part_storage_boundary(tx: &hrc_store::ReadTx<'_>) -> Result<serde_json::
     Ok(
         serde_json::json!({"parts":tx.tool_result_blobs().parts_for_blob("p1-part")?,"blob":tx.tool_result_blobs().get("p1-part")?}),
     )
+}
+
+fn json_depth_observe(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    let value = store.read_snapshot(|tx| {
+        Ok(serde_json::json!({"events":tx.broker_events_by_invocation("p1-depth")?}))
+    })?;
+    store.close()?;
+    Ok(value)
+}
+fn json_depth_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    for (i, depth) in [128usize, 129, 256, 512].into_iter().enumerate() {
+        let raw = format!("{}0{}", "{\"x\":".repeat(depth), "}".repeat(depth));
+        let input = BrokerEventAppend {
+            invocation_id: "p1-depth".into(),
+            seq: i as i64 + 1,
+            time: "2026-10-23T00:00:00.000Z".into(),
+            r#type: "input.accepted".into(),
+            runtime_id: "p1-runtime".into(),
+            payload: serde_json::from_str(&raw)?,
+            ..Default::default()
+        };
+        store.write(|tx| tx.append_broker_event(&input))?;
+        store.write(|tx| tx.append_broker_event(&input))?;
+    }
+    json_depth_observe(store)
 }

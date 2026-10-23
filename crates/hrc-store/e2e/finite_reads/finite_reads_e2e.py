@@ -311,6 +311,8 @@ def main():
         summary['sourceUnchanged'] = hashes == after_hashes
         summary['nativeUnchanged'] = digest(binary) == identity['native']['sha256']
         write(out / 'summary.json', summary)
+        files=sorted(p for p in out.rglob('*') if p.is_file() and p != out/'SHA256SUMS')
+        (out/'SHA256SUMS').write_text(''.join(digest(p)+'  '+str(p.relative_to(out))+'\n' for p in files))
     assert summary['sourceUnchanged'] and summary['nativeUnchanged']
 
 

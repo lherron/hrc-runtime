@@ -125,15 +125,31 @@ impl JsObject {
     pub fn keys(&self) -> indexmap::map::Keys<'_, JsString, JsValue> {
         self.0.keys()
     }
-    pub fn extend(&mut self, other: Self) {
-        self.0.extend(other.0)
+    pub fn extend(&mut self, mut other: Self) {
+        self.0.extend(std::mem::take(&mut other.0))
+    }
+}
+// Drain nested containers on the heap rather than recursively dropping a deeply
+// nested object after a successful parse/stringify or duplicate-key replacement.
+impl Drop for JsObject {
+    fn drop(&mut self) {
+        let mut pending = self.0.drain(..).map(|(_, value)| value).collect::<Vec<_>>();
+        while let Some(mut value) = pending.pop() {
+            match &mut value {
+                JsValue::Array(values) => pending.append(values),
+                JsValue::Object(object) => {
+                    pending.extend(object.0.drain(..).map(|(_, value)| value))
+                }
+                _ => {}
+            }
+        }
     }
 }
 impl IntoIterator for JsObject {
     type Item = (JsString, JsValue);
     type IntoIter = indexmap::map::IntoIter<JsString, JsValue>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+    fn into_iter(mut self) -> Self::IntoIter {
+        std::mem::take(&mut self.0).into_iter()
     }
 }
 impl<'a> IntoIterator for &'a JsObject {
@@ -357,41 +373,61 @@ fn array_index(s: &JsString) -> Option<u32> {
     (n != u32::MAX && n.to_string() == s).then_some(n)
 }
 fn emit(v: &JsValue, out: &mut String) {
-    match v {
-        JsValue::Null => out.push_str("null"),
-        JsValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        JsValue::Number(n) => out.push_str(&number(*n)),
-        JsValue::String(s) => quote(s, out),
-        JsValue::Array(a) => {
-            out.push('[');
-            for (i, v) in a.iter().enumerate() {
-                if i > 0 {
-                    out.push(',')
-                }
-                emit(v, out)
+    enum Part<'a> {
+        Value(&'a JsValue),
+        Key(&'a JsString),
+        Char(char),
+    }
+    let mut pending = vec![Part::Value(v)];
+    while let Some(part) = pending.pop() {
+        let v = match part {
+            Part::Char(c) => {
+                out.push(c);
+                continue;
             }
-            out.push(']')
-        }
-        JsValue::Object(o) => {
-            out.push('{');
-            let mut indexed = o
-                .iter()
-                .filter_map(|(k, v)| array_index(k).map(|i| (i, k, v)))
-                .collect::<Vec<_>>();
-            indexed.sort_by_key(|x| x.0);
-            let entries = indexed
-                .into_iter()
-                .map(|(_, k, v)| (k, v))
-                .chain(o.iter().filter(|(k, _)| array_index(k).is_none()));
-            for (i, (k, v)) in entries.enumerate() {
-                if i > 0 {
-                    out.push(',')
-                }
+            Part::Key(k) => {
                 quote(k, out);
-                out.push(':');
-                emit(v, out)
+                continue;
             }
-            out.push('}')
+            Part::Value(v) => v,
+        };
+        match v {
+            JsValue::Null => out.push_str("null"),
+            JsValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            JsValue::Number(n) => out.push_str(&number(*n)),
+            JsValue::String(s) => quote(s, out),
+            JsValue::Array(values) => {
+                out.push('[');
+                pending.push(Part::Char(']'));
+                for (i, value) in values.iter().enumerate().rev() {
+                    pending.push(Part::Value(value));
+                    if i > 0 {
+                        pending.push(Part::Char(','));
+                    }
+                }
+            }
+            JsValue::Object(object) => {
+                out.push('{');
+                pending.push(Part::Char('}'));
+                let mut indexed = object
+                    .iter()
+                    .filter_map(|(k, v)| array_index(k).map(|i| (i, k, v)))
+                    .collect::<Vec<_>>();
+                indexed.sort_by_key(|v| v.0);
+                let entries = indexed
+                    .into_iter()
+                    .map(|(_, k, v)| (k, v))
+                    .chain(object.iter().filter(|(k, _)| array_index(k).is_none()))
+                    .collect::<Vec<_>>();
+                for (i, (key, value)) in entries.into_iter().enumerate().rev() {
+                    pending.push(Part::Value(value));
+                    pending.push(Part::Char(':'));
+                    pending.push(Part::Key(key));
+                    if i > 0 {
+                        pending.push(Part::Char(','));
+                    }
+                }
+            }
         }
     }
 }
@@ -483,7 +519,6 @@ pub fn parse(s: &str) -> Result<JsValue, Error> {
     let mut p = Parser {
         bytes: s.as_bytes(),
         at: 0,
-        depth: 0,
     };
     let v = p.value()?;
     p.ws();
@@ -495,7 +530,6 @@ pub fn parse(s: &str) -> Result<JsValue, Error> {
 struct Parser<'a> {
     bytes: &'a [u8],
     at: usize,
-    depth: usize,
 }
 impl Parser<'_> {
     fn err(&self, s: &str) -> Error {
@@ -509,90 +543,105 @@ impl Parser<'_> {
         }
     }
     fn value(&mut self) -> Result<JsValue, Error> {
-        self.ws();
-        if self.depth >= 128 {
-            return Err(self.err("JSON nesting limit"));
+        enum Frame {
+            Array(Vec<JsValue>),
+            Object(JsObject, JsString),
         }
-        self.depth += 1;
-        let v = match self.bytes.get(self.at) {
-            Some(b'"') => JsValue::String(self.string()?),
-            Some(b'n') => {
-                self.literal(b"null")?;
-                JsValue::Null
-            }
-            Some(b't') => {
-                self.literal(b"true")?;
-                JsValue::Bool(true)
-            }
-            Some(b'f') => {
-                self.literal(b"false")?;
-                JsValue::Bool(false)
-            }
-            Some(b'[') => {
-                self.at += 1;
-                self.ws();
-                let mut a = Vec::new();
-                if self.take(b']') {
-                    JsValue::Array(a)
-                } else {
-                    loop {
-                        a.push(self.value()?);
-                        self.ws();
-                        if self.take(b']') {
-                            break;
-                        }
-                        self.expect(b',')?;
+        let mut frames = Vec::new();
+        loop {
+            self.ws();
+            let mut value = match self.bytes.get(self.at) {
+                Some(b'[') => {
+                    self.at += 1;
+                    self.ws();
+                    if self.take(b']') {
+                        JsValue::Array(Vec::new())
+                    } else {
+                        frames.push(Frame::Array(Vec::new()));
+                        continue;
                     }
-                    JsValue::Array(a)
                 }
-            }
-            Some(b'{') => {
-                self.at += 1;
-                self.ws();
-                let mut o = JsObject::new();
-                if self.take(b'}') {
-                    JsValue::Object(o)
-                } else {
-                    loop {
-                        self.ws();
-                        let k = self.string()?;
+                Some(b'{') => {
+                    self.at += 1;
+                    self.ws();
+                    if self.take(b'}') {
+                        JsValue::Object(JsObject::new())
+                    } else {
+                        let key = self.string()?;
                         self.ws();
                         self.expect(b':')?;
-                        o.insert(k, self.value()?);
+                        frames.push(Frame::Object(JsObject::new(), key));
+                        continue;
+                    }
+                }
+                Some(b'"') => JsValue::String(self.string()?),
+                Some(b'n') => {
+                    self.literal(b"null")?;
+                    JsValue::Null
+                }
+                Some(b't') => {
+                    self.literal(b"true")?;
+                    JsValue::Bool(true)
+                }
+                Some(b'f') => {
+                    self.literal(b"false")?;
+                    JsValue::Bool(false)
+                }
+                Some(b'-' | b'0'..=b'9') => {
+                    let start = self.at;
+                    self.take(b'-');
+                    if !self.take(b'0') {
+                        self.digits()?;
+                    }
+                    if self.take(b'.') {
+                        self.digits()?;
+                    }
+                    if self.take(b'e') || self.take(b'E') {
+                        if !self.take(b'+') {
+                            self.take(b'-');
+                        }
+                        self.digits()?;
+                    }
+                    let raw = std::str::from_utf8(&self.bytes[start..self.at]).unwrap();
+                    JsValue::Number(
+                        raw.parse::<f64>()
+                            .map_err(|_| self.err("invalid JSON number"))?,
+                    )
+                }
+                _ => return Err(self.err("expected JSON value")),
+            };
+            loop {
+                match frames.pop() {
+                    None => return Ok(value),
+                    Some(Frame::Array(mut values)) => {
+                        values.push(value);
                         self.ws();
-                        if self.take(b'}') {
+                        if self.take(b']') {
+                            value = JsValue::Array(values);
+                        } else {
+                            self.expect(b',')?;
+                            frames.push(Frame::Array(values));
                             break;
                         }
-                        self.expect(b',')?;
                     }
-                    JsValue::Object(o)
+                    Some(Frame::Object(mut object, key)) => {
+                        object.insert(key, value);
+                        self.ws();
+                        if self.take(b'}') {
+                            value = JsValue::Object(object);
+                        } else {
+                            self.expect(b',')?;
+                            self.ws();
+                            let key = self.string()?;
+                            self.ws();
+                            self.expect(b':')?;
+                            frames.push(Frame::Object(object, key));
+                            break;
+                        }
+                    }
                 }
             }
-            Some(b'-' | b'0'..=b'9') => {
-                let start = self.at;
-                self.take(b'-');
-                if !self.take(b'0') {
-                    self.digits()?;
-                }
-                if self.take(b'.') {
-                    self.digits()?;
-                }
-                if self.take(b'e') || self.take(b'E') {
-                    if !self.take(b'+') {
-                        self.take(b'-');
-                    }
-                    self.digits()?;
-                }
-                let raw = std::str::from_utf8(&self.bytes[start..self.at]).unwrap();
-                JsValue::Number(
-                    raw.parse::<f64>()
-                        .map_err(|_| self.err("invalid JSON number"))?,
-                )
-            }
-            _ => return Err(self.err("expected JSON value")),
-        };
-        self.depth -= 1;
-        Ok(v)
+        }
     }
     fn digits(&mut self) -> Result<(), Error> {
         let start = self.at;

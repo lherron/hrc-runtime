@@ -1239,7 +1239,13 @@ def main():
           'exitCode': 3, 'checks': [{'id': 'completion', 'pass': False}]})
     try:
         if args.command == 'run':
-            data = run_suite(args, checks)
+            if args.suite == 'p1-native-store':
+                from native_suite import run as run_native_store
+                data = run_native_store(args, checks, check)
+            elif args.suite == 'p0-bun':
+                data = run_suite(args, checks)
+            else:
+                check(checks, 'suite:known', False, 'unknown qualification suite', 2)
         elif args.command == 'compare':
             data = compare(args, checks)
         elif args.command == 'inventory':
@@ -1258,8 +1264,9 @@ def main():
                  'classification': {0: 'PASS', 1: 'FAIL', 2: 'GAP', 3: 'INFRA_ERROR'}[code],
                  'reason': '; '.join(c['reason'] for c in failures) or 'all requested checks passed'})
     if args.command == 'run':
-        data['qualificationScope'] = 'p0-bun-compatibility'
-        data['inventoryComplete'] = any(c['id'] == 'jobs-files-listeners:semantic:source-inventory' and c['pass'] for c in checks)
+        data['qualificationScope'] = 'p1-native-store' if args.suite == 'p1-native-store' else 'p0-bun-compatibility'
+        if args.suite == 'p0-bun':
+            data['inventoryComplete'] = any(c['id'] == 'jobs-files-listeners:semantic:source-inventory' and c['pass'] for c in checks)
         data['behaviorQualified'] = code == 0 and data.get('validationSurface') == 'installed'
     data['fullParityQualified'] = code == 0 and data.get('claim') == 'full-parity'
     write(out / 'summary.json', data)

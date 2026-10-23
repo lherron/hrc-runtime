@@ -14,6 +14,17 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def make_native_profile(identity, repositories, coverage_bindings, surface='source'):
+    """Explicit offline native readback profile; no daemon/endpoint defaults."""
+    if surface not in ('source', 'installed'):
+        raise ValueError('unknown native validation surface')
+    return {'schema': 1, 'suite': 'p1-native-store', 'claim': 'native-store',
+            'mode': 'readback', 'validationSurface': surface,
+            'identity': str(Path(identity).resolve(strict=True)),
+            'repositories': str(Path(repositories).resolve(strict=True)),
+            'coverageBindings': str(Path(coverage_bindings).resolve(strict=True))}
+
+
 def make_profile(root, release, cli, asp_evidence, node, source=False):
     root, release = Path(root), Path(release)
     for required in ('packages/hrc-sdk/src/index.ts','packages/hrc-store-sqlite/src/index.ts'):
