@@ -29,3 +29,17 @@ pub fn fingerprint_mail_json(value: &JsValue) -> String {
         Sha256::digest(canonical_mail_json(value).as_bytes())
     )
 }
+
+pub fn fingerprint_mail_request(
+    input: &hrc_domain::store::LegacyMailSend,
+) -> crate::Result<String> {
+    use hrc_domain::store::json;
+    let mut value = json::json!({"from":input.from,"targetSessionRef":input.target_session_ref,"payload":input.payload});
+    if let Some(schema) = &input.reply_schema {
+        value
+            .as_object_mut()
+            .expect("object")
+            .insert("replySchema".into(), schema.clone());
+    }
+    Ok(fingerprint_mail_json(&value))
+}

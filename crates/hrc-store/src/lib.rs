@@ -241,4 +241,6 @@ mod mail_delivery;
 mod outbox;
 
 mod mail_json;
-pub use mail_json::{canonical_mail_json, fingerprint_mail_json};
+pub use mail_json::{canonical_mail_json, fingerprint_mail_json, fingerprint_mail_request};
+
+mod legacy_mail;

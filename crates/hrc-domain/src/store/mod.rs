@@ -765,3 +765,6 @@ impl TryFrom<LifecyclePage> for crate::api::EventPage {
 pub struct ContinuationHistoryRepair {
     pub sessions: i64,
 }
+
+mod legacy_mail;
+pub use legacy_mail::*;

@@ -51,6 +51,9 @@ fn run() -> Result<serde_json::Value, StoreError> {
                 || command == "collective-contract"
                 || command == "append-boundary-contract"
                 || command.starts_with("continuation-maintenance-")
+                || command == "legacy-mail-transition-contract"
+                || command == "legacy-mail-origin-contract"
+                || command == "legacy-mail-present-caught-contract"
                 || command == "mail-accounting-contract"
                 || command == "mail-delivery-contract"
             {
@@ -80,6 +83,10 @@ fn run() -> Result<serde_json::Value, StoreError> {
         "replication-contract"=>replication_contract(store),
         "outbox-contract"=>outbox_contract(store),
         "collective-contract"=>collective_contract(store),
+        "legacy-mail-read-contract"=>legacy_mail_read_contract(store),
+        "legacy-mail-transition-contract"=>legacy_mail_transition_contract(store),
+        "legacy-mail-origin-contract"=>legacy_mail_origin_contract(store),
+        "legacy-mail-present-caught-contract"=>{let before=store.read_snapshot(|tx|tx.require_legacy_mail_envelope("legacy-envelope-2"))?;let rejected=store.write(|tx|Ok(tx.present_pending_legacy_mail("agent:tabularasa:project:hrc-runtime:task:p1-store",100,"2026-10-23T00:00:00.000Z").is_err()))?.value;let after=store.read_snapshot(|tx|tx.require_legacy_mail_envelope("legacy-envelope-2"))?;store.close()?;Ok(serde_json::json!({"rejected":rejected,"before":before,"after":after}))},
         "append-boundary-contract"=>append_boundary_contract(store),
         "continuation-maintenance-seed"=>continuation_maintenance_seed(store),
         "continuation-maintenance-contract"=>continuation_maintenance_contract(store),
@@ -3183,4 +3190,186 @@ fn continuation_maintenance_contract(mut store: Store) -> Result<serde_json::Val
     let result = store.read_snapshot(|tx|Ok(serde_json::json!({"backfilled":backfilled,"repeatBackfill":repeat_backfill,"repaired":repaired,"repeatRepair":repeat_repair,"session":tx.sessions().get_by_host_session_id("p1-host")?,"reuseDisabled":tx.sessions().is_continuation_reuse_disabled("p1-host")?,"hasBarrier":tx.host_has_continuation_clear("p1-host")?,"events":tx.broker_events_by_invocation("p1-history")?})))?;
     store.close()?;
     Ok(result)
+}
+
+fn legacy_mail_read_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let target = "agent:tabularasa:project:hrc-runtime:task:p1-store";
+    let value=store.read_snapshot(|tx|{
+        let actor=LegacyMailActor::Operator{principal:"fixture".into()};
+        if tx.legacy_mail_envelope("absent")?.is_some() || tx.legacy_mail_origin_by_ingress("absent")?.is_some() || tx.legacy_mail_ingress_receipt("absent")?.is_some(){return Err(StoreError::Invalid("missing record read synthesized data".into()))}
+        for (actual,expected) in [(tx.require_legacy_mail_envelope("absent").unwrap_err().code(),"unknown_envelope"),(tx.legacy_mail_inbox(&LegacyMailActor::Scope{session_ref:"other".into()},target).unwrap_err().code(),"target_mismatch"),(tx.legacy_mail_inbox(&actor," ").unwrap_err().code(),"invalid_transition")]{if actual!=expected{return Err(StoreError::Invalid("legacy mail read error mismatch".into()))}}
+        Ok(serde_json::json!({"all":tx.list_legacy_mail_envelopes(&LegacyMailList::default())?,"inbox":tx.legacy_mail_inbox(&actor,&format!(" {target} "))?,"limited":tx.list_legacy_mail_envelopes(&LegacyMailList{limit:Some(1),..Default::default()})?,"pending":tx.list_legacy_mail_envelopes(&LegacyMailList{state:Some("pending".into()),target_session_ref:Some(target.into()),..Default::default()})?,"dead":tx.list_legacy_mail_envelopes(&LegacyMailList{dead:true,..Default::default()})?,"one":tx.require_legacy_mail_envelope("legacy-envelope-0")?,"receipt":tx.legacy_mail_ingress_receipt("legacy-ingress-0")?,"origin":tx.legacy_mail_origin_by_ingress("legacy-origin-ingress")?,"originEnvelope":tx.legacy_mail_origin_by_envelope("legacy-origin-envelope")?,"originRequest":tx.legacy_mail_origin_by_request("legacy-request")?}))
+    })?;
+    store.close()?;
+    Ok(value)
+}
+
+fn legacy_mail_transition_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let target = "agent:tabularasa:project:hrc-runtime:task:p1-store";
+    let at = "2026-10-23T00:00:00.000Z";
+    let actor = LegacyMailActor::Operator {
+        principal: "fixture".into(),
+    };
+    let mut failures = vec![];
+    failures.push(
+        store
+            .write(|tx| tx.mark_legacy_mail_dead("legacy-envelope-3", at))
+            .err()
+            .expect("expected transition refusal")
+            .code(),
+    );
+    let mut input = LegacyMailDefer {
+        actor: actor.clone(),
+        envelope_id: "legacy-envelope-2".into(),
+        reason: "why".into(),
+        retry_after_ms: Some(-1),
+    };
+    failures.push(
+        store
+            .write(|tx| tx.defer_legacy_mail(&input, at))
+            .err()
+            .expect("expected transition refusal")
+            .code(),
+    );
+    let presented = store
+        .write(|tx| tx.present_pending_legacy_mail(&format!(" {target} "), 1, at))?
+        .value;
+    input.actor = LegacyMailActor::Scope {
+        session_ref: "other".into(),
+    };
+    input.retry_after_ms = None;
+    failures.push(
+        store
+            .write(|tx| tx.defer_legacy_mail(&input, at))
+            .err()
+            .expect("expected transition refusal")
+            .code(),
+    );
+    input.actor = actor;
+    input.reason = "  why  ".into();
+    input.retry_after_ms = Some(1000);
+    let deferred = store.write(|tx| tx.defer_legacy_mail(&input, at))?.value;
+    input.reason = "why".into();
+    let repeated = store.write(|tx| tx.defer_legacy_mail(&input, at))?.value;
+    input.reason = "different".into();
+    failures.push(
+        store
+            .write(|tx| tx.defer_legacy_mail(&input, at))
+            .err()
+            .expect("expected transition refusal")
+            .code(),
+    );
+    let not_due = store
+        .write(|tx| tx.requeue_deferred_legacy_mail_due("2000-01-01T00:00:00.000Z"))?
+        .value;
+    let due = store
+        .write(|tx| tx.requeue_deferred_legacy_mail_due("2050-01-01T00:00:00.000Z"))?
+        .value;
+    let represented = store
+        .write(|tx| tx.present_pending_legacy_mail(target, 1, at))?
+        .value;
+    let dead = store
+        .write(|tx| tx.mark_legacy_mail_dead("legacy-envelope-2", at))?
+        .value;
+    let repeat_dead = store
+        .write(|tx| tx.mark_legacy_mail_dead("legacy-envelope-2", at))?
+        .value;
+    let all =
+        store.read_snapshot(|tx| tx.list_legacy_mail_envelopes(&LegacyMailList::default()))?;
+    store.close()?;
+    Ok(
+        serde_json::json!({"failures":failures,"presented":presented,"deferred":deferred,"repeated":repeated,"notDue":not_due,"due":due,"represented":represented,"dead":dead,"repeatDead":repeat_dead,"all":all}),
+    )
+}
+
+fn legacy_mail_origin_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let origin = store
+        .read_snapshot(|tx| tx.legacy_mail_origin_by_request("legacy-request"))?
+        .expect("seeded origin");
+    let mut incoming = origin.envelope.current().expect("current fixture").clone();
+    incoming.state = "acked".into();
+    incoming.round_count = 3;
+    incoming.response = Some(serde_json::parse(r#"{"\ud800":"\udfff","ok":true}"#)?);
+    incoming.presented_at = Some("2026-10-23T01:00:00.000Z".into());
+    incoming.acked_at = Some("2026-10-23T01:00:01.000Z".into());
+    incoming.updated_at = "2026-10-23T01:00:02.000Z".into();
+    incoming.terminal_actor = Some(LegacyMailActor::Operator {
+        principal: "remote".into(),
+    });
+    let mut failures = vec![];
+    let mut bad = incoming.clone();
+    bad.state = "dead".into();
+    failures.push(
+        store
+            .write(|tx| {
+                tx.apply_legacy_mail_federated_disposition("legacy-request", "disposition-1", &bad)
+            })
+            .err()
+            .expect("dead refusal")
+            .code(),
+    );
+    failures.push(
+        store
+            .write(|tx| {
+                tx.apply_legacy_mail_federated_disposition("absent", "disposition-1", &incoming)
+            })
+            .err()
+            .expect("missing refusal")
+            .code(),
+    );
+    bad = incoming.clone();
+    bad.payload.body = "wrong".into();
+    failures.push(
+        store
+            .write(|tx| {
+                tx.apply_legacy_mail_federated_disposition("legacy-request", "disposition-1", &bad)
+            })
+            .err()
+            .expect("request refusal")
+            .code(),
+    );
+    let applied = store
+        .write(|tx| {
+            tx.apply_legacy_mail_federated_disposition("legacy-request", "disposition-1", &incoming)
+        })?
+        .value;
+    bad = incoming.clone();
+    bad.updated_at = "2099-01-01T00:00:00.000Z".into();
+    let repeated = store
+        .write(|tx| {
+            tx.apply_legacy_mail_federated_disposition("legacy-request", "disposition-1", &bad)
+        })?
+        .value;
+    failures.push(
+        store
+            .write(|tx| {
+                tx.apply_legacy_mail_federated_disposition(
+                    "legacy-request",
+                    "other-disposition",
+                    &incoming,
+                )
+            })
+            .err()
+            .expect("disposition refusal")
+            .code(),
+    );
+    bad = incoming.clone();
+    bad.response = Some(serde_json::Value::Null);
+    failures.push(
+        store
+            .write(|tx| {
+                tx.apply_legacy_mail_federated_disposition("legacy-request", "disposition-1", &bad)
+            })
+            .err()
+            .expect("response refusal")
+            .code(),
+    );
+    let origin = store.read_snapshot(|tx| tx.legacy_mail_origin_by_request("legacy-request"))?;
+    store.close()?;
+    Ok(
+        serde_json::json!({"failures":failures,"applied":applied,"repeated":repeated,"origin":origin}),
+    )
 }

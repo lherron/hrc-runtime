@@ -564,6 +564,204 @@ try {
         hits: db.transcriptIndex.search('cafe', {}, { limit: 10 }),
       })
     )
+  } else if (mode === 'legacy-mail-seed') {
+    const targetSessionRef = 'agent:tabularasa:project:hrc-runtime:task:p1-store'
+    const from = { kind: 'operator', principal: 'fixture' }
+    for (let i = 0; i < 4; i++)
+      db.mailEnvelopes.create({
+        ingressId: `legacy-ingress-${i}`,
+        envelopeId: `legacy-envelope-${i}`,
+        from,
+        targetSessionRef,
+        payload: {
+          kind: i === 1 ? 'conversational' : 'request',
+          body: `  fixture-${i}  `,
+          metadata: { '\ud800': '\udfff', numeric: 9007199254740993 },
+        },
+        ...(i === 3
+          ? {
+              replySchema: {
+                type: 'object',
+                properties: { ok: { const: true } },
+                required: ['ok'],
+              },
+            }
+          : {}),
+      })
+    db.mailEnvelopes.presentPendingForTarget(targetSessionRef, 2)
+    db.mailEnvelopes.ack({ actor: from, envelopeIds: ['legacy-envelope-0'], response: null })
+    db.mailFederatedOrigins.create({
+      request: {
+        ingressId: 'legacy-origin-ingress',
+        from,
+        targetSessionRef,
+        payload: { kind: 'request', body: 'remote fixture' },
+      },
+      envelopeId: 'legacy-origin-envelope',
+      requestMessageId: 'legacy-request',
+    })
+    console.log(JSON.stringify({ seeded: true }))
+  } else if (mode === 'legacy-mail-corrupt-pending') {
+    db.sqlite
+      .query("UPDATE hrcmail_envelopes SET metadata_json='{' WHERE envelope_id='legacy-envelope-3'")
+      .run()
+    console.log(JSON.stringify({ corrupted: true }))
+  } else if (mode === 'legacy-mail-present-caught-control') {
+    const target = 'agent:tabularasa:project:hrc-runtime:task:p1-store'
+    const before = db.mailEnvelopes.require('legacy-envelope-2')
+    let rejected = false
+    db.sqlite
+      .transaction(() => {
+        try {
+          db.mailEnvelopes.presentPendingForTarget(target, 100)
+        } catch {
+          rejected = true
+        }
+      })
+      .immediate()
+    const after = db.mailEnvelopes.require('legacy-envelope-2')
+    console.log(JSON.stringify({ rejected, before, after }))
+  } else if (mode === 'legacy-mail-origin-control') {
+    const original = db.mailFederatedOrigins.getByRequestMessageId('legacy-request').envelope
+    const incoming = {
+      ...original,
+      state: 'acked',
+      roundCount: 3,
+      response: { '\ud800': '\udfff', ok: true },
+      presentedAt: '2026-10-23T01:00:00.000Z',
+      ackedAt: '2026-10-23T01:00:01.000Z',
+      updatedAt: '2026-10-23T01:00:02.000Z',
+      terminalActor: { kind: 'operator', principal: 'remote' },
+    }
+    const failures = []
+    const apply = (
+      envelope,
+      requestMessageId = 'legacy-request',
+      dispositionMessageId = 'disposition-1'
+    ) =>
+      db.mailFederatedOrigins.applyDisposition({ envelope, requestMessageId, dispositionMessageId })
+    for (const operation of [
+      () => apply({ ...incoming, state: 'dead' }),
+      () => apply(incoming, 'absent'),
+      () => apply({ ...incoming, payload: { ...incoming.payload, body: 'wrong' } }),
+    ]) {
+      try {
+        operation()
+        throw new Error('expected refusal')
+      } catch (error) {
+        failures.push(error.code)
+      }
+    }
+    const applied = apply(incoming)
+    const repeated = apply({ ...incoming, updatedAt: '2099-01-01T00:00:00.000Z' })
+    for (const operation of [
+      () => apply(incoming, 'legacy-request', 'other-disposition'),
+      () => apply({ ...incoming, response: null }),
+    ]) {
+      try {
+        operation()
+        throw new Error('expected refusal')
+      } catch (error) {
+        failures.push(error.code)
+      }
+    }
+    console.log(
+      JSON.stringify({
+        failures,
+        applied,
+        repeated,
+        origin: db.mailFederatedOrigins.getByRequestMessageId('legacy-request'),
+      })
+    )
+  } else if (mode === 'legacy-mail-transition-control') {
+    const target = 'agent:tabularasa:project:hrc-runtime:task:p1-store'
+    const actor = { kind: 'operator', principal: 'fixture' }
+    const failures = []
+    for (const operation of [
+      () => db.mailEnvelopes.markDead('legacy-envelope-3'),
+      () =>
+        db.mailEnvelopes.defer({
+          actor,
+          envelopeId: 'legacy-envelope-2',
+          reason: 'why',
+          retryAfterMs: -1,
+        }),
+    ]) {
+      try {
+        operation()
+        throw new Error('expected refusal')
+      } catch (error) {
+        failures.push(error.code)
+      }
+    }
+    const presented = db.mailEnvelopes.presentPendingForTarget(` ${target} `, 1)
+    try {
+      db.mailEnvelopes.defer({
+        actor: { kind: 'scope', sessionRef: 'other' },
+        envelopeId: 'legacy-envelope-2',
+        reason: 'why',
+      })
+    } catch (error) {
+      failures.push(error.code)
+    }
+    const deferred = db.mailEnvelopes.defer({
+      actor,
+      envelopeId: 'legacy-envelope-2',
+      reason: '  why  ',
+      retryAfterMs: 1000,
+    })
+    const repeated = db.mailEnvelopes.defer({
+      actor,
+      envelopeId: 'legacy-envelope-2',
+      reason: 'why',
+      retryAfterMs: 1000,
+    })
+    try {
+      db.mailEnvelopes.defer({
+        actor,
+        envelopeId: 'legacy-envelope-2',
+        reason: 'different',
+        retryAfterMs: 1000,
+      })
+    } catch (error) {
+      failures.push(error.code)
+    }
+    const notDue = db.mailEnvelopes.requeueDeferredDue('2000-01-01T00:00:00.000Z')
+    const due = db.mailEnvelopes.requeueDeferredDue('2050-01-01T00:00:00.000Z')
+    const represented = db.mailEnvelopes.presentPendingForTarget(target, 1)
+    const dead = db.mailEnvelopes.markDead('legacy-envelope-2')
+    const repeatDead = db.mailEnvelopes.markDead('legacy-envelope-2')
+    console.log(
+      JSON.stringify({
+        failures,
+        presented,
+        deferred,
+        repeated,
+        notDue,
+        due,
+        represented,
+        dead,
+        repeatDead,
+        all: db.mailEnvelopes.list(),
+      })
+    )
+  } else if (mode === 'legacy-mail-read') {
+    const actor = { kind: 'operator', principal: 'fixture' }
+    const target = 'agent:tabularasa:project:hrc-runtime:task:p1-store'
+    console.log(
+      JSON.stringify({
+        all: db.mailEnvelopes.list(),
+        inbox: db.mailEnvelopes.inbox(actor, ` ${target} `),
+        limited: db.mailEnvelopes.list({ limit: 1 }),
+        pending: db.mailEnvelopes.list({ state: 'pending', targetSessionRef: target }),
+        dead: db.mailEnvelopes.list({ dead: true }),
+        one: db.mailEnvelopes.require('legacy-envelope-0'),
+        receipt: db.mailEnvelopes.getIngressReceipt('legacy-ingress-0'),
+        origin: db.mailFederatedOrigins.getByIngressId('legacy-origin-ingress'),
+        originEnvelope: db.mailFederatedOrigins.getByEnvelopeId('legacy-origin-envelope'),
+        originRequest: db.mailFederatedOrigins.getByRequestMessageId('legacy-request'),
+      })
+    )
   } else if (mode === 'continuation-maintenance-count-seed') {
     seedHistoryCount(Number(process.argv[5]), process.argv[6] === 'true')
     console.log(JSON.stringify({ seeded: true }))
