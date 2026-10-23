@@ -769,3 +769,26 @@ pub struct ContinuationHistoryRepair {
 
 mod legacy_mail;
 pub use legacy_mail::*;
+
+/// Optional broker process evidence for the exact aging CAS. A missing
+/// invocation deliberately skips its process-ID predicate, as in Bun.
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeAgingInvocation {
+    pub invocation_id: Option<String>,
+    pub broker_pid: Option<i64>,
+    pub child_pid: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AbsorbedSubmissionEvent {
+    pub invocation_id: String,
+    pub runtime_id: String,
+    pub broker_event_json: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalRuntimeActiveRun {
+    pub runtime_id: String,
+    pub status: String,
+    pub active_run_id: String,
+}

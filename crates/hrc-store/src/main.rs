@@ -48,6 +48,7 @@ fn run() -> Result<serde_json::Value, StoreError> {
                 || command == "participants-contract"
                 || command == "messages-contract"
                 || command == "authority-contract"
+                || command == "reconciliation-cas-contract"
                 || command == "ledgers-contract"
                 || command == "edges-contract"
                 || command == "crash-contract"
@@ -106,6 +107,8 @@ fn run() -> Result<serde_json::Value, StoreError> {
         "grants-contract"=>grants_contract(store),
         "participants-contract"=>participants_contract(store),
         "messages-contract"=>messages_contract(store),
+        "reconciliation-query-contract"=>reconciliation_query_contract(store),
+        "reconciliation-cas-contract"=>reconciliation_cas_contract(store),
         "authority-contract"=>authority_contract(store),
         "ledgers-contract"=>ledgers_contract(store),
         "edges-contract"=>edges_contract(store),
@@ -4047,4 +4050,200 @@ fn legacy_mail_origin_body_read_contract(
     })?;
     store.close()?;
     Ok(serde_json::json!({"envelopes":envelopes}))
+}
+
+fn reconciliation_cas_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let at = "2026-10-23T01:00:00.000Z";
+    let base = store
+        .read_snapshot(|tx| tx.runtime_by_id("p1-runtime"))?
+        .ok_or_else(|| StoreError::MissingRecord("p1-runtime".into()))?;
+    let families: &[(&str, &[&str])] = &[
+        (
+            "aging",
+            &[
+                "exact",
+                "pidWrong",
+                "childWrong",
+                "invocationMissing",
+                "invocationSkip",
+                "statusChanged",
+                "runChanged",
+                "opChanged",
+                "invChanged",
+                "activityChanged",
+                "stateChanged",
+                "hasAccepted",
+                "hasTerminal",
+            ],
+        ),
+        (
+            "orphan",
+            &[
+                "free",
+                "noRuntime",
+                "ownsSame",
+                "ownsOtherOpen",
+                "ownsOtherTerminal",
+                "ownsOtherMissing",
+                "runTerminal",
+                "runCompleted",
+            ],
+        ),
+        (
+            "finalize",
+            &[
+                "exact",
+                "wrongRuntime",
+                "ownerChanged",
+                "terminal",
+                "completed",
+                "unsupportedTransport",
+            ],
+        ),
+        (
+            "reap",
+            &[
+                "exact",
+                "wrongRuntime",
+                "ownerChanged",
+                "terminal",
+                "completed",
+                "unsupportedTransport",
+            ],
+        ),
+        (
+            "zombie",
+            &["exact", "wrongTransport", "terminal", "completed"],
+        ),
+        ("release", &["exact", "changed"]),
+    ];
+    let mut results = vec![];
+    for (family, variants) in families {
+        for variant in *variants {
+            let id = format!("{family}-{variant}");
+            let runtime = format!("{id}-runtime");
+            let run = format!("{id}-run");
+            let changed = store
+                .write(|tx| match *family {
+                    "aging" => {
+                        let mut observed = base.clone();
+                        observed.runtime_id = runtime.clone();
+                        observed.status = "ready".into();
+                        observed.active_run_id = None;
+                        observed.active_operation_id = None;
+                        observed.active_invocation_id = None;
+                        observed.last_activity_at = Some("2026-10-23T00:00:00.000Z".into());
+                        observed.runtime_state_json = Some(serde_json::json!({"v":1}));
+                        let evidence = RuntimeAgingInvocation {
+                            invocation_id: if *variant == "invocationSkip" {
+                                None
+                            } else {
+                                Some(
+                                    if *variant == "invocationMissing" {
+                                        "missing"
+                                    } else {
+                                        "p1-process"
+                                    }
+                                    .into(),
+                                )
+                            },
+                            broker_pid: Some(if *variant == "pidWrong" { 101 } else { 100 }),
+                            child_pid: Some(if *variant == "childWrong" { 201 } else { 200 }),
+                        };
+                        tx.age_runtime_if_unchanged(&observed, &evidence, at)
+                    }
+                    "orphan" => tx.fail_abandoned_run(
+                        &run,
+                        &runtime,
+                        "fixture-error",
+                        "fixture message",
+                        at,
+                    ),
+                    "finalize" => tx.finalize_owned_run(&run, &runtime, "completed", at),
+                    "reap" => {
+                        tx.reap_owned_run(&run, &runtime, "fixture-error", "fixture message", at)
+                    }
+                    "zombie" => {
+                        tx.zombie_headless_run(&run, "fixture-error", "fixture message", at)
+                    }
+                    "release" => tx.release_runtime_run(&runtime, &run, "ready", at),
+                    _ => unreachable!("fixed family"),
+                })?
+                .value;
+            results.push(serde_json::json!({"id":id,"changed":changed}));
+        }
+    }
+
+    let mut fields = store
+        .read_snapshot(|tx| tx.lifecycle_events().page(0, 1, None))?
+        .rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| StoreError::MissingRecord("nonempty lifecycle".into()))?
+        .fields;
+    fields.ts = at.into();
+    fields.runtime_id = Some("atomic-runtime".into());
+    fields.run_id = Some("atomic-run".into());
+    fields.category = "turn".into();
+    fields.event_kind = "turn.completed".into();
+    fields.transport = Some("headless".into());
+    fields.payload = Some(serde_json::json!({"source":"reconciliation","success":true}));
+    let before=store.read_snapshot(|tx|Ok(serde_json::json!({
+        "run":tx.run_by_id("atomic-run")?,"runtime":tx.runtime_by_id("atomic-runtime")?,
+        "hrcHead":tx.lifecycle_events().allocated_hrc_seq()?,"streamHead":tx.allocated_event_stream_seq()?
+    })))?;
+    let hints = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let observed = hints.clone();
+    store.observe(move |_| observed.set(observed.get() + 1));
+    let atomic = |tx: &mut hrc_store::WriteTx<'_>| -> hrc_store::Result<()> {
+        if !tx.finalize_owned_run("atomic-run", "atomic-runtime", "completed", at)?
+            || !tx.release_runtime_run("atomic-runtime", "atomic-run", "ready", at)?
+        {
+            return Err(StoreError::Invalid("missing atomic CAS".into()));
+        }
+        tx.append_lifecycle(&fields)?;
+        Ok(())
+    };
+    let rejected = store.write::<()>(|tx| {
+        atomic(tx)?;
+        Err(StoreError::Invalid("fixture rollback".into()))
+    });
+    if !matches!(rejected,Err(StoreError::Invalid(ref message)) if message=="fixture rollback") {
+        return Err(StoreError::Invalid("missing forced rollback".into()));
+    }
+    let after=store.read_snapshot(|tx|Ok(serde_json::json!({
+        "run":tx.run_by_id("atomic-run")?,"runtime":tx.runtime_by_id("atomic-runtime")?,
+        "hrcHead":tx.lifecycle_events().allocated_hrc_seq()?,"streamHead":tx.allocated_event_stream_seq()?
+    })))?;
+    let atomic_rolled_back = before == after && hints.get() == 0;
+    let committed = store.write(atomic)?;
+    let atomic_committed = committed.changes.len() == 2 && hints.get() == 2;
+    store.close()?;
+    Ok(
+        serde_json::json!({"results":results,"atomicRolledBack":atomic_rolled_back,"atomicCommitted":atomic_committed,"postCommitHints":hints.get()}),
+    )
+}
+
+fn reconciliation_query_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    let result=store.read_snapshot(|tx|{
+        let accepted=["chosen","missing"].map(|input|tx.accepted_broker_input_seq("read-invocation",input)).into_iter().collect::<Result<Vec<_>,_>>()?;
+        let terminals=[0,2,3,4,5,99].map(|seq|tx.first_orphan_broker_terminal_after("read-invocation",seq)).into_iter().collect::<Result<Vec<_>,_>>()?;
+        let prefixes=vec!["agent:literal_%\\".into()];let tasks=vec!["same-task".into()];
+        Ok(serde_json::json!({
+            "accepted":accepted,"terminals":terminals,
+            "absorbedAll":tx.absorbed_submission_events("p1-runtime",None)?,
+            "absorbedOne":tx.absorbed_submission_events("p1-runtime",Some("read-invocation"))?,
+            "terminalRuntimes":tx.terminal_runtime_active_runs()?,
+            "inFlight":tx.recent_in_flight_work("2026-10-23T00:00:00.000Z",false,&[],None)?,
+            "acceptedInFlight":tx.recent_in_flight_work("2026-10-23T00:00:00.000Z",true,&[],None)?,
+            "excluded":tx.recent_in_flight_work("2026-10-23T00:00:00.000Z",true,&["tmux".into()],Some("flight-headless"))?,
+            "scoped":[tx.scoped_selector_host_ids(&[],&[])?,tx.scoped_selector_host_ids(&prefixes,&[])?,
+                tx.scoped_selector_host_ids(&[],&tasks)?,tx.scoped_selector_host_ids(&prefixes,&["same-task".into(),"same-task".into()])?],
+            "roleTree":tx.role_tree_selector_host_ids("agent:literal_%\\",true)?,
+            "roleExact":tx.role_tree_selector_host_ids("agent:literal_%\\:role:review",false)?
+        }))
+    })?;
+    store.close()?;
+    Ok(serde_json::json!({"result":result}))
 }

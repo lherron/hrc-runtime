@@ -161,3 +161,53 @@ impl ReadTx<'_> {
         Ok(self.db.prepare(&format!("SELECT s.host_session_id FROM sessions s WHERE s.status='active' AND {RECENCY}<? AND NOT {LIVE}"))?.query_map([since],|r|r.get(0))?.collect::<std::result::Result<Vec<_>,_>>()?)
     }
 }
+
+impl ReadTx<'_> {
+    /// Finite SQL portion of monitor's scoped selector set. Exact selectors are
+    /// resolved separately by its caller. Empty scoped inputs select no hosts.
+    pub fn scoped_selector_host_ids(
+        &self,
+        prefixes: &[String],
+        task_ids: &[String],
+    ) -> Result<Vec<String>> {
+        let mut predicates = vec![];
+        let mut values = vec![];
+        for prefix in prefixes {
+            predicates.push("scope_ref LIKE ? ESCAPE '\\'");
+            values.push(format!("{}%", crate::events::escape_like(prefix)));
+        }
+        for task in task_ids {
+            predicates.push("(sessions.scope_ref,sessions.lane_ref) IN (SELECT c.scope_ref,c.lane_ref FROM continuities c WHERE c.task_id=?)");
+            values.push(task.clone());
+        }
+        if predicates.is_empty() {
+            return Ok(vec![]);
+        }
+        let sql = format!(
+            "SELECT host_session_id FROM sessions WHERE {} ORDER BY host_session_id",
+            predicates.join(" OR ")
+        );
+        Ok(self
+            .db
+            .prepare(&sql)?
+            .query_map(params_from_iter(values), |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Caller passes true precisely when the parsed selector leaves role
+    /// unspecified; all stored generations are retained by this finite query.
+    pub fn role_tree_selector_host_ids(
+        &self,
+        scope: &str,
+        include_roles: bool,
+    ) -> Result<Vec<String>> {
+        if include_roles {
+            let prefix = format!("{}:role:%", crate::events::escape_like(scope));
+            Ok(self.db.prepare("SELECT host_session_id FROM sessions WHERE scope_ref=? OR scope_ref LIKE ? ESCAPE '\\' ORDER BY host_session_id")?
+                .query_map(params![scope,prefix],|row|row.get(0))?.collect::<std::result::Result<Vec<_>,_>>()?)
+        } else {
+            Ok(self.db.prepare("SELECT host_session_id FROM sessions WHERE scope_ref=? ORDER BY host_session_id")?
+                .query_map([scope],|row|row.get(0))?.collect::<std::result::Result<Vec<_>,_>>()?)
+        }
+    }
+}
