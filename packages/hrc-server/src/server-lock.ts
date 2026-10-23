@@ -1,5 +1,6 @@
 import { mkdir, open, readFile } from 'node:fs/promises'
 import { Socket } from 'node:net'
+import { uptime } from 'node:os'
 import { dirname } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { HrcServerOptions } from './server-types.js'
@@ -54,7 +55,7 @@ export async function acquireServerLock(options: HrcServerOptions): Promise<Serv
       throw new Error(`hrc server lock ${options.lockPath} is malformed; manual cleanup required`)
     }
 
-    if (isLiveProcess(existingLock.owner.pid)) {
+    if (isLockOwnerAlive(existingLock.owner)) {
       throw createServerAlreadyRunningError(options.lockPath, existingLock.owner)
     }
 
@@ -64,6 +65,23 @@ export async function acquireServerLock(options: HrcServerOptions): Promise<Serv
 
     await clearStaleServerState(options, existingLock)
   }
+}
+
+/**
+ * A lock written before the current boot cannot belong to a live server, even
+ * when its pid has since been reused by another process (hrcdev, 2026-10-20:
+ * pid 501 went to akd and every respawn refused for 3.3 days). The margin
+ * absorbs uptime's whole-second resolution and small clock steps.
+ */
+const BOOT_MARGIN_MS = 60_000
+
+function isLockOwnerAlive(owner: ServerLockOwner): boolean {
+  const createdAtMs = Date.parse(owner.createdAt)
+  if (Number.isFinite(createdAtMs) && createdAtMs < Date.now() - uptime() * 1000 - BOOT_MARGIN_MS) {
+    return false
+  }
+
+  return isLiveProcess(owner.pid)
 }
 
 export function isLiveProcess(pid: number): boolean {
@@ -119,7 +137,7 @@ async function clearStaleServerState(
       throw new Error(`hrc server lock ${options.lockPath} is malformed; manual cleanup required`)
     }
 
-    if (isLiveProcess(currentLock.owner.pid)) {
+    if (isLockOwnerAlive(currentLock.owner)) {
       throw createServerAlreadyRunningError(options.lockPath, currentLock.owner)
     }
 
