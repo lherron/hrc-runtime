@@ -778,8 +778,17 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     # ~/.zshenv. svc's does not add ~/.bun/bin or Homebrew, so `hrc` and `just`
     # are both MISSING over ssh there while they resolve fine on hrcdev.
     # Prepend the canonical locations rather than requiring every node's dotfiles
-    # to agree.
-    export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+    # to agree. `just install` builds hrc-kernel, so cargo is required too:
+    # rustup-init puts it in ~/.cargo/bin, Homebrew's keg-only rustup (hrcdev)
+    # in /opt/homebrew/opt/rustup/bin.
+    export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+    # The kernel's cardo dependency is a private GitHub repo. cargo's built-in git
+    # cannot authenticate on every node, so fetch through the git CLI over ssh,
+    # exactly as post-push-verify does.
+    export CARGO_NET_GIT_FETCH_WITH_CLI=true
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0=url.git@github.com:lherron/.insteadOf
+    export GIT_CONFIG_VALUE_0=https://github.com/lherron/
 
     fail() {
       printf 'deploy-%s: %s\n' "$expected_node" "$*" >&2
@@ -791,6 +800,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     command -v jq >/dev/null 2>&1 || fail 'jq is not available'
     command -v just >/dev/null 2>&1 || fail 'just is not available'
     command -v bun >/dev/null 2>&1 || fail 'bun is not available'
+    command -v cargo >/dev/null 2>&1 || fail 'cargo is not available (install builds hrc-kernel)'
     [[ -d "$repo/.git" ]] || fail "checkout not found at $repo"
     [[ -d "$asp_repo/.git" ]] || fail "agent-spaces checkout not found at $asp_repo"
     [[ -f "$aspd_ns/service/config.json" ]] ||
