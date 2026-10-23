@@ -40,6 +40,14 @@ impl ToolResultBlobs<'_> {
             )
             .optional()?)
     }
+    /// Finite stored assembly parts in the same order used by canonical ingestion.
+    pub fn parts_for_blob(&self, id: &str) -> Result<Vec<rows::ToolResultBlobPartsRow>> {
+        crate::typed_sql::many(
+            self.db,
+            "SELECT * FROM tool_result_blob_parts WHERE blob_id=? ORDER BY part ASC",
+            [id],
+        )
+    }
     pub fn list_local_from_rowid(&self, after: i64, limit: usize) -> Result<Vec<ToolResultBlob>> {
         let id: String = self.db.query_row(
             "SELECT ledger_incarnation_id FROM hrc_event_ledger_metadata WHERE id=1",
@@ -114,7 +122,7 @@ impl WriteTx<'_> {
             if count!=input.parts{return Ok(BlobPartOutcome{completed:false,duplicate:inserted==0})}
             let assembled:String=tx.db.query_row("SELECT group_concat(chunk,'') FROM (SELECT chunk FROM tool_result_blob_parts WHERE blob_id=? ORDER BY part ASC)",[&input.blob_id],|r|r.get(0))?;
             let valid:i64=tx.db.query_row("SELECT json_valid(?)",[&assembled],|r|r.get(0))?;
-            if assembled.len() as i64!=input.bytes||valid!=1{return Err(StoreError::Invalid(format!("invalid assembled blob {}",input.blob_id)))}
+            if assembled.len() as i64!=input.bytes||valid!=1{return Err(StoreError::Invalid(format!("invalid assembled tool-result blob {}",input.blob_id)))}
             tx.insert_tool_result_blob(&input.blob_id,&input.runtime_id,input.kind.clone(),input.bytes,&assembled,None)?;
             tx.db.execute("DELETE FROM tool_result_blob_parts WHERE blob_id=?",[&input.blob_id])?;
             Ok(BlobPartOutcome{completed:true,duplicate:inserted==0})

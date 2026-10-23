@@ -1,3 +1,5 @@
+mod qualification_presentation;
+mod qualification_reads;
 use hrc_domain::store::json as serde_json;
 // Explicit scratch/test driver; does not start a daemon or launch Bun.
 use hrc_store::{BlobKind, BlobPart, OpenMode, OpenOptions, Store, StoreError};
@@ -49,6 +51,7 @@ fn run() -> Result<serde_json::Value, StoreError> {
                 || command == "messages-contract"
                 || command == "authority-contract"
                 || command == "reconciliation-cas-contract"
+                || command == "finite-mutations-contract"
                 || command == "ledgers-contract"
                 || command == "edges-contract"
                 || command == "crash-contract"
@@ -107,6 +110,10 @@ fn run() -> Result<serde_json::Value, StoreError> {
         "grants-contract"=>grants_contract(store),
         "participants-contract"=>participants_contract(store),
         "messages-contract"=>messages_contract(store),
+        "presentation-contract"=>{let value=qualification_presentation::observe(&mut store)?;store.close()?;Ok(value)},
+        "presentation-chunks-contract"=>{let value=qualification_presentation::chunks(&mut store)?;store.close()?;Ok(value)},
+        "finite-reads-contract"=>{let value=qualification_reads::observe(&mut store)?;store.close()?;Ok(value)},
+        "finite-mutations-contract"=>{let value=qualification_reads::mutate(&mut store)?;store.close()?;Ok(value)},
         "reconciliation-query-contract"=>reconciliation_query_contract(store),
         "reconciliation-cas-contract"=>reconciliation_cas_contract(store),
         "authority-contract"=>authority_contract(store),
@@ -231,13 +238,18 @@ fn atomic_contract(
             .borrow_mut()
             .push(serde_json::to_value(change).expect("typed change serializes"))
     });
+    let mut boundaries = vec![
+        serde_json::json!({"stage":"before","state":store.read_snapshot(core_storage_boundary)?,"hints":hints.borrow().clone()}),
+    ];
     let rollback = store.write::<()>(|tx| {
         tx.append_lifecycle(&fields)?;
+        boundaries.push(serde_json::json!({"stage":"withinOuter","state":core_storage_boundary(&tx.read())?,"hints":hints.borrow().clone()}));
         Err(StoreError::Invalid("deliberate outer rollback".into()))
     });
     if rollback.is_ok() || !hints.borrow().is_empty() {
         return Err(StoreError::Invalid("rollback leaked hint".into()));
     }
+    boundaries.push(serde_json::json!({"stage":"afterOuterRollback","state":store.read_snapshot(core_storage_boundary)?,"hints":hints.borrow().clone()}));
     let after = store.read_snapshot(|tx| tx.lifecycle_events().page(0, 100, None))?;
     if after != initial {
         return Err(StoreError::Invalid("outer rollback changed ledger".into()));
@@ -250,16 +262,19 @@ fn atomic_contract(
     let committed = store.write(|tx| {
         let inner = tx.savepoint::<()>(|nested| {
             nested.append_lifecycle(&fields)?;
+            boundaries.push(serde_json::json!({"stage":"withinSavepoint","state":core_storage_boundary(&nested.read())?,"hints":hints.borrow().clone()}));
             Err(StoreError::Invalid("deliberate savepoint rollback".into()))
         });
         if inner.is_ok() {
             return Err(StoreError::Invalid("savepoint expected refusal".into()));
         }
+        boundaries.push(serde_json::json!({"stage":"afterSavepointRollback","state":core_storage_boundary(&tx.read())?,"hints":hints.borrow().clone()}));
         tx.append_lifecycle(&large)
     })?;
     if committed.changes.len() != 1 || hints.borrow().len() != 1 {
         return Err(StoreError::Invalid("savepoint hints leaked".into()));
     }
+    boundaries.push(serde_json::json!({"stage":"afterSpillCommit","state":store.read_snapshot(core_storage_boundary)?,"hints":hints.borrow().clone(),"committedChanges":committed.changes}));
     let page = store.read_snapshot(|tx| tx.lifecycle_events().page(0, 100, None))?;
     let written = page
         .rows
@@ -292,7 +307,11 @@ fn atomic_contract(
         parts: 2,
         chunk: "{\"a\":".into(),
     };
+    let mut part_boundaries = vec![
+        serde_json::json!({"stage":"beforePart","state":store.read_snapshot(blob_part_storage_boundary)?}),
+    ];
     let outcome = store.write(|tx| tx.ingest_blob_part(&first))?;
+    part_boundaries.push(serde_json::json!({"stage":"afterFirstPart","state":store.read_snapshot(blob_part_storage_boundary)?}));
     if outcome.value.completed {
         return Err(StoreError::Invalid("partial blob completed".into()));
     }
@@ -300,14 +319,26 @@ fn atomic_contract(
     last.part = 1;
     last.chunk = "1}".into();
     last.bytes = 8;
-    if store.write(|tx| tx.ingest_blob_part(&last)).is_ok() {
-        return Err(StoreError::Invalid("invalid bytes accepted".into()));
-    }
+    let invalid_input = serde_json::json!({"blobId":last.blob_id,"runtimeId":last.runtime_id,"kind":last.kind,"bytes":last.bytes,"part":last.part,"parts":last.parts,"chunk":last.chunk});
+    let mut invalid_part_error = None;
+    store.write(|tx|{
+        match tx.ingest_blob_part(&last) {
+            Err(error)=>{
+                let cause=match &error{StoreError::Invalid(message)=>Some(message.clone()),_=>None};
+                invalid_part_error=Some(serde_json::json!({"code":error.code(),"message":error.to_string(),"cause":cause}));
+                part_boundaries.push(serde_json::json!({"stage":"withinCaughtInvalidPart","state":blob_part_storage_boundary(&tx.read())?}));
+                Ok(())
+            },
+            Ok(_)=>Err(StoreError::Invalid("invalid bytes accepted".into()))
+        }
+    })?;
+    part_boundaries.push(serde_json::json!({"stage":"afterInvalidPart","state":store.read_snapshot(blob_part_storage_boundary)?}));
     last.bytes = 7;
     let complete = store.write(|tx| tx.ingest_blob_part(&last))?;
     if !complete.value.completed {
         return Err(StoreError::Invalid("blob assembly incomplete".into()));
     }
+    part_boundaries.push(serde_json::json!({"stage":"afterCompletePart","state":store.read_snapshot(blob_part_storage_boundary)?}));
     let blob = store
         .read_snapshot(|tx| tx.tool_result_blobs().get("p1-part"))?
         .ok_or_else(|| StoreError::MissingRecord("assembled blob".into()))?;
@@ -319,13 +350,22 @@ fn atomic_contract(
     if success.changes.len() != 1 {
         return Err(StoreError::Invalid("commit hint missing".into()));
     }
+    boundaries.push(serde_json::json!({"stage":"afterObserverFailureCommit","state":store.read_snapshot(core_storage_boundary)?,"hints":hints.borrow().clone(),"committedChanges":success.changes}));
     store.close()?;
     let mut reader = Store::open_existing(path, OpenOptions::default())?;
-    if reader.write(|tx| tx.append_lifecycle(&fields)).is_ok() {
+    let read_only_before = reader.read_snapshot(core_storage_boundary)?;
+    let read_only = reader.write(|tx| tx.append_lifecycle(&fields));
+    let read_only_error = read_only
+        .as_ref()
+        .err()
+        .map(|error| serde_json::json!({"code":error.code(),"message":error.to_string()}));
+    if read_only.is_ok() {
         return Err(StoreError::Invalid("read-only write accepted".into()));
     }
+    let read_only_after = reader.read_snapshot(core_storage_boundary)?;
+    let raw = serde_json::json!({"boundaries":boundaries,"partBoundaries":part_boundaries,"invalidPartInput":invalid_input,"readOnlyBefore":read_only_before,"readOnlyAfter":read_only_after,"initialPage":initial,"pageAfterSpill":page,"spillInput":large,"hydrated":hydrated,"firstPart":{"blobId":first.blob_id,"runtimeId":first.runtime_id,"kind":first.kind,"bytes":first.bytes,"part":first.part,"parts":first.parts,"chunk":first.chunk},"initialPartOutcome":outcome.value,"invalidPartError":invalid_part_error,"completePartOutcome":complete.value,"assembledBlob":blob,"readOnlyError":read_only_error});
     Ok(
-        serde_json::json!({"outerRollback":true,"savepointRollback":true,"commitHintsOnly":true,"observerFailureIsolated":true,"spillHydration":true,"blobPartsValidated":true,"readOnlyRefusal":true,"nativeCommittedSeq":success.value.hrc_seq,"hydratedUtf8Bytes":serde_json::to_string(&large.payload)?.len()}),
+        serde_json::json!({"observations":raw,"outerRollback":true,"savepointRollback":true,"commitHintsOnly":true,"observerFailureIsolated":true,"spillHydration":true,"blobPartsValidated":true,"readOnlyRefusal":true,"nativeCommittedSeq":success.value.hrc_seq,"hydratedUtf8Bytes":serde_json::to_string(&large.payload)?.len()}),
     )
 }
 
@@ -334,6 +374,8 @@ fn session_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
     let first = store
         .read_snapshot(|tx| tx.sessions().get_by_host_session_id("p1-host"))?
         .ok_or_else(|| StoreError::MissingRecord("oracle host".into()))?;
+    let mut observations = serde_json::Map::new();
+    observations.insert("initial".into(), serde_json::to_value(&first)?);
     let mut next = first.clone();
     next.host_session_id = "p1-host-next".into();
     next.generation = 2;
@@ -349,6 +391,7 @@ fn session_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
             )
         })?
         .value;
+    observations.insert("continuity".into(), serde_json::to_value(&continuity)?);
     if continuity.prior_host_session_ids != vec![first.host_session_id.clone()] {
         return Err(StoreError::Invalid("lineage differs".into()));
     }
@@ -361,6 +404,7 @@ fn session_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
         {
             return Err(StoreError::Invalid("reuse flag absent".into()));
         }
+        observations.insert("disabledWithin".into(),serde_json::json!({"session":tx.read().sessions().get_by_host_session_id(&next.host_session_id)?,"disabled":tx.read().sessions().is_continuation_reuse_disabled(&next.host_session_id)?}));
         tx.update_session_continuation(
             &next.host_session_id,
             &serde_json::json!({"nativeId":"p1-session"}),
@@ -373,6 +417,7 @@ fn session_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
     })? {
         return Err(StoreError::Invalid("reuse flag not reset".into()));
     }
+    observations.insert("continuationAfter".into(),store.read_snapshot(|tx|Ok(serde_json::json!({"session":tx.sessions().get_by_host_session_id(&next.host_session_id)?,"disabled":tx.sessions().is_continuation_reuse_disabled(&next.host_session_id)?})))?);
     let metadata = MetadataWrite {
         scope_ref: first.scope_ref.clone(),
         lane_ref: first.lane_ref.clone(),
@@ -395,6 +440,10 @@ fn session_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
     store.write(|tx| tx.upsert_session_title(&title))?;
     let resolved =
         store.read_snapshot(|tx| tx.session_metadata(&first.scope_ref, &first.lane_ref))?;
+    observations.insert(
+        "metadataPrecedence".into(),
+        serde_json::to_value(&resolved)?,
+    );
     if resolved.metadata["title"] != "native title"
         || resolved.metadata_sources["title"].shadowed.len() != 1
     {
@@ -403,6 +452,7 @@ fn session_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
     let same = store
         .read_snapshot(|tx| tx.session_title(&next.host_session_id))?
         .ok_or_else(|| StoreError::MissingRecord("successor title".into()))?;
+    observations.insert("successorTitle".into(), serde_json::to_value(&same)?);
     if same.title != "native title".into() {
         return Err(StoreError::Invalid("title not continuity scoped".into()));
     }
@@ -416,11 +466,18 @@ fn session_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
             "clear hides lower metadata layer".into(),
         ));
     }
+    observations.insert("afterTitleDelete".into(),store.read_snapshot(|tx|Ok(serde_json::json!({"title":tx.session_title(&next.host_session_id)?,"metadata":tx.session_metadata(&first.scope_ref,&first.lane_ref)?})))?);
+    let before_bad=store.read_snapshot(|tx|Ok(serde_json::json!({"core":core_storage_boundary(tx)?,"metadata":tx.session_metadata(&first.scope_ref,&first.lane_ref)?})))?;
     let head = store.read_snapshot(|tx| tx.lifecycle_events().allocated_hrc_seq())?;
     let mut bad = metadata.clone();
     bad.source = MetadataSource::Api;
     bad.set = serde_json::json!({"title":"","valid":true});
-    if store.write(|tx| tx.write_session_metadata(&bad)).is_ok() {
+    let bad_result = store.write(|tx| tx.write_session_metadata(&bad));
+    let bad_error = bad_result
+        .as_ref()
+        .err()
+        .map(|e| serde_json::json!({"code":e.code(),"message":e.to_string()}));
+    if bad_result.is_ok() {
         return Err(StoreError::Invalid("bad api metadata accepted".into()));
     }
     if store.read_snapshot(|tx| tx.lifecycle_events().allocated_hrc_seq())? != head {
@@ -428,15 +485,26 @@ fn session_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
             "bad metadata leaked lifecycle event".into(),
         ));
     }
-    store.write(|tx| tx.advance_wrkq_cursor("p1-native", 9, &first.updated_at))?;
+    let after_bad=store.read_snapshot(|tx|Ok(serde_json::json!({"core":core_storage_boundary(tx)?,"metadata":tx.session_metadata(&first.scope_ref,&first.lane_ref)?})))?;
+    observations.insert("invalidMetadata".into(),serde_json::json!({"input":bad.set,"error":bad_error,"before":before_bad,"after":after_bad}));
+    let first_cursor = store
+        .write(|tx| tx.advance_wrkq_cursor("p1-native", 9, &first.updated_at))?
+        .value;
     let high = store
         .write(|tx| tx.advance_wrkq_cursor("p1-native", 4, &first.updated_at))?
         .value;
     if high != 9 {
         return Err(StoreError::Invalid("cursor rewound".into()));
     }
+    observations.insert("cursor".into(),serde_json::json!({"first":first_cursor,"lowerAdvance":high,"stored":store.read_snapshot(|tx|tx.wrkq_cursor("p1-native"))?}));
+    observations.insert(
+        "sessionsAfter".into(),
+        serde_json::to_value(
+            store.read_snapshot(|tx| tx.sessions().list_by_scope_ref(&first.scope_ref, None))?,
+        )?,
+    );
     Ok(
-        serde_json::json!({"lineage":true,"continuationReuseReset":true,"metadataPrecedence":true,"titleContinuityFacade":true,"metadataRollback":true,"cursorMonotonic":true,"head":head}),
+        serde_json::json!({"observations":observations,"lineage":true,"continuationReuseReset":true,"metadataPrecedence":true,"titleContinuityFacade":true,"metadataRollback":true,"cursorMonotonic":true,"head":head}),
     )
 }
 
@@ -444,6 +512,11 @@ fn repository_contract(mut store: Store) -> Result<serde_json::Value, StoreError
     use hrc_store::*;
     let at = "2026-10-23T00:00:00.000Z";
     let scope = "agent:tabularasa:project:hrc-runtime:task:p1-store";
+    let mut observations = serde_json::Map::new();
+    observations.insert(
+        "before".into(),
+        store.read_snapshot(repository_storage_boundary)?,
+    );
     let claim = RosterClaim {
         idempotency_key: "p1-claim".into(),
         request_hash: "hash".into(),
@@ -466,30 +539,30 @@ fn repository_contract(mut store: Store) -> Result<serde_json::Value, StoreError
         accepted_epoch: 1,
         accepted_at: at.into(),
     };
-    if store
+    let acceptance_first = store
         .write(|tx| tx.record_federation_acceptance(&acceptance))?
-        .value
-        .outcome
-        != RecordOutcome::Recorded
-    {
+        .value;
+    if acceptance_first.outcome != RecordOutcome::Recorded {
         return Err(StoreError::Invalid("ACK not recorded".into()));
     }
-    if store
+    let acceptance_repeat = store
         .write(|tx| tx.record_federation_acceptance(&acceptance))?
-        .value
-        .outcome
-        != RecordOutcome::Duplicate
-    {
+        .value;
+    if acceptance_repeat.outcome != RecordOutcome::Duplicate {
         return Err(StoreError::Invalid("ACK not duplicate".into()));
     }
     let mut conflict = acceptance.clone();
     conflict.accepted_epoch = 2;
-    if store
-        .write(|tx| tx.record_federation_acceptance(&conflict))
-        .is_ok()
-    {
+    let acceptance_before = store.read_snapshot(repository_storage_boundary)?;
+    let acceptance_conflict = store.write(|tx| tx.record_federation_acceptance(&conflict));
+    let acceptance_error = acceptance_conflict
+        .as_ref()
+        .err()
+        .map(|e| serde_json::json!({"code":e.code(),"message":e.to_string()}));
+    if acceptance_conflict.is_ok() {
         return Err(StoreError::Invalid("divergent ACK accepted".into()));
     }
+    observations.insert("acceptance".into(),serde_json::json!({"first":acceptance_first,"repeat":acceptance_repeat,"error":acceptance_error,"beforeConflict":acceptance_before,"afterConflict":store.read_snapshot(repository_storage_boundary)?}));
     let peer = FederationPeerAcceptance {
         message_id: "p1-peer".into(),
         accepted_by_node_id: "p1-node".into(),
@@ -510,16 +583,25 @@ fn repository_contract(mut store: Store) -> Result<serde_json::Value, StoreError
         artifact_path: None,
         created_at: at.into(),
     };
-    store.write(|tx| tx.insert_runtime_artifact_idempotent(&artifact))?;
-    store.write(|tx| tx.insert_runtime_artifact_idempotent(&artifact))?;
+    let artifact_first = store
+        .write(|tx| tx.insert_runtime_artifact_idempotent(&artifact))?
+        .value;
+    let artifact_repeat = store
+        .write(|tx| tx.insert_runtime_artifact_idempotent(&artifact))?
+        .value;
     let mut artifact_conflict = artifact.clone();
     artifact_conflict.content_hash = "different".into();
-    if store
-        .write(|tx| tx.insert_runtime_artifact_idempotent(&artifact_conflict))
-        .is_ok()
-    {
+    let artifact_before = store.read_snapshot(repository_storage_boundary)?;
+    let artifact_conflict_result =
+        store.write(|tx| tx.insert_runtime_artifact_idempotent(&artifact_conflict));
+    let artifact_error = artifact_conflict_result
+        .as_ref()
+        .err()
+        .map(|e| serde_json::json!({"code":e.code(),"message":e.to_string()}));
+    if artifact_conflict_result.is_ok() {
         return Err(StoreError::Invalid("artifact conflict accepted".into()));
     }
+    observations.insert("artifacts".into(),serde_json::json!({"first":artifact_first,"repeat":artifact_repeat,"error":artifact_error,"beforeConflict":artifact_before,"afterConflict":store.read_snapshot(repository_storage_boundary)?}));
     let key = permission_identity_key("p1-invocation", Some(1), None, "p1-permission");
     let permission = PermissionDecision {
         permission_identity_key: key.clone(),
@@ -572,12 +654,15 @@ fn repository_contract(mut store: Store) -> Result<serde_json::Value, StoreError
     {
         return Err(StoreError::Invalid("retained audit lost".into()));
     }
-    if !store
+    let emission_first = store
         .write(|tx| tx.claim_emission("p1-event", scope, "changed", at))?
-        .value
-        || store
-            .write(|tx| tx.claim_emission("p1-event", scope, "changed", at))?
-            .value
+        .value;
+    let emission_repeat = store
+        .write(|tx| tx.claim_emission("p1-event", scope, "changed", at))?
+        .value;
+    observations.insert("emissions".into(),serde_json::json!({"first":emission_first,"repeat":emission_repeat,"count":store.read_snapshot(|tx|tx.emission_count_since(scope,"changed",at))?}));
+    if !emission_first
+        || emission_repeat
         || store.read_snapshot(|tx| tx.emission_count_since(scope, "changed", at))? != 1
     {
         return Err(StoreError::Invalid("emission duplicate".into()));
@@ -612,12 +697,14 @@ fn repository_contract(mut store: Store) -> Result<serde_json::Value, StoreError
     };
     store.write(|tx| tx.bind_surface(&binding))?;
     binding.surface_id = "p1-successor".into();
+    let mut displaced_rows = vec![];
     store.write(|tx| {
         let displaced =
             tx.unbind_other_ghostty_client_tty("p1-tty", &binding.surface_id, at, "replaced")?;
         if displaced.len() != 1 {
             return Err(StoreError::Invalid("surface displace count".into()));
         }
+        displaced_rows = displaced;
         tx.bind_surface(&binding)
     })?;
     let bridge = LocalBridge {
@@ -637,8 +724,42 @@ fn repository_contract(mut store: Store) -> Result<serde_json::Value, StoreError
     if !store.read_snapshot(|tx| tx.active_bridges())?.is_empty() {
         return Err(StoreError::Invalid("closed bridge active".into()));
     }
+    observations.insert(
+        "displacedSurfaces".into(),
+        serde_json::to_value(&displaced_rows)?,
+    );
+    observations.insert(
+        "permissionIdentity".into(),
+        serde_json::json!({"key":key,"input":permission}),
+    );
+    let roster_before = store.read_snapshot(repository_storage_boundary)?;
+    let mut roster_within = None;
+    let mut rolled_claim = claim.clone();
+    rolled_claim.idempotency_key = "p1-rollback".into();
+    rolled_claim.claimed_scope.push_str("-rollback");
+    let roster_error = store.write::<()>(|tx| {
+        tx.insert_roster_claim(&rolled_claim)?;
+        roster_within = Some(repository_storage_boundary(&tx.read())?);
+        Err(StoreError::Invalid("fixture roster rollback".into()))
+    });
+    if !matches!(roster_error,Err(StoreError::Invalid(ref message)) if message=="fixture roster rollback")
+    {
+        return Err(StoreError::Invalid("missing roster rollback".into()));
+    }
+    let roster_after = store.read_snapshot(repository_storage_boundary)?;
+    if roster_before != roster_after {
+        return Err(StoreError::Invalid("roster rollback changed state".into()));
+    }
+    observations.insert(
+        "rosterRollback".into(),
+        serde_json::json!({"before":roster_before,"within":roster_within,"after":roster_after}),
+    );
+    observations.insert(
+        "after".into(),
+        store.read_snapshot(repository_storage_boundary)?,
+    );
     Ok(
-        serde_json::json!({"rosterAtomic":true,"acceptanceIdempotency":true,"acceptanceConflict":true,"permissionIdentity":true,"artifactIdempotency":true,"retainedAppendOnly":true,"emissionClaimDedup":true,"bufferOrdering":true,"surfaceReplacement":true,"bridgeClose":true}),
+        serde_json::json!({"observations":observations,"rosterAtomic":true,"acceptanceIdempotency":true,"acceptanceConflict":true,"permissionIdentity":true,"artifactIdempotency":true,"retainedAppendOnly":true,"emissionClaimDedup":true,"bufferOrdering":true,"surfaceReplacement":true,"bridgeClose":true}),
     )
 }
 
@@ -649,6 +770,9 @@ fn transcript_contract(mut store: Store) -> Result<serde_json::Value, StoreError
         ..Default::default()
     };
     let filters = TranscriptSearchFilters::default();
+    let mut boundaries = vec![
+        serde_json::json!({"stage":"before","state":store.read_snapshot(transcript_storage_boundary)?}),
+    ];
     let mut turn = TranscriptTurn {
         turn_rowid: None,
         invocation_id: "p1-fts-a".into(),
@@ -670,6 +794,7 @@ fn transcript_contract(mut store: Store) -> Result<serde_json::Value, StoreError
         mid_text: "".into(),
     };
     store.write(|tx| tx.upsert_transcript_turn(&turn))?;
+    boundaries.push(serde_json::json!({"stage":"afterInitialInsert","state":store.read_snapshot(transcript_storage_boundary)?}));
     if store
         .read_snapshot(|tx| tx.search_transcript("cafe", &filters, &options))?
         .len()
@@ -679,6 +804,7 @@ fn transcript_contract(mut store: Store) -> Result<serde_json::Value, StoreError
     }
     let rollback = store.write::<()>(|tx| {
         tx.delete_transcript_turns_for_invocation(&turn.invocation_id)?;
+        boundaries.push(serde_json::json!({"stage":"withinDeleteRollback","state":transcript_storage_boundary(&tx.read())?}));
         Err(StoreError::Invalid("FTS rollback control".into()))
     });
     if rollback.is_ok()
@@ -689,8 +815,10 @@ fn transcript_contract(mut store: Store) -> Result<serde_json::Value, StoreError
     {
         return Err(StoreError::Invalid("FTS rollback lost match".into()));
     }
+    boundaries.push(serde_json::json!({"stage":"afterDeleteRollback","state":store.read_snapshot(transcript_storage_boundary)?}));
     turn.user_text = "newword".into();
     store.write(|tx| tx.upsert_transcript_turn(&turn))?;
+    boundaries.push(serde_json::json!({"stage":"afterTextUpdate","state":store.read_snapshot(transcript_storage_boundary)?}));
     if !store
         .read_snapshot(|tx| tx.search_transcript("cafe", &filters, &options))?
         .is_empty()
@@ -707,6 +835,7 @@ fn transcript_contract(mut store: Store) -> Result<serde_json::Value, StoreError
     turn.seq_from = 1;
     turn.seq_to = 2;
     store.write(|tx| tx.upsert_transcript_turn(&turn))?;
+    boundaries.push(serde_json::json!({"stage":"afterMultipleTurns","state":store.read_snapshot(transcript_storage_boundary)?}));
     let cap = TranscriptSearchOptions {
         limit: 10,
         per_runtime_cap: Some(1),
@@ -723,13 +852,17 @@ fn transcript_contract(mut store: Store) -> Result<serde_json::Value, StoreError
         weights: [-1.0, 1.0, 1.0],
         ..Default::default()
     };
-    if store
-        .read_snapshot(|tx| tx.search_transcript("cafe", &filters, &invalid))
-        .is_ok()
-    {
+    let invalid_weights =
+        store.read_snapshot(|tx| tx.search_transcript("cafe", &filters, &invalid));
+    let invalid_weights_error = invalid_weights
+        .as_ref()
+        .err()
+        .map(|e| serde_json::json!({"code":e.code(),"message":e.to_string()}));
+    if invalid_weights.is_ok() {
         return Err(StoreError::Invalid("negative BM25 accepted".into()));
     }
     store.write(|tx| tx.delete_transcript_turns_for_invocation("p1-fts-b"))?;
+    boundaries.push(serde_json::json!({"stage":"afterDeleteB","state":store.read_snapshot(transcript_storage_boundary)?}));
     if store
         .read_snapshot(|tx| tx.search_transcript("cafe", &filters, &options))?
         .len()
@@ -757,8 +890,9 @@ fn transcript_contract(mut store: Store) -> Result<serde_json::Value, StoreError
     {
         return Err(StoreError::Invalid("index cursor/mark differs".into()));
     }
+    boundaries.push(serde_json::json!({"stage":"afterCursorMark","state":store.read_snapshot(transcript_storage_boundary)?}));
     Ok(
-        serde_json::json!({"ftsInsertUpdateDelete":true,"ftsRollback":true,"unicodeTokenizer":true,"perRuntimeCap":true,"invalidWeights":true,"cursorAndMark":true}),
+        serde_json::json!({"boundaries":boundaries,"invalidWeightsError":invalid_weights_error,"ftsInsertUpdateDelete":true,"ftsRollback":true,"unicodeTokenizer":true,"perRuntimeCap":true,"invalidWeights":true,"cursorAndMark":true}),
     )
 }
 
@@ -4193,9 +4327,13 @@ fn reconciliation_cas_contract(mut store: Store) -> Result<serde_json::Value, St
         "run":tx.run_by_id("atomic-run")?,"runtime":tx.runtime_by_id("atomic-runtime")?,
         "hrcHead":tx.lifecycle_events().allocated_hrc_seq()?,"streamHead":tx.allocated_event_stream_seq()?
     })))?;
-    let hints = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let hints = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let observed = hints.clone();
-    store.observe(move |_| observed.set(observed.get() + 1));
+    store.observe(move |change| {
+        observed
+            .borrow_mut()
+            .push(serde_json::to_value(change).expect("typed change"))
+    });
     let atomic = |tx: &mut hrc_store::WriteTx<'_>| -> hrc_store::Result<()> {
         if !tx.finalize_owned_run("atomic-run", "atomic-runtime", "completed", at)?
             || !tx.release_runtime_run("atomic-runtime", "atomic-run", "ready", at)?
@@ -4205,8 +4343,12 @@ fn reconciliation_cas_contract(mut store: Store) -> Result<serde_json::Value, St
         tx.append_lifecycle(&fields)?;
         Ok(())
     };
+    let mut boundaries = vec![
+        serde_json::json!({"stage":"before","state":store.read_snapshot(core_storage_boundary)?,"hints":hints.borrow().clone()}),
+    ];
     let rejected = store.write::<()>(|tx| {
         atomic(tx)?;
+        boundaries.push(serde_json::json!({"stage":"withinRollback","state":core_storage_boundary(&tx.read())?,"hints":hints.borrow().clone()}));
         Err(StoreError::Invalid("fixture rollback".into()))
     });
     if !matches!(rejected,Err(StoreError::Invalid(ref message)) if message=="fixture rollback") {
@@ -4216,12 +4358,14 @@ fn reconciliation_cas_contract(mut store: Store) -> Result<serde_json::Value, St
         "run":tx.run_by_id("atomic-run")?,"runtime":tx.runtime_by_id("atomic-runtime")?,
         "hrcHead":tx.lifecycle_events().allocated_hrc_seq()?,"streamHead":tx.allocated_event_stream_seq()?
     })))?;
-    let atomic_rolled_back = before == after && hints.get() == 0;
-    let committed = store.write(atomic)?;
-    let atomic_committed = committed.changes.len() == 2 && hints.get() == 2;
+    let atomic_rolled_back = before == after && hints.borrow().is_empty();
+    boundaries.push(serde_json::json!({"stage":"afterRollback","state":store.read_snapshot(core_storage_boundary)?,"hints":hints.borrow().clone()}));
+    let committed = store.write(|tx|{atomic(tx)?;boundaries.push(serde_json::json!({"stage":"withinCommit","state":core_storage_boundary(&tx.read())?,"hints":hints.borrow().clone()}));Ok(())})?;
+    boundaries.push(serde_json::json!({"stage":"afterCommit","state":store.read_snapshot(core_storage_boundary)?,"hints":hints.borrow().clone(),"committedChanges":committed.changes}));
+    let atomic_committed = committed.changes.len() == 2 && hints.borrow().len() == 2;
     store.close()?;
     Ok(
-        serde_json::json!({"results":results,"atomicRolledBack":atomic_rolled_back,"atomicCommitted":atomic_committed,"postCommitHints":hints.get()}),
+        serde_json::json!({"results":results,"atomicRolledBack":atomic_rolled_back,"atomicCommitted":atomic_committed,"postCommitHints":hints.borrow().len(),"boundaries":boundaries}),
     )
 }
 
@@ -4246,4 +4390,63 @@ fn reconciliation_query_contract(mut store: Store) -> Result<serde_json::Value, 
     })?;
     store.close()?;
     Ok(serde_json::json!({"result":result}))
+}
+
+fn core_storage_boundary(tx: &hrc_store::ReadTx<'_>) -> Result<serde_json::Value, StoreError> {
+    Ok(serde_json::json!({
+        "page":tx.lifecycle_events().page(0,100,None)?,
+        "streamHead":tx.allocated_event_stream_seq()?,
+        "blobs":tx.tool_result_blobs().list_local_from_rowid(0,100)?,
+        "atomicRun":tx.run_by_id("atomic-run")?,"atomicRuntime":tx.runtime_by_id("atomic-runtime")?
+    }))
+}
+
+fn transcript_storage_boundary(
+    tx: &hrc_store::ReadTx<'_>,
+) -> Result<serde_json::Value, StoreError> {
+    let filters = hrc_store::TranscriptSearchFilters::default();
+    let options = hrc_store::TranscriptSearchOptions {
+        limit: 10,
+        ..Default::default()
+    };
+    let cap = hrc_store::TranscriptSearchOptions {
+        limit: 10,
+        per_runtime_cap: Some(1),
+        weights: [1.0; 3],
+    };
+    Ok(serde_json::json!({
+        "turnsA":tx.transcript_turns_for_invocation("p1-fts-a")?,
+        "turnsB":tx.transcript_turns_for_invocation("p1-fts-b")?,
+        "cafe":tx.search_transcript("cafe",&filters,&options)?,
+        "newword":tx.search_transcript("newword",&filters,&options)?,
+        "cappedCafe":tx.search_transcript("cafe",&filters,&cap)?,
+        "stats":tx.transcript_stats()?,"cursor":tx.transcript_cursor()?,
+        "markA":tx.transcript_invocation_mark("p1-fts-a")?
+    }))
+}
+
+fn repository_storage_boundary(
+    tx: &hrc_store::ReadTx<'_>,
+) -> Result<serde_json::Value, StoreError> {
+    let scope = "agent:tabularasa:project:hrc-runtime:task:p1-store";
+    Ok(serde_json::json!({
+        "roster":tx.roster_claims_by_base_scope(scope)?,
+        "acceptance":tx.federation_accepted_request("p1-message")?,
+        "peer":tx.federation_peer_acceptance("p1-peer")?,
+        "artifacts":tx.runtime_artifacts_by_operation("p1-operation")?,
+        "permissions":tx.permissions_by_invocation("p1-invocation")?,
+        "retained":tx.retained_by_runtime("p1-runtime")?,
+        "retainedLatest":tx.retained_latest_by_runtime("p1-runtime")?,
+        "emissionCount":tx.emission_count_since(scope,"changed","2026-10-23T00:00:00.000Z")?,
+        "buffers":tx.runtime_buffers_by_run("p1-run")?,"bufferTail":tx.runtime_buffers_tail_by_run("p1-run",2)?,
+        "surfaces":tx.surface_bindings_by_runtime("p1-runtime")?,
+        "activeSurfaces":tx.active_surface_bindings()?,
+        "bridge":tx.bridge_by_id("p1-bridge")?,"activeBridges":tx.active_bridges()?
+    }))
+}
+
+fn blob_part_storage_boundary(tx: &hrc_store::ReadTx<'_>) -> Result<serde_json::Value, StoreError> {
+    Ok(
+        serde_json::json!({"parts":tx.tool_result_blobs().parts_for_blob("p1-part")?,"blob":tx.tool_result_blobs().get("p1-part")?}),
+    )
 }

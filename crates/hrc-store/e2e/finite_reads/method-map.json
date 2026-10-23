@@ -1,0 +1,1746 @@
+{
+  "schema": 1,
+  "methods": [
+    {
+      "methodId": "HrcLifecycleEventRepository.ledgerIncarnationId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:ledgerIncarnationId:13826",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:ledgerIncarnationId:13826"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 437,
+        "signature": "ledgerIncarnationId(): string",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "incarnation"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.incarnation"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.allocatedHrcSeq",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:allocatedHrcSeq:25767",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:allocatedHrcSeq:25767"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 772,
+        "signature": "allocatedHrcSeq(): number",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "allocated"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.allocated"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.maxHrcSeq",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:maxHrcSeq:25959",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:maxHrcSeq:25959"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 779,
+        "signature": "maxHrcSeq(): number",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "max"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.max"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.page",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:page:16612",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:page:16612"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 511,
+        "signature": "page(input:",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "page1",
+        "page2",
+        "pageShort",
+        "pageAhead",
+        "pageMismatch",
+        "originalFence",
+        "repositoryPages",
+        "repositoryAfterNegative",
+        "repositoryStale"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.page1",
+        "inputs.json#/inputs/lifecycle.page2",
+        "inputs.json#/inputs/lifecycle.pageShort",
+        "inputs.json#/inputs/lifecycle.pageAhead",
+        "inputs.json#/inputs/lifecycle.pageMismatch",
+        "inputs.json#/inputs/lifecycle.originalFence",
+        "inputs.json#/inputs/lifecycle.repositoryPages",
+        "inputs.json#/inputs/lifecycle.repositoryAfterNegative",
+        "inputs.json#/inputs/lifecycle.repositoryStale"
+      ],
+      "nativeExactRepositoryAPI": "LifecycleEvents.repository_page(after:i64,limit:i64,expected)"
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.tail",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:tail:14686",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:tail:14686"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 459,
+        "signature": "tail(\n    limit: number,\n    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq' | 'limit'> =",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "tail",
+        "tailBefore",
+        "tailWrong",
+        "tailGeneration",
+        "tailMismatch",
+        "repositoryTails",
+        "repositoryTailNegativeBefore"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.tail",
+        "inputs.json#/inputs/lifecycle.tailBefore",
+        "inputs.json#/inputs/lifecycle.tailWrong",
+        "inputs.json#/inputs/lifecycle.tailGeneration",
+        "inputs.json#/inputs/lifecycle.tailMismatch",
+        "inputs.json#/inputs/lifecycle.repositoryTails",
+        "inputs.json#/inputs/lifecycle.repositoryTailNegativeBefore"
+      ],
+      "nativeExactRepositoryAPI": "LifecycleEvents.repository_tail(filters,limit:i64,before,expected)"
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.listFromHrcSeq",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listFromHrcSeq:22781",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listFromHrcSeq:22781"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 678,
+        "signature": "listFromHrcSeq(\n    fromHrcSeq = 1,\n    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq'> =",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "local",
+        "imported",
+        "emptySource",
+        "all",
+        "from",
+        "zero"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.local",
+        "inputs.json#/inputs/lifecycle.imported",
+        "inputs.json#/inputs/lifecycle.emptySource",
+        "inputs.json#/inputs/lifecycle.all",
+        "inputs.json#/inputs/lifecycle.from",
+        "inputs.json#/inputs/lifecycle.zero"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.listFromStreamSeq",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listFromStreamSeq:22996",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listFromStreamSeq:22996"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 685,
+        "signature": "listFromStreamSeq(\n    fromStreamSeq = 1,\n    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq'> =",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "stream"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.stream"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.listByRun",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listByRun:23273",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listByRun:23273"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 693,
+        "signature": "listByRun(\n    runId: string,\n    filters: Omit<HrcLifecycleQueryFilters, 'runId'> =",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "byRun"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.byRun"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.listByLaunch",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listByLaunch:23454",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listByLaunch:23454"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 700,
+        "signature": "listByLaunch(\n    launchId: string,\n    filters: Omit<HrcLifecycleQueryFilters, 'launchId'> =",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "byLaunch"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.byLaunch"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.listByKind",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listByKind:23647",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listByKind:23647"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 707,
+        "signature": "listByKind(\n    eventKind: string,\n    filters: Omit<HrcLifecycleQueryFilters, 'eventKind'> =",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "byKind"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.byKind"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.listByScope",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listByScope:25489",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listByScope:25489"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 764,
+        "signature": "listByScope(\n    scopeRef: string,\n    filters: Omit<HrcLifecycleQueryFilters, 'scopeRef'> =",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "byScope"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.byScope"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.findLatestByKind",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:findLatestByKind:23841",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:findLatestByKind:23841"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 714,
+        "signature": "findLatestByKind(\n    eventKind: string,\n    filters: Omit<HrcLifecycleQueryFilters, 'eventKind' | 'limit'> =",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "latestKind"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.latestKind"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.findLatestBySession",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:findLatestBySession:31280",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:findLatestBySession:31280"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 916,
+        "signature": "findLatestBySession(hostSessionId: string, generation: number): HrcLifecycleEvent | null",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "latestSession",
+        "latestWrong"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.latestSession",
+        "inputs.json#/inputs/lifecycle.latestWrong"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.findLatestLocalInScope",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:findLatestLocalInScope:24643",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:findLatestLocalInScope:24643"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 739,
+        "signature": "findLatestLocalInScope(\n    scopeRef: string,\n    options:",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "latestLocal",
+        "latestLocalBefore"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.latestLocal",
+        "inputs.json#/inputs/lifecycle.latestLocalBefore"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.listLatestPerSession",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listLatestPerSession:32509",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listLatestPerSession:32509"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 941,
+        "signature": "listLatestPerSession(\n    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq' | 'limit'> =",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "latestGroups"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.latestGroups"
+      ]
+    },
+    {
+      "methodId": "HrcLifecycleEventRepository.scanReplayNewestFirst",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:scanReplayNewestFirst:18112",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:scanReplayNewestFirst:18112"
+        ],
+        "group": "lifecycle-legacy-ledgers"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/event-repositories.ts",
+        "line": 553,
+        "signature": "scanReplayNewestFirst(\n    input: ScanHrcLifecycleReplayInput,\n    visitNewestFirst: (event: HrcLifecycleEvent) => boolean\n  ): ScanHrcLifecycleReplayResult",
+        "sourceHash": "7ebf3caa4afcba8e3656627902d8a0b37919fcf3d95e15e8210b958a76070a55",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/event-repositories.ts"
+      },
+      "group": "lifecycle",
+      "slots": [
+        "replay",
+        "replayBytes",
+        "replayMismatch"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/lifecycle"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/lifecycle"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/lifecycle.replay",
+        "inputs.json#/inputs/lifecycle.replayBytes",
+        "inputs.json#/inputs/lifecycle.replayMismatch"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.count",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:count:3457",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:count:3457"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 91,
+        "signature": "count(): number",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "runtime",
+      "slots": [
+        "count"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/runtime"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/runtime"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/runtime.count"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.getByRuntimeId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getByRuntimeId:5766",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getByRuntimeId:5766"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 169,
+        "signature": "getByRuntimeId(runtimeId: string): HrcRuntimeSnapshot | null",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "runtime",
+      "slots": [
+        "one",
+        "missing"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/runtime"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/runtime"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/runtime.one",
+        "inputs.json#/inputs/runtime.missing"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.getLatestByHostSessionId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getLatestByHostSessionId:6040",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getLatestByHostSessionId:6040"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 177,
+        "signature": "getLatestByHostSessionId(hostSessionId: string): HrcRuntimeSnapshot | null",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "runtime",
+      "slots": [
+        "latest"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/runtime"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/runtime"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/runtime.latest"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.listByHostSessionId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByHostSessionId:6433",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByHostSessionId:6433"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 190,
+        "signature": "listByHostSessionId(hostSessionId: string): HrcRuntimeSnapshot[]",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "runtime",
+      "slots": [
+        "host",
+        "wrongHost"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/runtime"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/runtime"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/runtime.host",
+        "inputs.json#/inputs/runtime.wrongHost"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.listByScopeRef",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByScopeRef:10273",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByScopeRef:10273"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 286,
+        "signature": "listByScopeRef(scopeRef: string): HrcRuntimeSnapshot[]",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "runtime",
+      "slots": [
+        "scope"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/runtime"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/runtime"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/runtime.scope"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.listAll",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAll:10826",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAll:10826"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 302,
+        "signature": "listAll(): HrcRuntimeSnapshot[]",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "runtime",
+      "slots": [
+        "all"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/runtime"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/runtime"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/runtime.all"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.listAvailable",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAvailable:9171",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAvailable:9171"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 256,
+        "signature": "listAvailable(): HrcRuntimeSnapshot[]",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "runtime",
+      "slots": [
+        "available"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/runtime"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/runtime"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/runtime.available"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.listByStatus",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByStatus:9538",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByStatus:9538"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 267,
+        "signature": "listByStatus(statuses: readonly string[]): HrcRuntimeSnapshot[]",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "runtime",
+      "slots": [
+        "statuses",
+        "emptyStatuses"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/runtime"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/runtime"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/runtime.statuses",
+        "inputs.json#/inputs/runtime.emptyStatuses"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.listLiveSessionRefs",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listLiveSessionRefs:7204",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listLiveSessionRefs:7204"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 210,
+        "signature": "listLiveSessionRefs(): string[]",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "runtime",
+      "slots": [
+        "live"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/runtime"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/runtime"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/runtime.live"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.listLiveSessionRefRows",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listLiveSessionRefRows:7955",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listLiveSessionRefRows:7955"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 230,
+        "signature": "listLiveSessionRefRows(): LiveSeatRefRow[]",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "runtime",
+      "slots": [
+        "liveRows"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/runtime"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/runtime"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/runtime.liveRows"
+      ]
+    },
+    {
+      "methodId": "RunRepository.getByRunId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByRunId:7005",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByRunId:7005"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 191,
+        "signature": "getByRunId(runId: string): HrcRunRecord | null",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "run",
+      "slots": [
+        "one",
+        "missing"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/run"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/run"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/run.one",
+        "inputs.json#/inputs/run.missing"
+      ]
+    },
+    {
+      "methodId": "RunRepository.getByDispatchIdempotencyKey",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByDispatchIdempotencyKey:7226",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByDispatchIdempotencyKey:7226"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 199,
+        "signature": "getByDispatchIdempotencyKey(hostSessionId: string, idempotencyKey: string): HrcRunRecord | null",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "run",
+      "slots": [
+        "dispatch",
+        "wrongDispatch"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/run"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/run"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/run.dispatch",
+        "inputs.json#/inputs/run.wrongDispatch"
+      ]
+    },
+    {
+      "methodId": "RunRepository.getByDispatchedInputId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByDispatchedInputId:7939",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByDispatchedInputId:7939"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 215,
+        "signature": "getByDispatchedInputId(inputId: string): HrcRunRecord | null",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "run",
+      "slots": [
+        "input"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/run"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/run"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/run.input"
+      ]
+    },
+    {
+      "methodId": "RunRepository.getByBrokerSubmissionId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByBrokerSubmissionId:8213",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByBrokerSubmissionId:8213"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 225,
+        "signature": "getByBrokerSubmissionId(submissionId: string): HrcRunRecord | null",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "run",
+      "slots": [
+        "submission"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/run"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/run"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/run.submission"
+      ]
+    },
+    {
+      "methodId": "RunRepository.getByTurnKey",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByTurnKey:8499",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByTurnKey:8499"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 235,
+        "signature": "getByTurnKey(turnKey: string): HrcRunRecord | null",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "run",
+      "slots": [
+        "turn"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/run"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/run"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/run.turn"
+      ]
+    },
+    {
+      "methodId": "RunRepository.listByRuntimeId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listByRuntimeId:8735",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listByRuntimeId:8735"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 242,
+        "signature": "listByRuntimeId(runtimeId: string): HrcRunRecord[]",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "run",
+      "slots": [
+        "runtime"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/run"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/run"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/run.runtime"
+      ]
+    },
+    {
+      "methodId": "RunRepository.listCorrelatedByInvocationId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listCorrelatedByInvocationId:9280",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listCorrelatedByInvocationId:9280"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 259,
+        "signature": "listCorrelatedByInvocationId(invocationId: string): HrcRunRecord[]",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "run",
+      "slots": [
+        "correlated"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/run"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/run"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/run.correlated"
+      ]
+    },
+    {
+      "methodId": "RunRepository.listQueuedByHostSessionId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listQueuedByHostSessionId:9931",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listQueuedByHostSessionId:9931"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 277,
+        "signature": "listQueuedByHostSessionId(hostSessionId: string): HrcRunRecord[]",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "run",
+      "slots": [
+        "queue",
+        "wrongQueue"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/run"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/run"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/run.queue",
+        "inputs.json#/inputs/run.wrongQueue"
+      ]
+    },
+    {
+      "methodId": "RunRepository.listRuns",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listRuns:14223",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listRuns:14223"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 410,
+        "signature": "listRuns(filters: RunListFilters =",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "run",
+      "slots": [
+        "all",
+        "filtered",
+        "zero",
+        "emptyStatuses",
+        "selectors"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/run"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/run"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/run.all",
+        "inputs.json#/inputs/run.filtered",
+        "inputs.json#/inputs/run.zero",
+        "inputs.json#/inputs/run.emptyStatuses",
+        "inputs.json#/inputs/run.selectors"
+      ]
+    },
+    {
+      "methodId": "RunRepository.getLatestForSession",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getLatestForSession:14918",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getLatestForSession:14918"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 432,
+        "signature": "getLatestForSession(input:",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "run",
+      "slots": [
+        "latest",
+        "latestGeneration",
+        "wrongGeneration"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "{phase}-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result/run"
+        },
+        "native": {
+          "file": "{phase}-native.json",
+          "parseField": "stdout",
+          "pointer": "/run"
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/run.latest",
+        "inputs.json#/inputs/run.latestGeneration",
+        "inputs.json#/inputs/run.wrongGeneration"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.update",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:update:11108",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:update:11108"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 313,
+        "signature": "update(runtimeId: string, patch: RuntimeUpdatePatch): HrcRuntimeSnapshot | null",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "mutation",
+      "slots": [
+        "empty",
+        "patch",
+        "clear"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "mutation-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result"
+        },
+        "native": {
+          "file": "mutation-native.json",
+          "parseField": "stdout",
+          "pointer": ""
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/mutation.empty",
+        "inputs.json#/inputs/mutation.patch",
+        "inputs.json#/inputs/mutation.clear"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.updateStatus",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:updateStatus:12278",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:updateStatus:12278"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 340,
+        "signature": "updateStatus(\n    runtimeId: string,\n    status: HrcRuntimeSnapshot['status'],\n    updatedAt: string\n  ): HrcRuntimeSnapshot | null",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "mutation",
+      "slots": [
+        "sameStatus",
+        "status"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "mutation-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result"
+        },
+        "native": {
+          "file": "mutation-native.json",
+          "parseField": "stdout",
+          "pointer": ""
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/mutation.sameStatus",
+        "inputs.json#/inputs/mutation.status"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.updateActivity",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:updateActivity:13238",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:updateActivity:13238"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 377,
+        "signature": "updateActivity(\n    runtimeId: string,\n    lastActivityAt: string,\n    updatedAt: string\n  ): HrcRuntimeSnapshot | null",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "mutation",
+      "slots": [
+        "activity",
+        "absent"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "mutation-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result"
+        },
+        "native": {
+          "file": "mutation-native.json",
+          "parseField": "stdout",
+          "pointer": ""
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/mutation.activity",
+        "inputs.json#/inputs/mutation.absent"
+      ]
+    },
+    {
+      "methodId": "RuntimeRepository.updateRunId",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:updateRunId:12504",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:updateRunId:12504"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repository.ts",
+        "line": 348,
+        "signature": "updateRunId(\n    runtimeId: string,\n    activeRunId: string | undefined,\n    updatedAt: string\n  ): HrcRuntimeSnapshot | null",
+        "sourceHash": "891fa63934da3284860ad9e038c3e026e2cceca5743da02067ac32597631b82a",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repository.ts"
+      },
+      "group": "mutation",
+      "slots": [
+        "runId",
+        "clearRunId",
+        "ownership",
+        "ownershipAfter"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "mutation-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result"
+        },
+        "native": {
+          "file": "mutation-native.json",
+          "parseField": "stdout",
+          "pointer": ""
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/mutation.runId",
+        "inputs.json#/inputs/mutation.clearRunId",
+        "inputs.json#/inputs/mutation.ownership",
+        "inputs.json#/inputs/mutation.ownershipAfter"
+      ]
+    },
+    {
+      "methodId": "RunRepository.update",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:update:15252",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:update:15252"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 445,
+        "signature": "update(runId: string, patch: RunUpdatePatch): HrcRunRecord | null",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "runMutation",
+      "slots": [
+        "runEmpty",
+        "runMonotonic",
+        "runResurrect",
+        "runClear"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "mutation-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result"
+        },
+        "native": {
+          "file": "mutation-native.json",
+          "parseField": "stdout",
+          "pointer": ""
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/mutation.runEmpty",
+        "inputs.json#/inputs/mutation.runMonotonic",
+        "inputs.json#/inputs/mutation.runResurrect",
+        "inputs.json#/inputs/mutation.runClear"
+      ]
+    },
+    {
+      "methodId": "RunRepository.updateStatus",
+      "p0": {
+        "landedEntryId": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:updateStatus:16880",
+        "landedCaseIds": [
+          "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:updateStatus:16880"
+        ],
+        "group": "runtime-run-ownership"
+      },
+      "original": {
+        "source": "packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts",
+        "line": 480,
+        "signature": "updateStatus(\n    runId: string,\n    status: HrcRunRecord['status'],\n    updatedAt: string\n  ): HrcRunRecord | null",
+        "sourceHash": "8114f16d42713d098d04e5a55f13a948f479e8389b5203247dfc10abf87f78ef",
+        "snapshot": "/Users/lherron/praesidium/var/wrkq-artifacts/T-11528.coverage/source/packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts"
+      },
+      "group": "runMutation",
+      "slots": [
+        "runStatus",
+        "runAbsent"
+      ],
+      "inputSource": "source/crates/hrc-store/e2e/finite_reads/oracle.ts",
+      "assertionSource": "source/crates/hrc-store/e2e/finite_reads/finite_reads_e2e.py",
+      "adequacy": "EXACT_BUN_NATIVE_VALUES_PLUS_FIXED_IDENTITIES; not fullP1 closure",
+      "raw": {
+        "bun": {
+          "file": "mutation-bun.json",
+          "parseField": "stdout",
+          "pointer": "/result"
+        },
+        "native": {
+          "file": "mutation-native.json",
+          "parseField": "stdout",
+          "pointer": ""
+        }
+      },
+      "inputSlots": [
+        "inputs.json#/inputs/mutation.runStatus",
+        "inputs.json#/inputs/mutation.runAbsent"
+      ]
+    }
+  ],
+  "gaps": [
+    {
+      "id": "PresentationQueries.keyedSeats",
+      "reason": "Initially missing typed keyed projection seam reported EN-34048, then moved to parent separate presentation worker. This finite_reads family does not qualify >256 keyed seats; consume sibling evidence separately."
+    }
+  ],
+  "nativeOnlyAssertions": {
+    "nativeBoundedRefusals": "Typed bounded observation contract; deliberately separate from unchanged Bun original repository page/tail. Exact five refused operations/codes are required."
+  }
+}

@@ -25,6 +25,8 @@ mod participant_mapping;
 mod participants;
 mod placement;
 mod plans;
+mod presentation;
+pub use presentation::PresentationQueries;
 mod registry;
 pub use registry::{BindingRegistry, RegistryReadTx, RegistryWriteTx};
 mod prune;

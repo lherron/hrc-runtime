@@ -1,0 +1,433 @@
+{
+  "schema": 1,
+  "omission": "Absent JSON key means omitted/undefined; JSON null means explicit null. Native RunFilters.statuses corresponds to Bun status.",
+  "inputs": {
+    "lifecycle.incarnation": {},
+    "lifecycle.allocated": {},
+    "lifecycle.max": {},
+    "lifecycle.page1": {
+      "afterSeq": 0,
+      "limit": 1
+    },
+    "lifecycle.page2": {
+      "afterSeq": 1,
+      "limit": 2
+    },
+    "lifecycle.pageShort": {
+      "afterSeq": 0,
+      "limit": 100
+    },
+    "lifecycle.pageAhead": {
+      "afterSeq": 999,
+      "limit": 2
+    },
+    "lifecycle.originalFence": {
+      "afterSeq": 0,
+      "limit": 2,
+      "expectedLedgerIncarnationId": "finite-original"
+    },
+    "lifecycle.pageMismatch": {
+      "afterSeq": 0,
+      "limit": 2,
+      "expectedLedgerIncarnationId": "wrong"
+    },
+    "lifecycle.tail": {
+      "limit": 2,
+      "filters": {
+        "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+      }
+    },
+    "lifecycle.tailBefore": {
+      "limit": 2,
+      "filters": {
+        "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+      },
+      "beforeHrcSeq": 7
+    },
+    "lifecycle.tailWrong": {
+      "limit": 2,
+      "filters": {
+        "scopeRef": "absent"
+      }
+    },
+    "lifecycle.tailGeneration": {
+      "limit": 2,
+      "filters": {
+        "hostSessionId": "finite-host",
+        "generation": 2
+      }
+    },
+    "lifecycle.tailMismatch": {
+      "limit": 2,
+      "filters": {},
+      "expectedLedgerIncarnationId": "wrong"
+    },
+    "lifecycle.local": {
+      "fromHrcSeq": 1,
+      "sourceRef": null
+    },
+    "lifecycle.imported": {
+      "fromHrcSeq": 1,
+      "sourceRef": "peer:finite"
+    },
+    "lifecycle.emptySource": {
+      "fromHrcSeq": 1,
+      "sourceRef": ""
+    },
+    "lifecycle.all": {
+      "fromHrcSeq": 1
+    },
+    "lifecycle.from": {
+      "fromHrcSeq": 4,
+      "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+    },
+    "lifecycle.stream": {
+      "fromStreamSeq": 4,
+      "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+    },
+    "lifecycle.zero": {
+      "fromHrcSeq": 1,
+      "limit": 0
+    },
+    "lifecycle.byRun": {
+      "runId": "finite-a",
+      "generation": 1
+    },
+    "lifecycle.byLaunch": {
+      "launchId": "finite-launch",
+      "generation": 2
+    },
+    "lifecycle.byKind": {
+      "eventKind": "turn.completed"
+    },
+    "lifecycle.byScope": {
+      "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%",
+      "laneRef": "main"
+    },
+    "lifecycle.latestKind": {
+      "eventKind": "turn.message",
+      "generation": 2
+    },
+    "lifecycle.latestSession": {
+      "hostSessionId": "finite-host",
+      "generation": 2
+    },
+    "lifecycle.latestWrong": {
+      "hostSessionId": "finite-host",
+      "generation": 99
+    },
+    "lifecycle.latestLocal": {
+      "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+    },
+    "lifecycle.latestLocalBefore": {
+      "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%",
+      "beforeHrcSeq": 6,
+      "eventKind": "turn.message"
+    },
+    "lifecycle.latestGroups": {
+      "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+    },
+    "lifecycle.replay": {
+      "afterHrcSeq": 0,
+      "expectedLedgerIncarnationId": "observed incarnation",
+      "filters": {
+        "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+      },
+      "callbackSerializedUtf8Budget": 1000000
+    },
+    "lifecycle.replayBytes": {
+      "afterHrcSeq": 0,
+      "expectedLedgerIncarnationId": "observed incarnation",
+      "filters": {
+        "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+      },
+      "callbackSerializedUtf8Budget": 700
+    },
+    "lifecycle.replayMismatch": {
+      "afterHrcSeq": 0,
+      "expectedLedgerIncarnationId": "wrong"
+    },
+    "runtime.count": {},
+    "runtime.one": {
+      "runtimeId": "finite-a"
+    },
+    "runtime.missing": {
+      "runtimeId": "absent"
+    },
+    "runtime.latest": {
+      "hostSessionId": "finite-host"
+    },
+    "runtime.host": {
+      "hostSessionId": "finite-host"
+    },
+    "runtime.wrongHost": {
+      "hostSessionId": "absent"
+    },
+    "runtime.scope": {
+      "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+    },
+    "runtime.all": {},
+    "runtime.available": {},
+    "runtime.statuses": {
+      "statuses": [
+        "busy",
+        "ready"
+      ]
+    },
+    "runtime.emptyStatuses": {
+      "statuses": []
+    },
+    "runtime.live": {},
+    "runtime.liveRows": {},
+    "run.one": {
+      "runId": "finite-a"
+    },
+    "run.missing": {
+      "runId": "absent"
+    },
+    "run.dispatch": {
+      "hostSessionId": "finite-host",
+      "idempotencyKey": "key-finite-b"
+    },
+    "run.wrongDispatch": {
+      "hostSessionId": "finite-other",
+      "idempotencyKey": "key-finite-b"
+    },
+    "run.input": {
+      "inputId": "input-finite-c"
+    },
+    "run.submission": {
+      "submissionId": "submission-finite-d"
+    },
+    "run.turn": {
+      "turnKey": "turn-finite-e"
+    },
+    "run.runtime": {
+      "runtimeId": "finite-a"
+    },
+    "run.correlated": {
+      "invocationId": "finite-invocation"
+    },
+    "run.queue": {
+      "hostSessionId": "finite-host"
+    },
+    "run.wrongQueue": {
+      "hostSessionId": "finite-other"
+    },
+    "run.all": {},
+    "run.filtered": {
+      "hostSessionId": "finite-host",
+      "generation": 2,
+      "status": [
+        "queued"
+      ]
+    },
+    "run.zero": {
+      "limit": 0
+    },
+    "run.emptyStatuses": {
+      "status": []
+    },
+    "run.latest": {
+      "hostSessionId": "finite-host"
+    },
+    "run.latestGeneration": {
+      "hostSessionId": "finite-host",
+      "generation": 2
+    },
+    "run.wrongGeneration": {
+      "hostSessionId": "finite-host",
+      "generation": 99
+    },
+    "run.selectors": [
+      {
+        "runId": "finite-c"
+      },
+      {
+        "runtimeId": "finite-a"
+      },
+      {
+        "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%",
+        "laneRef": "main",
+        "status": [
+          "completed"
+        ]
+      },
+      {
+        "scopeRef": ""
+      },
+      {
+        "laneRef": ""
+      },
+      {
+        "hostSessionId": ""
+      },
+      {
+        "generation": 0
+      }
+    ],
+    "mutation.empty": {
+      "runtimeId": "finite-a",
+      "patch": {}
+    },
+    "mutation.patch": {
+      "runtimeId": "finite-a",
+      "patch": {
+        "presentation": {
+          "label": "finite"
+        },
+        "runtimeStateJson": {
+          "stage": 1
+        },
+        "updatedAt": "2026-10-23T01:00:00.000Z"
+      }
+    },
+    "mutation.sameStatus": {
+      "runtimeId": "finite-a",
+      "status": "ready",
+      "updatedAt": "2026-10-23T01:00:00.000Z"
+    },
+    "mutation.status": {
+      "runtimeId": "finite-a",
+      "status": "busy",
+      "updatedAt": "2026-10-23T01:00:00.000Z"
+    },
+    "mutation.activity": {
+      "runtimeId": "finite-a",
+      "lastActivityAt": "2026-10-23T02:00:00.000Z",
+      "updatedAt": "2026-10-23T01:00:00.000Z"
+    },
+    "mutation.clear": {
+      "runtimeId": "finite-a",
+      "patch": {
+        "presentation": null,
+        "runtimeStateJson": null,
+        "updatedAt": "2026-10-23T01:00:00.000Z"
+      },
+      "nativePatch": "Set(JSON null), distinct from Clear(SQLNULL)"
+    },
+    "mutation.runId": {
+      "runtimeId": "finite-a",
+      "activeRunId": "finite-a",
+      "updatedAt": "2026-10-23T01:00:00.000Z"
+    },
+    "mutation.clearRunId": {
+      "runtimeId": "finite-a",
+      "activeRunId": "undefined -> SQLNULL",
+      "updatedAt": "2026-10-23T01:00:00.000Z"
+    },
+    "mutation.ownership": {
+      "runtimeId": "finite-a",
+      "activeRunId": "finite-app",
+      "updatedAt": "2026-10-23T01:00:00.000Z"
+    },
+    "mutation.ownershipAfter": {
+      "runtimeId": "finite-a"
+    },
+    "mutation.absent": {
+      "runtimeId": "absent",
+      "lastActivityAt": "2026-10-23T02:00:00.000Z",
+      "updatedAt": "2026-10-23T01:00:00.000Z"
+    },
+    "mutation.runEmpty": {
+      "runId": "finite-d",
+      "patch": {}
+    },
+    "mutation.runMonotonic": {
+      "runId": "finite-d",
+      "patch": {
+        "status": "running",
+        "startedAt": "2026-10-23T01:00:00.000Z",
+        "acceptedAt": "2026-10-23T01:00:00.000Z",
+        "updatedAt": "2026-10-23T01:00:00.000Z"
+      }
+    },
+    "mutation.runResurrect": {
+      "runId": "finite-d",
+      "patch": {
+        "status": "running",
+        "completedAt": null,
+        "errorCode": "finite-error",
+        "updatedAt": "2026-10-23T01:00:00.000Z"
+      }
+    },
+    "mutation.runStatus": {
+      "runId": "finite-d",
+      "status": "failed",
+      "updatedAt": "2026-10-23T01:00:00.000Z"
+    },
+    "mutation.runClear": {
+      "runId": "finite-d",
+      "patch": {
+        "errorCode": null,
+        "errorMessage": null,
+        "updatedAt": "2026-10-23T01:00:00.000Z"
+      }
+    },
+    "mutation.runAbsent": {
+      "runId": "absent",
+      "status": "failed",
+      "updatedAt": "2026-10-23T01:00:00.000Z"
+    },
+    "lifecycle.repositoryPages": [
+      {
+        "afterSeq": 0,
+        "limit": 0
+      },
+      {
+        "afterSeq": 0,
+        "limit": -1
+      },
+      {
+        "afterSeq": 0,
+        "limit": -2
+      },
+      {
+        "afterSeq": 0,
+        "limit": 10001
+      }
+    ],
+    "lifecycle.repositoryTails": [
+      {
+        "limit": 0,
+        "filters": {
+          "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+        }
+      },
+      {
+        "limit": -1,
+        "filters": {
+          "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+        }
+      },
+      {
+        "limit": -2,
+        "filters": {
+          "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+        }
+      },
+      {
+        "limit": 10001,
+        "filters": {
+          "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+        }
+      }
+    ],
+    "lifecycle.repositoryAfterNegative": {
+      "afterSeq": -1,
+      "limit": 2
+    },
+    "lifecycle.repositoryTailNegativeBefore": {
+      "limit": -2,
+      "filters": {
+        "scopeRef": "agent:tabularasa:project:hrc-runtime:task:finite_%"
+      },
+      "beforeHrcSeq": 7
+    },
+    "lifecycle.repositoryStale": {
+      "afterSeq": 0,
+      "limit": 0,
+      "expectedLedgerIncarnationId": "finite-original"
+    }
+  }
+}

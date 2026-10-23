@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix='hrcp1-read-predicates-',dir='/tmp')as s
  values={}
  for name,command in [('bun',['bun',str(pathlib.Path(__file__).with_name('read_predicates_control.ts')),a.release,str(root)]),('native',[a.binary,'reconciliation-query-contract','--db',str(path)])]:
   r=subprocess.run(command,capture_output=True,text=True,env=None if name=='bun'else{**os.environ,'PATH':'/usr/bin:/bin','HRC_SOCKET_PATH':str(root/'absent.sock')});(out/(name+'.json')).write_text(json.dumps({'command':command,'exit':r.returncode,'stdout':r.stdout,'stderr':r.stderr},indent=2));assert r.returncode==0,r.stdout+r.stderr
-  values[name]=json.loads(r.stdout)['result'];assert snapshot(path)==before,name+' read mutated logical DB'
+  values[name]=json.loads(r.stdout)['result'];after=snapshot(path);(out/(name+'-after.json')).write_text(json.dumps(after));assert after==before,name+' read mutated logical DB'
  assert values['bun']==values['native'],{k:[values['bun'][k],values['native'].get(k)]for k in values['bun']if values['bun'][k]!=values['native'].get(k)}
  value=values['native'];assert value['accepted']==[2,None];assert value['terminals']==['turn.failed','turn.failed','turn.failed','turn.interrupted',None,None]
  assert [r['runId']for r in value['inFlight']]==['flight-tmux','flight-headless']

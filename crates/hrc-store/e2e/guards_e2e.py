@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Existing-only guard, compatible extra objects, passive reads, contention and crash recovery."""
 import argparse,json,pathlib,subprocess,tempfile,os,sqlite3,hashlib,time
+from contextlib import closing
 p=argparse.ArgumentParser();p.add_argument('--binary',required=True);p.add_argument('--release',required=True);p.add_argument('--artifacts',required=True);a=p.parse_args();out=pathlib.Path(a.artifacts);out.mkdir(parents=True,exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='hrcp1-guards-',dir='/tmp') as root:
     root=pathlib.Path(root);dbpath=root/'state.sqlite';env={**os.environ,'PATH':'/usr/bin:/bin','HRC_SOCKET_PATH':str(root/'absent.sock')};results=[]
@@ -22,10 +23,30 @@ with tempfile.TemporaryDirectory(prefix='hrcp1-guards-',dir='/tmp') as root:
     with sqlite3.connect(compatible) as db:db.execute('CREATE INDEX fixture_compatible_extra_index ON hrc_events(ts)')
     r,j=native('page',compatible);assert r.returncode==0 and len(j['rows'])==2
     def image():return {p.name:{'bytes':p.stat().st_size,'mtimeNs':p.stat().st_mtime_ns,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in root.glob('state.sqlite*')}
+    def logical():
+        with closing(sqlite3.connect('file:'+str(dbpath)+'?mode=ro',uri=True)) as db:
+            db.text_factory=bytes
+            def value(v):
+                if isinstance(v,bytes):return {'sqliteBytes':v.hex()}
+                if isinstance(v,(tuple,list)):return [value(x)for x in v]
+                return v
+            schema=list(db.execute('SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name'))
+            tables=[r[1].decode()for r in schema if r[0]==b'table']
+            return {'schema':value(schema),'tables':{name:value(list(db.execute('SELECT * FROM "'+name.replace('"','""')+'"')))for name in tables}}
+    logical_before=logical();(out/'passive-before.json').write_text(json.dumps(logical_before))
     before=image()
     r,page=native('page');assert r.returncode==0
+    page_image=logical();(out/'passive-page-after.json').write_text(json.dumps(page_image));assert page_image==logical_before
     r,head=native('inspect');assert r.returncode==0
-    after=image();(out/'passive-files.json').write_text(json.dumps({'before':before,'after':after},indent=2));assert before['state.sqlite']==after['state.sqlite'];assert after.get('state.sqlite-wal',{}).get('bytes',0)==0
+    after=image();(out/'passive-files.json').write_text(json.dumps({'before':before,'after':after},indent=2))
+    logical_after=logical();(out/'passive-after.json').write_text(json.dumps(logical_after));assert logical_before==logical_after
+    # WAL may already contain committed canonical setup; unchanged logical state is the oracle.
+    activity_code="const {openHrcDatabase}=await import(process.argv[1]+'/packages/hrc-store-sqlite/src/index.ts');const db=openHrcDatabase(process.argv[2],{migrate:false});try{console.log(JSON.stringify(db.runtimes.updateActivity('p1-runtime','2026-10-23T00:00:01.000Z','2026-10-23T00:00:01.000Z')))}finally{db.close()}"
+    activity_argv=['bun','-e',activity_code,a.release,str(dbpath)]
+    activity=subprocess.run(activity_argv,capture_output=True,text=True);(out/'activity-control.json').write_text(json.dumps({'command':activity_argv,'exit':activity.returncode,'stdout':activity.stdout,'stderr':activity.stderr},indent=2));assert activity.returncode==0,activity.stderr
+    logical_activity=logical();(out/'activity-after.json').write_text(json.dumps(logical_activity));assert logical_activity!=logical_after
+    assert json.loads(activity.stdout)['lastActivityAt']=='2026-10-23T00:00:01.000Z'
+
     start=time.monotonic()
     with sqlite3.connect(dbpath) as locked:
         locked.execute('BEGIN IMMEDIATE')

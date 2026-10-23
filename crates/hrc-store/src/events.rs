@@ -92,19 +92,29 @@ impl LifecycleEvents<'_> {
         if limit == 0 || limit > 10000 || after < 0 {
             return Err(StoreError::Invalid("invalid page cursor/limit".into()));
         }
+        self.repository_page(after, limit as i64, expected)
+    }
+    /// Exact integral SQLite repository behavior. Unlike the bounded observation
+    /// interface, zero and negative limits retain the canonical Bun semantics.
+    pub fn repository_page(
+        &self,
+        after: i64,
+        limit: i64,
+        expected: Option<&str>,
+    ) -> Result<LifecyclePage> {
         let id = self.fence(expected)?;
         let head = self.allocated_hrc_seq()?;
         let mut statement = self.db.prepare(
             "SELECT * FROM hrc_events WHERE hrc_seq>? AND hrc_seq<=? ORDER BY hrc_seq ASC LIMIT ?",
         )?;
         let raw = statement
-            .query_map(params![after, head, limit as i64], map_event)?
+            .query_map(params![after, head, limit], map_event)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let rows = raw
             .into_iter()
             .map(|r| self.decorate(r, false))
             .collect::<Result<Vec<_>>>()?;
-        let scanned_through = if rows.len() == limit {
+        let scanned_through = if i64::try_from(rows.len()).ok() == Some(limit) {
             rows.last().map_or(head, |r| r.hrc_seq)
         } else {
             head
@@ -126,6 +136,17 @@ impl LifecycleEvents<'_> {
         if limit == 0 || limit > 10000 {
             return Err(StoreError::Invalid("invalid tail limit".into()));
         }
+        self.repository_tail(filters, limit as i64, before, expected)
+    }
+    /// Exact canonical repository tail, including its single-row pop for
+    /// negative limits. Call `tail` for the bounded observation interface.
+    pub fn repository_tail(
+        &self,
+        filters: &LifecycleFilters,
+        limit: i64,
+        before: Option<i64>,
+        expected: Option<&str>,
+    ) -> Result<LifecycleTail> {
         let ledger_incarnation_id = self.fence(expected)?;
         let head_hrc_seq = self.max_hrc_seq()?;
         let (mut predicates, mut values) = where_filters(filters, false);
@@ -133,10 +154,17 @@ impl LifecycleEvents<'_> {
             predicates.push("hrc_seq < ?".into());
             values.push(before.into());
         }
-        values.push((limit as i64 + 1).into());
+        values.push(
+            limit
+                .checked_add(1)
+                .ok_or_else(|| StoreError::Invalid("tail limit overflow".into()))?
+                .into(),
+        );
         let mut rows = self.query(&predicates, values, "hrc_seq DESC", Some("?"))?;
-        let truncated = rows.len() > limit;
-        rows.truncate(limit);
+        let truncated = limit < 0 || i64::try_from(rows.len()).map_or(true, |count| count > limit);
+        if truncated {
+            rows.pop();
+        }
         rows.reverse();
         Ok(LifecycleTail {
             ledger_incarnation_id,
