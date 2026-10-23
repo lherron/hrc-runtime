@@ -13,3 +13,5 @@ serde_json.workspace = true
 reqwest.workspace = true
 chrono.workspace = true
 unicode-segmentation.workspace = true
+indexmap = "2"
+ryu = "1"

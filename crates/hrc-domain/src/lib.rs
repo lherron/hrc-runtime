@@ -35,3 +35,6 @@ pub fn decode_edits(wire: Value) -> Result<Vec<CoreEdit>, Refusal> {
         })
         .collect()
 }
+
+/// Shared typed persistence contracts; SQLite implementation lives in hrc-store.
+pub mod store;
