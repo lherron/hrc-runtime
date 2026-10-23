@@ -216,25 +216,30 @@ describe('.githooks timing shim', () => {
   })
 
   test('a broken or missing wrkp never changes a passing result', async () => {
-    const broken = await makeFixture('exit 9')
-    await stageCode(broken, "'broken'")
-    ok(['commit', '-m', 'broken wrkp'], broken.work, env(broken))
+    const fixture = await makeFixture('exit 9')
+    await stageCode(fixture, "'broken'")
+    ok(['commit', '-m', 'broken wrkp'], fixture.work, env(fixture))
 
-    const missing = await makeFixture('')
-    await rm(join(missing.binDir, 'wrkp'))
-    await stageCode(missing, "'missing'")
+    expect(ok(['rev-list', '--count', 'HEAD'], fixture.work).trim()).toBe('2')
+
+    // Exercise both optional-recorder failures on the same real repository.
+    // A second init/baseline/push/copy cycle consumed the shared test deadline
+    // under load before the missing-wrkp commit could finish (T-11600).
+    await rm(join(fixture.binDir, 'wrkp'))
+    await stageCode(fixture, "'missing'")
     // The real wrkp must not be reachable either, and it shares a directory
     // with node on some hosts, so bun and node (lefthook's launcher) are
     // linked into a private directory instead of putting theirs on PATH.
-    const tools = join(dirname(missing.binDir), 'tools')
+    const tools = join(dirname(fixture.binDir), 'tools')
     await mkdir(tools)
     for (const name of ['bun', 'node']) {
       await symlink(Bun.which(name) ?? name, join(tools, name))
     }
-    const path = [missing.binDir, tools, '/usr/bin', '/bin'].join(':')
+    const path = [fixture.binDir, tools, '/usr/bin', '/bin'].join(':')
     expect(Bun.which('wrkp', { PATH: path })).toBeNull()
-    ok(['commit', '-m', 'missing wrkp'], missing.work, { ...env(missing), PATH: path })
-    expect(ok(['rev-list', '--count', 'HEAD'], missing.work).trim()).toBe('2')
+    ok(['commit', '-m', 'missing wrkp'], fixture.work, { ...env(fixture), PATH: path })
+    expect(ok(['rev-list', '--count', 'HEAD'], fixture.work).trim()).toBe('3')
+    expect(await lines(fixture.probeLog)).toEqual(['code', 'code'])
   })
 
   test('pre-push stdin reaches code-validation untouched and the push posts once', async () => {
