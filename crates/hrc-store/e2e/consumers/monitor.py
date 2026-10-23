@@ -8,7 +8,7 @@ import signal
 import socket
 import time
 from assertions import require
-from harness import InfraError, save, backup, rows, REPO
+from harness import InfraError, save, backup, rows, REPO, store_snapshot
 
 
 def run_profile(c, profile):
@@ -103,7 +103,7 @@ def run_profile(c, profile):
         head = rows(db, "SELECT seq FROM sqlite_sequence WHERE name='hrc_events'")
         require(len(head) == 1 and body['eventLog']['highWaterSeq'] == head[0]['seq'] > 0, 'actual highwater after startup')
         save(c.caseout / 'after-startup.json', {'lifecycle': rows(db, 'SELECT * FROM hrc_events ORDER BY hrc_seq'),
-             'runtimes': rows(db, 'SELECT * FROM runtimes'), 'startupIsPassive': False})
+             'runtimes': rows(db, 'SELECT * FROM runtimes'), 'startupIsPassive': False, 'allocatedHead': head[0]['seq'], 'store': store_snapshot(db)})
     finally:
         if client:
             client.close()
@@ -123,12 +123,13 @@ def run_profile(c, profile):
                 else:
                     c.cleanup_failed = True
                     raise InfraError('owned foreground failed bounded shutdown; retained PID/root for operator')
+        c.command('foreground-pid-gone', ['ps', '-p', str(pid), '-o', 'args='], root, parse=False, exits=(1,))
         c.command('ghostmux-close-owned', ['ghostmux', 'kill-surface', '-t', surface], root, parse=False, exits=(0, 1))
         surfaces = c.command('foreground-surface-cleanup', ['ghostmux', 'list-surfaces', '--json'], root)
         require(all(x['id'].lower() != surface.lower() for x in surfaces['terminals']), 'owned foreground surface residue')
         if logfile.exists():
             (c.caseout / 'foreground.log').write_bytes(logfile.read_bytes())
-        save(c.caseout / 'foreground-cleanup.json', {'pid': pid, 'socketAbsent': not Path(profile['publicSocket']).exists(), 'nativeExitedBeforeLaunch': native_done})
+        save(c.caseout / 'foreground-cleanup.json', {'pid': pid, 'socketAbsent': not Path(profile['publicSocket']).exists(), 'nativeExitedBeforeLaunch': native_done, 'observedAt': time.time()})
     require(not Path(profile['publicSocket']).exists(), 'foreground socket cleanup required before native reopen')
     loaded = c.native_call('native-after-Bun-exit', 'consumer-history-read', root)
     require(loaded['run']['runId'] == ids['runId'] and bool(loaded['lifecycle']), 'typed reopen same history')
@@ -223,9 +224,10 @@ def run_monitor(c):
                     else:
                         c.cleanup_failed = True
                         raise InfraError('owned wrkqd did not stop; root retained')
+            c.command('authority-pid-gone', ['ps', '-p', str(pid), '-o', 'args='], a['root'], parse=False, exits=(1,))
             c.command('close-owned-authority', ['ghostmux', 'kill-surface', '-t', a['surface']], a['root'], parse=False, exits=(0, 1))
             surfaces = c.command('authority-surface-cleanup', ['ghostmux', 'list-surfaces', '--json'], a['root'])
             require(all(x['id'].lower() != a['surface'].lower() for x in surfaces['terminals']), 'owned authority surface residue')
             if (a['root'] / 'authority.log').exists():
                 (c.caseout / 'authority.log').write_bytes((a['root'] / 'authority.log').read_bytes())
-            save(c.caseout / 'authority-cleanup.json', {'pid': pid, 'stopped': True})
+            save(c.caseout / 'authority-cleanup.json', {'pid': pid, 'stopped': True, 'observedAt': time.time()})

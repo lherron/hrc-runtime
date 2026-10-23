@@ -32,7 +32,7 @@ No new Cargo target is created.
 `--cases C02` runs an explicitly labeled subset. `validate.py --allow-subset`
 accepts such an artifact only at subset scope. `validate.py` normally requires all
 seven cases and every fixed assertion from `requirements.py`; it reparses raw
-stdout, checks semantic rows/results, and verifies the artifact manifest. Missing
+stdout, reconstructs every REQUIRED assertion through `rederive.py` from exact raw commands and before/after rows, and verifies the artifact manifest. Missing
 commands/cases/fields, malformed output, empty rows, partial tool completion,
 missing native scenarios and unavailable infrastructure cannot produce a pass.
 The initial summary stays incomplete across interruption. Normal nonpassing runs
@@ -60,7 +60,7 @@ adapter does not modify P0 profiles, inventory, assertion law or aggregation.
 `control_checks.py` rejects inadequate assertion inputs before producer runs.
 `evidence_controls.py EVIDENCE --out NEW_DIR` tampers coherent actual artifacts
 (removes a case/assertion/command, truncates raw JSON, erases native rows, marks
-incomplete) and requires the external validator to refuse every variant. These
+incomplete). Coherent controls also regenerate manifests after removing an annotation negative, clearing capture-hole findings, changing a nonzero monitor head, erasing native hydration, erasing a restub skip, or substituting native identity. Each must fail for its semantic reason, independent of hashes. These
 are checker controls, never product qualification.
 
 ## Native scenario interface
@@ -82,6 +82,8 @@ fresh authority ports/credentials rather than reusing P0's cleaned subjects. The
 optional `--monitor-profile` is for an externally prepared dedicated subject
 within this run's scratch root; it must pass the same P0 admission and contain no
 HRC DB or existing owner/socket. It is not a source of fabricated responses.
+
+Maintenance observations retain exact pre/post tool table snapshots and post-signal/pre-resume rows. Monitor observations retain the allocated cursor at snapshot time; shutdown may append additional facts, which are recorded separately.
 
 Every current run is **source-native with installed-Bun consumers**. Even a full
 source consumer PASS has `installedNativeAcceptance=false`,

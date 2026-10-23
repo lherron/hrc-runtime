@@ -2,7 +2,7 @@
 import json
 import sqlite3
 from assertions import require, drained, prune_report
-from harness import Gap, save
+from harness import Gap, save, store_snapshot
 from cases import dbpath, table
 from pathlib import Path
 
@@ -25,7 +25,10 @@ def run_maintenance(c):
         args += ['--tables', 'runtime_buffers'] if mode == 'buffers' else ['--' + mode + '-tool-results'] if mode in ('spill', 'restub') else ['--strip-envelope-payloads']
         if apply:
             args.append('--apply')
-        return prune_report(c.command(name, [*args, *extra], root, parse=False))
+        before = store_snapshot(dbpath(root))
+        record = c.command(name, [*args, *extra], root, parse=False)
+        save(c.caseout / (name + '-rows.json'), {'dbPath': str(dbpath(root)), 'before': before, 'after': store_snapshot(dbpath(root))})
+        return prune_report(record)
 
     def hydration(root, expected, prefixes):
         helper = Path(__file__).with_name('maintenance_setup.ts')

@@ -47,6 +47,14 @@ def backup(source, target):
         a.backup(b)
 
 
+def store_snapshot(path):
+    names = {r['name'] for r in rows(path, "SELECT name FROM sqlite_master WHERE type='table'")}
+    return {name: rows(path, 'SELECT * FROM ' + name) for name in (
+        'runs', 'runtimes', 'events', 'events_legacy', 'hrc_events', 'broker_invocations',
+        'broker_invocation_events', 'runtime_artifacts', 'runtime_buffers', 'tool_result_blobs',
+        'event_stream_cursor', 'sqlite_sequence') if name in names}
+
+
 class Context:
     def __init__(self, args):
         self.args = args

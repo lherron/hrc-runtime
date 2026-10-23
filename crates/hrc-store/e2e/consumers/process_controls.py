@@ -3,7 +3,7 @@ import subprocess
 import time
 import sqlite3
 from assertions import require, archive_evidence, prune_report
-from harness import InfraError, save
+from harness import InfraError, save, store_snapshot
 from cases import dbpath, table
 
 
@@ -22,6 +22,7 @@ def interrupt_at(c, root, name, argv, predicate):
         # Only this child is signaled. A timeout is never evidence of partial progress.
         process.terminate()
         stdout, stderr = process.communicate(timeout=5)
+        save(c.caseout / (name + '-before-resume.json'), store_snapshot(dbpath(root)))
     finally:
         if process.poll() is None:
             process.kill()
@@ -43,13 +44,19 @@ def archive_resume(c, unused, eligible, active):
     c.command('archive-status-interrupted', [*base, '--status'], root)
     def partial_copy():
         count = len(table(root, 'events_legacy'))
-        return {'copied': count, 'expected': len(expected)} if 0 < count < len(expected) else None
+        if 0 < count < len(expected):
+            appended = c.native_call('native-during-archive-copy', 'consumer-append-control', root)
+            return {'copied': count, 'expected': len(expected), 'nativeAppend': appended}
+        return None
     interrupt_at(c, root, 'archive-copy-killed', [*base, '--copy', '--step=1', '--sleep=250'], partial_copy)
     c.command('archive-copy-resumed', [*base, '--copy', '--step=1', '--sleep=1'], root, parse=False)
     archive_evidence(expected, table(root, 'events_legacy'))
     def partial_delete():
         count = len([r for r in table(root, 'events') if r['source'] not in ('broker', 'tmux')])
-        return {'remaining': count, 'expected': len(expected)} if 0 < count < len(expected) else None
+        if 0 < count < len(expected):
+            appended = c.native_call('native-during-archive-delete', 'consumer-append-control', root)
+            return {'remaining': count, 'expected': len(expected), 'nativeAppend': appended}
+        return None
     interrupt_at(c, root, 'archive-delete-killed', [*base, '--delete', '--step=1', '--sleep=250'], partial_delete)
     c.command('archive-delete-resumed', [*base, '--delete', '--step=1', '--sleep=1'], root, parse=False)
     require(table(root, 'events') == preserved, 'active sources survived partial delete/resume')
@@ -100,6 +107,7 @@ def maintenance_resume(c, setup, command):
         stdout, stderr = process.communicate(timeout=10)
         record = {'argv': list(map(str, argv)), 'pid': process.pid, 'exit': process.returncode, 'stdout': stdout, 'stderr': stderr, 'startedAt': concurrent_started, 'endedAt': time.time()}
         save(c.caseout / 'concurrent-strip-process.json', record)
+        save(c.caseout / 'concurrent-strip-after.json', store_snapshot(dbpath(concurrent)))
         require(prune_report(record)['stopReason'] == 'complete', 'concurrent strip complete')
         require(isinstance(appended['row']['hrcSeq'], int) and appended['row']['hrcSeq'] > 0, 'native appended identity')
         require(any(r['hrc_seq'] == appended['row']['hrcSeq'] for r in table(concurrent, 'hrc_events')), 'concurrent native append retained')

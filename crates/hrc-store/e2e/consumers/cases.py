@@ -122,14 +122,18 @@ def c02(c):
             result = c.cli_call(name, ['run', 'annotate', 'p1-app', '--correlation', raw, '--json'], root,
                                 exits=(1, 2), parse=False)
             require(reason in (result['stdout'] + result['stderr']).lower(), 'specific correlation refusal')
-            require(runrow() == before, 'invalid annotation mutated run')
+            after = runrow()
+            save(c.caseout / (name + '-rows.json'), {'before': before, 'after': after})
+            require(after == before, 'invalid annotation mutated run')
         c.check(name + '-no-mutation', negative)
     def absent():
         before = table(root, 'runs')
         result = c.cli_call('absent-run', ['run', 'annotate', 'consumer-absent', '--correlation', json.dumps(a), '--json'], root,
                             exits=(1, 2), parse=False)
         require('run' in (result['stdout'] + result['stderr']).lower(), 'absent run refusal')
-        require(table(root, 'runs') == before, 'absent run mutation')
+        after = table(root, 'runs')
+        save(c.caseout / 'absent-run-rows.json', {'before': before, 'after': after})
+        require(after == before, 'absent run mutation')
     c.check('absent-run-no-mutation', absent)
 
 

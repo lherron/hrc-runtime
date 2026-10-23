@@ -41,8 +41,9 @@ def validate(directory, allow_subset=False):
             require(data['endedAt'] >= data['startedAt'], 'command time evidence')
             if 'body' in data:
                 require(json.loads(data['stdout']) == data['body'], 'malformed/stale parsed output')
-            if data['argv'][0] == identity['nativeRealpath']:
-                require(data['nativeHash'] == identity['nativeHashBefore'], 'wrong native binary')
+            command_name = path.stem.split('-', 1)[1] if path.stem.split('-', 1)[0].isdigit() else path.stem
+            if command_name.startswith('native-'):
+                require(data['argv'][0] == identity['nativeRealpath'] and data['nativeHash'] == identity['nativeHashBefore'], 'wrong native binary')
             commands[path.name.split('-', 1)[1].removesuffix('.json')] = data
         require(bool(commands), 'missing actual commands')
         traces[id] = commands
@@ -126,6 +127,9 @@ def validate(directory, allow_subset=False):
         native = body('C07', 'native-registry-read')
         require({r['scopeRef']: r['homeNodeId'] for r in native['bindings']} == active, 'native registry reload')
         require(traces['C07']['conflicting-home-refused']['exit'] == 1, 'conflict refusal evidence')
+    from rederive import rederive
+    derived = rederive(out, cases)
+    require(set(derived) == set(cases), 'required semantic reconstruction missing')
     # Artifact integrity is additional to semantic checks, never a product checksum protocol.
     manifest = out / 'SHA256SUMS'
     require(manifest.is_file(), 'missing artifact manifest')
@@ -134,7 +138,7 @@ def validate(directory, allow_subset=False):
         path = out / relative
         require(path.resolve().is_relative_to(out.resolve()) and path.is_file(), 'missing/escaping artifact')
         require(digest(path) == expected, 'artifact changed: ' + relative)
-    return {'status': 'PASS', 'claim': 'source-native-with-installed-Bun-consumers', 'cases': sorted(cases), 'installedNativeAcceptance': False}
+    return {'status': 'PASS', 'claim': 'source-native-with-installed-Bun-consumers', 'cases': sorted(cases), 'installedNativeAcceptance': False, 'rederivedAssertions': derived}
 
 
 if __name__ == '__main__':
