@@ -29,3 +29,21 @@ Negative checker controls run without a daemon; their claim is checker-control
 and cannot certify these workflows. Real profile artifacts preserve exact
 commands, failures and timings. A mandatory infrastructure failure remains
 nonpassing even when independent workflows finish successfully.
+
+The first corrected-source run returned a resume successor session projection
+whose lastAppliedIntentJson named the production agent root. This field is
+preserved in the raw response. Source explanation:
+`target-message-successor-handlers.ts:normalizeLocalProjectSuccessorIntent`
+re-resolves local placement through `resolveNodeLocalPlacement` at successor
+minting, replacing the supplied placement in that returned session intent.
+Resume-continuation itself mints the successor and does not start its runtime.
+The profile then explicitly calls runtimes/start with the original scratch
+intent. The operative `runtime_operations.preparation_json` for initial,
+restarted and resumed runtimes contains the scratch agent/project roots in both
+intent and ASP response.plan.placement, and scratch cwd in resolvedBundle and
+admission.execution.dispatchRequest.startRequest.spec.process. These frozen
+preparations, not the intermediate successor projection, bind actual dispatch.
+The runner now reads each generation's raw preparation through readonly SQL,
+requires exact scratch roots and correlates its runtime IDs with the actual
+start/restart responses. A production prepared root fails a discriminating
+control. No response is rewritten and no Bun behavior is changed for this test.

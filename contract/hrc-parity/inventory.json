@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "sourceCommit": "c720ad33b1cf61e091f870b4f97a8e8b40e14d67",
+  "sourceCommit": "1335fc17de13fd67f753a09d774f89c10aa80406",
   "items": [
     {
       "id": "bin:hrc",
@@ -26,7 +26,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli-alias:hrc list"
@@ -43,7 +43,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc"
@@ -97,7 +97,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin"
@@ -112,7 +112,29 @@
       "aliases": [],
       "description": "administrative maintenance commands",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -130,7 +152,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin bridge"
@@ -146,7 +168,29 @@
       "aliases": [],
       "description": "manage low-level local bridge delivery",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -164,7 +208,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin bridge close"
@@ -187,7 +231,29 @@
           "variadic": false
         }
       ],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -205,7 +271,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin bridge deliver"
@@ -246,6 +312,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -265,7 +352,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin bridge deliver-text"
@@ -318,6 +405,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -337,7 +445,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin bridge list"
@@ -366,6 +474,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -385,7 +514,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin bridge register"
@@ -438,6 +567,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -457,7 +607,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin bridge target"
@@ -522,6 +672,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -541,7 +712,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin broker-verify"
@@ -557,7 +728,29 @@
       "aliases": [],
       "description": "verify broker capture and projection",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -575,7 +768,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin broker-verify candidates"
@@ -604,6 +797,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -623,7 +837,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin broker-verify run"
@@ -664,6 +878,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -683,7 +918,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin events"
@@ -699,7 +934,29 @@
       "aliases": [],
       "description": "recover HRC event ledgers",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -717,7 +974,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin events drain"
@@ -752,6 +1009,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -771,7 +1049,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin metrics"
@@ -787,7 +1065,29 @@
       "aliases": [],
       "description": "inspect local HRC performance metrics",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -805,7 +1105,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin metrics report"
@@ -855,6 +1155,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -874,7 +1195,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin registrations"
@@ -890,7 +1211,29 @@
       "aliases": [],
       "description": "inspect and retire externally registered instance scopes",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -908,7 +1251,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin registrations gc"
@@ -943,6 +1286,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -962,7 +1326,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin runs"
@@ -978,7 +1342,29 @@
       "aliases": [],
       "description": "repair run records (sweep zombies, reconcile active)",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -996,7 +1382,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin runs reconcile-active"
@@ -1037,6 +1423,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1056,7 +1463,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin runs recover-unstarted"
@@ -1097,6 +1504,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1116,7 +1544,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin runs sweep-zombies"
@@ -1157,6 +1585,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1176,7 +1625,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin runtime"
@@ -1192,7 +1641,29 @@
       "aliases": [],
       "description": "low-level runtime provisioning and adoption",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -1210,7 +1681,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin runtime ensure"
@@ -1245,6 +1716,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1264,7 +1756,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin runtime prune"
@@ -1311,6 +1803,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1330,7 +1843,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin status"
@@ -1349,6 +1862,27 @@
       "options": [
         {
           "flags": "--json",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
           "required": false,
           "optional": false,
           "negate": false
@@ -1371,7 +1905,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin surface"
@@ -1387,7 +1921,29 @@
       "aliases": [],
       "description": "manage surface bindings",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -1405,7 +1961,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin surface bind"
@@ -1440,6 +1996,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1459,7 +2036,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin surface list"
@@ -1488,6 +2065,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1507,7 +2105,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin surface unbind"
@@ -1542,6 +2140,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1561,7 +2180,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin worktrees"
@@ -1577,7 +2196,29 @@
       "aliases": [],
       "description": "audit and prune completed-task linked worktrees",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -1595,7 +2236,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin worktrees audit"
@@ -1630,6 +2271,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1649,7 +2311,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc admin worktrees prune"
@@ -1696,6 +2358,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1715,7 +2398,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc attach"
@@ -1748,6 +2431,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1767,7 +2471,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc capture"
@@ -1782,7 +2486,29 @@
       "aliases": [],
       "description": "inspect or release broker capture state",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -1800,7 +2526,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc capture recover"
@@ -1840,6 +2566,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1859,7 +2606,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc capture release"
@@ -1917,6 +2664,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1936,7 +2704,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc capture status"
@@ -1964,6 +2732,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -1983,7 +2772,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc doctor"
@@ -2016,6 +2805,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2035,7 +2845,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc federation"
@@ -2050,7 +2860,29 @@
       "aliases": [],
       "description": "inspect and operate federation",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -2068,7 +2900,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc federation retire"
@@ -2102,6 +2934,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2121,7 +2974,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc index"
@@ -2136,7 +2989,29 @@
       "aliases": [],
       "description": "inspect or rebuild the transcript search index",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -2154,7 +3029,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc index rebuild"
@@ -2182,6 +3057,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2201,7 +3097,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc index status"
@@ -2220,6 +3116,27 @@
       "options": [
         {
           "flags": "--json",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
           "required": false,
           "optional": false,
           "negate": false
@@ -2242,7 +3159,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc info"
@@ -2275,6 +3192,15 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
         }
       ],
       "variants": [
@@ -2294,7 +3220,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc ls"
@@ -2323,6 +3249,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2342,7 +3289,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc monitor"
@@ -2357,7 +3304,29 @@
       "aliases": [],
       "description": "show, watch, and wait on HRC monitor state",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -2375,7 +3344,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc monitor events"
@@ -2445,6 +3414,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2464,7 +3454,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc monitor search"
@@ -2542,6 +3532,21 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2561,7 +3566,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc monitor session-report"
@@ -2607,6 +3612,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2626,7 +3652,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc monitor show"
@@ -2654,6 +3680,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2673,7 +3720,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc monitor stats"
@@ -2719,6 +3766,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2738,7 +3806,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc monitor transcript"
@@ -2809,6 +3877,27 @@
           "required": false,
           "optional": true,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2828,7 +3917,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc monitor wait"
@@ -2895,6 +3984,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -2914,7 +4024,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc monitor watch"
@@ -3059,6 +4169,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3078,7 +4209,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc peek"
@@ -3112,6 +4243,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3131,7 +4283,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc restart"
@@ -3164,6 +4316,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3183,7 +4356,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc restartme"
@@ -3210,6 +4383,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3229,7 +4423,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc resume"
@@ -3322,6 +4516,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3341,7 +4556,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc run"
@@ -3434,6 +4649,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3453,7 +4689,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc run annotate"
@@ -3493,6 +4729,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3512,7 +4769,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc run export"
@@ -3547,6 +4804,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3566,7 +4844,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime"
@@ -3581,7 +4859,29 @@
       "aliases": [],
       "description": "list, inspect, and control runtimes",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -3599,7 +4899,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime capture"
@@ -3621,7 +4921,29 @@
           "variadic": false
         }
       ],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -3639,7 +4961,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime diagnostics"
@@ -3667,6 +4989,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3686,7 +5029,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime inspect"
@@ -3720,6 +5063,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3739,7 +5103,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime interrupt"
@@ -3761,7 +5125,29 @@
           "variadic": false
         }
       ],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -3779,7 +5165,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime list"
@@ -3867,6 +5253,21 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3886,7 +5287,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime prune"
@@ -3962,6 +5363,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -3981,7 +5403,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime send"
@@ -4021,6 +5443,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4040,7 +5483,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime status"
@@ -4068,6 +5511,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4087,7 +5551,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime sweep"
@@ -4151,6 +5615,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4170,7 +5655,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc runtime terminate"
@@ -4222,6 +5707,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4241,7 +5747,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc send"
@@ -4291,6 +5797,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4310,7 +5837,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc server"
@@ -4325,7 +5852,29 @@
       "aliases": [],
       "description": "daemon lifecycle, health, and tmux backend control",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -4343,7 +5892,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc server restart"
@@ -4407,6 +5956,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4426,7 +5996,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc server serve"
@@ -4448,6 +6018,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4467,7 +6058,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc server start"
@@ -4501,6 +6092,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4520,7 +6132,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc server status"
@@ -4539,6 +6151,27 @@
       "options": [
         {
           "flags": "--json",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
           "required": false,
           "optional": false,
           "negate": false
@@ -4561,7 +6194,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc server stop"
@@ -4613,6 +6246,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4632,7 +6286,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc server subscribers"
@@ -4651,6 +6305,27 @@
       "options": [
         {
           "flags": "--json",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
           "required": false,
           "optional": false,
           "negate": false
@@ -4673,7 +6348,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc server tmux"
@@ -4689,7 +6364,29 @@
       "aliases": [],
       "description": "tmux and broker-tmux backend control",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -4707,7 +6404,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc server tmux kill"
@@ -4730,6 +6427,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4749,7 +6467,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc server tmux status"
@@ -4772,6 +6490,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4791,7 +6530,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session"
@@ -4806,7 +6545,29 @@
       "aliases": [],
       "description": "resolve, list, and inspect sessions",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -4824,7 +6585,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session drop-continuation"
@@ -4852,6 +6613,27 @@
           "required": true,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4871,7 +6653,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session get"
@@ -4911,6 +6693,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -4930,7 +6733,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session list"
@@ -5000,6 +6803,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -5019,7 +6843,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session meta"
@@ -5035,7 +6859,29 @@
       "aliases": [],
       "description": "get, set, or clear continuity metadata",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -5053,7 +6899,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session meta clear"
@@ -5081,7 +6927,29 @@
           "variadic": true
         }
       ],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -5099,7 +6967,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session meta get"
@@ -5128,6 +6996,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -5147,7 +7036,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session meta set"
@@ -5180,7 +7069,29 @@
           "variadic": false
         }
       ],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -5198,7 +7109,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session resolve"
@@ -5238,6 +7149,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -5257,7 +7189,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session retitle"
@@ -5297,6 +7229,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -5316,7 +7269,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc session rotate"
@@ -5344,6 +7297,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -5363,7 +7337,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc show"
@@ -5390,6 +7364,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -5409,7 +7404,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc start"
@@ -5540,6 +7535,27 @@
             "completed"
           ],
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -5559,7 +7575,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc summon"
@@ -5586,6 +7602,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -5605,7 +7642,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc target"
@@ -5620,7 +7657,29 @@
       "aliases": [],
       "description": "inspect where scopes live (placement)",
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
+        }
+      ],
       "variants": [
         "help-agent",
         "help-human",
@@ -5638,7 +7697,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc target bindings"
@@ -5657,6 +7716,27 @@
       "options": [
         {
           "flags": "--json",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
           "required": false,
           "optional": false,
           "negate": false
@@ -5679,7 +7759,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc target locate"
@@ -5713,6 +7793,27 @@
           "required": false,
           "optional": false,
           "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
+          "required": false,
+          "optional": false,
+          "negate": false
         }
       ],
       "variants": [
@@ -5732,7 +7833,7 @@
         "path": "packages/hrc-cli/src/cli/build-program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "682f5b7dbf14ceba30eea685103cbc6ef56b6ca6b336931df67052f4a623c574"
+        "hash": "dc4acfb91ca837eccd0cce3aa39f37f5389a627e3a782ee0835c5c938909f2ed"
       },
       "caseIds": [
         "cli:hrc turn"
@@ -5882,6 +7983,27 @@
         },
         {
           "flags": "--json",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--output <format>",
+          "required": true,
+          "optional": false,
+          "choices": [
+            "json"
+          ],
+          "negate": false
+        },
+        {
+          "flags": "--agent",
+          "required": false,
+          "optional": false,
+          "negate": false
+        },
+        {
+          "flags": "--human",
           "required": false,
           "optional": false,
           "negate": false
@@ -28057,7 +30179,7 @@
         "path": "packages/hrc-cli/src/cli/command-errors.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "0b3f22e40c32abadb958b0be9cc60f2d904bb061cb5d6e5acfafa28107e741bc"
+        "hash": "d905135a75e461f9b0f53d14a1bbb675a7542184799d6730781426c28f45dacf"
       },
       "caseIds": [
         "source:packages/hrc-cli/src/cli/command-errors.ts"
@@ -28065,7 +30187,7 @@
       "downstreamOwner": "T-11530",
       "coverage": "GAP",
       "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "hash": "0b3f22e40c32abadb958b0be9cc60f2d904bb061cb5d6e5acfafa28107e741bc"
+      "hash": "d905135a75e461f9b0f53d14a1bbb675a7542184799d6730781426c28f45dacf"
     },
     {
       "id": "source:packages/hrc-cli/src/cli/command-metadata.ts",
@@ -28431,7 +30553,7 @@
         "path": "packages/hrc-cli/src/cli/program.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "3fbd8ef5a2c100a1087713c6438381050d9688f9b41e407687227a78ec7ecb49"
+        "hash": "b8e6785362dd878a4080f110c3e1145a1b0bdfa7a7e1960bde9efd1596b46337"
       },
       "caseIds": [
         "source:packages/hrc-cli/src/cli/program.ts"
@@ -28439,7 +30561,7 @@
       "downstreamOwner": "T-11530",
       "coverage": "GAP",
       "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "hash": "3fbd8ef5a2c100a1087713c6438381050d9688f9b41e407687227a78ec7ecb49"
+      "hash": "b8e6785362dd878a4080f110c3e1145a1b0bdfa7a7e1960bde9efd1596b46337"
     },
     {
       "id": "source:packages/hrc-cli/src/cli/register-federation.ts",
@@ -33191,7 +35313,7 @@
         "path": "packages/hrc-server/src/session-restart.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "a5d81df5869ddbc59eae6ace29aec8820708b47d8073d17a0a49571dce6be2e0"
+        "hash": "e6be74a41a8c0efcefbb2f1ca76a2d4e682459f7284591beee531bce609e9147"
       },
       "caseIds": [
         "source:packages/hrc-server/src/session-restart.ts"
@@ -33199,7 +35321,7 @@
       "downstreamOwner": "T-11530",
       "coverage": "GAP",
       "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "hash": "a5d81df5869ddbc59eae6ace29aec8820708b47d8073d17a0a49571dce6be2e0"
+      "hash": "e6be74a41a8c0efcefbb2f1ca76a2d4e682459f7284591beee531bce609e9147"
     },
     {
       "id": "source:packages/hrc-server/src/session-resume-continuation.ts",

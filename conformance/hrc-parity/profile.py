@@ -69,7 +69,8 @@ def make_profile(root, release, cli, asp_evidence, node, source=False):
         http('POST','/v1/runtimes/start',{'hostSessionId':'$host','intent':'$intent'}, {'runtime':'body.runtimeId'},
             [eq('scope-lane-generation-runtime','status',200)]), terminal(scope),
         invoke('p0-'+str(time.time_ns())),
-        {'kind':'turn-ledger','scopeRef':scope,'assertions':[exists('two-real-identities','lifecycleRows'),exists('two-final-messages','brokerRows')]}]
+        {'kind':'turn-ledger','scopeRef':scope,'assertions':[exists('two-real-identities','lifecycleRows'),exists('two-final-messages','brokerRows')]},
+        {'kind':'preparation','runtimeId':'$runtime'}]
     cases['cold-second-turn']=cold
     cases['attach-restart-resume-terminate']=[
         {'kind':'pty','path':'/v1/attach?runtimeId=${runtime}','assertions':[
@@ -77,12 +78,14 @@ def make_profile(root, release, cli, asp_evidence, node, source=False):
         http('POST','/v1/sessions/restart',{'hostSessionId':'$host','expectedGeneration':'$generation'},
              {'host2':'body.hostSessionId','generation2':'body.generation','runtime2':'body.launch.runtimeId'},
              [eq('restart-generation','status',200)]),
+        {'kind':'preparation','runtimeId':'$runtime2'},
         {'kind':'poll','path':'/v1/events/tail?hostSessionId=${host2}&eventKind=turn.completed&limit=1',
          'until':[{'op':'count','path':'body.events','value':1}],'timeoutSec':90},
         http('POST','/v1/terminate',{'runtimeId':'$runtime2'}),
         http('POST','/v1/sessions/resume-continuation',{'sessionRef':ref,'priorHostSessionId':'$host2','intent':'$intent'},
              {'host3':'body.hostSessionId'}),
         http('POST','/v1/runtimes/start',{'hostSessionId':'$host3','intent':'$intent'}, {'runtime3':'body.runtimeId'}),
+        {'kind':'preparation','runtimeId':'$runtime3'},
         {'kind':'poll','path':'/v1/events/tail?hostSessionId=${host3}&eventKind=turn.completed&limit=1',
          'until':[{'op':'count','path':'body.events','value':1}],'timeoutSec':90,
          'assertions':[eq('resume-final','body.events.0.payload.success',True)]},

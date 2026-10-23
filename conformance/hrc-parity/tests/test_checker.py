@@ -237,6 +237,34 @@ class CheckerBehavior(unittest.TestCase):
         p=self.command('compare','--baseline',a,'--candidate',b,'--out',self.root/'result')
         self.assertEqual(p.returncode,0,p.stdout+p.stderr)
 
+    def test_second_db_owner_is_not_bun_alone(self):
+        c=self.semantic_check('identity-isolation',[{'kind':'owner-observation','ownerPid':123,
+            'scratchPids':[123],'rustOwners':[],'dbPids':[123,456]}],'Bun-alone')
+        self.assertFalse(c['pass'])
+
+    def test_prepared_generation_cannot_escape_scratch_agent_root(self):
+        c=self.semantic_check('attach-restart-resume-terminate',[{'kind':'preparation',
+            'runtimeId':'rt-test','admittedRoots':{'scratchRoot':'/tmp/hrcp0-test','agentRoot':'/tmp/hrcp0-test/agents/tabularasa','projectRoot':'/tmp/hrcp0-test/project'},
+            'rows':[{'runtime_id':'rt-test','generation':2,'preparation_json':json.dumps({
+                'intent':{'placement':{'agentRoot':'/Users/lherron/praesidium/var/agents/tabularasa'}}})}]}],
+            'effective-preparation-roots')
+        self.assertFalse(c['pass'])
+
+    def test_full_parity_cannot_erase_inventory_obligations(self):
+        p=self.compare(lambda d:d.__setitem__('claim','full-parity'))
+        report=json.loads(p.stdout)
+        c=next(c for c in report['checks'] if c['id']=='coverage:full-source-obligations')
+        self.assertFalse(c['pass'])
+
+    def test_ndjson_keepalive_blank_line_preserves_valid_replay_live(self):
+        frames=[{'type':'ready','ledgerIncarnationId':'real-shape','replayHeadHrcSeq':1},
+            {'type':'event','ledgerIncarnationId':'real-shape','event':{'hrcSeq':1,'eventKind':'turn.message'}},
+            {'type':'event','ledgerIncarnationId':'real-shape','event':{'hrcSeq':2,'eventKind':'turn.completed'}}]
+        stream={'frames':[{'raw':json.dumps(f)+'\n'} for f in frames]+[{'raw':'\n'}],
+            'closed':True,'errors':[],'closeDurationMs':10}
+        c=self.semantic_check('streams-errors',[stream],'live-frames')
+        self.assertTrue(c['pass'])
+
     def test_missing_explicit_profile_refused(self):
         p = self.command('run', '--out', self.root / 'result')
         self.assertNotEqual(p.returncode, 0)

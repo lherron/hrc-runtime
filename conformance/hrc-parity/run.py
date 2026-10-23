@@ -2,6 +2,7 @@
 """External HRC conformance driver. No daemon imports or implicit endpoints."""
 import argparse
 from collections import Counter
+from contextlib import closing
 import hashlib
 import http.client
 import json
@@ -106,6 +107,27 @@ def validate_evidence(data, directory, checks):
             validate_case_observations(id, observations, checks, data.get('status'))
     status_checks(data.get('status', {}), checks)
     if not control:
+        check(checks, 'artifact:installed-surface', data.get('validationSurface') == 'installed',
+              'source evidence cannot qualify an installed compatibility baseline', 2)
+        identity_observations = []
+        for case in cases:
+            if case.get('id') == 'identity-isolation':
+                for path in case.get('evidence', []):
+                    if (directory / path).is_file():
+                        observation = json.loads((directory / path).read_text())
+                        if isinstance(observation, dict):
+                            identity_observations.append(observation)
+        cli_statuses = [o for o in identity_observations if o.get('exit') == 0
+            and all(word in o.get('argv', []) for word in ('server', 'status', '--json'))]
+        check(checks, 'status:raw-CLI-binding', len(cli_statuses) == 1
+            and cli_statuses[0].get('body') == data.get('status'),
+            'serialized status must equal the actual CLI status observation')
+        api_statuses = [o for o in identity_observations if o.get('method') == 'GET'
+            and o.get('path') == '/v1/status' and o.get('status') == 200]
+        check(checks, 'status:raw-API-binding', len(api_statuses) == 1 and all(
+            api_statuses[0].get('body', {}).get(key) == data.get('status', {}).get('api', {}).get(key)
+            for key in ('dbPath', 'runtimeRoot', 'stateRoot', 'socketPath', 'binaryPath', 'packagePath')),
+            'CLI/API owner destinations must agree in raw observations')
         joins = []
         for case in cases:
             if case.get('id') == 'cold-second-turn':
@@ -154,6 +176,9 @@ def validate_evidence(data, directory, checks):
     if data.get('claim') == 'full-parity':
         check(checks, 'coverage:full', not data.get('coverage', {}).get('gaps'),
               'full parity has unresolved behavior gaps', 2)
+        frozen = json.loads((ROOT / 'contract/hrc-parity/inventory.json').read_text())
+        check(checks, 'coverage:full-source-obligations', all(i.get('coverage') == 'PASS' for i in frozen['items']),
+              'serialized gaps cannot erase unqualified frozen inventory obligations', 2)
 
 
 def derive_turns(observation):
@@ -221,6 +246,9 @@ def derive_turns(observation):
 
 def validate_case_observations(id, observations, checks, status=None):
     """Re-evaluate raw external responses/SQL/PTY, never serialized pass flags."""
+    if not all(isinstance(o, dict) for o in observations):
+        check(checks, id + ':semantic:raw-schema', False, 'case observations must be raw observation objects', 2)
+        return
     def http(method, path):
         return [o for o in observations if isinstance(o, dict) and o.get('method') == method
                 and o.get('path', '').split('?')[0] == path]
@@ -231,16 +259,50 @@ def validate_case_observations(id, observations, checks, status=None):
                 and all(w in o.get('argv', []) for w in words)]
     def require(label, passed):
         check(checks, id + ':semantic:' + label, passed, id + ': required real ' + label + ' evidence absent')
+    def preparations_valid(minimum):
+        captures = [o for o in observations if o.get('kind') == 'preparation']
+        try:
+            identities = set()
+            for capture in captures:
+                roots = capture['admittedRoots']
+                root = Path(roots['scratchRoot']).resolve()
+                if not all(Path(roots[k]).resolve().is_relative_to(root) for k in ('agentRoot', 'projectRoot')):
+                    return False
+                if not capture['rows']:
+                    return False
+                for row in capture['rows']:
+                    prepared = json.loads(row['preparation_json'])
+                    if row['runtime_id'] != capture['runtimeId'] or prepared['runtimeId'] != row['runtime_id'] or prepared['generation'] != row['generation']:
+                        return False
+                    identities.add((row['runtime_id'], row['generation']))
+                    for placement in (prepared['intent']['placement'], prepared['response']['plan']['placement']):
+                        if any(Path(placement[k]).resolve() != Path(roots[target]).resolve()
+                               for k, target in (('agentRoot','agentRoot'),('projectRoot','projectRoot'),('cwd','projectRoot'))):
+                            return False
+                    frozen = prepared['admission']['execution']['dispatchRequest']['startRequest']['spec']['process']
+                    if Path(frozen['cwd']).resolve() != Path(roots['projectRoot']).resolve():
+                        return False
+                    if Path(prepared['response']['plan']['resolvedBundle']['cwd']).resolve() != Path(roots['projectRoot']).resolve():
+                        return False
+            expected = {o.get('body', {}).get('runtimeId') for o in success('POST', '/v1/runtimes/start')}
+            expected |= {o.get('body', {}).get('launch', {}).get('runtimeId') for o in success('POST', '/v1/sessions/restart')}
+            expected.discard(None)
+            return len(identities) >= minimum and {runtime for runtime, generation in identities} == expected
+        except (KeyError, TypeError, ValueError):
+            return False
     if id == 'identity-isolation':
         require('owner-status', bool(success('GET', '/v1/status')))
         require('health', bool(success('GET', '/v1/health')))
         require('Bun-alone', any(o.get('kind') == 'owner-observation' and o.get('ownerPid') in o.get('scratchPids', [])
-            and o.get('rustOwners') == [] for o in observations if isinstance(o, dict)))
+            and o.get('rustOwners') == [] and o.get('dbPids') == [o.get('ownerPid')]
+            for o in observations if isinstance(o, dict)))
     elif id == 'cold-second-turn':
         require('start', bool(success('POST', '/v1/runtimes/start')))
         require('submission', bool(success('POST', '/v1/submissions/invoke')))
         require('real-ledger-join', any(o.get('kind') == 'turn-ledger' and len(derive_turns(o)[0]) >= 4 for o in observations if isinstance(o, dict)))
+        require('effective-preparation-roots', preparations_valid(1))
     elif id == 'attach-restart-resume-terminate':
+        require('effective-preparation-roots', preparations_valid(2))
         restarts = success('POST', '/v1/sessions/restart')
         require('fenced-generation-advance', any(type(o.get('request', {}).get('expectedGeneration')) is int
             and type(o.get('body', {}).get('generation')) is int
@@ -290,7 +352,7 @@ def validate_case_observations(id, observations, checks, status=None):
         streams = [o for o in observations if isinstance(o, dict) and 'frames' in o]
         def valid_stream(o):
             try:
-                frames = [json.loads(f['raw']) for f in o['frames']]
+                frames = [json.loads(f['raw']) for f in o['frames'] if f['raw'].strip()]
                 ready = frames[0]
                 events = [f for f in frames if f.get('type') == 'event']
                 head = ready['replayHeadHrcSeq']
@@ -638,7 +700,7 @@ def run_suite(args, checks):
               'wrong owner: observed ' + field + ' must match admitted scratch', 3)
     if any(not c['pass'] for c in checks):
         return {'mutationRequests': 0, 'status': status}
-    with sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True) as db:
+    with closing(sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True)) as db:
         existing = db.execute('SELECT count(*) FROM sessions WHERE scope_ref = ?', [profile['scopePrefix']]).fetchone()[0]
     check(checks, 'isolation:fresh-scope', existing == 0, 'scope already exists; never adopt an existing subject', 3)
     if existing:
@@ -650,11 +712,19 @@ def run_suite(args, checks):
           'mandatory P0 workflow definition absent; cannot downgrade to downstream gap', 2)
     if any(not c['pass'] for c in checks):
         return {'mutationRequests': 0, 'status': status}
+    frozen_inventory = json.loads((ROOT / 'contract/hrc-parity/inventory.json').read_text())
     data = {'schema': 1, 'claim': profile['claim'], 'complete': False, 'status': {},
-            'cases': [], 'events': [], 'effects': [], 'coverage': {'required': list(MANDATORY), 'gaps': []},
+            'cases': [], 'events': [], 'effects': [], 'coverage': {'required': list(MANDATORY),
+                'gaps': [i['id'] for i in frozen_inventory['items'] if i['coverage'] != 'PASS']},
             'inventoryHash': digest(ROOT / 'contract/hrc-parity/inventory.json')}
     write(output / 'manifest.json', {'profile': profile, 'source': source_identity(),
-          'startedAt': time.time(), 'profileHash': digest(args.profile)})
+          'startedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'profileHash': digest(args.profile),
+          'driverHash': digest(__file__),
+          'producerTuple': status.get('release'), 'schemaHash': digest(ROOT / 'contract/hrc-parity/store-schema.json'),
+          'executables': [{'path': str(Path(arg).resolve()), 'sha256': digest(arg)}
+              for key in ('cliArgv', 'sdkArgv', 'wrkqArgv') for arg in profile[key]
+              if Path(arg).is_absolute() and Path(arg).is_file()]})
+    write(output / 'inventory.json', json.loads((ROOT / 'contract/hrc-parity/inventory.json').read_text()))
     start = time.monotonic()
     variables = {k: v for k, v in profile.items() if isinstance(v, (str, int, bool))}
     followers = {}
@@ -676,6 +746,7 @@ def run_suite(args, checks):
     # Destructive lifecycle rotation follows all independent observations of this subject.
     execution_order = [id for id in MANDATORY if id != 'attach-restart-resume-terminate'] + ['attach-restart-resume-terminate']
     for id in execution_order:
+        case_started = time.monotonic()
         spec = by_id[id]
         record = {'id': id, 'status': 'PASS', 'assertions': [], 'evidence': []}
         required = definitions['cases'][id]['assertionIds']
@@ -684,6 +755,7 @@ def run_suite(args, checks):
         seen = set()
         try:
             for n, action in enumerate(actions):
+                action_started = time.monotonic()
                 if time.monotonic() - start > profile.get('suiteTimeoutSec', 1800):
                     raise TimeoutError('suite deadline exceeded; evidence incomplete')
                 kind = action['kind']
@@ -755,14 +827,15 @@ def run_suite(args, checks):
                     env.update(profile['env'])
                     child = subprocess.run(argv, text=True, capture_output=True, env=env,
                                            cwd=profile['projectRoot'], timeout=action.get('timeoutSec', 30))
-                    actual = {'argv': argv, 'stdout': child.stdout, 'stderr': child.stderr, 'exit': child.returncode, 'sdk': kind == 'sdk'}
+                    actual = {'argv': argv, 'stdout': child.stdout, 'stderr': child.stderr, 'exit': child.returncode, 'sdk': kind == 'sdk',
+                              'durationMs': (time.monotonic() - action_started) * 1000}
                     try:
                         actual['body'] = json.loads(child.stdout)
                     except ValueError:
                         pass
                 elif kind == 'sql':
                     # SQL observations are readonly. Existing Bun tools own deliberate writes.
-                    with sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True) as db:
+                    with closing(sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True)) as db:
                         db.execute('PRAGMA query_only=ON')
                         cursor = db.execute(expand(action['query']), expand(action.get('params', [])))
                         actual = {'columns': [d[0] for d in cursor.description], 'rows': cursor.fetchall()}
@@ -777,9 +850,13 @@ def run_suite(args, checks):
                     actual = {'kind': 'resource', 'rssKb': int(rss), 'cpuPercent': float(cpu), 'at': time.time()}
                 elif kind == 'owner-observation':
                     processes = subprocess.check_output(['ps', '-axo', 'pid=,command='], text=True)
+                    db_owners = subprocess.run(['/usr/sbin/lsof', '-t', profile['dbPath']],
+                        text=True, capture_output=True, timeout=5)
                     scratch = [line.strip() for line in processes.splitlines()
                                if profile['scratchRoot'] in line and 'ps -axo' not in line]
                     actual = {'kind': kind, 'ownerPid': profile['ownerPid'],
+                              'dbPids': sorted({int(pid) for pid in db_owners.stdout.split()}),
+                              'dbOwnerStderr': db_owners.stderr, 'dbOwnerExit': db_owners.returncode,
                               'scratchPids': sorted({profile['ownerPid']} | {int(line.split()[0]) for line in scratch}),
                               'processes': scratch, 'rustOwners': [line for line in scratch
                                   if any(name in line for name in ('rusthrc', 'hrc-kernel'))]}
@@ -788,21 +865,21 @@ def run_suite(args, checks):
                     if not path.is_relative_to(Path(profile['scratchRoot']).resolve()):
                         raise ValueError('server log outside admitted scratch')
                     records = [json.loads(line) for line in path.read_text().splitlines() if line.startswith('{')]
-                    with sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True) as db:
+                    with closing(sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True)) as db:
                         db.row_factory = sqlite3.Row
                         lifecycle = [dict(r) for r in db.execute("SELECT * FROM hrc_events WHERE event_kind IN ('server.started','server.stopped') ORDER BY hrc_seq")]
                     actual = {'kind': 'server-log', 'events': [r.get('event') for r in records],
                               'records': records, 'lifecycleRows': lifecycle}
                 elif kind == 'cursor-observation':
-                    with sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True) as db:
+                    with closing(sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True)) as db:
                         db.row_factory = sqlite3.Row
                         cursors = [dict(r) for r in db.execute('SELECT * FROM wrkq_ledger_cursors ORDER BY stream')]
                     actual = {'kind': 'cursor-observation', 'cursors': cursors}
                 elif kind == 'publication':
-                    with sqlite3.connect('file:' + profile['wrkqDbPath'] + '?mode=ro', uri=True) as db:
+                    with closing(sqlite3.connect('file:' + profile['wrkqDbPath'] + '?mode=ro', uri=True)) as db:
                         db.row_factory = sqlite3.Row
                         facts = [dict(r) for r in db.execute('SELECT type,idempotency_key,attributes FROM project_events')]
-                    with sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True) as db:
+                    with closing(sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True)) as db:
                         db.row_factory = sqlite3.Row
                         cursors = [dict(r) for r in db.execute('SELECT * FROM wrkq_ledger_cursors ORDER BY stream')]
                     actual = {'kind': 'publication', 'nodeId': profile['nodeId'], 'facts': facts,
@@ -832,14 +909,14 @@ def run_suite(args, checks):
                         'launch': (negative_root / 'launch.sh').read_text(),
                         'processProbe': {'exit': process.returncode, 'stdout': process.stdout, 'stderr': process.stderr}}
                 elif kind == 'store-observation':
-                    with sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True) as db:
+                    with closing(sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True)) as db:
                         seqs = [r[0] for r in db.execute('SELECT hrc_seq FROM hrc_events ORDER BY hrc_seq')]
                         head = db.execute("SELECT seq FROM sqlite_sequence WHERE name='hrc_events'").fetchone()[0]
                         spill = db.execute('SELECT count(*) FROM tool_result_blobs').fetchone()[0]
                     holes = [b-a-1 for a,b in zip([0]+seqs, seqs+[head+1]) if b-a>1]
                     actual = {'kind': 'store-observation', 'head': head, 'seqs': seqs, 'holes': holes, 'spillCount': spill}
                 elif kind == 'turn-ledger':
-                    with sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True) as db:
+                    with closing(sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True)) as db:
                         db.row_factory = sqlite3.Row
                         scope = expand(action['scopeRef'])
                         if not scope.startswith(profile['scopePrefix']):
@@ -852,6 +929,15 @@ def run_suite(args, checks):
                     actual = {'kind': 'turn-ledger', 'query': query, 'rawQuery': raw_query,
                               'scopeRef': scope, 'lifecycleRows': rows, 'brokerRows': raw}
                     data['events'], data['effects'] = derive_turns(actual)
+                elif kind == 'preparation':
+                    runtime = expand(action['runtimeId'])
+                    with closing(sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True)) as db:
+                        db.row_factory = sqlite3.Row
+                        rows = [dict(r) for r in db.execute('''SELECT op.* FROM runtime_operations op
+                            JOIN runtimes r ON r.runtime_id=op.runtime_id
+                            WHERE r.runtime_id=? AND r.scope_ref=? ORDER BY op.created_at''', [runtime, profile['scopePrefix']])]
+                    actual = {'kind': 'preparation', 'runtimeId': runtime, 'rows': rows,
+                        'admittedRoots': {k: profile[k] for k in ('scratchRoot', 'agentRoot', 'projectRoot')}}
                 elif kind == 'pty':
                     actual = drive_pty(profile, {**action, 'path': expand(action['path'])})
                 elif kind == 'substrate':
@@ -878,6 +964,12 @@ def run_suite(args, checks):
                     passed = assertion(actual, expand(spec_assert))
                     seen.add(spec_assert['id'])
                     entry = {'id': spec_assert['id'], 'pass': passed, 'reason': spec_assert.get('reason', spec_assert['id'])}
+                    entry.update({'op': spec_assert['op'], 'path': spec_assert.get('path'),
+                                  'expected': expand(spec_assert).get('value')})
+                    try:
+                        entry['observed'] = get(actual, spec_assert['path']) if spec_assert.get('path') else actual
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        entry['observedAbsent'] = True
                     if id == 'cold-second-turn':
                         entry['validator'] = 'turn-evidence'
                     record['assertions'].append(entry)
@@ -891,7 +983,8 @@ def run_suite(args, checks):
             record['status'] = 'INFRA_ERROR'
             failure_path = f'cases/{id}/failure.json'
             write(output / failure_path, {'kind': 'failed-action', 'action': action,
-                'errorType': type(error).__name__, 'error': str(error), 'at': time.time()})
+                'errorType': type(error).__name__, 'error': str(error), 'at': time.time(),
+                'durationMs': (time.monotonic() - action_started) * 1000})
             record['evidence'].append(failure_path)
             check(checks, id + ':infrastructure', False, type(error).__name__ + ': ' + str(error), 3)
         check(checks, id + ':required-assertions', set(required) <= seen,
@@ -904,6 +997,7 @@ def run_suite(args, checks):
         checks.extend(semantic)
         if record['status'] == 'PASS' and any(not c['pass'] for c in semantic):
             record['status'] = 'FAIL'
+        record['durationMs'] = (time.monotonic() - case_started) * 1000
         data['cases'].append(record)
     for client, response, thread, frames, errors in followers.values():
         if client.sock:
@@ -911,9 +1005,22 @@ def run_suite(args, checks):
         thread.join(timeout=2)
         client.close()
     write(output / 'stream-frames.json', captures)
+    samples, resources = [], []
+    for case in data['cases']:
+        for path in case['evidence']:
+            observation = json.loads((output / path).read_text())
+            if case['id'] == 'fallback-performance' and 'durationMs' in observation:
+                samples.append(observation['durationMs'])
+            if observation.get('kind') == 'resource':
+                resources.append(observation)
+    ordered = sorted(samples)
+    write(output / 'performance.json', {'samplesMs': samples, 'resources': resources,
+          'count': len(samples), 'p50Ms': ordered[len(ordered)//2] if ordered else None,
+          'p95Ms': ordered[min(len(ordered)-1, int(len(ordered)*0.95))] if ordered else None,
+          'thresholdsEnforced': False})
     # Discover only this newly admitted exact scope, including a successor whose
     # HTTP request timed out before its identity could be captured.
-    with sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True) as db:
+    with closing(sqlite3.connect('file:' + profile['dbPath'] + '?mode=ro', uri=True)) as db:
         db.row_factory = sqlite3.Row
         owned = [dict(r) for r in db.execute('SELECT * FROM runtimes WHERE scope_ref = ?', [profile['scopePrefix']])]
     cleanup = {'scopeRef': profile['scopePrefix'], 'runtimesBefore': owned, 'terminations': []}
@@ -1046,7 +1153,7 @@ def drive_pty(profile, action):
 
 
 def inspect_schema(path):
-    with sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True) as db:
+    with closing(sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True)) as db:
         db.row_factory = sqlite3.Row
         objects = [dict(r) for r in db.execute(
             "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")]
@@ -1148,6 +1255,11 @@ def main():
     data.update({'schema': 1, 'exitCode': code, 'checks': checks,
                  'classification': {0: 'PASS', 1: 'FAIL', 2: 'GAP', 3: 'INFRA_ERROR'}[code],
                  'reason': '; '.join(c['reason'] for c in failures) or 'all requested checks passed'})
+    if args.command == 'run':
+        data['qualificationScope'] = 'p0-bun-compatibility'
+        data['inventoryComplete'] = any(c['id'] == 'jobs-files-listeners:semantic:source-inventory' and c['pass'] for c in checks)
+        data['behaviorQualified'] = code == 0 and data.get('validationSurface') == 'installed'
+    data['fullParityQualified'] = code == 0 and data.get('claim') == 'full-parity'
     write(out / 'summary.json', data)
     write(out / 'coverage.json', data.get('coverage', {'gaps': [], 'claim': 'checker-only'}))
     with (out / 'cases.ndjson').open('w') as cases_file:
