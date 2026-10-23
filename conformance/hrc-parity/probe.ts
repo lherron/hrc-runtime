@@ -25,11 +25,15 @@ if (mode === 'health') {
     !scopeRef?.startsWith('agent:tabularasa:project:hrc-runtime:task:p0-')
   )
     throw new Error('fixture requires actual scratch host/scope')
-  const { openHrcDatabase } = await import(
+  const { openHrcDatabase, createPlacementLedgerRepository } = await import(
     pathToFileURL(join(releaseRoot, 'packages/hrc-store-sqlite/src/index.ts')).href
   )
   const db = openHrcDatabase(join(root, 'state/state.sqlite'), { migrate: false })
   try {
+    // This lazy canonical extension is not created by explicit-local startup.
+    // Exercise its public constructor in deliberate scratch setup, before the
+    // strict complete-schema comparison. Never hand-write its DDL or rows.
+    const placementRows = createPlacementLedgerRepository(db.sqlite).list().length
     const base = {
       ts: new Date().toISOString(),
       hostSessionId,
@@ -62,7 +66,7 @@ if (mode === 'health') {
       .query('DELETE FROM hrc_events WHERE hrc_seq IN (?, ?)')
       .run(hole.hrcSeq, highest.hrcSeq)
     process.stdout.write(
-      `${JSON.stringify({ fixtureOnly: true, first: a.hrcSeq, deleted: [hole.hrcSeq, highest.hrcSeq], spill: spill.hrcSeq })}\n`
+      `${JSON.stringify({ fixtureOnly: true, canonicalLazySetup: 'placement_ledger', placementRows, first: a.hrcSeq, deleted: [hole.hrcSeq, highest.hrcSeq], spill: spill.hrcSeq })}\n`
     )
   } finally {
     db.close()

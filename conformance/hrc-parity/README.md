@@ -141,3 +141,10 @@ server_project_event.post_failed diagnostic and unadvanced server cursor.
 Stop only this owned PID, retain its exit and prove it disappeared. The runner
 reads these raw observations directly and binds installed negative-leg source
 identity to the successful subject's release. CLI refusal alone is insufficient.
+
+The deliberate store fixture also calls the installed canonical exported
+`createPlacementLedgerRepository(db.sqlite)` factory. It initializes the lazy
+placement_ledger extension before complete-schema comparison, reporting that
+side effect and row count in its JSON artifact. Fresh explicit-local daemon
+startup does not create this table. The first installed run discovered this
+setup distinction and remains preserved; the schema requirement is retained.

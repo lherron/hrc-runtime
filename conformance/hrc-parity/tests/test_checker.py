@@ -168,12 +168,12 @@ class CheckerBehavior(unittest.TestCase):
         check = next(c for c in checks if c['id'].endswith(':PTY-attach-detach'))
         self.assertFalse(check['pass'], 'tmux error output falsely proves attachment')
 
-    def semantic_check(self, case, observations, suffix):
+    def semantic_check(self, case, observations, suffix, status=None):
         spec = importlib.util.spec_from_file_location('checker', RUNNER)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         checks = []
-        module.validate_case_observations(case, observations, checks)
+        module.validate_case_observations(case, observations, checks, status)
         return next(c for c in checks if c['id'].endswith(':' + suffix))
 
     def test_two_cursor_owners_cannot_be_a_node_label(self):
@@ -264,6 +264,22 @@ class CheckerBehavior(unittest.TestCase):
             'closed':True,'errors':[],'closeDurationMs':10}
         c=self.semantic_check('streams-errors',[stream],'live-frames')
         self.assertTrue(c['pass'])
+
+    def test_actual_server_lifecycle_source_commit_shape(self):
+        commit='68b13e11031542c83a941881848b1fde30c57cd2'
+        observation={'kind':'hrc-authority-unavailable','events':[{'eventKind':'server.started',
+            'payload_json':json.dumps({'release':'release-20261023083200324-77043','sourceCommit':commit})}]}
+        c=self.semantic_check('wrkq',[observation],'HRC-unavailable-source-tuple',
+            {'release':{'releaseId':'release-20261023083200324-77043','hrcBuild':{'sourceCommit':commit}}})
+        self.assertTrue(c['pass'])
+        observation['events'][0]['payload_json']=json.dumps({'release':'release-20261023083200324-77043','sourceCommit':'wrong'})
+        c=self.semantic_check('wrkq',[observation],'HRC-unavailable-source-tuple',
+            {'release':{'releaseId':'release-20261023083200324-77043','hrcBuild':{'sourceCommit':commit}}})
+        self.assertFalse(c['pass'])
+        observation['events'][0]['payload_json']=json.dumps({'release':'wrong-release','sourceCommit':commit})
+        c=self.semantic_check('wrkq',[observation],'HRC-unavailable-source-tuple',
+            {'release':{'releaseId':'release-20261023083200324-77043','hrcBuild':{'sourceCommit':commit}}})
+        self.assertFalse(c['pass'])
 
     def test_missing_explicit_profile_refused(self):
         p = self.command('run', '--out', self.root / 'result')

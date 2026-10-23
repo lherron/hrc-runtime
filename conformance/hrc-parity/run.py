@@ -427,9 +427,11 @@ def validate_case_observations(id, observations, checks, status=None):
         expected_commit = (status or {}).get('release', {}).get('hrcBuild', {}).get('sourceCommit')
         if expected_commit:
             require('HRC-unavailable-source-tuple', any(
-                json.loads(r.get('payload_json', '{}')).get('release', {}).get('sourceCommit') == expected_commit
+                json.loads(r.get('payload_json', '{}')).get('sourceCommit') == expected_commit
+                and json.loads(r.get('payload_json', '{}')).get('release') == status['release'].get('releaseId')
+                and isinstance(status['release'].get('releaseId'), str)
                 for o in observations if o.get('kind') == 'hrc-authority-unavailable' for r in o.get('events', [])
-                if isinstance(json.loads(r.get('payload_json', '{}')).get('release'), dict)))
+                if r.get('eventKind') == 'server.started'))
         require('HRC-unavailable-authority', any(o.get('kind') == 'hrc-authority-unavailable'
             and o.get('processBeforeStop', {}).get('exit') == 0 and 'server serve' in o['processBeforeStop'].get('stdout', '')
             and o.get('environment', {}).get('HRC_WRKQ_DB') == o.get('environment', {}).get('WRKQ_DB') == 'rpc://127.0.0.1:1'
