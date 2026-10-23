@@ -50,6 +50,8 @@ impl HrcApi {
         Ok(Self {
             client: Client::builder()
                 .unix_socket(socket)
+                // Logging standard L3: HRC logs and meters callers by User-Agent (T-11541).
+                .user_agent(concat!("hrc-kernel/", env!("CARGO_PKG_VERSION")))
                 .connect_timeout(Duration::from_secs(2))
                 .build()?,
         })
