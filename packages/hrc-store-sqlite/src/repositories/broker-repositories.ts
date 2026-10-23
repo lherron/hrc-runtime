@@ -1,7 +1,5 @@
 export {
-  CompiledRuntimePlanRepository,
   BrokerInvocationRepository,
-  LifecyclePolicyRepository,
   RuntimeOperationRepository,
   type BrokerInvocationUpdatePatch,
   type RuntimeOperationUpdatePatch,

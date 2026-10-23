@@ -1,9 +1,7 @@
 import type {
   HrcBrokerInvocationEventRecord,
   HrcBrokerInvocationRecord,
-  HrcCompiledRuntimePlanRecord,
   HrcExecutionFormat,
-  HrcLifecyclePolicyRecord,
   HrcPermissionDecisionRecord,
   HrcRuntimeArtifactRecord,
   HrcRuntimeOperationRecord,
@@ -14,24 +12,6 @@ import type {
 // additive and inert: nothing here is wired into any live dispatch path. The
 // harness-broker controller (W4) and event mapper (W3A) are the only callers,
 // and they are unreachable unless HRC_HEADLESS_CODEX_BROKER_ENABLED is set.
-
-export type LifecyclePolicyRow = {
-  policy_id: string
-  lifecycle_policy_hash: string
-  canonical_policy_json: string
-  schema_version: string
-  created_at: string
-}
-
-export type CompiledRuntimePlanRow = {
-  plan_hash: string
-  compile_id: string
-  schema_version: string
-  compiler_name: string
-  compiler_version: string
-  plan_projection_json: string
-  created_at: string
-}
 
 export type RuntimeOperationRow = {
   operation_id: string
@@ -141,22 +121,6 @@ export type PermissionDecisionRow = {
   requested_at: string
   decided_at: string
 }
-
-export const LIFECYCLE_POLICY_COLUMNS = `
-  policy_id,
-  lifecycle_policy_hash,
-  canonical_policy_json,
-  schema_version,
-  created_at`
-
-export const COMPILED_RUNTIME_PLAN_COLUMNS = `
-  plan_hash,
-  compile_id,
-  schema_version,
-  compiler_name,
-  compiler_version,
-  plan_projection_json,
-  created_at`
 
 export const RUNTIME_OPERATION_COLUMNS = `
   operation_id,
@@ -294,30 +258,6 @@ export const PERMISSION_DECISION_COLUMNS = `
   policy_json,
   requested_at,
   decided_at`
-
-export function mapLifecyclePolicyRow(row: LifecyclePolicyRow): HrcLifecyclePolicyRecord {
-  return {
-    policyId: row.policy_id,
-    lifecyclePolicyHash: row.lifecycle_policy_hash,
-    canonicalPolicyJson: row.canonical_policy_json,
-    schemaVersion: row.schema_version,
-    createdAt: row.created_at,
-  }
-}
-
-export function mapCompiledRuntimePlanRow(
-  row: CompiledRuntimePlanRow
-): HrcCompiledRuntimePlanRecord {
-  return {
-    planHash: row.plan_hash,
-    compileId: row.compile_id,
-    schemaVersion: row.schema_version,
-    compilerName: row.compiler_name,
-    compilerVersion: row.compiler_version,
-    planProjectionJson: row.plan_projection_json,
-    createdAt: row.created_at,
-  }
-}
 
 export function mapRuntimeOperationRow(row: RuntimeOperationRow): HrcRuntimeOperationRecord {
   return {

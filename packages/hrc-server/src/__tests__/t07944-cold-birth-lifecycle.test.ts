@@ -82,20 +82,6 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
     const scopeRef = seed.scopeRef.startsWith('agent:') ? seed.scopeRef : `agent:${seed.scopeRef}`
     const db = openHrcDatabase(fixture.dbPath)
     try {
-      db.compiledRuntimePlans.insert({
-        planHash: PLAN_HASH,
-        compileId: 'compile-t07944',
-        schemaVersion: 'agent-runtime-plan/v2',
-        compilerName: 'asp',
-        compilerVersion: '0.0.0-test',
-        planProjectionJson: JSON.stringify({
-          schemaVersion: 'agent-runtime-plan/v2',
-          execution: {
-            dispatchRequest: { startRequest: { initialInput: { inputId: PRIMING_INPUT_ID } } },
-          },
-        }),
-        createdAt: seed.acceptedAt,
-      })
       db.runtimeOperations.insert({
         operationId: seed.operationId,
         runtimeId: seed.runtimeId,

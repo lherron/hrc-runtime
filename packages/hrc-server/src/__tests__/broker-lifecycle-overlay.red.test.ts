@@ -19,7 +19,7 @@
  *   - BrokerControllerStartInput.lifecyclePolicy threading (controller.ts), with
  *       BrokerClientLike.startInvocationFromRequest widened to carry the overlay
  *       via the real client's dispatch-options form.
- *   - Persistence of the dispatched overlay via WS-B's lifecyclePolicies repo +
+ *   - Persistence of the dispatched overlay via the
  *       broker_invocations.lifecycle_policy_hash.
  *
  * Run with: TMPDIR=/tmp bun run --filter hrc-server test broker-lifecycle-overlay
@@ -33,7 +33,6 @@ import { join } from 'node:path'
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 import {
   CONSERVATIVE_LIFECYCLE_CAPABILITIES,
-  canonicalLifecyclePolicyJson,
   conservativeDefaultLifecyclePolicyOverlay,
   lifecyclePolicyHash,
 } from 'spaces-harness-broker-protocol'
@@ -422,7 +421,7 @@ describe('T-01787 preflightLifecyclePolicyCapabilities', () => {
 // 5. Persistence: dispatched overlay recorded via WS-B's repo + invocation col.
 // ──────────────────────────────────────────────────────────────────────────
 describe('T-01787 lifecycle overlay persistence (audit material)', () => {
-  it('persists the dispatched overlay into lifecycle_policies and broker_invocations.lifecycle_policy_hash', async () => {
+  it('persists the dispatched overlay on broker_invocations.lifecycle_policy_hash', async () => {
     const overlay = conservativeDefaultLifecyclePolicyOverlay('policy_route_codex')
     const fake = new FakeBrokerClient()
     const result = await makeController(fake).start({
@@ -431,11 +430,6 @@ describe('T-01787 lifecycle overlay persistence (audit material)', () => {
       brokerClient: fake,
     })
     expect(result.ok).toBe(true)
-
-    const persistedPolicy = fixture.db.lifecyclePolicies.getByPolicyHash(overlay.policyHash)
-    expect(persistedPolicy).not.toBeNull()
-    expect(persistedPolicy?.policyId).toBe(overlay.policyId)
-    expect(persistedPolicy?.canonicalPolicyJson).toBe(canonicalLifecyclePolicyJson(overlay))
 
     expect(
       fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.lifecyclePolicyHash

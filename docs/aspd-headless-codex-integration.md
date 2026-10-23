@@ -2073,7 +2073,7 @@ Reused records; one additive column. No new table, no universal lifecycle.
 | Frozen preparation: aspd endpoint, service hello identity (protocol, release), the complete unchanged `compileHarnessInvocation` ok response (plan, selectedProfile, startRequest, dispatchRequest incl. dispatchEnv, diagnostics, executionRelease), HRC admission results (profile hashes, identity allocation), HRC dispatch environment and lifecycle policy overlay, the exact worker launch description (executable, argv, socket/ledger/token/stderr paths, tmux socket/session), the dispatch idempotency key | `runtime_operations.preparation_json` (new nullable TEXT column) on the attempt's `operation_id` row | Boundary P |
 | Attempt progress for this route | `runtime_operations.status`: new value `prepared`; then the existing `starting` → `completed`/`failed` | P; B4 (existing); after start (existing) |
 | Last pre-start refusal of a frozen preparation | `runtime_operations.error_code/error_message` while status stays `prepared` | On refusal |
-| Plan projection | `compiled_runtime_plans` (existing insert, now at P for this route) | P |
+| Plan hash | `runtime_operations.plan_hash`; frozen plan remains in preparation JSON | P |
 | Runtime/run/invocation start graph, hosting endpoint/substrate, negotiated protocol | existing `persistStartGraph` rows | B4 (existing position: after hello, before `invocation.start`) |
 | Per-runtime execution release (frozen release + actual worker hello release) | `runtimes.runtime_state_json.executionRelease` (`source: 'aspd'`) | B4, then the post-start runtime state write |
 | Uncertain start | `preparation_json.startOutcome = 'uncertain'` in addition to the existing failure projection | When `invocation.start` fails at transport level after being sent |
@@ -2112,7 +2112,7 @@ Transactions are single SQLite writes; effects happen only between them.
    (`aspd_route_profile_mismatch`); existing permission-policy and
    actuator-split admission.
 3. **Boundary P — freeze preparation + hosting intent.** One transaction inserts
-   the `compiled_runtime_plans` row and the `runtime_operations` row with status
+   the `runtime_operations` row (including the plan hash) with status
    `prepared` and the complete `preparation_json`, including the launch
    description computed from the frozen release and HRC's deterministic hosting
    paths. After this commit the attempt is bound to that release.

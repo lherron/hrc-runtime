@@ -13,7 +13,6 @@ import type {
   BrokerInstallIdentityResponse,
   InvocationId,
 } from 'spaces-harness-broker-protocol'
-import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 import type { ParticipantBrokerDescriptor } from 'spaces-runtime-contracts'
 import { runtimeHarness } from './broker/runtime-state.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
@@ -395,13 +394,6 @@ function materializeParticipantBrokerBookkeeping(
         )
       }
     } else {
-      server.db.lifecyclePolicies.insert({
-        policyId: intent.lifecyclePolicy.policyId,
-        lifecyclePolicyHash: intent.lifecyclePolicy.policyHash,
-        canonicalPolicyJson: canonicalLifecyclePolicyJson(intent.lifecyclePolicy),
-        schemaVersion: intent.lifecyclePolicy.schemaVersion,
-        createdAt: now,
-      })
       server.db.brokerInvocations.insert({
         invocationId: attempt.invocationId,
         operationId: attempt.operationId,

@@ -137,15 +137,6 @@ function seedLedgerDependents(
   const runtime = db.runtimes.getByRuntimeId(runtimeId)
   if (!runtime) throw new Error(`missing seeded runtime ${runtimeId}`)
 
-  db.compiledRuntimePlans.insert({
-    planHash,
-    compileId: `compile-${runtimeId}`,
-    schemaVersion: '1',
-    compilerName: 'test',
-    compilerVersion: '1',
-    planProjectionJson: '{}',
-    createdAt: now,
-  })
   db.runtimes.update(runtimeId, { planHash, updatedAt: now })
   db.runtimeOperations.insert({
     operationId,
@@ -312,13 +303,12 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
       expect(countTable(db, 'runtime_artifacts')).toBe(1)
       expect(countTable(db, 'tool_result_blob_parts')).toBe(1)
       expect(countTable(db, 'tool_result_blobs')).toBe(1)
-      expect(countTable(db, 'compiled_runtime_plans')).toBe(1)
     } finally {
       db.close()
     }
   })
 
-  it('deletes ledgers, Phase 4 blobs, and newly orphaned plans when requested', () => {
+  it('deletes ledgers and Phase 4 blobs without a compiled plan table', () => {
     const db = openHrcDatabase(dbPath)
     try {
       seedRuntimeWithDependents(db, 'rt-ledger-cascade')
@@ -357,7 +347,6 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
         runtime_artifacts: 1,
         tool_result_blob_parts: 1,
         tool_result_blobs: 1,
-        compiled_runtime_plans: 1,
         runtime_buffers: 1,
         runs: 1,
         runtimes: 1,
@@ -377,7 +366,6 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
         'runtime_artifacts',
         'tool_result_blob_parts',
         'tool_result_blobs',
-        'compiled_runtime_plans',
         'runtime_buffers',
         'runs',
         'runtimes',
@@ -389,20 +377,33 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
     }
   })
 
-  it('guards absent Phase 4 blob tables and preserves plans still referenced elsewhere', () => {
+  it('prunes a runtime with a shared plan hash while preserving the peer and its operation', () => {
     const db = openHrcDatabase(dbPath)
     try {
+      expect(
+        db.sqlite
+          .query("SELECT name FROM sqlite_master WHERE name = 'compiled_runtime_plans'")
+          .get()
+      ).toBeNull()
       seedRuntimeWithDependents(db, 'rt-plan-owner')
       seedRuntimeWithDependents(db, 'rt-plan-peer')
       const sharedPlanHash = seedLedgerDependents(db, 'rt-plan-owner')
+      seedLedgerDependents(db, 'rt-plan-peer')
+      db.runtimeOperations.update('op-rt-plan-peer', { planHash: sharedPlanHash, updatedAt: ts() })
       const peer = db.runtimes.getByRuntimeId('rt-plan-peer')
       if (!peer) throw new Error('missing peer runtime')
       db.runtimes.update('rt-plan-peer', { planHash: sharedPlanHash, updatedAt: ts() })
 
       expect(db.runtimes.pruneRuntime('rt-plan-owner', { includeLedgers: true })).toBe(true)
 
-      expect(countTable(db, 'compiled_runtime_plans')).toBe(1)
-      expect(db.runtimes.getByRuntimeId('rt-plan-peer')).not.toBeNull()
+      expect(db.runtimes.getByRuntimeId('rt-plan-peer')?.planHash).toBe(sharedPlanHash)
+      expect(db.runtimeOperations.getByOperationId('op-rt-plan-peer')?.planHash).toBe(
+        sharedPlanHash
+      )
+      expect(db.brokerInvocations.getByInvocationId('inv-rt-plan-peer')).not.toBeNull()
+      expect(db.runtimes.countPruneRows(['rt-plan-peer'], { includeLedgers: true }).runtimes).toBe(
+        1
+      )
     } finally {
       db.close()
     }
@@ -427,7 +428,6 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
       ).toBe(2)
       expect(countTable(db, 'runtimes')).toBe(0)
       expect(countTable(db, 'broker_invocation_events')).toBe(0)
-      expect(countTable(db, 'compiled_runtime_plans')).toBe(0)
     } finally {
       db.close()
     }

@@ -172,15 +172,6 @@ function seedLedgerRows(runtimeId: string, streamSeq: number): void {
   const invocationId = `inv-${runtimeId}`
   const planHash = `plan-${runtimeId}`
   try {
-    db.compiledRuntimePlans.insert({
-      planHash,
-      compileId: `compile-${runtimeId}`,
-      schemaVersion: '1',
-      compilerName: 'test',
-      compilerVersion: '1',
-      planProjectionJson: '{}',
-      createdAt: now,
-    })
     db.runtimes.update(runtimeId, { planHash, updatedAt: now })
     db.runtimeOperations.insert({
       operationId,
@@ -496,7 +487,6 @@ describe('POST /v1/runtimes/prune', () => {
       hrc_events: 1,
       broker_invocations: 1,
       runtime_operations: 1,
-      compiled_runtime_plans: 1,
     })
     expect(getRuntime('rt-mneme-manifest')).not.toBeNull()
     expect(countRows('broker_invocation_events', 'rt-mneme-manifest')).toBe(1)
@@ -513,7 +503,6 @@ describe('POST /v1/runtimes/prune', () => {
     expect(countRows('hrc_events', 'rt-mneme-manifest')).toBe(0)
     expect(countRows('broker_invocations', 'rt-mneme-manifest')).toBe(0)
     expect(countRows('runtime_operations', 'rt-mneme-manifest')).toBe(0)
-    expect(countRows('compiled_runtime_plans')).toBe(0)
   })
 
   it('refuses the whole manifest when any runtime fails scope or orphan gates', async () => {

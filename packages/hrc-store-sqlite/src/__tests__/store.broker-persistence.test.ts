@@ -20,7 +20,6 @@ function scopeRef(key: string): string {
 }
 
 const BROKER_TABLES = [
-  'compiled_runtime_plans',
   'runtime_operations',
   'broker_invocations',
   'broker_invocation_events',
@@ -502,32 +501,10 @@ describe('BrokerInvocationEventRepository.appendEvent idempotency', () => {
 })
 
 describe('broker record repositories round-trip', () => {
-  it('persists and reloads compiled plans, operations, invocations, artifacts, and permission decisions', () => {
+  it('persists and reloads operations, invocations, artifacts, and permission decisions', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-
-      const plan = db.compiledRuntimePlans.insert({
-        planHash: 'plan-hash-1',
-        compileId: 'compile-1',
-        schemaVersion: 'agent-runtime-plan/v1',
-        compilerName: 'agent-spaces',
-        compilerVersion: '1.2.3',
-        planProjectionJson: JSON.stringify({ ok: true }),
-        createdAt: now,
-      })
-      expect(plan.planHash).toBe('plan-hash-1')
-      // Content-addressed re-insert is a no-op (keeps first compile metadata).
-      const planAgain = db.compiledRuntimePlans.insert({
-        planHash: 'plan-hash-1',
-        compileId: 'compile-2',
-        schemaVersion: 'agent-runtime-plan/v1',
-        compilerName: 'agent-spaces',
-        compilerVersion: '9.9.9',
-        planProjectionJson: JSON.stringify({ ok: false }),
-        createdAt: ts(),
-      })
-      expect(planAgain.compileId).toBe('compile-1')
 
       const op = db.runtimeOperations.insert({
         operationId: 'op-1',

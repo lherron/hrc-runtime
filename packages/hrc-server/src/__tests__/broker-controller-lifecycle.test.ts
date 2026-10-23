@@ -59,17 +59,12 @@ describe('HarnessBrokerController', () => {
     expect(fake.callOrder.slice(0, 3)).toEqual(['permission', 'hello', 'start'])
     expect(fake.startCalls[0]?.request).toBe(input.startRequest)
     expect(fake.startCalls[0]?.dispatchEnv).toEqual({ HRC_DISPATCH: 'yes' })
-    expect(fixture.db.compiledRuntimePlans.getByPlanHash('planhash_w2')).not.toBeNull()
     expect(fixture.db.runtimeOperations.getByOperationId('runtimeOperation_w2')?.status).toBe(
       'completed'
     )
     expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.controllerKind).toBe('harness-broker')
     expect(
       fixture.db.runtimes.getByRuntimeId('runtime_w2')?.runtimeStateJson?.['selection']
-    ).toEqual(input.plan.selection)
-    expect(
-      JSON.parse(fixture.db.compiledRuntimePlans.getByPlanHash('planhash_w2')!.planProjectionJson)
-        .selection
     ).toEqual(input.plan.selection)
     const persistedRuntime = fixture.db.runtimes.getByRuntimeId('runtime_w2')
     expect(persistedRuntime?.harness).toBeUndefined()

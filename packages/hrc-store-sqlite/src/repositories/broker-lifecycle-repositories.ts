@@ -1,22 +1,11 @@
 import type { Database } from 'bun:sqlite'
-import type {
-  HrcBrokerInvocationRecord,
-  HrcCompiledRuntimePlanRecord,
-  HrcLifecyclePolicyRecord,
-  HrcRuntimeOperationRecord,
-} from 'hrc-core'
+import type { HrcBrokerInvocationRecord, HrcRuntimeOperationRecord } from 'hrc-core'
 import {
   BROKER_INVOCATION_COLUMNS,
   type BrokerInvocationRow,
-  COMPILED_RUNTIME_PLAN_COLUMNS,
-  type CompiledRuntimePlanRow,
-  LIFECYCLE_POLICY_COLUMNS,
-  type LifecyclePolicyRow,
   RUNTIME_OPERATION_COLUMNS,
   type RuntimeOperationRow,
   mapBrokerInvocationRow,
-  mapCompiledRuntimePlanRow,
-  mapLifecyclePolicyRow,
   mapRuntimeOperationRow,
 } from './broker.js'
 import {
@@ -26,95 +15,6 @@ import {
   execute,
   requireRecord,
 } from './shared.js'
-
-export class LifecyclePolicyRepository {
-  constructor(private readonly db: Database) {}
-
-  insert(record: HrcLifecyclePolicyRecord): HrcLifecyclePolicyRecord {
-    execute(
-      this.db,
-      `
-        INSERT INTO lifecycle_policies (
-          policy_id,
-          lifecycle_policy_hash,
-          canonical_policy_json,
-          schema_version,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(lifecycle_policy_hash) DO NOTHING
-      `,
-      record.policyId,
-      record.lifecyclePolicyHash,
-      record.canonicalPolicyJson,
-      record.schemaVersion,
-      record.createdAt
-    )
-
-    return requireRecord(
-      this.getByPolicyHash(record.lifecyclePolicyHash),
-      `failed to reload lifecycle policy ${record.lifecyclePolicyHash}`
-    )
-  }
-
-  getByPolicyHash(lifecyclePolicyHash: string): HrcLifecyclePolicyRecord | null {
-    const row = this.db
-      .query<LifecyclePolicyRow, [string]>(
-        `SELECT ${LIFECYCLE_POLICY_COLUMNS} FROM lifecycle_policies
-          WHERE lifecycle_policy_hash = ?`
-      )
-      .get(lifecyclePolicyHash)
-
-    return row ? mapLifecyclePolicyRow(row) : null
-  }
-}
-
-export class CompiledRuntimePlanRepository {
-  constructor(private readonly db: Database) {}
-
-  /**
-   * Content-addressed insert. Plans are keyed by `planHash`; re-inserting the
-   * same plan is a no-op (the first stored compile metadata is preserved).
-   */
-  insert(record: HrcCompiledRuntimePlanRecord): HrcCompiledRuntimePlanRecord {
-    execute(
-      this.db,
-      `
-        INSERT INTO compiled_runtime_plans (
-          plan_hash,
-          compile_id,
-          schema_version,
-          compiler_name,
-          compiler_version,
-          plan_projection_json,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(plan_hash) DO NOTHING
-      `,
-      record.planHash,
-      record.compileId,
-      record.schemaVersion,
-      record.compilerName,
-      record.compilerVersion,
-      record.planProjectionJson,
-      record.createdAt
-    )
-
-    return requireRecord(
-      this.getByPlanHash(record.planHash),
-      `failed to reload compiled runtime plan ${record.planHash}`
-    )
-  }
-
-  getByPlanHash(planHash: string): HrcCompiledRuntimePlanRecord | null {
-    const row = this.db
-      .query<CompiledRuntimePlanRow, [string]>(
-        `SELECT ${COMPILED_RUNTIME_PLAN_COLUMNS} FROM compiled_runtime_plans WHERE plan_hash = ?`
-      )
-      .get(planHash)
-
-    return row ? mapCompiledRuntimePlanRow(row) : null
-  }
-}
 
 export type RuntimeOperationUpdatePatch = Partial<
   Omit<HrcRuntimeOperationRecord, 'operationId' | 'createdAt'>

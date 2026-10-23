@@ -596,15 +596,6 @@ export async function prepareAspdHeadlessAttempt(
         updatedBy: 'aspc',
         updatedAt: preparedAt,
       })
-    server.db.compiledRuntimePlans.insert({
-      planHash: String(compiled.plan.planHash),
-      compileId: String(compiled.plan.compileId),
-      schemaVersion: compiled.plan.schemaVersion,
-      compilerName: 'aspc',
-      compilerVersion: 'v2',
-      planProjectionJson: JSON.stringify(compiled.plan),
-      createdAt: compiled.plan.createdAt,
-    })
     server.db.runtimeOperations.insert({
       operationId,
       runtimeId,

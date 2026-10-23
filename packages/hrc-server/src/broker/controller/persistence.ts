@@ -20,7 +20,6 @@ import type {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { BrokerHelloResponse, InvocationStartResponse } from 'spaces-harness-broker-protocol'
-import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 import { neutralSpecHash } from 'spaces-runtime-contracts'
 
 import { armFirstTurnWatch } from '../../first-turn-watch'
@@ -148,15 +147,6 @@ function persistStartGraphInTransaction(
       updatedBy: 'aspc',
       updatedAt: now,
     })
-  ctx.db.compiledRuntimePlans.insert({
-    planHash: String(input.plan.planHash),
-    compileId: String(input.plan.compileId),
-    schemaVersion: input.plan.schemaVersion,
-    compilerName: 'aspc',
-    compilerVersion: 'v2',
-    planProjectionJson: JSON.stringify(input.plan),
-    createdAt: input.plan.createdAt,
-  })
 
   const operation = {
     operationId: String(identity.operationId),
@@ -376,19 +366,7 @@ function persistStartGraphInTransaction(
     })
   }
 
-  // Persist the dispatched lifecycle overlay as AUDIT material (never compiler
-  // closure): record the canonical policy in lifecycle_policies and stamp the
-  // invocation's lifecycle_policy_hash. WS-B owns the DDL; we only call it.
-  if (input.lifecyclePolicy) {
-    ctx.db.lifecyclePolicies.insert({
-      policyId: input.lifecyclePolicy.policyId,
-      lifecyclePolicyHash: input.lifecyclePolicy.policyHash,
-      canonicalPolicyJson: canonicalLifecyclePolicyJson(input.lifecyclePolicy),
-      schemaVersion: input.lifecyclePolicy.schemaVersion,
-      createdAt: now,
-    })
-  }
-
+  // Keep the dispatched policy hash on the invocation for acceptance fencing.
   const invocation = ctx.db.brokerInvocations.insert({
     invocationId: String(identity.invocationId),
     operationId: String(identity.operationId),

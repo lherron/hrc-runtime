@@ -102,32 +102,13 @@ function createPre0019Database(): ReturnType<typeof createHrcDatabase> {
 
 // ── 0019/0020/0021 migration shape ────────────────────────────────────────
 describe('lifecycle persistence migrations (0019/0020/0021)', () => {
-  it('creates the lifecycle_policies audit table on a fresh db', () => {
+  it('retires the policy table while retaining invocation lifecycle state', () => {
     const db = openHrcDatabase(dbPath)
     try {
-      expect(db.migrations.applied).toContain('0019_lifecycle_policy_audit')
-      expect(db.migrations.applied).toContain('0020_runtime_lifecycle_state')
-      expect(db.migrations.applied).toContain('0021_permission_identity')
-
-      expect(tableExists(db, 'lifecycle_policies')).toBe(true)
-      const cols = tableColumns(db, 'lifecycle_policies')
-      for (const col of [
-        'policy_id',
-        'lifecycle_policy_hash',
-        'canonical_policy_json',
-        'schema_version',
-        'created_at',
-      ]) {
-        expect(cols).toContain(col)
-      }
-
-      // lifecycle_policy_hash is the PK / content fence.
-      const pkCols = db.sqlite
-        .query<{ name: string; pk: number }, []>('PRAGMA table_info(lifecycle_policies)')
-        .all()
-        .filter((r) => r.pk > 0)
-        .map((r) => r.name)
-      expect(pkCols).toEqual(['lifecycle_policy_hash'])
+      expect(db.migrations.applied).toContain('0126_plan_policy_table_removal')
+      expect(tableExists(db, 'lifecycle_policies')).toBe(false)
+      expect(tableExists(db, 'compiled_runtime_plans')).toBe(false)
+      expect(tableColumns(db, 'broker_invocations')).toContain('lifecycle_policy_hash')
     } finally {
       db.close()
     }
@@ -305,72 +286,11 @@ describe('lifecycle persistence migrations (0019/0020/0021)', () => {
   })
 })
 
-// ── lifecycle_policies audit round-trip ────────────────────────────────────
-describe('lifecycle_policies audit repository round-trip', () => {
-  it('inserts and looks up a policy by lifecycle_policy_hash, content-addressed', () => {
+describe('invocation policy hash round-trip', () => {
+  it('persists the invocation policy hash without a policy table', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      const canonical = JSON.stringify({ maxTurns: 50, escalation: { onDeny: 'pause' } })
-
-      const policy = db.lifecyclePolicies.insert({
-        policyId: 'route:agent-spaces:default',
-        lifecyclePolicyHash: 'lph-abc123',
-        canonicalPolicyJson: canonical,
-        schemaVersion: 'lifecycle-policy/v1',
-        createdAt: now,
-      })
-      expect(policy.policyId).toBe('route:agent-spaces:default')
-      expect(policy.lifecyclePolicyHash).toBe('lph-abc123')
-      expect(policy.canonicalPolicyJson).toBe(canonical)
-      expect(policy.schemaVersion).toBe('lifecycle-policy/v1')
-
-      const reloaded = db.lifecyclePolicies.getByPolicyHash('lph-abc123')
-      expect(reloaded).not.toBeNull()
-      expect(reloaded?.policyId).toBe('route:agent-spaces:default')
-      expect(reloaded?.canonicalPolicyJson).toBe(canonical)
-
-      // Content-addressed: same hash, different policy metadata is a no-op,
-      // first stored canonical/metadata preserved (audit fence).
-      const again = db.lifecyclePolicies.insert({
-        policyId: 'route:agent-spaces:default',
-        lifecyclePolicyHash: 'lph-abc123',
-        canonicalPolicyJson: JSON.stringify({ maxTurns: 9999 }),
-        schemaVersion: 'lifecycle-policy/v1',
-        createdAt: ts(),
-      })
-      expect(again.canonicalPolicyJson).toBe(canonical)
-
-      // Same policyId, DIFFERENT hash = a distinct audit row (version fence).
-      const v2 = db.lifecyclePolicies.insert({
-        policyId: 'route:agent-spaces:default',
-        lifecyclePolicyHash: 'lph-def456',
-        canonicalPolicyJson: JSON.stringify({ maxTurns: 75 }),
-        schemaVersion: 'lifecycle-policy/v1',
-        createdAt: ts(),
-      })
-      expect(v2.lifecyclePolicyHash).toBe('lph-def456')
-      expect(db.lifecyclePolicies.getByPolicyHash('lph-def456')?.policyId).toBe(
-        'route:agent-spaces:default'
-      )
-      // The original version is still independently retrievable.
-      expect(db.lifecyclePolicies.getByPolicyHash('lph-abc123')).not.toBeNull()
-    } finally {
-      db.close()
-    }
-  })
-
-  it('links broker_invocations to a lifecycle_policies row via lifecycle_policy_hash', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      const now = ts()
-      db.lifecyclePolicies.insert({
-        policyId: 'route:agent-spaces:default',
-        lifecyclePolicyHash: 'lph-link-1',
-        canonicalPolicyJson: JSON.stringify({ maxTurns: 50 }),
-        schemaVersion: 'lifecycle-policy/v1',
-        createdAt: now,
-      })
 
       const inv = db.brokerInvocations.insert({
         invocationId: 'inv-link',

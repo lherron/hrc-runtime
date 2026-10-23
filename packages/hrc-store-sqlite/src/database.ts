@@ -24,9 +24,7 @@ import {
 import {
   BrokerInvocationEventRepository,
   BrokerInvocationRepository,
-  CompiledRuntimePlanRepository,
   InputRepository,
-  LifecyclePolicyRepository,
   PermissionDecisionRepository,
   RuntimeArtifactRepository,
   RuntimeOperationRepository,
@@ -98,8 +96,6 @@ export type HrcDatabase = {
   mailDelivery: HrcMailDeliveryRepository
   mailStopRefusals: HrcMailStopRefusalRepository
   wrkqLedgerCursors: WrkqLedgerCursorRepository
-  compiledRuntimePlans: CompiledRuntimePlanRepository
-  lifecyclePolicies: LifecyclePolicyRepository
   runtimeOperations: RuntimeOperationRepository
   brokerInvocations: BrokerInvocationRepository
   inputs: InputRepository
@@ -210,8 +206,6 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     mailDelivery: new HrcMailDeliveryRepository(sqlite),
     mailStopRefusals: new HrcMailStopRefusalRepository(sqlite),
     wrkqLedgerCursors: new WrkqLedgerCursorRepository(sqlite),
-    compiledRuntimePlans: new CompiledRuntimePlanRepository(sqlite),
-    lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),
     brokerInvocations: new BrokerInvocationRepository(sqlite),
     inputs: new InputRepository(sqlite),

@@ -419,7 +419,6 @@ export class RuntimeRepository {
       runtime_artifacts: 0,
       tool_result_blob_parts: 0,
       tool_result_blobs: 0,
-      compiled_runtime_plans: 0,
       runtime_buffers: count(
         `WITH selected AS (${selected})
          SELECT COUNT(*) AS count FROM runtime_buffers
@@ -490,44 +489,6 @@ export class RuntimeRepository {
          WHERE runtime_id IN (SELECT runtime_id FROM selected)`
       )
     }
-    counts.compiled_runtime_plans = count(
-      `WITH selected AS MATERIALIZED (${selected}),
-            candidates AS MATERIALIZED (
-              SELECT plan_hash FROM runtimes
-              WHERE runtime_id IN (SELECT runtime_id FROM selected) AND plan_hash IS NOT NULL
-              UNION
-              SELECT plan_hash FROM runtime_operations
-              WHERE runtime_id IN (SELECT runtime_id FROM selected) AND plan_hash IS NOT NULL
-            ),
-            referenced_elsewhere AS MATERIALIZED (
-              SELECT runtime.plan_hash
-              FROM runtimes AS runtime
-              JOIN candidates ON candidates.plan_hash = runtime.plan_hash
-              LEFT JOIN selected ON selected.runtime_id = runtime.runtime_id
-              WHERE selected.runtime_id IS NULL
-              UNION
-              SELECT operation.plan_hash
-              FROM runtime_operations AS operation
-              JOIN candidates ON candidates.plan_hash = operation.plan_hash
-              LEFT JOIN selected ON selected.runtime_id = operation.runtime_id
-              WHERE selected.runtime_id IS NULL
-              UNION
-              SELECT operation.plan_hash
-              FROM broker_invocations AS invocation
-              JOIN runtime_operations AS operation
-                ON operation.operation_id = invocation.operation_id
-              JOIN candidates ON candidates.plan_hash = operation.plan_hash
-              LEFT JOIN selected ON selected.runtime_id = invocation.runtime_id
-              WHERE selected.runtime_id IS NULL
-            )
-       SELECT COUNT(*) AS count
-       FROM compiled_runtime_plans AS plan
-       JOIN candidates ON candidates.plan_hash = plan.plan_hash
-       LEFT JOIN referenced_elsewhere AS reference
-         ON reference.plan_hash = plan.plan_hash
-       WHERE reference.plan_hash IS NULL`
-    )
-
     return counts
   }
 
@@ -649,44 +610,6 @@ export class RuntimeRepository {
         )
       }
 
-      execute(
-        this.db,
-        `WITH selected AS MATERIALIZED (
-               SELECT CAST(value AS TEXT) AS runtime_id FROM json_each(?)
-             ),
-             candidates AS MATERIALIZED (
-               SELECT plan_hash FROM runtimes
-               WHERE runtime_id IN (SELECT runtime_id FROM selected) AND plan_hash IS NOT NULL
-               UNION
-               SELECT plan_hash FROM runtime_operations
-               WHERE runtime_id IN (SELECT runtime_id FROM selected) AND plan_hash IS NOT NULL
-             ),
-             referenced_elsewhere AS MATERIALIZED (
-               SELECT runtime.plan_hash
-               FROM runtimes AS runtime
-               JOIN candidates ON candidates.plan_hash = runtime.plan_hash
-               LEFT JOIN selected ON selected.runtime_id = runtime.runtime_id
-               WHERE selected.runtime_id IS NULL
-               UNION
-               SELECT operation.plan_hash
-               FROM runtime_operations AS operation
-               JOIN candidates ON candidates.plan_hash = operation.plan_hash
-               LEFT JOIN selected ON selected.runtime_id = operation.runtime_id
-               WHERE selected.runtime_id IS NULL
-               UNION
-               SELECT operation.plan_hash
-               FROM broker_invocations AS invocation
-               JOIN runtime_operations AS operation
-                 ON operation.operation_id = invocation.operation_id
-               JOIN candidates ON candidates.plan_hash = operation.plan_hash
-               LEFT JOIN selected ON selected.runtime_id = invocation.runtime_id
-               WHERE selected.runtime_id IS NULL
-             )
-         DELETE FROM compiled_runtime_plans AS plan
-         WHERE plan.plan_hash IN (SELECT plan_hash FROM candidates)
-           AND plan.plan_hash NOT IN (SELECT plan_hash FROM referenced_elsewhere)`,
-        selectedJson
-      )
       executeSelected(
         'DELETE FROM runtime_operations WHERE runtime_id IN (SELECT runtime_id FROM selected)'
       )

@@ -375,8 +375,10 @@ describe('RED #2: structural hash boundary (lease only in runtime arg)', () => {
       const invocation = fixture.db.brokerInvocations.getByInvocationId(
         String(identity.invocationId)
       )!
-      const plan = fixture.db.compiledRuntimePlans.getByPlanHash('planhash_v2_fixture')!
-      const persisted = JSON.stringify({ invocation, plan })
+      const persisted = JSON.stringify({
+        invocation,
+        operation: fixture.db.runtimeOperations.getByOperationId(String(identity.operationId)),
+      })
 
       for (const tmuxId of [lease.paneId, lease.sessionId, lease.windowId]) {
         expect(persisted).not.toContain(tmuxId)

@@ -4,6 +4,7 @@ import { brokerMigrations } from './migrations/broker-migrations.js'
 import { deadTableRemoval } from './migrations/dead-table-removal.js'
 import { legacyEventsRemoval } from './migrations/legacy-events-removal.js'
 import { participantFreshContinuationReason } from './migrations/participant-fresh-continuation-reason.js'
+import { planPolicyTableRemoval } from './migrations/plan-policy-table-removal.js'
 import { runtimeLegacyIdentityNullableMigration } from './migrations/runtime-legacy-identity-nullability.js'
 import { schemaMigrations } from './migrations/schema-migrations.js'
 import { sessionIdentityMetadata } from './migrations/session-identity-metadata.js'
@@ -27,6 +28,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   participantFreshContinuationReason,
   deadTableRemoval,
   legacyEventsRemoval,
+  planPolicyTableRemoval,
 ]
 
 /**
