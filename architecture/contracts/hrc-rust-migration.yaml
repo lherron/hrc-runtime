@@ -17,6 +17,8 @@ approved_source:
   preview_amendment_task_slug: kernel-latest-event-preview
   restart_amendment_task: T-11496
   restart_amendment_task_slug: kernel-seat-restart-op
+  surrogate_amendment_task: T-11538
+  surrogate_amendment_task_slug: kernel-surrogate-ledger-recovery
 adopted_m1_amendment:
   task: T-11527
   campaign: P-00866
@@ -84,6 +86,35 @@ predicate: >
   during bootstrap, apply and resync, never retained as projection state.
   The window is bounded context, not a promise to recover calls outside it.
   No HRC server behavior or activation changes with this extension.
+  T-11538 adds an explicit display-only Unicode recovery policy at the private
+  HTTP projection decoder for successful page, tail, latest-by-session,
+  sessions, presentation runtimes and seats/read responses. Ordinary strict
+  serde_json decoding remains the fast path. Only unpaired escape failures
+  enter structural RawValue parsing, with object keys decoded strictly.
+  Replacement is limited to event.payload.result.content[*].text,
+  event.payload.content[*].text and direct string-valued event.payload fields
+  text, message, summary, description, prompt, reason, notice, title, output,
+  stdout, stderr and content. Nested message text follows these display rules
+  only inside payload.message, never arbitrary nested objects. Session title
+  and metadata.title may use this policy only at their observed contract paths.
+  Each genuinely unpaired UTF-16 unit in an admitted display value becomes
+  exactly one U+FFFD. Valid pairs and literal escaped backslash-u text remain
+  unchanged. Unknown fields, keys, identities, tool IDs, scope/lane/session/
+  runtime IDs, incarnation, transport and eventKind remain strict. Malformed
+  identity/key values, including would-be replacement collisions, fail closed
+  with metadata-only errors; no identity encoding or key renaming is allowed.
+  Invalid UTF-8, malformed JSON, invalid escape syntax and structural errors
+  remain errors. There is no row skipping, durable normalization, database
+  rewrite or modification of the HRC HTTP response. All rows and cursor
+  ordering survive the projection bridge; raw durable JSON remains lossless.
+  The same amendment changes only newly generated spill excerpt cut boundaries:
+  a head of at most 4096 UTF-16 units ends at 4095 when the old boundary split
+  a valid pair; a tail of at most 1024 units starts one unit later, retaining
+  1023, when the old start split a valid pair. Genuine unpaired source units,
+  preserveExistingExcerpt and blob/full source stay unchanged. This is the
+  exact compatibility delta from P1's 4096-slice oracle; the parity owner is
+  informed and refreshes that oracle while retaining lossless historical and
+  genuinely unpaired controls. It does not authorize lossy store JSON bridges.
   Neither /v1/runtimes nor /v1/attach is in that set. Attach descriptors use
   the presentation row's HRC-resolved socketPath and attachTarget; an absent
   tmux block refuses resource_unavailable. The kernel does not parse hosting-state variants.
@@ -173,6 +204,8 @@ authority: >
   2026-10-23; Daedalus approved native-parity bearing EN-33646 and P0
   runner-contract.md v2/amendment intent EN-33680. Tracked adoption is
   recorded with T-11527; no runtime parity is implied by design approval.
+  Daedalus approval of T-11538 kernel-surrogate-ledger-recovery policy,
+  task specification etag 4 submitted in EN-34147, 2026-10-23.
 source:
   - docs/proposals/hrc-rust-parity.md
   - docs/proposals/hrc-rust-parity/state-audit.md
@@ -197,6 +230,7 @@ source:
   - wrkc:EN-33162
   - wrkc:EN-33174
   - wrkq:T-11496
+  - wrkq:T-11538
   - wrkc:EN-33147
   - architecture/contracts/runtime-context-reading.yaml
   - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
@@ -215,6 +249,8 @@ source:
   - crates/hrc-domain/src/api.rs
   - crates/hrc-domain/src/projector.rs
   - crates/hrc-domain/src/projection.rs
+  - crates/hrc-domain/src/preview.rs
+  - packages/hrc-core/src/tool-result-storage.ts
   - packages/hrc-core/src/declaration-contracts.ts
   - packages/hrc-server/src/declaration-handlers.ts
   - packages/hrc-server/src/exact-claim.ts
@@ -255,6 +291,17 @@ validation_scope: >
   retry, responsive reads, installed discovery, same-seat generation advance
   on a throwaway seat and captured real busy-seat refusal. Activation stops
   only the Loggia-supervised kernel, not HRC.
+  For T-11538 the requester supplies exact captured-page actual-kernel replay
+  before/after and a scratch production-shaped stream carrying that page then
+  a later valid seat event, with prompt seat/cursor observation and no resync.
+  Controls cover lone high/low units, valid pairs, nested admitted display,
+  literal backslash-u, malformed syntax/UTF-8/structure, strict unknown fields,
+  keys and identity collision rejection, ordered complete rows, producer head
+  and tail pair cuts, genuine lone units and preserved historical excerpts.
+  Full just verify and the relevant Rust gate precede pushed source-ready
+  delivery. Canonical install and authorized activation remain separate from
+  live acceptance: cursor advancement beyond the poison row to current head
+  and prompt fresh-seat projection. These gates are not claimed passed here.
   Stage 2 requires P0 executable inventory closure, real standalone Bun
   baseline, discriminating missing-route/field/duplicate-effect/wrong-owner
   controls, explicit downstream gaps and isolated real ASP/wrkq/broker
@@ -304,11 +351,20 @@ last_verified: >
   draft inventory review; adopts isolated development and cohesive owner
   transfer while preserving delivered predicates. No behavior, install or
   service validation is implied; P0 and later package gates remain open.
+  2026-10-23 T-11538 policy approved by reading HrcApi, HrcApiLedger,
+  projection/preview, spill helper, active contracts and supplied replay.
+  Read-only artifact inspection confirms the preserved 10217-byte page hash
+  and one lone low surrogate at rows/0/payload/result/content/0/text. Supplied
+  replay-before records cursor 3101357 with source_unavailable on row 3101358;
+  this is requester evidence, not a test run by the reviewer. No builds,
+  tests, installs or service operations were run; recovery remains unverified.
 reopen_when: >
   Migration authority, repository or release boundaries, execution ownership or
   rollback completeness, schema ownership, stage prerequisites, page coverage
   or incarnation semantics, pinned read set, projection state ownership,
   context source, attach source, restart behavior or consolidation trigger
+  changes; or projection Unicode recovery paths, strict identity/key handling,
+  durable JSON preservation or the spill pair-cut compatibility delta
   changes; or the stage-1b no-TypeScript-growth rule, summon request/receipt,
   restart request/receipt, daemon authority, retry or cancellation semantics
   or unsupported cases change.
