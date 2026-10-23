@@ -1,8 +1,8 @@
 import { CliUsageError } from 'cli-kit'
 import { Command, Help, Option } from 'commander'
 
-import { throwCommanderError } from './command-errors.js'
-import { annotateCommand, finalizeCommandMetadata } from './command-metadata.js'
+import { throwCommanderError, validateCommandBeforeHelp } from './command-errors.js'
+import { allCommandNodes, annotateCommand, finalizeCommandMetadata } from './command-metadata.js'
 import { printInfo, renderRootHelp, resolveHelpView } from './help.js'
 import { registerFederationCommands } from './register-federation.js'
 import { registerMetricsCommands } from './register-metrics.js'
@@ -15,6 +15,7 @@ import { registerTopLevelCommands } from './register-top.js'
 export function buildProgram(): Command {
   const program = new Command()
     .name('hrc')
+    .enablePositionalOptions()
     .description('HRC operator CLI')
     .exitOverride(throwCommanderError)
     .showSuggestionAfterError(false)
@@ -24,11 +25,6 @@ export function buildProgram(): Command {
       },
     })
 
-  program.addOption(
-    new Option('--output <format>', 'output format alias for --json').choices(['json'])
-  )
-  program.addOption(new Option('--agent', 'render the agent-oriented help projection'))
-  program.addOption(new Option('--human', 'render the human-oriented help projection'))
   program.hook('preAction', (rootCommand, actionCommand) => {
     if (rootCommand.opts<{ output?: string }>().output !== 'json') return
     if (!actionCommand.options.some((option) => option.long === '--json')) {
@@ -60,6 +56,32 @@ export function buildProgram(): Command {
   registerMetricsCommands(program)
   registerFederationCommands(program)
   finalizeCommandMetadata(program)
+
+  // Commander stops each parent's option scan at its subcommand. Register the
+  // globals at every node, giving an existing local spelling (notably the
+  // runtime --agent <agent> filter) precedence. Forward only these fallback
+  // options to the root so help, output aliases and error rendering share state.
+  for (const command of allCommandNodes(program)) {
+    for (const option of [
+      new Option('--output <format>', 'output format alias for --json').choices(['json']),
+      new Option('--agent', 'render the agent-oriented help projection'),
+      new Option('--human', 'render the human-oriented help projection'),
+    ]) {
+      if (command.options.some((local) => local.long === option.long)) continue
+      if (command !== program) option.hideHelp()
+      command.addOption(option)
+      if (command !== program) {
+        command.on(`option:${option.name()}`, (value) => {
+          program.setOptionValueWithSource(option.attributeName(), value ?? true, 'cli')
+          // These are root options, not inputs to the command's legacy handler.
+          command.setOptionValueWithSource(option.attributeName(), undefined, 'cli')
+        })
+      }
+    }
+  }
+  program.on('beforeAllHelp', ({ command }: { command: Command }) => {
+    validateCommandBeforeHelp(command)
+  })
 
   program.configureHelp({
     formatHelp(command) {

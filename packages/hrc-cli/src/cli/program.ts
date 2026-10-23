@@ -6,7 +6,7 @@ import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { MonitorWaitExit } from '../monitor-wait.js'
 import { TurnExitError } from '../turn/commands/turn.js'
 import { buildProgram } from './build-program.js'
-import { normalizeCommanderError, validateCommandPathBeforeHelp } from './command-errors.js'
+import { normalizeCommanderError } from './command-errors.js'
 import { renderRootHelp, resolveHelpView } from './help.js'
 import { CliStatusExit } from './shared.js'
 
@@ -111,7 +111,6 @@ export async function runProgram(
   }
 
   try {
-    validateCommandPathBeforeHelp(program, argv.slice(2))
     await program.parseAsync(argv)
   } catch (err) {
     handleCliError(err, program)

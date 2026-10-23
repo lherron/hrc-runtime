@@ -123,41 +123,13 @@ function formatUnknownCommandError(
   return new CliUsageError(`unknown command: ${unknownName}${hint}`)
 }
 
-export function validateCommandPathBeforeHelp(program: Command, args: readonly string[]): void {
-  let current = program
-
-  for (let index = 0; index < args.length; index += 1) {
-    const token = args[index]
-    if (!token) continue
-    if (token === '--help' || token === '-h') return
-
-    if (token.startsWith('-')) {
-      const flag = token.split('=', 1)[0]
-      let option = current.options.find(
-        (candidate) => candidate.long === flag || candidate.short === flag
-      )
-      for (let parent = current.parent; !option && parent; parent = parent.parent) {
-        option = parent.options.find(
-          (candidate) => candidate.long === flag || candidate.short === flag
-        )
-      }
-      if (option && !token.includes('=') && (option.required || option.optional)) {
-        index += 1
-      }
-      continue
-    }
-
-    const child = current.commands.find(
-      (candidate) => candidate.name() === token || candidate.alias() === token
-    )
-    if (child) {
-      current = child
-      continue
-    }
-
-    const acceptsPositionals = current.registeredArguments.length > 0
-    if (current.commands.length > 0 && !acceptsPositionals) {
-      throw formatUnknownCommandError(token, current)
+/** Commander has already consumed option values and dispatched known aliases. */
+export function validateCommandBeforeHelp(command: Command): void {
+  if (command.commands.length === 0 || command.registeredArguments.length > 0) return
+  for (const token of command.args) {
+    if (token === '--help' || token === '-h' || token === '--') return
+    if (!token.startsWith('-')) {
+      throw formatUnknownCommandError(token, command)
     }
   }
 }

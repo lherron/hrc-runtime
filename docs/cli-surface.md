@@ -23,6 +23,12 @@ agent or human audience. Selection precedence is explicit `--agent` /
 labels the selected view; named-command help is never filtered, and `hrc admin
 --help` always exposes the full cellar.
 
+Options after a command name belong to that command. In `runtime list` and
+`monitor search`, `--agent <agent>` filters by agent ID; both `--agent astra`
+and `--agent=astra` are accepted. The global `--output json` alias can appear
+before or after command names on commands that support `--json`. A literal
+`--` ends option parsing.
+
 For target-handle syntax used throughout this page, see
 `hrc-runtime/target-handles`. Agent messaging is `wrkc`; the `hrcchat` CLI
 was retired in T-07616.

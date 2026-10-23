@@ -388,11 +388,9 @@ describe('session retitle CLI plumbing', () => {
 
     // --force reaches the server guard that protects an existing manual title.
     // Without it registered here the overwrite path is unreachable from the CLI.
-    expect(retitle?.options.map((option) => option.long)).toEqual([
-      '--title',
-      '--force',
-      '--regenerate',
-    ])
+    expect(
+      retitle?.options.filter((option) => !option.hidden).map((option) => option.long)
+    ).toEqual(['--title', '--force', '--regenerate'])
     expect(
       toLegacyArgv(
         ['hsid-test'],
