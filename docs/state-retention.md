@@ -278,9 +278,9 @@ still resolve: a bounded *view* must never become a lost *capability*.
 ### The idle-archive sweep
 
 hrc-server runs the archival pass on its own daily timer
-(`HRC_SESSION_RETENTION_SWEEP_ENABLED=0` disables it), sharing exactly the code
-behind `POST /v1/sessions/archive-abandoned`. It writes `sessions.status` and
-nothing else — it never deletes a row and never touches `continuation_json`.
+(`HRC_SESSION_RETENTION_SWEEP_ENABLED=0` disables it), through the internal
+`archiveIdleSessions` function. The unused HTTP trigger was retired in T-11569.
+It writes `sessions.status` and nothing else — it never deletes a row and never touches `continuation_json`.
 
 A non-primary `active` session is archived when all of the following hold:
 

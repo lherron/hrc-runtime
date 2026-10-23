@@ -1,36 +1,8 @@
 /**
- * RED tests (T-04831 / parent T-04827 GROUP 2) — selection and resolution of
- * archived sessions.
- *
- * Architecture: daedalus-cleared (T-04827).  Three behaviors to pin:
- *
- * [RED 2a] default target LIST hides archived rows
- *   GET /v1/targets must not return sessions with status 'archived', even when
- *   the continuity still points to the archived hostSessionId.  Currently the
- *   list INCLUDES them because listAllSessions returns all rows and
- *   isActiveTargetSession returns true when continuity.activeHostSessionId
- *   matches the archived session (continuity is not updated on removal).
- *
- * [RED 2b] explicit target GET surfaces archived row as state:'dormant'
- *   GET /v1/targets/by-session-ref?sessionRef=… for an archived session with
- *   a continuation must return { state: 'dormant' }.  Currently returns
- *   { state: 'broken' } because toTargetState maps every non-active session
- *   to 'broken'.
- *
- * [RED 2c] resuming an archived row mints a new active successor
- *   POST /v1/sessions/create-successor { sessionRef, priorHostSessionId }
- *   must:
- *     - mint a new status:'active' host session
- *     - set priorHostSessionId = archived session's hostSessionId
- *     - copy continuation + last intent/parsed scope from the archived row
- *     - repoint continuity.activeHostSessionId → the new session
- *     - leave the archived row with status:'archived' (no reactivation-in-place)
- *   Currently fails with HTTP 404 (endpoint does not exist).
- *
- * RED at HEAD:
- *   2a — archived rows appear in GET /v1/targets (list bug)
- *   2b — GET /v1/targets/by-session-ref returns state:'broken' not 'dormant'
- *   2c — POST /v1/sessions/create-successor returns HTTP 404
+ * Archived-target regression coverage (T-04831, T-11569).
+ * Default target lists hide archived rows; explicit lookup reports dormant;
+ * the retained resume-continuation endpoint mints an active successor while
+ * preserving the archived row and its continuation.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
@@ -112,10 +84,10 @@ async function getTargetByRef(sessionRef: string): Promise<{ status: number; bod
   return { status: res.status, body: await res.json() }
 }
 
-async function postCreateSuccessor(
+async function postResumeContinuation(
   body: Record<string, unknown>
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const res = await fixture.postJson('/v1/sessions/create-successor', body)
+  const res = await fixture.postJson('/v1/sessions/resume-continuation', body)
   const text = await res.text()
   let parsed: Record<string, unknown>
   try {
@@ -149,7 +121,6 @@ describe('[RED 2a] GET /v1/targets list must NOT include archived sessions', () 
   it('archived session does not appear in GET /v1/targets list', async () => {
     const targets = await getTargetList()
     const refs = targets.map((t) => t.sessionRef)
-    // RED: currently included because isActiveTargetSession returns true when
     // continuity still points to the archived row
     expect(refs).not.toContain(sessionRef)
   })
@@ -157,7 +128,6 @@ describe('[RED 2a] GET /v1/targets list must NOT include archived sessions', () 
   it('archived session is absent from list even when continuity points to it', async () => {
     const targets = await getTargetList()
     const found = targets.find((t) => t.scopeRef === scopeRef)
-    // RED: currently found because continuity.activeHostSessionId === hostSessionId
     expect(found).toBeUndefined()
   })
 
@@ -205,7 +175,6 @@ describe('[RED 2b] GET /v1/targets/by-session-ref must return state dormant for 
     const { status, body } = await getTargetByRef(sessionRef)
     expect(status).toBe(200)
     const view = body as HrcTargetView
-    // RED: currently returns 'broken' (toTargetState maps status !== 'active' → 'broken')
     expect(view.state).toBe('dormant')
   })
 
@@ -239,7 +208,7 @@ describe('[RED 2b] GET /v1/targets/by-session-ref must return state dormant for 
 
 // ── RED 2c: resume mints a new active successor ───────────────────────────────
 
-describe('[RED 2c] POST /v1/sessions/create-successor mints active successor from archived row', () => {
+describe('[RED 2c] POST /v1/sessions/resume-continuation mints active successor from archived row', () => {
   const scopeRef = `${SCOPE_PREFIX}:task:successor`
   const archivedHsid = 'hsid-archived-successor-2c'
   const sessionRef = `${scopeRef}/lane:main`
@@ -255,37 +224,33 @@ describe('[RED 2c] POST /v1/sessions/create-successor mints active successor fro
     })
   })
 
-  it('returns HTTP 200 (not 404) for create-successor endpoint', async () => {
-    const { status } = await postCreateSuccessor({ sessionRef })
-    // RED: currently 404 (endpoint does not exist)
+  it('returns HTTP 200 (not 404) for resume-continuation endpoint', async () => {
+    const { status } = await postResumeContinuation({ sessionRef })
     expect(status).toBe(200)
   })
 
   it('mints a new active session with incremented generation', async () => {
-    const { body } = await postCreateSuccessor({ sessionRef })
+    const { body } = await postResumeContinuation({ sessionRef })
     const result = body as Record<string, unknown>
-    // RED: endpoint doesn't exist, so result is error body
     expect(result['status']).toBe('active')
     expect(result['generation']).toBe(3) // archived was gen 2 → successor gen 3
   })
 
   it('successor preserves priorHostSessionId → archived session', async () => {
-    const { body } = await postCreateSuccessor({ sessionRef })
+    const { body } = await postResumeContinuation({ sessionRef })
     const result = body as Record<string, unknown>
-    // RED: endpoint doesn't exist
     expect(result['priorHostSessionId']).toBe(archivedHsid)
   })
 
   it('successor inherits continuation from archived row', async () => {
-    const { body } = await postCreateSuccessor({ sessionRef })
+    const { body } = await postResumeContinuation({ sessionRef })
     const result = body as Record<string, unknown>
-    // RED: endpoint doesn't exist
     const continuation = result['continuation'] as Record<string, unknown> | undefined
     expect(continuation?.key).toBe('sess-key-t04831-g2')
   })
 
   it('continuity is repointed to the new successor', async () => {
-    const { body } = await postCreateSuccessor({ sessionRef })
+    const { body } = await postResumeContinuation({ sessionRef })
     const result = body as Record<string, unknown>
     const newHostSessionId = result['hostSessionId'] as string
     expect(newHostSessionId).toBeDefined()
@@ -294,7 +259,6 @@ describe('[RED 2c] POST /v1/sessions/create-successor mints active successor fro
     const db = openHrcDatabase(fixture.dbPath)
     try {
       const continuity = db.continuities.getByKey(scopeRef, 'main')
-      // RED: continuity still points to archived (no endpoint)
       expect(continuity?.activeHostSessionId).toBe(newHostSessionId)
       expect(continuity?.activeHostSessionId).not.toBe(archivedHsid)
     } finally {
@@ -303,12 +267,11 @@ describe('[RED 2c] POST /v1/sessions/create-successor mints active successor fro
   })
 
   it('archived row STAYS archived after successor is minted (no reactivation-in-place)', async () => {
-    await postCreateSuccessor({ sessionRef })
+    await postResumeContinuation({ sessionRef })
 
     const db = openHrcDatabase(fixture.dbPath)
     try {
       const archivedRow = db.sessions.getByHostSessionId(archivedHsid)
-      // RED: archived row unchanged (or endpoint doesn't exist)
       expect(archivedRow?.status).toBe('archived')
     } finally {
       db.close()

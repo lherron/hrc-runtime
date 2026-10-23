@@ -159,18 +159,12 @@ export function buildExactRouteHandlers(
     [exactRouteKey('POST', '/v1/interrupt')]: (request) => server.handleInterrupt(request),
     [exactRouteKey('POST', '/v1/terminate')]: (request) => server.handleTerminate(request),
     [exactRouteKey('POST', '/v1/clear-context')]: (request) => server.handleClearContext(request),
-    [exactRouteKey('POST', '/v1/sessions/clear-context')]: (request) =>
-      server.handleClearContext(request),
     [exactRouteKey('POST', '/v1/sessions/restart')]: (request) =>
       handleRestartSession(server, request),
     [exactRouteKey('POST', '/v1/sessions/drop-continuation')]: (request) =>
       server.handleDropContinuation(request),
-    [exactRouteKey('POST', '/v1/sessions/create-successor')]: (request) =>
-      server.handleCreateSessionSuccessor(request),
     [exactRouteKey('POST', '/v1/sessions/resume-continuation')]: (request) =>
       server.handleResumeContinuation(request),
-    [exactRouteKey('POST', '/v1/sessions/archive-abandoned')]: (request) =>
-      server.handleArchiveAbandonedSessions(request),
     // T-08566 stage 1: the launch-wrapper hook ingest is retired (no producer).
     [exactRouteKey('POST', '/v1/internal/hooks/ingest')]: (request) =>
       legacyLaunchIngestRetired(new URL(request.url).pathname),

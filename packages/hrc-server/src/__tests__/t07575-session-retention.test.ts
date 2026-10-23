@@ -10,6 +10,7 @@ import {
 } from '../server-constants.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { startSessionRetentionSweep } from '../sweep-handlers.js'
+import { archiveIdleSessions } from '../target-message-handlers.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -248,7 +249,7 @@ describe('T-07575 session retention', () => {
   })
 
   test('the archive sweep also senses on session_index, so it spares an events-only session', async () => {
-    const { fixture, server } = await boot('hrc-t07575-sweep-authority-', (db) => {
+    const { server } = await boot('hrc-t07575-sweep-authority-', (db) => {
       seed(db, {
         id: 'events-only',
         ts: daysAgo(30),
@@ -257,9 +258,8 @@ describe('T-07575 session retention', () => {
       })
     })
     try {
-      const response = await fixture.postJson('/v1/sessions/archive-abandoned', {})
-      expect(response.status).toBe(200)
-      expect((await response.json()).archived).toBe(0)
+      const result = archiveIdleSessions(server as unknown as HrcServerInstanceForHandlers, 7)
+      expect(result.archived).toBe(0)
     } finally {
       await server.stop()
     }
@@ -283,9 +283,8 @@ describe('T-07575 session retention', () => {
     try {
       expect((await listSessions(fixture)).ids).toEqual(['hsid-fresh'])
 
-      const response = await fixture.postJson('/v1/sessions/archive-abandoned', {})
-      expect(response.status).toBe(200)
-      expect((await response.json()).archived).toBe(5)
+      const result = archiveIdleSessions(server as unknown as HrcServerInstanceForHandlers, 7)
+      expect(result.archived).toBe(5)
 
       const after = await listSessions(fixture)
       expect(after.ids).toEqual(['hsid-fresh'])
@@ -300,7 +299,7 @@ describe('T-07575 session retention', () => {
       seed(db, { id: 'cold', ts: daysAgo(90), continuationKey: 'ck-cold' })
     })
     try {
-      await fixture.postJson('/v1/sessions/archive-abandoned', {})
+      archiveIdleSessions(server as unknown as HrcServerInstanceForHandlers, 7)
       const rows = (await listSessions(fixture, '?all=true')).ids
       expect(rows).toEqual(['hsid-cold'])
 
@@ -335,8 +334,8 @@ describe('T-07575 session retention', () => {
       seed(db, { id: 'cold', ts: daysAgo(90), continuationKey: 'ck-cold' })
     })
     try {
-      const response = await fixture.postJson('/v1/sessions/archive-abandoned', {})
-      const body = await response.json()
+      const result = archiveIdleSessions(server as unknown as HrcServerInstanceForHandlers, 7)
+      const body = result
       expect(body.archived).toBe(1)
       expect(body.skippedPrimary).toBe(1)
       expect(body.skippedNoContinuation).toBe(1)
@@ -374,8 +373,8 @@ describe('T-07575 session retention', () => {
       try {
         expect((await listSessions(fixture)).ids).toEqual(['hsid-parked'])
 
-        const response = await fixture.postJson('/v1/sessions/archive-abandoned', {})
-        expect((await response.json()).archived).toBe(0)
+        const result = archiveIdleSessions(server as unknown as HrcServerInstanceForHandlers, 7)
+        expect(result.archived).toBe(0)
         withDb(fixture, (db) => {
           expect(db.sessions.getByHostSessionId('hsid-parked')?.status).toBe('active')
         })
@@ -400,8 +399,8 @@ describe('T-07575 session retention', () => {
     })
     try {
       expect((await listSessions(fixture)).ids).toEqual(['hsid-midturn'])
-      const response = await fixture.postJson('/v1/sessions/archive-abandoned', {})
-      expect((await response.json()).archived).toBe(0)
+      const result = archiveIdleSessions(server as unknown as HrcServerInstanceForHandlers, 7)
+      expect(result.archived).toBe(0)
     } finally {
       await server.stop()
     }

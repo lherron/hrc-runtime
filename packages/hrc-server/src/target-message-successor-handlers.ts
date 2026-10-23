@@ -128,66 +128,6 @@ export async function handleGetTarget(
   return json(await toTargetViewWithArtifactProbe(this.db, session, 'scan'))
 }
 
-export async function handleCreateSessionSuccessor(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = await parseJsonBody(request)
-  if (!isObjectRecord(body)) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
-  }
-
-  const sessionRef = body['sessionRef']
-  if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'sessionRef is required', {
-      field: 'sessionRef',
-    })
-  }
-
-  const priorHostSessionId = body['priorHostSessionId']
-  if (priorHostSessionId !== undefined && typeof priorHostSessionId !== 'string') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'priorHostSessionId must be a string',
-      {
-        field: 'priorHostSessionId',
-      }
-    )
-  }
-
-  const prior =
-    priorHostSessionId !== undefined
-      ? requireSession(this.db, priorHostSessionId)
-      : findTargetSession(this.db, sessionRef)
-  if (!prior) {
-    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
-      sessionRef,
-    })
-  }
-  if (!prior.continuation?.key) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'session has no continuation to resume',
-      { hostSessionId: prior.hostSessionId }
-    )
-  }
-
-  // Raw successor mint (POST /v1/sessions/create-successor) — a summon path in
-  // its own right, not reachable through ensureTargetSession.
-  const successor = await createNotifiedSessionSuccessor(this, prior, undefined)
-
-  return json({
-    hostSessionId: successor.hostSessionId,
-    status: successor.status,
-    generation: successor.generation,
-    priorHostSessionId: successor.priorHostSessionId,
-    continuation: successor.continuation,
-    scopeRef: successor.scopeRef,
-    laneRef: successor.laneRef,
-    session: successor,
-  })
-}
-
 /**
  * T-07899 — `POST /v1/sessions/resume-continuation`.
  *
@@ -280,33 +220,6 @@ export async function handleResumeContinuation(
   })
 }
 
-export async function handleArchiveAbandonedSessions(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = await parseJsonBody(request)
-  if (!isObjectRecord(body)) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
-  }
-
-  const rawIdleThresholdDays = body['idleThresholdDays']
-  const idleThresholdDays =
-    rawIdleThresholdDays === undefined
-      ? 7
-      : typeof rawIdleThresholdDays === 'number' && Number.isFinite(rawIdleThresholdDays)
-        ? rawIdleThresholdDays
-        : undefined
-  if (idleThresholdDays === undefined || idleThresholdDays < 0) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'idleThresholdDays must be a non-negative number',
-      { field: 'idleThresholdDays' }
-    )
-  }
-
-  return json({ ...archiveIdleSessions(this, idleThresholdDays), idleThresholdDays })
-}
-
 export type ArchiveIdleSessionsResult = {
   archived: number
   skippedPrimary: number
@@ -316,9 +229,7 @@ export type ArchiveIdleSessionsResult = {
 }
 
 /**
- * T-07575 — the idle-archive pass, callable without an HTTP request so the
- * recurring sweep and `POST /v1/sessions/archive-abandoned` run exactly the
- * same code.
+ * T-07575 — the idle-archive pass used by the recurring retention sweep.
  *
  * This writes `sessions.status` and nothing else. It never deletes a row and
  * never touches `continuation_json` — Lance's binding condition on the

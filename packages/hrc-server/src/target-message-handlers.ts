@@ -11,8 +11,6 @@ import {
   persistAndDeliverSemanticTurnHandoff,
 } from './target-message-handoff-handlers.js'
 import {
-  handleArchiveAbandonedSessions,
-  handleCreateSessionSuccessor,
   handleGetTarget,
   handleListTargets,
   handleResumeContinuation,
@@ -28,9 +26,7 @@ export { completeDirectiveOnlyIntent } from './target-message-dm-handlers.js'
 export {
   handleListTargets,
   handleGetTarget,
-  handleCreateSessionSuccessor,
   handleResumeContinuation,
-  handleArchiveAbandonedSessions,
   handleQueryMessages,
   handleTraceMessage,
   handleSemanticTurnHandoff,
@@ -44,9 +40,7 @@ export {
 export const targetMessageHandlersMethods = {
   handleListTargets,
   handleGetTarget,
-  handleCreateSessionSuccessor,
   handleResumeContinuation,
-  handleArchiveAbandonedSessions,
   handleQueryMessages,
   handleTraceMessage,
   handleSemanticTurnHandoff,

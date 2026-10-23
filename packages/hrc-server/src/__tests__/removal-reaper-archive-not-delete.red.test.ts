@@ -1,28 +1,7 @@
 /**
- * RED tests (T-04831 / parent T-04827 GROUP 3) — removal and GC reaper
- * must archive sessions, not orphan continuity.
- *
- * Architecture: daedalus-cleared (T-04827).
- *
- * [RED 3d] GC reaper: archives abandoned-active sessions (no live runtime, idle)
- *   POST /v1/sessions/archive-abandoned must archive host sessions whose
- *   runtime is terminal and idle >= threshold, skipping primary-scope sessions.
- *   Currently fails with HTTP 404 (endpoint does not exist).
- *
- * [RED 3e] GC reaper MUST NOT drop continuation
- *   A reaped session's continuation_json must be preserved unchanged.  Archiving
- *   only delists; it must never delete JSONL/continuation.
- *   Currently RED because the endpoint does not exist.
- *
- * [RED 3f] Reaped session returns 'dormant' from target view
- *   After reaping, GET /v1/targets/by-session-ref must return state:'dormant'
- *   (continuation intact + artifact present/unknown).
- *   Currently RED because the endpoint does not exist AND toTargetState bug.
- *
- * RED at HEAD:
- *   3d — POST /v1/sessions/archive-abandoned → 404
- *   3e — endpoint missing, would fail if it existed (no reaper yet)
- *   3f — endpoint missing + toTargetState bug
+ * Retention regression coverage (T-04831, T-07575, T-11569).
+ * The internal sweep archives idle non-primary sessions without deleting rows
+ * or continuations. Reaped sessions remain dormant and resumable in target views.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
@@ -32,6 +11,8 @@ import type { HrcTargetView } from 'hrc-core'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
+import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
+import { archiveIdleSessions } from '../target-message-handlers.js'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture, ResolveSessionResult } from './fixtures/hrc-test-fixture'
 
@@ -104,32 +85,11 @@ async function getTargetByRef(sessionRef: string): Promise<{ status: number; bod
   return { status: res.status, body: await res.json() }
 }
 
-async function safePostJson(
-  path: string,
-  body: Record<string, unknown>
-): Promise<{
-  status: number
-  body: Record<string, unknown>
-}> {
-  const res = await fixture.postJson(path, body)
-  const text = await res.text()
-  let parsed: Record<string, unknown>
-  try {
-    parsed = JSON.parse(text) as Record<string, unknown>
-  } catch {
-    parsed = { _raw: text, _parseError: true }
-  }
-  return { status: res.status, body: parsed }
+function archiveAbandoned(idleThresholdDays = 7) {
+  return archiveIdleSessions(server as unknown as HrcServerInstanceForHandlers, idleThresholdDays)
 }
 
-async function postArchiveAbandoned(body: Record<string, unknown> = {}): Promise<{
-  status: number
-  body: Record<string, unknown>
-}> {
-  return safePostJson('/v1/sessions/archive-abandoned', body)
-}
-
-describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary sessions', () => {
+describe('[RED 3d] Internal retention sweep archives idle non-primary sessions', () => {
   const scopeRef = `${SCOPE_PREFIX}:task:reap-target`
   let resolved: ResolveSessionResult
 
@@ -162,18 +122,15 @@ describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary
     ageSession(resolved.hostSessionId, pastDate)
   })
 
-  it('archive-abandoned endpoint returns HTTP 200 (not 404)', async () => {
-    const { status } = await postArchiveAbandoned({ idleThresholdDays: 7 })
-    // RED: currently 404 (endpoint does not exist)
-    expect(status).toBe(200)
+  it('the retention sweep reports the archived row', () => {
+    expect(archiveAbandoned(7).archived).toBe(1)
   })
 
   it('archives sessions with terminal runtime idle >= threshold', async () => {
-    await postArchiveAbandoned({ idleThresholdDays: 7 })
+    archiveAbandoned(7)
     const db = openHrcDatabase(fixture.dbPath)
     try {
       const session = db.sessions.getByHostSessionId(resolved.hostSessionId)
-      // RED: endpoint doesn't exist, session stays 'active'
       expect(session?.status).toBe('archived')
     } finally {
       db.close()
@@ -235,7 +192,7 @@ describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary
     ageSession(primaryResolved.hostSessionId, pastDate)
     ageSession(nonPrimaryResolved.hostSessionId, pastDate)
 
-    await postArchiveAbandoned({ idleThresholdDays: 7 })
+    archiveAbandoned(7)
 
     const verifyDb = openHrcDatabase(fixture.dbPath)
     try {
@@ -248,7 +205,6 @@ describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary
       expect(nonPrimarySession?.status).toBe('archived')
 
       const primarySession = verifyDb.sessions.getByHostSessionId(primaryResolved.hostSessionId)
-      // RED: current isPrimaryScopeRef = !scopeRef.includes(':task:') returns FALSE
       // for ':task:primary' — so the reaper archives it wrongly. This assertion FAILS.
       expect(primarySession?.status).toBe('active')
     } finally {
@@ -291,11 +247,10 @@ describe('[RED 3e] archive-abandoned must not delete/null continuation', () => {
   })
 
   it('continuation is preserved after reaping (archiving is a view filter not deletion)', async () => {
-    await postArchiveAbandoned({ idleThresholdDays: 7 })
+    archiveAbandoned(7)
     const db = openHrcDatabase(fixture.dbPath)
     try {
       const session = db.sessions.getByHostSessionId(resolved.hostSessionId)
-      // RED: endpoint doesn't exist + must not drop continuation
       expect(session?.continuation).toBeDefined()
       expect(session?.continuation?.key).toBe(CONTINUATION_KEY)
     } finally {
@@ -340,12 +295,11 @@ describe('[RED 3f] reaped session returns dormant from target view', () => {
   })
 
   it('reaped session has state dormant in target view (continuation intact, resumable)', async () => {
-    await postArchiveAbandoned({ idleThresholdDays: 7 })
+    archiveAbandoned(7)
 
     const { status, body } = await getTargetByRef(sessionRef)
     expect(status).toBe(200)
     const view = body as HrcTargetView
-    // RED: endpoint doesn't exist + toTargetState bug (returns 'broken' for archived)
     expect(view.state).toBe('dormant')
     expect(view.continuation?.key).toBe(CONTINUATION_KEY)
   })

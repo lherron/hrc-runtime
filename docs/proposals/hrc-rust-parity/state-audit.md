@@ -32,7 +32,7 @@ Every HTTP route below currently resolves to Bun. “Passive candidate” means 
 | Broker events/query/follow/forensics and input/contribution observations | `event-handlers.ts`, `input-handlers.ts::{handleGetInput,handleWatchInput}`, submission handlers | Raw broker subscriber stream is separate from lifecycle follow. Input watch uses `followSubscribers`, live/replay high-water and stream closers; single input lookup is a store read. Contributions and input receipts correlate with admission. Native gap includes both retained and live observations. |
 | Message query/trace/create/dm/turn-handoff/wait/watch; target ensure and selector delivery | `target-message-{dm,handoff}-handlers.ts`, `selector-message-handlers.ts`, `selector-wait-handlers.ts`, `event-notification-handlers.ts` | Query/trace may use collective history, not only local rows. DM executes admitted turns, can rotate/reprovision/reattach. Handoff and terminal processing share `turnResponseFinalizers`. Wait/watch use `messageSubscribers`, timeout and stream lifecycle. S2 is not an isolated message-store port. |
 | Runtime ensure/start/attach/inspect, broker-session open, runtime seat, capture and capture control/recovery | `runtime-start-handlers.ts`, `broker-{headless,interactive}-handlers.ts`, `runtime-io-handlers.ts`, `runtime-inspect-handlers.ts` | Starts share `runtimeStartOperations`, attach/reattach maps, first-turn rendezvous and broker warmup. `captureRuntime` inspects tmux and **writes runtime activity**; inspect can seat-probe and recover retained evidence. Attach reconciles. S1 capture cannot be classified as passive. |
-| Session clear-context/restart/drop/resume/create-successor/archive; interrupt/terminate/restart-self | `session-restart.ts::handleRestartSession`, `runtime-control-handlers/`, `self-restart.ts` | Idle authority is broker seat, including human turns with no HRC run. Restart probes, disposes/rotates and launches; committed rotation with failed launch remains success receipt. Self-restart intents fire on terminal events. State transfer belongs with execution. |
+| Session clear-context/restart/drop/resume; interrupt/terminate/restart-self | `session-restart.ts::handleRestartSession`, `runtime-control-handlers/`, `self-restart.ts` | Idle authority is broker seat, including human turns with no HRC run. Restart probes, disposes/rotates and launches; committed rotation with failed launch remains success receipt. Self-restart intents fire on terminal events. State transfer belongs with execution. |
 | Turns, submissions steer/enqueue/invoke/preempt/admission/withdraw, in-flight input, contributions, command-run launch, attached-run prepare/resume | `turn-admission/routes/`, `turn-dispatch-handlers.ts`, `broker/submission-doors.ts`, `server-instance-context.ts` | Admission gate, pending literal inputs, attached operations, durable queue drains, runtime-start singleflight and controller dispatch all interact. Includes participant routes, accepted-run recovery and request cancellation. No native implementation. |
 | Sweep/prune/reconcile/recover, kill broker leases, capture recover | `sweep-handlers.ts`, `runtime-prune-handlers.ts`, startup reconciliation | Actuate across sessions/runs/runtime/broker state and filesystem substrates. Lease GC also runs retained-evidence recovery. Moving a route without the background and startup equivalents leaves duplicate authority. |
 | Registrations/participants attach/register and registration GC | `participant-registration-handlers.ts`, `external-registration-rendezvous.ts`, `index.ts` | External clients, registration/establishment/participant-operation maps, deferred rendezvous and staged broker activation belong with attach/replay and external lifecycle owner semantics. Missing from provisional named slices; must be explicit parity scope. |
@@ -173,12 +173,9 @@ GET /v1/bridges
 POST /v1/interrupt
 POST /v1/terminate
 POST /v1/clear-context
-POST /v1/sessions/clear-context
 POST /v1/sessions/restart
 POST /v1/sessions/drop-continuation
-POST /v1/sessions/create-successor
 POST /v1/sessions/resume-continuation
-POST /v1/sessions/archive-abandoned
 POST /v1/internal/hooks/ingest
 GET /v1/runtime-diagnostics
 POST /v1/presentation/seats/read

@@ -3805,39 +3805,6 @@
       "state": "GAP",
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
     },
-    "public:POST:/v1/sessions/archive-abandoned": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/sessions/clear-context": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/sessions/create-successor": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
     "public:POST:/v1/sessions/drop-continuation": {
       "downstreamOwner": "T-11530",
       "variants": [
