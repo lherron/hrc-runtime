@@ -25,5 +25,8 @@ with tempfile.TemporaryDirectory(prefix='hrcp1-serialization-',dir='/tmp') as ro
     native=run_evidence([a.binary,'serialization-observe','--db',str(pathlib.Path(root)/'state.sqlite')],'native-read.json',{**os.environ,'PATH':'/usr/bin:/bin','HRC_SOCKET_PATH':str(pathlib.Path(root)/'absent.sock')})
     control=run_evidence(oracle+['serialization-observe'],'bun-read.json')
     assert native==control,'Bun/native passive page, broker rehydration or lifecycle hydration differ'
-    assert native['page']['rows'][-1]['payload']['result']['content'][0]['text'].encode('utf-16-le','surrogatepass')[8190:8192]==bytes([0x3e,0xd8])
+    excerpt=native['page']['rows'][-1]['payload']['result']['content'][0]['text']
+    head=excerpt.split('\n…[',1)[0]
+    assert len(head.encode('utf-16-le','surrogatepass'))//2==4095
+    assert not 0xd800<=int.from_bytes(head.encode('utf-16-le','surrogatepass')[-2:],'little')<=0xdbff
     assert native['hydrated']['payload']['result']=='X'+'🫠'*20000

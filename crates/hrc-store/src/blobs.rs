@@ -240,8 +240,24 @@ fn truncate_utf8(s: &JsString, max: usize) -> JsString {
 pub(crate) fn spill_stub(result: &Value, descriptor: &SpillDescriptor) -> Value {
     let body = result_body(result);
     let units = body.utf16().len();
-    let head = body.slice(0, 4096);
-    let tail = body.slice(units.saturating_sub(1024), 1024);
+    // Qualified Bun baseline eb739105: move only a valid-pair cut inward.
+    // Genuine lone units and already-preserved historical excerpts stay exact.
+    let splits_pair = |index: usize| {
+        index > 0
+            && index < units
+            && (0xd800..=0xdbff).contains(&body.utf16()[index - 1])
+            && (0xdc00..=0xdfff).contains(&body.utf16()[index])
+    };
+    let mut head_end = units.min(4096);
+    let mut tail_start = units.saturating_sub(1024);
+    if splits_pair(head_end) {
+        head_end -= 1;
+    }
+    if splits_pair(tail_start) {
+        tail_start += 1;
+    }
+    let head = body.slice(0, head_end);
+    let tail = body.slice(tail_start, units - tail_start);
     let mut details = serde_json::Map::new();
     for key in [
         "exitCode",

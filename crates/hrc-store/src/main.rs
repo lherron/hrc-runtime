@@ -64,6 +64,8 @@ fn run() -> Result<serde_json::Value, StoreError> {
                 || command == "index-contract"
                 || command == "serialization-contract"
                 || command == "json-depth-contract"
+                || command == "spill-pair-contract"
+                || command == "spill-history-reappend"
                 || command == "replication-contract"
                 || command == "outbox-contract"
                 || command == "collective-contract"
@@ -122,6 +124,9 @@ fn run() -> Result<serde_json::Value, StoreError> {
         "edges-contract"=>edges_contract(store),
         "serialization-contract"=>serialization_contract(store),
         "json-depth-contract"=>json_depth_contract(store),
+        "spill-pair-contract"=>spill_pair_contract(store),
+        "spill-history-reappend"=>spill_history_reappend(store),
+        "spill-pair-observe"=>spill_pair_observe(store),
         "json-depth-observe"=>json_depth_observe(store),
         "replication-contract"=>replication_contract(store),
         "outbox-contract"=>outbox_contract(store),
@@ -901,6 +906,7 @@ fn transcript_contract(mut store: Store) -> Result<serde_json::Value, StoreError
 
 fn execution_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
     use hrc_store::*;
+    let mut observations = Vec::new();
     let existing = store
         .read_snapshot(|tx| tx.run_by_id("p1-run"))?
         .ok_or_else(|| StoreError::MissingRecord("oracle run".into()))?;
@@ -913,24 +919,32 @@ fn execution_contract(mut store: Store) -> Result<serde_json::Value, StoreError>
         host_session_id: "p1-host".into(),
         generation: 1,
     };
-    if store
-        .write(|tx| tx.assert_can_create_run("p1-app", &writer))
-        .is_ok()
+    if traced_execution_write(&mut store, &mut observations, "execution-step-1",
+serde_json::json!({"runId":"p1-app","tokenPresented":false,"writer":{"runtimeId":"p1-runtime","operationId":"p1-op","hostSessionId":"p1-host","generation":1}}), |tx| {
+        tx.assert_can_create_run("p1-app", &writer)
+    })
+    .is_ok()
     {
         return Err(StoreError::Invalid("reservation token bypassed".into()));
     }
-    let attempt = store.write::<()>(|tx| {
-        tx.with_run_token("p1-app", "secret", |tx| {
-            tx.assert_can_create_run(
-                "p1-app",
-                &RunWriter {
-                    runtime_id: Some("rolled-back-runtime".into()),
-                    ..writer.clone()
-                },
-            )?;
-            Err(StoreError::Invalid("rollback reserved binding".into()))
-        })
-    });
+    let attempt = traced_execution_write::<()>(
+        &mut store,
+        &mut observations,
+        "execution-step-2",
+        serde_json::json!({"runId":"p1-app","tokenPresented":true,"writer":{"runtimeId":"rolled-back-runtime","operationId":"p1-op","hostSessionId":"p1-host","generation":1},"forceOuterRollback":true}),
+        |tx| {
+            tx.with_run_token("p1-app", "secret", |tx| {
+                tx.assert_can_create_run(
+                    "p1-app",
+                    &RunWriter {
+                        runtime_id: Some("rolled-back-runtime".into()),
+                        ..writer.clone()
+                    },
+                )?;
+                Err(StoreError::Invalid("rollback reserved binding".into()))
+            })
+        },
+    );
     if attempt.is_ok() {
         return Err(StoreError::Invalid(
             "reservation rollback control did not fail".into(),
@@ -940,31 +954,46 @@ fn execution_contract(mut store: Store) -> Result<serde_json::Value, StoreError>
     app.run_id = "p1-app".into();
     app.scope_ref = "app:p1-fixture".into();
     app.operation_id = writer.operation_id.clone();
-    store.write(|tx| tx.with_run_token("p1-app", "secret", |tx| tx.insert_run(&app)))?;
-    if store
-        .write(|tx| {
-            tx.assert_can_name_active_run(
-                Some("p1-app"),
-                &RunWriter {
-                    generation: 2,
-                    ..writer.clone()
-                },
-            )
-        })
-        .is_ok()
+    traced_execution_write(
+        &mut store,
+        &mut observations,
+        "execution-step-3",
+        serde_json::json!({"run":app,"tokenPresented":true}),
+        |tx| tx.with_run_token("p1-app", "secret", |tx| tx.insert_run(&app)),
+    )?;
+    if traced_execution_write(&mut store, &mut observations, "execution-step-4",
+serde_json::json!({"runId":"p1-app","writer":{"runtimeId":"p1-runtime","operationId":"p1-op","hostSessionId":"p1-host","generation":2}}), |tx| {
+        tx.assert_can_name_active_run(
+            Some("p1-app"),
+            &RunWriter {
+                generation: 2,
+                ..writer.clone()
+            },
+        )
+    })
+    .is_ok()
     {
         return Err(StoreError::Invalid(
             "sealed tuple generation bypassed".into(),
         ));
     }
-    if store
-        .write(|tx| tx.assert_contribution_may_name_run("p1-app"))
-        .is_ok()
+    if traced_execution_write(
+        &mut store,
+        &mut observations,
+        "execution-step-5",
+        serde_json::json!({"runId":"p1-app"}),
+        |tx| tx.assert_contribution_may_name_run("p1-app"),
+    )
+    .is_ok()
     {
         return Err(StoreError::Invalid("contribution app run bypassed".into()));
     }
-    let updated = store
-        .write(|tx| {
+    let updated = traced_execution_write(
+        &mut store,
+        &mut observations,
+        "execution-step-6",
+        serde_json::json!({"runId":"p1-run","patch":{"status":"running","startedAt":"late"}}),
+        |tx| {
             tx.update_run(
                 "p1-run",
                 &RunPatch {
@@ -973,16 +1002,18 @@ fn execution_contract(mut store: Store) -> Result<serde_json::Value, StoreError>
                     ..Default::default()
                 },
             )
-        })?
-        .value
-        .ok_or_else(|| StoreError::MissingRecord("run".into()))?;
+        },
+    )?
+    .value
+    .ok_or_else(|| StoreError::MissingRecord("run".into()))?;
     if updated.status != "completed" || updated.started_at.is_some() {
         return Err(StoreError::Invalid(
             "terminal run resurrected implicitly".into(),
         ));
     }
-    let resurrected = store
-        .write(|tx| {
+    let resurrected =
+        traced_execution_write(&mut store, &mut observations, "execution-step-7",
+serde_json::json!({"runId":"p1-run","patch":{"status":"running","completedAt":{"patch":"Clear"}}}), |tx| {
             tx.update_run(
                 "p1-run",
                 &RunPatch {
@@ -997,11 +1028,22 @@ fn execution_contract(mut store: Store) -> Result<serde_json::Value, StoreError>
     if resurrected.status != "running" || resurrected.completed_at.is_some() {
         return Err(StoreError::Invalid("explicit resurrection refused".into()));
     }
-    store.write(|tx| tx.update_runtime_status("p1-runtime", "ready", "2026-10-23T01:00:00Z"))?;
-    let unchanged = store
-        .write(|tx| tx.update_runtime_status("p1-runtime", "ready", "2026-10-23T02:00:00Z"))?
-        .value
-        .ok_or_else(|| StoreError::MissingRecord("runtime".into()))?;
+    traced_execution_write(
+        &mut store,
+        &mut observations,
+        "execution-step-8",
+        serde_json::json!({"runtimeId":"p1-runtime","status":"ready","at":"2026-10-23T01:00:00Z"}),
+        |tx| tx.update_runtime_status("p1-runtime", "ready", "2026-10-23T01:00:00Z"),
+    )?;
+    let unchanged = traced_execution_write(
+        &mut store,
+        &mut observations,
+        "execution-step-9",
+        serde_json::json!({"runtimeId":"p1-runtime","status":"ready","at":"2026-10-23T02:00:00Z"}),
+        |tx| tx.update_runtime_status("p1-runtime", "ready", "2026-10-23T02:00:00Z"),
+    )?
+    .value
+    .ok_or_else(|| StoreError::MissingRecord("runtime".into()))?;
     if unchanged.status_changed_at != "2026-10-23T01:00:00Z" {
         return Err(StoreError::Invalid(
             "status timestamp moved on no-op".into(),
@@ -1014,11 +1056,22 @@ fn execution_contract(mut store: Store) -> Result<serde_json::Value, StoreError>
         run.completed_at = None;
         run.runtime_id = None;
         run.queued_input_seq = Some(n);
-        store.write(|tx| tx.insert_run(&run))?;
+        traced_execution_write(
+            &mut store,
+            &mut observations,
+            "execution-step-10",
+            serde_json::json!({"run":run}),
+            |tx| tx.insert_run(&run),
+        )?;
     }
-    let snapshot = store
-        .write(|tx| tx.snapshot_queued_by_host("p1-host", "p1-snapshot", "now"))?
-        .value;
+    let snapshot = traced_execution_write(
+        &mut store,
+        &mut observations,
+        "execution-step-11",
+        serde_json::json!({"hostSessionId":"p1-host","snapshotId":"p1-snapshot","at":"now"}),
+        |tx| tx.snapshot_queued_by_host("p1-host", "p1-snapshot", "now"),
+    )?
+    .value;
     if snapshot.len() != 3
         || snapshot
             .iter()
@@ -1030,29 +1083,47 @@ fn execution_contract(mut store: Store) -> Result<serde_json::Value, StoreError>
             "queue snapshot ordering differs".into(),
         ));
     }
-    if !store
-        .write(|tx| {
-            tx.claim_queued_run(
-                "p1-queued-0",
-                Some("p1-runtime"),
-                None,
-                None,
-                Some("p1-input"),
-                "now",
-            )
+    if !traced_execution_write(&mut store, &mut observations, "execution-step-12",
+serde_json::json!({"runId":"p1-queued-0","runtimeId":"p1-runtime","operationId":null,"invocationId":null,"inputId":"p1-input","at":"now"}), |tx| {
+        tx.claim_queued_run(
+            "p1-queued-0",
+            Some("p1-runtime"),
+            None,
+            None,
+            Some("p1-input"),
+            "now",
+        )
+    })?
+    .value
+        || traced_execution_write(&mut store, &mut observations, "execution-step-13",
+serde_json::json!({"runId":"p1-queued-0","runtimeId":"p1-runtime","operationId":null,"invocationId":null,"inputId":null,"at":"now"}), |tx| {
+            tx.claim_queued_run("p1-queued-0", Some("p1-runtime"), None, None, None, "now")
         })?
         .value
-        || store
-            .write(|tx| {
-                tx.claim_queued_run("p1-queued-0", Some("p1-runtime"), None, None, None, "now")
-            })?
-            .value
     {
         return Err(StoreError::Invalid("queue claim not atomic".into()));
     }
-    store.write(|tx| tx.mark_queued_coalesced("p1-queued-1", "p1-queued-0", 1, "now", "now"))?;
-    store.write(|tx| tx.set_run_correlation_json("p1-run", Some("{\"attemptRef\":\"one\"}")))?;
-    store.write(|tx| tx.set_run_correlation_json("p1-run", Some("{\"attemptRef\":\"two\"}")))?;
+    traced_execution_write(
+        &mut store,
+        &mut observations,
+        "execution-step-14",
+        serde_json::json!({"runId":"p1-queued-1","intoRunId":"p1-queued-0","position":1,"at":"now","completedAt":"now"}),
+        |tx| tx.mark_queued_coalesced("p1-queued-1", "p1-queued-0", 1, "now", "now"),
+    )?;
+    traced_execution_write(
+        &mut store,
+        &mut observations,
+        "execution-step-15",
+        serde_json::json!({"runId":"p1-run","correlationJson":"{\"attemptRef\":\"one\"}"}),
+        |tx| tx.set_run_correlation_json("p1-run", Some("{\"attemptRef\":\"one\"}")),
+    )?;
+    traced_execution_write(
+        &mut store,
+        &mut observations,
+        "execution-step-16",
+        serde_json::json!({"runId":"p1-run","correlationJson":"{\"attemptRef\":\"two\"}"}),
+        |tx| tx.set_run_correlation_json("p1-run", Some("{\"attemptRef\":\"two\"}")),
+    )?;
     if store.read_snapshot(|tx| tx.run_correlation_json("p1-run"))?
         != Some("{\"attemptRef\":\"two\"}".into())
     {
@@ -1069,7 +1140,14 @@ fn execution_contract(mut store: Store) -> Result<serde_json::Value, StoreError>
             })
         })?
         .len();
-    if store.write(|tx| tx.insert_run(&bad)).is_ok()
+    if traced_execution_write(
+        &mut store,
+        &mut observations,
+        "execution-step-17",
+        serde_json::json!({"run":bad}),
+        |tx| tx.insert_run(&bad),
+    )
+    .is_ok()
         || store
             .read_snapshot(|tx| {
                 tx.list_runs(&RunFilters {
@@ -1083,7 +1161,7 @@ fn execution_contract(mut store: Store) -> Result<serde_json::Value, StoreError>
         return Err(StoreError::Invalid("foreign key partial effect".into()));
     }
     Ok(
-        serde_json::json!({"reservationTuple":true,"reservationRollback":true,"terminalMonotonicity":true,"explicitResurrection":true,"runtimeStatusTimestamp":true,"queueSnapshotClaim":true,"correlationWholeDocument":true,"foreignKeyRollback":true}),
+        serde_json::json!({"observations":observations,"reservationTokenHeld":store.run_reservation_for("p1-app").is_some(),"reservationTuple":true,"reservationRollback":true,"terminalMonotonicity":true,"explicitResurrection":true,"runtimeStatusTimestamp":true,"queueSnapshotClaim":true,"correlationWholeDocument":true,"foreignKeyRollback":true}),
     )
 }
 
@@ -1540,6 +1618,7 @@ fn recovery_contract(mut store: Store) -> Result<serde_json::Value, StoreError> 
 }
 fn grants_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
     use hrc_store::*;
+    let mut observations = Vec::new();
     use serde_json::json;
     let at = "2026-10-23T00:00:00.000Z";
     let expired = "2026-10-23T01:00:00.000Z";
@@ -1555,17 +1634,27 @@ fn grants_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
         created_at: at.into(),
         ..Default::default()
     };
-    let issued = store
-        .write(|tx| tx.issue_registration_grant(&grant, 1, at))?
-        .value;
+    let issued = traced_grant_write(
+        &mut store,
+        &mut observations,
+        "grant-step-1",
+        serde_json::json!({"grant":grant,"maxInstances":1,"now":at}),
+        |tx| tx.issue_registration_grant(&grant, 1, at),
+    )?
+    .value;
     let occupied_before =
         store.read_snapshot(|tx| tx.registration_capacity_occupants(&grant.class_id, at))?;
     let mut next = grant.clone();
     next.registration_id = "p1-grant-next".into();
     next.derived_scope = "external:p1-next".into();
-    let denied = store
-        .write(|tx| tx.issue_registration_grant(&next, 1, at))?
-        .value;
+    let denied = traced_grant_write(
+        &mut store,
+        &mut observations,
+        "grant-step-2",
+        serde_json::json!({"grant":next,"maxInstances":1,"now":at}),
+        |tx| tx.issue_registration_grant(&next, 1, at),
+    )?
+    .value;
     let mint = ExternalRegistrationMint {
         host_session_id: "p1-host".into(),
         runtime_id: "p1-runtime".into(),
@@ -1576,66 +1665,116 @@ fn grants_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
         capabilities: serde_json::Map::new(),
         participant_info: serde_json::Map::new(),
     };
-    let failed = store.write::<()>(|tx| {
-        tx.consume_registration_grant(&grant.registration_id, at)?;
-        tx.record_registration_mint(&grant.registration_id, &mint)?;
-        Err(StoreError::Invalid("deliberate mint rollback".into()))
-    });
+    let failed = traced_grant_write::<()>(
+        &mut store,
+        &mut observations,
+        "grant-step-3",
+        serde_json::json!({"registrationId":grant.registration_id,"mint":serde_json::json!({"hostSessionId":mint.host_session_id,"runtimeId":mint.runtime_id,"operationId":mint.operation_id,"invocationId":mint.invocation_id,"attachTokenRef":mint.attach_token_ref,"controllerInstanceId":mint.controller_instance_id,"capabilities":mint.capabilities,"participantInfo":mint.participant_info}),"now":at,"forceRollback":true}),
+        |tx| {
+            tx.consume_registration_grant(&grant.registration_id, at)?;
+            tx.record_registration_mint(&grant.registration_id, &mint)?;
+            Err(StoreError::Invalid("deliberate mint rollback".into()))
+        },
+    );
     if failed.is_ok() {
         return Err(StoreError::Invalid("mint rollback accepted".into()));
     }
     let rollback = store.read_snapshot(|tx| tx.registration_grant(&grant.registration_id))?;
-    store.write(|tx| {
-        if !tx.consume_registration_grant(&grant.registration_id, at)? {
-            return Err(StoreError::Invalid("fresh consume refused".into()));
-        }
-        tx.record_registration_mint(&grant.registration_id, &mint)
-    })?;
-    let consume_repeat = store
-        .write(|tx| tx.consume_registration_grant(&grant.registration_id, at))?
-        .value;
-    let mint_repeat = store.write(|tx| tx.record_registration_mint(&grant.registration_id, &mint));
+    traced_grant_write(
+        &mut store,
+        &mut observations,
+        "grant-step-4",
+        serde_json::json!({"registrationId":grant.registration_id,"mint":serde_json::json!({"hostSessionId":mint.host_session_id,"runtimeId":mint.runtime_id,"operationId":mint.operation_id,"invocationId":mint.invocation_id,"attachTokenRef":mint.attach_token_ref,"controllerInstanceId":mint.controller_instance_id,"capabilities":mint.capabilities,"participantInfo":mint.participant_info}),"now":at}),
+        |tx| {
+            if !tx.consume_registration_grant(&grant.registration_id, at)? {
+                return Err(StoreError::Invalid("fresh consume refused".into()));
+            }
+            tx.record_registration_mint(&grant.registration_id, &mint)
+        },
+    )?;
+    let consume_repeat = traced_grant_write(
+        &mut store,
+        &mut observations,
+        "grant-step-5",
+        serde_json::json!({"registrationId":grant.registration_id,"now":at}),
+        |tx| tx.consume_registration_grant(&grant.registration_id, at),
+    )?
+    .value;
+    let mint_repeat = traced_grant_write(
+        &mut store,
+        &mut observations,
+        "grant-step-6",
+        serde_json::json!({"registrationId":grant.registration_id,"mint":serde_json::json!({"hostSessionId":mint.host_session_id,"runtimeId":mint.runtime_id,"operationId":mint.operation_id,"invocationId":mint.invocation_id,"attachTokenRef":mint.attach_token_ref,"controllerInstanceId":mint.controller_instance_id,"capabilities":mint.capabilities,"participantInfo":mint.participant_info})}),
+        |tx| tx.record_registration_mint(&grant.registration_id, &mint),
+    );
     if mint_repeat.is_ok() {
         return Err(StoreError::Invalid("mint replay changed identity".into()));
     }
     let pending = store.read_snapshot(|tx| tx.grant_rendezvous_candidates(expired))?;
     let occupied_expired =
         store.read_snapshot(|tx| tx.registration_capacity_occupants(&grant.class_id, expired))?;
-    if !store
-        .write(|tx| tx.establish_registration_grant(&grant.registration_id, at))?
-        .value
+    if !traced_grant_write(
+        &mut store,
+        &mut observations,
+        "grant-step-7",
+        serde_json::json!({"registrationId":grant.registration_id,"at":at}),
+        |tx| tx.establish_registration_grant(&grant.registration_id, at),
+    )?
+    .value
     {
         return Err(StoreError::Invalid("pending establishment refused".into()));
     }
-    let establish_repeat = store
-        .write(|tx| tx.establish_registration_grant(&grant.registration_id, expired))?
-        .value;
+    let establish_repeat = traced_grant_write(
+        &mut store,
+        &mut observations,
+        "grant-step-8",
+        serde_json::json!({"registrationId":grant.registration_id,"at":expired}),
+        |tx| tx.establish_registration_grant(&grant.registration_id, expired),
+    )?
+    .value;
     let established = store.read_snapshot(|tx| tx.established_registration_grants())?;
-    let controller = store
-        .write(|tx| {
-            tx.update_registration_controller(&grant.registration_id, "p1-controller-next")
-        })?
-        .value;
-    store.write(|tx| tx.retire_registration_grant(&grant.registration_id, expired))?;
-    let retire_repeat = store
-        .write(|tx| tx.retire_registration_grant(&grant.registration_id, expired))?
-        .value;
+    let controller = traced_grant_write(&mut store, &mut observations, "grant-step-9",
+serde_json::json!({"registrationId":grant.registration_id,"controllerInstanceId":"p1-controller-next"}), |tx| {
+        tx.update_registration_controller(&grant.registration_id, "p1-controller-next")
+    })?
+    .value;
+    traced_grant_write(
+        &mut store,
+        &mut observations,
+        "grant-step-10",
+        serde_json::json!({"registrationId":grant.registration_id,"at":expired}),
+        |tx| tx.retire_registration_grant(&grant.registration_id, expired),
+    )?;
+    let retire_repeat = traced_grant_write(
+        &mut store,
+        &mut observations,
+        "grant-step-11",
+        serde_json::json!({"registrationId":grant.registration_id,"at":expired}),
+        |tx| tx.retire_registration_grant(&grant.registration_id, expired),
+    )?
+    .value;
     let occupied_retired =
         store.read_snapshot(|tx| tx.registration_capacity_occupants(&grant.class_id, expired))?;
     let minted = store.read_snapshot(|tx| tx.minted_registration_grants())?;
     let rendezvous = store.read_snapshot(|tx| tx.grant_rendezvous_candidates(expired))?;
     let retired = store.read_snapshot(|tx| tx.registration_grant(&grant.registration_id))?;
-    let next_issue = store
-        .write(|tx| tx.issue_registration_grant(&next, 1, expired))?
-        .value;
+    let next_issue = traced_grant_write(
+        &mut store,
+        &mut observations,
+        "grant-step-12",
+        serde_json::json!({"grant":next,"maxInstances":1,"now":expired}),
+        |tx| tx.issue_registration_grant(&next, 1, expired),
+    )?
+    .value;
     store.close()?;
     Ok(
-        json!({"issued":issued,"occupiedBefore":occupied_before,"denied":denied,"rollback":rollback,"consumeRepeat":consume_repeat,"pendingAfterExpiry":pending,"occupiedExpiredConsumed":occupied_expired,"establishRepeat":establish_repeat,"established":established,"controllerUpdated":controller,"retireRepeat":retire_repeat,"occupiedRetired":occupied_retired,"minted":minted,"retired":retired,"rendezvousAfterRetire":rendezvous,"nextIssue":next_issue}),
+        json!({"observations":observations,"issued":issued,"occupiedBefore":occupied_before,"denied":denied,"rollback":rollback,"consumeRepeat":consume_repeat,"pendingAfterExpiry":pending,"occupiedExpiredConsumed":occupied_expired,"establishRepeat":establish_repeat,"established":established,"controllerUpdated":controller,"retireRepeat":retire_repeat,"occupiedRetired":occupied_retired,"minted":minted,"retired":retired,"rendezvousAfterRetire":rendezvous,"nextIssue":next_issue}),
     )
 }
 fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
     use hrc_store::*;
     use serde_json::json;
+    let mut observations = Vec::new();
     let at = "2026-10-23T00:00:00.000Z";
     let registration = ParticipantRegistration {
         registration_id: "p1-registration".into(),
@@ -1696,15 +1835,20 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
         updated_at: at.into(),
         ..Default::default()
     };
-    store.write(|tx| {
-        tx.insert_participant_registration(&registration)?;
-        tx.insert_participant_reservation(&reservation)?;
-        tx.insert_participant_binding(&binding)?;
-        tx.insert_participant_attempt(&attempt)?;
-        Ok(())
-    })?;
-    let illegal = store
-        .write(|tx| {
+    traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-1",
+        serde_json::json!({"registration":registration,"reservation":reservation,"binding":binding,"attempt":attempt}),
+        |tx| {
+            tx.insert_participant_registration(&registration)?;
+            tx.insert_participant_reservation(&reservation)?;
+            tx.insert_participant_binding(&binding)?;
+            tx.insert_participant_attempt(&attempt)?;
+            Ok(())
+        },
+    )?;
+    let illegal = traced_participant_write(&mut store, &mut observations, "participant-step-2", serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"from":["REGISTERED"],"to":"ACTIVE","disposition":null}), |tx| {
             tx.transition_participant_attempt(
                 &attempt.attempt_id,
                 &["REGISTERED".into()],
@@ -1714,23 +1858,28 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
             )
         })?
         .value;
-    store.write(|tx| {
-        tx.transition_participant_attempt(
-            &attempt.attempt_id,
-            &["REGISTERED".into()],
-            "IDENTITY_MINTED",
-            at,
-            None,
-        )
-    })?;
+    traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-3",
+        serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"from":["REGISTERED"],"to":"IDENTITY_MINTED","disposition":null}),
+        |tx| {
+            tx.transition_participant_attempt(
+                &attempt.attempt_id,
+                &["REGISTERED".into()],
+                "IDENTITY_MINTED",
+                at,
+                None,
+            )
+        },
+    )?;
     let non_runnable = store.read_snapshot(|tx| tx.participant_establishment_work())?;
     let selection = ParticipantContinuationSelection {
         carried: false,
         reason: "participant_fresh".into(),
         selected_json: None,
     };
-    let selection_first = store
-        .write(|tx| {
+    let selection_first = traced_participant_write(&mut store, &mut observations, "participant-step-4", serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"selection":selection,"resumeState":"not_requested"}), |tx| {
             tx.record_participant_continuation_if_absent(
                 &attempt.attempt_id,
                 &selection,
@@ -1739,8 +1888,7 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
             )
         })?
         .value;
-    let selection_repeat = store
-        .write(|tx| {
+    let selection_repeat = traced_participant_write(&mut store, &mut observations, "participant-step-5", serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"selection":selection,"resumeState":"requested"}), |tx| {
             tx.record_participant_continuation_if_absent(
                 &attempt.attempt_id,
                 &selection,
@@ -1759,14 +1907,11 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
         resume_reason: None,
         updated_at: at.into(),
     };
-    let first = store
-        .write(|tx| tx.attach_participant_prepared_descriptor(&prepare))?
+    let first = traced_participant_write(&mut store, &mut observations, "participant-step-6", serde_json::json!({"attemptId":prepare.attempt_id,"attachEpoch":prepare.attach_epoch,"preparedDescriptorJson":prepare.prepared_descriptor_json,"adapterDispatchEnvJson":prepare.adapter_dispatch_env_json,"attachSocketPath":prepare.attach_socket_path,"resumeState":prepare.resume_state,"resumeReason":prepare.resume_reason,"updatedAt":prepare.updated_at}), |tx| tx.attach_participant_prepared_descriptor(&prepare))?
         .value;
-    let repeat = store
-        .write(|tx| tx.attach_participant_prepared_descriptor(&prepare))?
+    let repeat = traced_participant_write(&mut store, &mut observations, "participant-step-7", serde_json::json!({"attemptId":prepare.attempt_id,"attachEpoch":prepare.attach_epoch,"preparedDescriptorJson":prepare.prepared_descriptor_json,"adapterDispatchEnvJson":prepare.adapter_dispatch_env_json,"attachSocketPath":prepare.attach_socket_path,"resumeState":prepare.resume_state,"resumeReason":prepare.resume_reason,"updatedAt":prepare.updated_at}), |tx| tx.attach_participant_prepared_descriptor(&prepare))?
         .value;
-    let snapshot_first = store
-        .write(|tx| {
+    let snapshot_first = traced_participant_write(&mut store, &mut observations, "participant-step-8", serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"snapshot":"hostingIntent","value":"{}"}), |tx| {
             tx.set_participant_snapshot_if_absent(
                 &attempt.attempt_id,
                 ParticipantSnapshot::HostingIntent,
@@ -1775,8 +1920,7 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
             )
         })?
         .value;
-    let snapshot_repeat = store
-        .write(|tx| {
+    let snapshot_repeat = traced_participant_write(&mut store, &mut observations, "participant-step-9", serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"snapshot":"hostingIntent","value":"{\"different\":true}"}), |tx| {
             tx.set_participant_snapshot_if_absent(
                 &attempt.attempt_id,
                 ParticipantSnapshot::HostingIntent,
@@ -1793,8 +1937,7 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
         ("INSTALL_CONFIRMED", "INVOCATION_READY"),
         ("INVOCATION_READY", "ATTACH_CONFIRMED"),
     ] {
-        if !store
-            .write(|tx| {
+        if !traced_participant_write(&mut store, &mut observations, "participant-step-10", serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"from":[from],"to":to,"disposition":null}), |tx| {
                 tx.transition_participant_attempt(&attempt.attempt_id, &[from.into()], to, at, None)
             })?
             .value
@@ -1804,33 +1947,64 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
             )));
         }
     }
-    let activated = store
-        .write(|tx| tx.confirm_participant_initial_activation(&attempt.attempt_id, at))?
-        .value;
-    let activation_repeat = store
-        .write(|tx| tx.confirm_participant_initial_activation(&attempt.attempt_id, at))?
-        .value;
-    store.write(|tx| tx.complete_participant_establishment(&attempt.attempt_id, 1, at))?;
-    let reconnect_first = store
-        .write(|tx| tx.arm_participant_reconnect(&attempt.attempt_id, at))?
-        .value;
-    let reconnect_repeat = store
-        .write(|tx| tx.arm_participant_reconnect(&attempt.attempt_id, at))?
-        .value;
-    store.write(|tx| {
-        tx.transition_participant_attempt(
-            &attempt.attempt_id,
-            &["ACTIVE".into()],
-            "DETACHED",
-            at,
-            None,
-        )
-    })?;
+    let activated = traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-11",
+        serde_json::json!({"attemptId":attempt.attempt_id,"now":at}),
+        |tx| tx.confirm_participant_initial_activation(&attempt.attempt_id, at),
+    )?
+    .value;
+    let activation_repeat = traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-12",
+        serde_json::json!({"attemptId":attempt.attempt_id,"now":at}),
+        |tx| tx.confirm_participant_initial_activation(&attempt.attempt_id, at),
+    )?
+    .value;
+    traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-13",
+        serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"attachEpoch":1}),
+        |tx| tx.complete_participant_establishment(&attempt.attempt_id, 1, at),
+    )?;
+    let reconnect_first = traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-14",
+        serde_json::json!({"attemptId":attempt.attempt_id,"now":at}),
+        |tx| tx.arm_participant_reconnect(&attempt.attempt_id, at),
+    )?
+    .value;
+    let reconnect_repeat = traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-15",
+        serde_json::json!({"attemptId":attempt.attempt_id,"now":at}),
+        |tx| tx.arm_participant_reconnect(&attempt.attempt_id, at),
+    )?
+    .value;
+    traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-16",
+        serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"from":["ACTIVE"],"to":"DETACHED","disposition":null}),
+        |tx| {
+            tx.transition_participant_attempt(
+                &attempt.attempt_id,
+                &["ACTIVE".into()],
+                "DETACHED",
+                at,
+                None,
+            )
+        },
+    )?;
     let mut replacement_store = vec![];
     for intent in ["{}", "{}", "{\"other\":true}"] {
         replacement_store.push(
-            store
-                .write(|tx| {
+            traced_participant_write(&mut store, &mut observations, "participant-step-17", serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"attachEpoch":1,"intent":intent}), |tx| {
                     tx.store_participant_replacement_intent(&attempt.attempt_id, 1, intent, at)
                 })?
                 .value,
@@ -1844,15 +2018,24 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
         error: "controlled unreachable endpoint; no dial performed".into(),
         max_attempts: 2,
     };
-    store.write(|tx| tx.record_participant_establishment_failure(&failure))?;
-    let exhausted = store
-        .write(|tx| tx.record_participant_establishment_failure(&failure))?
+    traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-18",
+        serde_json::json!({"attemptId":failure.attempt_id,"attachEpoch":failure.attach_epoch,"failedAt":failure.failed_at,"nextAttemptAt":failure.next_attempt_at,"error":failure.error,"maxAttempts":failure.max_attempts}),
+        |tx| tx.record_participant_establishment_failure(&failure),
+    )?;
+    let exhausted = traced_participant_write(&mut store, &mut observations, "participant-step-19", serde_json::json!({"attemptId":failure.attempt_id,"attachEpoch":failure.attach_epoch,"failedAt":failure.failed_at,"nextAttemptAt":failure.next_attempt_at,"error":failure.error,"maxAttempts":failure.max_attempts}), |tx| tx.record_participant_establishment_failure(&failure))?
         .value;
-    let renew_empty = store
-        .write(|tx| tx.renew_exhausted_participant_replacement(&attempt.attempt_id, "  ", at))?
-        .value;
-    let renew_valid = store
-        .write(|tx| {
+    let renew_empty = traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-20",
+        serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"reason":"  "}),
+        |tx| tx.renew_exhausted_participant_replacement(&attempt.attempt_id, "  ", at),
+    )?
+    .value;
+    let renew_valid = traced_participant_write(&mut store, &mut observations, "participant-step-21", serde_json::json!({"attemptId":attempt.attempt_id,"now":at,"reason":"operator scratch recovery"}), |tx| {
             tx.renew_exhausted_participant_replacement(
                 &attempt.attempt_id,
                 "operator scratch recovery",
@@ -1868,21 +2051,24 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
         retirement_receipt_json: None,
         disposition_reason: None,
     };
-    store.write(|tx| tx.transition_participant_binding(&bound))?;
+    traced_participant_write(
+        &mut store,
+        &mut observations,
+        "participant-step-22",
+        serde_json::json!({"bindingId":bound.binding_id,"from":bound.from,"to":bound.to,"now":bound.now,"retirementReceiptJson":bound.retirement_receipt_json,"dispositionReason":bound.disposition_reason}),
+        |tx| tx.transition_participant_binding(&bound),
+    )?;
     let mut retire = bound.clone();
     retire.from = vec!["BOUND".into()];
     retire.to = "RETIRING".into();
-    let retire_without = store
-        .write(|tx| tx.transition_participant_binding(&retire))?
+    let retire_without = traced_participant_write(&mut store, &mut observations, "participant-step-23", serde_json::json!({"bindingId":retire.binding_id,"from":retire.from,"to":retire.to,"now":retire.now,"retirementReceiptJson":retire.retirement_receipt_json,"dispositionReason":retire.disposition_reason}), |tx| tx.transition_participant_binding(&retire))?
         .value;
     retire.retirement_receipt_json = Some("{\"evidence\":\"opaque-scratch-only\"}".into());
-    let retire_with = store
-        .write(|tx| tx.transition_participant_binding(&retire))?
+    let retire_with = traced_participant_write(&mut store, &mut observations, "participant-step-24", serde_json::json!({"bindingId":retire.binding_id,"from":retire.from,"to":retire.to,"now":retire.now,"retirementReceiptJson":retire.retirement_receipt_json,"dispositionReason":retire.disposition_reason}), |tx| tx.transition_participant_binding(&retire))?
         .value;
     let held =
         store.read_snapshot(|tx| tx.has_held_participant_reservation(&registration.scope_ref))?;
-    let release_first = store
-        .write(|tx| {
+    let release_first = traced_participant_write(&mut store, &mut observations, "participant-step-25", serde_json::json!({"reservationId":reservation.reservation_id,"releasedBy":"operator","reason":"explicit scratch release","now":at}), |tx| {
             tx.release_participant_reservation(
                 &reservation.reservation_id,
                 "operator",
@@ -1891,8 +2077,7 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
             )
         })?
         .value;
-    let release_repeat = store
-        .write(|tx| {
+    let release_repeat = traced_participant_write(&mut store, &mut observations, "participant-step-26", serde_json::json!({"reservationId":reservation.reservation_id,"releasedBy":"operator","reason":"explicit scratch release","now":at}), |tx| {
             tx.release_participant_reservation(
                 &reservation.reservation_id,
                 "operator",
@@ -1907,7 +2092,7 @@ fn participants_contract(mut store: Store) -> Result<serde_json::Value, StoreErr
         store.read_snapshot(|tx| tx.participant_registration(&registration.registration_id))?;
     store.close()?;
     Ok(
-        json!({"illegalJump":illegal,"nonRunnable":non_runnable,"prepareFirst":first,"prepareRepeat":repeat,"snapshotFirst":snapshot_first,"snapshotRepeat":snapshot_repeat,"selectionFirst":selection_first,"selectionRepeat":selection_repeat,"initialActivation":activated,"activationRepeat":activation_repeat,"reconnectFirst":reconnect_first,"reconnectRepeat":reconnect_repeat,"replacementStore":replacement_store,"exhausted":exhausted,"renewEmpty":renew_empty,"renewValid":renew_valid,"retireWithoutReceipt":retire_without,"retireWithReceipt":retire_with,"reservationStillHeld":held,"releaseFirst":release_first,"releaseRepeat":release_repeat,"attempt":final_attempt,"binding":final_binding,"registration":final_registration}),
+        json!({"observations":observations,"illegalJump":illegal,"nonRunnable":non_runnable,"prepareFirst":first,"prepareRepeat":repeat,"snapshotFirst":snapshot_first,"snapshotRepeat":snapshot_repeat,"selectionFirst":selection_first,"selectionRepeat":selection_repeat,"initialActivation":activated,"activationRepeat":activation_repeat,"reconnectFirst":reconnect_first,"reconnectRepeat":reconnect_repeat,"replacementStore":replacement_store,"exhausted":exhausted,"renewEmpty":renew_empty,"renewValid":renew_valid,"retireWithoutReceipt":retire_without,"retireWithReceipt":retire_with,"reservationStillHeld":held,"releaseFirst":release_first,"releaseRepeat":release_repeat,"attempt":final_attempt,"binding":final_binding,"registration":final_registration}),
     )
 }
 fn messages_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
@@ -4478,4 +4663,143 @@ fn json_depth_contract(mut store: Store) -> Result<serde_json::Value, StoreError
         store.write(|tx| tx.append_broker_event(&input))?;
     }
     json_depth_observe(store)
+}
+
+fn spill_pair_observe(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    let rows = store.read_snapshot(|tx| tx.broker_events_by_invocation("p1-pairs"))?;
+    store.close()?;
+    Ok(serde_json::json!({"events":rows}))
+}
+fn spill_pair_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let emoji = "🫠".repeat(20000);
+    let mut lone_head = vec![97; 35000];
+    lone_head[4095] = 0xd800;
+    let mut lone_tail = vec![97; 36024];
+    lone_tail[35000] = 0xdc00;
+    let bodies: Vec<JsString> = vec![
+        format!("X{emoji}").into(),
+        format!("{emoji}Z").into(),
+        format!("X{emoji}Z").into(),
+        emoji.into(),
+        JsString::from_utf16(lone_head),
+        JsString::from_utf16(lone_tail),
+    ];
+    for (i, body) in bodies.into_iter().enumerate() {
+        let input = BrokerEventAppend {
+            invocation_id: "p1-pairs".into(),
+            seq: i as i64 + 1,
+            time: "2026-10-23T00:00:00.000Z".into(),
+            r#type: "tool.call.completed".into(),
+            runtime_id: "p1-runtime".into(),
+            payload: serde_json::json!({"toolCallId":format!("pair-{i}"),"result":body}),
+            ..Default::default()
+        };
+        store.write(|tx| tx.append_broker_event(&input))?;
+        store.write(|tx| tx.append_broker_event(&input))?;
+    }
+    spill_pair_observe(store)
+}
+
+fn spill_history_reappend(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    let input = hrc_store::BrokerEventAppend {
+        invocation_id: "p1-json".into(),
+        seq: 2,
+        time: "2026-10-23T00:00:00.000Z".into(),
+        r#type: "tool.call.completed".into(),
+        runtime_id: "p1-runtime".into(),
+        payload: serde_json::json!({"toolCallId":"p1-tool","result":format!("X{}","🫠".repeat(20000))}),
+        ..Default::default()
+    };
+    let (record, idempotent) = store.write(|tx| tx.append_broker_event(&input))?.value;
+    store.close()?;
+    Ok(serde_json::json!({"record":record,"idempotent":idempotent}))
+}
+
+fn execution_storage_boundary(tx: &hrc_store::ReadTx<'_>) -> hrc_store::Result<serde_json::Value> {
+    Ok(
+        serde_json::json!({"correlation":tx.run_correlation_json("p1-run")?,"runs":tx.list_runs(&hrc_store::RunFilters{limit:Some(1000),..Default::default()})?,"runtime":tx.runtime_by_id("p1-runtime")?,"queue":tx.queued_runs_by_host("p1-host")?,"page":tx.lifecycle_events().page(0,1000,None)?,"streamHead":tx.allocated_event_stream_seq()?}),
+    )
+}
+fn traced_store_write<T: serde::Serialize>(
+    store: &mut Store,
+    trace: &mut Vec<serde_json::Value>,
+    step: &str,
+    input: serde_json::Value,
+    state: fn(&hrc_store::ReadTx<'_>) -> hrc_store::Result<serde_json::Value>,
+    write: impl FnOnce(&mut hrc_store::WriteTx<'_>) -> hrc_store::Result<T>,
+) -> hrc_store::Result<hrc_store::Committed<T>> {
+    use std::{cell::RefCell, rc::Rc};
+    let before = store.read_snapshot(state)?;
+    let hints = Rc::new(RefCell::new(Vec::new()));
+    let observed = hints.clone();
+    let observer = store.observe(move |hint| observed.borrow_mut().push(hint.clone()));
+    let mut within = None;
+    let mut hints_within = Vec::new();
+    let result = store.write(|tx| {
+        let result = write(tx);
+        within = Some(state(&tx.read())?);
+        hints_within = hints.borrow().clone();
+        result
+    });
+    store.unobserve(observer);
+    let after = store.read_snapshot(state)?;
+    let outcome = match &result {
+        Ok(committed) => {
+            serde_json::json!({"value":serde_json::to_value(&committed.value)?,"committedChanges":committed.changes})
+        }
+        Err(error) => {
+            serde_json::json!({"error":{"code":error.code(),"message":error.to_string()}})
+        }
+    };
+    trace.push(serde_json::json!({"step":step,"input":input,"before":before,"within":within,"after":after,"outcome":outcome,"hintsWithin":hints_within,"hintsAfter":hints.borrow().clone()}));
+    result
+}
+
+fn traced_execution_write<T: serde::Serialize>(
+    store: &mut Store,
+    trace: &mut Vec<serde_json::Value>,
+    step: &str,
+    input: serde_json::Value,
+    write: impl FnOnce(&mut hrc_store::WriteTx<'_>) -> hrc_store::Result<T>,
+) -> hrc_store::Result<hrc_store::Committed<T>> {
+    traced_store_write(store, trace, step, input, execution_storage_boundary, write)
+}
+fn grant_storage_boundary(tx: &hrc_store::ReadTx<'_>) -> hrc_store::Result<serde_json::Value> {
+    Ok(
+        serde_json::json!({"grants":tx.registration_grants_by_class("p1-class")?,"occupiedAt":tx.registration_capacity_occupants("p1-class","2026-10-23T00:00:00.000Z")?,"occupiedExpired":tx.registration_capacity_occupants("p1-class","2026-10-23T01:00:00.000Z")?,"minted":tx.minted_registration_grants()?,"established":tx.established_registration_grants()?,"rendezvousExpired":tx.grant_rendezvous_candidates("2026-10-23T01:00:00.000Z")?,"runtime":tx.runtime_by_id("p1-runtime")?,"session":tx.sessions().get_by_host_session_id("p1-host")?}),
+    )
+}
+fn traced_grant_write<T: serde::Serialize>(
+    store: &mut Store,
+    trace: &mut Vec<serde_json::Value>,
+    step: &str,
+    input: serde_json::Value,
+    write: impl FnOnce(&mut hrc_store::WriteTx<'_>) -> hrc_store::Result<T>,
+) -> hrc_store::Result<hrc_store::Committed<T>> {
+    traced_store_write(store, trace, step, input, grant_storage_boundary, write)
+}
+
+fn participant_storage_boundary(
+    tx: &hrc_store::ReadTx<'_>,
+) -> hrc_store::Result<serde_json::Value> {
+    Ok(
+        serde_json::json!({"registration":tx.participant_registration("p1-registration")?,"attempt":tx.participant_attempt("p1-attempt")?,"reservation":tx.participant_reservation("p1-reservation")?,"binding":tx.participant_binding("p1-binding")?,"establishmentWork":tx.participant_establishment_work()?,"exhaustedReconnects":tx.exhausted_participant_reconnects()?,"activatedAttempts":tx.activated_participant_attempts()?}),
+    )
+}
+fn traced_participant_write<T: serde::Serialize>(
+    store: &mut Store,
+    trace: &mut Vec<serde_json::Value>,
+    step: &str,
+    input: serde_json::Value,
+    write: impl FnOnce(&mut hrc_store::WriteTx<'_>) -> hrc_store::Result<T>,
+) -> hrc_store::Result<hrc_store::Committed<T>> {
+    traced_store_write(
+        store,
+        trace,
+        step,
+        input,
+        participant_storage_boundary,
+        write,
+    )
 }
