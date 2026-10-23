@@ -97,16 +97,4 @@ export class RosterClaimRepository {
       .all(baseScope)
       .map(mapRow)
   }
-
-  /** Age-based pruning hook for the existing guarded historical purge. */
-  deleteOlderThan(cutoffIso: string): number {
-    const before = this.db
-      .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM roster_claims')
-      .get()
-    execute(this.db, 'DELETE FROM roster_claims WHERE created_at < ?', cutoffIso)
-    const after = this.db
-      .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM roster_claims')
-      .get()
-    return (before?.count ?? 0) - (after?.count ?? 0)
-  }
 }

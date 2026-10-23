@@ -173,11 +173,19 @@ describe('T-06802 collective message read model', () => {
         return (
           labDb.collectiveHistoryReplications.pendingCount() === 0 &&
           max3Db.collectiveHistoryReplications.pendingCount() === 0 &&
-          svcDb.collectiveHistory.count() === 2
+          svcDb.sqlite
+            .query<{ count: number }, []>(
+              'SELECT COUNT(*) AS count FROM collective_history_messages'
+            )
+            .get()!.count === 2
         )
       })
       svc.acceptReplication('lab', { record: root })
-      expect(svcDb.collectiveHistory.count()).toBe(2)
+      expect(
+        svcDb.sqlite
+          .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM collective_history_messages')
+          .get()!.count
+      ).toBe(2)
       labDb.messages.updateExecution(root.messageId, {
         state: 'failed',
         errorCode: 'delivery_failed',

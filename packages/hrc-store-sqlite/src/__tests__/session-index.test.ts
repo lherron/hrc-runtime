@@ -229,7 +229,10 @@ describe('session_index maintained projection', () => {
       })
       appendEvent(db, 'hsid-a', seeded.scopeRef, seeded.laneRef, '2026-08-11T12:00:00.000Z')
       appendEvent(db, 'hsid-a', seeded.scopeRef, seeded.laneRef, '2026-08-11T09:00:00.000Z')
-      db.runtimes.updateActivity('rt-a', '2026-08-11T10:30:00.000Z', '2026-08-11T13:00:00.000Z')
+      db.runtimes.update('rt-a', {
+        lastActivityAt: '2026-08-11T10:30:00.000Z',
+        updatedAt: '2026-08-11T13:00:00.000Z',
+      })
       db.sessions.updateStatus('hsid-a', 'active', '2026-08-11T14:00:00.000Z')
       db.sessions.updateContinuation(
         'hsid-a',

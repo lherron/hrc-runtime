@@ -51,31 +51,10 @@ export function compilerPrimingSubmissionId(
         if (typeof inputId === 'string' && inputId.length > 0) return inputId
       }
     } catch {
-      // The plan fallback below retains ordinary historical compatibility.
+      // Missing or malformed frozen admission cannot identify a priming submission.
     }
   }
-  // The controller's just-started snapshot is intentionally smaller than the
-  // persisted runtime row. Boundary P already bound its active operation to a
-  // plan, so use that durable link until the returned snapshot is refreshed.
-  const planHash = runtime.planHash ?? operation?.planHash
-  if (planHash === undefined) return undefined
-  const record = db.compiledRuntimePlans.getByPlanHash(planHash)
-  if (record === null) return undefined
-  try {
-    const plan = JSON.parse(record.planProjectionJson) as {
-      schemaVersion?: unknown
-      execution?: {
-        dispatchRequest?: { startRequest?: { initialInput?: { inputId?: unknown } } }
-      }
-    }
-    // Retained v1 plan bytes are attach/replay evidence only. Never reopen
-    // their plural profile selection during a v2 runtime decision.
-    if (plan.schemaVersion !== 'agent-runtime-plan/v2') return undefined
-    const inputId = plan.execution?.dispatchRequest?.startRequest?.initialInput?.inputId
-    return typeof inputId === 'string' && inputId.length > 0 ? inputId : undefined
-  } catch {
-    return undefined
-  }
+  return undefined
 }
 
 /**

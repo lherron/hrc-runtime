@@ -69,46 +69,6 @@ export class RuntimeArtifactRepository {
     return row ? mapRuntimeArtifactRow(row) : null
   }
 
-  listByOperationId(operationId: string): HrcRuntimeArtifactRecord[] {
-    const rows = this.db
-      .query<RuntimeArtifactRow, [string]>(
-        `SELECT ${RUNTIME_ARTIFACT_COLUMNS} FROM runtime_artifacts
-          WHERE operation_id = ?
-          ORDER BY created_at ASC, artifact_id ASC`
-      )
-      .all(operationId)
-
-    return rows.map(mapRuntimeArtifactRow)
-  }
-
-  listByOperationIdAndKind(operationId: string, artifactKind: string): HrcRuntimeArtifactRecord[] {
-    const rows = this.db
-      .query<RuntimeArtifactRow, [string, string]>(
-        `SELECT ${RUNTIME_ARTIFACT_COLUMNS} FROM runtime_artifacts
-          WHERE operation_id = ? AND artifact_kind = ?
-          ORDER BY created_at ASC, artifact_id ASC`
-      )
-      .all(operationId, artifactKind)
-
-    return rows.map(mapRuntimeArtifactRow)
-  }
-
-  getLatestByOperationIdAndKind(
-    operationId: string,
-    artifactKind: string
-  ): HrcRuntimeArtifactRecord | null {
-    const row = this.db
-      .query<RuntimeArtifactRow, [string, string]>(
-        `SELECT ${RUNTIME_ARTIFACT_COLUMNS} FROM runtime_artifacts
-          WHERE operation_id = ? AND artifact_kind = ?
-          ORDER BY created_at DESC, artifact_id DESC
-          LIMIT 1`
-      )
-      .get(operationId, artifactKind)
-
-    return row ? mapRuntimeArtifactRow(row) : null
-  }
-
   listByKind(artifactKind: string): HrcRuntimeArtifactRecord[] {
     const rows = this.db
       .query<RuntimeArtifactRow, [string]>(
@@ -244,17 +204,5 @@ export class PermissionDecisionRepository {
       .get(permissionRequestId)
 
     return row ? mapPermissionDecisionRow(row) : null
-  }
-
-  listByInvocationId(invocationId: string): HrcPermissionDecisionRecord[] {
-    const rows = this.db
-      .query<PermissionDecisionRow, [string]>(
-        `SELECT ${PERMISSION_DECISION_COLUMNS} FROM permission_decisions
-          WHERE invocation_id = ?
-          ORDER BY requested_at ASC, permission_identity_key ASC`
-      )
-      .all(invocationId)
-
-    return rows.map(mapPermissionDecisionRow)
   }
 }

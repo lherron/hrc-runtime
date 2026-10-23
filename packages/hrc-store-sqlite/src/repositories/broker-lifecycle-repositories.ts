@@ -114,18 +114,6 @@ export class CompiledRuntimePlanRepository {
 
     return row ? mapCompiledRuntimePlanRow(row) : null
   }
-
-  listByCompileId(compileId: string): HrcCompiledRuntimePlanRecord[] {
-    const rows = this.db
-      .query<CompiledRuntimePlanRow, [string]>(
-        `SELECT ${COMPILED_RUNTIME_PLAN_COLUMNS} FROM compiled_runtime_plans
-          WHERE compile_id = ?
-          ORDER BY created_at ASC, plan_hash ASC`
-      )
-      .all(compileId)
-
-    return rows.map(mapCompiledRuntimePlanRow)
-  }
 }
 
 export type RuntimeOperationUpdatePatch = Partial<
@@ -242,18 +230,6 @@ export class RuntimeOperationRepository {
           ORDER BY created_at DESC, operation_id DESC`
       )
       .all(hostSessionId)
-
-    return rows.map(mapRuntimeOperationRow)
-  }
-
-  listByRuntimeId(runtimeId: string): HrcRuntimeOperationRecord[] {
-    const rows = this.db
-      .query<RuntimeOperationRow, [string]>(
-        `SELECT ${RUNTIME_OPERATION_COLUMNS} FROM runtime_operations
-          WHERE runtime_id = ?
-          ORDER BY created_at ASC, operation_id ASC`
-      )
-      .all(runtimeId)
 
     return rows.map(mapRuntimeOperationRow)
   }

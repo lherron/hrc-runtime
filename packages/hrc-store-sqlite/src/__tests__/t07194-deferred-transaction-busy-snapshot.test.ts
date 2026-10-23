@@ -5,10 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcMessageAddress } from 'hrc-core'
-
 import { type HrcDatabase, openHrcDatabase } from '../database.js'
-import { MessageRepository } from '../message-repository.js'
 import { EventRepository, HrcLifecycleEventRepository } from '../repositories/event-repositories.js'
 
 const COMPETING_WRITER_SOURCE = String.raw`
@@ -30,8 +27,6 @@ const COMPETING_WRITER_SOURCE = String.raw`
   writeFileSync(donePath, 'done')
   db.close()
 `
-
-const humanAddress: HrcMessageAddress = { kind: 'entity', entity: 'human' }
 
 let tmpDir: string
 let dbPath: string
@@ -165,24 +160,6 @@ function seedSession(hostSessionId: string): void {
 }
 
 describe('T-07194 read-before-write transactions', () => {
-  it('idempotently inserts a message while another WAL connection commits', async () => {
-    const result = await againstCompetingCommit(
-      (sql) => sql.includes('FROM messages WHERE message_id = ?'),
-      (sqlite) =>
-        new MessageRepository(sqlite).insertIdempotent({
-          messageId: 'msg-t07194',
-          kind: 'dm',
-          phase: 'request',
-          from: humanAddress,
-          to: humanAddress,
-          body: 'survives the competing commit',
-        })
-    )
-
-    expect(result.outcome).toBe('inserted')
-    expect(db.messages.getById('msg-t07194')?.body).toBe('survives the competing commit')
-  })
-
   it('appends a raw event while another WAL connection commits', async () => {
     seedSession('hsid-t07194-raw')
     const event = await againstCompetingCommit(

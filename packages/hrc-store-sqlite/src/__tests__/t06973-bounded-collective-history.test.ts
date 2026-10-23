@@ -625,7 +625,11 @@ describe('T-06973 migration and backfill on a populated database', () => {
           .map((r) => r.messageId)
       ).toEqual(['msg-legacy-a'])
       // The corrupt row keeps NULL filter columns rather than aborting the run.
-      expect(db.collectiveHistory.count()).toBe(3)
+      expect(
+        db.sqlite
+          .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM collective_history_messages')
+          .get()!.count
+      ).toBe(3)
     } finally {
       db.close()
     }

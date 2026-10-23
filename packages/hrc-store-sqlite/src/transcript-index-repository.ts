@@ -223,16 +223,6 @@ export class TranscriptIndexRepository {
     )
   }
 
-  listTurnsForInvocation(invocationId: string): TranscriptTurn[] {
-    return this.db
-      .query<TranscriptTurnRow, [string]>(
-        `SELECT ${TURN_COLUMNS} FROM transcript_turns
-         WHERE invocation_id = ? ORDER BY seq_from ASC`
-      )
-      .all(invocationId)
-      .map(mapTurn)
-  }
-
   search(
     query: string,
     filters: TranscriptSearchFilters,

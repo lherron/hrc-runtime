@@ -114,13 +114,4 @@ export class RetainedEvidenceOutcomeRepository {
       .all(runtimeId, runtimeId)
       .map(mapRow)
   }
-
-  listByRuntime(runtimeId: string): RetainedEvidenceOutcomeRecord[] {
-    return this.db
-      .query<RetainedEvidenceOutcomeRow, [string]>(
-        `SELECT ${COLUMNS} FROM retained_evidence_outcomes WHERE runtime_id = ? ORDER BY outcome_id ASC`
-      )
-      .all(runtimeId)
-      .map(mapRow)
-  }
 }

@@ -89,10 +89,9 @@ describe('T-05375 provider transcript protocol drift proof', () => {
         producerEnvelope
       )
 
-      const artifacts = fixture.db.runtimeArtifacts.listByOperationIdAndKind(
-        OPERATION_ID,
-        PROVIDER_TRANSCRIPT_ARTIFACT_KIND
-      )
+      const artifacts = fixture.db.runtimeArtifacts
+        .listByKind(PROVIDER_TRANSCRIPT_ARTIFACT_KIND)
+        .filter((artifact) => artifact.operationId === OPERATION_ID)
       expect(artifacts).toHaveLength(1)
       expect(artifacts[0]).toMatchObject({
         operationId: OPERATION_ID,

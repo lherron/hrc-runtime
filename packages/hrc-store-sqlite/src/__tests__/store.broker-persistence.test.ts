@@ -582,14 +582,7 @@ describe('broker record repositories round-trip', () => {
         artifactJson: JSON.stringify({ startRequest: {} }),
         createdAt: now,
       })
-      expect(db.runtimeArtifacts.listByOperationId('op-1')).toHaveLength(1)
       expect(artifact.artifactKind).toBe('broker-start-request')
-      expect(db.runtimeArtifacts.listByOperationIdAndKind('op-1', 'broker-start-request')).toEqual([
-        artifact,
-      ])
-      expect(
-        db.runtimeArtifacts.getLatestByOperationIdAndKind('op-1', 'broker-start-request')
-      ).toEqual(artifact)
       expect(db.runtimeArtifacts.insertIdempotent(artifact)).toEqual(artifact)
 
       const decision = db.permissionDecisions.insert({
@@ -606,7 +599,6 @@ describe('broker record repositories round-trip', () => {
         decidedAt: now,
       })
       expect(decision.decision).toBe('deny')
-      expect(db.permissionDecisions.listByInvocationId('inv-1')).toHaveLength(1)
 
       // Runtime broker-state columns round-trip through RuntimeRepository.
       db.sessions.insert({

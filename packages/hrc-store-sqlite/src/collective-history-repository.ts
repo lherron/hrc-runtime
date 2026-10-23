@@ -440,14 +440,6 @@ export class CollectiveHistoryRepository {
       }
     }
   }
-
-  count(): number {
-    return (
-      this.db
-        .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM collective_history_messages')
-        .get()?.count ?? 0
-    )
-  }
 }
 
 export type CollectiveHistoryReplicationRecord = {

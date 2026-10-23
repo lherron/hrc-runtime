@@ -163,10 +163,6 @@ const MESSAGE_EXECUTION_UPDATE_SPEC: ReadonlyArray<PatchColumnSpec<Partial<HrcMe
 export class MessageRepository {
   private readonly changeListeners = new Set<MessageChangeListener>()
   private readonly insertInTransaction: (input: MessageInsertInput) => HrcMessageRecord
-  private readonly insertIdempotentInTransaction: (input: MessageInsertInput) => {
-    outcome: 'inserted' | 'duplicate'
-    record: HrcMessageRecord
-  }
 
   constructor(private readonly db: Database) {
     const insertRow = (input: MessageInsertInput): HrcMessageRecord => {
@@ -234,30 +230,12 @@ export class MessageRepository {
     }
 
     this.insertInTransaction = db.transaction(insertRow)
-    const insertIdempotent = db.transaction((input: MessageInsertInput) => {
-      const existing = this.getById(input.messageId)
-      if (existing !== undefined) return { outcome: 'duplicate' as const, record: existing }
-      return { outcome: 'inserted' as const, record: insertRow(input) }
-    })
-    // Reserve the WAL writer before the dedupe read. Contention at BEGIN
-    // IMMEDIATE is covered by busy_timeout; a stale read snapshot is not.
-    this.insertIdempotentInTransaction = (input) => insertIdempotent.immediate(input)
   }
 
   insert(input: MessageInsertInput): HrcMessageRecord {
     const record = this.insertInTransaction(input)
     this.emitChange(record)
     return record
-  }
-
-  /** Durable message-id dedupe used by federation accept. */
-  insertIdempotent(input: MessageInsertInput): {
-    outcome: 'inserted' | 'duplicate'
-    record: HrcMessageRecord
-  } {
-    const result = this.insertIdempotentInTransaction(input)
-    if (result.outcome === 'inserted') this.emitChange(result.record)
-    return result
   }
 
   subscribeChanges(listener: MessageChangeListener): () => void {

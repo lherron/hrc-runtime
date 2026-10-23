@@ -374,26 +374,6 @@ export class RuntimeRepository {
     return this.getByRuntimeId(runtimeId)
   }
 
-  updateActivity(
-    runtimeId: string,
-    lastActivityAt: string,
-    updatedAt: string
-  ): HrcRuntimeSnapshot | null {
-    execute(
-      this.db,
-      `
-        UPDATE runtimes
-        SET last_activity_at = ?, updated_at = ?
-        WHERE runtime_id = ?
-      `,
-      lastActivityAt,
-      updatedAt,
-      runtimeId
-    )
-
-    return this.getByRuntimeId(runtimeId)
-  }
-
   /**
    * Hard-delete an orphaned runtime store row plus its runtime-scoped satellite
    * rows (T-05441). `runtimes(runtime_id)` is FK-referenced (no ON DELETE

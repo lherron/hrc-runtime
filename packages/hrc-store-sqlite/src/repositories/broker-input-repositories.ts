@@ -466,39 +466,4 @@ export class SubmissionAdmissionRepository {
       input.disposedAt
     )
   }
-
-  getBySubmissionId(submissionId: string): SubmissionAdmissionRecord | null {
-    const row = this.db
-      .query<
-        {
-          submission_id: string
-          run_id: string | null
-          runtime_id: string | null
-          invocation_id: string | null
-          door: string | null
-          envelope_id: string | null
-          admitted_at: string | null
-          disposition: string | null
-          disposed_at: string | null
-        },
-        [string]
-      >(
-        `SELECT submission_id, run_id, runtime_id, invocation_id, door,
-                envelope_id, admitted_at, disposition, disposed_at
-         FROM submission_admissions WHERE submission_id = ? LIMIT 1`
-      )
-      .get(submissionId)
-    if (row === undefined || row === null) return null
-    return {
-      submissionId: row.submission_id,
-      ...(row.run_id !== null ? { runId: row.run_id } : {}),
-      ...(row.runtime_id !== null ? { runtimeId: row.runtime_id } : {}),
-      ...(row.invocation_id !== null ? { invocationId: row.invocation_id } : {}),
-      ...(row.door !== null ? { door: row.door } : {}),
-      ...(row.envelope_id !== null ? { envelopeId: row.envelope_id } : {}),
-      ...(row.admitted_at !== null ? { admittedAt: row.admitted_at } : {}),
-      ...(row.disposition !== null ? { disposition: row.disposition } : {}),
-      ...(row.disposed_at !== null ? { disposedAt: row.disposed_at } : {}),
-    }
-  }
 }

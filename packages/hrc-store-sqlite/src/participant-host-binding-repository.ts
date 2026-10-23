@@ -240,27 +240,6 @@ export class ParticipantHostBindingRepository {
       .map(mapReservation)
   }
 
-  /**
-   * The one and only release. It is explicit, attributed and reasoned, and it
-   * is never reachable from eviction, stop, terminal or GC (R-4.3.4).
-   */
-  releaseReservation(input: {
-    reservationId: string
-    releasedBy: string
-    reason: string
-    now: string
-  }): boolean {
-    const result = this.db
-      .query(
-        `UPDATE participant_address_reservations
-            SET state = 'released', released_at = ?, released_by = ?, release_reason = ?,
-                updated_at = ?
-          WHERE reservation_id = ? AND state = 'held'`
-      )
-      .run(input.now, input.releasedBy, input.reason, input.now, input.reservationId)
-    return result.changes > 0
-  }
-
   insertBinding(record: ParticipantHostBinding): ParticipantHostBinding {
     execute(
       this.db,

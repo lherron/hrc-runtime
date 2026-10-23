@@ -150,10 +150,9 @@ describe('emitted lifecycle events', () => {
         )
       )
 
-      const artifacts = harness.fixture.db.runtimeArtifacts.listByOperationIdAndKind(
-        OPERATION_ID,
-        'provider-transcript-jsonl'
-      )
+      const artifacts = harness.fixture.db.runtimeArtifacts
+        .listByKind('provider-transcript-jsonl')
+        .filter((artifact) => artifact.operationId === OPERATION_ID)
       expect(artifacts).toHaveLength(1)
       expect(artifacts[0]).toMatchObject({
         artifactId: `provider-transcript:${INVOCATION_ID}:8`,
@@ -191,10 +190,9 @@ describe('emitted lifecycle events', () => {
     )
 
     expect(
-      harness.fixture.db.runtimeArtifacts.listByOperationIdAndKind(
-        OPERATION_ID,
-        'provider-transcript-jsonl'
-      )
+      harness.fixture.db.runtimeArtifacts
+        .listByKind('provider-transcript-jsonl')
+        .filter((artifact) => artifact.operationId === OPERATION_ID)
     ).toEqual([])
     const warnings = harness.fixture.db.events
       .listFromSeq(1, { runtimeId: RUNTIME_ID })

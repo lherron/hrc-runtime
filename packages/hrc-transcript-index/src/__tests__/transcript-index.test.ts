@@ -89,14 +89,34 @@ describe('ledger-derived transcript segmentation', () => {
     append(target, 'inv-double', 'rt-d', 4, 'turn.completed')
 
     await indexer(target).tickOnce()
-    expect(target.transcriptIndex.listTurnsForInvocation('inv-no-start')).toMatchObject([
-      { seqFrom: 1, seqTo: 3, finalText: 'no start' },
-    ])
-    expect(target.transcriptIndex.listTurnsForInvocation('inv-late-start')).toMatchObject([
-      { seqFrom: 4, seqTo: 8, finalText: 'answer', midText: 'early' },
-    ])
-    expect(target.transcriptIndex.listTurnsForInvocation('inv-open')).toEqual([])
-    expect(target.transcriptIndex.listTurnsForInvocation('inv-double')).toHaveLength(1)
+    expect(
+      target.sqlite
+        .query(
+          'SELECT seq_from AS seqFrom, seq_to AS seqTo, final_text AS finalText, mid_text AS midText, terminal_status AS terminalStatus FROM transcript_turns WHERE invocation_id = ? ORDER BY seq_from ASC'
+        )
+        .all('inv-no-start')
+    ).toMatchObject([{ seqFrom: 1, seqTo: 3, finalText: 'no start' }])
+    expect(
+      target.sqlite
+        .query(
+          'SELECT seq_from AS seqFrom, seq_to AS seqTo, final_text AS finalText, mid_text AS midText, terminal_status AS terminalStatus FROM transcript_turns WHERE invocation_id = ? ORDER BY seq_from ASC'
+        )
+        .all('inv-late-start')
+    ).toMatchObject([{ seqFrom: 4, seqTo: 8, finalText: 'answer', midText: 'early' }])
+    expect(
+      target.sqlite
+        .query(
+          'SELECT seq_from AS seqFrom, seq_to AS seqTo, final_text AS finalText, mid_text AS midText, terminal_status AS terminalStatus FROM transcript_turns WHERE invocation_id = ? ORDER BY seq_from ASC'
+        )
+        .all('inv-open')
+    ).toEqual([])
+    expect(
+      target.sqlite
+        .query(
+          'SELECT seq_from AS seqFrom, seq_to AS seqTo, final_text AS finalText, mid_text AS midText, terminal_status AS terminalStatus FROM transcript_turns WHERE invocation_id = ? ORDER BY seq_from ASC'
+        )
+        .all('inv-double')
+    ).toHaveLength(1)
   })
 
   it('splits failed and completed turns and honors shared finality', async () => {
@@ -131,7 +151,11 @@ describe('ledger-derived transcript segmentation', () => {
     append(target, 'inv-split', 'rt-a', 7, 'turn.completed')
     await indexer(target).tickOnce()
 
-    const turns = target.transcriptIndex.listTurnsForInvocation('inv-split')
+    const turns = target.sqlite
+      .query(
+        'SELECT seq_from AS seqFrom, seq_to AS seqTo, final_text AS finalText, mid_text AS midText, terminal_status AS terminalStatus FROM transcript_turns WHERE invocation_id = ? ORDER BY seq_from ASC'
+      )
+      .all('inv-split')
     expect(turns).toMatchObject([
       { terminalStatus: 'failed', finalText: 'failed A', midText: '' },
       { terminalStatus: 'completed', finalText: 'completed B', midText: 'trailer' },
@@ -161,7 +185,13 @@ describe('ledger-derived transcript segmentation', () => {
       )
       append(target, `inv-${batchSize}`, 'rt-a', 82, 'turn.completed')
       await indexer(target, batchSize).tickOnce()
-      expect(target.transcriptIndex.listTurnsForInvocation(`inv-${batchSize}`)).toMatchObject([
+      expect(
+        target.sqlite
+          .query(
+            'SELECT seq_from AS seqFrom, seq_to AS seqTo, final_text AS finalText, mid_text AS midText, terminal_status AS terminalStatus FROM transcript_turns WHERE invocation_id = ? ORDER BY seq_from ASC'
+          )
+          .all(`inv-${batchSize}`)
+      ).toMatchObject([
         { seqFrom: 78, seqTo: 79, finalText: 'prior' },
         { seqFrom: 80, seqTo: 82, finalText: 'next' },
       ])
@@ -187,9 +217,13 @@ describe('ledger-derived transcript segmentation', () => {
     append(target, 'inv-late', 'rt-a', 3, 'tool.call.completed', { result: 'TOOL_SENTINEL' })
     await worker.tickOnce()
 
-    expect(target.transcriptIndex.listTurnsForInvocation('inv-late')).toMatchObject([
-      { seqFrom: 1, seqTo: 4, finalText: 'late searchable' },
-    ])
+    expect(
+      target.sqlite
+        .query(
+          'SELECT seq_from AS seqFrom, seq_to AS seqTo, final_text AS finalText, mid_text AS midText, terminal_status AS terminalStatus FROM transcript_turns WHERE invocation_id = ? ORDER BY seq_from ASC'
+        )
+        .all('inv-late')
+    ).toMatchObject([{ seqFrom: 1, seqTo: 4, finalText: 'late searchable' }])
     expect(worker.stats().invocationsReindexed).toBe(1)
     expect(searchTurns(target, 'TOOL_SENTINEL')).toEqual([])
   })
@@ -205,7 +239,13 @@ describe('ledger-derived transcript segmentation', () => {
     const persisted = target.transcriptIndex.getCursor()
     await indexer(target, 1).tickOnce()
     expect(target.transcriptIndex.getCursor()).toBe(persisted)
-    expect(target.transcriptIndex.listTurnsForInvocation('inv-a')).toHaveLength(1)
+    expect(
+      target.sqlite
+        .query(
+          'SELECT seq_from AS seqFrom, seq_to AS seqTo, final_text AS finalText, mid_text AS midText, terminal_status AS terminalStatus FROM transcript_turns WHERE invocation_id = ? ORDER BY seq_from ASC'
+        )
+        .all('inv-a')
+    ).toHaveLength(1)
   })
 
   it('rebuilds to the same row count from the authoritative ledger', async () => {

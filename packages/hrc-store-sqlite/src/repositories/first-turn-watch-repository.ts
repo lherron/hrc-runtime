@@ -267,16 +267,6 @@ export class FirstTurnWatchRepository {
     return row ? mapRow(row) : null
   }
 
-  getByRunId(runId: string): HrcFirstTurnWatchRecord | null {
-    const row = this.db
-      .query<FirstTurnWatchRow, [string]>(
-        `SELECT ${FIRST_TURN_WATCH_COLUMNS} FROM runtime_first_turn_watch
-          WHERE run_id = ?`
-      )
-      .get(runId)
-    return row ? mapRow(row) : null
-  }
-
   listTripsByRuntimeId(runtimeId: string): HrcFirstTurnWatchRecord[] {
     const rows = this.db
       .query<FirstTurnWatchRow, [string]>(

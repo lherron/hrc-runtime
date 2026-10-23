@@ -658,7 +658,9 @@ describe('HarnessBrokerController', () => {
       )
     )
     await tick()
-    expect(fixture.db.permissionDecisions.listByInvocationId('invocation_w2')).toHaveLength(1)
+    expect(
+      fixture.db.permissionDecisions.getByPermissionRequestId('perm_default_deny')
+    ).toMatchObject({ invocationId: 'invocation_w2', decision: 'deny' })
   })
 
   it('uses broker.health in status/reconcile probes', async () => {

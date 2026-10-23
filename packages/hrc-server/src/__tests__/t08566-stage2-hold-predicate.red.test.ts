@@ -405,7 +405,13 @@ describe('T-08566 H1 disposition admission', () => {
       const db = openHrcDatabase(fixture.dbPath)
       try {
         expect(db.runtimes.getByRuntimeId(row.runtimeId)).toBeDefined()
-        expect(db.retainedEvidenceOutcomes.listByRuntime(row.runtimeId)).toEqual([])
+        expect(
+          db.sqlite
+            .query<{ outcome: string }, [string]>(
+              'SELECT outcome FROM retained_evidence_outcomes WHERE runtime_id = ? ORDER BY outcome_id ASC'
+            )
+            .all(row.runtimeId)
+        ).toEqual([])
       } finally {
         db.close()
       }
@@ -435,7 +441,13 @@ describe('T-08566 H1 disposition admission', () => {
         const db = openHrcDatabase(fixture.dbPath)
         try {
           expect(db.runtimes.getByRuntimeId(row.runtimeId)).toBeDefined()
-          expect(db.retainedEvidenceOutcomes.listByRuntime(row.runtimeId)).toEqual([])
+          expect(
+            db.sqlite
+              .query<{ outcome: string }, [string]>(
+                'SELECT outcome FROM retained_evidence_outcomes WHERE runtime_id = ? ORDER BY outcome_id ASC'
+              )
+              .all(row.runtimeId)
+          ).toEqual([])
         } finally {
           db.close()
         }
@@ -454,7 +466,11 @@ describe('T-08566 H1 disposition admission', () => {
       const db = openHrcDatabase(fixture.dbPath)
       try {
         expect(db.runtimes.getByRuntimeId(row.runtimeId)).toBeNull()
-        const outcomes = db.retainedEvidenceOutcomes.listByRuntime(row.runtimeId)
+        const outcomes = db.sqlite
+          .query<{ outcome: string }, [string]>(
+            'SELECT outcome FROM retained_evidence_outcomes WHERE runtime_id = ? ORDER BY outcome_id ASC'
+          )
+          .all(row.runtimeId)
         expect(outcomes.map((entry) => entry.outcome)).toEqual([
           'operator_disposed',
           'operator_disposed',
@@ -485,7 +501,13 @@ describe('T-08566 H1 disposition admission', () => {
     const db = openHrcDatabase(fixture.dbPath)
     try {
       expect(db.runtimes.getByRuntimeId(row.runtimeId)).toBeDefined()
-      expect(db.retainedEvidenceOutcomes.listByRuntime(row.runtimeId)).toEqual([])
+      expect(
+        db.sqlite
+          .query<{ outcome: string }, [string]>(
+            'SELECT outcome FROM retained_evidence_outcomes WHERE runtime_id = ? ORDER BY outcome_id ASC'
+          )
+          .all(row.runtimeId)
+      ).toEqual([])
     } finally {
       db.close()
     }
@@ -513,7 +535,13 @@ describe('T-08566 H1 reachable releases', () => {
     try {
       expect(dbAfterRefusal.runtimes.getByRuntimeId(row.runtimeId)).toEqual(runtimeBefore)
       expect(retainedEvidenceHold(dbAfterRefusal, runtimeBefore!)).toEqual(holdBefore)
-      expect(dbAfterRefusal.retainedEvidenceOutcomes.listByRuntime(row.runtimeId)).toEqual([])
+      expect(
+        dbAfterRefusal.sqlite
+          .query<{ outcome: string }, [string]>(
+            'SELECT outcome FROM retained_evidence_outcomes WHERE runtime_id = ? ORDER BY outcome_id ASC'
+          )
+          .all(row.runtimeId)
+      ).toEqual([])
     } finally {
       dbAfterRefusal.close()
     }
@@ -532,7 +560,12 @@ describe('T-08566 H1 reachable releases', () => {
     const db = openHrcDatabase(fixture.dbPath)
     try {
       expect(
-        db.retainedEvidenceOutcomes.listByRuntime(row.runtimeId).map((entry) => entry.outcome)
+        db.sqlite
+          .query<{ outcome: string }, [string]>(
+            'SELECT outcome FROM retained_evidence_outcomes WHERE runtime_id = ? ORDER BY outcome_id ASC'
+          )
+          .all(row.runtimeId)
+          .map((entry) => entry.outcome)
       ).toEqual(['operator_disposed'])
       await sweepOrphanedBrokerTmuxLeases(db, fixture.runtimeRoot, sweepOptions())
     } finally {
@@ -616,7 +649,13 @@ describe('T-08566 H1 reachable releases', () => {
     const afterRefusal = openHrcDatabase(fixture.dbPath)
     try {
       expect(afterRefusal.runtimes.getByRuntimeId(row.runtimeId)?.activeRunId).toBe(runId)
-      expect(afterRefusal.retainedEvidenceOutcomes.listByRuntime(row.runtimeId)).toEqual([])
+      expect(
+        afterRefusal.sqlite
+          .query<{ outcome: string }, [string]>(
+            'SELECT outcome FROM retained_evidence_outcomes WHERE runtime_id = ? ORDER BY outcome_id ASC'
+          )
+          .all(row.runtimeId)
+      ).toEqual([])
     } finally {
       afterRefusal.close()
     }
