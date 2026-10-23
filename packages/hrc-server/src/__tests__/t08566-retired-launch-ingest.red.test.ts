@@ -1,19 +1,15 @@
 /**
  * Retired native ingest routes stay unmatched and cannot mutate broker runs.
- * Historical spool quarantine and committed broker projection remain supported.
+ * Committed broker projection remains supported.
  */
 import { expect, test } from 'bun:test'
-import { createHash, randomUUID } from 'node:crypto'
-import { readFile, readdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { createServer as createTcpServer } from 'node:net'
-import { join } from 'node:path'
 
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 
 import { BrokerEventMapper } from '../broker/event-mapper'
-import { appendHrcEvent } from '../hrc-event-helper'
 import { createHrcServer } from '../index'
-import { CORRUPT_SPOOL_DIRNAME, readSpoolEntries, spoolCallback } from '../launch/spool'
 import { RUN_ID, headlessSequence, makeSeededFixture } from './broker-event-mapper-fixtures'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import { type ServerLogCapture, withServerLog } from './fixtures/server-log'
@@ -50,18 +46,6 @@ function durableSnapshot(db: HrcDatabase): DurableSnapshot {
     hrcEvents: sequenceSnapshot(db, 'hrc_events', 'hrc_seq'),
     runs: count('runs'),
     runtimes: count('runtimes'),
-  }
-}
-
-function sha256(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex')
-}
-
-async function listOrEmpty(path: string): Promise<string[]> {
-  try {
-    return await readdir(path)
-  } catch {
-    return []
   }
 }
 
@@ -254,140 +238,6 @@ test('R3: the daemon exposes no OTLP endpoint and leaves the configured legacy p
     ).rejects.toThrow()
   } finally {
     await server.stop()
-    await fixture.cleanup()
-  }
-})
-
-test('R4: retired spool entries are quarantined while unhandled bytes, reader, and history survive', async () => {
-  const fixture = await createHrcTestFixture('t08566-spool-retired-')
-  let server = await createHrcServer(fixture.serverOpts({ otelPreferredPort: 0 } as never))
-  const runtime = await fixture.ensureRuntime('agent:smokey:project:hrc-runtime:task:T-08566')
-  const hookKey = `hook-${randomUUID()}`
-  const launchKey = `launch-${randomUUID()}`
-  const unknownKey = `unknown-${randomUUID()}`
-  const historicalLaunchId = `historical-${randomUUID()}`
-  let before: DurableSnapshot
-  let reconciledRuntimeStatus: string
-
-  try {
-    const seeded = openHrcDatabase(fixture.dbPath)
-    try {
-      const session = seeded.sessions.getByHostSessionId(runtime.hostSessionId)
-      if (!session) throw new Error('fixture session is missing')
-      seeded.hrcEvents.append({
-        ts: fixture.now(),
-        hostSessionId: runtime.hostSessionId,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        generation: runtime.generation,
-        runtimeId: runtime.runtimeId,
-        category: 'runtime',
-        eventKind: 'historical.hook',
-        payload: { retained: true },
-      })
-      appendHrcEvent(seeded, 'launch.wrapper_started', {
-        ts: fixture.now(),
-        hostSessionId: runtime.hostSessionId,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        generation: runtime.generation,
-        runtimeId: runtime.runtimeId,
-        launchId: historicalLaunchId,
-        payload: { wrapperPid: 8080 },
-      })
-    } finally {
-      seeded.close()
-    }
-
-    await server.stop()
-
-    // Establish a quiescent restart baseline before adding spool entries.
-    // Startup reconciliation independently marks this legacy fixture runtime
-    // stale and appends runtime.stale once; the spool-bearing restart must add
-    // nothing beyond that already-reconciled state.
-    server = await createHrcServer(fixture.serverOpts({ otelPreferredPort: 0 } as never))
-    await server.stop()
-    const baseline = openHrcDatabase(fixture.dbPath)
-    try {
-      before = durableSnapshot(baseline)
-      const reconciledRuntime = baseline.runtimes.getByRuntimeId(runtime.runtimeId)
-      if (!reconciledRuntime) throw new Error('fixture runtime is missing after reconciliation')
-      reconciledRuntimeStatus = reconciledRuntime.status
-    } finally {
-      baseline.close()
-    }
-
-    const hookPath = await spoolCallback(fixture.spoolDir, hookKey, {
-      endpoint: '/v1/internal/hooks/ingest',
-      payload: {
-        launchId: hookKey,
-        hostSessionId: runtime.hostSessionId,
-        generation: runtime.generation,
-        runtimeId: runtime.runtimeId,
-        hookData: { kind: 'turn.started' },
-      },
-    })
-    const launchRoute = `/v1/internal/launches/${launchKey}/wrapper-started`
-    const launchPath = await spoolCallback(fixture.spoolDir, launchKey, {
-      endpoint: launchRoute,
-      payload: { hostSessionId: runtime.hostSessionId, wrapperPid: 91919 },
-    })
-    const unknownPath = await spoolCallback(fixture.spoolDir, unknownKey, {
-      endpoint: '/v1/internal/example/unhandled',
-      payload: { nativeThreadId: randomUUID() },
-    })
-    const unknownBytesBefore = await readFile(unknownPath)
-    expect(
-      (await readSpoolEntries(fixture.spoolDir, unknownKey)).map((entry) => entry.payload)
-    ).toEqual([
-      {
-        endpoint: '/v1/internal/example/unhandled',
-        payload: expect.objectContaining({ nativeThreadId: expect.any(String) }),
-      },
-    ])
-
-    const started = await withServerLog(() =>
-      createHrcServer(fixture.serverOpts({ otelPreferredPort: 0 } as never))
-    )
-    server = started.value
-
-    expect(await Bun.file(hookPath).exists()).toBe(false)
-    expect(await Bun.file(launchPath).exists()).toBe(false)
-    expect(await listOrEmpty(join(fixture.spoolDir, CORRUPT_SPOOL_DIRNAME, hookKey))).toHaveLength(
-      1
-    )
-    expect(
-      await listOrEmpty(join(fixture.spoolDir, CORRUPT_SPOOL_DIRNAME, launchKey))
-    ).toHaveLength(1)
-    expect(started.log.text().match(/retired legacy spool entry quarantined/g) ?? []).toHaveLength(
-      2
-    )
-    expect(started.log.text()).toContain('/v1/internal/hooks/ingest')
-    expect(started.log.text()).toContain(launchRoute)
-
-    expect(await Bun.file(unknownPath).exists()).toBe(true)
-    expect(sha256(await readFile(unknownPath))).toBe(sha256(unknownBytesBefore))
-    expect(await readSpoolEntries(fixture.spoolDir, unknownKey)).toHaveLength(1)
-    expect(started.log.text()).toContain('spool replay failed')
-    expect(started.log.text()).toContain('/v1/internal/example/unhandled')
-
-    const observed = openHrcDatabase(fixture.dbPath)
-    try {
-      expect(durableSnapshot(observed)).toEqual(before)
-      expect(observed.hrcEvents.listByKind('historical.hook')).toEqual([
-        expect.objectContaining({ category: 'runtime', eventKind: 'historical.hook' }),
-      ])
-      expect(observed.hrcEvents.listByLaunch(historicalLaunchId)).toEqual([
-        expect.objectContaining({ eventKind: 'launch.wrapper_started' }),
-      ])
-      expect(observed.runtimes.getByRuntimeId(runtime.runtimeId)).toMatchObject({
-        status: reconciledRuntimeStatus,
-      })
-    } finally {
-      observed.close()
-    }
-  } finally {
-    await server.stop().catch(() => {})
     await fixture.cleanup()
   }
 })

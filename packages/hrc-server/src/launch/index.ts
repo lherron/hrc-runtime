@@ -1,8 +1,5 @@
-// hrc-launch: callback spooling and tmux environment hygiene. The launch-wrapper
-// hook, OTEL and artifact plumbing was retired in T-08566 stage 1.
+// Tmux environment hygiene. Launch callback spooling was retired in T-11714.
 
-export { CORRUPT_SPOOL_DIRNAME, readSpoolEntries, spoolCallback } from './spool.js'
-export type { CorruptSpoolEntry, ReadSpoolEntriesOptions, SpoolEntry } from './spool.js'
 export {
   listInheritedEnvKeysToScrub,
   sanitizeTmuxClientEnv,

@@ -45,6 +45,7 @@ export type HrcLaunchArtifact = {
   env: Record<string, string>
   cwd: string
   callbackSocketPath: string
+  /** @deprecated Compatibility only; ignored since T-11714. */
   spoolDir: string
   correlationEnv: Record<string, string>
   launchMode?: 'exec' | 'app-server' | undefined

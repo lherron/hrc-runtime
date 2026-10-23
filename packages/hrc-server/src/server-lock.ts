@@ -30,7 +30,6 @@ export async function prepareFilesystem(
   await Promise.all([
     mkdir(options.runtimeRoot, { recursive: true }),
     mkdir(options.stateRoot, { recursive: true }),
-    mkdir(options.spoolDir, { recursive: true }),
     mkdir(dirname(options.socketPath), { recursive: true }),
     mkdir(dirname(options.lockPath), { recursive: true }),
     mkdir(dirname(options.dbPath), { recursive: true }),

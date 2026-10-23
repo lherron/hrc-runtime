@@ -177,8 +177,8 @@ predicate: >
   /v1/internal/hooks/ingest and
   /v1/internal/launches/:launchId/{wrapper-started,child-started,continuation,event,exited}
   are unmatched (404) and write nothing durable, no OTLP
-  log listener is bound, and spooled entries for those routes are quarantined
-  without being applied, so run, turn, and runtime state are never derived from
+  log listener is bound, and launch callback spool writing, replay, and quarantine
+  are retired (T-11714; the legacy spoolDir option is accepted but ignored), so run, turn, and runtime state are never derived from
   those native payloads. The retired Codex Desktop registration route (POST
   /v1/internal/desktop/register, T-08567) answers 404; Desktop threads join
   through the generic participant door governed by
@@ -226,7 +226,7 @@ required_tests:
   - T-08207 durable input-protection gates preserve a shared runtime for another accepted input before landing, including after daemon restart, transfer coverage atomically at initiating and joined landing, release only for exact pre-landing rejection or confirmed withdrawal, and retain coverage through teardown cancellation, invocation failure/exited, and liveness uncertainty
   - T-08201 auxiliary gates cover accepted and ACK-completed coalescence, truthful failed/cancelled/zombie preservation, duplicate absorption, crash after commit before ACK, unresolved teardown, and both prune dependency guards
   - T-08201 installed Codex TUI and Claude original-run observers survive two mid-run steers and receive normal or interrupted terminals; raw/direct-wait interruption stays non-success while existing canonical mapping and stacked exit behavior remain unchanged
-  - retired launch-wrapper hook, OTEL, and launch-callback ingest refuses without any run, runtime, launch, or event write, and quarantines retired spool entries unapplied, while Desktop registration requests and their spool entries behave unchanged
+  - retired launch-wrapper hook, OTEL, and launch-callback ingest refuses without any run, runtime, launch, or event write, and launch callback spool writing, replay, and quarantine are retired with spoolDir accepted but ignored since T-11714
   - retained turn-start without terminal does not change runtime status, active run, or an operator-written run terminal
   - unexpired crashed, dead, stale, and detached runtimes, including those with missing or unparseable statusChangedAt, are refused retained recovery without cursor movement
   - expired revivable recovery refuses a live but socket-unreachable broker, matching process argv, failed process enumeration, or a live recorded broker pane without recording an outcome or moving a cursor; dead expired brokers are admitted under recovery ownership

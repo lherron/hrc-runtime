@@ -34,8 +34,7 @@ their own subdirectory.
 ### 2.1 `index.ts`: construction, lifecycle and handler composition
 
 - `createHrcServer(options)` prepares the filesystem, takes the server lock
-  (`server-lock.ts`), opens the SQLite store (`hrc-store-sqlite`), replays the
-  launch spool (`replay-spool.ts`), reconciles startup state
+  (`server-lock.ts`), opens the SQLite store (`hrc-store-sqlite`), reconciles startup state
   (`startup-reconcile.ts`) and returns a `HrcServerInstance`.
 - The `HrcServerInstance` constructor starts the socket server and federation
   services (`startFederationServices`), wires the wrkq ledger client (a real
@@ -149,7 +148,7 @@ barrel that keeps the historical import path.
 
 ### 2.7 `launch/` and `agent-spaces-adapter/`
 
-- `launch/`: callback client, spool and environment hygiene (`env.ts`).
+- `launch/`: tmux environment hygiene (`env.ts`). Launch callback spooling was retired in T-11714.
 - `agent-spaces-adapter/`: the seam to ASP. `compile-adapter.ts` (+ its
   admission and types modules) sends the runtime intent, including
   `selectionContext.summonDirectives`, to `aspd` and consumes the selected

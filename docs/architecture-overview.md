@@ -67,7 +67,7 @@ addressed wrkq mail to seats, and the federation peer surface.
   `app-sessions.ts`, `bridges.ts`, `command-runs.ts`, `messages.ts`,
   `provision.ts`, `sweeps.ts`), plus `runtime-harness-resolver.ts` for the one parser that
   does filesystem IO. `server-parsers.ts` is a thin re-export barrel.
-- `launch/` — callback spooling and tmux environment hygiene. The
+- `launch/` — tmux environment hygiene. Callback spooling was retired in T-11714. The
   launch-wrapper hook, OTEL and artifact plumbing was retired in T-08566.
 - `agent-spaces-adapter/` — the seam onto `aspd`: `compileBrokerRuntimePlan`
   and per-request Unix-socket clients (`aspc.hello` /

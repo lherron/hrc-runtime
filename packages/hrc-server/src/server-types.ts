@@ -321,6 +321,7 @@ export type HrcServerOptions = {
   stateRoot: string
   socketPath: string
   lockPath: string
+  /** @deprecated Compatibility only; ignored since T-11714. */
   spoolDir: string
   dbPath: string
   /**

@@ -77,6 +77,7 @@ export function resolveLaunchesDir(): string {
   return join(resolveRuntimeRoot(), 'launches')
 }
 
+/** @deprecated Legacy path only; launch spool is ignored since T-11714. */
 export function resolveSpoolDir(): string {
   return join(resolveRuntimeRoot(), 'spool')
 }

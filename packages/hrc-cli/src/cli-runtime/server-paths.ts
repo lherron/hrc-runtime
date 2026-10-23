@@ -19,6 +19,7 @@ export type ServerPaths = {
   stateRoot: string
   socketPath: string
   lockPath: string
+  /** @deprecated Compatibility only; ignored since T-11714. */
   spoolDir: string
   dbPath: string
   tmuxSocketPath: string

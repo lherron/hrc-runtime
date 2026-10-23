@@ -106,7 +106,6 @@ import {
   presentationPublishMethods,
 } from './presentation-publish.js'
 import { captureServerRelease, pruneReleasesFromCurrent } from './release-provenance.js'
-import { replaySpool } from './replay-spool.js'
 import { ServerRequestMetricSampler, writeServerMetric } from './request-metrics.js'
 import type { RequestMetricsSink } from './request-metrics.js'
 import {
@@ -846,7 +845,6 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       })
     }
     const livePlacementRepairCandidates = captureLivePlacementRepairCandidates(db)
-    await replaySpool(resolvedOptions)
     await reconcileStartupState(db, tmux, {
       runtimeRoot: resolvedOptions.runtimeRoot,
     })
