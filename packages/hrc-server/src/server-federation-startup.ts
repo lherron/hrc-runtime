@@ -101,6 +101,7 @@ export function startFederationServices(
         birthEnvelopeFor: async (scopeRef: string) =>
           await server.wrkqLedger.birthEnvelope({ scopeRef }),
         sqliteBusyTimeoutMs: options.sqliteBusyTimeoutMs,
+        metrics: server.requestMetricsSink,
       })
       federationRegistryEndpoint = bindingRegistryEndpoint.url
       writeServerLog('INFO', 'server.start.binding_registry_listener', {
@@ -136,6 +137,7 @@ export function startFederationServices(
     try {
       peerProtocolEndpoint = startPeerProtocolEndpoint({
         listener: federationConfig.peerListener,
+        metrics: server.requestMetricsSink,
         options: {
           localNodeId: federationConfig.nodeId,
           peers: federationConfig.peers,

@@ -1,7 +1,7 @@
 import { markLoopActivity } from './event-loop-lag.js'
 import type { HrcServerInstance } from './index.js'
 import { handleGetInput, handleWatchInput, matchInputRoute } from './input-handlers.js'
-import { measureResponseBytes, normalizeRoute, writeServerMetric } from './request-metrics.js'
+import { normalizeRoute, recordRequestMetric, requestClientLabel } from './request-metrics.js'
 import {
   exactRouteKey,
   matchLaunchSubroute,
@@ -23,41 +23,22 @@ export const serverRequestMethods = {
     this.exactRouteKeys ??= new Set(Object.keys(this.exactRouteHandlers))
     const route = normalizeRoute(method, pathname, this.exactRouteKeys)
     markLoopActivity(`request:${method} ${route}`)
-    if (!this.requestMetricsEnabled) {
+    const sink = this.requestMetricsSink
+    if (sink === undefined) {
       return this.dispatchRequest(request)
     }
 
     const started = process.hrtime.bigint()
     const response = await this.dispatchRequest(request)
-    const handlerMs = Number(process.hrtime.bigint() - started) / 1_000_000
-    try {
-      const reqId = request.headers.get('x-hrc-request-id')
-      const now = new Date()
-      const sampleWeight = this.requestMetricSampler.weight(
-        { method, route, ms: handlerMs, status: response.status, reqId },
-        now.getTime()
-      )
-      if (sampleWeight === 0) return response
-      const measurement = await measureResponseBytes(response)
-      writeServerMetric(
-        {
-          v: 1,
-          kind: 'server',
-          ts: now.toISOString(),
-          route,
-          method,
-          ms: handlerMs,
-          status: response.status,
-          ...measurement,
-          ...(reqId && reqId.trim().length > 0 ? { reqId } : {}),
-          ...(sampleWeight > 1 ? { sampleWeight } : {}),
-        },
-        now,
-        this.options.stateRoot
-      )
-    } catch {
-      // Metrics are observational and must never alter request handling.
-    }
+    await recordRequestMetric({
+      request,
+      response,
+      listener: 'main',
+      route,
+      client: requestClientLabel(request),
+      ms: Number(process.hrtime.bigint() - started) / 1_000_000,
+      sink,
+    })
     return response
   },
 

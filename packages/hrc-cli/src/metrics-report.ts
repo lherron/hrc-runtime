@@ -250,7 +250,9 @@ function parseLaunchSpanMetric(value: unknown): LaunchSpanRecord | undefined {
   }
 }
 
-function parseServerMetric(value: unknown): ServerRequestMetricRecord | undefined {
+const REQUEST_METRIC_LISTENERS = new Set(['ingest', 'peer', 'registry'])
+
+export function parseServerMetric(value: unknown): ServerRequestMetricRecord | undefined {
   if (!isRecord(value) || value['v'] !== 1 || value['kind'] !== 'server') return undefined
   if (
     typeof value['ts'] !== 'string' ||
@@ -261,6 +263,9 @@ function parseServerMetric(value: unknown): ServerRequestMetricRecord | undefine
     (value['bytes'] !== undefined && !isFiniteNonNegative(value['bytes'])) ||
     (value['stream'] !== undefined && value['stream'] !== true) ||
     (value['reqId'] !== undefined && typeof value['reqId'] !== 'string') ||
+    (value['client'] !== undefined && typeof value['client'] !== 'string') ||
+    (value['listener'] !== undefined &&
+      !REQUEST_METRIC_LISTENERS.has(value['listener'] as string)) ||
     (value['sampleWeight'] !== undefined &&
       !(Number.isSafeInteger(value['sampleWeight']) && (value['sampleWeight'] as number) >= 1))
   ) {
@@ -270,8 +275,12 @@ function parseServerMetric(value: unknown): ServerRequestMetricRecord | undefine
     v: 1,
     kind: 'server',
     ts: value['ts'],
+    ...(value['listener'] === undefined
+      ? {}
+      : { listener: value['listener'] as NonNullable<ServerRequestMetricRecord['listener']> }),
     route: value['route'],
     method: value['method'],
+    ...(value['client'] === undefined ? {} : { client: value['client'] as string }),
     ms: value['ms'],
     status: value['status'],
     ...(value['bytes'] === undefined ? {} : { bytes: value['bytes'] }),
@@ -338,7 +347,7 @@ function byteStats(samples: number[]): ByteStats {
   }
 }
 
-function fileCouldContainWindow(name: string, cutoff: number): boolean {
+export function fileCouldContainWindow(name: string, cutoff: number): boolean {
   const match = /^(?:cli|server)-(\d{4}-\d{2}-\d{2})\.ndjson$/.exec(name)
   if (!match?.[1]) return false
   return match[1] >= new Date(cutoff).toISOString().slice(0, 10)
@@ -413,7 +422,9 @@ function recordWeight(record: ServerRequestMetricRecord): number {
 function groupRoutes(records: ServerRequestMetricRecord[]): RouteMetricGroup[] {
   const groups = new Map<string, ServerRequestMetricRecord[]>()
   for (const record of records) {
-    const key = `${record.method} ${record.route}`
+    // A non-main listener's route is its own row (peer `GET /v1/runs` is not main's).
+    const listener = record.listener === undefined ? '' : `${record.listener} `
+    const key = `${listener}${record.method} ${record.route}`
     const group = groups.get(key)
     if (group) group.push(record)
     else groups.set(key, [record])

@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+
 import type { HrcHttpError, HrcLifecycleEvent } from 'hrc-core'
-import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
+import { HRC_CLIENT_HEADER, HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type {
   HrcSubscriberReceiptAckRequest,
   HrcSubscriberReceiptAckResponse,
@@ -100,11 +103,58 @@ export function matchesWatchOptions(
   return true
 }
 
+let derivedClientName: string | undefined
+
+/**
+ * The caller label this process sends when its client names none (T-11541):
+ * the `name` of the package that owns the program's entry module, so
+ * `acp server serve` reports `acp-cli` and `hrc` reports `hrc-cli` without
+ * either one opting in. A compiled binary (`/$bunfs/...`) has no package on
+ * disk and reports its entry file's stem.
+ */
+export function defaultHrcClientName(): string {
+  derivedClientName ??= deriveClientName()
+  return derivedClientName
+}
+
+function deriveClientName(): string {
+  const entry = typeof Bun !== 'undefined' ? Bun.main : process.argv[1]
+  if (!entry) return 'hrc-sdk'
+  if (!entry.startsWith('/$bunfs/')) {
+    let dir = dirname(entry)
+    for (let depth = 0; depth < 8; depth += 1) {
+      try {
+        const name = (
+          JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+            name?: unknown
+          }
+        ).name
+        if (typeof name === 'string' && name.length > 0) return name
+      } catch {
+        // No (readable) package.json here; keep walking up.
+      }
+      const parent = dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  }
+  return basename(entry).replace(/\.[cm]?[jt]sx?$/, '') || 'hrc-sdk'
+}
+
+export type HrcClientTransportOptions = {
+  socketPath: string
+  /** Observational caller label sent as `x-hrc-client`; defaults to {@link defaultHrcClientName}. */
+  clientName?: string | undefined
+}
+
 export class HrcClientTransport {
   protected readonly socketPath: string
+  protected readonly clientName: string
 
-  constructor(socketPath: string | { socketPath: string }) {
+  constructor(socketPath: string | HrcClientTransportOptions) {
     this.socketPath = typeof socketPath === 'string' ? socketPath : socketPath.socketPath
+    this.clientName =
+      (typeof socketPath === 'string' ? undefined : socketPath.clientName) ?? defaultHrcClientName()
   }
 
   // -- HTTP primitives -------------------------------------------------------
@@ -116,13 +166,14 @@ export class HrcClientTransport {
    * `Response` so streaming callers can consume `res.body` directly.
    */
   protected unixFetch(path: string, init: BunRequestInit = {}): Promise<Response> {
+    const headers = new Headers(init.headers)
+    headers.set(HRC_CLIENT_HEADER, this.clientName)
     const metrics = getHrcCliRpcMetricsHook()
     if (!metrics) {
-      return fetch(`${BASE_URL}${path}`, { ...init, unix: this.socketPath })
+      return fetch(`${BASE_URL}${path}`, { ...init, headers, unix: this.socketPath })
     }
 
     const span = metrics.start(path, (init.method ?? 'GET').toUpperCase())
-    const headers = new Headers(init.headers)
     headers.set('x-hrc-request-id', span.id)
     return fetch(`${BASE_URL}${path}`, { ...init, headers, unix: this.socketPath }).then(
       (response) => {

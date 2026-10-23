@@ -1,6 +1,8 @@
 import { appendFile, mkdir, readdir, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { HRC_CLIENT_HEADER } from 'hrc-core'
+
 import { writeServerLog } from './server-log.js'
 import { exactRouteKey, matchLaunchSubroute, matchSessionTitleRoute } from './server-routing.js'
 
@@ -36,12 +38,27 @@ export const SERVER_METRIC_SAMPLE_EVERY = 20
 export const SERVER_METRIC_UNSAMPLED_PER_MINUTE = 10
 export const SERVER_METRIC_ALWAYS_KEEP_MS = 25
 
+/**
+ * Every HTTP listener the daemon owns writes the same request record (T-11541).
+ * `main` is the control unix socket; its records omit `listener`.
+ */
+export type RequestMetricListener = 'main' | 'ingest' | 'peer' | 'registry'
+
 export type ServerRequestMetricRecord = {
   v: 1
   kind: 'server'
   ts: string
+  /** Absent on the main control socket (and on every record written before T-11541). */
+  listener?: Exclude<RequestMetricListener, 'main'>
   route: string
   method: string
+  /**
+   * Observational caller label (T-11541): the sanitized `x-hrc-client` header,
+   * else `ua:<product>` from the User-Agent, else `unknown`; on a federation
+   * listener, `peer:<nodeId>` from the request's own bearer check. Absent on
+   * records written before T-11541.
+   */
+  client?: string
   ms: number
   status: number
   bytes?: number
@@ -103,28 +120,100 @@ export type ServerMetricRecord =
 
 export type ResponseByteMeasurement = { bytes: number } | { stream: true }
 
+type PatternRoute = { method: string; route: string; matches: (pathname: string) => boolean }
+
+/**
+ * Every parameterized route `dispatchRequest` answers on the main socket, in
+ * its dispatch order. Matching never decodes the path: a malformed escape is
+ * the handler's 400 to give, not the metric's exception to throw.
+ */
+const MAIN_PATTERN_ROUTES: readonly PatternRoute[] = [
+  {
+    method: 'GET',
+    route: '/v1/inputs/:inputId/watch',
+    matches: (pathname) => /^\/v1\/inputs\/[^/]+\/watch$/.test(pathname),
+  },
+  {
+    method: 'GET',
+    route: '/v1/inputs/:inputId',
+    matches: (pathname) => /^\/v1\/inputs\/[^/]+$/.test(pathname),
+  },
+  {
+    method: 'GET',
+    route: '/v1/sessions/by-host/:hostSessionId',
+    matches: (pathname) => pathname.startsWith('/v1/sessions/by-host/'),
+  },
+  ...(['POST', 'DELETE'] as const).map((method) => ({
+    method,
+    route: '/v1/sessions/:hostSessionId/title',
+    matches: (pathname: string) => matchSessionTitleRoute(method, pathname) !== undefined,
+  })),
+  {
+    method: 'GET',
+    route: '/v1/runtimes/:runtimeId/seat',
+    matches: (pathname) => /^\/v1\/runtimes\/[^/]+\/seat$/.test(pathname),
+  },
+  {
+    method: 'GET',
+    route: '/v1/active-run-contributions/:inputApplicationId',
+    matches: (pathname) => pathname.startsWith('/v1/active-run-contributions/'),
+  },
+  ...(['continuation', 'wrapper-started', 'child-started', 'event', 'exited'] as const).map(
+    (suffix) => ({
+      method: 'POST',
+      route: `/v1/internal/launches/:launchId/${suffix}`,
+      matches: (pathname: string) => matchLaunchSubroute('POST', pathname)?.suffix === suffix,
+    })
+  ),
+]
+
+/** The main socket's parameterized routes, as `{method, route}` templates. */
+export function mainPatternRoutes(): { method: string; route: string }[] {
+  return MAIN_PATTERN_ROUTES.map(({ method, route }) => ({ method, route }))
+}
+
 export function normalizeRoute(
   method: string,
   pathname: string,
-  knownExactKeys: Set<string>
+  knownExactKeys: ReadonlySet<string>
 ): string {
   if (knownExactKeys.has(exactRouteKey(method, pathname))) {
     return pathname
   }
-  if (method === 'GET' && pathname.startsWith('/v1/sessions/by-host/')) {
-    return '/v1/sessions/by-host/:hostSessionId'
-  }
-  if (method === 'GET' && pathname.startsWith('/v1/active-run-contributions/')) {
-    return '/v1/active-run-contributions/:inputApplicationId'
-  }
-  if (matchSessionTitleRoute(method, pathname)) {
-    return '/v1/sessions/:hostSessionId/title'
-  }
-  const launchSubroute = matchLaunchSubroute(method, pathname)
-  if (launchSubroute) {
-    return `/v1/internal/launches/:launchId/${launchSubroute.suffix}`
+  for (const pattern of MAIN_PATTERN_ROUTES) {
+    if (pattern.method === method && pattern.matches(pathname)) return pattern.route
   }
   return 'unmatched'
+}
+
+const CLIENT_LABEL_MAX_CHARS = 64
+const UA_PRODUCT_MAX_CHARS = 32
+
+/** Bounded, line-safe label: anything outside a conservative charset becomes `_`. */
+function clientLabel(raw: string | null | undefined, maxChars: number): string | undefined {
+  const label = raw
+    ?.trim()
+    .slice(0, maxChars)
+    .replace(/[^A-Za-z0-9._:/@+-]/g, '_')
+  return label ? label : undefined
+}
+
+/**
+ * Who sent this request, for metrics only. Reads exactly two headers and keeps
+ * no more of the User-Agent than its product token (`Bun/1.3` -> `ua:Bun`).
+ */
+export function requestClientLabel(request: Request): string {
+  const declared = clientLabel(request.headers.get(HRC_CLIENT_HEADER), CLIENT_LABEL_MAX_CHARS)
+  if (declared) return declared
+  const product = request.headers.get('user-agent')?.trim().split(/[\s/]/, 1)[0]
+  const ua = clientLabel(product, UA_PRODUCT_MAX_CHARS)
+  return ua ? `ua:${ua}` : 'unknown'
+}
+
+/** A federation caller is the peer its bearer token authenticated as, or nobody. */
+export function peerClientLabel(nodeId: string | undefined): string {
+  const label = clientLabel(nodeId, CLIENT_LABEL_MAX_CHARS)
+  return label ? `peer:${label}` : 'unauthenticated'
 }
 
 export async function measureResponseBytes(response: Response): Promise<ResponseByteMeasurement> {
@@ -154,13 +243,23 @@ export class ServerRequestMetricSampler {
 
   /** Returns the weight to record the request at, or 0 to skip it. */
   weight(
-    request: { method: string; route: string; ms: number; status: number; reqId?: string | null },
+    request: {
+      method: string
+      route: string
+      ms: number
+      status: number
+      reqId?: string | null
+      listener?: RequestMetricListener
+      client?: string
+    },
     nowMs: number
   ): number {
     if (request.reqId || request.status >= 400 || request.ms >= SERVER_METRIC_ALWAYS_KEEP_MS) {
       return 1
     }
-    const key = `${request.method} ${request.route}`
+    // Client is part of the stratum: a rare caller of a hot route keeps its own
+    // unsampled head instead of vanishing into another caller's 1-in-N.
+    const key = `${request.listener ?? 'main'} ${request.method} ${request.route} ${request.client ?? ''}`
     const minute = Math.floor(nowMs / 60_000)
     let state = this.routes.get(key)
     if (!state) {
@@ -390,4 +489,117 @@ export function recordLaunchSpan(
     now,
     stateRoot
   )
+}
+
+/** Where a listener's request records go; absent when `HRC_METRICS=0`. */
+export type RequestMetricsSink = {
+  stateRoot: string
+  sampler: ServerRequestMetricSampler
+}
+
+/**
+ * Record one completed request (any listener). Never throws and never consumes
+ * the response: bytes are measured from headers or a clone.
+ */
+export async function recordRequestMetric(input: {
+  request: Request
+  response: Response
+  listener: RequestMetricListener
+  route: string
+  client: string
+  ms: number
+  sink: RequestMetricsSink
+}): Promise<void> {
+  try {
+    const { request, response, listener, route, client, ms, sink } = input
+    const method = request.method
+    const reqId = request.headers.get('x-hrc-request-id')
+    const now = new Date()
+    const sampleWeight = sink.sampler.weight(
+      { method, route, ms, status: response.status, reqId, listener, client },
+      now.getTime()
+    )
+    if (sampleWeight === 0) return
+    const measurement = await measureResponseBytes(response)
+    writeServerMetric(
+      {
+        v: 1,
+        kind: 'server',
+        ts: now.toISOString(),
+        ...(listener === 'main' ? {} : { listener }),
+        route,
+        method,
+        client,
+        ms,
+        status: response.status,
+        ...measurement,
+        ...(reqId && reqId.trim().length > 0 ? { reqId } : {}),
+        ...(sampleWeight > 1 ? { sampleWeight } : {}),
+      },
+      now,
+      sink.stateRoot
+    )
+  } catch {
+    // Metrics are observational and must never alter request handling.
+  }
+}
+
+/**
+ * Put a non-main listener's requests in the same stream as the control socket.
+ * Its routes are exact paths, so anything outside `routeKeys` is `unmatched`.
+ */
+export function withRequestMetrics<Rest extends unknown[]>(
+  handler: (request: Request, ...rest: Rest) => Response | Promise<Response>,
+  input: {
+    listener: Exclude<RequestMetricListener, 'main'>
+    routeKeys: ReadonlySet<string>
+    sink: RequestMetricsSink | undefined
+    clientOf?: ((request: Request) => string) | undefined
+  }
+): (request: Request, ...rest: Rest) => Promise<Response> {
+  const { sink } = input
+  if (sink === undefined) return async (request, ...rest) => handler(request, ...rest)
+  const clientOf = input.clientOf ?? requestClientLabel
+  return async (request, ...rest) => {
+    const pathname = new URL(request.url).pathname
+    const route = input.routeKeys.has(exactRouteKey(request.method, pathname))
+      ? pathname
+      : 'unmatched'
+    const started = process.hrtime.bigint()
+    const elapsedMs = () => Number(process.hrtime.bigint() - started) / 1_000_000
+    let response: Response
+    try {
+      response = await handler(request, ...rest)
+    } catch (error) {
+      // Bun answers an escaped throw with its own 500; record that.
+      await recordRequestMetric({
+        request,
+        response: new Response(null, { status: 500 }),
+        listener: input.listener,
+        route,
+        client: safeClient(clientOf, request),
+        ms: elapsedMs(),
+        sink,
+      })
+      throw error
+    }
+    await recordRequestMetric({
+      request,
+      response,
+      listener: input.listener,
+      route,
+      client: safeClient(clientOf, request),
+      ms: elapsedMs(),
+      sink,
+    })
+    return response
+  }
+}
+
+function safeClient(clientOf: (request: Request) => string, request: Request): string {
+  try {
+    return clientOf(request)
+  } catch {
+    return 'unknown'
+  }
 }

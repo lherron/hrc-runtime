@@ -7,6 +7,8 @@ import {
   openBindingRegistry,
 } from 'hrc-store-sqlite'
 
+import { peerClientLabel, withRequestMetrics } from '../request-metrics.js'
+import type { RequestMetricsSink } from '../request-metrics.js'
 import { writeServerLog } from '../server-log.js'
 import type { BirthEnvelopeReader } from './birth-designation.js'
 import { BirthEnvelopeUnavailableError, designateBirthOnHost } from './birth-designation.js'
@@ -123,6 +125,16 @@ function parseBirthDesignationDecision(
   }
   throw new InvalidRegistryRequest()
 }
+
+/** The registry listener's whole route table, for request metrics (T-11541). */
+export const BINDING_REGISTRY_ROUTE_KEYS: ReadonlySet<string> = new Set([
+  'GET /v1/federation/registry/designation',
+  'GET /v1/federation/registry/unborn-designations',
+  'POST /v1/federation/registry/designate-birth',
+  'GET /v1/federation/registry/consult',
+  'POST /v1/federation/registry/establish',
+  'POST /v1/federation/registry/delete',
+])
 
 function authenticate(
   request: Request,
@@ -353,6 +365,7 @@ export function startBindingRegistryEndpoint(input: {
    */
   birthEnvelopeFor?: BirthEnvelopeReader | undefined
   sqliteBusyTimeoutMs?: number | undefined
+  metrics?: RequestMetricsSink | undefined
 }): BindingRegistryEndpointControl {
   const bind = new URL(input.listener.bind)
   const registry = openBindingRegistry(input.registryPath, {
@@ -366,13 +379,21 @@ export function startBindingRegistryEndpoint(input: {
       hostname: bind.hostname.replace(/^\[|\]$/g, ''),
       port: Number(bind.port),
       fetch: withRequestLog(
-        createBindingRegistryRequestHandler({
-          registry,
-          peers: input.peers,
-          ...(input.birthEnvelopeFor === undefined
-            ? {}
-            : { birthEnvelopeFor: input.birthEnvelopeFor }),
-        })
+        withRequestMetrics(
+          createBindingRegistryRequestHandler({
+            registry,
+            peers: input.peers,
+            ...(input.birthEnvelopeFor === undefined
+              ? {}
+              : { birthEnvelopeFor: input.birthEnvelopeFor }),
+          }),
+          {
+            listener: 'registry',
+            routeKeys: BINDING_REGISTRY_ROUTE_KEYS,
+            sink: input.metrics,
+            clientOf: (request) => peerClientLabel(authenticate(request, input.peers)?.nodeId),
+          }
+        )
       ),
     })
     return {

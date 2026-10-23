@@ -13,6 +13,8 @@ import type {
   ListMessagesResponse,
   StartRuntimeResponse,
 } from 'hrc-core'
+import { peerClientLabel, withRequestMetrics } from '../request-metrics.js'
+import type { RequestMetricsSink } from '../request-metrics.js'
 import { writeServerLog } from '../server-log.js'
 import type { PeerEntry } from './federation-config.js'
 import { withRequestLog } from './http-request-log.js'
@@ -475,6 +477,28 @@ const CLAIM_START_ROUTES: readonly ClaimStartRoute[] = [
   },
 ]
 
+/**
+ * The peer listener's whole route table, for request metrics (T-11541). Kept
+ * beside the dispatchers it mirrors; `conformance/hrc-parity` freezes the set.
+ */
+export const PEER_PROTOCOL_ROUTE_KEYS: ReadonlySet<string> = new Set([
+  'GET /v1/federation/health',
+  'GET /v1/sessions/metadata',
+  'PATCH /v1/sessions/metadata',
+  'GET /v1/sessions/get',
+  'GET /v1/sessions/page',
+  'GET /v1/sessions/facets',
+  'POST /v1/sessions/resolve',
+  ...Object.keys(SESSION_READ_GET_ROUTES).map((path) => `GET ${path}`),
+  'POST /v1/federation/locate',
+  ...CLAIM_START_ROUTES.map((route) => `POST ${route.path}`),
+  'POST /v1/federation/establish',
+  'POST /v1/federation/server-lifecycle',
+  'POST /v1/federation/history/replicate',
+  'POST /v1/federation/history/query',
+  'POST /v1/federation/history/checkpoint',
+])
+
 async function handleClaimStartRequest(input: {
   request: Request
   url: URL
@@ -681,15 +705,32 @@ export function parsePeerProtocolBind(raw: string, where: string): PeerProtocolL
   return { bind: url.toString() }
 }
 
+/**
+ * The handler the peer listener serves: the protocol handler inside the daemon's
+ * request metrics, attributed to the peer its own bearer check authenticates.
+ */
+export function createMeteredPeerProtocolRequestHandler(
+  options: PeerProtocolRequestHandlerOptions,
+  metrics: RequestMetricsSink | undefined
+): (request: Request) => Promise<Response> {
+  return withRequestMetrics(createPeerProtocolRequestHandler(options), {
+    listener: 'peer',
+    routeKeys: PEER_PROTOCOL_ROUTE_KEYS,
+    sink: metrics,
+    clientOf: (request) => peerClientLabel(authenticate(request, options.peers)?.nodeId),
+  })
+}
+
 export function startPeerProtocolEndpoint(input: {
   readonly listener: PeerProtocolListenerConfig
   readonly options: PeerProtocolRequestHandlerOptions
+  readonly metrics?: RequestMetricsSink | undefined
 }): PeerProtocolEndpointControl {
   const bind = new URL(input.listener.bind)
   const server = Bun.serve({
     hostname: bind.hostname.replace(/^\[|\]$/g, ''),
     port: Number(bind.port),
-    fetch: withRequestLog(createPeerProtocolRequestHandler(input.options)),
+    fetch: withRequestLog(createMeteredPeerProtocolRequestHandler(input.options, input.metrics)),
   })
   return {
     url: input.listener.bind,

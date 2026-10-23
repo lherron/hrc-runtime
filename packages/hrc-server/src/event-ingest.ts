@@ -8,7 +8,7 @@ import type {
   HrcLifecycleEvent,
   HrcToolResultBlobPart,
 } from 'hrc-core'
-import { resolveIngestSocketPath } from 'hrc-core'
+import { HRC_CLIENT_HEADER, resolveIngestSocketPath } from 'hrc-core'
 import {
   BrokerInvocationEventConflictError,
   ImportedHrcLifecycleEventConflictError,
@@ -16,6 +16,8 @@ import {
 } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import { withRequestMetrics } from './request-metrics.js'
+import type { RequestMetricsSink } from './request-metrics.js'
 import { writeServerLog } from './server-log.js'
 
 export const HRC_INGEST_MAX_BODY_BYTES = 1_048_576
@@ -25,6 +27,8 @@ export const HRC_EVENT_INGEST_SOCKET_ENV = 'HRC_EVENT_INGEST_SOCKET'
 export const HRC_EVENT_FORWARD_URL_ENV = 'HRC_EVENT_FORWARD_URL'
 export const HRC_EVENT_INGEST_TCP_PORT_ENV = 'HRC_EVENT_INGEST_TCP_PORT'
 export const HRC_EVENT_INGEST_TCP_HOST = '127.0.0.1'
+/** The ingest listener's whole route table, for request metrics (T-11541). */
+export const EVENT_INGEST_ROUTE_KEYS: ReadonlySet<string> = new Set(['POST /v1/ingest'])
 const CURSOR_FILE = 'event-forward-cursors.json'
 const EVENT_FORWARD_MAX_RETRY_MS = 60_000
 const serveIngest = Bun.serve
@@ -410,6 +414,7 @@ export async function startEventIngestListener(options: {
   tcpPort?: number
   onLifecycleEvent?: (event: HrcLifecycleEvent) => void
   onBrokerEvent?: (event: HrcBrokerInvocationEventRecord) => void
+  metrics?: RequestMetricsSink | undefined
 }): Promise<EventIngestListener> {
   const socketPath = options.socketPath ?? join(options.runtimeRoot, 'ingest', 'events.sock')
   await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 })
@@ -420,7 +425,11 @@ export async function startEventIngestListener(options: {
     divergentDuplicates: 0,
     rejected: 0,
   }
-  const fetch = createIngestHandler({ ...options, counters })
+  const fetch = withRequestMetrics(createIngestHandler({ ...options, counters }), {
+    listener: 'ingest',
+    routeKeys: EVENT_INGEST_ROUTE_KEYS,
+    sink: options.metrics,
+  })
   const unixServer = serveIngest({
     unix: socketPath,
     idleTimeout: 30,
@@ -581,7 +590,10 @@ async function postBatch(
   const prepared = prepareBoundedBatch(batch)
   const init: RequestInit & { unix?: string } = {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      [HRC_CLIENT_HEADER]: `hrc-forwarder/${batch.sourceRef}`,
+    },
     body: prepared.body,
   }
   const endpoint =

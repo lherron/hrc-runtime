@@ -128,6 +128,7 @@ import {
 import { captureServerRelease, pruneReleasesFromCurrent } from './release-provenance.js'
 import { replaySpool } from './replay-spool.js'
 import { ServerRequestMetricSampler, writeServerMetric } from './request-metrics.js'
+import type { RequestMetricsSink } from './request-metrics.js'
 import {
   type RetainedEvidenceMethods,
   retainedEvidenceMethods,
@@ -467,6 +468,8 @@ export class HrcServerInstance implements HrcServer {
   readonly ctx: ServerContext
   readonly requestMetricsEnabled = process.env['HRC_METRICS'] !== '0'
   readonly requestMetricSampler = new ServerRequestMetricSampler()
+  /** One request-metric stream for every listener; undefined when `HRC_METRICS=0`. */
+  readonly requestMetricsSink: RequestMetricsSink | undefined
   eventLoopLag: EventLoopLagMonitor | undefined
   exactRouteKeys: Set<string> | undefined
   eventIngestListener: EventIngestListener | undefined
@@ -481,6 +484,9 @@ export class HrcServerInstance implements HrcServer {
     readonly lockHandle: ServerLockHandle
   ) {
     this.turnAdmissionGate = new TurnAdmissionGate(options.runtimeRoot)
+    this.requestMetricsSink = this.requestMetricsEnabled
+      ? { stateRoot: options.stateRoot, sampler: this.requestMetricSampler }
+      : undefined
     this.followFanOut = new FollowFanOut(db.sqlite, this.followSubscribers)
     this.stopObservingLifecycleAppends = observeLifecycleAppends(db.sqlite, (event) =>
       this.followFanOut.deliver(event)
@@ -705,6 +711,7 @@ export class HrcServerInstance implements HrcServer {
     this.eventIngestListener = await startEventIngestListener({
       db: this.db,
       runtimeRoot: this.options.runtimeRoot,
+      metrics: this.requestMetricsSink,
       ...(socketPath ? { socketPath } : {}),
       ...(tcpPort !== undefined ? { tcpPort } : {}),
       onLifecycleEvent: (event) => this.notifyEvent(event),

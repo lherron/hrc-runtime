@@ -16,6 +16,12 @@ and `packages/hrc-cli/src/metrics-report.ts`, `broker-verify/`, `worktree-prune.
   <runId>` withdraws one accepted run's broker submission (not driven: needs a stuck run).
 - `hrc admin metrics report [--since D] [--json]`: `commands`, `counters`, `routes`, `slowest`, `largest`,
   `launch`, `diagnostics`, `uncorrelatedServerCount`.
+- `hrc admin metrics routes [--since D] [--by route|client|route,client] [--listener main|ingest|peer|registry]
+  [--idle] [--json]` (T-11541): read-only streaming rollup of the `server-*.ndjson` request records.
+  Each row has `count` (weighted by `sampleWeight`), `records`, `errors`, `errorRate`, `ms.p50|p95|max` and
+  `firstSeen`/`lastSeen`; `--idle` adds the registered routes with no request in the window. Callers come from
+  `x-hrc-client` (the SDK sends its host package name: `hrc-cli`, `acp-cli`, ...), else `ua:<product>`. On
+  federation listeners the caller is `peer:<nodeId>`. Records from before T-11541 read as `unattributed`.
 - `hrc runtime sweep [--dry-run|--yes] [--older-than D] [--json]`: liveness-gates aged ready/busy runtimes
   (summary `matched`, `stale`, `terminated`, `skipped`). `hrc runtime prune [--dry-run|--yes] [--status S]
   [--older-than D] [--json]`: deletes orphaned runtime rows (default `stale`, 24h); a dry-run lists each
@@ -53,6 +59,7 @@ hv run <task> -- hrc admin runs sweep-zombies --dry-run --json
 hv run <task> -- hrc admin runs reconcile-active --dry-run --json
 hrc admin runs sweep-zombies --dry-run --json                 # live, read-only
 hrc admin metrics report --since 1h --json | jq -c keys
+hrc admin metrics routes --since 1h --by client --json | jq -c '.rows[] | {client, count}'   # live, read-only
 hrc admin status --json | jq -c keys
 hrc runtime diagnostics --json | jq -c '(.trips // .) | length'
 hv run <task> -- hrc capture status $T --json

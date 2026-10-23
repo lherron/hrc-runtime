@@ -3,6 +3,8 @@ import type { Command } from 'commander'
 
 import { readMetricsReport } from '../metrics-report.js'
 import type { MetricsReport } from '../metrics-report.js'
+import { readRouteUsage } from '../metrics-routes.js'
+import type { RouteUsageDimension, RouteUsageReport } from '../metrics-routes.js'
 import { printJson } from '../print.js'
 
 type MetricsReportFlags = {
@@ -19,6 +21,58 @@ function parseLimit(value: string, flag: string): number {
     throw new CliUsageError(`${flag} must be a non-negative integer`)
   }
   return parsed
+}
+
+type MetricsRoutesFlags = {
+  since: string
+  by: string
+  listener?: string | undefined
+  idle?: boolean | undefined
+  json?: boolean | undefined
+}
+
+const ROUTE_USAGE_LISTENERS = ['main', 'ingest', 'peer', 'registry'] as const
+
+function parseBy(value: string): RouteUsageDimension[] {
+  const parts = value.split(',').map((part) => part.trim())
+  if (parts.length === 0 || parts.some((part) => part !== 'route' && part !== 'client')) {
+    throw new CliUsageError('--by takes route, client, or route,client')
+  }
+  return [...new Set(parts)] as RouteUsageDimension[]
+}
+
+function parseListener(
+  value: string | undefined
+): (typeof ROUTE_USAGE_LISTENERS)[number] | undefined {
+  if (value === undefined) return undefined
+  const listener = ROUTE_USAGE_LISTENERS.find((candidate) => candidate === value)
+  if (!listener) throw new CliUsageError(`--listener takes ${ROUTE_USAGE_LISTENERS.join(', ')}`)
+  return listener
+}
+
+function printRouteUsage(report: RouteUsageReport): void {
+  const { diagnostics } = report
+  process.stdout.write(
+    `Request metrics since ${diagnostics.since}: files=${diagnostics.filesScanned} records=${diagnostics.recordsScanned}${diagnostics.metricsDirExists ? '' : ' (no metrics dir)'}\n`
+  )
+  process.stdout.write(
+    `${'count'.padStart(10)} ${'err%'.padStart(6)} ${'p50ms'.padStart(8)} ${'p95ms'.padStart(8)}  ${'last seen'.padEnd(16)}  ${report.by.map((dimension) => (dimension === 'route' ? 'listener route' : 'client')).join('  ')}\n`
+  )
+  for (const row of report.rows) {
+    const key = [
+      ...(row.route === undefined ? [] : [`${row.listener} ${row.method} ${row.route}`]),
+      ...(row.client === undefined ? [] : [row.client]),
+    ].join('  ')
+    process.stdout.write(
+      `${String(row.count).padStart(10)} ${(row.errorRate * 100).toFixed(1).padStart(6)} ${String(row.ms.p50).padStart(8)} ${String(row.ms.p95).padStart(8)}  ${row.lastSeen.slice(0, 16).padEnd(16)}  ${key}\n`
+    )
+  }
+  if (report.idle) {
+    process.stdout.write(`\nIdle routes (no request in window): ${report.idle.length}\n`)
+    for (const entry of report.idle) {
+      process.stdout.write(`  ${entry.listener} ${entry.method} ${entry.route}\n`)
+    }
+  }
 }
 
 function printNdjson(report: MetricsReport): void {
@@ -130,5 +184,24 @@ export function registerMetricsCommands(program: Command): void {
       if (options.json) printJson(report)
       else if (options.ndjson) printNdjson(report)
       else printHuman(report)
+    })
+  metrics
+    .command('routes')
+    .description('request counts per route and caller across every daemon listener (read-only)')
+    .option('--since <duration>', 'include records within this duration', '7d')
+    .option('--by <dimensions>', 'group rows by route, client, or route,client', 'route')
+    .option('--listener <name>', 'only one listener: main, ingest, peer or registry')
+    .option('--idle', 'also list registered routes with no request in the window')
+    .option('--json', 'output one structured JSON object')
+    .action(async (options: MetricsRoutesFlags) => {
+      const listener = parseListener(options.listener)
+      const report = await readRouteUsage({
+        since: options.since,
+        by: parseBy(options.by),
+        ...(listener === undefined ? {} : { listener }),
+        ...(options.idle ? { idle: true } : {}),
+      })
+      if (options.json) printJson(report)
+      else printRouteUsage(report)
     })
 }
