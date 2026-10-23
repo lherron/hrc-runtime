@@ -63,4 +63,26 @@ describe('bounded tool-result spill stubs', () => {
 
     expect(stub).toEqual({ content, details: { exitCode: 7, spill } })
   })
+  test('new head and tail excerpts never split a valid UTF16 pair', () => {
+    const body = `${'a'.repeat(4095)}😀${'b'.repeat(40_000)}😀${'c'.repeat(1023)}`
+    const text = createToolResultSpillStub(body, spill).content[0]
+    expect(text?.type).toBe('text')
+    if (text?.type !== 'text') throw new Error('missing excerpt')
+    const [head, , tail] = text.text.split('\n')
+    expect(head).toBe('a'.repeat(4095))
+    expect(tail).toBe('c'.repeat(1023))
+    expect(text.text.isWellFormed()).toBe(true)
+  })
+
+  test('genuine lone units and preserved historical excerpts remain lossless', () => {
+    const body = `\ud800${'x'.repeat(40_000)}\udc00`
+    const stub = createToolResultSpillStub(body, spill)
+    const block = stub.content[0]
+    if (block?.type !== 'text') throw new Error('missing excerpt')
+    expect(block.text.charCodeAt(0)).toBe(0xd800)
+    expect(block.text.charCodeAt(block.text.length - 1)).toBe(0xdc00)
+    expect(
+      createToolResultSpillStub(stub, spill, { preserveExistingExcerpt: true }).content
+    ).toEqual(stub.content)
+  })
 })

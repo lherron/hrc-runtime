@@ -146,7 +146,20 @@ export function createToolResultSpillStub(
     }
   }
   const body = resultBody(result)
-  const text = `${body.slice(0, TOOL_RESULT_SPILL_HEAD_CHARS)}\n…[${spill.bytes} bytes spilled → ${spill.blobId}]…\n${body.slice(-TOOL_RESULT_SPILL_TAIL_CHARS)}`
+  // Keep the existing UTF16 budgets, but move a cut inward if it bisects a pair.
+  // Genuine unpaired source units and preserved historical excerpts stay lossless.
+  const splitsPair = (index: number): boolean =>
+    index > 0 &&
+    index < body.length &&
+    body.charCodeAt(index - 1) >= 0xd800 &&
+    body.charCodeAt(index - 1) <= 0xdbff &&
+    body.charCodeAt(index) >= 0xdc00 &&
+    body.charCodeAt(index) <= 0xdfff
+  let headEnd = Math.min(body.length, TOOL_RESULT_SPILL_HEAD_CHARS)
+  let tailStart = Math.max(0, body.length - TOOL_RESULT_SPILL_TAIL_CHARS)
+  if (splitsPair(headEnd)) headEnd -= 1
+  if (splitsPair(tailStart)) tailStart += 1
+  const text = `${body.slice(0, headEnd)}\n…[${spill.bytes} bytes spilled → ${spill.blobId}]…\n${body.slice(tailStart)}`
   return {
     content: [{ type: 'text', text }],
     details: spillDetails(result, spill),
