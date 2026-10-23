@@ -4,7 +4,6 @@ from itertools import product
 import json
 from common import Gap
 from expressions import Pure
-from catalog import CATALOG
 
 
 NATIVE = {'atomic_e2e': 'native-atomic.json', 'store_e2e': 'native-page.json'}
@@ -23,9 +22,13 @@ class Bindings(dict):
         self.local = local
 
     def raw(self, name):
+        if not (self.c.root / self.family / name).is_file():
+            raise Gap('unsupported fixed-source alias points to absent convenience path; review retained source binding: ' + self.family + '/' + name)
         return self.c.load(self.family + '/' + name)
 
     def body(self, name):
+        if not (self.c.root / self.family / name).is_file():
+            raise Gap('unsupported fixed-source alias points to absent convenience path; review retained source binding: ' + self.family + '/' + name)
         return self.c.receipt(self.family, name)
 
     def get_binding(self, key):
@@ -42,6 +45,10 @@ class Bindings(dict):
                 cache[f] = Invocations(self.c, f)
                 self.c._invocations = cache
             return cache[f].receipt(key, self.assertion['line'], self.assertion['column'])
+        from retained_bindings import resolve, MISSING
+        retained = resolve(self.c, f, key, self.local)
+        if retained is not MISSING:
+            return retained
         if key in ('seed', 's'):
             for name in ('seed.json', 'bun-seed.json'):
                 if (self.c.root / f / name).is_file():
@@ -92,7 +99,9 @@ class Bindings(dict):
 
 
 def source_checks(c):
-    for family, record in CATALOG.items():
+    for family, record in c.catalog.items():
+        if record is None:
+            continue  # Family identity reports unknown/missing pin; never borrow another version.
         for assertion in record['assertions']:
             expression = ast.parse(assertion['expression'], mode='eval').body
             loops = assertion['loops']
@@ -103,6 +112,8 @@ def source_checks(c):
                 suffix = ''.join(':' + k + '=' + str(v) for k, v in local.items())
                 name = assertion['id'].split(':', 1)[1] + suffix
                 def prove(f=family, expr=expression, local=local, loops=loops, assertion=assertion):
+                    from retained_bindings import precheck, environments
+                    precheck(c, f, assertion, local)
                     if any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == 'get' and isinstance(n.func.value, ast.Name) and n.func.value.id in ('result', 'checks', 'data', 'd') and n.args and isinstance(n.args[0], ast.Name) and n.args[0].id in local for n in ast.walk(expr)):
                         raise Gap('native self-attestation ignored; raw operation/boundary reconstruction required')
                     if f == 'append_boundaries_e2e' and ast.unparse(expr) == 'r == expected':
@@ -111,17 +122,22 @@ def source_checks(c):
                     # Comprehension targets are local to their expression.
                     names -= {n.target.id for n in ast.walk(expr) if isinstance(n, ast.comprehension) and isinstance(n.target, ast.Name)}
                     names -= {'json', 'len', 'all', 'any', 'str', 'list', 'bytes', 'reversed', 'sorted', 'range'}
-                    bindings = Bindings(c, f, expr, local, assertion)
-                    env = {name: bindings.get_binding(name) for name in names}
-                    answer = Pure(env).expr(expr)
-                    if not answer:
-                        raise AssertionError('raw source assertion false: ' + ast.unparse(expr))
+                    for context in environments(c, f, assertion, local):
+                        bindings = Bindings(c, f, expr, context, assertion)
+                        env = {name: bindings.get_binding(name) for name in sorted(names)}
+                        answer = Pure(env).expr(expr)
+                        if not answer:
+                            raise AssertionError('raw source assertion false: ' + ast.unparse(expr))
                     # A successful output flag remains a behavioral gap. Do not turn native
                     # self-attestation into transaction, conflict, observer or FTS proof.
                     if any(loop['values'] is None for loop in loops):
                         raise Gap('dynamic source iteration not independently reconstructed: ' + ', '.join(loop['source'] for loop in loops if loop['values'] is None))
                 row = c.check(family, name, prove)
                 row.update(source=record['source'], sourceSha256=record['sha256'], line=assertion['line'], column=assertion['column'], expression=assertion['expression'], scope='raw-output-only')
+                if row['reason'].startswith('declared incarnation normalization'):
+                    row['gapKind'] = 'CHECKER_UNSUPPORTED'
+                if row['reason'].startswith('source branch not reached:'):
+                    row.update(gapKind='SOURCE_NOT_REACHED', sourceReachability='not-reached')
 
 
 FLAG_CLOSURES = {

@@ -9,7 +9,6 @@ import hashlib
 from pathlib import PurePosixPath as Path
 import re
 from types import SimpleNamespace
-from catalog import CATALOG
 from common import Gap
 from expressions import Receipt
 
@@ -20,7 +19,8 @@ class Invocations:
         rows = {r['id']: r for r in checker.assertions}
         if rows.get(family + '/identity', {}).get('status') != 'PASS':
             raise Gap('source invocation requires independently pinned complete family identity')
-        record = CATALOG[family]
+        record = checker.catalog[family]
+        self.record = record
         raw = checker.file(family + '/source/' + record['source']).read_bytes()
         if hashlib.sha256(raw).hexdigest() != record['sha256']:
             raise AssertionError('invocation source differs from fixed reviewed source')
@@ -132,7 +132,7 @@ class Invocations:
                 continue
         if len(sites) != 1:
             raise Gap('repeated exact source invocation requires additional temporal linkage')
-        self.c.file(self.family + '/source/' + CATALOG[self.family]['source'])
+        self.c.file(self.family + '/source/' + self.record['source'])
         self.c.file(self.family + '/entry.json')
         self.c.file(self.family + '/capture.json')
         self.c.file('identity.json')

@@ -11,6 +11,7 @@ import struct
 from urllib.parse import quote
 
 from catalog import CATALOG
+from source_versions import select
 from common import Gap, exact
 
 
@@ -43,7 +44,8 @@ SQL_CLOCKS = DTO_CLOCKS | {'created_at', 'updated_at', 'presented_at', 'acked_at
 
 
 class Checker:
-    def __init__(self, root):
+    def __init__(self, root, expected_identity=None):
+        self.catalog = select(expected_identity)
         self.root = Path(root).resolve()
         self.assertions = []
         self.used = []
@@ -170,6 +172,17 @@ class Checker:
         if expected is None:
             raise Gap('missing independent caller expected_identity pins')
         require(exact(observed['native'], expected['native']) and exact(observed['bun'], expected['bun']), 'root identity differs from independent pins')
+        if not isinstance(expected.get('sources'), dict) or family not in expected['sources']:
+            raise Gap('missing independent caller source pin: ' + family)
+        require(exact(observed.get('sources'), expected['sources']), 'retained source identity differs from independent caller source pins')
+        if not isinstance(expected.get('controls'), dict):
+            raise Gap('missing independent caller control/fixture source pins')
+        require(exact(observed.get('controls'), expected['controls']), 'retained controls differ from independent caller source pins')
+        record = self.catalog[family]
+        retained_source = self.file(family + '/source/' + CATALOG[family]['source'])
+        require(sha(retained_source) == expected['sources'][family], 'retained source bytes differ from independent caller source pin')
+        if record is None:
+            raise Gap('unreviewed caller-pinned source version: ' + family + ':' + expected['sources'][family])
         legs = [leg for leg in observed['legs'] if leg['family'] == family]
         require(bool(legs), 'no per-command identity legs: ' + family)
         captured = self.load(family + '/capture.json')
@@ -236,7 +249,7 @@ class Checker:
                     require(stdin_record['present'] is True and stdin_record['bytes'] == len(data) and stdin_record['literalNewlineCount'] == data.count(b'\n'), 'actual stdin presence/bytes/literal newline mismatch')
         if 'sources' not in observed or family not in observed['sources']:
             raise Gap('missing captured fixed-source digest: identity.json:sources.' + family)
-        require(observed['sources'][family] == CATALOG[family]['sha256'], 'fixed E2E source identity differs')
+        require(observed['sources'][family] == record['sha256'], 'fixed E2E source identity differs')
         before = self.load(family + '/sources-before.json')
         after = self.load(family + '/sources-after.json')
         require(exact(before, after), 'E2E/control/fixture source changed during actual family')
@@ -592,12 +605,12 @@ def titles(c):
 
 
 def revalidate(root, expected_identity=None):
-    c = Checker(root)
+    c = Checker(root, expected_identity)
     c.check('identity', 'root', lambda: c.identity(expected_identity))
     c.check('identity', 'build-provenance', lambda: c.build_provenance(expected_identity))
     c.check('integrity', 'manifest', c.integrity)
     from source_checks import source_checks
-    for family in CATALOG:
+    for family in c.catalog:
         c.check(family, 'identity', lambda f=family: c.family_identity(f, expected_identity))
     source_checks(c)
     reconciliation(c)
@@ -613,7 +626,7 @@ def revalidate(root, expected_identity=None):
     guards(c)
     append_boundary(c)
     titles(c)
-    for family in CATALOG:
+    for family in c.catalog:
         if family not in ('reconciliation_e2e', 'read_predicates_e2e', 'mail_body_e2e', 'federated_origin_body_e2e', 'legacy_mail_mutations_e2e', 'federated_origin_create_e2e', 'json_values_e2e', 'mail_json_e2e', 'reply_schema_e2e', 'atomic_e2e', 'session_e2e', 'transcript_e2e', 'repository_e2e', 'guards_e2e', 'title_reads_e2e', 'append_boundaries_e2e'):
             c.check(family, 'persisted-operation-receipts', lambda f=family: (_ for _ in ()).throw(Gap('persisted operation reconstruction not yet supported for ' + f + '; fixed source output rows and historical coverageDiscovery method links remain distinct from exact effects/refusals/transaction proof')))
     from source_checks import close_flags
@@ -625,7 +638,7 @@ def revalidate(root, expected_identity=None):
     return {'schemaVersion': 1, 'status': status, 'exitCode': {'PASS': 0, 'FAIL': 1, 'GAP': 2}[status],
             'scope': 'repository-source-raw-evidence', 'installedNativeAcceptance': False,
             'fullP1Qualified': False, 'fullParityQualified': False,
-            'requiredFamilies': sorted(CATALOG), 'coverageDiscovery': COVERAGE_DISCOVERY, 'assertions': c.assertions,
+            'requiredFamilies': sorted(c.catalog), 'reviewedSourceCatalog': {f: r['sha256'] if r else None for f, r in c.catalog.items()}, 'coverageDiscovery': COVERAGE_DISCOVERY, 'assertions': c.assertions,
             'gaps': [{'id': r['id'], 'reason': r['reason'], 'kind': r.get('gapKind', 'RAW_MISSING'), 'receipts': r['receipts']} for r in c.assertions if r['status'] == 'GAP']}
 
 

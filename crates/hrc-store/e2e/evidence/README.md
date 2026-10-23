@@ -32,12 +32,22 @@ assertions additionally carry exact source file/hash/line/column/expression.
 nonpassing. The `gaps` list is directly usable as a durable receipt/work request.
 Unexpected/incomplete/malformed CLI inputs produce parseable nonpassing JSON.
 
-`catalog.py` inventories every assertion in all 45 fixed top-level E2E scripts,
-including each statically known loop key. Dynamic loops are retained explicitly.
-`inventory.py` detects additions/removals/source drift. After reviewing a producer
-change and its semantic adapters, `inventory.py --write` refreshes only this
-checker's catalog. A catalog update is discovery, never new behavioral proof.
-Historical evidence is not upgraded to the new source version.
+catalog.py preserves the historical45-family assertion records, including
+statically known loop keys. source_versions.py adds explicit reviewed digest
+variants. The caller's independent expected_identity.sources[family] selects the
+record; the observed root source/control pins must equal the caller's pins and
+exact retained source bytes must match. No current-path or latest-label selection
+exists. Unknown/missing source pins produce family GAP and receive no borrowed
+assertion IDs. Current inventory.py validates against reviewed variants; --write
+refuses to overwrite historical records. Admitting source metadata never proves
+that a new scenario executed. Historical329/328/41220 keeps its original
+serialization source/assertion identity; ef7a586f is a separate reviewed variant.
+
+version_controls.py --root ROOT --identity PIN --out NEW requires an exact
+historical source assertion baseline, then rejects a caller-source mismatch and
+an unknown coherent source. The latter must remain GAP without historical/new
+source attribution. Raw manifests must PASS independently. Qualified new producer
+execution still requires its actual complete outer identity/capture receipts.
 
 ## Evidence layout and identity
 
@@ -197,3 +207,28 @@ coherently relinked wrong scenario, an actual nonzero command exit, and a missin
 stdout field. Run `invocation_controls.py --root ROOT --identity PIN --out NEW`
 for the retained baseline and per-target reasons. They regenerate manifests and
 check manifest validity separately from rejection.
+
+## Retained alias and source-control bindings
+
+retained_bindings.py resolves reviewed JSONL, read-predicate and prune aliases
+from actual source-pinned data. JSONL splitting follows each original source's
+literal-newline versus splitlines law; invalid-input literals come from the
+retained reviewed source, never comparison flags. Reader result wrappers remain
+explicit. Each-reader passivity checks consume both after snapshots independently.
+Prune aliases use the literal variant's native/Bun receipts and remaining-row
+images; source conditional guards are evaluated before any predicate.
+
+Unreached expanded prune variants remain GAP with gapKind:SOURCE_NOT_REACHED
+and sourceReachability:not-reached. They never become behavioral PASS or producer
+receipt requests. The reviewed missing before images, filesystem observations,
+outer busy interval, passive snapshots and pre-factory schema boundary remain
+explicit RAW_MISSING. Unsupported generic convenience aliases remain checker
+gaps; an absent guessed filename is not evidence that a producer omitted data.
+
+alias_controls.py --root ROOT --identity PIN --out NEW revalidates actual
+evidence copies, coherently links changed stdout to the actual producer command,
+and regenerates manifests. Its five baseline targets must PASS before shortened
+JSONL output, wrong invalid tails on BOTH sides, wrong prune returns, changed
+remaining rows and wrong accepted-read values on BOTH sides count as rejected.
+Every targeted rejection must FAIL while family identity and manifest still PASS.
+These additions retain raw-output-only scope and claim no operation coverage.

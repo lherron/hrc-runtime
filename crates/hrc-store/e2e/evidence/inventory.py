@@ -36,9 +36,12 @@ if __name__ == '__main__':
     a = p.parse_args()
     current = inventory(Path(__file__).resolve().parents[1])
     if a.write:
-        Path(__file__).with_name('catalog.py').write_text('"""Fixed source assertion inventory; source flags are never behavior proof."""\nCATALOG = ' + pprint.pformat(current, width=120, sort_dicts=False) + '\n')
-    else:
-        from catalog import CATALOG
-        if current != CATALOG:
-            raise SystemExit('fixed source inventory drift: review source and semantic adapters, then inventory.py --write')
-        print('fixed source assertions and source digests match')
+        raise SystemExit('historical catalog is immutable; add an explicit reviewed source variant')
+    from catalog import CATALOG
+    from source_versions import REVIEWED
+    if set(current) != set(CATALOG):
+        raise SystemExit('fixed source family set drift: review family obligations before admission')
+    for family, record in current.items():
+        if REVIEWED[family].get(record['sha256']) != record:
+            raise SystemExit('unreviewed source assertion variant: ' + family)
+    print('fixed source assertions match explicit reviewed source variants')
