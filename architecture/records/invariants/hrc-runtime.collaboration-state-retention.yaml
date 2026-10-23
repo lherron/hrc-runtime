@@ -5,8 +5,14 @@ owner_project: hrc-runtime
 scope: standing retention for local and collective collaboration state in state.sqlite
 predicate: >
   messages, collective_history_messages, collective_history_observations,
-  collective_history_replications, and every hrcmail_* table are keep-forever
-  durable collaboration state with no standing TTL or scheduled deletion path.
+  collective_history_replications, and retained hrcmail_* tables are keep-forever
+  durable collaboration state, except hrcmail_stop_refusals counters whose
+  updated_at is strictly more than 14 days old and whose runtime exists with
+  status exactly terminated. The existing nightly prune may delete only those
+  counters, with status and valid-date age rechecked under its bounded writer.
+  Missing runtimes, invalid dates and every other runtime status stay protected.
+  The runtime row itself is retained. Other classes have no standing TTL or
+  scheduled deletion path.
   messages is the canonical local message and dedupe ledger and the startup
   source for collective-history observation. Collective-history message and
   observation rows preserve authority and provenance, while delivered
@@ -16,18 +22,21 @@ predicate: >
   wrkq-owned collaboration ledger; they do not become room,
   envelope, obligation, discharge, or reply-body authority. No TTL or delete
   path for these classes is introduced without separately approved terminality
-  and replay-fence authority.
-  Keep-forever bars a standing TTL, an age predicate, and any scheduled deletion
+  and replay-fence authority. The stop-counter exception is approved in
+  wrkq:T-11710 (Mable scope ruling EN-34971); it preserves runtime-lifetime
+  refusal caps while a runtime can execute.
+  Outside that exception, keep-forever bars a standing TTL, an age predicate, and any scheduled deletion
   path; it does not preserve the bookkeeping of a mechanism that has been
   retired by principal ruling. Retiring one removes its own tables and columns in
   an explicit forward migration, so that the mechanism's absence is checkable by
   schema rather than by reading code. Such a migration may only drop rows that
   were never collaboration state: presentation receipts, reminders, failure
   notices and the local execution history around them are not eligible.
-authority: daedalus@hrc-runtime:T-07200 revision 2 approval, 2026-09-01; retirement-migration clause by Lance principal ruling 2026-09-05 (spec wrkq:T-08092 D1)
+authority: daedalus@hrc-runtime:T-07200 revision 2 approval, 2026-09-01; retirement-migration clause by Lance principal ruling 2026-09-05 (spec wrkq:T-08092 D1); stop-refusal exception approved by daedalus@hrc-runtime:T-11710 on 2026-10-23, review EN-34974, scope authority Mable EN-34971
 source:
   - wrkq:T-07200
   - wrkq:T-08092
+  - wrkq:T-11710
   - packages/hrc-store-sqlite/src/message-repository.ts
   - packages/hrc-store-sqlite/src/collective-history-repository.ts
   - packages/hrc-server/src/federation/collective-history.ts
@@ -35,10 +44,11 @@ source:
   - architecture/records/invariants/hrc-runtime.collaboration-presentation-authority.yaml
 required_tests:
   - just architecture-records
+  - scripts/prune-hrc-event-deltas.stop-refusals.test.ts
   - T-07200 collaboration-retention policy documentation gate
   - existing message dedupe, collective-history restart, and hrcmail recovery gates
   - the T-08093 retirement migration drops only retired-mechanism bookkeeping and leaves receipts, reminders and failure notices intact
-last_verified: 2026-09-01 design approval; implementation gates pending
+last_verified: 2026-10-23 stop-refusal exception approved by source review of the counter consumer, retention predicate and bounded-key delete path; reviewer ran no implementation gates. Prior retention implementation gates remain pending in this record.
 reopen_when: Collaboration state authority, replay semantics, terminality fences, any standing TTL or deletion path for the named tables, or the scope of what a retirement migration may drop changes.
 supersedes: []
 superseded_by: []
