@@ -19,9 +19,17 @@ and `packages/hrc-cli/src/metrics-report.ts`, `broker-verify/`, `worktree-prune.
 - `hrc admin metrics routes [--since D] [--by route|client|route,client] [--listener main|ingest|peer|registry]
   [--idle] [--json]` (T-11541): read-only streaming rollup of the `server-*.ndjson` request records.
   Each row has `count` (weighted by `sampleWeight`), `records`, `errors`, `errorRate`, `ms.p50|p95|max` and
-  `firstSeen`/`lastSeen`; `--idle` adds the registered routes with no request in the window. Callers come from
-  `x-hrc-client` (the SDK sends its host package name: `hrc-cli`, `acp-cli`, ...), else `ua:<product>`. On
-  federation listeners the caller is `peer:<nodeId>`. Records from before T-11541 read as `unattributed`.
+  `firstSeen`/`lastSeen`; `--idle` adds the registered routes with no request in the window. `client` is the
+  caller's `<name>/<version>` from its User-Agent (`hrc-cli/<v>`, `acp-cli/<v>`, `hrc-server/<v>`, `Bun/<v>` for an
+  unnamed Bun caller), else `unknown`; federation records also carry `peer` (the authenticated node). Records
+  from before T-11541 read as `unattributed`. Rows on `L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES` carry
+  `suppressedPoll: true`.
+- L3 request line (T-11541): every listener (main, ingest, peer, registry) writes one `component: http`,
+  `event: http.request` line per request to the hrc-server log, with `{listener, method, route, path, status,
+  durationMs, client, requestId?, remote? (TCP), peer? (federation)}`. Streams write `http.stream.open`/`close`.
+  Successful non-stream requests on the 16 routes of `L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES`
+  (`packages/hrc-server/src/request-log.ts`) write no line. A failing poll always does.
+  `grep '"event":"http.request"' ~/praesidium/var/logs/hrc-runtime/hrc-server.log | tail`
 - `hrc runtime sweep [--dry-run|--yes] [--older-than D] [--json]`: liveness-gates aged ready/busy runtimes
   (summary `matched`, `stale`, `terminated`, `skipped`). `hrc runtime prune [--dry-run|--yes] [--status S]
   [--older-than D] [--json]`: deletes orphaned runtime rows (default `stale`, 24h); a dry-run lists each

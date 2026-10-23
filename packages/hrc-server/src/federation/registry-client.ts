@@ -14,6 +14,7 @@ import { writeServerLog } from '../server-log.js'
 import type { BirthEnvelopeReader } from './birth-designation.js'
 import { BirthEnvelopeUnavailableError, designateBirthOnHost } from './birth-designation.js'
 import type { PeerEntry } from './federation-config.js'
+import { HRC_SERVER_USER_AGENT } from './peer-request.js'
 import { isTailnetHost } from './registry-bind.js'
 
 const DEFAULT_PER_ATTEMPT_TIMEOUT_MS = 2_000
@@ -469,7 +470,16 @@ export class HttpBindingRegistryClient implements BindingRegistryClient {
       options.perAttemptTimeoutMs ?? DEFAULT_PER_ATTEMPT_TIMEOUT_MS
     )
     this.#totalTimeoutMs = positiveDuration(options.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS)
-    this.#fetch = options.fetch ?? ((url, init) => globalThis.fetch(url, init))
+    this.#fetch =
+      options.fetch ??
+      ((url, init) =>
+        globalThis.fetch(url, {
+          ...init,
+          headers: {
+            ...(init?.headers as Record<string, string>),
+            'user-agent': HRC_SERVER_USER_AGENT,
+          },
+        }))
     this.#now = options.now ?? (() => performance.now())
     this.#random = options.random ?? Math.random
     this.#sleep = options.sleep ?? defaultSleep

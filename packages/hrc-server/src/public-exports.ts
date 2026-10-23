@@ -12,6 +12,11 @@ export type { ServerLifecycleExecutor } from './server-lifecycle-controller.js'
 export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
 export type { RequestMetricListener, ServerMetricRecord } from './request-metrics.js'
 export { listRequestRouteInventory } from './request-route-inventory.js'
+export {
+  L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES,
+  isSuppressedPollRoute,
+} from './request-log.js'
+export type { SuppressedPollRoute } from './request-log.js'
 export type { RequestRouteInventoryEntry } from './request-route-inventory.js'
 export { parseDurationMs } from './parsers/common.js'
 export { formatServerLogLine } from './server-log.js'

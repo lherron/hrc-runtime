@@ -13,14 +13,15 @@ import { join } from 'node:path'
 
 import { createMeteredPeerProtocolRequestHandler } from '../federation/peer-protocol.js'
 import { PeerToken } from '../federation/peer-token.js'
+import { L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES, isSuppressedPollRoute } from '../request-log.js'
 import {
   ServerRequestMetricSampler,
   flushServerMetrics,
   normalizeRoute,
-  peerClientLabel,
   requestClientLabel,
 } from '../request-metrics.js'
 import { listRequestRouteInventory } from '../request-route-inventory.js'
+import { captureServerLog } from './fixtures/server-log.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -39,33 +40,33 @@ async function readRecords(stateRoot: string): Promise<Record<string, unknown>[]
   return records
 }
 
-describe('caller label', () => {
-  test('keeps a declared label, bounded and line-safe', () => {
-    const hostile = new Request('http://hrc/v1/health', {
-      headers: { 'x-hrc-client': `acp"\t{evil} ${'x'.repeat(500)}` },
-    })
-    const label = requestClientLabel(hostile)
-    expect(label.length).toBeLessThanOrEqual(64)
-    expect(label).toMatch(/^[A-Za-z0-9._:/@+-]+$/)
-    expect(label.startsWith('acp_')).toBe(true)
-    expect(
-      requestClientLabel(new Request('http://hrc/', { headers: { 'x-hrc-client': '@scope/pkg' } }))
-    ).toBe('@scope/pkg')
-  })
-
-  test('falls back to the User-Agent product token only, then to unknown', () => {
+describe('caller label (L3 client)', () => {
+  test('is the User-Agent product token: name/version, bounded and line-safe', () => {
     const ua = (value: string) =>
       requestClientLabel(new Request('http://hrc/', { headers: { 'user-agent': value } }))
-    expect(ua('HRCMac/1 CFNetwork/3826.500.62 Darwin/25.6.0')).toBe('ua:HRCMac')
-    expect(ua('curl/8.7.1')).toBe('ua:curl')
-    expect(ua('Bun/1.3.14')).toBe('ua:Bun')
-    // A header-less request: Bun's Request adds no UA of its own.
+    expect(ua('hrc-cli/0.5.13-dev.20261023 (darwin)')).toBe('hrc-cli/0.5.13-dev.20261023')
+    expect(ua('HRCMac/1 CFNetwork/3826.500.62 Darwin/25.6.0')).toBe('HRCMac/1')
+    expect(ua('curl/8.7.1')).toBe('curl/8.7.1')
+    const hostile = ua(`acp"{evil}\u0007${'x'.repeat(500)}`)
+    expect(hostile.length).toBeLessThanOrEqual(64)
+    expect(hostile).toMatch(/^[A-Za-z0-9._:/@+-]+$/)
+    // No other header names a caller.
+    expect(
+      requestClientLabel(new Request('http://hrc/', { headers: { 'x-hrc-client': 'forged' } }))
+    ).toBe('unknown')
     expect(requestClientLabel(new Request('http://hrc/'))).toBe('unknown')
   })
 
-  test('a federation caller is its authenticated peer or nobody', () => {
-    expect(peerClientLabel('svc')).toBe('peer:svc')
-    expect(peerClientLabel(undefined)).toBe('unauthenticated')
+  test('the suppression table is the only allowlist and names real main routes', () => {
+    const inventory = new Set(
+      listRequestRouteInventory().map((entry) => `${entry.listener} ${entry.method} ${entry.route}`)
+    )
+    expect(L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES).toHaveLength(16)
+    for (const entry of L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES) {
+      expect(inventory).toContain(`${entry.listener} ${entry.method} ${entry.route}`)
+      expect(isSuppressedPollRoute(entry.listener, entry.method, entry.route)).toBe(true)
+    }
+    expect(isSuppressedPollRoute('main', 'GET', '/v1/health')).toBe(false)
   })
 })
 
@@ -126,7 +127,7 @@ describe('route normalization', () => {
 })
 
 describe('federation peer listener', () => {
-  test('records each request under the peer its token authenticates, in its own listener', async () => {
+  test('records and logs each request with the peer its token authenticates, in its own listener', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'hrc-t11541-peer-'))
     roots.push(stateRoot)
     const handler = createMeteredPeerProtocolRequestHandler(
@@ -150,23 +151,51 @@ describe('federation peer listener', () => {
     const at = (path: string, token?: string) =>
       new Request(`http://lab.example.ts.net:18490${path}`, {
         headers: token
-          ? { authorization: `Bearer ${token}`, 'x-hrc-client': 'forged' }
-          : { 'x-hrc-client': 'forged' },
+          ? { authorization: `Bearer ${token}`, 'user-agent': 'hrc-server/9.9.9' }
+          : { 'user-agent': 'hrc-server/9.9.9' },
       })
 
-    const ok = await handler(at('/v1/federation/health', 'svc-token'))
-    expect(ok.status).toBe(200)
-    expect(await ok.json()).toMatchObject({ ok: true })
-    expect((await handler(at('/v1/federation/health'))).status).toBe(401)
-    expect((await handler(at('/v1/nonesuch/abc', 'svc-token'))).status).toBe(404)
+    const tcp = { requestIP: () => ({ address: '100.117.215.92' }) }
+    const log = captureServerLog()
+    try {
+      const ok = await handler(at('/v1/federation/health', 'svc-token'), tcp)
+      expect(ok.status).toBe(200)
+      expect(await ok.json()).toMatchObject({ ok: true })
+      expect((await handler(at('/v1/federation/health'), tcp)).status).toBe(401)
+      expect((await handler(at('/v1/nonesuch/abc', 'svc-token'), tcp)).status).toBe(404)
+      await Bun.sleep(10) // error-field lifting reads a clone asynchronously
+    } finally {
+      log.restore()
+    }
+    expect(
+      log
+        .events('http.request')
+        .map((line) => [
+          line.level,
+          line.data?.['route'],
+          line.data?.['peer'],
+          line.data?.['remote'],
+        ])
+    ).toEqual([
+      ['info', '/v1/federation/health', 'svc', '100.117.215.92'],
+      ['warn', '/v1/federation/health', undefined, '100.117.215.92'],
+      ['warn', 'unmatched', 'svc', '100.117.215.92'],
+    ])
+    expect(log.events('http.request')[0]?.data?.['client']).toBe('hrc-server/9.9.9')
+    expect(log.events('http.request')[1]?.data?.['code']).toBe('unauthorized')
 
     const records = (await readRecords(stateRoot)).filter((record) => record['kind'] === 'server')
     expect(
-      records.map((record) => [record['listener'], record['route'], record['client']])
+      records.map((record) => [
+        record['listener'],
+        record['route'],
+        record['client'],
+        record['peer'],
+      ])
     ).toEqual([
-      ['peer', '/v1/federation/health', 'peer:svc'],
-      ['peer', '/v1/federation/health', 'unauthenticated'],
-      ['peer', 'unmatched', 'peer:svc'],
+      ['peer', '/v1/federation/health', 'hrc-server/9.9.9', 'svc'],
+      ['peer', '/v1/federation/health', 'hrc-server/9.9.9', undefined],
+      ['peer', 'unmatched', 'hrc-server/9.9.9', 'svc'],
     ])
   })
 })

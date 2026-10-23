@@ -13,11 +13,10 @@ import type {
   ListMessagesResponse,
   StartRuntimeResponse,
 } from 'hrc-core'
-import { peerClientLabel, withRequestMetrics } from '../request-metrics.js'
+import { withRequestObservation } from '../request-metrics.js'
 import type { RequestMetricsSink } from '../request-metrics.js'
 import { writeServerLog } from '../server-log.js'
 import type { PeerEntry } from './federation-config.js'
-import { withRequestLog } from './http-request-log.js'
 import { isTailnetHost } from './registry-bind.js'
 
 export type PeerProtocolListenerConfig = {
@@ -707,17 +706,18 @@ export function parsePeerProtocolBind(raw: string, where: string): PeerProtocolL
 
 /**
  * The handler the peer listener serves: the protocol handler inside the daemon's
- * request metrics, attributed to the peer its own bearer check authenticates.
+ * request metrics and L3 request log, with the peer its own bearer check
+ * authenticates.
  */
 export function createMeteredPeerProtocolRequestHandler(
   options: PeerProtocolRequestHandlerOptions,
   metrics: RequestMetricsSink | undefined
-): (request: Request) => Promise<Response> {
-  return withRequestMetrics(createPeerProtocolRequestHandler(options), {
+): ReturnType<typeof withRequestObservation> {
+  return withRequestObservation(createPeerProtocolRequestHandler(options), {
     listener: 'peer',
     routeKeys: PEER_PROTOCOL_ROUTE_KEYS,
     sink: metrics,
-    clientOf: (request) => peerClientLabel(authenticate(request, options.peers)?.nodeId),
+    peerOf: (request) => authenticate(request, options.peers)?.nodeId,
   })
 }
 
@@ -730,7 +730,7 @@ export function startPeerProtocolEndpoint(input: {
   const server = Bun.serve({
     hostname: bind.hostname.replace(/^\[|\]$/g, ''),
     port: Number(bind.port),
-    fetch: withRequestLog(createMeteredPeerProtocolRequestHandler(input.options, input.metrics)),
+    fetch: createMeteredPeerProtocolRequestHandler(input.options, input.metrics),
   })
   return {
     url: input.listener.bind,

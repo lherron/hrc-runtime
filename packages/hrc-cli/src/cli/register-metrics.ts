@@ -62,6 +62,7 @@ function printRouteUsage(report: RouteUsageReport): void {
     const key = [
       ...(row.route === undefined ? [] : [`${row.listener} ${row.method} ${row.route}`]),
       ...(row.client === undefined ? [] : [row.client]),
+      ...(row.suppressedPoll ? ['(suppressed poll: no log line on success)'] : []),
     ].join('  ')
     process.stdout.write(
       `${String(row.count).padStart(10)} ${(row.errorRate * 100).toFixed(1).padStart(6)} ${String(row.ms.p50).padStart(8)} ${String(row.ms.p95).padStart(8)}  ${row.lastSeen.slice(0, 16).padEnd(16)}  ${key}\n`
@@ -70,7 +71,9 @@ function printRouteUsage(report: RouteUsageReport): void {
   if (report.idle) {
     process.stdout.write(`\nIdle routes (no request in window): ${report.idle.length}\n`)
     for (const entry of report.idle) {
-      process.stdout.write(`  ${entry.listener} ${entry.method} ${entry.route}\n`)
+      process.stdout.write(
+        `  ${entry.listener} ${entry.method} ${entry.route}${entry.suppressedPoll ? '  (suppressed poll)' : ''}\n`
+      )
     }
   }
 }

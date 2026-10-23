@@ -1,7 +1,7 @@
 import { markLoopActivity } from './event-loop-lag.js'
 import type { HrcServerInstance } from './index.js'
 import { handleGetInput, handleWatchInput, matchInputRoute } from './input-handlers.js'
-import { normalizeRoute, recordRequestMetric, requestClientLabel } from './request-metrics.js'
+import { normalizeRoute, observeRequest } from './request-metrics.js'
 import {
   exactRouteKey,
   matchLaunchSubroute,
@@ -17,29 +17,25 @@ import {
 
 export const serverRequestMethods = {
   async handleRequest(this: HrcServerInstance, request: Request): Promise<Response> {
+    const startedAt = performance.now()
     const method = request.method
     const pathname = new URL(request.url).pathname
     // Routes are all registered in the constructor, before the first request.
     this.exactRouteKeys ??= new Set(Object.keys(this.exactRouteHandlers))
     const route = normalizeRoute(method, pathname, this.exactRouteKeys)
     markLoopActivity(`request:${method} ${route}`)
-    const sink = this.requestMetricsSink
-    if (sink === undefined) {
-      return this.dispatchRequest(request)
-    }
-
-    const started = process.hrtime.bigint()
+    // dispatchRequest answers every throw with errorResponse, so the request
+    // line and metric always see a status.
     const response = await this.dispatchRequest(request)
-    await recordRequestMetric({
+    return observeRequest({
       request,
       response,
       listener: 'main',
       route,
-      client: requestClientLabel(request),
-      ms: Number(process.hrtime.bigint() - started) / 1_000_000,
-      sink,
+      path: pathname,
+      startedAt,
+      sink: this.requestMetricsSink,
     })
-    return response
   },
 
   async dispatchRequest(this: HrcServerInstance, request: Request): Promise<Response> {

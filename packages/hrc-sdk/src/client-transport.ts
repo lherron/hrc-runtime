@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 import type { HrcHttpError, HrcLifecycleEvent } from 'hrc-core'
-import { HRC_CLIENT_HEADER, HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type {
   HrcSubscriberReceiptAckRequest,
   HrcSubscriberReceiptAckResponse,
@@ -103,33 +103,37 @@ export function matchesWatchOptions(
   return true
 }
 
-let derivedClientName: string | undefined
+let derivedUserAgent: string | undefined
 
 /**
- * The caller label this process sends when its client names none (T-11541):
- * the `name` of the package that owns the program's entry module, so
- * `acp server serve` reports `acp-cli` and `hrc` reports `hrc-cli` without
- * either one opting in. A compiled binary (`/$bunfs/...`) has no package on
- * disk and reports its entry file's stem.
+ * The `User-Agent` this process sends when its client names none: the L3
+ * client name `<name>/<version>` (logging standard L3, service-API §3) of the
+ * package that owns the program's entry module, so `acp server serve` reports
+ * `acp-cli/<version>` and `hrc` reports `hrc-cli/<version>` without either one
+ * opting in. A compiled binary (`/$bunfs/...`) has no package on disk and
+ * reports its entry file's stem.
  */
-export function defaultHrcClientName(): string {
-  derivedClientName ??= deriveClientName()
-  return derivedClientName
+export function defaultHrcUserAgent(): string {
+  derivedUserAgent ??= deriveUserAgent()
+  return derivedUserAgent
 }
 
-function deriveClientName(): string {
+function deriveUserAgent(): string {
   const entry = typeof Bun !== 'undefined' ? Bun.main : process.argv[1]
   if (!entry) return 'hrc-sdk'
   if (!entry.startsWith('/$bunfs/')) {
     let dir = dirname(entry)
     for (let depth = 0; depth < 8; depth += 1) {
       try {
-        const name = (
-          JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
-            name?: unknown
-          }
-        ).name
-        if (typeof name === 'string' && name.length > 0) return name
+        const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+          name?: unknown
+          version?: unknown
+        }
+        if (typeof manifest.name === 'string' && manifest.name.length > 0) {
+          return typeof manifest.version === 'string' && manifest.version.length > 0
+            ? `${manifest.name}/${manifest.version}`
+            : manifest.name
+        }
       } catch {
         // No (readable) package.json here; keep walking up.
       }
@@ -143,18 +147,18 @@ function deriveClientName(): string {
 
 export type HrcClientTransportOptions = {
   socketPath: string
-  /** Observational caller label sent as `x-hrc-client`; defaults to {@link defaultHrcClientName}. */
-  clientName?: string | undefined
+  /** L3 client name `<name>/<version>` sent as `User-Agent`; defaults to {@link defaultHrcUserAgent}. */
+  userAgent?: string | undefined
 }
 
 export class HrcClientTransport {
   protected readonly socketPath: string
-  protected readonly clientName: string
+  protected readonly userAgent: string
 
   constructor(socketPath: string | HrcClientTransportOptions) {
     this.socketPath = typeof socketPath === 'string' ? socketPath : socketPath.socketPath
-    this.clientName =
-      (typeof socketPath === 'string' ? undefined : socketPath.clientName) ?? defaultHrcClientName()
+    this.userAgent =
+      (typeof socketPath === 'string' ? undefined : socketPath.userAgent) ?? defaultHrcUserAgent()
   }
 
   // -- HTTP primitives -------------------------------------------------------
@@ -167,7 +171,7 @@ export class HrcClientTransport {
    */
   protected unixFetch(path: string, init: BunRequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers)
-    headers.set(HRC_CLIENT_HEADER, this.clientName)
+    headers.set('user-agent', this.userAgent)
     const metrics = getHrcCliRpcMetricsHook()
     if (!metrics) {
       return fetch(`${BASE_URL}${path}`, { ...init, headers, unix: this.socketPath })

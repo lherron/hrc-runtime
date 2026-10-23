@@ -1,10 +1,12 @@
 /**
- * T-11541 — caller-attributed request metrics end to end, against a scratch
- * daemon: a real `hrc server serve` process on isolated roots. Requests from
- * the real CLI, a named SDK client, a header-less raw caller and the event
- * ingest listener must each land in the existing server metric stream under
- * their own `client` (and `listener`), and `hrc admin metrics routes` must
- * report them with weighted counts that match both the raw file and the truth.
+ * T-11541 — caller-attributed request metrics and the L3 request line end to
+ * end, against a scratch daemon: a real `hrc server serve` process on isolated
+ * roots. Requests from the real CLI, a named SDK client, a header-less raw
+ * caller and the event ingest listener must each land in the server metric
+ * stream AND the daemon log under the same `client` (`<name>/<version>` from
+ * User-Agent) and `listener`; successful polls on the suppression table write
+ * no line, failing ones and streams do; and `hrc admin metrics routes` must
+ * report weighted counts that match both the raw file and the truth.
  * Never the live daemon.
  *
  * Failure modes: var/wrkq-artifacts/T-11541/failure-modes.md.
@@ -15,6 +17,8 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { HrcClient } from 'hrc-sdk'
+
+import { parseServerLog } from '../../../hrc-server/src/__tests__/fixtures/server-log'
 
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
 const IDENTITY_KEY = /^(HRC_|ASP_|AGENT_|WRKQ_|CLAUDE|CODEX_)/
@@ -92,7 +96,7 @@ async function startDaemon(scratch: Scratch): Promise<number> {
       try {
         const response = await fetch('http://hrc/v1/health', {
           unix: socketOf(scratch),
-          headers: { 'x-hrc-client': 'test-readiness' },
+          headers: { 'user-agent': 'test-readiness/1' },
           signal: AbortSignal.timeout(1_000),
         })
         if (response.ok) return child.pid
@@ -159,6 +163,7 @@ async function waitForRecords(scratch: Scratch, predicate: (records: RawRecord[]
 }
 
 type RollupRow = {
+  suppressedPoll?: boolean
   listener?: string
   method?: string
   route?: string
@@ -178,7 +183,7 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     expect(status.exitCode).toBe(0)
 
     // 2. A named SDK client, hot enough on one route to cross into sampling.
-    const sdk = new HrcClient({ socketPath: socketOf(scratch), clientName: 't11541-sdk' })
+    const sdk = new HrcClient({ socketPath: socketOf(scratch), userAgent: 't11541-sdk/1.0' })
     for (let index = 0; index < SDK_REQUESTS; index += 1) await sdk.getHealth()
 
     // 3. A raw caller with neither header: attributed by its UA product.
@@ -188,15 +193,40 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     // 4. A pattern route that used to be counted as `unmatched`.
     const seat = await fetch('http://hrc/v1/runtimes/rt-none/seat', {
       unix: socketOf(scratch),
-      headers: { 'x-hrc-client': 't11541-raw' },
+      headers: { 'user-agent': 't11541-raw/1 (probe)' },
     })
     expect(seat.status).toBeGreaterThanOrEqual(400)
+
+    // 4b. A FAILING poll on a suppressed route is still logged; so is an unknown path.
+    const badPoll = await fetch('http://hrc/v1/runtimes?limit=0', {
+      unix: socketOf(scratch),
+      headers: { 'user-agent': 't11541-raw/1' },
+    })
+    expect(badPoll.status).toBe(400)
+    const unknownPath = await fetch('http://hrc/v1/nonesuch/abc?secret=1', {
+      unix: socketOf(scratch),
+      headers: { 'user-agent': 't11541-raw/1' },
+    })
+    expect(unknownPath.status).toBe(404)
+
+    // 4c. A stream on a suppressed route still logs its open and close.
+    const abort = new AbortController()
+    const stream = await fetch('http://hrc/v1/events?follow=true', {
+      unix: socketOf(scratch),
+      headers: { 'user-agent': 't11541-stream/1' },
+      signal: abort.signal,
+    })
+    expect(stream.status).toBe(200)
+    const reader = stream.body?.getReader()
+    await reader?.read()
+    abort.abort()
+    await reader?.cancel().catch(() => undefined)
 
     // 5. The event-ingest listener lands in the same stream, response intact.
     const ingest = await fetch('http://hrc/v1/ingest', {
       unix: join(scratch.runtimeRoot, 'ingest', 'events.sock'),
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-hrc-client': 'hrc-forwarder/t11541' },
+      headers: { 'content-type': 'application/json', 'user-agent': 'hrc-server/t11541' },
       body: JSON.stringify({ feed: 'hrc_events', sourceRef: 'hrc:t11541', events: [] }),
     })
     expect(ingest.headers.get('content-type')).toContain('json')
@@ -210,23 +240,23 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     // Every record carries a client; main-listener records omit `listener`.
     for (const record of records) expect(record.client).toBeString()
     const clients = new Set(records.map((record) => record.client))
-    expect(clients).toContain('hrc-cli')
-    expect(clients).toContain('t11541-sdk')
-    expect(clients).toContain('ua:Bun')
-    expect(clients).toContain('hrc-forwarder/t11541')
+    const cliClient = [...clients].find((client) => client?.startsWith('hrc-cli/'))
+    expect(cliClient).toMatch(/^hrc-cli\/\d+\.\d+\.\d+/)
+    expect(clients).toContain('t11541-sdk/1.0')
+    expect(clients).toContain(`Bun/${Bun.version}`)
+    expect(clients).toContain('hrc-server/t11541')
 
-    const cliRoutes = records.filter((record) => record.client === 'hrc-cli')
+    const cliRoutes = records.filter((record) => record.client === cliClient)
     expect(cliRoutes.map((record) => record.route)).toContain('/v1/status')
-    expect(records.some((record) => record.route === 'unmatched')).toBe(false)
-    expect(records.find((record) => record.client === 't11541-raw')?.route).toBe(
+    expect(records.find((record) => record.client === 't11541-raw/1')?.route).toBe(
       '/v1/runtimes/:runtimeId/seat'
     )
     const ingestRecord = records.find((record) => record.listener === 'ingest')
     expect(ingestRecord?.route).toBe('/v1/ingest')
-    expect(ingestRecord?.client).toBe('hrc-forwarder/t11541')
+    expect(ingestRecord?.client).toBe('hrc-server/t11541')
 
     const sdkRecords = records.filter(
-      (record) => record.client === 't11541-sdk' && record.route === '/v1/health'
+      (record) => record.client === 't11541-sdk/1.0' && record.route === '/v1/health'
     )
     const sdkWeight = sdkRecords.reduce((sum, record) => sum + (record.sampleWeight ?? 1), 0)
     // Sampling must actually have happened, and weights stand in for the truth.
@@ -234,6 +264,63 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     expect(sdkRecords.length).toBeLessThan(SDK_REQUESTS)
     expect(sdkWeight).toBeLessThanOrEqual(SDK_REQUESTS)
     expect(sdkWeight).toBeGreaterThan(SDK_REQUESTS - 20)
+
+    // The L3 request line: same listener/route/client as the metric, every request.
+    const log = parseServerLog(readFileSync(join(scratch.runtimeRoot, 'server.log'), 'utf8'))
+    const http = log.filter((line) => line.component === 'http')
+    const requestLines = http.filter((line) => line.event === 'http.request')
+    const lines = (client: string) =>
+      requestLines.filter((line) => line.data?.['client'] === client)
+    const sdkLines = lines('t11541-sdk/1.0')
+    expect(sdkLines).toHaveLength(SDK_REQUESTS)
+    expect(sdkLines[0]).toMatchObject({
+      level: 'info',
+      data: {
+        listener: 'main',
+        method: 'GET',
+        route: '/v1/health',
+        path: '/v1/health',
+        status: 200,
+      },
+    })
+    expect(typeof sdkLines[0]?.data?.['durationMs']).toBe('number')
+    expect(sdkLines[0]?.data).not.toHaveProperty('remote')
+    // The CLI's /v1/status is a successful suppressed poll: counted, never logged.
+    const cliLines = lines(cliClient ?? '')
+    expect(cliLines.map((line) => line.data?.['path'])).toContain('/v1/health')
+    expect(cliLines.map((line) => line.data?.['path'])).not.toContain('/v1/status')
+    expect(
+      cliLines.find((line) => line.data?.['path'] === '/v1/health')?.data?.['requestId']
+    ).toBeString()
+    const rawLines = lines('t11541-raw/1')
+    expect(
+      rawLines.find((line) => line.data?.['route'] === '/v1/runtimes/:runtimeId/seat')
+    ).toMatchObject({
+      level: 'warn',
+      data: { path: '/v1/runtimes/rt-none/seat', status: 404 },
+    })
+    expect(rawLines.find((line) => line.data?.['route'] === '/v1/runtimes')).toMatchObject({
+      level: 'warn',
+      data: { path: '/v1/runtimes', status: 400 },
+    })
+    expect(rawLines.find((line) => line.data?.['route'] === 'unmatched')).toMatchObject({
+      level: 'warn',
+      data: { path: '/v1/nonesuch/abc', status: 404 },
+    })
+    expect(JSON.stringify(http)).not.toContain('secret=1')
+    expect(lines('hrc-server/t11541')[0]).toMatchObject({
+      data: { listener: 'ingest', route: '/v1/ingest', path: '/v1/ingest' },
+    })
+    expect(lines(`Bun/${Bun.version}`).map((line) => line.data?.['path'])).toContain('/v1/health')
+    const streamLines = http.filter((line) => line.data?.['client'] === 't11541-stream/1')
+    expect(streamLines.map((line) => line.event)).toEqual(['http.stream.open', 'http.stream.close'])
+    expect(streamLines[1]?.data).toMatchObject({ route: '/v1/events', outcome: 'cancel' })
+    // Log and metrics name the same callers.
+    const loggedClients = new Set(requestLines.map((line) => line.data?.['client']))
+    for (const client of ['t11541-sdk/1.0', 't11541-raw/1', 'hrc-server/t11541', cliClient]) {
+      expect(loggedClients).toContain(client)
+      expect(clients).toContain(client)
+    }
 
     // The rollup reads the same day files and reports the same weighted counts.
     const rollup = await hrc(scratch, [
@@ -257,12 +344,14 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
           candidate.route === route &&
           candidate.listener === listener
       )
-    expect(row('t11541-sdk', '/v1/health')?.count).toBe(sdkWeight)
-    expect(row('t11541-sdk', '/v1/health')?.records).toBe(sdkRecords.length)
-    expect(row('hrc-cli', '/v1/status')?.count).toBeGreaterThanOrEqual(1)
-    expect(row('ua:Bun', '/v1/health')?.count).toBe(1)
-    expect(row('t11541-raw', '/v1/runtimes/:runtimeId/seat')?.errors).toBe(1)
-    expect(row('hrc-forwarder/t11541', '/v1/ingest', 'ingest')?.count).toBe(1)
+    expect(row('t11541-sdk/1.0', '/v1/health')?.count).toBe(sdkWeight)
+    expect(row('t11541-sdk/1.0', '/v1/health')?.records).toBe(sdkRecords.length)
+    expect(row(cliClient ?? '', '/v1/status')?.count).toBeGreaterThanOrEqual(1)
+    expect(row(cliClient ?? '', '/v1/status')?.suppressedPoll).toBe(true)
+    expect(row('t11541-sdk/1.0', '/v1/health')?.suppressedPoll).toBeUndefined()
+    expect(row(`Bun/${Bun.version}`, '/v1/health')?.count).toBe(1)
+    expect(row('t11541-raw/1', '/v1/runtimes/:runtimeId/seat')?.errors).toBe(1)
+    expect(row('hrc-server/t11541', '/v1/ingest', 'ingest')?.count).toBe(1)
 
     // By client alone: one row per caller, summed over its routes.
     const byClient = await hrc(scratch, [
@@ -278,9 +367,11 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     expect(byClient.exitCode).toBe(0)
     const clientRows = (JSON.parse(byClient.stdout) as { rows: RollupRow[] }).rows
     const sdkTotal = records
-      .filter((record) => record.client === 't11541-sdk')
+      .filter((record) => record.client === 't11541-sdk/1.0')
       .reduce((sum, record) => sum + (record.sampleWeight ?? 1), 0)
-    expect(clientRows.find((candidate) => candidate.client === 't11541-sdk')?.count).toBe(sdkTotal)
+    expect(clientRows.find((candidate) => candidate.client === 't11541-sdk/1.0')?.count).toBe(
+      sdkTotal
+    )
     expect(clientRows.every((candidate) => candidate.route === undefined)).toBe(true)
 
     // --idle lists registered routes nobody called; a called route is not idle.
@@ -295,12 +386,21 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     ])
     expect(idle.exitCode).toBe(0)
     const idleRows = (
-      JSON.parse(idle.stdout) as { idle: { listener: string; route: string; method: string }[] }
+      JSON.parse(idle.stdout) as {
+        idle: { listener: string; route: string; method: string; suppressedPoll?: boolean }[]
+      }
     ).idle
     expect(idleRows).toContainEqual({
       listener: 'main',
       method: 'POST',
       route: '/v1/runtimes/sweep',
+    })
+    // An idle route on the suppression table is tagged, so it never reads as dead from logs alone.
+    expect(idleRows).toContainEqual({
+      listener: 'main',
+      method: 'GET',
+      route: '/v1/presentation/runtimes',
+      suppressedPoll: true,
     })
     expect(idleRows).toContainEqual({
       listener: 'peer',

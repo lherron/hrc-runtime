@@ -1,8 +1,7 @@
 import { appendFile, mkdir, readdir, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { HRC_CLIENT_HEADER } from 'hrc-core'
-
+import { logRequestCompletion, logRequestEscaped } from './request-log.js'
 import { writeServerLog } from './server-log.js'
 import { exactRouteKey, matchLaunchSubroute, matchSessionTitleRoute } from './server-routing.js'
 
@@ -53,12 +52,13 @@ export type ServerRequestMetricRecord = {
   route: string
   method: string
   /**
-   * Observational caller label (T-11541): the sanitized `x-hrc-client` header,
-   * else `ua:<product>` from the User-Agent, else `unknown`; on a federation
-   * listener, `peer:<nodeId>` from the request's own bearer check. Absent on
-   * records written before T-11541.
+   * The caller's `<name>/<version>` from its User-Agent, `unknown` when it sent
+   * none: the same value as the `http.request` log line (logging standard L3,
+   * T-11541). Absent on records written before T-11541.
    */
   client?: string
+  /** Federation listeners: the node the request's bearer token authenticated as. */
+  peer?: string
   ms: number
   status: number
   bytes?: number
@@ -187,33 +187,17 @@ export function normalizeRoute(
 }
 
 const CLIENT_LABEL_MAX_CHARS = 64
-const UA_PRODUCT_MAX_CHARS = 32
-
-/** Bounded, line-safe label: anything outside a conservative charset becomes `_`. */
-function clientLabel(raw: string | null | undefined, maxChars: number): string | undefined {
-  const label = raw
-    ?.trim()
-    .slice(0, maxChars)
-    .replace(/[^A-Za-z0-9._:/@+-]/g, '_')
-  return label ? label : undefined
-}
 
 /**
- * Who sent this request, for metrics only. Reads exactly two headers and keeps
- * no more of the User-Agent than its product token (`Bun/1.3` -> `ua:Bun`).
+ * The caller's `<name>/<version>`: the first product token of its User-Agent
+ * (`hrc-cli/0.5.13 (...)` -> `hrc-cli/0.5.13`), bounded and line-safe, or
+ * `unknown` when it sent none (logging standard L3, service-API §3). No other
+ * header is read.
  */
 export function requestClientLabel(request: Request): string {
-  const declared = clientLabel(request.headers.get(HRC_CLIENT_HEADER), CLIENT_LABEL_MAX_CHARS)
-  if (declared) return declared
-  const product = request.headers.get('user-agent')?.trim().split(/[\s/]/, 1)[0]
-  const ua = clientLabel(product, UA_PRODUCT_MAX_CHARS)
-  return ua ? `ua:${ua}` : 'unknown'
-}
-
-/** A federation caller is the peer its bearer token authenticated as, or nobody. */
-export function peerClientLabel(nodeId: string | undefined): string {
-  const label = clientLabel(nodeId, CLIENT_LABEL_MAX_CHARS)
-  return label ? `peer:${label}` : 'unauthenticated'
+  const product = request.headers.get('user-agent')?.trim().split(/\s/, 1)[0]
+  const label = product?.slice(0, CLIENT_LABEL_MAX_CHARS).replace(/[^A-Za-z0-9._:/@+-]/g, '_')
+  return label ? label : 'unknown'
 }
 
 export async function measureResponseBytes(response: Response): Promise<ResponseByteMeasurement> {
@@ -507,11 +491,12 @@ export async function recordRequestMetric(input: {
   listener: RequestMetricListener
   route: string
   client: string
+  peer?: string | undefined
   ms: number
   sink: RequestMetricsSink
 }): Promise<void> {
   try {
-    const { request, response, listener, route, client, ms, sink } = input
+    const { request, response, listener, route, client, peer, ms, sink } = input
     const method = request.method
     const reqId = request.headers.get('x-hrc-request-id')
     const now = new Date()
@@ -530,6 +515,7 @@ export async function recordRequestMetric(input: {
         route,
         method,
         client,
+        ...(peer ? { peer } : {}),
         ms,
         status: response.status,
         ...measurement,
@@ -545,61 +531,123 @@ export async function recordRequestMetric(input: {
 }
 
 /**
- * Put a non-main listener's requests in the same stream as the control socket.
- * Its routes are exact paths, so anything outside `routeKeys` is `unmatched`.
+ * Everything a daemon listener records about one completed request: its
+ * sampled metric (when metrics are on) and its L3 `http.request` line (always).
+ * Returns the response to send, which wraps a stream so its close is logged.
  */
-export function withRequestMetrics<Rest extends unknown[]>(
-  handler: (request: Request, ...rest: Rest) => Response | Promise<Response>,
-  input: {
-    listener: Exclude<RequestMetricListener, 'main'>
-    routeKeys: ReadonlySet<string>
-    sink: RequestMetricsSink | undefined
-    clientOf?: ((request: Request) => string) | undefined
+export async function observeRequest(input: {
+  request: Request
+  response: Response
+  listener: RequestMetricListener
+  route: string
+  path: string
+  startedAt: number
+  sink: RequestMetricsSink | undefined
+  remote?: string | undefined
+  peer?: string | undefined
+}): Promise<Response> {
+  const { request, response, listener, route, sink, peer } = input
+  const client = requestClientLabel(request)
+  const ms = performance.now() - input.startedAt
+  if (sink !== undefined) {
+    await recordRequestMetric({ request, response, listener, route, client, peer, ms, sink })
   }
-): (request: Request, ...rest: Rest) => Promise<Response> {
-  const { sink } = input
-  if (sink === undefined) return async (request, ...rest) => handler(request, ...rest)
-  const clientOf = input.clientOf ?? requestClientLabel
-  return async (request, ...rest) => {
-    const pathname = new URL(request.url).pathname
-    const route = input.routeKeys.has(exactRouteKey(request.method, pathname))
-      ? pathname
-      : 'unmatched'
-    const started = process.hrtime.bigint()
-    const elapsedMs = () => Number(process.hrtime.bigint() - started) / 1_000_000
-    let response: Response
-    try {
-      response = await handler(request, ...rest)
-    } catch (error) {
-      // Bun answers an escaped throw with its own 500; record that.
-      await recordRequestMetric({
-        request,
-        response: new Response(null, { status: 500 }),
-        listener: input.listener,
+  try {
+    return logRequestCompletion(
+      {
+        listener,
+        method: request.method,
         route,
-        client: safeClient(clientOf, request),
-        ms: elapsedMs(),
-        sink,
-      })
-      throw error
-    }
-    await recordRequestMetric({
-      request,
-      response,
-      listener: input.listener,
-      route,
-      client: safeClient(clientOf, request),
-      ms: elapsedMs(),
-      sink,
-    })
+        path: input.path,
+        client,
+        requestId: requestIdOf(request),
+        remote: input.remote,
+        peer,
+        startedAt: input.startedAt,
+      },
+      response
+    )
+  } catch {
+    // The request line is observational; it must never change the response.
     return response
   }
 }
 
-function safeClient(clientOf: (request: Request) => string, request: Request): string {
+function requestIdOf(request: Request): string | undefined {
+  const requestId = request.headers.get('x-hrc-request-id')?.trim()
+  return requestId ? requestId.slice(0, 128) : undefined
+}
+
+/**
+ * Observe a non-main listener (ingest, federation peer, registry) exactly like
+ * the control socket. Its routes are exact paths, so anything outside
+ * `routeKeys` is `unmatched`.
+ */
+export function withRequestObservation(
+  handler: (request: Request) => Response | Promise<Response>,
+  input: {
+    listener: Exclude<RequestMetricListener, 'main'>
+    routeKeys: ReadonlySet<string>
+    sink: RequestMetricsSink | undefined
+    /** Federation listeners: the authenticated peer node, from the handler's own token check. */
+    peerOf?: ((request: Request) => string | undefined) | undefined
+  }
+): (
+  request: Request,
+  server?: { requestIP(request: Request): { address: string } | null } | undefined
+) => Promise<Response> {
+  return async (request, server) => {
+    const startedAt = performance.now()
+    const path = new URL(request.url).pathname
+    const route = input.routeKeys.has(exactRouteKey(request.method, path)) ? path : 'unmatched'
+    const context = {
+      request,
+      listener: input.listener,
+      route,
+      path,
+      startedAt,
+      sink: input.sink,
+      remote: safely(() => server?.requestIP(request)?.address),
+      peer: safely(() => input.peerOf?.(request)),
+    }
+    let response: Response
+    try {
+      response = await handler(request)
+    } catch (error) {
+      // Bun answers an escaped throw with its own 500; record and log that.
+      if (input.sink !== undefined) {
+        await recordRequestMetric({
+          request,
+          response: new Response(null, { status: 500 }),
+          listener: input.listener,
+          route,
+          client: requestClientLabel(request),
+          peer: context.peer,
+          ms: performance.now() - startedAt,
+          sink: input.sink,
+        })
+      }
+      logRequestEscaped({
+        listener: input.listener,
+        method: request.method,
+        route,
+        path,
+        client: requestClientLabel(request),
+        requestId: requestIdOf(request),
+        remote: context.remote,
+        peer: context.peer,
+        startedAt,
+      })
+      throw error
+    }
+    return observeRequest({ ...context, response })
+  }
+}
+
+function safely<T>(read: () => T | undefined): T | undefined {
   try {
-    return clientOf(request)
+    return read()
   } catch {
-    return 'unknown'
+    return undefined
   }
 }

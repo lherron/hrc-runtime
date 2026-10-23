@@ -8,7 +8,7 @@ import type {
   HrcLifecycleEvent,
   HrcToolResultBlobPart,
 } from 'hrc-core'
-import { HRC_CLIENT_HEADER, resolveIngestSocketPath } from 'hrc-core'
+import { resolveIngestSocketPath } from 'hrc-core'
 import {
   BrokerInvocationEventConflictError,
   ImportedHrcLifecycleEventConflictError,
@@ -16,7 +16,8 @@ import {
 } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { withRequestMetrics } from './request-metrics.js'
+import { HRC_SERVER_USER_AGENT } from './federation/peer-request.js'
+import { withRequestObservation } from './request-metrics.js'
 import type { RequestMetricsSink } from './request-metrics.js'
 import { writeServerLog } from './server-log.js'
 
@@ -425,7 +426,7 @@ export async function startEventIngestListener(options: {
     divergentDuplicates: 0,
     rejected: 0,
   }
-  const fetch = withRequestMetrics(createIngestHandler({ ...options, counters }), {
+  const fetch = withRequestObservation(createIngestHandler({ ...options, counters }), {
     listener: 'ingest',
     routeKeys: EVENT_INGEST_ROUTE_KEYS,
     sink: options.metrics,
@@ -592,7 +593,8 @@ async function postBatch(
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      [HRC_CLIENT_HEADER]: `hrc-forwarder/${batch.sourceRef}`,
+      // L3 client name: the forwarding daemon (its source node is in the batch).
+      'user-agent': HRC_SERVER_USER_AGENT,
     },
     body: prepared.body,
   }

@@ -7,12 +7,11 @@ import {
   openBindingRegistry,
 } from 'hrc-store-sqlite'
 
-import { peerClientLabel, withRequestMetrics } from '../request-metrics.js'
+import { withRequestObservation } from '../request-metrics.js'
 import type { RequestMetricsSink } from '../request-metrics.js'
 import { writeServerLog } from '../server-log.js'
 import type { BirthEnvelopeReader } from './birth-designation.js'
 import { BirthEnvelopeUnavailableError, designateBirthOnHost } from './birth-designation.js'
-import { withRequestLog } from './http-request-log.js'
 import type { RegistryListenerConfig } from './registry-bind.js'
 import type { BindingRegistryClient } from './registry-client.js'
 import { createLocalBindingRegistryClient } from './registry-client.js'
@@ -378,22 +377,20 @@ export function startBindingRegistryEndpoint(input: {
     const server = Bun.serve({
       hostname: bind.hostname.replace(/^\[|\]$/g, ''),
       port: Number(bind.port),
-      fetch: withRequestLog(
-        withRequestMetrics(
-          createBindingRegistryRequestHandler({
-            registry,
-            peers: input.peers,
-            ...(input.birthEnvelopeFor === undefined
-              ? {}
-              : { birthEnvelopeFor: input.birthEnvelopeFor }),
-          }),
-          {
-            listener: 'registry',
-            routeKeys: BINDING_REGISTRY_ROUTE_KEYS,
-            sink: input.metrics,
-            clientOf: (request) => peerClientLabel(authenticate(request, input.peers)?.nodeId),
-          }
-        )
+      fetch: withRequestObservation(
+        createBindingRegistryRequestHandler({
+          registry,
+          peers: input.peers,
+          ...(input.birthEnvelopeFor === undefined
+            ? {}
+            : { birthEnvelopeFor: input.birthEnvelopeFor }),
+        }),
+        {
+          listener: 'registry',
+          routeKeys: BINDING_REGISTRY_ROUTE_KEYS,
+          sink: input.metrics,
+          peerOf: (request) => authenticate(request, input.peers)?.nodeId,
+        }
       ),
     })
     return {

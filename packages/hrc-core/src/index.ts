@@ -453,7 +453,6 @@ export type {
   ListUnbornDesignationsResponse,
 } from './http-contracts.js'
 export {
-  HRC_CLIENT_HEADER,
   OPERATOR_REAP_REASON,
   isExactStartRuntimeRequest,
   isSuffixStartRuntimeRequest,
