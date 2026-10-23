@@ -56,6 +56,8 @@ export function usage(): string {
     '  --restub-tool-results               bound >32 KiB rows that already have a complete',
     '                                      matching spill blob (BIE, then hrc_events)',
     '  --tables <a,b|all>                  tables to prune (default: runtime_buffers,broker_projection_dispositions)',
+    '                                      add hrcmail_stop_refusals for terminated-runtime',
+    '                                      refusal counters older than 14 days',
     '  --apply                             apply the selected maintenance operation',
     '  --batch-size <n>                    rows per write batch (default: 10000)',
     '  --event-retention-days <n>          event TTL; only applies to event tables named',

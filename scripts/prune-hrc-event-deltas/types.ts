@@ -82,6 +82,7 @@ export type PruneStateRetentionResult = {
     hrc_events: PruneRetentionTableResult
     broker_invocation_events: PruneRetentionTableResult
     broker_projection_dispositions: PruneRetentionTableResult
+    hrcmail_stop_refusals: PruneRetentionTableResult
     runtime_buffers: PruneRetentionTableResult
   }
 }
@@ -172,6 +173,7 @@ export const RETENTION_TABLES: readonly RetentionTable[] = [
   'broker_invocation_events',
   'runtime_buffers',
   'broker_projection_dispositions',
+  'hrcmail_stop_refusals',
 ]
 
 /**

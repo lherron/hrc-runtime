@@ -22,6 +22,8 @@ import {
   RESTUB_TOOL_RESULTS_OPERATION,
   RUNTIME_BUFFERS_ELIGIBLE_SQL,
   SPILL_TOOL_RESULTS_OPERATION,
+  STOP_REFUSALS_ELIGIBLE_SQL,
+  STOP_REFUSAL_RETENTION_DAYS,
   STRIP_ENVELOPE_PAYLOADS_OPERATION,
 } from './constants.ts'
 import {
@@ -50,7 +52,8 @@ import {
 export function createRetentionPlans(
   eventCutoff: string,
   runtimeBufferCutoff: string,
-  dispositionCutoff: string = eventCutoff
+  dispositionCutoff: string = eventCutoff,
+  stopRefusalCutoff: string = dispositionCutoff
 ): PruneTablePlan[] {
   return [
     {
@@ -91,6 +94,14 @@ export function createRetentionPlans(
       keyColumn: 'rowid',
       predicateValue: dispositionCutoff,
       eligibleSql: BROKER_PROJECTION_DISPOSITIONS_ELIGIBLE_SQL,
+      selectionOrderSql: 'e.rowid ASC',
+    },
+    {
+      table: 'hrcmail_stop_refusals',
+      alias: 'e',
+      keyColumn: 'rowid',
+      predicateValue: stopRefusalCutoff,
+      eligibleSql: STOP_REFUSALS_ELIGIBLE_SQL,
       selectionOrderSql: 'e.rowid ASC',
     },
   ]
@@ -141,7 +152,15 @@ export async function pruneStateRetention(
   const dispositionCutoff = new Date(
     options.now.getTime() - BROKER_DISPOSITION_RETENTION_DAYS * MILLISECONDS_PER_DAY
   ).toISOString()
-  const retentionPlans = createRetentionPlans(eventCutoff, runtimeBufferCutoff, dispositionCutoff)
+  const stopRefusalCutoff = new Date(
+    options.now.getTime() - STOP_REFUSAL_RETENTION_DAYS * MILLISECONDS_PER_DAY
+  ).toISOString()
+  const retentionPlans = createRetentionPlans(
+    eventCutoff,
+    runtimeBufferCutoff,
+    dispositionCutoff,
+    stopRefusalCutoff
+  )
   const purgePlans = createPurgePlans()
   const allPlans = options.operation === PURGE_DELTA_BACKLOG_OPERATION ? purgePlans : retentionPlans
   const plans = allPlans.filter((plan) => options.tables.includes(plan.table))
@@ -234,6 +253,7 @@ export async function pruneStateRetention(
       broker_invocation_events: 0,
       runtime_buffers: 0,
       broker_projection_dispositions: 0,
+      hrcmail_stop_refusals: 0,
     } satisfies Record<RetentionTable, number>
     const stopReasons = Object.fromEntries(
       RETENTION_TABLES.map((table) => [
@@ -247,6 +267,7 @@ export async function pruneStateRetention(
       broker_invocation_events: options.batchSize,
       runtime_buffers: options.batchSize,
       broker_projection_dispositions: options.batchSize,
+      hrcmail_stop_refusals: options.batchSize,
     }
     let freelistBeforeVacuumPages = freelistBeforePages
     let vacuumStopReason: PrunePhaseStop = 'complete'

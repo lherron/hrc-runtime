@@ -25,7 +25,7 @@ test('documents the state retention policy and index adequacy evidence', () => {
     /(?=[\s\S]*resume barriers are permanent)(?=[\s\S]*nonterminal runs)(?=[\s\S]*current active run)(?=[\s\S]*imported federation observations)(?=[\s\S]*no archive migration)(?=[\s\S]*auto_vacuum=INCREMENTAL)/i
   )
   expect(doc).toMatch(
-    /(?=[\s\S]*collaboration state[^\n]*keep forever)(?=[\s\S]*`messages`[^\n]*canonical local message)(?=[\s\S]*collective_history_messages)(?=[\s\S]*collective_history_observations)(?=[\s\S]*collective_history_replications)(?=[\s\S]*every `hrcmail_\*` table)(?=[\s\S]*no TTL)(?=[\s\S]*replay-fence)/i
+    /(?=[\s\S]*collaboration state[^\n]*keep forever)(?=[\s\S]*`messages`[^\n]*canonical local message)(?=[\s\S]*collective_history_messages)(?=[\s\S]*collective_history_observations)(?=[\s\S]*collective_history_replications)(?=[\s\S]*retained `hrcmail_\*` tables)(?=[\s\S]*no TTL)(?=[\s\S]*replay-fence)/i
   )
   // Writer-lock guards: the job shares state.sqlite with the live daemon.
   expect(doc).toMatch(

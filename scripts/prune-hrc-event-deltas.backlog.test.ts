@@ -34,6 +34,7 @@ describe('prune-hrc-event-deltas keeps non-delta events indefinitely', () => {
       'broker_invocation_events',
       'runtime_buffers',
       'broker_projection_dispositions',
+      'hrcmail_stop_refusals',
     ])
     expect(parsePruneStateRetentionArgs(['--tables=hrc_events,events'], {}).tables).toEqual([
       'events',

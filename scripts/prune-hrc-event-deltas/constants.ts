@@ -242,3 +242,13 @@ export const BROKER_PROJECTION_DISPOSITIONS_ELIGIBLE_SQL = `(
       AND e.seq <= i.last_projected_seq
   )
 )`
+
+/** T-11710: preserve lifetime refusal caps until the runtime is terminated. */
+export const STOP_REFUSAL_RETENTION_DAYS = 14
+export const STOP_REFUSALS_ELIGIBLE_SQL = `
+  julianday(e.updated_at) < julianday(?)
+  AND EXISTS (
+    SELECT 1 FROM runtimes AS runtime
+    WHERE runtime.runtime_id = e.runtime_id AND runtime.status = 'terminated'
+  )
+`

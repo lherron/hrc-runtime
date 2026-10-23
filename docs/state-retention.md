@@ -107,17 +107,54 @@ prior multi-gigabyte observation-ledger growth:
   authority's canonical history and provenance. Delivered rows in
   `collective_history_replications` are durable checkpoints; deleting them
   would make every restart replay the corresponding local message.
-- Every `hrcmail_*` table is durable local execution or recovery state around
+- Retained `hrcmail_*` tables are durable local execution or recovery state around
   the wrkq-owned collaboration ledger: delivery intents and expiries,
-  presentation receipts, birth and stop refusals, seat hints, failure notices,
+  presentation receipts, birth refusals, seat hints, failure notices,
   ingress receipts, federated origins, and legacy envelope records.
 
-None has a TTL or standing delete path. A future deletion policy requires its
+Except for the terminated-runtime stop counters below, none has a TTL or standing
+delete path. A future deletion policy requires its
 own approved terminality and replay-fence contract; row age alone is not
 authority to discard collaboration state. On the 2026-09-01 hrcdev store these
 surfaces were small: 501 `messages`, 501 delivered replication checkpoints, no
 collective-history message/observation rows, and only tens of populated hrcmail
 execution rows in a 484 MiB database.
+
+### Small-table retention limits (2026-10-23)
+
+`collective_history_replications`: retain pending rows and delivered fingerprints.
+`CollectiveHistoryCoordinator.start` re-enqueues all local messages; `enqueue`
+needs the delivered fingerprint to suppress retransmission on every restart.
+Read-only counts: max3 22,191 (all delivered), svc 0; the queue is source-local, not svc-only.
+
+`roster_claims`: retain all 487 max3 rows, including archived successors.
+`replayRecordedClaim` uses any-age keys to reject conflicting or superseded
+claims; expiry would turn an old retry into a new claim-and-start operation.
+
+`participant_address_reservations`: retain all 114 max3 rows (all held).
+Reservations survive host retirement by design: TX-E transfers the same held
+reservation to the successor. Release requires an explicit attributed operation;
+retirement or age alone cannot free the address.
+
+### Stop-refusal counters — 14 days, terminated runtimes only
+
+`hrcmail_stop_refusals` held 357 rows on max3 on 2026-10-23. The Stop gate
+(`stop-gate-handlers.ts` → `mailStopRefusals.evaluate`) reads these counters to
+preserve per-obligation and runtime-lifetime refusal caps. A live runtime can
+need its oldest counter indefinitely; row age alone cannot reset those caps.
+Once the runtime is `terminated`, retain a 14-day diagnostic grace period on
+**the refusal's `updated_at`**, then delete it. This grace is conservative
+operational retention; terminality is what ends the live decision horizon.
+
+The existing nightly prune supports `--tables hrcmail_stop_refusals`; append
+this value to the scheduled selection alongside `runtime_buffers` and
+`broker_projection_dispositions` to activate it. The existing default and
+source plist selection remain unchanged. The strict cutoff excludes exactly
+14-day-old counters, invalid dates, missing runtimes, and every status other
+than `terminated` (including `ready`, `busy`, `stale` and `crashed`).
+The runtime row itself is retained. Candidate discovery and the bounded-key
+DELETE both check status and age, using the nightly job's existing batch,
+deadline, pacing and busy-retry controls. No new periodic job is introduced.
 
 ## Runtime artifact directories — `first_turn_missing` bundles
 
