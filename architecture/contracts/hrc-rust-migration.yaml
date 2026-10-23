@@ -2,7 +2,7 @@ id: hrc-runtime.rust-migration
 kind: contract
 status: active
 owner_project: hrc-runtime
-scope: Rust migration stages, API-fed kernel projection, and slice-scoped dual implementation
+scope: Rust migration, delivered API-fed kernel/facades, isolated native parity and cohesive per-node owner transfer
 approved_source:
   revision: d04a6f9d
   draft: r3.3 (facade-first ruling, seat.summon, and scoped preview and seat.restart amendments)
@@ -17,19 +17,13 @@ approved_source:
   preview_amendment_task_slug: kernel-latest-event-preview
   restart_amendment_task: T-11496
   restart_amendment_task_slug: kernel-seat-restart-op
-proposed_m1_amendment:
-  task: T-11525
+adopted_m1_amendment:
+  task: T-11527
+  campaign: P-00866
   proposal: docs/proposals/hrc-rust-parity.md
-  status: design approved in EN-33646; pending Lance adoption
-  affected_sections: migration proposal sections 1, 2, 5, 6, 7, 8, 13
-  boundary: >
-    M1 source audit finds process-local claim, retirement, broker and message
-    execution coupling across provisional S1-S5 slices. Proposed replacement
-    is incremental native development on isolated state and substrate, followed
-    by a cohesive execution-owner transfer per node after parity and rollback
-    proof. Complete standalone Bun remains supported; no retirement, live Rust
-    migration ownership or activation is authorized. This proposed amendment
-    does not replace the approved predicate until adopted.
+  status: adopted by Lance; design approved EN-33646 and concrete P0/amendment intent EN-33680
+  affected_sections: migration proposal sections 1, 2, 5, 6, 7, 8, 13 and surviving old-premise statements
+  boundary: independently isolated native development; whole coupled execution-owner transfer per node after parity and real rollback; standalone Bun preserved
 predicate: >
   HRC embeds cardo-runtime as a library and retains ownership of its durable
   store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
@@ -127,19 +121,41 @@ predicate: >
   ingest updates the existing scope/lane seat natural key. Cancellation
   cannot undo the mutation and requires readback. The other three proposed
   operations remain outside this approval.
-  During stage 2 the route table owns slice routing, exactly one process
-  serves each route family and sweep loop, and the TypeScript daemon remains
-  complete until stage 3. Unported slices change in TypeScript; ported slices
-  change in both implementations and are done only after both pass the same
-  black-box conformance. Shared contracts, conformance and schema changes
-  require both validation legs. M1's route-by-state inventory and the S1
-  contract and conformance population remain prerequisites before stage 2
-  starts, as stated in the approved proposal; its slice table is provisional.
-  TypeScript owns schema migrations until retired everywhere, and Rust
-  refuses a store newer than its known schema. Rust takes migration ownership
-  only after retirement. Install, activation, fleet identity and restart
-  authority retain their existing contracts. Broker consolidation and its
-  process-count benefit remain deferred behind the G0 restart finding.
+  During stage 2 complete Bun remains independently usable without Rust,
+  with existing hrc CLI, SDK and package exports preserved. The native CLI
+  is rusthrc. Incremental native packages use isolated state, scopes, tmux
+  leases, sockets/ports, registry, ASP configuration and wrkq/publication
+  destinations. No copied row grants production broker control. One coupled
+  execution owner controls each node/state/substrate; there is no production
+  slice-writer front/private-Bun topology. External direct writers/readers
+  remain explicit compatibility consumers. Production schema migrations stay
+  Bun-owned. Native scratch initialization uses canonical Bun machinery;
+  unknown or incomplete schemas refuse. A Rust canonical migration runner
+  is test-only until separately authorized for production.
+  P0 inventories exact/computed/pattern routes, aliases/refusals, protocols,
+  schema/repositories, direct tools, exports, jobs and files, mapped to cases
+  and downstream owners. Inventory closure is separate from mandatory real
+  Bun baseline and full parity. Missing, empty, skipped, baseline-failed or
+  fixture-only cases do not pass. Native qualification requires the Bun
+  daemon unavailable for its subject; facade success is not native parity.
+  P1-P6 and P7 build independent native behavior under reviewed component
+  contracts and prerequisite grades. Ordinary Bun changes refresh source
+  inventory and real baseline tuples before affected native requalification.
+  P8 separately reviews whole-owner activation/rollback: admission closes,
+  pending work settles or records durable uncertainty, old ingress,
+  controllers, credentials, jobs and publishers relinquish control before
+  the replacement starts. Preserve surviving brokers, generation, sequence,
+  incarnation, replay/ACK, queued input, projections and publication cursors.
+  A named same-release Bun fallback must read and continue native-written
+  history; stop/fence candidate before fallback. Socket redirection alone
+  cannot prove rollback. Installation and activation remain separate;
+  worktree checks do not certify canonical installed acceptance. Preserve
+  release sourceCommit, actual binary/package paths, selected/running tuple
+  and restart authority. Pilot order requires supported reviewed tooling,
+  since current deploy-fleet order differs. No production activation,
+  migration transfer, Bun retirement, ACP port or broker consolidation is
+  authorized by this amendment. Delivered kernel/read/facade predicates
+  above remain unchanged. Performance budgets remain measured proposals.
 authority: >
   Lance's library, gradual migration and one-repository rulings cited in the
   approved proposal; Daedalus architecture approval of r3.2 submitted in
@@ -153,7 +169,16 @@ authority: >
   wrkq:T-11490 specification etag 13, 2026-10-22; closes F1 from EN-33162.
   Daedalus approval of the section 4.6.2 seat.restart facade amendment
   submitted in EN-33147 and wrkq:T-11496 specification etag 4, 2026-10-22.
+  Lance adopted P-00866 and authorized Cody task-seat implementation,
+  2026-10-23; Daedalus approved native-parity bearing EN-33646 and P0
+  runner-contract.md v2/amendment intent EN-33680. Tracked adoption is
+  recorded with T-11527; no runtime parity is implied by design approval.
 source:
+  - docs/proposals/hrc-rust-parity.md
+  - docs/proposals/hrc-rust-parity/state-audit.md
+  - docs/proposals/hrc-rust-parity/operations-audit.md
+  - wrkq:T-11527
+  - wrkc:EN-33680
   - docs/proposals/hrc-rust-migration.md
   - commit:e159381c1524a40921893601f9e858fc8645843e
   - wrkq:T-11441
@@ -230,10 +255,15 @@ validation_scope: >
   retry, responsive reads, installed discovery, same-seat generation advance
   on a throwaway seat and captured real busy-seat refusal. Activation stops
   only the Loggia-supervised kernel, not HRC.
-  Stage 2 retains
-  both-daemon conformance per ported slice, installed runtime smoke and
-  broker reattach evidence, plus the proposal's M1 prerequisite. These are
-  future acceptance obligations, not evidence of successful implementation.
+  Stage 2 requires P0 executable inventory closure, real standalone Bun
+  baseline, discriminating missing-route/field/duplicate-effect/wrong-owner
+  controls, explicit downstream gaps and isolated real ASP/wrkq/broker
+  evidence. Component gates require both-implementation compatibility and
+  native ownership discriminators. P8 requires forward/reverse same-history
+  owner transfer with one executor for every ingress/controller/job and
+  named compatible Bun fallback. Worktree checks, canonical installed
+  acceptance and independent grading remain separate. These are future
+  implementation obligations, not successful runtime evidence.
 last_verified: >
   2026-10-20 design approval by source and contract reading against HRC
   e159381c and cardo main 1796e1c. Reviewed page coverage, presentation and
@@ -270,8 +300,12 @@ last_verified: >
   exclusive-before query, mismatch refusal, and current raw freshness sources.
   No build, test, install or service commands were run; the new black-box
   cases and live before/after samples remain implementation acceptance.
+  2026-10-23 M1/P0 design approved in EN-33646/EN-33680 by source and
+  draft inventory review; adopts isolated development and cohesive owner
+  transfer while preserving delivered predicates. No behavior, install or
+  service validation is implied; P0 and later package gates remain open.
 reopen_when: >
-  Migration authority, repository or release boundaries, slice ownership or
+  Migration authority, repository or release boundaries, execution ownership or
   rollback completeness, schema ownership, stage prerequisites, page coverage
   or incarnation semantics, pinned read set, projection state ownership,
   context source, attach source, restart behavior or consolidation trigger

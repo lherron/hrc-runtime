@@ -1,6 +1,6 @@
 # HRC Rust parity: remaining feature and gap closure
 
-Status: design APPROVED by Daedalus (EN-33646), pending Lance adoption, 2026-10-23. Owner: Astra. Task: T-11525 (Rust native parity proposal). Source baseline: `763c28dbf27ccb36ab3ccd532320d3585e89179e`. Analysis only: no runtime parity, activation or implementation completion is claimed. Design review and Lance's adoption are separate from implementation dispatch.
+Status: adopted by Lance, 2026-10-23; design APPROVED by Daedalus EN-33646 and concrete P0/amendment intent EN-33680. Owner: Astra. Task: T-11525 (Rust native parity proposal). Source baseline: `763c28dbf27ccb36ab3ccd532320d3585e89179e`. Analysis only: no runtime parity, activation or implementation completion is claimed. Design review and Lance's adoption are separate from implementation dispatch.
 
 ## Recommendation
 
@@ -63,7 +63,7 @@ These are bounded implementation packages, not yet-dispatched backlog tasks. Eac
 
 P0 precedes implementation because it determines what “rest of HRC” actually counts and catches new Bun behavior while Rust is being built. P1 makes later ports cheaper by sharing canonical storage and transaction semantics. P2/P3 establish execution before P4 can truthfully deliver messages. P5 closes alternate ingress before ownership can transfer. P6/P8 prevent an HTTP-only completion claim.
 
-Potential parallel work after P0: store/read implementation; CLI parser/output inventory and compatible transport; release/activation design; external dependency protocol work. Actual runtime/message/federation integration remains ordered. Mable owns implementation campaign execution, task seats own bounded diffs, Astra grades durable results, and Daedalus verifies material designs. No workers are armed for implementation by this document.
+Potential parallel work after P0: store/read implementation; CLI parser/output inventory and compatible transport; release/activation design; external dependency protocol work. Actual runtime/message/federation integration remains ordered. Mable owns implementation campaign execution, task seats own bounded diffs, Astra grades durable results, and Daedalus verifies material designs. Implementation is armed separately under P-00866: P0 T-11527 is authorized; later packages retain prerequisite grades and detailed design gates.
 
 ## Acceptance and grading
 
@@ -91,6 +91,6 @@ Preserve `sourceCommit`, selected/running release comparison and actual binary/p
 
 ## Decision and next action
 
-Adopt the **independent native build with cohesive per-node owner transfer** as the replacement for the provisional split-writer plan. Keep the existing API-fed kernel and Bun deployment unchanged. Then arm only P0, with P1 next after the executable baseline is graded. Detailed component designs and P8 activation mechanics still need their own reviewed specs; this proposal is the feature closure map, not permission to improvise them.
+Adopt the **independent native build with cohesive per-node owner transfer** as the replacement for the provisional split-writer plan. Keep the existing API-fed kernel and Bun deployment unchanged. P0 is now armed, with P1 next only after the executable baseline is graded. Detailed component designs and P8 activation mechanics still need their own reviewed specs; this proposal is the feature closure map, not permission to improvise them.
 
 Neither Bun retirement, an ACP port nor broker consolidation belongs to this authorization. If “all Rust” later means eliminating every build-time Bun dependency or every external Bun process, that is a separate scope ruling; this proposal includes HRC native daemon and HRC-owned operational tooling while preserving client package compatibility.

@@ -1,0 +1,147 @@
+{
+  "ok": true,
+  "status": "healthy",
+  "schema": {
+    "readable": true,
+    "storeVersion": "0123_participant_fresh_continuation_reason",
+    "releaseVersion": "0123_participant_fresh_continuation_reason",
+    "pending": [],
+    "schemaAhead": false
+  },
+  "binaryPath": "/Users/lherron/.bun/install/hrc-runtime-releases/release-20261022142110461-53098/packages/hrc-cli/src/cli.ts",
+  "packagePath": "/Users/lherron/.bun/install/hrc-runtime-releases/release-20261022142110461-53098/packages/hrc-server",
+  "release": {
+    "mode": "atomic",
+    "releaseId": "release-20261022142110461-53098",
+    "releasePath": "/Users/lherron/.bun/install/hrc-runtime-releases/release-20261022142110461-53098",
+    "manifestPath": "/Users/lherron/.bun/install/hrc-runtime-releases/release-20261022142110461-53098/praesidium-release.json",
+    "hrcBuild": {
+      "schema": 1,
+      "repository": "hrc-runtime",
+      "canonicalRemote": "git@github.com:lherron/hrc-runtime.git",
+      "sourceCommit": "763c28dbf27ccb36ab3ccd532320d3585e89179e",
+      "setName": "hrc",
+      "setVersion": "0.5.13-dev.20261022092121",
+      "builtAt": "2026-10-22T14:21:21.971Z"
+    },
+    "aspContracts": [
+      {
+        "name": "agent-scope",
+        "version": "0.1.1-dev.20261022092030"
+      },
+      {
+        "name": "cli-kit",
+        "version": "0.1.1-dev.20261022092030"
+      },
+      {
+        "name": "spaces-aspc-protocol",
+        "version": "0.1.1-dev.20261022092030"
+      },
+      {
+        "name": "spaces-harness-broker-protocol",
+        "version": "0.1.1-dev.20261022092030"
+      },
+      {
+        "name": "spaces-harness-broker-client",
+        "version": "0.1.1-dev.20261022092030"
+      },
+      {
+        "name": "spaces-runtime-contracts",
+        "version": "0.1.1-dev.20261022092030"
+      }
+    ],
+    "installedAt": "2026-10-22T14:21:21.971Z",
+    "processStartedAt": "2026-10-22T14:21:30.968Z",
+    "runningEqualsInstalled": true
+  },
+  "api": {
+    "startedAt": "2026-10-22T14:21:30.968Z",
+    "uptime": 57365,
+    "apiVersion": "0.1.0",
+    "runtimeRoot": "/Users/lherron/praesidium/var/run/hrc",
+    "stateRoot": "/Users/lherron/praesidium/var/state/hrc",
+    "socketPath": "/Users/lherron/praesidium/var/run/hrc/hrc.sock",
+    "dbPath": "/Users/lherron/praesidium/var/state/hrc/state.sqlite",
+    "cwd": "/Users/lherron/praesidium",
+    "binaryPath": "/Users/lherron/.bun/install/hrc-runtime-releases/release-20261022142110461-53098/packages/hrc-cli/src/cli.ts",
+    "packagePath": "/Users/lherron/.bun/install/hrc-runtime-releases/release-20261022142110461-53098/packages/hrc-server",
+    "release": {
+      "mode": "atomic",
+      "releaseId": "release-20261022142110461-53098",
+      "releasePath": "/Users/lherron/.bun/install/hrc-runtime-releases/release-20261022142110461-53098",
+      "manifestPath": "/Users/lherron/.bun/install/hrc-runtime-releases/release-20261022142110461-53098/praesidium-release.json",
+      "hrcBuild": {
+        "schema": 1,
+        "repository": "hrc-runtime",
+        "canonicalRemote": "git@github.com:lherron/hrc-runtime.git",
+        "sourceCommit": "763c28dbf27ccb36ab3ccd532320d3585e89179e",
+        "setName": "hrc",
+        "setVersion": "0.5.13-dev.20261022092121",
+        "builtAt": "2026-10-22T14:21:21.971Z"
+      },
+      "aspContracts": [
+        {
+          "name": "agent-scope",
+          "version": "0.1.1-dev.20261022092030"
+        },
+        {
+          "name": "cli-kit",
+          "version": "0.1.1-dev.20261022092030"
+        },
+        {
+          "name": "spaces-aspc-protocol",
+          "version": "0.1.1-dev.20261022092030"
+        },
+        {
+          "name": "spaces-harness-broker-protocol",
+          "version": "0.1.1-dev.20261022092030"
+        },
+        {
+          "name": "spaces-harness-broker-client",
+          "version": "0.1.1-dev.20261022092030"
+        },
+        {
+          "name": "spaces-runtime-contracts",
+          "version": "0.1.1-dev.20261022092030"
+        }
+      ],
+      "installedAt": "2026-10-22T14:21:21.971Z",
+      "processStartedAt": "2026-10-22T14:21:30.968Z",
+      "runningEqualsInstalled": true
+    },
+    "aspd": {
+      "configured": true,
+      "endpoint": "/Users/lherron/praesidium/var/aspd/run/aspd.sock",
+      "reachable": true,
+      "protocolVersion": "aspc/0.1",
+      "release": {
+        "releaseId": "asp-7c6d25dce882-20261022T142058Z-03b4ad",
+        "sourceCommit": "7c6d25dce882c26fe6f008165c07b6c90addece9",
+        "builtAt": "2026-10-22T14:20:58.771Z"
+      },
+      "probedAt": "2026-10-23T06:17:36.119Z"
+    }
+  },
+  "runtimeRoot": "/Users/lherron/praesidium/var/run/hrc",
+  "stateRoot": "/Users/lherron/praesidium/var/state/hrc",
+  "socketPath": "/Users/lherron/praesidium/var/run/hrc/hrc.sock",
+  "node": {
+    "nodeId": "max3",
+    "nodeIdProvenance": "declared",
+    "mode": "federated",
+    "configPath": "/Users/lherron/praesidium/var/state/hrc/federation.json",
+    "configExists": true,
+    "peerCount": 2,
+    "peers": [
+      {
+        "nodeId": "svc",
+        "endpoint": "http://100.117.215.92:18493/",
+        "registryEndpoint": "http://100.117.215.92:18491/"
+      },
+      {
+        "nodeId": "hrcdev",
+        "endpoint": "http://100.121.7.100:18490/"
+      }
+    ]
+  }
+}

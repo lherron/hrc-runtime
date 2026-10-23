@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HRC parity inventory v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "sourceCommit",
+    "items",
+    "unresolved"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "source",
+          "caseIds",
+          "downstreamOwner",
+          "coverage",
+          "gapReason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "path",
+              "hash",
+              "line",
+              "symbol"
+            ]
+          },
+          "caseIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "downstreamOwner": {
+            "type": "string",
+            "pattern": "^T-[0-9]{5}$"
+          },
+          "coverage": {
+            "enum": [
+              "GAP",
+              "PASS",
+              "FAIL",
+              "BASELINE_FAILURE",
+              "INFRA_ERROR"
+            ]
+          },
+          "gapReason": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

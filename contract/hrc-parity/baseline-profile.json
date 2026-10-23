@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "status": "design-example-not-admitted",
+  "claim": "bun-compatibility",
+  "suite": "p0-bun",
+  "publicSocket": "/tmp/hrcp0-RUN/run/hrc.sock",
+  "dbPath": "/tmp/hrcp0-RUN/state/state.sqlite",
+  "runtimeRoot": "/tmp/hrcp0-RUN/run",
+  "stateRoot": "/tmp/hrcp0-RUN/state",
+  "agentsRoot": "/tmp/hrcp0-RUN/agents",
+  "projectRoot": "/tmp/hrcp0-RUN/project",
+  "peerConfig": "/tmp/hrcp0-RUN/federation.json",
+  "wrkqLocator": "/tmp/hrcp0-RUN/wrkq.db",
+  "aspEndpoint": "REQUIRES_REVIEWED_ISOLATED_PREPARATION",
+  "scopePrefix": "agent:tabularasa:project:hrc-runtime:task:p0-RUN",
+  "cliArgv": [
+    "/ABSOLUTE/PINNED/INSTALLED/hrc"
+  ],
+  "candidateArgv": null,
+  "deadlinesMs": {
+    "request": 10000,
+    "case": 180000,
+    "suite": 1800000
+  },
+  "allowProduction": false,
+  "scratchRoot": "/tmp/hrcp0-RUN",
+  "implementation": "bun",
+  "runId": "p0-RUN",
+  "ownerPid": null,
+  "rustOwnerPids": [],
+  "env": {},
+  "sdkArgv": [],
+  "cases": [
+    {
+      "id": "identity-isolation",
+      "actions": []
+    },
+    {
+      "id": "cold-second-turn",
+      "actions": []
+    },
+    {
+      "id": "attach-restart-resume-terminate",
+      "actions": []
+    },
+    {
+      "id": "finite-store",
+      "actions": []
+    },
+    {
+      "id": "streams-errors",
+      "actions": []
+    },
+    {
+      "id": "direct-cli-sdk",
+      "actions": []
+    },
+    {
+      "id": "wrkq",
+      "actions": []
+    },
+    {
+      "id": "fallback-performance",
+      "actions": []
+    },
+    {
+      "id": "jobs-files-listeners",
+      "actions": []
+    }
+  ]
+}

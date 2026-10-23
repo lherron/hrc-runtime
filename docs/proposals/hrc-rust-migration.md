@@ -1,23 +1,23 @@
 # HRC Rust migration
 
-> 2026-10-23 M1 finding: [Rust native parity closure proposal](hrc-rust-parity.md) supplies current implementation status and source-grounded gap analysis. Its proposed amendment replaces the provisional S1–S5 split-writer rollout with isolated native development and cohesive per-node execution-owner transfer, retaining standalone Bun. This amendment awaits adoption; it does not change delivered stage 1/1b behavior or authorize activation/retirement. Read it before planning from §§1–2, 5–8 or 13 below.
+> 2026-10-23 adopted M1 amendment: [Rust native parity](hrc-rust-parity.md), authorized by Lance and reviewed in EN-33646/EN-33680, replaces the provisional slice-writer rollout with independently isolated native development and cohesive per-node execution-owner transfer. Standalone Bun and the delivered kernel/facades remain supported. No activation, retirement or production migration transfer is authorized. Campaign P-00866 owns P0–P8 closure.
 
-Status: proposal r3.2, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `/v1/events/page` ledger read, a pinned side-effect-free read set, attach from the presentation read model. r3.2 answers EN-32628 F5: `contextReading` on presentation rows. r3.3: §4.6 stage 1b ops are facade calls over existing routes with no TS change, and `seat.summon` is specified first). Owner mable@hrc-runtime:primary. Campaign P-00862. **Stage 1 delivered 2026-10-20:** gate 0 T-11441 (371cc396), kernel T-11442 (8f70c9e8..5f7e1bc9), gates 0–5 graded PASS, live on max3. Cardo F7 is green; A5 (T-11426) measurements are cardo's. Stage 1b and stage 2 are not dispatched. Lance's rulings are marked **RULED**.
+Status: proposal r3.2, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `/v1/events/page` ledger read, a pinned side-effect-free read set, attach from the presentation read model. r3.2 answers EN-32628 F5: `contextReading` on presentation rows. r3.3: §4.6 stage 1b ops are facade calls over existing routes with no TS change, and `seat.summon` is specified first). Owner mable@hrc-runtime:primary. Campaign P-00862. **Stage 1 delivered 2026-10-20:** gate 0 T-11441 (371cc396), kernel T-11442 (8f70c9e8..5f7e1bc9), gates 0–5 graded PASS, live on max3. Cardo F7 is green; A5 (T-11426) measurements are cardo's. Summon and restart facade amendments have since landed; native parity proceeds under P-00866, beginning with the reviewed P0 baseline. No native execution-owner transfer is delivered. Lance's rulings are marked **RULED**.
 
 r3 replaces r2.2's stage 1 and adds the repository rules:
 - **One stage 1.** It merges clod@loggia's stage 0 (R-00448, EN-32603) into stage 1. The kernel reads HRC through its HTTP API through cardo's own ingest machinery, not through a read-only open of `state.sqlite` (§4).
-- **One repository**, with dual implementation scoped by slice (§2).
+- **One repository**, with independent native development and both-implementation compatibility qualification (§2).
 - **Cardo prerequisites:** all of them are on cardo main at 1796e1c (§3).
 
-This page owns the HRC side of the port: the repository layout, the stages, the strangler inside stage 2, the compatibility contract, install and fleet, and the process budget. The cardo work lives in cardo's `docs/explorations/pre-hrc-cardo-gaps.md`, which this page cites by item number (`cardo B6`) and does not restate.
+This page owns the HRC side of the port: the repository layout, the stages, independent native development in stage 2, the compatibility contract, install and fleet, and the process budget. The cardo work lives in cardo's `docs/explorations/pre-hrc-cardo-gaps.md`, which this page cites by item number (`cardo B6`) and does not restate.
 
 ## 0. Rulings and scope
 
 - **RULED, Q1 (T-11381): library.** HRC becomes a Rust binary that embeds `cardo-runtime`, as foundry does. Cardo hosts nothing that belongs to HRC.
 - **RULED, port first and consolidate later** (Lance, 2026-10-19). Brokers, aspc and the injector do not move into the port. Brokers survive an HRC restart only because they are separate processes in leased tmux servers that reattach by `eventsSince(lastProjectedSeq)`, and there is no strategy yet for keeping them alive inside the daemon (§9).
-- **RULED, gradual migration with TS fully functional** (Lance, 2026-10-20). There is no big-bang cutover. The TS daemon stays a complete daemon that can serve every route until stage 3. Dual implementation is scoped by slice (§2.2).
+- **RULED, gradual migration with TS fully functional** (Lance, 2026-10-20). There is no big-bang cutover. The TS daemon stays a complete daemon that can serve every route until stage 3. The adopted M1 plan qualifies native packages independently and transfers coupled execution authority together (§2.2).
 - **RULED, one repository** (Lance, 2026-10-20). Rust lives in hrc-runtime beside the TS packages (§2.1).
-- **RULED, facade first, then native slices** (Lance, 2026-10-20). Rust HRC starts as a facade over the working TS daemon (stages 1 and 1b), then replaces the facade's parts with native Rust implementations one slice at a time (stage 2). **Stage 1b ops add no TS code and no HRC features:** each op is a client of routes that already exist, exactly as the `hrc` CLI, ACP and the mail injector use them. If an op needs something TS HRC does not offer, it waits for that slice's native Rust implementation; TS HRC does not grow to serve the facade. The three additive S1 reads that stage 1 already landed (§4.8 costs) stand.
+- **RULED, facade first, then native slices** (Lance, 2026-10-20). Rust HRC starts as a facade over the working TS daemon (stages 1 and 1b), then develops native Rust packages on isolated state/substrate (stage 2), with whole-node execution-owner transfer after parity and rollback. **Stage 1b ops add no TS code and no HRC features:** each op is a client of routes that already exist, exactly as the `hrc` CLI, ACP and the mail injector use them. If an op needs something TS HRC does not offer, it waits for that slice's native Rust implementation; TS HRC does not grow to serve the facade. The three additive S1 reads that stage 1 already landed (§4.8 costs) stand.
 - The process-count goal is deferred, and stated as deferred (§8). The mail injector moves with ACP, not HRC (§10).
 
 HRC keeps everything it owns today:
@@ -31,13 +31,13 @@ The cardo wire is an additional socket, the mount surface for Loggia and agents.
 
 ## 1. Stages
 
-Each stage is usable on its own and reversible.
+Delivered stages are preserved. Native development is incremental; production transfer and retirement have separate gates.
 
 | stage | what runs | writes `state.sqlite` | reversible by |
 |---|---|---|---|
 | 1. Kernel projector | the TS daemon, plus a Rust `hrc-kernel` that reads HRC over its HTTP API and serves the cardo wire | TS only | stopping the kernel |
-| 2. Rust front, sliced by state | the Rust front on `hrc.sock`; the TS daemon on a private socket, still complete | both, one slice each | pointing `hrc.sock` back at TS |
-| 3. TS retired | Rust only | Rust only | (not reversible after the first Rust migration, §6.2) |
+| 2. Native parity | independent native daemon on isolated state/substrate; one coupled production execution owner per node | one execution owner per state/substrate, plus inventoried external tools | P8 reviewed whole-owner drain/fence/handoff to named compatible Bun |
+| 3. Possible Bun retirement | separately authorized after parity and rollback | production migrations remain Bun-owned until separately transferred | outside P-00866 authorization |
 
 Stage 1 replaces nothing. It is a new reader, so the dual-implementation rule (§2.2) starts at stage 2. ACP ports afterwards (§10).
 
@@ -48,14 +48,14 @@ Stage 1 replaces nothing. It is a new reader, so the dual-implementation rule (�
 ```
 hrc-runtime/
   packages/        TS: hrc-server, hrc-cli, hrc-core, hrc-sdk, hrc-store-sqlite, … (unchanged)
-  crates/          Rust Cargo workspace: hrc-domain, hrc-kernel; later hrc-front, hrc-store
+  crates/          Rust Cargo workspace: hrc-domain, hrc-kernel; later native daemon/rusthrc and hrc-store
   contract/        neutral, consumed by both sides (from stage 2)
   conformance/     the black-box suite that runs against either daemon's socket (from stage 2)
 ```
 
 - **No cross-imports.** `packages/` and `crates/` meet only through the HTTP API, the cardo wire and the store. Neither builds the other.
-- **`contract/` is owned by neither side.** It holds the route table, request and response schemas, event kinds, and the schema version the store is at. TS and Rust either generate their types from it, or check them against it by example in the conformance suite. It starts empty at stage 1, because the kernel consumes the HTTP API as a client (plus two additive TS store reads, §4.2 and §4.3). It fills as slices move.
-- **The route table is the single statement of ownership.** For each route family it names the slice, the daemon that serves it, and whether the slice is ported (§2.2). The Rust front reads it at stage 2.
+- **`contract/` is owned by neither side.** It holds the route table, request and response schemas, event kinds, and the schema version the store is at. TS and Rust either generate their types from it, or check them against it by example in the conformance suite. It starts empty at stage 1, because the kernel consumes the HTTP API as a client (plus two additive TS store reads, §4.2 and §4.3). P0 populates its inventory and qualification contracts; they do not route split production writers.
+- **The inventory states compatibility obligations.** Exact/computed/pattern routes, protocols, aliases/refusals, stores, direct tools, exports, jobs and files map to cases and owning packages. It does not assign production route slices; one coupled execution owner controls the node after P8 qualification.
 - **Hooks are path-scoped** through the existing `hook-scope`/`.hookignore` mechanism:
   - a TS-only change skips cargo;
   - a `crates/`-only change skips the bun suites;
@@ -63,17 +63,11 @@ hrc-runtime/
 - **Seats.** Rust work runs in its own task seats. One session doesn't do both halves of a dual-implemented change unless the change is small.
 - **Why not a separate repository.** The two daemons share the API contract, the store schema and the release. One commit can change both sides and the conformance suite together, and one release has one `sourceCommit` per node. Two repositories would turn each of those into a cross-repo pin that drifts. The benefits of a separate repository (build speed, clean ownership, agents that never confuse the halves) come here from the path-scoped hooks and separate seats.
 
-### 2.2 Dual implementation, scoped by slice
+### 2.2 Independent implementations and behavior drift
 
-| slice state | a new feature or change lands in |
-|---|---|
-| not ported | TS only. Rust picks it up when the slice ports. |
-| ported (Rust serves it) | both. TS is the rollback target, so it stays current. |
-| soaked on every node | both, until stage 3 retires TS |
+Complete Bun remains independently usable without Rust, with existing `hrc`, SDK and package exports unchanged. The native CLI is `rusthrc`. Ordinary Bun fixes continue; P0 refreshes source inventories, real baseline observations and release/config/producer tuples before affected Rust behavior can be graded current. A contract change is complete only after both implementations pass the affected conformance obligations; unimplemented native cases remain explicit gaps.
 
-- **Done means the conformance suite passes against both daemons** for a ported slice. A pre-push check refuses a change to a ported slice's routes, schemas or tests that touches only one side.
-- **Schema.** TS owns migrations until stage 3 (§6.2). A migration commit also bumps the schema version in `contract/`, and Rust refuses a store newer than the version it knows. Pre-push checks that the two agree.
-- **Keep the double cost short.** It applies only to the slices in flight, so a slice's soak (§5) is kept short and slices move one at a time.
+Production migrations stay Bun-owned. Rust refuses unknown/incomplete schemas and uses canonical Bun scratch initialization during coexistence. A named same-release Bun fallback must read and continue native-written history. A Rust migration runner is separately reviewed test-only tooling until production authority changes explicitly. Development packages are not permission to transfer execution owners or retire Bun.
 
 ## 3. Prerequisites from cardo
 
@@ -277,58 +271,37 @@ A `LedgerSource` read directly over `hrc_events` moves to stage 2, where Rust ow
 - **Additive HRC TS changes**, all store reads in slice S1: the `/v1/events/page` route and its test (§4.2), and `contextReading` on `/v1/presentation/runtimes` rows (§4.3), plus the pre-ruled batched seat-read route adopted after A5 (T-11451). Nothing else in TS HRC changes.
 - **HTTP reads per batch.** Each batch re-reads only the seats it names, in one batched seat-read route in TS HRC. A5 exposed the full-state-per-batch deviation; T-11451 applies this pre-ruled remedy without changing delta semantics or the ingest batch size.
 
-## 5. Stage 2: the Rust front, sliced by state
+## 5. Stage 2: independent native parity
 
-**Shape.**
-- The Rust front takes `hrc.sock`, and the TS daemon moves to a private socket.
-- The front serves the slices marked ported in the route table (§2.1) and proxies the rest byte for byte, including the NDJSON follow streams.
-- Both processes write the one WAL store under `BEGIN IMMEDIATE` with busy timeouts. The prune job already writes beside the daemon today.
+The M1 state and operational audits resolve the provisional slice finding: process-local claims, retirement, broker control, messages, publication and recovery cross the former S1–S5 groupings. Shared WAL serialization does not fence asynchronous execution or recreate live maps. Do not introduce Bun job suppression or split-writer locks solely to support the port.
 
-**Slices.** A slice moves together with all the in-memory state its routes share, never route by route. Proposed order, from the least in-memory state to the most:
+Develop on separate state/runtime roots AND scope identities, tmux leases, sockets/ports, registry, ASP preparation configuration, wrkq authority and publication destinations. Never attach or reap production brokers from copied rows. Preserve the current API-fed Cardo kernel until equivalent native ledger integration is qualified; summon/restart remain honest facades over Bun in their delivered mode.
 
-| slice | routes (families) | in-memory state that moves with it |
-|---|---|---|
-| S1 reads | sessions, runtimes and runs listing; events tail, head and latest-by-session; health and status; capture reads | none |
-| S2 messages | messages, dm, query, wait and watch; wrkq presentation; the stop-gate and hint-decision internal routes | `messageSubscribers`; the wrkq ledger cursor's consumer |
-| S3 runtime lifecycle | runtimes start, ensure, attach, sweep and prune; capture; bridges; placements and declarations | in-flight start maps; tmux leases |
-| S4 brokers and turns | broker-events and broker-sessions; dispatch, inputs and in-flight input; interrupt; clear-context; runs reconcile and recover; the follow hub; hook ingest | `harnessBrokerController`, `followSubscribers`, the in-flight dispatch map, broker warmup |
-| S5 federation | the peer listener, bindings, designations, locate, retire | peer health |
+The executable package sequence is P0 baseline → P1 store → P2 lifecycle foundation → P3 broker/turn/recovery → P4 messages/streams/publication → P5 federation/ingest → P6 operational/kernel closure → P8 reversible node qualification. P7 rusthrc/tools requires P1 and qualifies execution commands against P3–P6. Each package gets its own task-seat design ruling, real checks and independent grade. The full [closure ledger](hrc-rust-parity.md) and audits define the obligations, including direct store writers and every startup/recurring/controller job.
 
-**Rules while split.**
-1. **One owner per slice.** A route family is served by exactly one daemon, as stated in the route table.
-2. **One process runs each sweep.** HRC's timer loops (`sweep-handlers.ts`, `first-turn-watch.ts`, …) move with the slice whose state they read. The front refuses to start if both daemons claim a loop.
-3. **The TS daemon stays complete** (§2.2). It keeps every slice's code current, so pointing `hrc.sock` back at it restores full service.
-4. **The follow hub is split.** Until S4 moves, Rust followers use a seq-poll fallback on `hrc_events`.
-5. **No Rust migration** (§6.2).
-6. **Restart doctrine unchanged.** Brokers reattach to whichever daemon owns S4. A front restart is an HRC restart, and Mable primary's authority covers both processes.
-7. **The stage-1 kernel** keeps reading the HTTP API through the front. Once S1 and S4 move, its source can become an in-process `LedgerSource` over `hrc_events`, and the document, types and mounts stay unchanged.
+P0 inventory completeness is separate from its mandatory real Bun baseline, and both are separate from full native/tooling parity. Missing, empty, skipped or fixture-only cases cannot pass. Native qualification requires the Bun daemon unavailable for its subject; external ASP/brokers and unchanged Bun clients may remain. Performance budgets are measured proposals until separately approved.
 
-**Gate per slice.** The conformance suite passes against both daemons for the slice (§2.2). Add an installed smoke through `verify-hrc-runtime`, and a broker reattach count after a restart.
+Transfer the entire coupled execution owner per node only through P8: close admission, settle or durably classify pending work, stop/fence old ingress/controllers/jobs/publishers/credentials, establish relinquishment, then start and verify the new owner. Preserve surviving brokers, replay/ACK, queued input, incarnations and publisher cursors. Rollback stops/fences the candidate before restoring the named compatible Bun release and demonstrates continued real turns on the same history/substrate. A socket swap is insufficient.
 
-**Owed before stage 2 starts:**
-- **Finding M1:** confirm or rewrite the slice table from a route-by-state inventory of `hrc-server` (method aliases, subscriber sets, in-flight maps, timer loops), and check the seq-poll fallback's latency against the follow consumers.
-- **`contract/` and `conformance/` populated for S1:** the existing hrc-server e2e suites run as a black box against a socket.
-
-**Cutover, per node and per slice:** hrcdev first, then svc, then max3. The soak is short by design (§2.2). Rollback before stage 3 is pointing `hrc.sock` back at TS.
+Intended qualification order is isolated scratch → hrcdev → svc → max3, using a reviewed supported pilot procedure. Existing deploy-fleet runs max3 → svc → hrcdev and cannot be cited as implementing the pilot order. No production transfer or activation is authorized by this plan.
 
 ## 6. Compatibility contract
 
 ### 6.1 HTTP API
 
-All the routes on `hrc.sock` (about 110), with the same request and response shapes, error codes and NDJSON follow semantics. Clients:
+All exact, computed and pattern routes on `hrc.sock`, refreshed by P0 rather than a historical count, with the same request and response shapes, error codes and NDJSON follow semantics. Clients:
 - `hrc-sdk` and the `hrc` CLI; hcs (Go); ACP (gateway, dashboard, injector); agent-loop;
 - the hook bridges shipped in ASP releases;
 - federation peers;
 - **the stage-1 kernel** (§4.2).
 
-From stage 2 the contract is written down in `contract/`. Federation runs mixed-version during cutover, so the peer protocol (`docs/federation-peer-protocol.md`) is unchanged until stage 3.
+P0 writes the executable contract in `contract/hrc-parity/` and external runner in `conformance/hrc-parity/`. Federation runs mixed-version during cutover, so the peer protocol (`docs/federation-peer-protocol.md`) is unchanged until stage 3.
 
 ### 6.2 Schema
 
-- TS owns migrations until it is retired everywhere. Rust adds none, because a rollback would meet cardo C1's "a reader behind the schema refuses" rule.
-- `contract/` carries the schema version. Rust refuses a newer store, and pre-push checks the two agree (§2.2).
-- After retirement, Rust takes migration ownership through cardo C1.
-- The contract includes the columns read from outside the daemon: the `hrc` CLI's monitor reads, the capture verifier, the prune job, and ACP's twelve direct reads (§11). The stage-1 kernel adds none.
+Bun owns production migrations. Rust supports the exact compatible migration set, refuses unknown/incomplete stores and cannot initialize or migrate production by accident. Canonical Bun migrations initialize scratch during coexistence. P7 may qualify a Rust runner for canonical migration history as test-only tooling; production migration transfer and Bun retirement require separate authorization.
+
+The contract inventories all schema/repositories and direct consumers/writers, including monitor, export/annotation, capture verifier, maintenance/archive/rebuild tools and release/schema inspection. ACP call sites remain ACP-owned compatibility/coordination obligations; no historical direct-read count is exhaustive. The stage-1 kernel adds no direct store read. Same-release fallback must reopen and continue native-written state; broader historical compatibility is not implied.
 
 ### 6.3 `hrc_events` as a `LedgerSource` (stage 2)
 
@@ -344,26 +317,13 @@ From stage 2 the contract is written down in `contract/`. Federation runs mixed-
 
 ## 7. Install, activation and fleet
 
-What exists today: atomic releases, install then restart, status `sourceCommit`, the release-prune rule (T-10024), `verify-hrc-runtime`, and Mable primary's restart authority. Rust keeps all of these.
+Atomic kernel packaging, incremental Cargo reuse, TS/Rust verification, selected/running provenance and Mable's restart authority already exist. Extend them; do not create another installation system. Native CLI name is `rusthrc`; default Bun `hrc` remains unchanged. Reuse the existing canonical Cargo target.
 
-- **Build.** `cargo build --release` joins `just install`, path-scoped, so a TS-only change doesn't trigger it. The release directory holds the Rust binaries beside the TS release. `hrc server status` reports one `sourceCommit`, which covers both.
-- **Verify and pre-push.** A cargo leg, path-scoped (§2.1). The cardo pin moves only through an explicit bump commit.
-- **launchd.** Stage 1 adds nothing. At stage 2 the label is the same and the program path changes to the front. The private TS daemon gets its own plist. Edits follow the launchd-control rules: edit the installed plist in place, then bootout and bootstrap.
-- **Fleet.** Build on each node, or ship the binary. The deploy order is the cutover order. Parity is `sourceCommit` per node.
-- **The stage-1 kernel** ships in the same release. Loggia finds it on the fixed socket path.
+Build, commit/push, install, activation and promotion are distinct states. Worktree checks do not certify installed acceptance; landing and canonical installation/smoke remain coordinated. No private Bun daemon/plist or front activation is required by independent development. P8 must review supported activation/rollback and pilot tooling before services change. Read back actual sourceCommit, binaryPath/packagePath, selected/running tuple AND implementation owner; matching source does not prove native authority. Production operations remain separately authorized.
 
 ## 8. Process budget
 
-| process (per node, max3 2026-10-19) | today | stage 1 | stage 2 (split) | stage 3 |
-|---|---|---|---|---|
-| HRC daemon | 1 (bun) | 1 | 2 (Rust front plus TS) | 1 (Rust) |
-| hrc-kernel | 0 | 1 | 1, folded into the front once S1 and S4 move | 0, in-process |
-| harness-broker | about 70 | unchanged | unchanged | unchanged |
-| aspd | 1 | unchanged | unchanged | unchanged |
-| injector | inside acp-server | unchanged | unchanged | moves with the ACP port |
-| HRC's `wrkq rpc --stdio` children | today's count | unchanged | unchanged | wrkq's call |
-
-The port does not reduce the process count, and it says so. Reducing it is consolidation (§9).
+Production keeps one execution owner per node/state/substrate throughout. Isolated development may run separate Bun/native subjects with disjoint substrates; this is not a production dual-daemon topology. The API-fed hrc-kernel remains separate until P6 native ledger integration preserves its document and mount contracts. ASP/brokers stay external; ACP owns the injector and gateways. The port claims no process reduction and does not authorize consolidation or ACP changes.
 
 ## 9. Consolidation (Track G): deferred, with a trigger
 
@@ -392,30 +352,28 @@ The ACP port is ACP's own document. What this page fixes:
 
 | item | owner | recommendation |
 |---|---|---|
-| M1 slice finding (§5) | mable@hrc-runtime | owed before stage 2 |
-| ACP's twelve direct reads of `state.sqlite` | ACP | move them onto the API before stage 2 |
-| HRC's wrkq client in Rust | wrkq | decide before S2 moves |
-| `contract/` format: generated types, or by-example checks only | mable@hrc-runtime | decide with M1; by-example is enough for S1 |
+| M1 ownership finding (§5) | P-00866 | resolved by source audits; executable P0 closure remains required |
+| ACP direct consumers | ACP | refresh call-site inventory; preserve exports and current behavior |
+| HRC's wrkq client in Rust | wrkq/HRC | external authority contract before P4 |
+| `contract/` format | T-11527 P0 | neutral manifest and external runner approved EN-33680; behavior evidence required |
 | Stage 1b ops | Lance | include, after the read-only gates pass |
 | Kernel supervision: Loggia or launchd | Lance | Loggia, until a second consumer exists |
 
 ## 12. Explicitly unsupported
 
-- Feature work implemented in both daemons for a slice that isn't ported.
-- A change to a ported slice on one side only.
+- Calling unimplemented native behavior qualified, or accepting native drift without requalification.
 - Transcripts and history in cardo documents.
 - Rows for other nodes, and remote attach, in stage 1.
 - The stage-1 kernel opening `state.sqlite`, or calling a route outside its pinned read set (§4.3).
-- A Rust schema migration before TS is retired everywhere.
-- Two daemons serving one route family, or running one sweep loop.
+- Production Rust migration authority or Bun retirement without separate authorization.
+- Two execution owners controlling one node/state/substrate, including alternate ingress, controllers, recovery, timers and publishers.
 - A double `seat.reset`. Raw keystroke input as a wire op.
 - Feature flags.
 
 ## 13. Order
 
-1. **Now: stage 1** (§4), graded by §4.8. Cardo's F7 and A5 run against it. Then the stage 1b ops.
-2. **Before stage 2:** M1, ACP's direct reads, and `contract/` plus `conformance/` for S1.
-3. **Stage 2:** port S1 to S5 in order. Each slice passes conformance against both daemons, then cuts over hrcdev, svc, max3.
-4. **Stage 3:** retire TS on every node. Rust takes migration ownership.
-5. **ACP port** (§10).
-6. **Track G**, on its trigger (§9).
+1. Preserve delivered stage 1/1b kernel/read/facade behavior and its recorded gates.
+2. P0 executable compatibility baseline and adopted architecture record precede native implementation dispatch.
+3. Implement P1–P6 and P7 under the closure ledger, isolated real validation and independent package grades.
+4. P8 proves whole-owner handoff and named Bun fallback on the same real history/substrate, then obtains separate activation/pilot authority.
+5. Bun retirement, production migration transfer, consolidation and any ACP port remain separate future decisions.
