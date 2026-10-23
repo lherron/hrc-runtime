@@ -32,7 +32,7 @@ locations at a glance).
 an installed atomic release. Source edits reach it through `just install`
 and an authorized daemon restart; restarting alone does not load checkout
 changes. `hrc server status --json` reports the running release path and source
-commit (see [atomic-install.md](atomic-install.md)). It is managed by launchd:
+commit (see `docs/atomic-install.md` in the repo). It is managed by launchd:
 
 - Launchd label: `com.praesidium.hrc-server` (`ProgramArguments: hrc server serve`)
 - Unix socket: `/Users/lherron/praesidium/var/run/hrc/hrc.sock`
