@@ -723,10 +723,6 @@ describe('HarnessBrokerController', () => {
       'exited'
     )
     expect(errors.some((entry) => JSON.stringify(entry).includes('stderr marker W3B'))).toBe(true)
-    const brokerClosed = fixture.db.events
-      .listFromSeq(1, { runtimeId: 'runtime_w2' })
-      .find((event) => event.eventKind === 'broker.process.closed')
-    expect(brokerClosed).toBeDefined()
     const canonicalCrashes = fixture.db.hrcEvents
       .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
       .filter((event) => event.eventKind === 'runtime.crashed')
@@ -786,10 +782,6 @@ describe('HarnessBrokerController', () => {
     expect(errors.some((entry) => entry.message.includes('harness broker process closed'))).toBe(
       false
     )
-    const crashEvent = fixture.db.events
-      .listFromSeq(1, { runtimeId: 'runtime_w2' })
-      .find((event) => event.eventKind === 'broker.process.closed')
-    expect(crashEvent).toBeUndefined()
     expect(
       fixture.db.hrcEvents
         .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })

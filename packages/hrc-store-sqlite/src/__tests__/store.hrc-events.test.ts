@@ -208,54 +208,6 @@ describe('HrcLifecycleEventRepository', () => {
     }
   })
 
-  it('interleaves stream_seq with EventRepository writes across sources', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      seedSession(db, 'hsid-mix', 'mix')
-      const baseHook = {
-        ts: ts(),
-        hostSessionId: 'hsid-mix',
-        scopeRef: scopeRef('mix'),
-        laneRef: 'default',
-        generation: 1,
-      }
-      const h1 = db.events.append({
-        ...baseHook,
-        source: 'hook',
-        eventKind: 'hook.ingested',
-        eventJson: {},
-      })
-      const l1 = db.hrcEvents.append({
-        ...baseHook,
-        category: 'turn',
-        eventKind: 'turn.started',
-        payload: {},
-      })
-      const h2 = db.events.append({
-        ...baseHook,
-        source: 'otel',
-        eventKind: 'codex.api_request',
-        eventJson: {},
-      })
-      const l2 = db.hrcEvents.append({
-        ...baseHook,
-        category: 'turn',
-        eventKind: 'turn.completed',
-        payload: {},
-      })
-
-      expect(l1.streamSeq).toBeGreaterThan(h1.streamSeq)
-      expect(h2.streamSeq).toBeGreaterThan(l1.streamSeq)
-      expect(l2.streamSeq).toBeGreaterThan(h2.streamSeq)
-
-      // stream_seq is unique across both tables
-      const seqs = new Set<number>([h1.streamSeq, l1.streamSeq, h2.streamSeq, l2.streamSeq])
-      expect(seqs.size).toBe(4)
-    } finally {
-      db.close()
-    }
-  })
-
   it('filters by runId, launchId, eventKind, category, and scopeRef', () => {
     const db = openHrcDatabase(dbPath)
     try {
@@ -388,14 +340,14 @@ describe('HrcLifecycleEventRepository', () => {
         laneRef: 'default',
         generation: 1,
       }
-      db.events.append({ ...base, source: 'hook', eventKind: 'hook.ingested', eventJson: {} })
+      db.hrcEvents.append({ ...base, category: 'turn', eventKind: 'turn.started', payload: {} })
       const l1 = db.hrcEvents.append({
         ...base,
         category: 'turn',
         eventKind: 'turn.accepted',
         payload: {},
       })
-      db.events.append({ ...base, source: 'hook', eventKind: 'hook.ingested', eventJson: {} })
+      db.hrcEvents.append({ ...base, category: 'turn', eventKind: 'turn.started', payload: {} })
       const l2 = db.hrcEvents.append({
         ...base,
         category: 'turn',
@@ -406,10 +358,11 @@ describe('HrcLifecycleEventRepository', () => {
       const fromL1 = db.hrcEvents.listFromStreamSeq(l1.streamSeq)
       expect(fromL1.map((e: HrcLifecycleEvent) => e.eventKind)).toEqual([
         'turn.accepted',
+        'turn.started',
         'turn.completed',
       ])
       expect(fromL1[0]!.streamSeq).toBe(l1.streamSeq)
-      expect(fromL1[1]!.streamSeq).toBe(l2.streamSeq)
+      expect(fromL1[2]!.streamSeq).toBe(l2.streamSeq)
     } finally {
       db.close()
     }
@@ -536,9 +489,9 @@ describe('0009_backfill_legacy_hrc_events', () => {
     try {
       expect(db.migrations.applied).toContain('0009_backfill_legacy_hrc_events')
 
-      const rawEvents = db.events.listFromSeq(1)
-      expect(rawEvents).toHaveLength(1)
-      expect(rawEvents[0]?.source).toBe('hook')
+      expect(db.sqlite.query("SELECT name FROM sqlite_master WHERE name = 'events'").all()).toEqual(
+        []
+      )
 
       // Upgrading an existing store also appends its own `store.migrated`
       // attribution row (T-08118). It is not part of the backfill under test,
@@ -635,7 +588,9 @@ describe('0009_backfill_legacy_hrc_events', () => {
 
     const db = openHrcDatabase(dbPath)
     try {
-      expect(db.events.listFromSeq(1)).toHaveLength(0)
+      expect(db.sqlite.query("SELECT name FROM sqlite_master WHERE name = 'events'").all()).toEqual(
+        []
+      )
 
       const typedEvents = db.hrcEvents
         .listFromHrcSeq(1)

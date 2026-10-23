@@ -25,6 +25,7 @@ import { PROVIDER_TRANSCRIPT_SCHEMA } from 'spaces-harness-broker-protocol'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
 import { terminalizeWithdrawnAcceptedRun } from '../../accepted-run-recovery.js'
+import { appendHrcEvent } from '../../hrc-event-helper.js'
 import { isRetryableInvocationFailure } from '../invocation-failure'
 import { projectCompletedTurnContextReading, projectUsageContextReading } from './context-reading'
 import {
@@ -407,7 +408,7 @@ export const projectEnvelopeMethods = {
     reason: string,
     data: Record<string, unknown>
   ): void {
-    this.db.events.append({
+    appendHrcEvent(this.db, 'broker.provider_transcript_artifact.warning', {
       ts: now,
       hostSessionId: ctx.hostSessionId,
       scopeRef: ctx.scopeRef,
@@ -415,9 +416,7 @@ export const projectEnvelopeMethods = {
       generation: ctx.generation,
       ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
       runtimeId: ctx.runtimeId,
-      source: 'broker',
-      eventKind: 'broker.provider_transcript_artifact.warning',
-      eventJson: {
+      payload: {
         invocationId: envelope.invocationId,
         seq: envelope.seq,
         type: envelope.type,

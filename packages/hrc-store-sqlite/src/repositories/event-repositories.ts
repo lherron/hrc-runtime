@@ -1,6 +1,5 @@
 import type { Database } from 'bun:sqlite'
 import {
-  type HrcEventEnvelope,
   type HrcEventPage,
   type HrcEventTail,
   type HrcLifecycleEvent,
@@ -14,18 +13,14 @@ import {
 } from 'hrc-core'
 import { lifecycleAppendHub } from '../lifecycle-append-hub.js'
 import { canonicalLaneRef, readSessionIdentity } from '../session-identity.js'
-import type { EventRow, HrcEventRow } from './rows.js'
+import type { HrcEventRow } from './rows.js'
 import {
-  EVENT_COLUMNS,
-  type EventQueryFilters,
   HRC_EVENT_COLUMNS,
   type HrcLifecycleMonitorFilters,
   type HrcLifecycleQueryFilters,
   allocateStreamSeq,
-  buildEventWhere,
   buildLifecycleWhere,
   execute,
-  mapEventRow,
   mapHrcEventRow,
 } from './shared.js'
 import { ToolResultBlobRepository } from './tool-result-blob-repository.js'
@@ -93,112 +88,6 @@ const MILESTONE_PREDICATE_SQL = `(
     )
   )
 )`
-
-export type EventAppendInput = Omit<HrcEventEnvelope, 'seq' | 'streamSeq'>
-
-export class EventRepository {
-  private readonly appendInTransaction: (event: EventAppendInput) => HrcEventEnvelope
-
-  constructor(private readonly db: Database) {
-    const append = db.transaction((event: EventAppendInput) => {
-      const streamSeq = allocateStreamSeq(this.db)
-      execute(
-        this.db,
-        `
-          INSERT INTO events (
-            stream_seq,
-            ts,
-            host_session_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            run_id,
-            runtime_id,
-            source,
-            event_kind,
-            event_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-        streamSeq,
-        event.ts,
-        event.hostSessionId,
-        event.scopeRef,
-        event.laneRef,
-        event.generation,
-        event.runId ?? null,
-        event.runtimeId ?? null,
-        event.source,
-        event.eventKind,
-        JSON.stringify(event.eventJson)
-      )
-
-      const inserted = this.db.query<{ seq: number }, []>('SELECT last_insert_rowid() AS seq').get()
-
-      if (!inserted) {
-        throw new Error('failed to read inserted event sequence')
-      }
-
-      const stored = this.db
-        .query<EventRow, [number]>(`SELECT ${EVENT_COLUMNS} FROM events WHERE seq = ?`)
-        .get(inserted.seq)
-
-      if (!stored) {
-        throw new Error(`failed to reload event ${inserted.seq}`)
-      }
-
-      return mapEventRow(stored)
-    })
-    // allocateStreamSeq reads before it updates. Reserve the WAL writer first
-    // so ordinary busy_timeout handling applies instead of BUSY_SNAPSHOT.
-    this.appendInTransaction = (event) => append.immediate(event)
-  }
-
-  append(event: EventAppendInput): HrcEventEnvelope {
-    return this.appendInTransaction(event)
-  }
-
-  listFromSeq(fromSeq = 1, filters: Omit<EventQueryFilters, 'fromSeq'> = {}): HrcEventEnvelope[] {
-    const where: string[] = ['seq >= ?']
-    const values: Array<string | number> = [fromSeq]
-
-    buildEventWhere(filters, where, values)
-
-    const limitClause = filters.limit !== undefined ? ' LIMIT ?' : ''
-    if (filters.limit !== undefined) {
-      values.push(filters.limit)
-    }
-
-    const rows = this.db
-      .query<EventRow, Array<string | number>>(
-        `SELECT ${EVENT_COLUMNS} FROM events
-          WHERE ${where.join(' AND ')}
-          ORDER BY seq ASC${limitClause}`
-      )
-      .all(...values)
-
-    return rows.map(mapEventRow)
-  }
-
-  count(filters: Omit<EventQueryFilters, 'limit'> = {}): number {
-    const where: string[] = []
-    const values: Array<string | number> = []
-
-    if (filters.fromSeq !== undefined) {
-      where.push('seq >= ?')
-      values.push(filters.fromSeq)
-    }
-    buildEventWhere(filters, where, values)
-
-    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
-    const row = this.db
-      .query<{ count: number }, Array<string | number>>(
-        `SELECT COUNT(*) AS count FROM events ${whereClause}`
-      )
-      .get(...values)
-
-    return row?.count ?? 0
-  }
-}
 
 export type HrcLifecycleEventInput = Omit<
   HrcLifecycleEvent,

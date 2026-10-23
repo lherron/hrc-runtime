@@ -261,15 +261,15 @@ describe('WAL concurrent reads', () => {
       const db2 = openHrcDatabase(fixture.dbPath)
       try {
         // Writer appends an event
-        db.events.append({
+        db.hrcEvents.append({
           ts: now,
           hostSessionId: 'hsid-wal-1',
           scopeRef: testScopeRef('scope-wal'),
           laneRef: 'default',
           generation: 1,
-          source: 'hrc',
+          category: 'runtime',
           eventKind: 'test.wal',
-          eventJson: {},
+          payload: {},
         })
 
         // Reader should be able to query without blocking

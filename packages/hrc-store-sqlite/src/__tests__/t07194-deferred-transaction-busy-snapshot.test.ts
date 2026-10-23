@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { type HrcDatabase, openHrcDatabase } from '../database.js'
-import { EventRepository, HrcLifecycleEventRepository } from '../repositories/event-repositories.js'
+import { HrcLifecycleEventRepository } from '../repositories/event-repositories.js'
 
 const COMPETING_WRITER_SOURCE = String.raw`
   import { Database } from 'bun:sqlite'
@@ -160,26 +160,6 @@ function seedSession(hostSessionId: string): void {
 }
 
 describe('T-07194 read-before-write transactions', () => {
-  it('appends a raw event while another WAL connection commits', async () => {
-    seedSession('hsid-t07194-raw')
-    const event = await againstCompetingCommit(
-      (sql) => sql.includes('SELECT next_seq FROM event_stream_cursor'),
-      (sqlite) =>
-        new EventRepository(sqlite).append({
-          ts: new Date().toISOString(),
-          hostSessionId: 'hsid-t07194-raw',
-          scopeRef: 'agent:cody:project:hrc-runtime:task:T-07194',
-          laneRef: 'default',
-          generation: 1,
-          source: 'hook',
-          eventKind: 'test.competing_commit',
-          eventJson: {},
-        })
-    )
-
-    expect(event.seq).toBeGreaterThan(0)
-  })
-
   it('appends a lifecycle event while another WAL connection commits', async () => {
     seedSession('hsid-t07194-lifecycle')
     const event = await againstCompetingCommit(

@@ -18,7 +18,7 @@ function plan(sql: string, ...bindings: Array<string | number>): string {
 }
 
 function expectIndexedSearch(
-  table: 'events' | 'hrc_events' | 'broker_invocation_events',
+  table: 'hrc_events' | 'broker_invocation_events',
   sql: string,
   bindings: Array<string | number>,
   expectedIndex?: string
@@ -30,31 +30,6 @@ function expectIndexedSearch(
 }
 
 describe('event repository query plans', () => {
-  test('events predicates select an index', () => {
-    const cases: Array<[string, Array<string | number>, string | undefined]> = [
-      ['SELECT seq FROM events WHERE seq >= ? ORDER BY seq', [1], undefined],
-      [
-        'SELECT seq FROM events WHERE host_session_id = ? ORDER BY seq',
-        ['host'],
-        'idx_events_host_session_seq',
-      ],
-      [
-        'SELECT seq FROM events WHERE generation = ? ORDER BY seq',
-        [1],
-        'idx_events_generation_seq',
-      ],
-      [
-        'SELECT seq FROM events WHERE runtime_id = ? ORDER BY seq',
-        ['runtime'],
-        'idx_events_runtime_seq',
-      ],
-      ['SELECT seq FROM events WHERE run_id = ? ORDER BY seq', ['run'], 'idx_events_run_seq'],
-    ]
-    for (const [sql, bindings, index] of cases) {
-      expectIndexedSearch('events', sql, bindings, index)
-    }
-  })
-
   test('hrc_events equality predicates select an index', () => {
     const cases: Array<[string, Array<string | number>, string | undefined]> = [
       ['SELECT hrc_seq FROM hrc_events WHERE hrc_seq >= ? ORDER BY hrc_seq', [1], undefined],

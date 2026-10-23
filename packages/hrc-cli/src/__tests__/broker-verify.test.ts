@@ -35,12 +35,11 @@ describe('broker verify CLI rendering', () => {
       eventCount: 3,
       firstSeq: 1,
       lastSeq: 3,
-      rawMirrorCount: 3,
       lifecycleProjectionCount: 2,
     }
 
     expect(renderCandidatesHuman(candidate.scopeRef, [candidate])).toContain(
-      'inv_1  codex-app-server  completed  events=3  raw=3  lifecycle=2'
+      'inv_1  codex-app-server  completed  events=3  lifecycle=2'
     )
   })
 
@@ -54,7 +53,6 @@ describe('broker verify CLI rendering', () => {
       brokerProtocol: 'harness-broker/0.2',
       runtimeId: 'rt_1',
       ledger: { eventCount: 1, firstSeq: 1, lastSeq: 1, statuses: { applied: 1 } },
-      rawMirror: { checked: 1, matched: 1 },
       providerMatches: [],
       lifecycle: [
         {
@@ -81,23 +79,6 @@ describe('broker verify CLI rendering', () => {
           runDivergenceWarningCount: 0,
           staleGenerationCount: 0,
           staleAttemptCount: 0,
-        },
-        rawEvents: {
-          expectedFromBroker: 1,
-          appliedBrokerRows: 1,
-          linkedByHrcEventSeq: 1,
-          found: 1,
-          matched: 1,
-          missing: 0,
-          mismatched: 0,
-          wrongSource: 0,
-          wrongEventKind: 0,
-          wrongInvocation: 0,
-          wrongSeq: 0,
-          wrongType: 0,
-          payloadMismatch: 0,
-          malformedEventJson: 0,
-          malformedPayload: 0,
         },
         lifecycleProjection: {
           policyId: 'hrc-core.broker-to-hrc-lifecycle/v1',
@@ -130,7 +111,6 @@ describe('broker verify CLI rendering', () => {
           },
         },
         crossSink: {
-          brokerToRaw: { expected: 1, matched: 1, missing: 0, mismatched: 0 },
           brokerToLifecycle: {
             expected: 1,
             present: 1,
@@ -144,7 +124,7 @@ describe('broker verify CLI rendering', () => {
 
     expect(renderReportHuman(report)).toContain('status: pass')
     expect(renderReportHuman(report)).toContain('analytics:')
-    expect(renderReportHuman(report)).toContain('raw events: matched=1/1 missing=0 mismatched=0')
+    expect(renderReportHuman(report)).toContain('broker ledger: events=1 applied=1')
     expect(renderReportHuman(report)).toContain(
       'No broker capture or projection integrity issues found.'
     )
@@ -218,21 +198,6 @@ describe('cmdBrokerVerifyRun auto-resolution (T-05375)', () => {
           createdAt: '2026-06-30T00:00:01.000Z',
         },
       ],
-      rawMirrors: {
-        11: {
-          seq: 11,
-          source: 'broker',
-          eventKind: 'broker.assistant.message.completed',
-          eventJson: {
-            invocationId,
-            seq: 1,
-            type: 'assistant.message.completed',
-            time: '2026-06-30T00:00:01.000Z',
-            payload: { content: 'auto resolve me' },
-          },
-          eventJsonText: '{}',
-        },
-      },
       lifecycleProjections: {},
       // The durable provider-transcript artifact HRC persisted for this
       // operation; auto-resolution must pick THIS path when --jsonl is omitted.

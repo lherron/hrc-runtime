@@ -24,7 +24,6 @@ type SequenceSnapshot = {
 }
 
 type DurableSnapshot = {
-  events: SequenceSnapshot
   hrcEvents: SequenceSnapshot
   runs: number
   runtimes: number
@@ -32,8 +31,8 @@ type DurableSnapshot = {
 
 function sequenceSnapshot(
   db: HrcDatabase,
-  table: 'events' | 'hrc_events',
-  sequenceColumn: 'seq' | 'hrc_seq'
+  table: 'hrc_events',
+  sequenceColumn: 'hrc_seq'
 ): SequenceSnapshot {
   const row = db.sqlite
     .query<{ count: number; maxSeq: number | null }, []>(
@@ -48,7 +47,6 @@ function durableSnapshot(db: HrcDatabase): DurableSnapshot {
     db.sqlite.query<{ count: number }, []>(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count ??
     0
   return {
-    events: sequenceSnapshot(db, 'events', 'seq'),
     hrcEvents: sequenceSnapshot(db, 'hrc_events', 'hrc_seq'),
     runs: count('runs'),
     runtimes: count('runtimes'),
@@ -276,16 +274,16 @@ test('R4: retired spool entries are quarantined while unhandled bytes, reader, a
     try {
       const session = seeded.sessions.getByHostSessionId(runtime.hostSessionId)
       if (!session) throw new Error('fixture session is missing')
-      seeded.events.append({
+      seeded.hrcEvents.append({
         ts: fixture.now(),
         hostSessionId: runtime.hostSessionId,
         scopeRef: session.scopeRef,
         laneRef: session.laneRef,
         generation: runtime.generation,
         runtimeId: runtime.runtimeId,
-        source: 'hook',
+        category: 'runtime',
         eventKind: 'historical.hook',
-        eventJson: { retained: true },
+        payload: { retained: true },
       })
       appendHrcEvent(seeded, 'launch.wrapper_started', {
         ts: fixture.now(),
@@ -376,8 +374,8 @@ test('R4: retired spool entries are quarantined while unhandled bytes, reader, a
     const observed = openHrcDatabase(fixture.dbPath)
     try {
       expect(durableSnapshot(observed)).toEqual(before)
-      expect(observed.events.listFromSeq(1)).toEqual([
-        expect.objectContaining({ source: 'hook', eventKind: 'historical.hook' }),
+      expect(observed.hrcEvents.listByKind('historical.hook')).toEqual([
+        expect.objectContaining({ category: 'runtime', eventKind: 'historical.hook' }),
       ])
       expect(observed.hrcEvents.listByLaunch(historicalLaunchId)).toEqual([
         expect.objectContaining({ eventKind: 'launch.wrapper_started' }),
@@ -425,7 +423,9 @@ test('R6 positive control: committed broker evidence still projects a complete t
       ])
     )
     expect(fixture.db.runs.getByRunId(RUN_ID)).toMatchObject({ status: 'completed' })
-    expect(fixture.db.events.listFromSeq(1)).toEqual([])
+    expect(
+      fixture.db.sqlite.query("SELECT name FROM sqlite_master WHERE name = 'events'").all()
+    ).toEqual([])
   } finally {
     await fixture.cleanup()
   }

@@ -15,7 +15,6 @@ export function renderCandidatesHuman(
         candidate.brokerDriver,
         candidate.state,
         `events=${candidate.eventCount}`,
-        `raw=${candidate.rawMirrorCount}`,
         `lifecycle=${candidate.lifecycleProjectionCount}`,
         `seq=${candidate.firstSeq ?? '-'}..${candidate.lastSeq ?? '-'}`,
         `runtime=${candidate.runtimeId}`,
@@ -35,7 +34,6 @@ export function renderReportHuman(report: CaptureVerificationReport): string {
     `driver: ${report.brokerDriver}`,
     `runtime: ${report.runtimeId}`,
     `ledger: ${report.ledger.eventCount} event(s), seq ${report.ledger.firstSeq ?? '-'}..${report.ledger.lastSeq ?? '-'}`,
-    `raw mirrors: ${report.rawMirror.matched}/${report.rawMirror.checked}`,
   ]
   if (report.transcriptPath !== undefined) {
     lines.push(
@@ -75,14 +73,12 @@ export function renderReportHuman(report: CaptureVerificationReport): string {
 function renderAnalyticsHuman(report: CaptureVerificationReport): string[] {
   const analytics = report.analytics
   const provider = analytics.providerJsonl
-  const malformed = analytics.rawEvents.malformedEventJson + analytics.rawEvents.malformedPayload
   return [
     'analytics:',
     provider !== undefined
       ? `  provider JSONL: lines=${provider.totalLines} parsed=${provider.parsedRecords} applicable=${provider.applicableObservations} ignored=${provider.ignoredRecords} unsupported=${provider.unsupportedRecords} unknown=${provider.unknownRecords} warnings=${provider.warningCount}`
       : '  provider JSONL: not supplied',
-    `  broker ledger: events=${analytics.brokerLedger.eventCount} applied=${analytics.rawEvents.appliedBrokerRows} seq=${analytics.brokerLedger.firstSeq ?? '-'}..${analytics.brokerLedger.lastSeq ?? '-'} holes=${analytics.brokerLedger.seqHoleCount} duplicates=${analytics.brokerLedger.duplicateSeqCount}`,
-    `  raw events: matched=${analytics.rawEvents.matched}/${analytics.rawEvents.expectedFromBroker} missing=${analytics.rawEvents.missing} mismatched=${analytics.rawEvents.mismatched} malformed=${malformed}`,
+    `  broker ledger: events=${analytics.brokerLedger.eventCount} applied=${analytics.brokerLedger.statuses['applied'] ?? 0} seq=${analytics.brokerLedger.firstSeq ?? '-'}..${analytics.brokerLedger.lastSeq ?? '-'} holes=${analytics.brokerLedger.seqHoleCount} duplicates=${analytics.brokerLedger.duplicateSeqCount}`,
     `  lifecycle: present=${analytics.lifecycleProjection.present} expected=${analytics.lifecycleProjection.expected} missing=${analytics.lifecycleProjection.missing} suppressed=${analytics.lifecycleProjection.suppressed} notApplicable=${analytics.lifecycleProjection.notApplicable} policy=${analytics.lifecycleProjection.policyId}@${analytics.lifecycleProjection.policyHash}`,
   ]
 }

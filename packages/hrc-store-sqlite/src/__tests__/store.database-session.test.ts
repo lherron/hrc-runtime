@@ -23,7 +23,6 @@ describe('openHrcDatabase', () => {
       expect(db.sessions).toBeDefined()
       expect(db.runtimes).toBeDefined()
       expect(db.runs).toBeDefined()
-      expect(db.events).toBeDefined()
       expect(db.surfaceBindings).toBeDefined()
       expect(db.runtimeBuffers).toBeDefined()
     } finally {

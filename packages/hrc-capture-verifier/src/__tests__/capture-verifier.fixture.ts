@@ -108,32 +108,8 @@ export function seedBrokerEvent(
   payload: unknown,
   options: {
     projectionStatus?: 'pending' | 'applied' | 'failed'
-    mirrorPayload?: unknown
-    skipMirror?: boolean
   } = {}
 ): void {
-  let hrcEventSeq: number | undefined
-  if (!options.skipMirror) {
-    const mirror = fixture.db.events.append({
-      ts: ts(seq),
-      hostSessionId: HOST_SESSION_ID,
-      scopeRef: SCOPE_REF,
-      laneRef: 'main',
-      generation: 1,
-      runId: RUN_ID,
-      runtimeId: RUNTIME_ID,
-      source: 'broker',
-      eventKind: `broker.${type}`,
-      eventJson: {
-        invocationId: INVOCATION_ID,
-        seq,
-        type,
-        time: ts(seq),
-        payload: options.mirrorPayload ?? payload,
-      },
-    })
-    hrcEventSeq = mirror.seq
-  }
   fixture.db.brokerInvocationEvents.appendEvent({
     invocationId: INVOCATION_ID,
     seq,
@@ -144,7 +120,6 @@ export function seedBrokerEvent(
     harnessGeneration: 1,
     turnAttempt: 1,
     payload,
-    ...(hrcEventSeq !== undefined ? { hrcEventSeq } : {}),
     projectionStatus: options.projectionStatus ?? 'applied',
   })
 }
@@ -171,15 +146,11 @@ export function fakeStore(events: ReturnType<typeof brokerEvent>[]): CaptureVeri
       return []
     },
     async loadInvocationCapture() {
-      const rawMirrors: Record<number, ReturnType<typeof rawMirror> | undefined> = {}
       const lifecycleProjections: Record<
         string,
         Array<{ hrcSeq: number; eventKind: string; payload: unknown }>
       > = {}
       for (const event of events) {
-        if (event.hrcEventSeq !== undefined && !event.__omitRawMirror) {
-          rawMirrors[event.hrcEventSeq] = rawMirror(event)
-        }
         const lifecycleKind =
           event.type === 'user.message'
             ? 'turn.user_prompt'
@@ -208,7 +179,6 @@ export function fakeStore(events: ReturnType<typeof brokerEvent>[]): CaptureVeri
           updatedAt: ts(),
         },
         brokerEvents: events,
-        rawMirrors,
         lifecycleProjections,
       }
     },
@@ -221,16 +191,6 @@ export function brokerEvent(
   payload: unknown,
   options: {
     projectionStatus?: string
-    mirrorPayload?: unknown
-    skipMirror?: boolean
-    omitRawMirror?: boolean
-    rawSource?: string
-    rawEventKind?: string
-    rawInvocationId?: string
-    rawBrokerSeq?: number
-    rawBrokerType?: string
-    rawEventJson?: unknown
-    rawPayloadMissing?: boolean
     runtimeId?: string
     runId?: string
     harnessGeneration?: number
@@ -248,46 +208,8 @@ export function brokerEvent(
     turnAttempt: options.turnAttempt ?? 1,
     payload,
     payloadJsonText: JSON.stringify(payload),
-    ...(options.skipMirror ? {} : { hrcEventSeq: seq + 10 }),
     projectionStatus: options.projectionStatus ?? 'applied',
     createdAt: ts(seq),
-    __mirrorPayload: options.mirrorPayload,
-    __omitRawMirror: options.omitRawMirror,
-    __rawSource: options.rawSource,
-    __rawEventKind: options.rawEventKind,
-    __rawInvocationId: options.rawInvocationId,
-    __rawBrokerSeq: options.rawBrokerSeq,
-    __rawBrokerType: options.rawBrokerType,
-    __rawEventJson: options.rawEventJson,
-    __rawPayloadMissing: options.rawPayloadMissing,
-  }
-}
-
-export function rawMirror(event: ReturnType<typeof brokerEvent>) {
-  if (event.__rawEventJson !== undefined) {
-    return {
-      seq: event.hrcEventSeq ?? 0,
-      source: event.__rawSource ?? 'broker',
-      eventKind: event.__rawEventKind ?? `broker.${event.type}`,
-      eventJson: event.__rawEventJson,
-      eventJsonText: '{}',
-    }
-  }
-  const eventJson: Record<string, unknown> = {
-    invocationId: event.__rawInvocationId ?? event.invocationId,
-    seq: event.__rawBrokerSeq ?? event.seq,
-    type: event.__rawBrokerType ?? event.type,
-    time: event.time,
-  }
-  if (!event.__rawPayloadMissing) {
-    eventJson['payload'] = event.__mirrorPayload ?? event.payload
-  }
-  return {
-    seq: event.hrcEventSeq ?? 0,
-    source: event.__rawSource ?? 'broker',
-    eventKind: event.__rawEventKind ?? `broker.${event.type}`,
-    eventJson,
-    eventJsonText: '{}',
   }
 }
 

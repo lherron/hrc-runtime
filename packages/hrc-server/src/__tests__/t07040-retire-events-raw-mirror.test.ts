@@ -43,7 +43,9 @@ describe('T-07040 broker raw-mirror retirement', () => {
     )
 
     expect(result.events).toEqual([])
-    expect(fixture.db.events.listFromSeq(1)).toEqual([])
+    expect(
+      fixture.db.sqlite.query("SELECT name FROM sqlite_master WHERE name = 'events'").all()
+    ).toEqual([])
     expect(result.lifecycleEvents.map((event) => event.eventKind)).toEqual(['turn.completed'])
     expect(fixture.db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.completed' })).toHaveLength(1)
 

@@ -164,7 +164,6 @@ export async function pruneStateRetention(
   const db = new Database(options.dbPath)
   try {
     db.exec('PRAGMA busy_timeout = 5000;')
-
     // The auto-vacuum mode gates every delete, so it cannot fall back to a
     // guess. If the daemon holds the lock through the backoff ladder, this run
     // simply does not start.
@@ -204,6 +203,14 @@ export async function pruneStateRetention(
         tables: emptyTableResult('busy'),
       }
     }
+    // T-11708 retired events. Keep maintenance of older snapshots available,
+    // but omit its historical plan on stores that applied the forward drop.
+    const legacyEventsPresent =
+      db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events'").get() !==
+      null
+    const legacyPlanIndex = plans.findIndex((plan) => plan.table === 'events')
+    if (!legacyEventsPresent && legacyPlanIndex >= 0) plans.splice(legacyPlanIndex, 1)
+
     if (options.apply) {
       assertIncrementalAutoVacuum(autoVacuumMode)
     }

@@ -6,8 +6,7 @@
  * a non-existent parent and asserts that SQLite rejects it.
  *
  * Coverage: runtimes→sessions, runs→sessions, runs→runtimes,
- *           launches→sessions, events→sessions, events→runs,
- *           events→runtimes, surface_bindings→sessions,
+ *           surface_bindings→sessions,
  *           surface_bindings→runtimes
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
@@ -114,60 +113,6 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
     }).toThrow()
   })
 
-  it('rejects event with non-existent host_session_id', () => {
-    expect(() => {
-      db.events.append({
-        seq: 0,
-        ts: ts(),
-        hostSessionId: 'hsid-does-not-exist',
-        scopeRef: testScopeRef('fk-test'),
-        laneRef: 'default',
-        generation: 1,
-        source: 'hrc',
-        eventKind: 'test',
-        eventJson: {},
-      })
-    }).toThrow()
-  })
-
-  it('rejects event with non-existent run_id', () => {
-    const session = db.sessions.insert(makeSession('hsid-evt-run'))
-    const runtime = db.runtimes.insert(makeRuntime('rt-evt-run', session.hostSessionId))
-    expect(() => {
-      db.events.append({
-        seq: 0,
-        ts: ts(),
-        hostSessionId: session.hostSessionId,
-        scopeRef: testScopeRef('fk-test'),
-        laneRef: 'default',
-        generation: 1,
-        runId: 'run-does-not-exist',
-        runtimeId: runtime.runtimeId,
-        source: 'hrc',
-        eventKind: 'test',
-        eventJson: {},
-      })
-    }).toThrow()
-  })
-
-  it('rejects event with non-existent runtime_id', () => {
-    const session = db.sessions.insert(makeSession('hsid-evt-rt'))
-    expect(() => {
-      db.events.append({
-        seq: 0,
-        ts: ts(),
-        hostSessionId: session.hostSessionId,
-        scopeRef: testScopeRef('fk-test'),
-        laneRef: 'default',
-        generation: 1,
-        runtimeId: 'rt-does-not-exist',
-        source: 'hrc',
-        eventKind: 'test',
-        eventJson: {},
-      })
-    }).toThrow()
-  })
-
   it('rejects surface_binding with non-existent host_session_id', () => {
     expect(() => {
       db.surfaceBindings.bind({
@@ -210,8 +155,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
       status: 'accepted',
       updatedAt: ts(),
     })
-    const event = db.events.append({
-      seq: 0,
+    const event = db.hrcEvents.append({
       ts: ts(),
       hostSessionId: session.hostSessionId,
       scopeRef: testScopeRef('fk-test'),
@@ -219,11 +163,11 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
       generation: 1,
       runId: run.runId,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
+      category: 'runtime',
       eventKind: 'test',
-      eventJson: { ok: true },
+      payload: { ok: true },
     })
-    expect(event.seq).toBeGreaterThan(0)
+    expect(event.hrcSeq).toBeGreaterThan(0)
   })
 
   it('rejects a session title referencing a non-existent session', () => {

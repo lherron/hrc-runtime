@@ -743,7 +743,6 @@ export type RuntimePruneDeleteCounts = {
   tool_result_blob_parts: number
   tool_result_blobs: number
   compiled_runtime_plans: number
-  events: number
   runtime_buffers: number
   surface_bindings: number
   runs: number

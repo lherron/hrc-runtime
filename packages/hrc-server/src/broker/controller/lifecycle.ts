@@ -724,22 +724,6 @@ export function markBrokerCrashTerminal(
           },
         },
       })
-      ctx.db.events.append({
-        ts: now,
-        hostSessionId: runtime.hostSessionId,
-        scopeRef: runtime.scopeRef,
-        laneRef: runtime.laneRef,
-        generation: runtime.generation,
-        ...(terminalRunId !== undefined ? { runId: terminalRunId } : {}),
-        runtimeId,
-        source: 'broker',
-        eventKind: 'broker.process.closed',
-        eventJson: {
-          code: error.code,
-          message: error.message,
-          detail: error.detail,
-        },
-      })
       const lastBrokerEvent =
         invocation != null
           ? ctx.db.brokerInvocationEvents.listByInvocationId(invocation.invocationId).at(-1)

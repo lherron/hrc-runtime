@@ -87,8 +87,8 @@ describe('T-06578 runtime status causal-time projection', () => {
       'runtime',
       { reason: 'daemon_exit' }
     )
-    const deathEvent = fixture.db.events
-      .listFromSeq(1, { runtimeId: RUNTIME_ID })
+    const deathEvent = fixture.db.hrcEvents
+      .listFromHrcSeq(1, { runtimeId: RUNTIME_ID })
       .find((event) => event.eventKind === 'runtime.dead')!
     expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)).toMatchObject({
       status: 'dead',

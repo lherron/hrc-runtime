@@ -18,7 +18,6 @@ import {
   type InvocationCaptureSnapshot,
   type ListVerificationCandidatesInput,
   type ProviderTranscriptArtifact,
-  type RawMirrorEvent,
   type VerificationCandidate,
 } from './types.js'
 import { lifecycleKey } from './verifier.js'
@@ -42,7 +41,6 @@ type CandidateRow = {
   last_seq: number | null
   first_event_at: string | null
   last_event_at: string | null
-  raw_mirror_count: number
   lifecycle_projection_count: number
 }
 
@@ -74,13 +72,6 @@ type EventRow = {
   projection_status: string
   projection_error: string | null
   created_at: string
-}
-
-type RawRow = {
-  seq: number
-  source: string
-  event_kind: string
-  event_json: string
 }
 
 type LifecycleRow = {
@@ -165,7 +156,6 @@ function listCandidates(
           MAX(bie.seq) AS last_seq,
           MIN(bie.time) AS first_event_at,
           MAX(bie.time) AS last_event_at,
-          COUNT(raw.seq) AS raw_mirror_count,
           (
             SELECT COUNT(*)
             FROM hrc_events he
@@ -176,7 +166,6 @@ function listCandidates(
         FROM broker_invocations bi
         JOIN runtimes r ON r.runtime_id = bi.runtime_id
         LEFT JOIN broker_invocation_events bie ON bie.invocation_id = bi.invocation_id
-        LEFT JOIN events raw ON raw.seq = bie.hrc_event_seq AND raw.source = 'broker'
         WHERE ${where.join(' AND ')}
         GROUP BY bi.invocation_id
         ORDER BY bi.updated_at DESC, bi.created_at DESC
@@ -206,7 +195,6 @@ function listCandidates(
     ...(row.last_seq !== null ? { lastSeq: row.last_seq } : {}),
     ...(row.first_event_at !== null ? { firstEventAt: row.first_event_at } : {}),
     ...(row.last_event_at !== null ? { lastEventAt: row.last_event_at } : {}),
-    rawMirrorCount: row.raw_mirror_count,
     lifecycleProjectionCount: row.lifecycle_projection_count,
   }))
 }
@@ -215,14 +203,10 @@ function loadSnapshot(db: Database, invocationId: string): InvocationCaptureSnap
   const invocation = loadInvocation(db, invocationId)
   if (invocation === undefined) return undefined
   const brokerEvents = listBrokerEvents(db, invocationId)
-  const rawMirrors: Record<number, RawMirrorEvent | undefined> = {}
   const lifecycleProjections: Record<string, HrcLifecycleProjection[]> = {}
   const transcriptArtifact = loadProviderTranscriptArtifact(db, invocation.operationId)
 
   for (const event of brokerEvents) {
-    if (event.hrcEventSeq !== undefined) {
-      rawMirrors[event.hrcEventSeq] = getRawMirror(db, event.hrcEventSeq)
-    }
     const lifecycleKind = lifecycleKindForBrokerEvent(event.type)
     if (lifecycleKind !== undefined) {
       lifecycleProjections[lifecycleKey(event, lifecycleKind)] = findLifecycle(db, {
@@ -238,7 +222,6 @@ function loadSnapshot(db: Database, invocationId: string): InvocationCaptureSnap
     schema: CAPTURE_VERIFIER_SCHEMA,
     invocation,
     brokerEvents,
-    rawMirrors,
     lifecycleProjections,
     ...(transcriptArtifact !== undefined ? { transcriptArtifact } : {}),
   }
@@ -353,20 +336,6 @@ function listBrokerEvents(db: Database, invocationId: string): BrokerCaptureEven
     ...(row.projection_error !== null ? { projectionError: row.projection_error } : {}),
     createdAt: row.created_at,
   }))
-}
-
-function getRawMirror(db: Database, seq: number): RawMirrorEvent | undefined {
-  const row = db
-    .query<RawRow, [number]>('SELECT seq, source, event_kind, event_json FROM events WHERE seq = ?')
-    .get(seq)
-  if (!row) return undefined
-  return {
-    seq: row.seq,
-    source: row.source,
-    eventKind: row.event_kind,
-    eventJson: safeJsonParse(row.event_json),
-    eventJsonText: row.event_json,
-  }
 }
 
 function findLifecycle(

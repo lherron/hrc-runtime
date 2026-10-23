@@ -41,7 +41,6 @@ describe('sqlite adapter', () => {
     expect(candidates.map((candidate) => candidate.invocationId)).toContain(INVOCATION_ID)
     expect(candidates.map((candidate) => candidate.invocationId)).toContain('inv_verify_second')
     expect(candidates.every((candidate) => candidate.schema === CAPTURE_VERIFIER_SCHEMA)).toBe(true)
-    expect(candidates[0]?.rawMirrorCount).toBeGreaterThanOrEqual(0)
   })
 
   it('loads sqlite snapshots equivalent to fake-store verification', async () => {
@@ -65,7 +64,6 @@ describe('sqlite adapter', () => {
     })
 
     expect(report.ok).toBe(true)
-    expect(report.rawMirror).toEqual({ checked: 1, matched: 1 })
   })
 
   it('auto-resolves only the matching operation transcript artifact when no explicit JSONL is supplied', async () => {

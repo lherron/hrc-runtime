@@ -68,18 +68,6 @@ function seedRuntimeWithDependents(
     acceptedAt: now,
     completedAt: now,
   })
-  db.sqlite
-    .query(
-      `INSERT INTO events (ts, host_session_id, scope_ref, lane_ref, generation, run_id, runtime_id, source, event_kind, event_json)
-       VALUES (?, ?, ?, 'default', 1, ?, NULL, 'hrc', 'turn.completed', '{}')`
-    )
-    .run(now, hostSessionId, scopeRef, `run-${runtimeId}`)
-  db.sqlite
-    .query(
-      `INSERT INTO events (ts, host_session_id, scope_ref, lane_ref, generation, run_id, runtime_id, source, event_kind, event_json)
-       VALUES (?, ?, ?, 'default', 1, NULL, ?, 'hrc', 'runtime.stale', '{}')`
-    )
-    .run(now, hostSessionId, scopeRef, runtimeId)
   // A runtime_buffer FK-references BOTH runtimes(runtime_id) AND runs(run_id).
   // It is the row that forces the delete order: if runs are deleted before the
   // buffer, the buffer's run_id FK trips FK_CONSTRAINT (the T-05441 live bug).
@@ -266,7 +254,6 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
       seedRuntimeWithDependents(db, 'rt-cascade')
       expect(db.runtimes.getByRuntimeId('rt-cascade')).not.toBeNull()
       expect(countWhere(db, 'runs', 'rt-cascade')).toBe(1)
-      expect(countWhere(db, 'events', 'rt-cascade')).toBe(1)
       expect(countWhere(db, 'runtime_buffers', 'rt-cascade')).toBe(1)
 
       const removed = db.runtimes.pruneRuntime('rt-cascade')
@@ -275,14 +262,6 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
       expect(db.runtimes.getByRuntimeId('rt-cascade')).toBeNull()
       expect(countWhere(db, 'runs', 'rt-cascade')).toBe(0)
       expect(countWhere(db, 'runtime_buffers', 'rt-cascade')).toBe(0)
-      // both the runtime-pinned and the run-pinned events are gone
-      expect(
-        db.sqlite
-          .query<{ n: number }, [string, string]>(
-            'SELECT COUNT(*) AS n FROM events WHERE run_id = ? OR runtime_id = ?'
-          )
-          .get('run-rt-cascade', 'rt-cascade')?.n ?? 0
-      ).toBe(0)
     } finally {
       db.close()
     }
@@ -310,7 +289,6 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
 
       expect(db.runtimes.getByRuntimeId('rt-bystander')).not.toBeNull()
       expect(countWhere(db, 'runs', 'rt-bystander')).toBe(1)
-      expect(countWhere(db, 'events', 'rt-bystander')).toBe(1)
     } finally {
       db.close()
     }
@@ -380,7 +358,6 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
         tool_result_blob_parts: 1,
         tool_result_blobs: 1,
         compiled_runtime_plans: 1,
-        events: 2,
         runtime_buffers: 1,
         runs: 1,
         runtimes: 1,
@@ -401,7 +378,6 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
         'tool_result_blob_parts',
         'tool_result_blobs',
         'compiled_runtime_plans',
-        'events',
         'runtime_buffers',
         'runs',
         'runtimes',

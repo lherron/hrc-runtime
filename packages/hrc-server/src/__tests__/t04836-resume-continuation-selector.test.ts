@@ -15,8 +15,6 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { automaticContinuationForSession } from '../session-continuation-reuse'
 import {
-  LEGACY_CONTINUATION_CLEAR_BACKFILL_SOURCE,
-  backfillLegacyContinuationClearBarriers,
   repairContinuationHistory,
   selectResumeContinuationCandidate,
 } from '../session-resume-continuation'
@@ -74,7 +72,7 @@ function appendContextCleared(
   })
 }
 
-function appendLegacyBrokerContinuationCleared(hostSessionId: string, generation: number): number {
+function appendBrokerContinuationCleared(hostSessionId: string, generation: number): void {
   const runtimeId = `rt-${hostSessionId}`
   const invocationId = `inv-${hostSessionId}`
   db.runtimes.insert({
@@ -106,24 +104,16 @@ function appendLegacyBrokerContinuationCleared(hostSessionId: string, generation
     createdAt: tsAt(generation),
     updatedAt: tsAt(generation),
   })
-  const raw = db.events.append({
-    ts: tsAt(generation),
-    hostSessionId,
-    scopeRef: SCOPE_REF,
-    laneRef: LANE_REF,
-    generation,
+  db.brokerInvocationEvents.appendEvent({
+    invocationId,
+    seq: 9,
+    time: tsAt(generation),
     runtimeId,
-    source: 'broker',
-    eventKind: 'broker.continuation.cleared',
-    eventJson: {
-      invocationId,
-      seq: 9,
-      type: 'continuation.cleared',
-      time: tsAt(generation),
-      payload: { reason: 'prompt_input_exit' },
-    },
+    harnessGeneration: generation,
+    type: 'continuation.cleared',
+    payload: { reason: 'prompt_input_exit' },
+    projectionStatus: 'applied',
   })
-  return raw.seq
 }
 
 beforeEach(async () => {
@@ -224,25 +214,7 @@ describe('selectResumeContinuationCandidate', () => {
 
   it('resumes past a broker continuation.cleared (/quit) audit event', () => {
     insertSession('hs-1', 1, { status: 'active', continuation })
-    const rawEventSeq = appendLegacyBrokerContinuationCleared('hs-1', 1)
-
-    expect(backfillLegacyContinuationClearBarriers(db)).toBe(1)
-    expect(backfillLegacyContinuationClearBarriers(db)).toBe(0)
-    const [backfilled] = db.brokerInvocationEvents.listBySourceRef(
-      LEGACY_CONTINUATION_CLEAR_BACKFILL_SOURCE
-    )
-    expect(backfilled).toMatchObject({
-      invocationId: 'inv-hs-1',
-      seq: 9,
-      type: 'continuation.cleared',
-      hrcEventSeq: rawEventSeq,
-      projectionStatus: 'imported',
-      sourceRef: LEGACY_CONTINUATION_CLEAR_BACKFILL_SOURCE,
-      originSeq: rawEventSeq,
-    })
-    expect(JSON.parse(backfilled!.brokerEventJson)).toEqual({ reason: 'prompt_input_exit' })
-
-    db.sqlite.query('DELETE FROM events').run()
+    appendBrokerContinuationCleared('hs-1', 1)
 
     const result = selectResumeContinuationCandidate(db, { sessionRef: SESSION_REF })
     expect(result.outcome).toBe('ok')

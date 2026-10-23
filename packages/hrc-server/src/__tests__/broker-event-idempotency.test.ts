@@ -59,7 +59,9 @@ describe('idempotency', () => {
     expect(first.idempotent).toBe(false)
     expect(first.events).toEqual([])
 
-    const eventsAfterFirst = harness.fixture.db.events.count({ runtimeId: RUNTIME_ID })
+    const eventsAfterFirst = harness.fixture.db.hrcEvents.listFromHrcSeq(1, {
+      runtimeId: RUNTIME_ID,
+    }).length
     const brokerRowsAfterFirst =
       harness.fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).length
 
@@ -68,7 +70,9 @@ describe('idempotency', () => {
     expect(second.events.length).toBe(0)
 
     // No double-apply: no new HRC events, no new broker event rows.
-    expect(harness.fixture.db.events.count({ runtimeId: RUNTIME_ID })).toBe(eventsAfterFirst)
+    expect(harness.fixture.db.hrcEvents.listFromHrcSeq(1, { runtimeId: RUNTIME_ID }).length).toBe(
+      eventsAfterFirst
+    )
     expect(harness.fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).length).toBe(
       brokerRowsAfterFirst
     )

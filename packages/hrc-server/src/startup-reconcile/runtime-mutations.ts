@@ -110,16 +110,15 @@ export function markRuntimeDead(
     statusChangedAt: now,
     ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
   })
-  db.events.append({
+  appendHrcEvent(db, 'runtime.dead', {
     ts: now,
     hostSessionId: session.hostSessionId,
     scopeRef: session.scopeRef,
     laneRef: session.laneRef,
     generation: session.generation,
     runtimeId: runtime.runtimeId,
-    source,
-    eventKind: 'runtime.dead',
-    eventJson,
+    transport: 'tmux',
+    payload: { ...eventJson, source },
   })
 }
 

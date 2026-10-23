@@ -4,7 +4,6 @@ import {
   type HrcActiveRunContributionResponse,
   type HrcContinuationRef,
   type HrcContinuityRecord,
-  type HrcEventEnvelope,
   type HrcLifecycleEvent,
   type HrcRunRecord,
   type HrcRuntimeIntent,
@@ -19,7 +18,6 @@ import {
 } from 'hrc-core'
 import type {
   ActiveInputDeliveryRow,
-  EventRow,
   HrcEventRow,
   RunRow,
   RuntimeBufferRow,
@@ -120,15 +118,6 @@ export type ContinuityUpsertInput = Pick<
   HrcContinuityRecord,
   'scopeRef' | 'laneRef' | 'activeHostSessionId' | 'updatedAt'
 >
-
-export type EventQueryFilters = {
-  hostSessionId?: string | undefined
-  generation?: number | undefined
-  runtimeId?: string | undefined
-  runId?: string | undefined
-  fromSeq?: number | undefined
-  limit?: number | undefined
-}
 
 export type RunListFilters = {
   runId?: string | undefined
@@ -284,40 +273,10 @@ export function collectPatchEntries<P>(
 }
 
 /**
- * Append the shared `events` filter predicates (host_session_id, generation,
- * runtime_id, run_id) to the provided `where`/`values` accumulators in the
- * canonical order. The seq predicate (`seq >= ?`) is owned by each caller
- * because it differs (a default-1 range scan vs an optional count filter).
- */
-export function buildEventWhere(
-  filters: Pick<EventQueryFilters, 'hostSessionId' | 'generation' | 'runtimeId' | 'runId'>,
-  where: string[],
-  values: Array<string | number>
-): void {
-  if (filters.hostSessionId !== undefined) {
-    where.push('host_session_id = ?')
-    values.push(filters.hostSessionId)
-  }
-  if (filters.generation !== undefined) {
-    where.push('generation = ?')
-    values.push(filters.generation)
-  }
-  if (filters.runtimeId !== undefined) {
-    where.push('runtime_id = ?')
-    values.push(filters.runtimeId)
-  }
-  if (filters.runId !== undefined) {
-    where.push('run_id = ?')
-    values.push(filters.runId)
-  }
-}
-
-/**
  * Append the `runs` filter predicates to the provided `where`/`values`
  * accumulators in canonical order. Owns the run-table column set
  * (run_id, host_session_id, generation, runtime_id, scope_ref, lane_ref,
- * status) so it stays decoupled from {@link buildEventWhere}, which is named
- * and documented for `events`/`hrc_events` fields.
+ * status) independently of lifecycle event fields.
  *
  * `runId`, `scopeRef`, and `laneRef` are exact-match equality predicates.
  * `status` is a one-or-more set filter (`status IN (?,...)`), matching the
@@ -548,23 +507,6 @@ export function mapSurfaceBindingRow(row: SurfaceBindingRow): HrcSurfaceBindingR
     boundAt: row.bound_at,
     unboundAt: row.unbound_at ?? undefined,
     reason: row.reason ?? undefined,
-  }
-}
-
-export function mapEventRow(row: EventRow): HrcEventEnvelope {
-  return {
-    seq: row.seq,
-    streamSeq: row.stream_seq,
-    ts: row.ts,
-    hostSessionId: row.host_session_id,
-    scopeRef: row.scope_ref,
-    laneRef: row.lane_ref,
-    generation: row.generation,
-    runId: row.run_id ?? undefined,
-    runtimeId: row.runtime_id ?? undefined,
-    source: row.source,
-    eventKind: row.event_kind,
-    eventJson: parseJson<unknown>(row.event_json, 'event_json'),
   }
 }
 

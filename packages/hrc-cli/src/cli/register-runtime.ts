@@ -205,7 +205,7 @@ function registerAdminBrokerVerify(admin: Command): void {
   verify
     .command('run')
     .description(
-      'verify one broker invocation against its ledger, raw mirror, and optional provider JSONL'
+      'verify one broker invocation against its ledger, lifecycle projections, and optional provider JSONL'
     )
     .requiredOption('--invocation <id>', 'broker invocation id')
     .option('--jsonl <path>', 'provider transcript JSONL path')

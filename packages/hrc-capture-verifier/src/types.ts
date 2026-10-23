@@ -11,12 +11,7 @@ export type CaptureObservationType =
   | 'tool.call.failed'
 
 export type FindingSeverity = 'error' | 'warning' | 'info'
-export type FindingLayer =
-  | 'provider'
-  | 'provider-provenance'
-  | 'broker-ledger'
-  | 'raw-mirror'
-  | 'lifecycle'
+export type FindingLayer = 'provider' | 'provider-provenance' | 'broker-ledger' | 'lifecycle'
 
 export type ListVerificationCandidatesInput = {
   scopeRef: string
@@ -66,7 +61,6 @@ export type VerificationCandidate = {
   lastSeq?: number | undefined
   firstEventAt?: string | undefined
   lastEventAt?: string | undefined
-  rawMirrorCount: number
   lifecycleProjectionCount: number
   transcriptGuess?: TranscriptGuess | undefined
 }
@@ -102,14 +96,6 @@ export type BrokerCaptureEvent = {
   createdAt: string
 }
 
-export type RawMirrorEvent = {
-  seq: number
-  source: string
-  eventKind: string
-  eventJson: unknown
-  eventJsonText: string
-}
-
 export type HrcLifecycleProjection = {
   hrcSeq: number
   eventKind: string
@@ -137,7 +123,6 @@ export type InvocationCaptureSnapshot = {
   schema: typeof CAPTURE_VERIFIER_SCHEMA
   invocation: BrokerInvocationCapture
   brokerEvents: BrokerCaptureEvent[]
-  rawMirrors: Record<number, RawMirrorEvent | undefined>
   lifecycleProjections: Record<string, HrcLifecycleProjection[]>
   transcriptArtifact?: ProviderTranscriptArtifact | undefined
 }
@@ -189,7 +174,6 @@ export type CaptureVerificationFinding = {
   sourceRef?: string | undefined
   line?: number | undefined
   brokerSeq?: number | undefined
-  rawEventSeq?: number | undefined
   lifecycleHrcSeq?: number | undefined
   type?: string | undefined
 }
@@ -208,11 +192,6 @@ export type LedgerCheck = {
   firstSeq?: number | undefined
   lastSeq?: number | undefined
   statuses: Record<string, number>
-}
-
-export type RawMirrorCheck = {
-  checked: number
-  matched: number
 }
 
 export type LifecycleCheck = {
@@ -250,25 +229,6 @@ export type BrokerLedgerAnalytics = {
   runDivergenceWarningCount: number
   staleGenerationCount: number
   staleAttemptCount: number
-}
-
-export type RawEventsAnalytics = {
-  expectedFromBroker: number
-  appliedBrokerRows: number
-  linkedByHrcEventSeq: number
-  found: number
-  matched: number
-  missing: number
-  /** Row-level count; field-specific mismatch counts may sum above this value. */
-  mismatched: number
-  wrongSource: number
-  wrongEventKind: number
-  wrongInvocation: number
-  wrongSeq: number
-  wrongType: number
-  payloadMismatch: number
-  malformedEventJson: number
-  malformedPayload: number
 }
 
 export type LifecycleProjectionAnalyticsBucket = {
@@ -312,12 +272,6 @@ export type CrossSinkAnalytics = {
         textMismatchTolerated: number
       }
     | undefined
-  brokerToRaw: {
-    expected: number
-    matched: number
-    missing: number
-    mismatched: number
-  }
   brokerToLifecycle: {
     expected: number
     present: number
@@ -331,7 +285,6 @@ export type CaptureVerificationAnalytics = {
   schema: typeof CAPTURE_VERIFIER_SCHEMA
   providerJsonl?: ProviderJsonlAnalytics | undefined
   brokerLedger: BrokerLedgerAnalytics
-  rawEvents: RawEventsAnalytics
   lifecycleProjection: LifecycleProjectionAnalytics
   crossSink: CrossSinkAnalytics
 }
@@ -349,7 +302,6 @@ export type CaptureVerificationReport = {
   transcriptArtifact?: ProviderTranscriptArtifact | undefined
   transcript?: ParsedProviderTranscript | undefined
   ledger: LedgerCheck
-  rawMirror: RawMirrorCheck
   providerMatches: ProviderObservationMatch[]
   lifecycle: LifecycleCheck[]
   findings: CaptureVerificationFinding[]

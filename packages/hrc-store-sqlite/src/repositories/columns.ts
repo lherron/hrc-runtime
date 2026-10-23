@@ -81,20 +81,6 @@ export const RUN_COLUMNS = `
   origin_kind,
   origin_causation_ref`
 
-export const EVENT_COLUMNS = `
-  seq,
-  stream_seq,
-  ts,
-  host_session_id,
-  scope_ref,
-  lane_ref,
-  generation,
-  run_id,
-  runtime_id,
-  source,
-  event_kind,
-  event_json`
-
 export const HRC_EVENT_COLUMNS = `
   hrc_seq,
   stream_seq,

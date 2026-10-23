@@ -1,9 +1,4 @@
-import type {
-  HrcErrorCode,
-  HrcEventEnvelope,
-  HrcLifecycleEvent,
-  HrcRuntimeSnapshot,
-} from 'hrc-core'
+import type { HrcErrorCode, HrcLifecycleEvent, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcActiveInputDeliveryRecord } from './shared.js'
 
 export type ContinuityRow = {
@@ -129,21 +124,6 @@ export type InputRow = {
   error_message: string | null
   created_at: string
   updated_at: string
-}
-
-export type EventRow = {
-  seq: number
-  stream_seq: number
-  ts: string
-  host_session_id: string
-  scope_ref: string
-  lane_ref: string
-  generation: number
-  run_id: string | null
-  runtime_id: string | null
-  source: HrcEventEnvelope['source']
-  event_kind: string
-  event_json: string
 }
 
 export type HrcEventRow = {

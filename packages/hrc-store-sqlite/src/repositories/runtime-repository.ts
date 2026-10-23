@@ -377,13 +377,13 @@ export class RuntimeRepository {
   /**
    * Hard-delete an orphaned runtime store row plus its runtime-scoped satellite
    * rows (T-05441). `runtimes(runtime_id)` is FK-referenced (no ON DELETE
-   * CASCADE, `foreign_keys = ON`) by runs, events, runtime_buffers,
+   * CASCADE, `foreign_keys = ON`) by runs, runtime_buffers,
    * and surface_bindings, so a plain `DELETE FROM runtimes` throws
    * FK_CONSTRAINT whenever any dependent row exists — essentially always for a
    * real runtime. We clear the dependents inside a single transaction before
    * removing the runtime itself.
    *
-   * Delete ORDER matters: `events` and `runtime_buffers` ALSO FK-reference
+   * Delete ORDER matters: `runtime_buffers` ALSO FK-reference
    * `runs(run_id)`, so every table that points at this runtime's runs must be
    * cleared BEFORE the runs themselves — otherwise deleting a run whose buffer
    * or event still exists trips the run-level FK. We therefore purge the
@@ -420,14 +420,6 @@ export class RuntimeRepository {
       tool_result_blob_parts: 0,
       tool_result_blobs: 0,
       compiled_runtime_plans: 0,
-      events: count(
-        `WITH selected AS (${selected})
-         SELECT COUNT(*) AS count FROM events
-         WHERE runtime_id IN (SELECT runtime_id FROM selected)
-            OR run_id IN (
-              SELECT run_id FROM runs WHERE runtime_id IN (SELECT runtime_id FROM selected)
-            )`
-      ),
       runtime_buffers: count(
         `WITH selected AS (${selected})
          SELECT COUNT(*) AS count FROM runtime_buffers
@@ -549,7 +541,6 @@ export class RuntimeRepository {
       // pin to this runtime's run while carrying a null/foreign runtime_id) so
       // no run-level FK survives the DELETE FROM runs below.
       const runScoped = 'runtime_id = ? OR run_id IN (SELECT run_id FROM runs WHERE runtime_id = ?)'
-      execute(this.db, `DELETE FROM events WHERE ${runScoped}`, id, id)
       execute(this.db, `DELETE FROM runtime_buffers WHERE ${runScoped}`, id, id)
       // Runtime-only satellite tables.
       execute(this.db, 'DELETE FROM surface_bindings WHERE runtime_id = ?', id)
@@ -704,7 +695,6 @@ export class RuntimeRepository {
         OR run_id IN (
           SELECT run_id FROM runs WHERE runtime_id IN (SELECT runtime_id FROM selected)
         )`
-      executeSelected(`DELETE FROM events WHERE ${runScoped}`)
       executeSelected(`DELETE FROM runtime_buffers WHERE ${runScoped}`)
       executeSelected(
         'DELETE FROM surface_bindings WHERE runtime_id IN (SELECT runtime_id FROM selected)'

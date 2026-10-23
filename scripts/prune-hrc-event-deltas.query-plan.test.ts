@@ -28,12 +28,11 @@ function explain(db: Database, sql: string, ...bindings: Array<string | number>)
 }
 
 describe('T-07200 bounded prune candidate plans', () => {
-  test('all six read-only discovery plans lead from their predicate indexes', () => {
+  test('current read-only discovery plans lead from their predicate indexes', () => {
     const { db: product } = makeProductStore()
     try {
       const db = product.sqlite
       const cases = [
-        [createRetentionPlans(EVENT_BOUNDARY, BUFFER_BOUNDARY)[0], 'idx_events_retention_ts'],
         [createRetentionPlans(EVENT_BOUNDARY, BUFFER_BOUNDARY)[1], 'idx_hrc_events_retention_ts'],
         [
           createRetentionPlans(EVENT_BOUNDARY, BUFFER_BOUNDARY)[2],
@@ -43,7 +42,6 @@ describe('T-07200 bounded prune candidate plans', () => {
           createRetentionPlans(EVENT_BOUNDARY, BUFFER_BOUNDARY)[3],
           'idx_runtime_buffers_retention_created',
         ],
-        [createPurgePlans()[0], 'idx_events_broker_kind_nocase'],
         [createPurgePlans()[1], 'idx_broker_invocation_events_type'],
       ] as const
 
@@ -59,13 +57,13 @@ describe('T-07200 bounded prune candidate plans', () => {
     }
   })
 
-  test('all six writer rechecks search only the bounded primary-key set', () => {
+  test('current writer rechecks search only the bounded primary-key set', () => {
     const { db: product } = makeProductStore()
     try {
       for (const plan of [
         ...createRetentionPlans(EVENT_BOUNDARY, BUFFER_BOUNDARY),
         ...createPurgePlans(),
-      ]) {
+      ].filter((plan) => plan.table !== 'events')) {
         const detail = explain(
           product.sqlite,
           deleteSelectedBatchSql(plan),

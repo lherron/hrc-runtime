@@ -124,35 +124,35 @@ describe('C-2: parseJson crash guard', () => {
     }
   })
 
-  it('survives corrupted event_json in an event row', () => {
+  it('survives corrupted payload_json in an event row', () => {
     const db = openHrcDatabase(dbPath)
     try {
       insertSession(db, 'hsid-evt-corrupt')
 
-      db.events.append({
+      db.hrcEvents.append({
         ts: ts(),
         hostSessionId: 'hsid-evt-corrupt',
         scopeRef: testScopeRef('hsid-evt-corrupt'),
         laneRef: 'default',
         generation: 1,
-        source: 'hrc',
+        category: 'runtime',
         eventKind: 'test.event',
-        eventJson: { valid: true },
+        payload: { valid: true },
       })
 
-      // Corrupt the event_json
+      // Corrupt the payload_json
       db.sqlite.run(
-        `UPDATE events SET event_json = 'totally broken json' WHERE host_session_id = ?`,
+        `UPDATE hrc_events SET payload_json = 'totally broken json' WHERE host_session_id = ?`,
         ['hsid-evt-corrupt']
       )
 
       // Should not throw
-      const events = db.events.listFromSeq(1, { hostSessionId: 'hsid-evt-corrupt' })
+      const events = db.hrcEvents.listFromHrcSeq(1, { hostSessionId: 'hsid-evt-corrupt' })
       expect(events.length).toBe(1)
       expect(events[0].eventKind).toBe('test.event')
-      expect(events[0].eventJson).toBeUndefined()
+      expect(events[0].payload).toBeUndefined()
       expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Corrupt JSON in column event_json')
+        expect.stringContaining('Corrupt JSON in column payload_json')
       )
     } finally {
       db.close()

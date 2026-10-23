@@ -9,8 +9,7 @@
  * The active invariant `hrc-runtime.mobile-session-index` defines session
  * recency as the greatest observed contributing activity timestamp, and that
  * column is what carries it: triggers advance it on every insert into
- * `hrc_events` *and* `events` (see `session_index_hrc_event_insert` /
- * `session_index_event_insert` in the schema migrations). A sensor built on
+ * `hrc_events` (see `session_index_hrc_event_insert` in the schema migrations). A sensor built on
  * `sessions.updated_at` misses all of that. It is not a theoretical gap — on
  * the host T-07575 was filed against, 5,380 of 8,319 rows have an index clock
  * strictly newer than `sessions.updated_at`.

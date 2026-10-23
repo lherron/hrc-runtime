@@ -11,12 +11,8 @@ import {
   type VerificationCandidate,
   type VerifyInvocationInput,
 } from './types.js'
-import {
-  buildAnalytics,
-  buildLifecycleAnalytics,
-  emptyRawEventsAnalytics,
-} from './verifier-analytics.js'
-import { checkLedger, checkLifecycle, checkRawMirrors } from './verifier-checks.js'
+import { buildAnalytics, buildLifecycleAnalytics } from './verifier-analytics.js'
+import { checkLedger, checkLifecycle } from './verifier-checks.js'
 import { compareTranscript } from './verifier-transcript.js'
 
 export { lifecycleKey } from './verifier-normalize.js'
@@ -55,7 +51,6 @@ export async function verifyInvocation(
       : autoResolvedArtifact?.transcript)
 
   const ledgerCheck = checkLedger(snapshot.invocation, snapshot.brokerEvents, findings)
-  const rawMirrorCheck = checkRawMirrors(snapshot, findings)
   const providerMatches =
     transcript === undefined
       ? []
@@ -81,7 +76,6 @@ export async function verifyInvocation(
   const analytics = buildAnalytics({
     transcript,
     brokerLedger: ledgerCheck.analytics,
-    rawEvents: rawMirrorCheck.analytics,
     lifecycleProjection: lifecycleAnalytics,
     providerMatches,
   })
@@ -102,7 +96,6 @@ export async function verifyInvocation(
       ? { transcriptArtifact: autoResolvedArtifact.artifact }
       : {}),
     ledger: ledgerCheck.ledger,
-    rawMirror: rawMirrorCheck.rawMirror,
     providerMatches,
     lifecycle,
     findings,
@@ -178,7 +171,6 @@ function missingInvocationReport(invocationId: string): CaptureVerificationRepor
     brokerProtocol: 'unknown',
     runtimeId: 'unknown',
     ledger: { eventCount: 0, statuses: {} },
-    rawMirror: { checked: 0, matched: 0 },
     providerMatches: [],
     lifecycle: [],
     findings: [
@@ -203,7 +195,6 @@ function missingInvocationReport(invocationId: string): CaptureVerificationRepor
         staleGenerationCount: 0,
         staleAttemptCount: 0,
       },
-      rawEvents: emptyRawEventsAnalytics(),
       lifecycleProjection: buildLifecycleAnalytics([], 0),
       providerMatches: [],
     }),

@@ -188,10 +188,7 @@ import {
   type SessionIndexHandlersMethods,
   sessionIndexHandlersMethods,
 } from './session-index-handlers.js'
-import {
-  backfillLegacyContinuationClearBarriers,
-  repairContinuationHistory,
-} from './session-resume-continuation.js'
+import { repairContinuationHistory } from './session-resume-continuation.js'
 import {
   type ShadowTeardownHandlersMethods,
   shadowTeardownHandlersMethods,
@@ -844,12 +841,6 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
         )
       },
     })
-    const backfilledContinuationClears = backfillLegacyContinuationClearBarriers(db)
-    if (backfilledContinuationClears > 0) {
-      writeServerLog('INFO', 'server.start.continuation_clear_barriers_backfilled', {
-        count: backfilledContinuationClears,
-      })
-    }
     const continuationHistoryRepair = repairContinuationHistory(db)
     if (continuationHistoryRepair.sessions > 0) {
       writeServerLog('INFO', 'server.start.continuation_history_repaired', {

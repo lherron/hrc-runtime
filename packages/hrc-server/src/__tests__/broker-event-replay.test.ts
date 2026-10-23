@@ -82,7 +82,7 @@ describe('replay (end-to-end idempotency)', () => {
     }
 
     const snapshot = {
-      hrcEvents: db.events.count({ runtimeId: RUNTIME_ID }),
+      hrcEvents: db.hrcEvents.listFromHrcSeq(1, { runtimeId: RUNTIME_ID }).length,
       brokerRows: db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).length,
       bufferChunks: db.runtimeBuffers.listByRunId(RUN_ID).length,
       runStatus: db.runs.getByRunId(RUN_ID)!.status,
@@ -97,7 +97,9 @@ describe('replay (end-to-end idempotency)', () => {
       expect(replay.events.length).toBe(0)
     }
 
-    expect(db.events.count({ runtimeId: RUNTIME_ID })).toBe(snapshot.hrcEvents)
+    expect(db.hrcEvents.listFromHrcSeq(1, { runtimeId: RUNTIME_ID }).length).toBe(
+      snapshot.hrcEvents
+    )
     expect(db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).length).toBe(
       snapshot.brokerRows
     )

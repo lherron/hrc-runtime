@@ -32,7 +32,7 @@ import {
   RuntimeOperationRepository,
   SubmissionAdmissionRepository,
 } from './repositories/broker-repositories.js'
-import { EventRepository, HrcLifecycleEventRepository } from './repositories/event-repositories.js'
+import { HrcLifecycleEventRepository } from './repositories/event-repositories.js'
 import { FirstTurnWatchRepository } from './repositories/first-turn-watch-repository.js'
 import { RetainedEvidenceOutcomeRepository } from './repositories/retained-evidence-outcome-repository.js'
 import {
@@ -88,7 +88,6 @@ export type HrcDatabase = {
   participantHostBindings: ParticipantHostBindingRepository
   runtimes: RuntimeRepository
   runs: RunRepository
-  events: EventRepository
   hrcEvents: HrcLifecycleEventRepository
   surfaceBindings: SurfaceBindingRepository
   runtimeBuffers: RuntimeBufferRepository
@@ -201,7 +200,6 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     participantHostBindings: new ParticipantHostBindingRepository(sqlite),
     runtimes: new RuntimeRepository(sqlite, runIdOwnership),
     runs: new RunRepository(sqlite, runIdOwnership),
-    events: new EventRepository(sqlite),
     hrcEvents: new HrcLifecycleEventRepository(sqlite, toolResultBlobs),
     surfaceBindings: new SurfaceBindingRepository(sqlite),
     runtimeBuffers: new RuntimeBufferRepository(sqlite),

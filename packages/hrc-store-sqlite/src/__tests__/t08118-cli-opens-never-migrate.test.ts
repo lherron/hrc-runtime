@@ -21,12 +21,12 @@ import { HrcStoreSchemaBehindError, readStoreSchemaState } from '../schema-guard
  * out from under the daemon still running the previous one. The daemon owns the
  * schema; every other open refuses.
  *
- * `0036_event_repository_query_indexes` is the lever throughout: its `apply` is
- * `CREATE INDEX IF NOT EXISTS` only, so deleting its ledger row produces a store
+ * `0125_legacy_events_removal` is the lever throughout: its `apply` is
+ * `DROP TRIGGER/TABLE IF EXISTS` only, so deleting its ledger row produces a store
  * that is genuinely "behind this binary" and can be brought forward again
  * without fighting DDL that is not replayable.
  */
-const REPLAYABLE_MIGRATION = '0036_event_repository_query_indexes'
+const REPLAYABLE_MIGRATION = '0125_legacy_events_removal'
 
 const dirs: string[] = []
 

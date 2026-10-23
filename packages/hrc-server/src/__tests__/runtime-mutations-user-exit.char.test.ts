@@ -14,7 +14,7 @@
  *        errorCode 'runtime_unavailable',
  *        errorMessage "<runtimeId> is dead after startup reconciliation"
  *    • NO broker-invocation settlement (no settleInvocation step)
- *    • event → db.events (raw EventRepository, NOT db.hrcEvents), kind 'runtime.dead'
+ *    • event → db.hrcEvents (lifecycle ledger), kind 'runtime.dead'
  *    • returns void (undefined)
  *
  *  markRuntimeStale(db, session, runtime, eventJson) → HrcLifecycleEvent
@@ -27,7 +27,7 @@
  *    • non-terminal broker invocation → 'disposed' (NOT 'exited')
  *    • already-terminal invocation NOT updated
  *    • runtimeStateJson.terminalInvocation.eventType = 'hrc.runtime.stale'
- *    • event → db.hrcEvents (HrcLifecycleEventRepository, NOT db.events), kind 'runtime.stale'
+ *    • event → db.hrcEvents (lifecycle ledger), kind 'runtime.stale'
  *    • event payload = eventJson (passed through as-is)
  *    • returns HrcLifecycleEvent
  *
@@ -54,7 +54,7 @@
  *  stateJson extra keys          | —               | staleReason/Payload | terminationReason/userExitReason
  *  terminalInvocation.eventType  | —               | 'hrc.runtime.stale' | 'hrc.runtime.terminated'
  *  invocation settled to         | (none)          | 'disposed'       | 'exited'
- *  event store                   | db.events       | db.hrcEvents     | db.hrcEvents
+ *  event store                   | db.hrcEvents    | db.hrcEvents     | db.hrcEvents
  *  event payload                 | eventJson       | eventJson        | {...eventJson, reason:'user_initiated_session_end'}
  *  errorMessage fragment         | 'is dead after' | 'is stale after' | 'was terminated by user exit'
  *  return type                   | void            | HrcLifecycleEvent| HrcLifecycleEvent
@@ -384,7 +384,7 @@ describe('characterization: markRuntimeTerminatedAfterUserExit', () => {
     expect(inv?.invocationState).toBe('ready')
   })
 
-  it('appends event to db.hrcEvents (NOT db.events) with kind runtime.terminated', () => {
+  it('appends event to db.hrcEvents with kind runtime.terminated', () => {
     const session = seedSession()
     const runtime = seedRuntime({ runtimeId: 'rt-term-evt', status: 'busy' })
 
@@ -396,10 +396,6 @@ describe('characterization: markRuntimeTerminatedAfterUserExit', () => {
       .filter((e) => e.eventKind === 'runtime.terminated')
     expect(hrcEvents).toHaveLength(1)
     expect(hrcEvents[0]?.runtimeId).toBe('rt-term-evt')
-
-    // NOT in raw db.events
-    const rawEvents = db.events.listFromSeq(1).filter((e) => e.eventKind === 'runtime.terminated')
-    expect(rawEvents).toHaveLength(0)
   })
 
   it('event payload merges reason=user_initiated_session_end into eventJson (diverges from markRuntimeStale)', () => {
@@ -491,16 +487,11 @@ describe('characterization: cross-function divergence guard', () => {
     expect(getInvocation(invStaleId)?.invocationState).toBe('disposed')
     expect(getInvocation(invTermId)?.invocationState).toBe('exited')
 
-    // event store routing — dead → db.events; stale/terminated → db.hrcEvents
-    const rawEvents = db.events.listFromSeq(1)
-    expect(rawEvents.find((e) => e.eventKind === 'runtime.dead')).toBeDefined()
-    expect(rawEvents.find((e) => e.eventKind === 'runtime.stale')).toBeUndefined()
-    expect(rawEvents.find((e) => e.eventKind === 'runtime.terminated')).toBeUndefined()
-
+    // All terminal facts use the lifecycle ledger.
     const hrcEvents = db.hrcEvents.listFromHrcSeq(1)
     expect(hrcEvents.find((e) => e.eventKind === 'runtime.stale')).toBeDefined()
     expect(hrcEvents.find((e) => e.eventKind === 'runtime.terminated')).toBeDefined()
-    expect(hrcEvents.find((e) => e.eventKind === 'runtime.dead')).toBeUndefined()
+    expect(hrcEvents.find((e) => e.eventKind === 'runtime.dead')).toBeDefined()
 
     // runtimeStateJson — dead: no status key; stale: status='stale'; terminated: status='terminated'
     const deadStateJson = getRuntime('rt-div-dead')?.runtimeStateJson as

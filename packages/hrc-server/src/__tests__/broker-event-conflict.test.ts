@@ -62,7 +62,9 @@ describe('conflict (divergent payload, same key)', () => {
       key: 'key_ORIGINAL',
     })
 
-    const eventsBefore = harness.fixture.db.events.count({ runtimeId: RUNTIME_ID })
+    const eventsBefore = harness.fixture.db.hrcEvents.listFromHrcSeq(1, {
+      runtimeId: RUNTIME_ID,
+    }).length
 
     const divergent = envelope('continuation.updated', 8, {
       provider: 'openai',
@@ -77,7 +79,9 @@ describe('conflict (divergent payload, same key)', () => {
       provider: 'openai',
       key: 'key_ORIGINAL',
     })
-    expect(harness.fixture.db.events.count({ runtimeId: RUNTIME_ID })).toBe(eventsBefore)
+    expect(harness.fixture.db.hrcEvents.listFromHrcSeq(1, { runtimeId: RUNTIME_ID }).length).toBe(
+      eventsBefore
+    )
 
     const stored = harness.fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 8)
     expect(stored).not.toBeNull()

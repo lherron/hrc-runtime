@@ -112,7 +112,9 @@ describe('T-07039 raw broker delta persistence gate', () => {
     expect(fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 5)).toBeNull()
     expect(fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 6)).toBeNull()
     expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(7)
-    expect(fixture.db.events.listFromSeq(1)).toEqual([])
+    expect(
+      fixture.db.sqlite.query("SELECT name FROM sqlite_master WHERE name = 'events'").all()
+    ).toEqual([])
   })
 
   it('refuses to advance across a missing event when skipping a tool delta', () => {
@@ -150,7 +152,9 @@ describe('T-07039 raw broker delta persistence gate', () => {
       2_500
     )
     expect(fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID)).toEqual([])
-    expect(fixture.db.events.listFromSeq(1)).toEqual([])
+    expect(
+      fixture.db.sqlite.query("SELECT name FROM sqlite_master WHERE name = 'events'").all()
+    ).toEqual([])
     expect(
       fixture.db.sqlite.query('SELECT COUNT(*) AS count FROM broker_projection_dispositions').get()
     ).toEqual({ count: 0 })

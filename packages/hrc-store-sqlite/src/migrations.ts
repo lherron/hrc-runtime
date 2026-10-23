@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite'
 
 import { brokerMigrations } from './migrations/broker-migrations.js'
 import { deadTableRemoval } from './migrations/dead-table-removal.js'
+import { legacyEventsRemoval } from './migrations/legacy-events-removal.js'
 import { participantFreshContinuationReason } from './migrations/participant-fresh-continuation-reason.js'
 import { runtimeLegacyIdentityNullableMigration } from './migrations/runtime-legacy-identity-nullability.js'
 import { schemaMigrations } from './migrations/schema-migrations.js'
@@ -25,6 +26,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   sessionIdentityMetadata,
   participantFreshContinuationReason,
   deadTableRemoval,
+  legacyEventsRemoval,
 ]
 
 /**

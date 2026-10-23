@@ -6,14 +6,12 @@ import {
   type LifecycleProjectionAnalytics,
   type ProviderJsonlAnalytics,
   type ProviderObservationMatch,
-  type RawEventsAnalytics,
   type VerifyInvocationInput,
 } from './types.js'
 
 export function buildAnalytics(input: {
   transcript?: VerifyInvocationInput['transcript'] | undefined
   brokerLedger: CaptureVerificationAnalytics['brokerLedger']
-  rawEvents: RawEventsAnalytics
   lifecycleProjection: LifecycleProjectionAnalytics
   providerMatches: ProviderObservationMatch[]
 }): CaptureVerificationAnalytics {
@@ -23,18 +21,11 @@ export function buildAnalytics(input: {
       ? { providerJsonl: providerJsonlAnalytics(input.transcript) }
       : {}),
     brokerLedger: input.brokerLedger,
-    rawEvents: input.rawEvents,
     lifecycleProjection: input.lifecycleProjection,
     crossSink: {
       ...(input.transcript !== undefined
         ? { providerToBroker: providerToBrokerAnalytics(input.providerMatches) }
         : {}),
-      brokerToRaw: {
-        expected: input.rawEvents.expectedFromBroker,
-        matched: input.rawEvents.matched,
-        missing: input.rawEvents.missing,
-        mismatched: input.rawEvents.mismatched,
-      },
       brokerToLifecycle: {
         expected: input.lifecycleProjection.expected,
         present: input.lifecycleProjection.present,
@@ -169,24 +160,4 @@ export function buildLifecycleAnalytics(
   }
 
   return out
-}
-
-export function emptyRawEventsAnalytics(): RawEventsAnalytics {
-  return {
-    expectedFromBroker: 0,
-    appliedBrokerRows: 0,
-    linkedByHrcEventSeq: 0,
-    found: 0,
-    matched: 0,
-    missing: 0,
-    mismatched: 0,
-    wrongSource: 0,
-    wrongEventKind: 0,
-    wrongInvocation: 0,
-    wrongSeq: 0,
-    wrongType: 0,
-    payloadMismatch: 0,
-    malformedEventJson: 0,
-    malformedPayload: 0,
-  }
 }

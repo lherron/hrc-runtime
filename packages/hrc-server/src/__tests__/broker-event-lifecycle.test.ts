@@ -114,7 +114,7 @@ describe('emitted lifecycle events', () => {
     const mapper = harness.makeMapper()
     mapper.apply(envelope('invocation.ready', 2, { state: 'ready' }))
 
-    const persisted = harness.fixture.db.events.listFromSeq(1, { runtimeId: RUNTIME_ID })
+    const persisted = harness.fixture.db.hrcEvents.listFromHrcSeq(1, { runtimeId: RUNTIME_ID })
     expect(persisted).toEqual([])
   })
 
@@ -194,11 +194,11 @@ describe('emitted lifecycle events', () => {
         .listByKind('provider-transcript-jsonl')
         .filter((artifact) => artifact.operationId === OPERATION_ID)
     ).toEqual([])
-    const warnings = harness.fixture.db.events
-      .listFromSeq(1, { runtimeId: RUNTIME_ID })
+    const warnings = harness.fixture.db.hrcEvents
+      .listFromHrcSeq(1, { runtimeId: RUNTIME_ID })
       .filter((event) => event.eventKind === 'broker.provider_transcript_artifact.warning')
     expect(warnings).toHaveLength(1)
-    expect(warnings[0]?.eventJson).toMatchObject({
+    expect(warnings[0]?.payload).toMatchObject({
       invocationId: INVOCATION_ID,
       seq: 8,
       reason: 'invalid_path',

@@ -108,18 +108,32 @@ function seedRuntime(options: SeedRuntimeOptions): void {
   }
 }
 
-/**
- * Seed a raw dependent event row pinned to a runtime. `events.runtime_id`
- * FK-references `runtimes(runtime_id)` with no ON DELETE CASCADE, so a runtime
- * that has any dependent row can only be deleted by the prune cascade.
- */
-function seedRuntimeEvent(runtimeId: string, hostSessionId: string, scopeRef: string): void {
-  const db = new Database(fixture.dbPath)
+/** Seed a retained runtime buffer to exercise the real dependent cascade. */
+function seedRuntimeBuffer(runtimeId: string, hostSessionId: string, scopeRef: string): void {
+  const db = openHrcDatabase(fixture.dbPath)
   try {
-    db.query(
-      `INSERT INTO events (ts, host_session_id, scope_ref, lane_ref, generation, run_id, runtime_id, source, event_kind, event_json)
-       VALUES (?, ?, ?, 'default', 1, NULL, ?, 'hrc', 'runtime.stale', '{}')`
-    ).run(fixture.now(), hostSessionId, canonicalScopeRef(scopeRef), runtimeId)
+    const now = fixture.now()
+    const runId = `dependent-${runtimeId}`
+    db.runs.insert({
+      runId,
+      runtimeId,
+      hostSessionId,
+      scopeRef: canonicalScopeRef(scopeRef),
+      laneRef: 'default',
+      generation: 1,
+      transport: 'headless',
+      status: 'completed',
+      acceptedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    })
+    db.runtimeBuffers.append({
+      runtimeId,
+      runId,
+      chunkSeq: 0,
+      text: 'prune dependent',
+      createdAt: now,
+    })
   } finally {
     db.close()
   }
@@ -134,12 +148,14 @@ function getRuntime(runtimeId: string): HrcRuntimeSnapshot | null {
   }
 }
 
-function countRuntimeEvents(runtimeId: string): number {
+function countRuntimeBuffers(runtimeId: string): number {
   const db = new Database(fixture.dbPath)
   try {
     return (
       db
-        .query<{ n: number }, [string]>('SELECT COUNT(*) AS n FROM events WHERE runtime_id = ?')
+        .query<{ n: number }, [string]>(
+          'SELECT COUNT(*) AS n FROM runtime_buffers WHERE runtime_id = ?'
+        )
         .get(runtimeId)?.n ?? 0
     )
   } finally {
@@ -247,8 +263,8 @@ describe('POST /v1/runtimes/prune', () => {
       status: 'stale',
       createdAt: isoMinutesAgo(180),
     })
-    seedRuntimeEvent('rt-orphan', 'hsid-orphan', 'prune-orphan')
-    expect(countRuntimeEvents('rt-orphan')).toBe(1)
+    seedRuntimeBuffer('rt-orphan', 'hsid-orphan', 'prune-orphan')
+    expect(countRuntimeBuffers('rt-orphan')).toBe(1)
 
     const body = await prune({ transport: 'tmux', olderThan: '1h', yes: true })
 
@@ -259,7 +275,7 @@ describe('POST /v1/runtimes/prune', () => {
       status: 'pruned',
     })
     expect(getRuntime('rt-orphan')).toBeNull()
-    expect(countRuntimeEvents('rt-orphan')).toBe(0)
+    expect(countRuntimeBuffers('rt-orphan')).toBe(0)
   })
 
   it('preserves a record with an active run even when the status filter matches', async () => {

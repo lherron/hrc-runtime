@@ -14,7 +14,7 @@
  *        errorCode 'runtime_unavailable',
  *        errorMessage "<runtimeId> is dead after startup reconciliation"
  *    • NO broker-invocation settlement (no settleInvocation step)
- *    • event → db.events (raw EventRepository, NOT db.hrcEvents), kind 'runtime.dead'
+ *    • event → db.hrcEvents (lifecycle ledger), kind 'runtime.dead'
  *    • returns void (undefined)
  *
  *  markRuntimeStale(db, session, runtime, eventJson) → HrcLifecycleEvent
@@ -27,7 +27,7 @@
  *    • non-terminal broker invocation → 'disposed' (NOT 'exited')
  *    • already-terminal invocation NOT updated
  *    • runtimeStateJson.terminalInvocation.eventType = 'hrc.runtime.stale'
- *    • event → db.hrcEvents (HrcLifecycleEventRepository, NOT db.events), kind 'runtime.stale'
+ *    • event → db.hrcEvents (lifecycle ledger), kind 'runtime.stale'
  *    • event payload = eventJson (passed through as-is)
  *    • returns HrcLifecycleEvent
  *
@@ -54,7 +54,7 @@
  *  stateJson extra keys          | —               | staleReason/Payload | terminationReason/userExitReason
  *  terminalInvocation.eventType  | —               | 'hrc.runtime.stale' | 'hrc.runtime.terminated'
  *  invocation settled to         | (none)          | 'disposed'       | 'exited'
- *  event store                   | db.events       | db.hrcEvents     | db.hrcEvents
+ *  event store                   | db.hrcEvents    | db.hrcEvents     | db.hrcEvents
  *  event payload                 | eventJson       | eventJson        | {...eventJson, reason:'user_initiated_session_end'}
  *  errorMessage fragment         | 'is dead after' | 'is stale after' | 'was terminated by user exit'
  *  return type                   | void            | HrcLifecycleEvent| HrcLifecycleEvent
@@ -267,23 +267,19 @@ describe('characterization: markRuntimeDead', () => {
     expect(run?.errorMessage).toBe('runtime rt-dead-msg is dead after startup reconciliation')
   })
 
-  it('appends event to db.events (raw EventRepository) with eventKind=runtime.dead', () => {
+  it('appends event to db.hrcEvents (lifecycle ledger) with eventKind=runtime.dead', () => {
     const session = seedSession()
     const runtime = seedRuntime({ runtimeId: 'rt-dead-evt', status: 'busy' })
 
     const eventJson = { reason: 'orphan_probe', extra: 'data' }
     markRuntimeDead(db, session, runtime, 'tmux', eventJson)
 
-    // Event is in db.events (raw table)
-    const rawEvents = db.events.listFromSeq(1).filter((e) => e.eventKind === 'runtime.dead')
+    // Event is in db.hrcEvents (lifecycle ledger)
+    const rawEvents = db.hrcEvents.listFromHrcSeq(1).filter((e) => e.eventKind === 'runtime.dead')
     expect(rawEvents).toHaveLength(1)
-    expect(rawEvents[0]?.source).toBe('tmux')
+    expect(rawEvents[0]?.transport).toBe('tmux')
     expect(rawEvents[0]?.runtimeId).toBe('rt-dead-evt')
-    expect(rawEvents[0]?.eventJson).toMatchObject(eventJson)
-
-    // NOT in db.hrcEvents
-    const hrcEvents = db.hrcEvents.listFromHrcSeq(1).filter((e) => e.eventKind === 'runtime.dead')
-    expect(hrcEvents).toHaveLength(0)
+    expect(rawEvents[0]?.payload).toMatchObject(eventJson)
   })
 
   it('does NOT update runtimeStateJson (key divergence from markRuntimeStale/Terminated)', () => {
@@ -494,7 +490,7 @@ describe('characterization: markRuntimeStale', () => {
     expect(inv?.invocationState).toBe('ready')
   })
 
-  it('appends event to db.hrcEvents (NOT db.events) with kind runtime.stale', () => {
+  it('appends event to db.hrcEvents with kind runtime.stale', () => {
     const session = seedSession()
     const runtime = seedRuntime({ runtimeId: 'rt-stale-evt', status: 'busy' })
     const eventJson = { reason: 'stale-evt-test', extra: true }
@@ -506,10 +502,6 @@ describe('characterization: markRuntimeStale', () => {
     expect(hrcEvents).toHaveLength(1)
     expect(hrcEvents[0]?.runtimeId).toBe('rt-stale-evt')
     expect(hrcEvents[0]?.payload).toMatchObject(eventJson)
-
-    // NOT in raw db.events
-    const rawEvents = db.events.listFromSeq(1).filter((e) => e.eventKind === 'runtime.stale')
-    expect(rawEvents).toHaveLength(0)
   })
 
   it('event payload is eventJson passed through as-is (no extra reason merge)', () => {
