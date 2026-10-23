@@ -21,7 +21,6 @@ import {
   handlePatchSessionMetadata,
 } from './session-metadata-handlers.js'
 import { handleRestartSession } from './session-restart.js'
-import { legacyLaunchIngestRetired } from './session-title-helpers.js'
 import {
   handleTranscriptIndexRebuild,
   handleTranscriptIndexStatus,
@@ -159,9 +158,6 @@ export function buildExactRouteHandlers(
       server.handleDropContinuation(request),
     [exactRouteKey('POST', '/v1/sessions/resume-continuation')]: (request) =>
       server.handleResumeContinuation(request),
-    // T-08566 stage 1: the launch-wrapper hook ingest is retired (no producer).
-    [exactRouteKey('POST', '/v1/internal/hooks/ingest')]: (request) =>
-      legacyLaunchIngestRetired(new URL(request.url).pathname),
     [exactRouteKey('GET', '/v1/runtime-diagnostics')]: (_request, url) =>
       handleFirstTurnDiagnostics(server.db, url),
     [exactRouteKey('POST', '/v1/presentation/seats/read')]: (request) =>

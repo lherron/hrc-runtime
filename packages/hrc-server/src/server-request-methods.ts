@@ -2,16 +2,10 @@ import { markLoopActivity } from './event-loop-lag.js'
 import type { HrcServerInstance } from './index.js'
 import { handleGetInput, handleWatchInput, matchInputRoute } from './input-handlers.js'
 import { normalizeRoute, observeRequest } from './request-metrics.js'
-import {
-  exactRouteKey,
-  matchLaunchSubroute,
-  matchRuntimeSeatRoute,
-  matchSessionTitleRoute,
-} from './server-routing.js'
+import { exactRouteKey, matchRuntimeSeatRoute, matchSessionTitleRoute } from './server-routing.js'
 import { errorResponse } from './server-util.js'
 import {
   decodeSessionTitleHostSessionId,
-  legacyLaunchIngestRetired,
   refuseExecutionFormatAtSealedDoor,
 } from './session-title-helpers.js'
 
@@ -83,11 +77,6 @@ export const serverRequestMethods = {
           pathname.slice('/v1/active-run-contributions/'.length)
         )
         return this.handleGetActiveRunContribution(inputApplicationId)
-      }
-
-      // T-08566 stage 1: launch-wrapper lifecycle callbacks are retired.
-      if (matchLaunchSubroute(request.method, pathname)) {
-        return legacyLaunchIngestRetired(pathname)
       }
 
       return new Response('Not Found', { status: 404 })

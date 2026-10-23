@@ -6,9 +6,7 @@ import {
   validateSessionMetadataEntry,
 } from 'hrc-core'
 import { type HrcDatabase, canonicalLaneRef } from 'hrc-store-sqlite'
-import { writeServerLog } from './server-log.js'
 import { isRecord } from './server-parsers.js'
-import { json } from './server-util.js'
 
 export { SESSION_TITLE_MAX_LENGTH } from 'hrc-core'
 
@@ -80,17 +78,6 @@ export function parseSessionTitleWriteInput(value: unknown): SessionTitleWriteIn
     source: 'manual',
     force: force === true,
   }
-}
-
-/**
- * T-08566 stage 1: the launch-wrapper hook, OTEL and launch-callback ingest is
- * retired. No production component composes these requests, and the hook route
- * could terminalize a broker run from an unauthenticated native payload.
- * Refuse with a named 410 and write nothing durable.
- */
-export function legacyLaunchIngestRetired(route: string): Response {
-  writeServerLog('WARN', 'server.legacy_launch_ingest_refused', { route })
-  return json({ error: { code: 'legacy_launch_ingest_retired', route } }, 410)
 }
 
 export function decodeSessionTitleHostSessionId(encodedHostSessionId: string): string {

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { logRequestCompletion, logRequestEscaped } from './request-log.js'
 import { writeServerLog } from './server-log.js'
-import { exactRouteKey, matchLaunchSubroute, matchSessionTitleRoute } from './server-routing.js'
+import { exactRouteKey, matchSessionTitleRoute } from './server-routing.js'
 
 const METRICS_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
 const SERVER_METRICS_FILE_PATTERN = /^server-\d{4}-\d{2}-\d{2}\.ndjson$/
@@ -158,13 +158,6 @@ const MAIN_PATTERN_ROUTES: readonly PatternRoute[] = [
     route: '/v1/active-run-contributions/:inputApplicationId',
     matches: (pathname) => pathname.startsWith('/v1/active-run-contributions/'),
   },
-  ...(['continuation', 'wrapper-started', 'child-started', 'event', 'exited'] as const).map(
-    (suffix) => ({
-      method: 'POST',
-      route: `/v1/internal/launches/:launchId/${suffix}`,
-      matches: (pathname: string) => matchLaunchSubroute('POST', pathname)?.suffix === suffix,
-    })
-  ),
 ]
 
 /** The main socket's parameterized routes, as `{method, route}` templates. */

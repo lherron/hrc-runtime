@@ -369,7 +369,7 @@ def validate_case_observations(id, observations, checks, status=None):
         require('abort-timeout', any(o.get('closed') is True and o.get('closeDurationMs', 999999) < 3000 for o in streams))
         for path in ('/v1/internal/hooks/ingest', *['/v1/internal/launches/p0/' + suffix for suffix in
                      ('continuation', 'wrapper-started', 'child-started', 'event', 'exited')]):
-            require('retired:' + path, any(o.get('status') == 410 for o in http('POST', path)))
+            require('retired:' + path, any(o.get('status') == 404 for o in http('POST', path)))
         require('unknown-route', any(o.get('status') == 404 and o.get('path') == '/v1/p0-unknown'
             for o in observations if isinstance(o, dict)))
         require('malformed-body', any(o.get('status') in (400, 422) and o.get('rawRequest') == '{'

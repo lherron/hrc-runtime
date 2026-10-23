@@ -131,7 +131,7 @@ barrel that keeps the historical import path.
   message state. Harness evidence reaches HRC only this way: the old hook, OTEL
   and launch-callback ingest was retired in T-08566 stage 1, and
   `/v1/internal/hooks/ingest` and `/v1/internal/launches/:launchId/*` answer
-  410 `legacy_launch_ingest_retired`.
+  unmatched `404 Not Found` (T-11567).
 - Other modules: capabilities, runtime hosting and runtime state, the
   lifecycle overlay, submission doors, turn ownership, live substrate,
   adoption root, observability.

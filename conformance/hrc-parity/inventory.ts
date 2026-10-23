@@ -157,13 +157,6 @@ const patterns: [string, string, string][] = [
   ['DELETE', '/v1/sessions/:hostSessionId/title', 'server-routing.ts'],
   ['GET', '/v1/runtimes/:runtimeId/seat', 'server-routing.ts'],
   ['GET', '/v1/active-run-contributions/:inputApplicationId', 'server-request-methods.ts'],
-  ...['continuation', 'wrapper-started', 'child-started', 'event', 'exited'].map(
-    (suffix): [string, string, string] => [
-      'POST',
-      `/v1/internal/launches/:launchId/${suffix}`,
-      'server-routing.ts',
-    ]
-  ),
 ]
 for (const [method, path, file] of patterns)
   add(
@@ -172,7 +165,7 @@ for (const [method, path, file] of patterns)
     `packages/hrc-server/src/${file}`,
     undefined,
     'T-11530',
-    { method, path, transport: 'public-unix', retired: path.includes('/internal/launches/') }
+    { method, path, transport: 'public-unix', retired: false }
   )
 for (const file of ['server-request-methods.ts', 'server-routing.ts', 'input-handlers.ts']) {
   add(

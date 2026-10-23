@@ -1,19 +1,6 @@
 /**
- * T-08566 stage-1 behavior reds: retire producer-less launch ingest without
- * disturbing unhandled spool endpoints, retained history, or broker projection.
- *
- * These tests deliberately drive the public Unix-socket HTTP surface and the
- * real spool reader. The Stop case has no launch row or launch artifact: the
- * legacy route currently accepts an unknown launch id and can terminalize an
- * accepted broker run, which is the defect this stage retires.
- *
- * Expected pre-implementation red signal:
- * - hook and launch callbacks do not return the named 410 response;
- * - an OTLP listener is still exposed and bound;
- * - retired spool entries are applied/deleted instead of quarantined.
- *
- * Positive controls remain green throughout: unhandled spool entries and
- * the committed broker-event projection path are intentionally not retired.
+ * Retired native ingest routes stay unmatched and cannot mutate broker runs.
+ * Historical spool quarantine and committed broker projection remain supported.
  */
 import { expect, test } from 'bun:test'
 import { createHash, randomUUID } from 'node:crypto'
@@ -30,8 +17,6 @@ import { CORRUPT_SPOOL_DIRNAME, readSpoolEntries, spoolCallback } from '../launc
 import { RUN_ID, headlessSequence, makeSeededFixture } from './broker-event-mapper-fixtures'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import { type ServerLogCapture, withServerLog } from './fixtures/server-log'
-
-const RETIRED_CODE = 'legacy_launch_ingest_retired'
 
 type SequenceSnapshot = {
   count: number
@@ -154,16 +139,13 @@ test('R1: unknown-launch Stop is refused without mutating an accepted broker run
         hookData: { hook_event_name: 'Stop' },
       })
     )
-    const body = (await response.json()) as { error?: { code?: string; route?: string } }
+    const body = await response.text()
 
     const observed = openHrcDatabase(fixture.dbPath)
     try {
-      expect(response.status).toBe(410)
-      expect(body).toMatchObject({
-        error: { code: RETIRED_CODE, route: '/v1/internal/hooks/ingest' },
-      })
-      expect(retiredWarnLines(log)).toHaveLength(1)
-      expect(retiredWarnLines(log)[0]).toContain('"route":"/v1/internal/hooks/ingest"')
+      expect(response.status).toBe(404)
+      expect(body).toBe('Not Found')
+      expect(retiredWarnLines(log)).toHaveLength(0)
       expect(durableSnapshot(observed)).toEqual(before)
       expect(observed.runs.getByRunId(runId)).toMatchObject({
         status: 'accepted',
@@ -214,7 +196,7 @@ const launchCallbackCases = [
 ] as const
 
 for (const callbackCase of launchCallbackCases) {
-  test(`R2: ${callbackCase.callback} callback returns the named 410 and writes nothing`, async () => {
+  test(`R2: ${callbackCase.callback} callback is unmatched and writes nothing`, async () => {
     const fixture = await createHrcTestFixture(`t08566-${callbackCase.callback}-`)
     const server = await createHrcServer(fixture.serverOpts({ otelPreferredPort: 0 } as never))
     const scopeRef = 'agent:smokey:project:hrc-runtime:task:T-08566'
@@ -245,10 +227,9 @@ for (const callbackCase of launchCallbackCases) {
 
       const observed = openHrcDatabase(fixture.dbPath)
       try {
-        expect(response.status).toBe(410)
-        expect(body).toMatchObject({ error: { code: RETIRED_CODE, route } })
-        expect(retiredWarnLines(log)).toHaveLength(1)
-        expect(retiredWarnLines(log)[0]).toContain(`"route":"${route}"`)
+        expect(response.status).toBe(404)
+        expect(body).toBe('Not Found')
+        expect(retiredWarnLines(log)).toHaveLength(0)
         expect(durableSnapshot(observed)).toEqual(before)
       } finally {
         observed.close()

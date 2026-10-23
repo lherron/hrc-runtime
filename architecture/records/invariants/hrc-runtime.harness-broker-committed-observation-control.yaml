@@ -157,7 +157,7 @@ predicate: >
   no launch-wrapper hook, OTEL, or launch-callback ingest: POST
   /v1/internal/hooks/ingest and
   /v1/internal/launches/:launchId/{wrapper-started,child-started,continuation,event,exited}
-  refuse with legacy_launch_ingest_retired and write nothing durable, no OTLP
+  are unmatched (404) and write nothing durable, no OTLP
   log listener is bound, and spooled entries for those routes are quarantined
   without being applied, so run, turn, and runtime state are never derived from
   those native payloads. The retired Codex Desktop registration route (POST

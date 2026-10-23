@@ -1,18 +1,4 @@
-/**
- * RED/GREEN tests for hrc-launch (T-00953 / T-00952)
- *
- * Tests the public surface of hrc-launch:
- *   - Spool write/read ordering (multiple callbacks, monotonic seq)
- *   - Callback failure triggers spool fallback
- *
- * T-08566 stage 1 retired the launch artifact and hook envelope helpers; their
- * round-trip tests went with them. Spool and callback client stay (Desktop hook).
- *
- * Pass conditions for Curly (T-00952):
- *   2. spoolCallback writes monotonically sequenced files, readSpoolEntries returns them in order
- *   4. postCallback returns false on connection failure (no throw)
- *   5. Failed callback triggers spool write when integrated
- */
+/** Historical spool reader/writer coverage; callback producers are retired. */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -20,8 +6,6 @@ import { join } from 'node:path'
 
 // These imports are the RED gates — they will fail until Curly implements the modules
 import { readSpoolEntries, spoolCallback } from '../launch/spool'
-
-import { postCallback } from '../launch/callback-client'
 
 let tmpDir: string
 
@@ -109,59 +93,6 @@ describe('Spool helpers', () => {
         .map((entry) => (entry.payload as { index: number }).index)
         .sort((left, right) => left - right)
     ).toEqual(Array.from({ length: 25 }, (_, i) => i))
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 4. Callback client — failure triggers spool fallback
-// ---------------------------------------------------------------------------
-describe('Callback client', () => {
-  it('returns false when socket does not exist (connection failure)', async () => {
-    // Use a non-existent socket path to simulate daemon unavailable
-    const result = await postCallback(
-      '/tmp/nonexistent-hrc-test.sock',
-      '/v1/internal/launches/l1/wrapper-started',
-      { pid: 12345 }
-    )
-    expect(result).toBe(false)
-  })
-
-  it('returns false for connection refused (no server listening)', async () => {
-    // Create a socket path that exists but has no listener
-    const fakeSock = join(tmpDir, 'no-listener.sock')
-    const result = await postCallback(fakeSock, '/v1/internal/hooks/ingest', { event: 'test' })
-    expect(result).toBe(false)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 5. Integration: callback failure should trigger spool write
-//    (This tests the intended composition, not a single module)
-// ---------------------------------------------------------------------------
-describe('Callback-to-spool fallback integration', () => {
-  it('spools payload when callback fails', async () => {
-    const spoolDir = join(tmpDir, 'fallback-spool')
-    const payload = {
-      endpoint: '/v1/internal/launches/launch-fb-1/exited',
-      body: { exitCode: 0, signal: null },
-    }
-
-    // Simulate: try callback, fail, then spool
-    const delivered = await postCallback(
-      '/tmp/nonexistent-hrc-test.sock',
-      payload.endpoint,
-      payload.body
-    )
-    expect(delivered).toBe(false)
-
-    // On failure, the wrapper would spool
-    const spoolPath = await spoolCallback(spoolDir, 'launch-fb-1', payload)
-    expect(spoolPath).toBeDefined()
-
-    // Verify spooled data is recoverable
-    const entries = await readSpoolEntries(spoolDir, 'launch-fb-1')
-    expect(entries.length).toBe(1)
-    expect((entries[0].payload as any).endpoint).toBe(payload.endpoint)
   })
 })
 

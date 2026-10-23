@@ -9277,7 +9277,7 @@
         "path": "packages/hrc-server/src/server-request-methods.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "dd1b49dbb2821abe1a42ea3ff036c439fbf43308bd8f6c505d9eeca7a216fab9"
+        "hash": "2e8399a1d194b4642aa802606fa6a0a8a50b42429596305f9ee44a2237dca536"
       },
       "caseIds": [
         "dispatch-source:server-request-methods.ts"
@@ -9294,7 +9294,7 @@
         "path": "packages/hrc-server/src/server-routing.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "bb432d8049152c6d533bf9a2de4192e35e7377808f33c087fc6610a93f0a2958"
+        "hash": "9c87857367dc2645f8df2e9f4096f516aa67e75a0c38b2d4616a9d082c54aadd"
       },
       "caseIds": [
         "dispatch-source:server-routing.ts"
@@ -10343,7 +10343,7 @@
         "path": "packages/hrc-server/src/server-routing.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "bb432d8049152c6d533bf9a2de4192e35e7377808f33c087fc6610a93f0a2958"
+        "hash": "9c87857367dc2645f8df2e9f4096f516aa67e75a0c38b2d4616a9d082c54aadd"
       },
       "caseIds": [
         "public:DELETE:/v1/sessions/:hostSessionId/title"
@@ -10363,7 +10363,7 @@
         "path": "packages/hrc-server/src/server-request-methods.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "dd1b49dbb2821abe1a42ea3ff036c439fbf43308bd8f6c505d9eeca7a216fab9"
+        "hash": "2e8399a1d194b4642aa802606fa6a0a8a50b42429596305f9ee44a2237dca536"
       },
       "caseIds": [
         "public:GET:/v1/active-run-contributions/:inputApplicationId"
@@ -10382,8 +10382,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 160,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 147,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/attach"
@@ -10407,8 +10407,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 66,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 59,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/broker-events"
@@ -10432,8 +10432,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 70,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 63,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/broker-events/follow"
@@ -10457,8 +10457,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 68,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 61,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/broker-events/query"
@@ -10482,8 +10482,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 75,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 68,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/broker-forensics"
@@ -10507,8 +10507,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 159,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 146,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/capture"
@@ -10532,8 +10532,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 57,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 50,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/events"
@@ -10557,8 +10557,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 63,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 56,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/events/bounded-stream"
@@ -10582,8 +10582,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 74,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 67,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/events/head"
@@ -10607,8 +10607,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 83,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 76,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/events/latest-by-session"
@@ -10632,8 +10632,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 62,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 55,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/events/page"
@@ -10657,8 +10657,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 59,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 52,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/events/tail"
@@ -10682,8 +10682,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 208,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 176,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/federation/bindings"
@@ -10707,8 +10707,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 209,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 177,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/federation/designations"
@@ -10732,8 +10732,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 201,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 169,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/federation/locate"
@@ -10757,8 +10757,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 203,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 171,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/federation/peers"
@@ -10782,8 +10782,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 204,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 172,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/federation/runtimes"
@@ -10807,8 +10807,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 199,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 167,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/health"
@@ -10872,8 +10872,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 211,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 179,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/placement/bindings"
@@ -10897,8 +10897,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 197,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 165,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/presentation/runtimes"
@@ -10941,8 +10941,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 193,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 161,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/runtime-diagnostics"
@@ -10986,7 +10986,7 @@
         "path": "packages/hrc-server/src/server-routing.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "bb432d8049152c6d533bf9a2de4192e35e7377808f33c087fc6610a93f0a2958"
+        "hash": "9c87857367dc2645f8df2e9f4096f516aa67e75a0c38b2d4616a9d082c54aadd"
       },
       "caseIds": [
         "public:GET:/v1/runtimes/:runtimeId/seat"
@@ -11005,8 +11005,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 213,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 181,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/runtimes/live-refs"
@@ -11030,8 +11030,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 85,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 78,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/server/subscribers"
@@ -11055,8 +11055,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 53,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 46,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/sessions"
@@ -11081,7 +11081,7 @@
         "path": "packages/hrc-server/src/server-request-methods.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "dd1b49dbb2821abe1a42ea3ff036c439fbf43308bd8f6c505d9eeca7a216fab9"
+        "hash": "2e8399a1d194b4642aa802606fa6a0a8a50b42429596305f9ee44a2237dca536"
       },
       "caseIds": [
         "public:GET:/v1/sessions/by-host/:hostSessionId"
@@ -11100,8 +11100,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 55,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 48,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/sessions/facets"
@@ -11125,8 +11125,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 47,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 40,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/sessions/get"
@@ -11150,8 +11150,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 49,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 42,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/sessions/metadata"
@@ -11175,8 +11175,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 54,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 47,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/sessions/page"
@@ -11200,8 +11200,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 200,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 168,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/status"
@@ -11225,8 +11225,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 164,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 151,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/surfaces"
@@ -11250,8 +11250,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 214,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 182,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/targets"
@@ -11275,8 +11275,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 215,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 183,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/targets/by-session-ref"
@@ -11300,8 +11300,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 79,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 72,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:GET:/v1/transcript-index/status"
@@ -11325,8 +11325,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 51,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 44,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:PATCH:/v1/sessions/metadata"
@@ -11350,8 +11350,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 155,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 142,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/active-run-contributions"
@@ -11375,8 +11375,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 103,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 90,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/broker-sessions/open"
@@ -11400,8 +11400,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 224,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 192,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/capture/by-selector"
@@ -11425,8 +11425,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 126,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 113,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/capture/recover"
@@ -11450,8 +11450,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 177,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 154,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/clear-context"
@@ -11475,8 +11475,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 101,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 88,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/command-runs/launch"
@@ -11500,8 +11500,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 239,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 207,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/declarations/resolve"
@@ -11525,8 +11525,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 206,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 174,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/federation/retire"
@@ -11550,8 +11550,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 157,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 144,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/in-flight-input"
@@ -11570,138 +11570,13 @@
       ]
     },
     {
-      "id": "public:POST:/v1/internal/hooks/ingest",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 191,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:POST:/v1/internal/hooks/ingest"
-      ],
-      "downstreamOwner": "T-11532",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/internal/hooks/ingest",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
-      "id": "public:POST:/v1/internal/launches/:launchId/child-started",
-      "kind": "public-pattern",
-      "source": {
-        "path": "packages/hrc-server/src/server-routing.ts",
-        "symbol": "<module>",
-        "line": 1,
-        "hash": "bb432d8049152c6d533bf9a2de4192e35e7377808f33c087fc6610a93f0a2958"
-      },
-      "caseIds": [
-        "public:POST:/v1/internal/launches/:launchId/child-started"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/internal/launches/:launchId/child-started",
-      "transport": "public-unix",
-      "retired": true
-    },
-    {
-      "id": "public:POST:/v1/internal/launches/:launchId/continuation",
-      "kind": "public-pattern",
-      "source": {
-        "path": "packages/hrc-server/src/server-routing.ts",
-        "symbol": "<module>",
-        "line": 1,
-        "hash": "bb432d8049152c6d533bf9a2de4192e35e7377808f33c087fc6610a93f0a2958"
-      },
-      "caseIds": [
-        "public:POST:/v1/internal/launches/:launchId/continuation"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/internal/launches/:launchId/continuation",
-      "transport": "public-unix",
-      "retired": true
-    },
-    {
-      "id": "public:POST:/v1/internal/launches/:launchId/event",
-      "kind": "public-pattern",
-      "source": {
-        "path": "packages/hrc-server/src/server-routing.ts",
-        "symbol": "<module>",
-        "line": 1,
-        "hash": "bb432d8049152c6d533bf9a2de4192e35e7377808f33c087fc6610a93f0a2958"
-      },
-      "caseIds": [
-        "public:POST:/v1/internal/launches/:launchId/event"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/internal/launches/:launchId/event",
-      "transport": "public-unix",
-      "retired": true
-    },
-    {
-      "id": "public:POST:/v1/internal/launches/:launchId/exited",
-      "kind": "public-pattern",
-      "source": {
-        "path": "packages/hrc-server/src/server-routing.ts",
-        "symbol": "<module>",
-        "line": 1,
-        "hash": "bb432d8049152c6d533bf9a2de4192e35e7377808f33c087fc6610a93f0a2958"
-      },
-      "caseIds": [
-        "public:POST:/v1/internal/launches/:launchId/exited"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/internal/launches/:launchId/exited",
-      "transport": "public-unix",
-      "retired": true
-    },
-    {
-      "id": "public:POST:/v1/internal/launches/:launchId/wrapper-started",
-      "kind": "public-pattern",
-      "source": {
-        "path": "packages/hrc-server/src/server-routing.ts",
-        "symbol": "<module>",
-        "line": 1,
-        "hash": "bb432d8049152c6d533bf9a2de4192e35e7377808f33c087fc6610a93f0a2958"
-      },
-      "caseIds": [
-        "public:POST:/v1/internal/launches/:launchId/wrapper-started"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/internal/launches/:launchId/wrapper-started",
-      "transport": "public-unix",
-      "retired": true
-    },
-    {
       "id": "public:POST:/v1/internal/mail/hint-decision",
       "kind": "public-exact",
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 237,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 205,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/internal/mail/hint-decision"
@@ -11725,8 +11600,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 235,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 203,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/internal/mail/stop-decision"
@@ -11750,8 +11625,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 175,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 152,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/interrupt"
@@ -11775,8 +11650,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 226,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 194,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/literal-input/by-selector"
@@ -11800,8 +11675,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 223,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 191,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/messages"
@@ -11825,8 +11700,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 219,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 187,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/messages/dm"
@@ -11850,8 +11725,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 217,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 185,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/messages/query"
@@ -11875,8 +11750,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 218,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 186,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/messages/trace"
@@ -11900,8 +11775,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 220,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 188,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/messages/turn-handoff"
@@ -11925,8 +11800,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 230,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 198,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/messages/wait"
@@ -11950,8 +11825,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 231,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 199,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/messages/watch"
@@ -11975,8 +11850,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 41,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 34,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/participants/attach"
@@ -12000,8 +11875,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 43,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 36,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/participants/register"
@@ -12025,8 +11900,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 241,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 209,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/placements/resolve"
@@ -12050,8 +11925,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 195,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 163,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/presentation/seats/read"
@@ -12075,8 +11950,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 242,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 210,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/previews/run"
@@ -12100,8 +11975,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 138,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 125,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runs/prepare-attached"
@@ -12125,8 +12000,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 134,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 121,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runs/reconcile-active"
@@ -12150,8 +12025,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 136,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 123,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runs/recover-unstarted"
@@ -12175,8 +12050,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 140,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 127,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runs/resume-attached"
@@ -12200,8 +12075,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 132,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 119,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runs/sweep-zombies"
@@ -12225,8 +12100,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 105,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 92,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runtimes/attach"
@@ -12250,8 +12125,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 120,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 107,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runtimes/broker/inspect"
@@ -12275,8 +12150,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 124,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 111,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runtimes/capture/release"
@@ -12300,8 +12175,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 122,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 109,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runtimes/capture/status"
@@ -12325,8 +12200,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 97,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 84,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runtimes/ensure"
@@ -12350,8 +12225,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 118,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 105,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runtimes/inspect"
@@ -12375,8 +12250,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 129,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 116,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runtimes/prune"
@@ -12400,8 +12275,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 100,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 87,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runtimes/restart-self"
@@ -12425,8 +12300,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 99,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 86,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runtimes/start"
@@ -12450,8 +12325,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 128,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 115,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/runtimes/sweep"
@@ -12475,8 +12350,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 91,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 82,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/server/lifecycle"
@@ -12500,8 +12375,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 72,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 65,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/server/subscribers"
@@ -12525,8 +12400,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 87,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 80,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/server/subscribers/ack"
@@ -12550,8 +12425,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 130,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 117,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/server/tmux/kill-broker-leases"
@@ -12576,7 +12451,7 @@
         "path": "packages/hrc-server/src/server-routing.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "bb432d8049152c6d533bf9a2de4192e35e7377808f33c087fc6610a93f0a2958"
+        "hash": "9c87857367dc2645f8df2e9f4096f516aa67e75a0c38b2d4616a9d082c54aadd"
       },
       "caseIds": [
         "public:POST:/v1/sessions/:hostSessionId/title"
@@ -12595,8 +12470,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 182,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 157,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/sessions/drop-continuation"
@@ -12620,8 +12495,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 45,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 38,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/sessions/resolve"
@@ -12645,8 +12520,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 180,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 155,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/sessions/restart"
@@ -12670,8 +12545,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 186,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 159,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/sessions/resume-continuation"
@@ -12695,8 +12570,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 145,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 132,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/submissions/enqueue"
@@ -12720,8 +12595,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 147,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 134,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/submissions/invoke"
@@ -12745,8 +12620,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 149,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 136,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/submissions/preempt"
@@ -12770,8 +12645,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 151,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 138,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/submissions/preempt/admission"
@@ -12795,8 +12670,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 143,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 130,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/submissions/steer"
@@ -12820,8 +12695,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 153,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 140,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/submissions/withdraw"
@@ -12845,8 +12720,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 161,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 148,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/surfaces/bind"
@@ -12870,8 +12745,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 162,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 149,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/surfaces/unbind"
@@ -12895,8 +12770,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 222,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 190,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/targets/ensure"
@@ -12920,8 +12795,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 176,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 153,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/terminate"
@@ -12945,8 +12820,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 81,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 74,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/transcript-index/rebuild"
@@ -12970,8 +12845,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 77,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 70,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/transcript-search"
@@ -12995,8 +12870,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 142,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 129,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/turns"
@@ -13020,8 +12895,8 @@
       "source": {
         "path": "packages/hrc-server/src/server-exact-routes.ts",
         "symbol": "buildExactRouteHandlers",
-        "line": 228,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
+        "line": 196,
+        "hash": "05fb367472ddcc401157d74280c98dbb2c8cf852ed5574abca2a55774a23f9e4"
       },
       "caseIds": [
         "public:POST:/v1/turns/by-selector"
@@ -33452,23 +33327,6 @@
       "hash": "1d5f8b4762b682509450269146e0b7f2b329a1a97b6ae199fa855262a5467a3c"
     },
     {
-      "id": "source:packages/hrc-server/src/launch/callback-client.ts",
-      "kind": "source-coverage-fence",
-      "source": {
-        "path": "packages/hrc-server/src/launch/callback-client.ts",
-        "symbol": "<module>",
-        "line": 1,
-        "hash": "5df53cf74294c782cd40b8df369598dac1e908ff1886f38c132d4388975451f0"
-      },
-      "caseIds": [
-        "source:packages/hrc-server/src/launch/callback-client.ts"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "hash": "5df53cf74294c782cd40b8df369598dac1e908ff1886f38c132d4388975451f0"
-    },
-    {
       "id": "source:packages/hrc-server/src/launch/env.ts",
       "kind": "source-coverage-fence",
       "source": {
@@ -33492,7 +33350,7 @@
         "path": "packages/hrc-server/src/launch/index.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "88f62d678103736f7d2379910d2b1c5bfeaed2a252c4b14b509bc59d1f7799fd"
+        "hash": "0a80e98e4938bc325d64a145cfa38171d1f4552233546c086a9dae8dfabed4ef"
       },
       "caseIds": [
         "source:packages/hrc-server/src/launch/index.ts"
@@ -33500,7 +33358,7 @@
       "downstreamOwner": "T-11530",
       "coverage": "GAP",
       "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "hash": "88f62d678103736f7d2379910d2b1c5bfeaed2a252c4b14b509bc59d1f7799fd"
+      "hash": "0a80e98e4938bc325d64a145cfa38171d1f4552233546c086a9dae8dfabed4ef"
     },
     {
       "id": "source:packages/hrc-server/src/launch/spool.ts",
@@ -34988,7 +34846,7 @@
         "path": "packages/hrc-server/src/session-title-helpers.ts",
         "symbol": "<module>",
         "line": 1,
-        "hash": "0de6ed44a93828d6c2371ce90a9aae0657cd2790786559dff253f2acbce26016"
+        "hash": "4690a434059789ff0e8343ccd76bd49fddb8449a24bfd139ef14e282c5a7d7cd"
       },
       "caseIds": [
         "source:packages/hrc-server/src/session-title-helpers.ts"
@@ -34996,7 +34854,7 @@
       "downstreamOwner": "T-11530",
       "coverage": "GAP",
       "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "hash": "0de6ed44a93828d6c2371ce90a9aae0657cd2790786559dff253f2acbce26016"
+      "hash": "4690a434059789ff0e8343ccd76bd49fddb8449a24bfd139ef14e282c5a7d7cd"
     },
     {
       "id": "source:packages/hrc-server/src/startup-reconcile.ts",
@@ -51973,16 +51831,16 @@
       "requirement": "Startup/trigger, one executor, recovery, shutdown and durable effects"
     },
     {
-      "id": "timer:packages/hrc-server/src/request-metrics.ts:7828",
+      "id": "timer:packages/hrc-server/src/request-metrics.ts:10648",
       "kind": "job-timer",
       "source": {
         "path": "packages/hrc-server/src/request-metrics.ts",
         "symbol": "ServerMetricsWriter.enqueue",
-        "line": 235,
-        "hash": "ef297b8debaa7c0034583b449182121bc5385ad395702622ff753517a6a5baa4"
+        "line": 311,
+        "hash": "ee5861478cb22e7434e417475a971bb137e514026f43f2c8dea06b5daa366464"
       },
       "caseIds": [
-        "timer:packages/hrc-server/src/request-metrics.ts:7828"
+        "timer:packages/hrc-server/src/request-metrics.ts:10648"
       ],
       "downstreamOwner": "T-11530",
       "coverage": "GAP",

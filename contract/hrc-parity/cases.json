@@ -3327,67 +3327,6 @@
       "state": "GAP",
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
     },
-    "public:POST:/v1/internal/hooks/ingest": {
-      "downstreamOwner": "T-11532",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/internal/launches/:launchId/child-started": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "negative-control",
-        "durable-effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/internal/launches/:launchId/continuation": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "negative-control",
-        "durable-effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/internal/launches/:launchId/event": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "negative-control",
-        "durable-effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/internal/launches/:launchId/exited": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "negative-control",
-        "durable-effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/internal/launches/:launchId/wrapper-started": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "negative-control",
-        "durable-effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
     "public:POST:/v1/internal/mail/hint-decision": {
       "downstreamOwner": "T-11531",
       "variants": [
@@ -21135,7 +21074,7 @@
       "state": "GAP",
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
     },
-    "timer:packages/hrc-server/src/request-metrics.ts:7828": {
+    "timer:packages/hrc-server/src/request-metrics.ts:10648": {
       "downstreamOwner": "T-11530",
       "variants": [
         "positive",
