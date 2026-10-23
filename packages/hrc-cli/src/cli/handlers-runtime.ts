@@ -278,12 +278,6 @@ export async function cmdShow(args: string[]): Promise<void> {
     return
   }
 
-  if (target.kind === 'bridge') {
-    // resolveShowTarget never expects bridge, so this is unreachable in practice;
-    // narrow defensively rather than mis-render.
-    fatal(`selector "${selectorArg}" resolved to a bridge, which 'hrc show' does not render`)
-  }
-
   // message / message-seq
   await renderShowMessage(client, target, jsonOutput)
 }

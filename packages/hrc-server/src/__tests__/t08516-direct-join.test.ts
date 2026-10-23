@@ -54,9 +54,7 @@ describe('T-08516 direct protocol join', () => {
   })
 
   async function start(options: Partial<HrcServerOptions> = {}): Promise<void> {
-    server = await createHrcServer(
-      fixture.serverOpts({ otelListenerEnabled: false, registrationClasses: [], ...options })
-    )
+    server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false, ...options }))
   }
 
   function join(body: Record<string, unknown>): Promise<Response> {
@@ -444,9 +442,7 @@ describe('T-08516 direct protocol join', () => {
     const home = await createHrcTestFixture('t08516-direct-join-home-')
     let homeServer: HrcServer | undefined
     try {
-      homeServer = await createHrcServer(
-        home.serverOpts({ otelListenerEnabled: false, registrationClasses: [] })
-      )
+      homeServer = await createHrcServer(home.serverOpts({ otelListenerEnabled: false }))
       const request = {
         registrationMode: 'direct',
         requestedSessionRef: OTHER_SCOPE,

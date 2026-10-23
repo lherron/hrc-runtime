@@ -35,20 +35,7 @@ export {
   parseTerminateRuntimeRequest,
   parseWithdrawSubmissionRequest,
 } from './parsers/runtime.js'
-export type {
-  BridgeSelector,
-  BridgeTargetRequest,
-  DeliverTextRequest,
-} from './parsers/bridges.js'
-export {
-  parseBindSurfaceRequest,
-  parseBridgeSelector,
-  parseBridgeTargetRequest,
-  parseCloseBridgeRequest,
-  parseDeliverBridgeRequest,
-  parseDeliverTextRequest,
-  parseUnbindSurfaceRequest,
-} from './parsers/bridges.js'
+export { parseBindSurfaceRequest, parseUnbindSurfaceRequest } from './parsers/surfaces.js'
 export { parseLaunchCommandScopedRunRequest } from './parsers/command-runs.js'
 export {
   parsePruneRuntimesRequest,

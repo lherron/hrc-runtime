@@ -48,7 +48,7 @@ FULL adds:
 4. `hrc runtime sweep --dry-run`
 6. `hrc attach --dry-run`
 7. `hrc admin surface bind`, `unbind`, `list`
-8. `hrc admin bridge target`, `deliver-text`, `deliver`, `list`, `close`
+8. (retired) `hrc admin bridge` — the local-bridge routes were removed in T-11542
 9. `hrc server tmux status`
 10. `hrc server tmux kill --yes` by code-read only on the shared daemon; execute only on an isolated daemon
 11. `RECONCILE-ACROSS-RESTART`

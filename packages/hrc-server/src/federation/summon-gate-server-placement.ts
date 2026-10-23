@@ -6,12 +6,10 @@
 import type { ProvisioningScalars } from 'agent-scope'
 import { formatCanonicalScopeRef } from 'hrc-core'
 import type { FederationRemoteEstablishResult, SummonIntent } from 'hrc-core'
-import type { PlacementBinding } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
 import { withScopeSummonLock } from './authority-lock.js'
 import { establishLocalPlacement } from './establishment.js'
-import { createPlacementPolicyResolver } from './placement-policy.js'
 import { RegistryRefusedError } from './registry-client.js'
 import { type SummonGateServerContext, gateDepsFor } from './summon-gate-server-context.js'
 import {
@@ -19,7 +17,6 @@ import {
   type SummonCapabilityHint,
   type SummonGateResult,
   type SummonPath,
-  resolveDeclaredPlacementHome,
   resolvePlacementDisposition,
 } from './summon-gate.js'
 
@@ -65,195 +62,6 @@ export type SummonAuthorityRequest = (
 }
 
 export type SummonAuthorityResult = SummonGateResult
-
-export type ExternalRegistrationPlacementResult =
-  | { outcome: 'pending'; reason: string; detail: string }
-  | { outcome: 'canonical'; binding: PlacementBinding }
-  | {
-      outcome: 'noncanonical'
-      cause: 'placement_refused' | 'binding_conflict'
-      detail: string
-      homeNodeId?: string | undefined
-      binding?: PlacementBinding | undefined
-    }
-
-/**
- * Best-effort issuance-time policy projection. It deliberately does not touch
- * the registry or return a refusal: placement never gates EPR grant issuance.
- */
-export async function externalRegistrationPlacementAdvisory(
-  server: SummonGateServerContext,
-  scopeRef: string
-): Promise<string | undefined> {
-  const config = server.federationConfig ?? server.options?.federationConfig
-  if (config === undefined || !config.sourceExists || config.gate.mode === 'off') return undefined
-
-  try {
-    const policyFor =
-      server.policyFor ?? createPlacementPolicyResolver(server.placementPolicyOptions)
-    const designated = resolveDeclaredPlacementHome(
-      scopeRef,
-      await policyFor(scopeRef),
-      config.nodeId
-    )
-    if (designated === undefined || designated.homeNodeId === config.nodeId) return undefined
-    return `policy designates ${designated.homeNodeId} as home; this registration will be noncanonical on ${config.nodeId}`
-  } catch {
-    // Missing/unreadable policy is reconciled visibly after local mint. An
-    // optional advisory must never become an issuance refusal.
-    return undefined
-  }
-}
-
-/**
- * Post-mint EPR placement reconciliation.
- *
- * The participant is already materialized, so this deliberately reuses the
- * normal placement decision without its future-launch capability observation.
- * Authority still goes through the exact registry-first establishment writer.
- */
-export async function establishExternalRegistrationPlacement(
-  server: SummonGateServerContext,
-  request: { scopeRef: string; registrationId: string; classId: string }
-): Promise<ExternalRegistrationPlacementResult> {
-  const deps = gateDepsFor(server)
-  if (deps === undefined) {
-    return {
-      outcome: 'pending',
-      reason: 'federation_not_configured',
-      detail: 'collective placement is not enabled on this node',
-    }
-  }
-
-  return await withScopeSummonLock(server as object, request.scopeRef, async () => {
-    const placement = await resolvePlacementDisposition({
-      scopeRef: request.scopeRef,
-      path: 'resolve-session',
-      // Registration is mechanism-born, not an operator declaration that this
-      // node should own the scope. Resolve pins/task defaults/default home.
-      intent: 'implicit',
-      origin: 'local',
-      // Local mint already proved materialization. Capability probing here
-      // would incorrectly ask whether HRC can launch the external process.
-      // This bounded controller owns cause-change and terminal logging. Letting
-      // the generic gate log here would emit a second WARN on every retry tick.
-      deps: { ...deps, capabilityFor: undefined, log: undefined },
-    })
-
-    if (placement === undefined) {
-      return {
-        outcome: 'noncanonical',
-        cause: 'placement_refused',
-        detail: `placement did not resolve for ${request.scopeRef}`,
-      }
-    }
-    if (placement.outcome === 'local-bound') {
-      try {
-        const declared = resolveDeclaredPlacementHome(
-          request.scopeRef,
-          await deps.policyFor(request.scopeRef),
-          deps.localNodeId
-        )
-        if (declared !== undefined && declared.homeNodeId !== deps.localNodeId) {
-          return {
-            outcome: 'noncanonical',
-            cause: 'placement_refused',
-            detail: `placement policy designates ${declared.homeNodeId} for ${request.scopeRef}`,
-            homeNodeId: declared.homeNodeId,
-            binding: placement.binding,
-          }
-        }
-      } catch (error) {
-        return {
-          outcome: 'pending',
-          reason: 'policy-unavailable',
-          detail: error instanceof Error ? error.message : String(error),
-        }
-      }
-      if (placement.source === 'registry') deps.ledger.installActive(placement.binding)
-      return { outcome: 'canonical', binding: placement.binding }
-    }
-    if (placement.outcome === 'remote-bound') {
-      return {
-        outcome: 'noncanonical',
-        cause: 'binding_conflict',
-        detail: `${request.scopeRef} is already bound on ${placement.binding.homeNodeId}`,
-        homeNodeId: placement.binding.homeNodeId,
-        binding: placement.binding,
-      }
-    }
-    if (placement.outcome === 'remote-establish') {
-      return {
-        outcome: 'noncanonical',
-        cause: 'placement_refused',
-        detail: `placement policy designates ${placement.candidateHomeNodeId} for ${request.scopeRef}`,
-        homeNodeId: placement.candidateHomeNodeId,
-      }
-    }
-    if (placement.outcome === 'refuse') {
-      if (placement.retryable) {
-        return {
-          outcome: 'pending',
-          reason: placement.reason,
-          detail: placement.diagnostic,
-        }
-      }
-      return {
-        outcome: 'noncanonical',
-        cause: 'placement_refused',
-        detail: placement.diagnostic,
-        ...(placement.homeNodeId === undefined ? {} : { homeNodeId: placement.homeNodeId }),
-      }
-    }
-    if (placement.kind !== 'virgin-policy') {
-      return {
-        outcome: 'noncanonical',
-        cause: 'placement_refused',
-        detail: `placement selected unsupported ${placement.kind} authority for external registration ${request.registrationId}`,
-        homeNodeId: placement.homeNodeId,
-      }
-    }
-
-    try {
-      const established = await establishLocalPlacement({
-        registry: deps.registry,
-        ledger: deps.ledger,
-        request: {
-          scopeRef: request.scopeRef,
-          homeNodeId: deps.localNodeId,
-          ...(placement.birthDesignation === undefined
-            ? {}
-            : { birthDesignation: placement.birthDesignation }),
-          now: new Date().toISOString(),
-        },
-      })
-      if (established.outcome === 'designation-mismatch') {
-        return {
-          outcome: 'noncanonical',
-          cause: 'placement_refused',
-          detail: `${request.scopeRef} is designated to be born on ${established.designation.homeNodeId} (T-07655); this node did not take the birth`,
-          homeNodeId: established.designation.homeNodeId,
-        }
-      }
-      if (established.outcome === 'bound-elsewhere') {
-        return {
-          outcome: 'noncanonical',
-          cause: 'binding_conflict',
-          detail: `${request.scopeRef} became bound on ${established.binding.homeNodeId}`,
-          homeNodeId: established.binding.homeNodeId,
-          binding: established.binding,
-        }
-      }
-      return { outcome: 'canonical', binding: established.binding }
-    } catch (error) {
-      return {
-        outcome: 'pending',
-        reason: error instanceof RegistryRefusedError ? 'registry-refused' : 'establishment_failed',
-        detail: error instanceof Error ? error.message : String(error),
-      }
-    }
-  })
-}
 
 /** Decision-only server seam shared by message prechecks and summon execution. */
 export async function resolvePlacementOnServer(

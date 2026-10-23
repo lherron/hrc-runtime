@@ -391,7 +391,6 @@ for (const [id, path, task] of [
   ],
   ['server-publication-cursor', 'packages/hrc-server/src/wrkq/server-project-events.ts', 'T-11531'],
   ['lifecycle-credentials', 'packages/hrc-server/src/index.ts', 'T-11529'],
-  ['registration-grants', 'packages/hrc-server/src/external-registration-rendezvous.ts', 'T-11529'],
   [
     'broker-leases-raw-provider-artifacts',
     'packages/hrc-server/src/broker/controller.ts',
@@ -473,10 +472,6 @@ for (const object of schema.objects) {
       observedSchemaHash: sha(JSON.stringify(object)),
     }
   )
-}
-for (const item of items) {
-  if (item.id === 'public:POST:/v1/bridges/local-target')
-    item.aliasOf = 'public:POST:/v1/bridges/target'
 }
 items.sort((a, b) => a.id.localeCompare(b.id))
 process.stdout.write(

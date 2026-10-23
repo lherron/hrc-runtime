@@ -26,14 +26,11 @@ export {
   resolveImplicitScopeHome,
 } from './summon-gate-server-preflight.js'
 export type {
-  ExternalRegistrationPlacementResult,
   SummonAuthorityRequest,
   SummonAuthorityResult,
 } from './summon-gate-server-placement.js'
 export {
-  establishExternalRegistrationPlacement,
   establishRemotePolicyAuthority,
-  externalRegistrationPlacementAdvisory,
   resolvePlacementOnServer,
 } from './summon-gate-server-placement.js'
 export type {

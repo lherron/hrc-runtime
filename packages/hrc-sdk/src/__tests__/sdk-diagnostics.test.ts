@@ -129,13 +129,13 @@ describe('Phase 6 diagnostics round-trip', () => {
       commandSessions: true,
       literalInput: true,
       surfaceBindings: true,
-      legacyLocalBridges: ['legacy-agentchat'],
+      legacyLocalBridges: [],
     })
     expect(result.capabilities.bridgeDelivery).toEqual({
-      actualPtyInjection: true,
-      enter: true,
-      oobSuffix: true,
-      freshnessFence: true,
+      actualPtyInjection: false,
+      enter: false,
+      oobSuffix: false,
+      freshnessFence: false,
     })
     expect(typeof result.capabilities.backend.tmux.available).toBe('boolean')
     if (result.capabilities.backend.tmux.available) {

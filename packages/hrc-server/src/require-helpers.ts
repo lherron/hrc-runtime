@@ -6,7 +6,6 @@ import {
 } from 'hrc-core'
 import type {
   HrcLifecycleEvent,
-  HrcLocalBridgeRecord,
   HrcRunRecord,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -50,17 +49,6 @@ export function requireContinuity(db: HrcDatabase, session: HrcSessionRecord) {
     )
   }
   return continuity
-}
-
-export function requireBridge(db: HrcDatabase, bridgeId: string): HrcLocalBridgeRecord {
-  const bridge = db.localBridges.findById(bridgeId)
-  if (!bridge) {
-    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_BRIDGE, `unknown bridge "${bridgeId}"`, {
-      bridgeId,
-    })
-  }
-
-  return bridge
 }
 
 export function requireRuntime(db: HrcDatabase, runtimeId: string): HrcRuntimeSnapshot {

@@ -22,10 +22,8 @@ import type {
   TurnPolicy,
 } from 'spaces-harness-broker-protocol'
 import type { BirthTimeline } from './birth-timeline.js'
-import type { ExternalParticipantClientFactory } from './external-registration-rendezvous.js'
 import type { FederationConfig } from './federation/federation-config.js'
 import type { ScopeReadTimeouts } from './federation/scope-read-routing.js'
-import type { RegistrationClassConfig } from './registration-classes-config.js'
 import type { ServerLifecycleExecutor } from './server-lifecycle-controller.js'
 import type { ServerShutdownAttribution } from './server-lifecycle.js'
 import type { WrkqLedgerClient } from './wrkq/ledger-client.js'
@@ -488,22 +486,6 @@ export type HrcServerOptions = {
    */
   brokerDurableIpcEnabled?: boolean | undefined
   commandRunTargets?: Record<string, HrcCommandLaunchSpec> | undefined
-  /** Operator-ratified external-participant birth templates. No API mutates these. */
-  registrationClasses?: readonly RegistrationClassConfig[] | undefined
-  /** Test/embedded seam for the daemon-owned EPR Unix client. */
-  externalParticipantClientFactory?: ExternalParticipantClientFactory | undefined
-  /** Test/embedded EPR retry overrides; production backs off from 100ms to a 2s cap. */
-  externalParticipantRendezvousRetryMs?: number | undefined
-  externalParticipantRendezvousRetryMaxMs?: number | undefined
-  externalParticipantRendezvousRetryBudget?: number | undefined
-  /** Test/embedded retry overrides for post-mint collective establishment. */
-  externalParticipantCollectiveEstablishmentRetryMs?: number | undefined
-  externalParticipantCollectiveEstablishmentRetryBudget?: number | undefined
-  /** Test/embedded EPR liveness and linger overrides. */
-  externalParticipantProbeIntervalMs?: number | undefined
-  externalParticipantProbeDeadlineMs?: number | undefined
-  externalParticipantProbeFailureThreshold?: number | undefined
-  externalParticipantLingerMs?: number | undefined
 }
 
 export type HrcServer = {

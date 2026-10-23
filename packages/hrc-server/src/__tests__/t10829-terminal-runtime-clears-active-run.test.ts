@@ -1,17 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { join } from 'node:path'
 
 import { HrcErrorCode } from 'hrc-core'
 import type { HrcSessionRecord } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
-import type { ExternalRegistrationGrant, HrcDatabase } from 'hrc-store-sqlite'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { BrokerControllerError } from '../broker/controller/errors.js'
-import {
-  markExternalParticipantDetached,
-  performExternalRegistrationHello,
-} from '../external-registration-rendezvous.js'
-import type { ExternalParticipantRpcClient } from '../external-registration-rendezvous.js'
 import { HrcServerInstance, createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
 import {
@@ -19,7 +13,6 @@ import {
   type DirectJoinResult,
   registerDirectParticipant,
 } from '../participant-host-registration.js'
-import { hashRegistrationCredential } from '../registration-handlers.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import { withServerLog } from './fixtures/server-log.js'
 
@@ -140,29 +133,6 @@ describe('T-10829 gate 1: broker crash on a non-participant runtime', () => {
   })
 })
 
-const REGISTRATION_ID = 'registration-t10829'
-const CREDENTIAL = 'credential-t10829'
-const EPR_SCOPE = 'agent:arris:project:arris:task:reg-t10829'
-
-class HelloClient implements ExternalParticipantRpcClient {
-  async request(method: string, params: Record<string, unknown>): Promise<unknown> {
-    if (method === 'epr.hello') {
-      return {
-        protocolVersion: 'epr/1',
-        registrationId: params['registrationId'],
-        credential: CREDENTIAL,
-        capabilities: { events: true, turns: false, continuations: true },
-        participantInfo: { name: 'arris' },
-      }
-    }
-    if (method === 'epr.established') return { ready: true, currentSeq: 0 }
-    throw new Error(`unexpected ${method}`)
-  }
-
-  async notify(): Promise<void> {}
-  async close(): Promise<void> {}
-}
-
 describe('T-10829 gate 2a: operator evict of an external participant', () => {
   let fixture: HrcServerTestFixture
   let server: HrcServer
@@ -178,29 +148,31 @@ describe('T-10829 gate 2a: operator evict of an external participant', () => {
   })
 
   test('POST /v1/terminate evicts, fails the run, drops the pointer and leaves the projection', async () => {
-    if (!(server instanceof HrcServerInstance)) throw new Error('expected a real HRC server')
-    const internal = server
-    const db = (server as HrcServerInstance).db
-    const now = fixture.now()
-    const grant: ExternalRegistrationGrant = {
-      registrationId: REGISTRATION_ID,
-      classId: 'arris-agent',
-      derivedScope: EPR_SCOPE,
-      socketPath: join(fixture.tmpDir, 'participant.sock'),
-      credentialHash: hashRegistrationCredential(CREDENTIAL),
-      expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      consumed: false,
-      turnsAllowed: false,
-      provisioner: {},
-      createdAt: now,
-    }
-    expect(db.externalRegistrationGrants.issueWithinCapacity(grant, 1, now).outcome).toBe('issued')
-    const delivery = (
-      await performExternalRegistrationHello(internal, REGISTRATION_ID, new HelloClient())
-    ).delivery
-    const linked = db.externalRegistrationGrants.getByRegistrationId(REGISTRATION_ID)!
-    const runtime = db.runtimes.getByRuntimeId(delivery.runtimeId)!
+    const scopeRef = 'agent:arris:project:arris:task:T-10829-evict'
+    const hostSessionId = 'hsid-t10829-evict'
     const runId = 'run-t10829-evict'
+    const db = (server as HrcServerInstance).db
+    fixture.seedSession(hostSessionId, scopeRef)
+    const now = fixture.now()
+    // A participant-owned runtime, as `/v1/participants/register` leaves it:
+    // `lifecycleOwner: 'external'` is the only thing eviction keys on.
+    const runtime = db.runtimes.insert({
+      runtimeId: 'rt-t10829-evict',
+      hostSessionId,
+      scopeRef,
+      laneRef: 'default',
+      generation: 1,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      controllerKind: 'harness-broker',
+      status: 'ready',
+      supportsInflightInput: true,
+      adopted: false,
+      runtimeStateJson: { status: 'ready', lifecycleOwner: 'external' },
+      createdAt: now,
+      updatedAt: now,
+    } as never)
     insertOpenRun(db, {
       runId,
       runtimeId: runtime.runtimeId,
@@ -209,9 +181,6 @@ describe('T-10829 gate 2a: operator evict of an external participant', () => {
       laneRef: runtime.laneRef,
       generation: runtime.generation,
     })
-    markExternalParticipantDetached(internal, linked, 600_000, { reason: 'socket_closed' })
-    // Detached is a linger state: the turn survives it, so does the pointer.
-    expect(db.runtimes.getByRuntimeId(runtime.runtimeId)?.activeRunId).toBe(runId)
     expect(await projectedIds(fixture)).toContain(runtime.hostSessionId)
 
     const response = await fixture.postJson('/v1/terminate', { runtimeId: runtime.runtimeId })

@@ -85,17 +85,6 @@ export async function reconcileStartupState(
   tmux: ServerTmuxManager,
   options: { runtimeRoot: string }
 ): Promise<void> {
-  // T-07155: an urgent-delivery contribution still `attempting` means the daemon
-  // died mid-RPC. It cannot be retried — the harness may or may not have applied
-  // it — so seal it `ambiguous`. A later retry with the same idempotency key then
-  // returns the truth instead of injecting the order a second time.
-  const sealedOrphanedSteers = db.steerContributions.sealOrphanedAsAmbiguous(timestamp())
-  if (sealedOrphanedSteers > 0) {
-    writeServerLog('WARN', 'steer_contribution.orphaned_sealed_ambiguous', {
-      count: sealedOrphanedSteers,
-    })
-  }
-
   // T-10829: rows written before every terminal transition settled its runs.
   reconcileTerminalRuntimeActiveRuns(db, timestamp())
 

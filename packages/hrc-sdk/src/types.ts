@@ -94,9 +94,6 @@ export type {
   ClearContextResponse,
   RestartSessionRequest,
   RestartSessionResponse,
-  CloseBridgeRequest,
-  DeliverBridgeRequest,
-  DeliverBridgeResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
   ExecutionFormatSelector,
@@ -146,13 +143,6 @@ export type {
   EventsHeadResponse,
   SubscriberDeclareRequest,
   SubscriberDeclareResponse,
-  HrcBridgeDeliverTextRequest,
-  HrcBridgeDeliverTextResponse,
-  HrcBridgeTargetSelector,
-  HrcBridgeTargetRequest,
-  HrcBridgeTargetResponse,
-  RegisterBridgeTargetRequest,
-  RegisterBridgeTargetResponse,
   PrepareAttachedRunRequest,
   PrepareAttachedRunResponse,
   ResolveSessionRequest,
@@ -171,7 +161,6 @@ export type {
   InspectRuntimeRequest,
   InspectRuntimeResponse,
   KillBrokerTmuxLeasesResponse,
-  ListRegistrationGcCandidatesResponse,
   LaunchCommandScopedRunBinding,
   LaunchCommandScopedRunRequest,
   LaunchCommandScopedRunResponse,
@@ -181,8 +170,6 @@ export type {
   PreemptSubmissionRequest,
   PruneRuntimesRequest,
   PruneRuntimesResponse,
-  RetireRegistrationScopesRequest,
-  RetireRegistrationScopesResponse,
   RuntimeActionResponse,
   StatusResponse,
   StatusSummaryResponse,
@@ -371,10 +358,6 @@ export type AttachDescriptor = {
 }
 
 export type SurfaceListFilter = {
-  runtimeId: string
-}
-
-export type BridgeListFilter = {
   runtimeId: string
 }
 

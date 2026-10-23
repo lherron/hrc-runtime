@@ -47,7 +47,6 @@
         "missing-field",
         "wrong-method",
         "unknown-route",
-        "aliases",
         "retired-callbacks"
       ],
       "requiredInP0": true
@@ -2784,29 +2783,7 @@
       "state": "GAP",
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
     },
-    "public:GET:/v1/admin/registrations/gc": {
-      "downstreamOwner": "T-11529",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
     "public:GET:/v1/attach": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:GET:/v1/bridges": {
       "downstreamOwner": "T-11530",
       "variants": [
         "positive",
@@ -3262,72 +3239,6 @@
       "state": "GAP",
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
     },
-    "public:POST:/v1/admin/registrations/gc": {
-      "downstreamOwner": "T-11529",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/bridges/close": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/bridges/deliver": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/bridges/deliver-text": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/bridges/local-target": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/bridges/target": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
     "public:POST:/v1/broker-sessions/open": {
       "downstreamOwner": "T-11530",
       "variants": [
@@ -3644,17 +3555,6 @@
     },
     "public:POST:/v1/previews/run": {
       "downstreamOwner": "T-11533",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/registrations": {
-      "downstreamOwner": "T-11529",
       "variants": [
         "positive",
         "malformed",

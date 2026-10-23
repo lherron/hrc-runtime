@@ -186,7 +186,6 @@ export async function rotateSessionContext(
     payload: {
       nextHostSessionId: nextSession.hostSessionId,
       relaunch: options.relaunch,
-      bridgesClosed: invalidated.bridgesClosed,
       surfacesUnbound: invalidated.surfacesUnbound,
       runtimesTerminated: invalidated.runtimesTerminated,
       dropContinuation: options.dropContinuation === true,
@@ -242,7 +241,6 @@ export async function invalidateHostContext(
   hostSessionId: string,
   reason: string
 ): Promise<{
-  bridgesClosed: number
   surfacesUnbound: number
   runtimesTerminated: number
 }> {
@@ -281,14 +279,6 @@ export async function invalidateHostContext(
     runtimesTerminated += 1
   }
 
-  let bridgesClosed = 0
-  for (const bridge of this.db.localBridges.listActive()) {
-    if (bridge.hostSessionId === hostSessionId) {
-      this.db.localBridges.close(bridge.bridgeId, now)
-      bridgesClosed += 1
-    }
-  }
-
   let surfacesUnbound = 0
   for (const surface of this.db.surfaceBindings.listActive()) {
     if (surface.hostSessionId === hostSessionId) {
@@ -298,7 +288,6 @@ export async function invalidateHostContext(
   }
 
   return {
-    bridgesClosed,
     surfacesUnbound,
     runtimesTerminated,
   }

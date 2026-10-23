@@ -80,20 +80,20 @@ describe('check-boundaries diagnostics', () => {
   test('mail persistence scoped guard keeps server orchestration out', () => {
     expect(
       findMailScopedViolation(
-        'packages/hrc-store-sqlite/src/mail/envelope-repository.ts',
+        'packages/hrc-store-sqlite/src/mail/delivery-repository.ts',
         'hrc-server'
       )
     ).toContain('persistence')
     expect(
       findMailScopedViolation(
-        'packages/hrc-store-sqlite/src/mail/envelope-repository.ts',
+        'packages/hrc-store-sqlite/src/mail/delivery-repository.ts',
         'hrc-server/dist/broker.js'
       )
     ).toContain('persistence')
     expect(
       findMailScopedViolation(
-        'packages/hrc-store-sqlite/src/mail/envelope-repository.ts',
-        './reply-schema.js'
+        'packages/hrc-store-sqlite/src/mail/delivery-repository.ts',
+        './delivery-types.js'
       )
     ).toBeUndefined()
   })

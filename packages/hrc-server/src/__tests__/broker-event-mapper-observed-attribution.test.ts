@@ -192,12 +192,6 @@ describe('observed Codex turn attribution', () => {
       completedAt: ts(12),
     })
 
-    expect(
-      fixture.db.sqlite
-        .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM broker_turn_attributions')
-        .get()?.count
-    ).toBe(0)
-
     const beforeReplay = rows.map(({ seq, type, runId }) => ({
       seq,
       type,

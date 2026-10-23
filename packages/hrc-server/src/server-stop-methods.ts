@@ -444,24 +444,7 @@ export const serverStopMethods = {
         { error }
       )
     })
-    step('external_participants')
-    for (const [id, client] of this.externalParticipantClients) {
-      await awaitStopStep('external_participant', client.close()).catch((error: unknown) => {
-        incomplete(
-          error instanceof StopStepTimeoutError
-            ? 'external_participant_close_timeout'
-            : 'external_participant_close_failed',
-          { id, error }
-        )
-      })
-    }
-    this.externalParticipantClients.clear()
     const participantOperationGroups = [
-      ['external_registration', [...this.externalRegistrationOperations.values()]],
-      [
-        'external_registration_establishment',
-        [...this.externalRegistrationEstablishmentOperations.values()],
-      ],
       ['participant_establishment', [...this.participantEstablishmentOperations.values()]],
     ] as const
     step('participant_operations')

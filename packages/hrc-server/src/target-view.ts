@@ -6,7 +6,6 @@ import { withAspdObservationSession } from './agent-spaces-adapter/aspd-observat
  * `observeContinuationArtifact`, never from a local probe.
  */
 export type ContinuationArtifactResult = 'present' | 'missing' | 'unknown'
-import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -18,9 +17,9 @@ import type {
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { canOperatorAttach, parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import { formatSessionRef, normalizeTargetSessionRef, targetLaneCandidates } from './messages.js'
-import { isRuntimeUnavailableStatus, requireSession } from './require-helpers.js'
+import { isRuntimeUnavailableStatus } from './require-helpers.js'
 import { findBoundSessionRuntime } from './runtime-select.js'
-import { type BridgeTargetRequest, parseSessionRef } from './server-parsers.js'
+import { parseSessionRef } from './server-parsers.js'
 
 export type ContinuationArtifactPresence = ContinuationArtifactResult
 
@@ -300,37 +299,4 @@ async function probeContinuationArtifact(
   } catch {
     return 'unknown'
   }
-}
-
-export function resolveBridgeTargetSession(
-  db: HrcDatabase,
-  request: BridgeTargetRequest
-): HrcSessionRecord {
-  if (request.hostSessionId !== undefined) {
-    return requireSession(db, request.hostSessionId)
-  }
-
-  if (request.selector === undefined) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'hostSessionId or selector is required'
-    )
-  }
-
-  if ('hostSessionId' in request.selector) {
-    return requireSession(db, request.selector.hostSessionId)
-  }
-
-  const session = findContinuitySession(db, request.selector.sessionRef)
-  if (!session) {
-    throw new HrcNotFoundError(
-      HrcErrorCode.UNKNOWN_SESSION,
-      `unknown session "${request.selector.sessionRef}"`,
-      {
-        sessionRef: request.selector.sessionRef,
-      }
-    )
-  }
-
-  return session
 }

@@ -109,9 +109,7 @@ def make_profile(root, release, cli, asp_evidence, node, source=False):
         {**http('POST','/v1/sessions/resolve'), 'rawBody':'{', 'assertions':[eq('malformed-uri-json','status',400)]},
         http('POST','/v1/sessions/resolve',{},assertions=[eq('missing-field','status',400)]),
         http('DELETE','/v1/health',assertions=[eq('wrong-method','status',404)]),
-        http('GET','/v1/p0-unknown',assertions=[eq('unknown-route','status',404)]),
-        http('POST','/v1/bridges/target',{},assertions=[eq('aliases','status',400)]),
-        http('POST','/v1/bridges/local-target',{},assertions=[eq('alias-target','status',400)])]
+        http('GET','/v1/p0-unknown',assertions=[eq('unknown-route','status',404)])]
     for suffix in ['continuation','wrapper-started','child-started','event','exited']:
         errors.append(http('POST','/v1/internal/launches/p0/'+suffix,{},assertions=[eq('retired-callbacks','status',410)]))
     errors.append(http('POST','/v1/internal/hooks/ingest',{},assertions=[eq('retired-hook','status',410)]))

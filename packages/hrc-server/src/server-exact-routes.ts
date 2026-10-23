@@ -32,12 +32,6 @@ export function buildExactRouteHandlers(
   server: HrcServerInstance
 ): Record<string, ExactRouteHandler> {
   return {
-    [exactRouteKey('GET', '/v1/admin/registrations/gc')]: () =>
-      server.handleListRegistrationGcCandidates(),
-    [exactRouteKey('POST', '/v1/admin/registrations/gc')]: (request) =>
-      server.handleRetireRegistrationScopes(request),
-    [exactRouteKey('POST', '/v1/registrations')]: (request) =>
-      server.handleCreateExternalRegistration(request),
     [exactRouteKey('POST', '/v1/participants/attach')]: (request) =>
       server.handleAttachParticipant(request),
     [exactRouteKey('POST', '/v1/participants/register')]: (request) =>
@@ -162,16 +156,6 @@ export function buildExactRouteHandlers(
     [exactRouteKey('POST', '/v1/surfaces/unbind')]: (request) =>
       server.handleUnbindSurface(request),
     [exactRouteKey('GET', '/v1/surfaces')]: (_request, url) => server.handleListSurfaces(url),
-    [exactRouteKey('POST', '/v1/bridges/local-target')]: (request) =>
-      server.handleRegisterBridgeTarget(request),
-    [exactRouteKey('POST', '/v1/bridges/target')]: (request) =>
-      server.handleRegisterBridgeTarget(request),
-    [exactRouteKey('POST', '/v1/bridges/deliver')]: (request) =>
-      server.handleDeliverBridge(request),
-    [exactRouteKey('POST', '/v1/bridges/deliver-text')]: (request) =>
-      server.handleDeliverBridgeText(request),
-    [exactRouteKey('POST', '/v1/bridges/close')]: (request) => server.handleCloseBridge(request),
-    [exactRouteKey('GET', '/v1/bridges')]: (_request, url) => server.handleListBridges(url),
     [exactRouteKey('POST', '/v1/interrupt')]: (request) => server.handleInterrupt(request),
     [exactRouteKey('POST', '/v1/terminate')]: (request) => server.handleTerminate(request),
     [exactRouteKey('POST', '/v1/clear-context')]: (request) => server.handleClearContext(request),

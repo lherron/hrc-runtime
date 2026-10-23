@@ -6,7 +6,6 @@ import {
   type HrcContinuityRecord,
   type HrcEventEnvelope,
   type HrcLifecycleEvent,
-  type HrcLocalBridgeRecord,
   type HrcRunRecord,
   type HrcRuntimeIntent,
   type HrcRuntimePresentationRecord,
@@ -22,7 +21,6 @@ import type {
   ActiveInputDeliveryRow,
   EventRow,
   HrcEventRow,
-  LocalBridgeRow,
   RunRow,
   RuntimeBufferRow,
   RuntimeRow,
@@ -149,8 +147,6 @@ export type SurfaceBindingBindInput = Omit<
 > & {
   boundAt: string
 }
-
-export type LocalBridgeStatus = 'active' | 'closed'
 
 export type SessionListFilters = {
   scopeRef: string
@@ -552,21 +548,6 @@ export function mapSurfaceBindingRow(row: SurfaceBindingRow): HrcSurfaceBindingR
     boundAt: row.bound_at,
     unboundAt: row.unbound_at ?? undefined,
     reason: row.reason ?? undefined,
-  }
-}
-
-export function mapLocalBridgeRow(row: LocalBridgeRow): HrcLocalBridgeRecord {
-  return {
-    bridgeId: row.bridge_id,
-    hostSessionId: row.host_session_id,
-    runtimeId: row.runtime_id ?? undefined,
-    transport: row.transport,
-    target: row.target,
-    expectedHostSessionId: row.expected_host_session_id ?? undefined,
-    expectedGeneration: row.expected_generation ?? undefined,
-    createdAt: row.created_at,
-    closedAt: row.closed_at ?? undefined,
-    status: row.status,
   }
 }
 

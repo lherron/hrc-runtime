@@ -2,119 +2,22 @@ import type { Database } from 'bun:sqlite'
 import type {
   HrcActiveRunContributionRequest,
   HrcActiveRunContributionResponse,
-  HrcLocalBridgeRecord,
   HrcSurfaceBindingRecord,
 } from 'hrc-core'
-import type {
-  ActiveInputDeliveryRow,
-  LocalBridgeRow,
-  RuntimeBufferRow,
-  SurfaceBindingRow,
-} from './rows.js'
+import type { ActiveInputDeliveryRow, RuntimeBufferRow, SurfaceBindingRow } from './rows.js'
 import {
   ACTIVE_INPUT_DELIVERY_COLUMNS,
   type HrcActiveInputDeliveryRecord,
   type HrcRuntimeBufferRecord,
-  LOCAL_BRIDGE_COLUMNS,
   RUNTIME_BUFFER_COLUMNS,
   SURFACE_BINDING_COLUMNS,
   type SurfaceBindingBindInput,
   execute,
   mapActiveInputDeliveryRow,
-  mapLocalBridgeRow,
   mapRuntimeBufferRow,
   mapSurfaceBindingRow,
   requireRecord,
 } from './shared.js'
-
-export class LocalBridgeRepository {
-  constructor(private readonly db: Database) {}
-
-  create(record: HrcLocalBridgeRecord): HrcLocalBridgeRecord {
-    execute(
-      this.db,
-      `
-        INSERT INTO local_bridges (
-          bridge_id,
-          host_session_id,
-          runtime_id,
-          transport,
-          target,
-          expected_host_session_id,
-          expected_generation,
-          status,
-          created_at,
-          closed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      record.bridgeId,
-      record.hostSessionId,
-      record.runtimeId ?? null,
-      record.transport,
-      record.target,
-      record.expectedHostSessionId ?? null,
-      record.expectedGeneration ?? null,
-      record.status ?? 'active',
-      record.createdAt,
-      record.closedAt ?? null
-    )
-
-    return requireRecord(
-      this.findById(record.bridgeId),
-      `failed to reload local bridge ${record.bridgeId}`
-    )
-  }
-
-  findByTarget(transport: string, target: string): HrcLocalBridgeRecord | null {
-    const row = this.db
-      .query<LocalBridgeRow, [string, string]>(
-        `SELECT ${LOCAL_BRIDGE_COLUMNS} FROM local_bridges
-          WHERE transport = ? AND target = ?
-          ORDER BY created_at ASC
-          LIMIT 1`
-      )
-      .get(transport, target)
-
-    return row ? mapLocalBridgeRow(row) : null
-  }
-
-  findById(bridgeId: string): HrcLocalBridgeRecord | null {
-    const row = this.db
-      .query<LocalBridgeRow, [string]>(
-        `SELECT ${LOCAL_BRIDGE_COLUMNS} FROM local_bridges WHERE bridge_id = ?`
-      )
-      .get(bridgeId)
-
-    return row ? mapLocalBridgeRow(row) : null
-  }
-
-  listActive(): HrcLocalBridgeRecord[] {
-    const rows = this.db
-      .query<LocalBridgeRow, []>(
-        `SELECT ${LOCAL_BRIDGE_COLUMNS} FROM local_bridges
-          WHERE closed_at IS NULL
-          ORDER BY created_at ASC, bridge_id ASC`
-      )
-      .all()
-
-    return rows.map(mapLocalBridgeRow)
-  }
-
-  close(bridgeId: string, closedAt: string): HrcLocalBridgeRecord | null {
-    execute(
-      this.db,
-      `
-        UPDATE local_bridges
-        SET status = 'closed', closed_at = ?
-        WHERE bridge_id = ?
-      `,
-      closedAt,
-      bridgeId
-    )
-
-    return this.findById(bridgeId)
-  }
-}
 
 export class SurfaceBindingRepository {
   constructor(private readonly db: Database) {}

@@ -118,18 +118,6 @@ export const HRC_EVENT_COLUMNS = `
   evidence_origin,
   payload_json`
 
-export const LOCAL_BRIDGE_COLUMNS = `
-  bridge_id,
-  host_session_id,
-  runtime_id,
-  transport,
-  target,
-  expected_host_session_id,
-  expected_generation,
-  status,
-  created_at,
-  closed_at`
-
 export const SURFACE_BINDING_COLUMNS = `
   surface_kind,
   surface_id,

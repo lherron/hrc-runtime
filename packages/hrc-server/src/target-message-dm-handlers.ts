@@ -210,8 +210,7 @@ export async function handleSemanticDm(
         phases: ['response'],
         afterSeq: record.messageSeq,
       },
-      body.wait.timeoutMs ?? 30_000,
-      record.messageId
+      body.wait.timeoutMs ?? 30_000
     )
     const projected = (await response.json()) as SemanticDmResponse
     return json({

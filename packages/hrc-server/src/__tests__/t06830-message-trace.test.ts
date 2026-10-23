@@ -2,11 +2,7 @@ import { writeFile } from 'node:fs/promises'
 
 import { describe, expect, test } from 'bun:test'
 
-import type {
-  FederationOutboxDeliveryRecord,
-  HrcCollectiveMessageRecord,
-  HrcMessageHistoryStatus,
-} from 'hrc-core'
+import type { HrcCollectiveMessageRecord, HrcMessageHistoryStatus } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
@@ -58,34 +54,6 @@ function message(
   }
 }
 
-function deliveredOutbox(): FederationOutboxDeliveryRecord {
-  return {
-    deliveryId: 'fd-t06830',
-    messageId: MESSAGE_ID,
-    peerNodeId: 'max3',
-    stage: 'delivering',
-    envelope: {
-      messageId: MESSAGE_ID,
-      kind: 'dm',
-      phase: 'request',
-      from: { kind: 'entity', entity: 'human' },
-      to: { kind: 'session', sessionRef: SESSION },
-      body: 'trace me',
-      rootMessageId: MESSAGE_ID,
-      expected: { homeNodeId: 'max3' },
-    },
-    state: 'delivered',
-    totalAttempts: 1,
-    cycleAttempts: 1,
-    replayCount: 0,
-    retryWindowStartedAt: '2026-07-25T10:00:00.000Z',
-    lastAttemptAt: '2026-07-25T10:00:01.000Z',
-    deliveredAt: '2026-07-25T10:00:01.000Z',
-    createdAt: '2026-07-25T10:00:00.000Z',
-    updatedAt: '2026-07-25T10:00:01.000Z',
-  }
-}
-
 describe('T-06830 message delivery trace', () => {
   test('renders authoritative destination runtime evidence', () => {
     const trace = buildMessageTrace({
@@ -108,14 +76,6 @@ describe('T-06830 message delivery trace', () => {
           observedAt: '2026-07-25T10:00:02.000Z',
         },
       }),
-      outbox: deliveredOutbox(),
-      acceptance: {
-        acceptedByNodeId: 'max3',
-        phase: 'request',
-        requestEpoch: 4,
-        acceptedAt: '2026-07-25T10:00:01.000Z',
-        outcome: 'accepted',
-      },
       history,
     })
 
@@ -128,7 +88,8 @@ describe('T-06830 message delivery trace', () => {
       messageSeq: 44,
       delivery: { outcome: 'runtime_delivery' },
     })
-    expect(trace.acceptance?.outcome).toBe('accepted')
+    expect(trace.acceptance).toBeUndefined()
+    expect(trace.outbox).toBeUndefined()
   })
 
   test('distinguishes durable store-only acceptance from runtime injection', () => {
@@ -148,7 +109,6 @@ describe('T-06830 message delivery trace', () => {
           observedAt: '2026-07-25T10:00:02.000Z',
         },
       }),
-      outbox: deliveredOutbox(),
       history,
     })
 
@@ -158,20 +118,9 @@ describe('T-06830 message delivery trace', () => {
     })
   })
 
-  test('persists exact ACK outcome and replicates delivery disposition', () => {
+  test('replicates delivery disposition', () => {
     const db = openHrcDatabase(':memory:')
     try {
-      expect(
-        db.federationPeerAcceptances.record({
-          messageId: MESSAGE_ID,
-          acceptedByNodeId: 'max3',
-          phase: 'request',
-          requestEpoch: 4,
-          ackOutcome: 'duplicate',
-          acceptedAt: '2026-07-25T10:00:01.000Z',
-        }).record
-      ).toMatchObject({ ackOutcome: 'duplicate' })
-
       const record = db.messages.insert({
         messageId: MESSAGE_ID,
         kind: 'dm',

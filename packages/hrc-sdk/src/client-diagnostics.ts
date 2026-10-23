@@ -1,13 +1,10 @@
 import type {
   GetInputResponse,
-  HrcLocalBridgeRecord as LocalBridgeRecord,
   HrcRunRecord as RunRecord,
   HrcRuntimeSnapshot as RuntimeRecord,
   WatchInputEvent,
 } from 'hrc-core'
 import type {
-  FederationOutboxDeliveryRecord,
-  FederationOutboxState,
   FederationPeerHealthObservation,
   FederationRetirementRequest,
   FederationRetirementResult,
@@ -18,21 +15,11 @@ import type {
 import { HrcClientRuntimeMethods } from './client-runtime.js'
 import { boolField, buildPath, emptyToUndefined } from './client-transport.js'
 import type {
-  BridgeListFilter,
-  CloseBridgeRequest,
-  DeliverBridgeRequest,
-  DeliverBridgeResponse,
   GetFirstTurnDiagnosticsResponse,
   HealthResponse,
-  HrcBridgeDeliverTextRequest,
-  HrcBridgeDeliverTextResponse,
-  HrcBridgeTargetRequest,
-  HrcBridgeTargetResponse,
   HrcSubscriberAdmissionSnapshot,
   ListFirstTurnDiagnosticsResponse,
   ListPresentationRuntimesResponse,
-  RegisterBridgeTargetRequest,
-  RegisterBridgeTargetResponse,
   RunListFilter,
   RuntimeListFilter,
   RuntimeListPage,
@@ -42,40 +29,6 @@ import type {
 } from './types.js'
 
 export class HrcClientDiagnosticsMethods extends HrcClientRuntimeMethods {
-  // -- Canonical bridge methods (Phase 2) ------------------------------------
-
-  async acquireBridgeTarget(request: HrcBridgeTargetRequest): Promise<HrcBridgeTargetResponse> {
-    return this.postJson<HrcBridgeTargetResponse>('/v1/bridges/target', request)
-  }
-
-  async deliverBridgeText(
-    request: HrcBridgeDeliverTextRequest
-  ): Promise<HrcBridgeDeliverTextResponse> {
-    return this.postJson<HrcBridgeDeliverTextResponse>('/v1/bridges/deliver-text', request)
-  }
-
-  // -- Compatibility wrappers (legacy endpoints) ----------------------------
-
-  async registerBridgeTarget(
-    request: RegisterBridgeTargetRequest
-  ): Promise<RegisterBridgeTargetResponse> {
-    return this.postJson<RegisterBridgeTargetResponse>('/v1/bridges/local-target', request)
-  }
-
-  async deliverBridge(request: DeliverBridgeRequest): Promise<DeliverBridgeResponse> {
-    return this.postJson<DeliverBridgeResponse>('/v1/bridges/deliver', request)
-  }
-
-  async closeBridge(request: CloseBridgeRequest): Promise<LocalBridgeRecord> {
-    return this.postJson<LocalBridgeRecord>('/v1/bridges/close', request)
-  }
-
-  async listBridges(filter: BridgeListFilter): Promise<LocalBridgeRecord[]> {
-    return this.getJson<LocalBridgeRecord[]>(
-      `/v1/bridges?runtimeId=${encodeURIComponent(filter.runtimeId)}`
-    )
-  }
-
   // -- Phase 6 diagnostics ----------------------------------------------------
 
   async getHealth(): Promise<HealthResponse> {
@@ -154,45 +107,6 @@ export class HrcClientDiagnosticsMethods extends HrcClientRuntimeMethods {
     request: FederationRetirementRequest
   ): Promise<FederationRetirementResult> {
     return this.postJson<FederationRetirementResult>('/v1/federation/retire', request)
-  }
-
-  /** Durable origin-side deliveries for F3 operator inspection. */
-  async listFederationOutbox(filter?: {
-    messageId?: string | undefined
-    peerNodeId?: string | undefined
-    state?: readonly FederationOutboxState[] | undefined
-  }): Promise<FederationOutboxDeliveryRecord[]> {
-    return this.getJson<FederationOutboxDeliveryRecord[]>(
-      buildPath('/v1/federation/outbox', {
-        messageId: emptyToUndefined(filter?.messageId),
-        peerNodeId: emptyToUndefined(filter?.peerNodeId),
-        state: filter?.state,
-      })
-    )
-  }
-
-  async replayFederationOutbox(deliveryId: string): Promise<FederationOutboxDeliveryRecord> {
-    return this.postJson<FederationOutboxDeliveryRecord>('/v1/federation/outbox/replay', {
-      deliveryId,
-    })
-  }
-
-  async replayFederationOutboxPeer(peerNodeId: string): Promise<FederationOutboxDeliveryRecord[]> {
-    return this.postJson<FederationOutboxDeliveryRecord[]>('/v1/federation/outbox/replay-peer', {
-      peerNodeId,
-    })
-  }
-
-  async dropFederationOutbox(deliveryId: string): Promise<FederationOutboxDeliveryRecord> {
-    return this.postJson<FederationOutboxDeliveryRecord>('/v1/federation/outbox/drop', {
-      deliveryId,
-    })
-  }
-
-  async cancelFederationOutbox(deliveryId: string): Promise<FederationOutboxDeliveryRecord> {
-    return this.postJson<FederationOutboxDeliveryRecord>('/v1/federation/outbox/cancel', {
-      deliveryId,
-    })
   }
 
   async getSubscribers(): Promise<HrcSubscriberAdmissionSnapshot> {

@@ -42,6 +42,12 @@ route. Retired with it, in source and schema
 - HRC-run adapter `prepare` during registration and adapter-produced writer
   evidence (`inspectWriter`/`retireWriter`) for succession.
 
+Legacy EPR is retired too (T-11542, migration `0124_dead_table_removal`):
+`POST /v1/registrations`, the hello/attach rendezvous, the
+`external_registration_grants` table, `hrc admin registrations gc` and
+`HRC_REGISTRATION_CLASSES_FILE` (the daemon ignores it). Rows below that say
+"legacy EPR unchanged" describe the pre-retirement baseline.
+
 Succession evidence for an attached predecessor is HRC's own transport probe
 (R7.7); a never-attached direct attempt is superseded under its pre-attach rule.
 Activation accepts no continuity evidence, so it classifies as

@@ -348,13 +348,14 @@ export const serverStatusMethods = {
           commandSessions: this.options.localPersonaAllowlist === undefined,
           literalInput: this.options.localPersonaAllowlist === undefined,
           surfaceBindings: true,
-          legacyLocalBridges: ['legacy-agentchat'],
+          // The local-bridge routes are retired (T-11542); the fields stay for wire shape.
+          legacyLocalBridges: [],
         },
         bridgeDelivery: {
-          actualPtyInjection: true,
-          enter: true,
-          oobSuffix: true,
-          freshnessFence: true,
+          actualPtyInjection: false,
+          enter: false,
+          oobSuffix: false,
+          freshnessFence: false,
         },
         backend: {
           tmux: tmuxStatus,

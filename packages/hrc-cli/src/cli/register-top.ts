@@ -11,17 +11,7 @@ import {
   toLegacyArgvForScopeCommand,
 } from './argv.js'
 import { type CommandMetadataInput, annotateCommand } from './command-metadata.js'
-import {
-  cmdBridgeClose,
-  cmdBridgeDeliver,
-  cmdBridgeDeliverText,
-  cmdBridgeList,
-  cmdBridgeRegister,
-  cmdBridgeTarget,
-  cmdSurfaceBind,
-  cmdSurfaceList,
-  cmdSurfaceUnbind,
-} from './handlers-control.js'
+import { cmdSurfaceBind, cmdSurfaceList, cmdSurfaceUnbind } from './handlers-control.js'
 import { cmdRestart } from './handlers-restart.js'
 import { cmdRestartMe } from './handlers-restartme.js'
 import {
@@ -538,122 +528,6 @@ The output always names the resolved kind and the concrete ID(s).
         booleans: ['json'],
       })
       await cmdSurfaceList(args)
-    })
-
-  const bridge = admin.command('bridge').description('manage low-level local bridge delivery')
-
-  bridge
-    .command('target')
-    .description('acquire bridge target')
-    .option('--bridge <bridge>', 'convenience alias for --transport tmux --target <value>')
-    .option('--host-session <id>', 'host session selector')
-    .option('--session-ref <ref>', 'session ref selector')
-    .option('--transport <transport>', 'bridge transport')
-    .option('--target <target>', 'bridge target')
-    .option('--runtime-id <id>', 'runtime ID')
-    .option('--expected-host-session-id <id>', 'expected host session ID')
-    .option('--expected-generation <n>', 'expected generation')
-    .action(async (_opts, cmd: Command) => {
-      const args = toLegacyArgv([], cmd.opts(), {
-        strings: [
-          'bridge',
-          'host-session',
-          'session-ref',
-          'transport',
-          'target',
-          'runtime-id',
-          'expected-host-session-id',
-          'expected-generation',
-        ],
-        booleans: [],
-      })
-      await cmdBridgeTarget(args)
-    })
-
-  bridge
-    .command('deliver-text')
-    .description('deliver text to a bridge')
-    .option('--bridge <bridge>', 'bridge ID')
-    .option('--text <text>', 'text to deliver')
-    .option('--oob-suffix <suffix>', 'out-of-band suffix')
-    .option('--expected-host-session-id <id>', 'expected host session ID')
-    .option('--expected-generation <n>', 'expected generation')
-    .option('--enter', 'send enter after text')
-    .action(async (_opts, cmd: Command) => {
-      const args = toLegacyArgv([], cmd.opts(), {
-        strings: [
-          'bridge',
-          'text',
-          'oob-suffix',
-          'expected-host-session-id',
-          'expected-generation',
-        ],
-        booleans: ['enter'],
-      })
-      await cmdBridgeDeliverText(args)
-    })
-
-  bridge
-    .command('register')
-    .description('register a bridge')
-    .argument('<hostSessionId>', 'host session ID')
-    .option('--transport <transport>', 'bridge transport')
-    .option('--target <target>', 'bridge target')
-    .option('--runtime-id <id>', 'runtime ID')
-    .option('--expected-host-session-id <id>', 'expected host session ID')
-    .option('--expected-generation <n>', 'expected generation')
-    .action(async (hostSessionId, _opts, cmd: Command) => {
-      const args = toLegacyArgv([hostSessionId], cmd.opts(), {
-        strings: [
-          'transport',
-          'target',
-          'runtime-id',
-          'expected-host-session-id',
-          'expected-generation',
-        ],
-        booleans: [],
-      })
-      await cmdBridgeRegister(args)
-    })
-
-  bridge
-    .command('deliver')
-    .description('deliver to a bridge')
-    .argument('<bridgeId>', 'bridge ID')
-    .option('--text <text>', 'text to deliver')
-    .option('--expected-host-session-id <id>', 'expected host session ID')
-    .option('--expected-generation <n>', 'expected generation')
-    .action(async (bridgeId, _opts, cmd: Command) => {
-      const args = toLegacyArgv([bridgeId], cmd.opts(), {
-        strings: ['text', 'expected-host-session-id', 'expected-generation'],
-        booleans: [],
-      })
-      await cmdBridgeDeliver(args)
-    })
-
-  bridge
-    .command('list')
-    .description('list bridges')
-    .argument('<runtimeId>', 'runtime ID')
-    .option('--json', 'output as JSON')
-    .action(async (runtimeId, _opts, cmd: Command) => {
-      const args = toLegacyArgv([runtimeId], cmd.opts(), {
-        strings: [],
-        booleans: ['json'],
-      })
-      await cmdBridgeList(args)
-    })
-
-  bridge
-    .command('close')
-    .description('close a bridge')
-    .argument('<bridgeId>', 'bridge ID')
-    .action(async (bridgeId, _opts, cmd: Command) => {
-      const args = toLegacyArgv([bridgeId], cmd.opts(), {
-        strings: [],
-        booleans: [],
-      })
-      await cmdBridgeClose(args)
     })
 
   annotateCommand(admin, { audience: 'human' })

@@ -2,8 +2,8 @@ import type { Database } from 'bun:sqlite'
 import { HrcConflictError } from 'hrc-core'
 
 /**
- * T-08576 D5 (rev 8): run ids are one database-wide namespace, and a runtime or
- * steer contribution that names a run as active is a mutation handle every
+ * T-08576 D5 (rev 8): run ids are one database-wide namespace, and a runtime
+ * that names a run as active is a mutation handle every
  * finalizer trusts. An app birth reserves its run id; the run's authority is
  * then the exact tuple {runId, runtimeId, operationId, hostSessionId,
  * generation}. Before the run is sealed (its row bound to a runtime) only the
@@ -108,20 +108,12 @@ export class RunIdOwnershipRegistry {
     this.#bind(reservation, writer)
   }
 
-  /** Guard for a runtime or contribution naming `runId` as its active run. */
+  /** Guard for a runtime naming `runId` as its active run. */
   assertCanNameActiveRun(runId: string | undefined, writer: RunHandleWriter): void {
     if (runId === undefined) return
     const refusal = this.#handleRefusal(runId, writer, this.#tokenReader(runId))
     if (refusal === 'no-token') throw new RunIdReservedError(runId)
     if (refusal !== undefined) throw new RunIdOwnershipError(runId, refusal)
-  }
-
-  /** Steer contributions carry no runtime or operation tuple: never for app runs. */
-  assertContributionMayNameRun(runId: string): void {
-    if (this.#reservations.has(runId)) throw new RunIdReservedError(runId)
-    if (this.#row(runId)?.scope_ref.startsWith('app:') === true) {
-      throw new RunIdOwnershipError(runId, 'contribution-cannot-name-app-run')
-    }
   }
 
   /**
@@ -265,12 +257,11 @@ export class RunIdOwnershipRegistry {
   #handleExists(runId: string): boolean {
     return (
       this.db
-        .query<{ found: number }, [string, string, string]>(
+        .query<{ found: number }, [string, string]>(
           `SELECT EXISTS (SELECT 1 FROM runs WHERE run_id = ?)
-               OR EXISTS (SELECT 1 FROM runtimes WHERE active_run_id = ?)
-               OR EXISTS (SELECT 1 FROM steer_contributions WHERE active_run_id = ?) AS found`
+               OR EXISTS (SELECT 1 FROM runtimes WHERE active_run_id = ?) AS found`
         )
-        .get(runId, runId, runId)?.found === 1
+        .get(runId, runId)?.found === 1
     )
   }
 }

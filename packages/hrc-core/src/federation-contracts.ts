@@ -1,6 +1,5 @@
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcTurnResponseFormat } from './contracts.js'
 import type { HrcMessageAddress, HrcMessageKind, HrcMessagePhase } from './hrcchat-contracts.js'
-import type { HrcMailEnvelope, HrcMailSendRequest } from './hrcmail-contracts.js'
 
 /**
  * Federation wire vocabulary shared by the daemon, the SDK, and the CLI.
@@ -188,26 +187,6 @@ export type FederationInteractiveLifecycleSignal = {
   }
 }
 
-/**
- * hrcmail's additive payload on the existing home-fenced federation message.
- *
- * The ordinary message fields remain the transport identity and response
- * fence. A request creates one destination-local envelope; a disposition is
- * the terminal envelope projection returned to its accepted origin request.
- */
-export type FederationMailPayload =
-  | {
-      readonly version: 1
-      readonly type: 'request'
-      readonly envelopeId: string
-      readonly request: HrcMailSendRequest
-    }
-  | {
-      readonly version: 1
-      readonly type: 'disposition'
-      readonly envelope: HrcMailEnvelope
-    }
-
 /** Federation v1 tolerant-reader envelope (spec §6). */
 export type FederationMessageEnvelope = {
   readonly messageId: string
@@ -222,7 +201,6 @@ export type FederationMessageEnvelope = {
   readonly delivery?: FederationMessageDelivery | undefined
   readonly semanticTurnSignal?: FederationSemanticTurnSignal | undefined
   readonly interactiveSignal?: FederationInteractiveLifecycleSignal | undefined
-  readonly mail?: FederationMailPayload | undefined
 }
 
 /** Exact durable placement tuple returned by authority establishment. */

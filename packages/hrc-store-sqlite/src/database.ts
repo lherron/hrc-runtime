@@ -8,13 +8,7 @@ import {
   CollectiveHistoryReplicationRepository,
   CollectiveHistoryRepository,
 } from './collective-history-repository.js'
-import { ExternalRegistrationGrantRepository } from './external-registration-grant-repository.js'
-import { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
-import { FederationOutboxRepository } from './federation-outbox-repository.js'
-import { FederationPeerAcceptanceRepository } from './federation-peer-acceptance-repository.js'
 import { HrcMailDeliveryRepository } from './mail/delivery-repository.js'
-import { HrcMailEnvelopeRepository } from './mail/envelope-repository.js'
-import { HrcMailFederatedOriginRepository } from './mail/federated-origin-repository.js'
 import { HrcMailStopRefusalRepository } from './mail/stop-refusal-repository.js'
 import { MessageRepository } from './message-repository.js'
 import { appliedMigrationIds, listAppliedMigrations, runMigrations } from './migrations.js'
@@ -24,7 +18,6 @@ import { ParticipantRegistrationRepository } from './participant-registration-re
 import { AcpBridgeEmissionRepository } from './repositories/acp-bridge-emission-repository.js'
 import {
   ActiveInputDeliveryRepository,
-  LocalBridgeRepository,
   RuntimeBufferRepository,
   SurfaceBindingRepository,
 } from './repositories/bridge-repositories.js'
@@ -48,7 +41,6 @@ import {
   RuntimeRepository,
 } from './repositories/runtime-repositories.js'
 import { ContinuityRepository, SessionRepository } from './repositories/session-repositories.js'
-import { SteerContributionRepository } from './repositories/steer-contribution-repository.js'
 import {
   type LedgerBlobMiss,
   ToolResultBlobRepository,
@@ -92,35 +84,27 @@ export type HrcDatabase = {
   sessionTitles: SessionTitleRepository
   sessionIndex: SessionIndexRepository
   rosterClaims: RosterClaimRepository
-  externalRegistrationGrants: ExternalRegistrationGrantRepository
   participantRegistrations: ParticipantRegistrationRepository
   participantHostBindings: ParticipantHostBindingRepository
   runtimes: RuntimeRepository
   runs: RunRepository
   events: EventRepository
   hrcEvents: HrcLifecycleEventRepository
-  localBridges: LocalBridgeRepository
   surfaceBindings: SurfaceBindingRepository
   runtimeBuffers: RuntimeBufferRepository
   activeInputDeliveries: ActiveInputDeliveryRepository
   messages: MessageRepository
   collectiveHistory: CollectiveHistoryRepository
   collectiveHistoryReplications: CollectiveHistoryReplicationRepository
-  mailEnvelopes: HrcMailEnvelopeRepository
-  mailFederatedOrigins: HrcMailFederatedOriginRepository
   mailDelivery: HrcMailDeliveryRepository
   mailStopRefusals: HrcMailStopRefusalRepository
   wrkqLedgerCursors: WrkqLedgerCursorRepository
-  federationAcceptedRequests: FederationAcceptedRequestRepository
-  federationPeerAcceptances: FederationPeerAcceptanceRepository
-  federationOutbox: FederationOutboxRepository
   compiledRuntimePlans: CompiledRuntimePlanRepository
   lifecyclePolicies: LifecyclePolicyRepository
   runtimeOperations: RuntimeOperationRepository
   brokerInvocations: BrokerInvocationRepository
   inputs: InputRepository
   submissionAdmissions: SubmissionAdmissionRepository
-  steerContributions: SteerContributionRepository
   retainedEvidenceOutcomes: RetainedEvidenceOutcomeRepository
   runIdOwnership: RunIdOwnershipRegistry
   brokerInvocationEvents: BrokerInvocationEventRepository
@@ -213,35 +197,27 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     sessionTitles: new SessionTitleRepository(sqlite),
     sessionIndex: new SessionIndexRepository(sqlite),
     rosterClaims: new RosterClaimRepository(sqlite),
-    externalRegistrationGrants: new ExternalRegistrationGrantRepository(sqlite),
     participantRegistrations: new ParticipantRegistrationRepository(sqlite),
     participantHostBindings: new ParticipantHostBindingRepository(sqlite),
     runtimes: new RuntimeRepository(sqlite, runIdOwnership),
     runs: new RunRepository(sqlite, runIdOwnership),
     events: new EventRepository(sqlite),
     hrcEvents: new HrcLifecycleEventRepository(sqlite, toolResultBlobs),
-    localBridges: new LocalBridgeRepository(sqlite),
     surfaceBindings: new SurfaceBindingRepository(sqlite),
     runtimeBuffers: new RuntimeBufferRepository(sqlite),
     activeInputDeliveries: new ActiveInputDeliveryRepository(sqlite),
     messages: new MessageRepository(sqlite),
     collectiveHistory: new CollectiveHistoryRepository(sqlite),
     collectiveHistoryReplications: new CollectiveHistoryReplicationRepository(sqlite),
-    mailEnvelopes: new HrcMailEnvelopeRepository(sqlite),
-    mailFederatedOrigins: new HrcMailFederatedOriginRepository(sqlite),
     mailDelivery: new HrcMailDeliveryRepository(sqlite),
     mailStopRefusals: new HrcMailStopRefusalRepository(sqlite),
     wrkqLedgerCursors: new WrkqLedgerCursorRepository(sqlite),
-    federationAcceptedRequests: new FederationAcceptedRequestRepository(sqlite),
-    federationPeerAcceptances: new FederationPeerAcceptanceRepository(sqlite),
-    federationOutbox: new FederationOutboxRepository(sqlite),
     compiledRuntimePlans: new CompiledRuntimePlanRepository(sqlite),
     lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),
     brokerInvocations: new BrokerInvocationRepository(sqlite),
     inputs: new InputRepository(sqlite),
     submissionAdmissions: new SubmissionAdmissionRepository(sqlite),
-    steerContributions: new SteerContributionRepository(sqlite, runIdOwnership),
     retainedEvidenceOutcomes: new RetainedEvidenceOutcomeRepository(sqlite),
     runIdOwnership,
     brokerInvocationEvents: new BrokerInvocationEventRepository(sqlite, toolResultBlobs),

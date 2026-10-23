@@ -20,12 +20,6 @@ export {
   resolveReleaseId,
   storeSchemaVersion,
 } from './migrations.js'
-export { ExternalRegistrationGrantRepository } from './external-registration-grant-repository.js'
-export type {
-  ExternalRegistrationGrant,
-  ExternalRegistrationMint,
-  IssueExternalRegistrationGrantResult,
-} from './external-registration-grant-repository.js'
 export {
   allowsParticipantHostBindingTransition,
   ParticipantHostBindingRepository,
@@ -66,29 +60,6 @@ export type {
 } from './collective-history-repository.js'
 export { RosterClaimRepository } from './roster-claim-repository.js'
 export type { RosterClaim } from './roster-claim-repository.js'
-export { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
-export type {
-  FederationAcceptedRequestRecord,
-  RecordFederationAcceptanceInput,
-} from './federation-accepted-request-repository.js'
-export {
-  FederationPeerAcceptanceConflictError,
-  FederationPeerAcceptanceRepository,
-} from './federation-peer-acceptance-repository.js'
-export type {
-  FederationPeerAcceptancePhase,
-  FederationPeerAcceptanceRecord,
-  RecordFederationPeerAcceptanceInput,
-} from './federation-peer-acceptance-repository.js'
-export { FederationOutboxRepository } from './federation-outbox-repository.js'
-export type {
-  EnqueueFederationEstablishingOutboxInput,
-  EnqueueFederationOutboxInput,
-  FederationOutboxDeliveryRecord,
-  FederationOutboxState,
-  MarkFederationOutboxDeadLetterInput,
-  ScheduleFederationOutboxRetryInput,
-} from './federation-outbox-repository.js'
 export {
   BindingRegistry,
   PlacementLedgerConflictError,
@@ -149,7 +120,6 @@ export type {
 export { FirstTurnWatchRepository } from './repositories/first-turn-watch-repository.js'
 export { SessionIndexRepository } from './session-index-repository.js'
 export type {
-  SessionIndexBackfillEvidence,
   SessionIndexCursor,
   SessionIndexEffectiveStatus,
   SessionIndexExecutionMode,
@@ -181,10 +151,6 @@ export type {
   TranscriptTerminalStatus,
   TranscriptTurn,
 } from './transcript-index-repository.js'
-export {
-  HrcMailEnvelopeRepository,
-  HrcMailRepositoryError,
-} from './mail/envelope-repository.js'
 export { HrcMailDeliveryRepository } from './mail/delivery-repository.js'
 export {
   WRKQ_ENVELOPE_STREAM,
@@ -210,22 +176,6 @@ export type {
   HrcMailHintDecision,
   HrcMailPresentation,
 } from './mail/delivery-repository.js'
-export type {
-  AckHrcMailEnvelopeInput,
-  CreateHrcMailEnvelopeInput,
-  DeferHrcMailEnvelopeInput,
-  HrcMailRepositoryErrorCode,
-} from './mail/envelope-repository.js'
-export {
-  canonicalHrcMailJson,
-  compileHrcMailReplySchema,
-  fingerprintHrcMailJson,
-  validateHrcMailReply,
-} from './mail/reply-schema.js'
-export type {
-  HrcMailReplyValidationResult,
-  HrcMailSchemaValidationError,
-} from './mail/reply-schema.js'
 export {
   RetainedEvidenceOutcomeRepository,
   type RetainedEvidenceOutcomeClass,

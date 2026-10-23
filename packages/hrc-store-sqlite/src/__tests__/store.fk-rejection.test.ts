@@ -8,8 +8,7 @@
  * Coverage: runtimes→sessions, runs→sessions, runs→runtimes,
  *           launches→sessions, events→sessions, events→runs,
  *           events→runtimes, surface_bindings→sessions,
- *           surface_bindings→runtimes,
- *           local_bridges→sessions, local_bridges→runtimes
+ *           surface_bindings→runtimes
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -192,35 +191,6 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
         runtimeId: 'rt-does-not-exist',
         generation: 1,
         boundAt: ts(),
-      })
-    }).toThrow()
-  })
-
-  it('rejects local_bridge with non-existent host_session_id', () => {
-    expect(() => {
-      db.localBridges.create({
-        bridgeId: 'bridge-orphan',
-        hostSessionId: 'hsid-does-not-exist',
-        runtimeId: 'rt-does-not-exist',
-        transport: 'unix',
-        target: '/tmp/bridge.sock',
-        status: 'active',
-        createdAt: ts(),
-      })
-    }).toThrow()
-  })
-
-  it('rejects local_bridge with non-existent runtime_id', () => {
-    const session = db.sessions.insert(makeSession('hsid-lb-rt'))
-    expect(() => {
-      db.localBridges.create({
-        bridgeId: 'bridge-bad-rt',
-        hostSessionId: session.hostSessionId,
-        runtimeId: 'rt-does-not-exist',
-        transport: 'unix',
-        target: '/tmp/bridge.sock',
-        status: 'active',
-        createdAt: ts(),
       })
     }).toThrow()
   })

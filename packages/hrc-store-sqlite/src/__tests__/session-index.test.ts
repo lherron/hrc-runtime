@@ -377,11 +377,6 @@ test('0041 backfill records the latest-seq to greatest-event recency reorder cou
 
   const db = openHrcDatabase(dbPath)
   try {
-    expect(db.sessionIndex.getBackfillEvidence()).toMatchObject({
-      migrationId: '0041_session_index',
-      rowCount: 2,
-      changedRecencyCount: 1,
-    })
     expect(db.sessionIndex.listPage({ limit: 2 }).items[0]?.lastActivityAt).toBe(
       '2026-08-11T12:00:00.000Z'
     )

@@ -94,8 +94,6 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'surface.bound': 'surface',
   'surface.rebound': 'surface',
   'surface.unbound': 'surface',
-  'bridge.delivered': 'bridge',
-  'bridge.closed': 'bridge',
   'context.cleared': 'context',
   // T-08137 daemon lifecycle provenance. Written only by the production daemon
   // integration under the `server:hrc` sentinel envelope (server-lifecycle.ts).

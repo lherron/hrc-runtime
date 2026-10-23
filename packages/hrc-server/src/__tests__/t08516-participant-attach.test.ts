@@ -51,9 +51,7 @@ describe('T-08516 participant attachment', () => {
 
   beforeEach(async () => {
     fixture = await createHrcTestFixture('t08516-attach-')
-    server = await createHrcServer(
-      fixture.serverOpts({ otelListenerEnabled: false, registrationClasses: [] })
-    )
+    server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
   })
 
   afterEach(async () => {

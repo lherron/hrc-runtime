@@ -142,11 +142,9 @@ Options: `--attach`, `--as`, `--fresh-context` / `--new`, `--dry-run`, `--format
 `--timeout`, `--quiet`, `--reply-to`, `--cross-scope-reply`, `--queue`, `--steer`,
 `--preempt`, `--ttl`, `--file`, and `--response-format-json-schema`.
 
-Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active|recover-unstarted`,
-operator-only `hrc admin registrations gc [<exact-scope>... --yes]` (no scopes
-is a read-only candidate projection; retirement is never automated), and
-`hrc admin worktrees audit|prune`. The admin cellar also owns low-level
-surface/bridge commands, runtime ensure and manifest prune
+Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active|recover-unstarted`
+and `hrc admin worktrees audit|prune`. The admin cellar also owns low-level
+surface commands, runtime ensure and manifest prune
 (`admin runtime ensure|prune`), `admin broker-verify candidates|run`,
 `admin events drain`, `admin metrics report`, `admin metrics routes` (weighted
 request counts per route and caller across every daemon listener, `--by

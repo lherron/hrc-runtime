@@ -254,53 +254,6 @@ describe('T-08576 R-B7(p) durable app-run handle ownership', () => {
     expect(db.runtimes.getByRuntimeId('rt-foreign-update')?.activeRunId).toBeUndefined()
   })
 
-  it('refuses both steer-contribution writers from a foreign host', () => {
-    seedAppRun('run-app-owned-steer')
-    seedSession('hsid-foreign', 'agent:other:project:hrc-runtime')
-    seedRuntime({
-      runtimeId: 'rt-foreign-steer',
-      hostSessionId: 'hsid-foreign',
-      scopeRef: 'agent:other:project:hrc-runtime',
-    })
-
-    const insert = outcome(() =>
-      db.steerContributions.insertAttempting({
-        contributionId: 'contrib-foreign-insert',
-        hostSessionId: 'hsid-foreign',
-        runtimeId: 'rt-foreign-steer',
-        invocationId: 'inv-foreign',
-        activeRunId: 'run-app-owned-steer',
-        inputId: 'input-foreign',
-        now: NOW,
-      })
-    )
-
-    db.steerContributions.insertAttempting({
-      contributionId: 'contrib-foreign-update',
-      hostSessionId: 'hsid-foreign',
-      runtimeId: 'rt-foreign-steer',
-      invocationId: 'inv-foreign',
-      activeRunId: 'run-agent-provisional',
-      inputId: 'input-foreign-update',
-      now: NOW,
-    })
-    const update = outcome(() => {
-      db.steerContributions.updateAttemptingRunPointer('contrib-foreign-update', {
-        activeRunId: 'run-app-owned-steer',
-        runtimeId: 'rt-foreign-steer',
-        invocationId: 'inv-foreign',
-        now: NOW,
-      })
-    })
-
-    expect(insert).toEqual({ ok: false, errorName: 'RunIdOwnershipError' })
-    expect(update).toEqual({ ok: false, errorName: 'RunIdOwnershipError' })
-    expect(db.steerContributions.getById('contrib-foreign-insert')).toBeNull()
-    expect(db.steerContributions.getById('contrib-foreign-update')?.activeRunId).toBe(
-      'run-agent-provisional'
-    )
-  })
-
   it('refuses same-host runtimes unless they are the app run bound runtime and operation', () => {
     seedSession(APP_HOST, APP_SCOPE, APP_LANE)
     seedRuntime({
@@ -426,31 +379,6 @@ describe('T-08576 R-B7(p) durable app-run handle ownership', () => {
     })
   })
 
-  it('refuses same-host steer contributions from naming an app run', () => {
-    seedAppRun('run-app-steer-same-host')
-    seedRuntime({
-      runtimeId: 'rt-app-steer-same-host',
-      hostSessionId: APP_HOST,
-      scopeRef: APP_SCOPE,
-      laneRef: APP_LANE,
-    })
-    const attempted = outcome(() =>
-      db.steerContributions.insertAttempting({
-        contributionId: 'contrib-app-same-host',
-        hostSessionId: APP_HOST,
-        runtimeId: 'rt-app-steer-same-host',
-        invocationId: 'inv-app-same-host',
-        activeRunId: 'run-app-steer-same-host',
-        inputId: 'input-app-same-host',
-        now: NOW,
-      })
-    )
-    expect({ attempted, row: db.steerContributions.getById('contrib-app-same-host') }).toEqual({
-      attempted: { ok: false, errorName: 'RunIdOwnershipError' },
-      row: null,
-    })
-  })
-
   it('R-B7(p) [green-phase registry seam] binds a reservation only to its token and tuple', () => {
     seedSession(APP_HOST, APP_SCOPE, APP_LANE)
     const runId = 'run-app-reserved-token'
@@ -514,7 +442,7 @@ describe('T-08576 R-B7(p) durable app-run handle ownership', () => {
     })
   })
 
-  it('R-B7(p) [green-phase registry seam] treats runtime and contribution handles as named ids', () => {
+  it('R-B7(p) [green-phase registry seam] treats runtime handles as named ids', () => {
     seedSession('hsid-agent-handles', 'agent:smokey:project:hrc-runtime', 'handles')
     seedRuntime({
       runtimeId: 'rt-agent-handle-only',
@@ -523,30 +451,10 @@ describe('T-08576 R-B7(p) durable app-run handle ownership', () => {
       laneRef: 'handles',
       activeRunId: 'run-runtime-handle-only',
     })
-    db.steerContributions.insertAttempting({
-      contributionId: 'contrib-handle-only',
-      hostSessionId: 'hsid-agent-handles',
-      runtimeId: 'rt-agent-handle-only',
-      invocationId: 'inv-agent-handle-only',
-      activeRunId: 'run-contribution-handle-only',
-      inputId: 'input-agent-handle-only',
-      now: NOW,
-    })
 
-    expect({
-      runtime: db.runIdOwnership.reserveRunId(
-        'run-runtime-handle-only',
-        'token-runtime',
-        APP_HOST,
-        1
-      ),
-      contribution: db.runIdOwnership.reserveRunId(
-        'run-contribution-handle-only',
-        'token-contribution',
-        APP_HOST,
-        1
-      ),
-    }).toEqual({ runtime: 'exists', contribution: 'exists' })
+    expect(
+      db.runIdOwnership.reserveRunId('run-runtime-handle-only', 'token-runtime', APP_HOST, 1)
+    ).toBe('exists')
   })
 
   it('control allows the app host and preserves agent-to-agent handle writes', () => {

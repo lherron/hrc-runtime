@@ -1,10 +1,8 @@
 import type {
-  FederationOutboxDeliveryRecord,
   HrcCollectiveMessageRecord,
   HrcMessageDeliveryEvidence,
   HrcMessageHistoryStatus,
   HrcMessageRecord,
-  HrcMessageTraceAcceptance,
   HrcMessageTraceDestination,
   HrcMessageTraceVerdict,
   TraceMessageResponse,
@@ -29,15 +27,10 @@ function deliveryEvidence(record: HrcMessageRecord): HrcMessageDeliveryEvidence 
 function destinationObservation(
   message: HrcCollectiveMessageRecord,
   localRecord: HrcMessageRecord | undefined,
-  localNodeId: string,
-  outbox: FederationOutboxDeliveryRecord | undefined
+  localNodeId: string
 ): HrcMessageTraceDestination | undefined {
   const observations = message.collectiveHistory?.observations ?? []
-  const destination =
-    observations.find(
-      (observation) =>
-        observation.role === 'destination' && observation.nodeId === outbox?.peerNodeId
-    ) ?? observations.find((observation) => observation.role === 'destination')
+  const destination = observations.find((observation) => observation.role === 'destination')
   if (destination !== undefined) {
     return {
       nodeId: destination.nodeId,
@@ -72,33 +65,10 @@ function traceVerdict(input: {
   localNodeId: string
   message: HrcCollectiveMessageRecord
   localRecord?: HrcMessageRecord | undefined
-  outbox?: FederationOutboxDeliveryRecord | undefined
   destination?: HrcMessageTraceDestination | undefined
   history: HrcMessageHistoryStatus
 }): HrcMessageTraceVerdict {
-  const { destination, outbox } = input
-  if (outbox?.state === 'dead_letter') {
-    const error = outbox.lastError?.code ?? outbox.lastErrorCode ?? 'delivery_failed'
-    return {
-      code: 'outbox_dead_letter',
-      summary: `dead-lettered in origin outbox: ${error} x${outbox.totalAttempts}`,
-    }
-  }
-  if (
-    outbox !== undefined &&
-    (outbox.state === 'pending' ||
-      outbox.state === 'retry_scheduled' ||
-      outbox.state === 'peer_unreachable')
-  ) {
-    const error = outbox.lastError?.code ?? outbox.lastErrorCode
-    return {
-      code: 'outbox_pending',
-      summary:
-        error === undefined
-          ? `queued in origin outbox for ${outbox.peerNodeId} (${outbox.totalAttempts} attempts)`
-          : `jammed in origin outbox: ${error} x${outbox.totalAttempts}`,
-    }
-  }
+  const { destination } = input
   if (destination?.delivery?.outcome === 'store_only') {
     return {
       code: 'stored_not_injected',
@@ -128,10 +98,10 @@ function traceVerdict(input: {
       summary: `delivered to runtime ${runtimeId} on ${destination.nodeId}`,
     }
   }
-  if (destination !== undefined || outbox?.state === 'delivered') {
+  if (destination !== undefined) {
     return {
       code: 'accepted_delivery_pending',
-      summary: `accepted by ${destination?.nodeId ?? outbox?.peerNodeId ?? 'peer'}; runtime delivery evidence pending`,
+      summary: `accepted by ${destination.nodeId}; runtime delivery evidence pending`,
     }
   }
   if (!input.history.complete) {
@@ -150,22 +120,13 @@ export function buildMessageTrace(input: {
   localNodeId: string
   message: HrcCollectiveMessageRecord
   localRecord?: HrcMessageRecord | undefined
-  outbox?: FederationOutboxDeliveryRecord | undefined
-  acceptance?: HrcMessageTraceAcceptance | undefined
   history: HrcMessageHistoryStatus
 }): TraceMessageResponse {
-  const destination = destinationObservation(
-    input.message,
-    input.localRecord,
-    input.localNodeId,
-    input.outbox
-  )
+  const destination = destinationObservation(input.message, input.localRecord, input.localNodeId)
   return {
     localNodeId: input.localNodeId,
     message: input.message,
     ...(input.localRecord === undefined ? {} : { localRecord: input.localRecord }),
-    ...(input.outbox === undefined ? {} : { outbox: input.outbox }),
-    ...(input.acceptance === undefined ? {} : { acceptance: input.acceptance }),
     ...(destination === undefined ? {} : { destination }),
     history: input.history,
     verdict: traceVerdict({ ...input, destination }),

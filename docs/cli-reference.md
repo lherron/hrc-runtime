@@ -239,24 +239,6 @@ its exact scope is one of the three approved signal-pipeline scopes. Dry-run
 prints aggregate per-table delete counts; it does not weaken the required
 `--yes` acknowledgement.
 
-External registration retirement is operator-only:
-
-```bash
-# Read-only: terminal instance scopes past linger with no stored continuation.
-hrc admin registrations gc [--json]
-
-# Retire only the exact listed candidates after interactive confirmation.
-hrc admin registrations gc <exact-scope-ref>...
-
-# Required when stdin/stdout is piped or otherwise non-interactive.
-hrc admin registrations gc <exact-scope-ref>... --yes [--json]
-```
-
-The command never runs from a timer or lifecycle transition. Retirement writes
-the permanent old-home fence before conditionally deleting the shared binding;
-an unavailable registry leaves a visible `fenced-registry-pending` result for
-an explicit idempotent retry.
-
 ### `monitor show | watch | wait | events | transcript | stats | search`
 
 `monitor` is the single observation noun. `show|watch|wait` read normalized HRC

@@ -59,8 +59,7 @@ type Inspectable = HrcServer & {
   sessionRetentionInFlight: Promise<unknown> | undefined
   shadowTeardownInFlight: Promise<unknown> | undefined
   activeStreamClosers: Set<() => void>
-  externalParticipantClients: Map<string, { close(): Promise<void> }>
-  externalRegistrationOperations: Map<string, Promise<void>>
+  participantEstablishmentOperations: Map<string, Promise<void>>
   exactRouteHandlers: Record<string, (request: Request, url: URL) => Promise<Response> | Response>
   serverProjectEvents: { drain(): Promise<void> } | undefined
   // Widened so a test can replay what a pre-contract predecessor wrote.
@@ -377,13 +376,9 @@ describe('T-08137 daemon lifecycle provenance', () => {
           }),
       },
       {
-        reason: 'external_participant_close_failed',
-        inject: (s) =>
-          void s.externalParticipantClients.set('epr-1', { close: () => rejected('close failed') }),
-      },
-      {
         reason: 'participant_operation_failed',
-        inject: (s) => void s.externalRegistrationOperations.set('reg-1', rejected('op failed')),
+        inject: (s) =>
+          void s.participantEstablishmentOperations.set('att-1', rejected('op failed')),
       },
       {
         reason: 'wrkq_ledger_close_failed',
@@ -664,16 +659,11 @@ describe('T-08137 stop() site coverage', () => {
     expect(uncovered).toEqual([])
     // Vacuity guard: the extractor must actually see today's sites.
     expect(sites.filter((site) => site.kind === 'catch').length).toBeGreaterThanOrEqual(8)
-    expect(sites.filter((site) => site.kind === '.catch').length).toBeGreaterThanOrEqual(2)
+    // T-11542 removed the EPR participant-client close, one of the two `.catch` sites.
+    expect(sites.filter((site) => site.kind === '.catch').length).toBeGreaterThanOrEqual(1)
     expect(sites.filter((site) => site.kind === 'allSettled(').length).toBeGreaterThanOrEqual(1)
-    // The three registration/establishment drains all reach a settled check.
-    for (const operations of [
-      'this.externalRegistrationOperations.values()',
-      'this.externalRegistrationEstablishmentOperations.values()',
-      'this.participantEstablishmentOperations.values()',
-    ]) {
-      expect(body).toContain(operations)
-    }
+    // The participant establishment drain reaches a settled check.
+    expect(body).toContain('this.participantEstablishmentOperations.values()')
     expect(sites.filter((site) => site.kind === 'drainTmuxSweepForStop(').length).toBe(2)
     expect(sites.filter((site) => site.kind === 'drainInFlightRequests(').length).toBe(1)
 
@@ -684,8 +674,6 @@ describe('T-08137 stop() site coverage', () => {
       'wrkq_ledger_close_failed',
       'wrkq_ledger_close_timeout',
       'stream_close_failed',
-      'external_participant_close_failed',
-      'external_participant_close_timeout',
       'participant_operation_failed',
       'participant_operation_timeout',
       'metrics_flush_timeout',

@@ -745,7 +745,6 @@ export type RuntimePruneDeleteCounts = {
   events: number
   runtime_buffers: number
   surface_bindings: number
-  local_bridges: number
   runs: number
   runtimes: number
 }

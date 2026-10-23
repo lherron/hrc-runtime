@@ -17,7 +17,6 @@ import type { SubscriberAdmissionRegistry } from './subscriber-admission-account
 
 import type { AcceptedRunRecoveryHandlersMethods } from './accepted-run-recovery-handlers.js'
 import type { AcpEventBridge } from './acp-event-bridge.js'
-import type { BridgeSurfaceHandlersMethods } from './bridge-surface-handlers.js'
 import type { BrokerHeadlessHandlersMethods } from './broker-headless-handlers.js'
 import type { BrokerInteractiveHandlersMethods } from './broker-interactive-handlers.js'
 import type {
@@ -28,18 +27,12 @@ import type {
 import type { EventHandlersMethods } from './event-handlers.js'
 import type { EventNotificationHandlersMethods } from './event-notification-handlers.js'
 import type { ExactClaimHandlersMethods } from './exact-claim.js'
-import type {
-  ExternalParticipantRpcClient,
-  ExternalRegistrationRendezvousMethods,
-} from './external-registration-rendezvous.js'
 import type { CollectiveHistoryCoordinator } from './federation/collective-history.js'
 import type { PeerReachability } from './federation/peer-reachability.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { ParticipantRegistrationHandlersMethods } from './participant-registration-handlers.js'
 import type { PresentationPublishMethods } from './presentation-publish.js'
-import type { RegistrationGcHandlersMethods } from './registration-gc-handlers.js'
-import type { RegistrationHandlersMethods } from './registration-handlers.js'
 import type { CapturedServerRelease } from './release-provenance.js'
 import type { RosterClaimHandlersMethods } from './roster-claim.js'
 import type { RuntimeControlHandlersMethods } from './runtime-control-handlers.js'
@@ -63,6 +56,7 @@ import type {
 } from './server-types.js'
 import type { SessionIndexHandlersMethods } from './session-index-handlers.js'
 import type { ShadowTeardownHandlersMethods } from './shadow-teardown-handlers.js'
+import type { SurfaceHandlersMethods } from './surface-handlers.js'
 import type { SweepHandlersMethods } from './sweep-handlers.js'
 import type { TargetMessageHandlersMethods } from './target-message-handlers.js'
 import type { TmuxManager as ServerTmuxManager } from './tmux.js'
@@ -89,19 +83,16 @@ export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
  */
 type DecomposedHandlerMethods = AdmissionRouteMethods &
   AcceptedRunRecoveryHandlersMethods &
-  BridgeSurfaceHandlersMethods &
+  SurfaceHandlersMethods &
   BrokerHeadlessHandlersMethods &
   BrokerInteractiveHandlersMethods &
   EventHandlersMethods &
   EventNotificationHandlersMethods &
-  ExternalRegistrationRendezvousMethods &
   WrkqStopGateHandlersMethods &
   PresentationPublishMethods &
   RosterClaimHandlersMethods &
   ExactClaimHandlersMethods &
-  RegistrationGcHandlersMethods &
   ParticipantRegistrationHandlersMethods &
-  RegistrationHandlersMethods &
   ShadowTeardownHandlersMethods &
   RuntimeControlHandlersMethods &
   RuntimeInspectHandlersMethods &
@@ -176,11 +167,8 @@ type HrcServerInstanceDataForHandlers = {
   readonly sessionProjectEvents: SessionProjectEventPublisher
   readonly ctx: ServerContext
   readonly runtimeAttachOperations: Map<string, Promise<Response>>
-  readonly externalRegistrationOperations: Map<string, Promise<void>>
-  readonly externalRegistrationEstablishmentOperations: Map<string, Promise<void>>
   /** Detached generic participant establishment, keyed by durable attempt ID. */
   readonly participantEstablishmentOperations: Map<string, Promise<void>>
-  readonly externalParticipantClients: Map<string, ExternalParticipantRpcClient>
   readonly runtimeStartOperations: Map<string, Promise<HrcRuntimeSnapshot>>
   readonly invokeFirstTurnRendezvous: Map<string, InvokeFirstTurnRendezvous>
   /** Cancelled by stop() before the store closes; never used as a shutdown drain. */

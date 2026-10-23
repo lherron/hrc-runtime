@@ -4,12 +4,10 @@
  */
 import type {
   HrcBrokerInvocationEventRecord,
-  HrcLocalBridgeRecord,
   HrcStatusResponse,
   HrcStatusSummaryResponse,
 } from './contracts.js'
 import type { BirthDesignationRecord } from './federation-contracts.js'
-import type { HrcSessionRef } from './selectors.js'
 
 export type HealthResponse = {
   ok: true
@@ -115,113 +113,6 @@ export type UnbindSurfaceRequest = {
   surfaceKind: string
   surfaceId: string
   reason?: string | undefined
-}
-
-// -- Bridge management --------------------------------------------------------
-
-export type RegisterBridgeTargetRequest = {
-  hostSessionId: string
-  runtimeId?: string | undefined
-  transport: string
-  target: string
-  expectedHostSessionId?: string | undefined
-  expectedGeneration?: number | undefined
-}
-
-export type RegisterBridgeTargetResponse = HrcLocalBridgeRecord
-
-export type DeliverBridgeRequest = {
-  bridgeId: string
-  text: string
-  expectedHostSessionId?: string | undefined
-  expectedGeneration?: number | undefined
-}
-
-export type DeliverBridgeResponse = {
-  delivered: true
-  bridgeId: string
-}
-
-export type CloseBridgeRequest = {
-  bridgeId: string
-}
-
-// -- Canonical bridge DTOs (Phase 2) ------------------------------------------
-
-export type HrcBridgeTargetSelector = { hostSessionId: string } | { sessionRef: HrcSessionRef }
-
-export type HrcBridgeTargetRequest = {
-  selector: HrcBridgeTargetSelector
-  transport: string
-  target: string
-  runtimeId?: string | undefined
-  expectedHostSessionId?: string | undefined
-  expectedGeneration?: number | undefined
-  /** @deprecated Use selector.hostSessionId instead */
-  hostSessionId?: string | undefined
-}
-
-export type HrcBridgeTargetResponse = HrcLocalBridgeRecord
-
-export type HrcBridgeDeliverTextRequest = {
-  bridgeId: string
-  text: string
-  enter: boolean
-  oobSuffix?: string | undefined
-  expectedHostSessionId?: string | undefined
-  expectedGeneration?: number | undefined
-}
-
-export type HrcBridgeDeliverTextResponse = {
-  delivered: true
-  bridgeId: string
-}
-
-/** Read-only operator projection for one externally registered scope eligible for retirement. */
-export type RegistrationGcCandidate = {
-  registrationId: string
-  classId: string
-  scopeRef: string
-  hostSessionId: string
-  runtimeId: string
-  runtimeStatus: string
-  terminalReason: string
-  terminalAt: string
-  eligibleAt: string
-}
-
-export type ListRegistrationGcCandidatesResponse = {
-  generatedAt: string
-  lingerMs: number
-  candidates: RegistrationGcCandidate[]
-}
-
-/** Mutation is unreachable without an explicit, exact candidate scope list. */
-export type RetireRegistrationScopesRequest = {
-  scopeRefs: string[]
-}
-
-export type RegistrationGcResult = {
-  scopeRef: string
-  registrationId?: string | undefined
-  status:
-    | 'retired'
-    | 'idempotent'
-    | 'not_candidate'
-    | 'authority_conflict'
-    | 'authority_unavailable'
-  detail?: string | undefined
-}
-
-export type RetireRegistrationScopesResponse = {
-  results: RegistrationGcResult[]
-  summary: {
-    requested: number
-    retired: number
-    idempotent: number
-    skipped: number
-    errors: number
-  }
 }
 
 /** T-08566 — retained-evidence recovery outcome classes (SPEC §3.4.4). */

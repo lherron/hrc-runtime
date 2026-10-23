@@ -10377,31 +10377,6 @@
       "retired": false
     },
     {
-      "id": "public:GET:/v1/admin/registrations/gc",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 35,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:GET:/v1/admin/registrations/gc"
-      ],
-      "downstreamOwner": "T-11529",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "GET",
-      "path": "/v1/admin/registrations/gc",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
       "id": "public:GET:/v1/attach",
       "kind": "public-exact",
       "source": {
@@ -10418,31 +10393,6 @@
       "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
       "method": "GET",
       "path": "/v1/attach",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
-      "id": "public:GET:/v1/bridges",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 174,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:GET:/v1/bridges"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "GET",
-      "path": "/v1/bridges",
       "transport": "public-unix",
       "variants": [
         "positive",
@@ -11445,157 +11395,6 @@
       ]
     },
     {
-      "id": "public:POST:/v1/admin/registrations/gc",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 37,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:POST:/v1/admin/registrations/gc"
-      ],
-      "downstreamOwner": "T-11529",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/admin/registrations/gc",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
-      "id": "public:POST:/v1/bridges/close",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 173,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:POST:/v1/bridges/close"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/bridges/close",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
-      "id": "public:POST:/v1/bridges/deliver",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 169,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:POST:/v1/bridges/deliver"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/bridges/deliver",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
-      "id": "public:POST:/v1/bridges/deliver-text",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 171,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:POST:/v1/bridges/deliver-text"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/bridges/deliver-text",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
-      "id": "public:POST:/v1/bridges/local-target",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 165,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:POST:/v1/bridges/local-target"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/bridges/local-target",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "aliasOf": "public:POST:/v1/bridges/target"
-    },
-    {
-      "id": "public:POST:/v1/bridges/target",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 167,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:POST:/v1/bridges/target"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/bridges/target",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
       "id": "public:POST:/v1/broker-sessions/open",
       "kind": "public-exact",
       "source": {
@@ -12312,31 +12111,6 @@
       "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
       "method": "POST",
       "path": "/v1/previews/run",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
-      "id": "public:POST:/v1/registrations",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 39,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:POST:/v1/registrations"
-      ],
-      "downstreamOwner": "T-11529",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/registrations",
       "transport": "public-unix",
       "variants": [
         "positive",

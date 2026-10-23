@@ -21,10 +21,6 @@ import {
 } from './accepted-run-recovery-handlers.js'
 import { AcpEventBridge } from './acp-event-bridge.js'
 import {
-  type BridgeSurfaceHandlersMethods,
-  bridgeSurfaceHandlersMethods,
-} from './bridge-surface-handlers.js'
-import {
   type BrokerHeadlessHandlersMethods,
   brokerHeadlessHandlersMethods,
 } from './broker-headless-handlers.js'
@@ -55,13 +51,6 @@ import {
 } from './event-notification-handlers.js'
 import { type EvidenceHandlersMethods, evidenceHandlersMethods } from './evidence-handlers.js'
 import { type ExactClaimHandlersMethods, exactClaimHandlersMethods } from './exact-claim.js'
-import { scheduleExternalRegistrationCollectiveEstablishment } from './external-registration-establishment.js'
-import {
-  DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS,
-  type ExternalRegistrationRendezvousMethods,
-  externalRegistrationRendezvousMethods,
-  markExternalParticipantDetached,
-} from './external-registration-rendezvous.js'
 import type { CollectiveHistoryCoordinator } from './federation/collective-history.js'
 import {
   deriveNodeIdFromHostname,
@@ -116,15 +105,6 @@ import {
   type PresentationPublishMethods,
   presentationPublishMethods,
 } from './presentation-publish.js'
-import { resolveRegistrationClasses } from './registration-classes-config.js'
-import {
-  type RegistrationGcHandlersMethods,
-  registrationGcHandlersMethods,
-} from './registration-gc-handlers.js'
-import {
-  type RegistrationHandlersMethods,
-  registrationHandlersMethods,
-} from './registration-handlers.js'
 import { captureServerRelease, pruneReleasesFromCurrent } from './release-provenance.js'
 import { replaySpool } from './replay-spool.js'
 import { ServerRequestMetricSampler, writeServerMetric } from './request-metrics.js'
@@ -204,7 +184,6 @@ import type {
   RawBrokerSubscriber,
   TurnResponseFinalizer,
 } from './server-types.js'
-import { timestamp } from './server-util.js'
 import {
   type SessionIndexHandlersMethods,
   sessionIndexHandlersMethods,
@@ -223,6 +202,7 @@ import {
   warmDurableBrokerBindings,
 } from './startup-reconcile.js'
 import { createSubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
+import { type SurfaceHandlersMethods, surfaceHandlersMethods } from './surface-handlers.js'
 import { type SweepHandlersMethods, sweepHandlersMethods } from './sweep-handlers.js'
 import {
   type TargetMessageHandlersMethods,
@@ -312,7 +292,7 @@ export interface HrcServerInstance
     PresentationPublishMethods,
     SdkTurnHandlersMethods,
     SessionIndexHandlersMethods,
-    BridgeSurfaceHandlersMethods,
+    SurfaceHandlersMethods,
     SweepHandlersMethods,
     RuntimePruneHandlersMethods,
     ShadowTeardownHandlersMethods,
@@ -321,16 +301,13 @@ export interface HrcServerInstance
     RuntimeControlHandlersMethods,
     TargetMessageHandlersMethods,
     EventNotificationHandlersMethods,
-    ExternalRegistrationRendezvousMethods,
     SelectorMessageHandlersMethods,
     SelectorWaitHandlersMethods,
     WrkqStopGateHandlersMethods,
     RosterClaimHandlersMethods,
     ExactClaimHandlersMethods,
-    RegistrationGcHandlersMethods,
     ParticipantRegistrationHandlersMethods,
     ParticipantAttachHandlersMethods,
-    RegistrationHandlersMethods,
     RuntimeInspectHandlersMethods,
     SeatWithdrawHandlersMethods,
     PlacementFederationHandlersMethods,
@@ -370,13 +347,7 @@ export class HrcServerInstance implements HrcServer {
   /** Peers that just failed at the transport level; session-index reads skip them briefly. */
   readonly peerReachability = new PeerReachability()
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
-  readonly externalRegistrationOperations = new Map<string, Promise<void>>()
-  readonly externalRegistrationEstablishmentOperations = new Map<string, Promise<void>>()
   readonly participantEstablishmentOperations = new Map<string, Promise<void>>()
-  readonly externalParticipantClients = new Map<
-    string,
-    import('./external-registration-rendezvous.js').ExternalParticipantRpcClient
-  >()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
   readonly invokeFirstTurnRendezvous = new Map<string, InvokeFirstTurnRendezvous>()
   readonly runtimeStartPresentationAbortController = new AbortController()
@@ -626,22 +597,6 @@ export class HrcServerInstance implements HrcServer {
       }
     }, 60_000)
     this.lifecycleCredentialSweepTimer.unref?.()
-    for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
-      if (grant.consumed) {
-        scheduleExternalRegistrationCollectiveEstablishment(this, grant.registrationId)
-      }
-      this.scheduleExternalRegistrationRendezvous(grant.registrationId)
-    }
-    for (const grant of this.db.externalRegistrationGrants.listEstablished()) {
-      scheduleExternalRegistrationCollectiveEstablishment(this, grant.registrationId)
-      markExternalParticipantDetached(
-        this,
-        grant,
-        this.options.externalParticipantLingerMs ?? DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS,
-        { reason: 'controller_restart' }
-      )
-      this.scheduleExternalRegistrationRendezvous(grant.registrationId)
-    }
 
     // T-01996: eagerly warm the request-serving broker controller. The pre-instance
     // reconcile only classified durable runtimes (attach:false); this is the sole
@@ -778,7 +733,7 @@ Object.assign(
   presentationPublishMethods,
   sdkTurnHandlersMethods,
   sessionIndexHandlersMethods,
-  bridgeSurfaceHandlersMethods,
+  surfaceHandlersMethods,
   sweepHandlersMethods,
   runtimePruneHandlersMethods,
   shadowTeardownHandlersMethods,
@@ -787,7 +742,6 @@ Object.assign(
   runtimeControlHandlersMethods,
   targetMessageHandlersMethods,
   eventNotificationHandlersMethods,
-  externalRegistrationRendezvousMethods,
   selectorMessageHandlersMethods,
   selectorWaitHandlersMethods,
   wrkqStopGateHandlersMethods,
@@ -797,10 +751,8 @@ Object.assign(
   evidenceHandlersMethods,
   rosterClaimHandlersMethods,
   exactClaimHandlersMethods,
-  registrationGcHandlersMethods,
   participantRegistrationHandlersMethods,
   participantAttachHandlersMethods,
-  registrationHandlersMethods,
   serverStopMethods,
   serverRequestMethods,
   retainedEvidenceMethods,
@@ -809,13 +761,11 @@ Object.assign(
 )
 
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {
-  const registrationClasses = await resolveRegistrationClasses(options.registrationClasses)
   const resolvedOptions: HrcServerOptions = {
     ...options,
     sqliteBusyTimeoutMs: resolveSqliteBusyTimeoutMs(options.sqliteBusyTimeoutMs),
     localPersonaAllowlist: normalizeLocalPersonaAllowlist(options.localPersonaAllowlist),
     commandRunTargets: await resolveCommandRunTargets(options.commandRunTargets),
-    registrationClasses,
   }
   const logCtx = {
     runtimeRoot: resolvedOptions.runtimeRoot,

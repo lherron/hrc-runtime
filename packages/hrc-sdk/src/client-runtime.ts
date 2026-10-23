@@ -71,7 +71,6 @@ import type {
   KillBrokerTmuxLeasesResponse,
   LaunchCommandScopedRunRequest,
   LaunchCommandScopedRunResponse,
-  ListRegistrationGcCandidatesResponse,
   OpenBrokerSessionRequest,
   OpenBrokerSessionResponse,
   PreemptAdmissionResponse,
@@ -92,8 +91,6 @@ import type {
   ResumeAttachedRunResponse,
   ResumeContinuationRequest,
   ResumeContinuationResponse,
-  RetireRegistrationScopesRequest,
-  RetireRegistrationScopesResponse,
   RuntimeActionResponse,
   SendInFlightInputRequest,
   SendInFlightInputResponse,
@@ -709,16 +706,6 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
 
   async pruneRuntimes(request: PruneRuntimesRequest = {}): Promise<PruneRuntimesResponse> {
     return this.postJson<PruneRuntimesResponse>('/v1/runtimes/prune', request)
-  }
-
-  async listRegistrationGcCandidates(): Promise<ListRegistrationGcCandidatesResponse> {
-    return this.getJson<ListRegistrationGcCandidatesResponse>('/v1/admin/registrations/gc')
-  }
-
-  async retireRegistrationScopes(
-    request: RetireRegistrationScopesRequest
-  ): Promise<RetireRegistrationScopesResponse> {
-    return this.postJson<RetireRegistrationScopesResponse>('/v1/admin/registrations/gc', request)
   }
 
   async killBrokerTmuxLeases(): Promise<KillBrokerTmuxLeasesResponse> {

@@ -551,12 +551,9 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     fatal(harnessGuard)
   }
 
-  const {
-    WrkqStdioLedgerClient,
-    createHrcServer,
-    loadCommandRunTargetsFromEnv,
-    loadRegistrationClassesFromEnv,
-  } = await import('hrc-server')
+  const { WrkqStdioLedgerClient, createHrcServer, loadCommandRunTargetsFromEnv } = await import(
+    'hrc-server'
+  )
 
   const paths = resolveServerPaths()
 
@@ -610,7 +607,6 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     tmuxSocketPath: paths.tmuxSocketPath,
     localPersonaAllowlist,
     commandRunTargets: await loadCommandRunTargetsFromEnv(),
-    registrationClasses: await loadRegistrationClassesFromEnv(),
     // The ONE place that reaches the fleet wrkq ledger. Any other
     // `createHrcServer` — every test, every embedded instance — gets the
     // unreachable default, so an in-process server cannot drive mail or write

@@ -152,26 +152,13 @@ export async function handleTraceMessage(
         message: 'trace source did not report collective-history status',
       },
     } as const)
-  const acceptance = this.db.federationPeerAcceptances.get(resolvedMessageId)
-  const outbox = this.db.federationOutbox.getByMessageId(resolvedMessageId)
+  // The federation acceptance/outbox records that once fed the trace's
+  // `acceptance` and `outbox` blocks were retired (T-11542); they are absent for
+  // every message, exactly as they already were for post-2026-08-28 traffic.
   const response = buildMessageTrace({
     localNodeId,
     message,
     ...(localRecord === undefined ? {} : { localRecord }),
-    ...(outbox === undefined ? {} : { outbox }),
-    ...(acceptance === undefined
-      ? {}
-      : {
-          acceptance: {
-            acceptedByNodeId: acceptance.acceptedByNodeId,
-            phase: acceptance.phase,
-            ...(acceptance.requestEpoch === undefined
-              ? {}
-              : { requestEpoch: acceptance.requestEpoch }),
-            acceptedAt: acceptance.acceptedAt,
-            ...(acceptance.ackOutcome === undefined ? {} : { outcome: acceptance.ackOutcome }),
-          },
-        }),
     history,
   } satisfies Parameters<typeof buildMessageTrace>[0])
   return json(response satisfies TraceMessageResponse)

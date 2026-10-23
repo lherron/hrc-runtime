@@ -4,7 +4,7 @@ import type {
   HrcLifecycleEvent,
   HrcRuntimeSnapshot,
 } from 'hrc-core'
-import type { HrcActiveInputDeliveryRecord, LocalBridgeStatus } from './shared.js'
+import type { HrcActiveInputDeliveryRecord } from './shared.js'
 
 export type ContinuityRow = {
   scope_ref: string
@@ -207,17 +207,4 @@ export type SurfaceBindingRow = {
   bound_at: string
   unbound_at: string | null
   reason: string | null
-}
-
-export type LocalBridgeRow = {
-  bridge_id: string
-  host_session_id: string
-  runtime_id: string | null
-  transport: string
-  target: string
-  expected_host_session_id: string | null
-  expected_generation: number | null
-  status: LocalBridgeStatus
-  created_at: string
-  closed_at: string | null
 }

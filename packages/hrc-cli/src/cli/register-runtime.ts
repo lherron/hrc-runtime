@@ -18,7 +18,6 @@ import {
   cmdRuntimeEnsure,
   cmdTerminate,
 } from './handlers-control.js'
-import { cmdRegistrationsGc } from './handlers-registration-gc.js'
 import {
   cmdRuntimeDiagnostics,
   cmdRuntimeInspect,
@@ -241,27 +240,6 @@ function registerAdminEvents(admin: Command): void {
     })
 }
 
-function registerAdminRegistrations(admin: Command): void {
-  const registrations = admin
-    .command('registrations')
-    .description('inspect and retire externally registered instance scopes')
-
-  registrations
-    .command('gc')
-    .description('list retirement candidates, or retire explicitly selected candidate scopes')
-    .argument('[scope...]', 'exact candidate instance scope(s) to retire')
-    .option('--yes', 'confirm retirement without an interactive prompt')
-    .option('--json', 'output as JSON')
-    .action(async (scopeRefs: string[] | undefined, _opts, cmd: Command) => {
-      await cmdRegistrationsGc(
-        toLegacyArgv(scopeRefs ?? [], cmd.opts(), {
-          strings: [],
-          booleans: ['yes', 'json'],
-        })
-      )
-    })
-}
-
 export function registerRuntimeCommands(program: Command): void {
   const admin = requireGroup(program, 'admin')
   const monitor = requireGroup(program, 'monitor')
@@ -269,7 +247,6 @@ export function registerRuntimeCommands(program: Command): void {
   registerAdminRuntimeCommands(admin)
   registerAdminBrokerVerify(admin)
   registerAdminEvents(admin)
-  registerAdminRegistrations(admin)
 
   const index = program
     .command('index')

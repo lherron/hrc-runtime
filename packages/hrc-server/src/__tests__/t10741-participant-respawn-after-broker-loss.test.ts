@@ -19,9 +19,9 @@ import {
   registerDirectParticipant,
 } from '../participant-host-registration.js'
 import { createParticipantHostingIntent } from '../participant-hosting-intent.js'
-import { externalRegistrationServerDouble } from './external-registration-server.fixture.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import { makeParticipantBrokerDescriptor } from './fixtures/participant-broker-descriptor.fixture.js'
+import { participantServerDouble } from './participant-server.fixture.js'
 
 /**
  * T-10741: a participant-served seat respawned in place (same host incarnation)
@@ -271,7 +271,7 @@ describe('T-10741 deterministic bookkeeping conflicts fail fast', () => {
   async function runAgainstExistingRuntime(runtimePatch: Record<string, unknown>) {
     const db = openHrcDatabase(':memory:')
     const factory = brokerFactory()
-    const server = externalRegistrationServerDouble({
+    const server = participantServerDouble({
       options: { runtimeRoot: '/tmp/t10741-runtime-root' },
       db,
       generateBrokerAttachToken: () => 't10741-token',

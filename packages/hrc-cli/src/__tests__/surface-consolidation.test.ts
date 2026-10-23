@@ -83,15 +83,12 @@ describe('consolidated hrc command graph', () => {
       'runs',
       'worktrees',
       'surface',
-      'bridge',
       'runtime',
       'broker-verify',
       'events',
-      'registrations',
       'metrics',
     ])
     expect(visibleChildren(child(child(program, 'admin'), 'worktrees'))).toEqual(['audit', 'prune'])
-    expect(visibleChildren(child(child(program, 'admin'), 'registrations'))).toEqual(['gc'])
   })
 
   test('removed groups and spellings are no longer registered', () => {

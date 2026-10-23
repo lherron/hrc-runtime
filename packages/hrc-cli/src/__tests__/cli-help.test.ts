@@ -368,28 +368,6 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(result.stdout).toContain('--kind')
   })
 
-  // -- admin bridge group --
-  it('hrc admin bridge --help exits 0 with Usage and lists all subcommands', async () => {
-    const result = await runCli(['admin', 'bridge', '--help'])
-    expect(result.exitCode).toBe(0)
-    const output = result.stdout
-    expect(output).toMatch(/Usage:/)
-    expect(output).toContain('target')
-    expect(output).toContain('deliver-text')
-    expect(output).toContain('register')
-    expect(output).toContain('deliver')
-    expect(output).toContain('list')
-    expect(output).toContain('close')
-  })
-
-  it('hrc admin bridge deliver-text --help exits 0 with Usage', async () => {
-    const result = await runCli(['admin', 'bridge', 'deliver-text', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/Usage:/)
-    expect(result.stdout).toContain('--bridge')
-    expect(result.stdout).toContain('--text')
-  })
-
   // -- runtime terminate negated-flag conflict --
   it('hrc runtime terminate with both --drop-continuation and --no-drop-continuation exits non-zero', async () => {
     const result = await runCli([

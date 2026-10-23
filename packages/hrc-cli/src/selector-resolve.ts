@@ -4,7 +4,7 @@ import type { HrcRuntimeSnapshot, HrcSelector, HrcSessionRecord } from 'hrc-core
 import type { HrcClient } from 'hrc-sdk'
 import { parseProfileAwareSelector } from './profile-aware-selector.js'
 
-export type SelectorTargetKind = 'runtime' | 'host-session' | 'message' | 'bridge'
+export type SelectorTargetKind = 'runtime' | 'host-session' | 'message'
 
 export type RuntimeSnapshot = Pick<
   HrcRuntimeSnapshot,
@@ -25,8 +25,7 @@ export type ResolvedSession = { kind: 'host-session'; hostSessionId: string }
 export type ResolvedMessage =
   | { kind: 'message'; messageId: string }
   | { kind: 'message-seq'; seq: number }
-export type ResolvedBridge = { kind: 'bridge'; bridgeId: string }
-export type ResolvedTarget = ResolvedRuntime | ResolvedSession | ResolvedMessage | ResolvedBridge
+export type ResolvedTarget = ResolvedRuntime | ResolvedSession | ResolvedMessage
 
 export type SelectorResolutionErrorCode =
   | 'type-mismatch'
@@ -54,8 +53,6 @@ function acceptedForms(expect: SelectorTargetKind): string {
       return 'host-session selectors: raw hostSessionId, host:<hostSessionId>, session:<sessionRef>, scope:<scopeRef>, or bare target handle'
     case 'message':
       return 'message selectors: msg:<messageId> or seq:<messageSeq>'
-    case 'bridge':
-      return 'bridge selectors: raw bridgeId'
   }
 }
 
@@ -78,8 +75,6 @@ function listingCommand(expect: SelectorTargetKind): string {
       return 'hrc session list --json'
     case 'message':
       return 'hrc ls messages'
-    case 'bridge':
-      return 'hrc admin bridge list --json'
   }
 }
 
@@ -90,7 +85,6 @@ function candidateCount(expect: SelectorTargetKind, snapshot: SelectorSnapshot):
     case 'host-session':
       return snapshot.sessions.length
     case 'message':
-    case 'bridge':
       return 0
   }
 }

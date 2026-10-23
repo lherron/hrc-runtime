@@ -631,14 +631,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "CloseBridgeRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|CloseBridgeRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "ColdBirthPromptMode",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
@@ -739,22 +731,6 @@
       "kind": "value",
       "file": "packages/hrc-core/src/placement-policy.ts",
       "hash": "hrc-core|defaultProjectSearchRoots|value",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "DeliverBridgeRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|DeliverBridgeRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "DeliverBridgeResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|DeliverBridgeResponse|type",
       "count": 1
     },
     {
@@ -947,14 +923,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|FederationInteractiveLifecycleSignal|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "FederationMailPayload",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|FederationMailPayload|type",
       "count": 1
     },
     {
@@ -1415,22 +1383,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "HRC_MAIL_REPLY_SCHEMA_DIALECT",
-      "kind": "value",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HRC_MAIL_REPLY_SCHEMA_DIALECT|value",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HRC_MAIL_REPLY_SCHEMA_MAX_BYTES",
-      "kind": "value",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HRC_MAIL_REPLY_SCHEMA_MAX_BYTES|value",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND",
       "kind": "value",
       "file": "packages/hrc-core/src/contracts-diagnostics.ts",
@@ -1651,46 +1603,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcBoundedEventStreamRecord|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcBridgeDeliverTextRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|HrcBridgeDeliverTextRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcBridgeDeliverTextResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|HrcBridgeDeliverTextResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcBridgeTargetRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|HrcBridgeTargetRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcBridgeTargetResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|HrcBridgeTargetResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcBridgeTargetSelector",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|HrcBridgeTargetSelector|type",
       "count": 1
     },
     {
@@ -2243,190 +2155,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-events.ts",
       "hash": "hrc-core|HrcLifecycleTransport|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcLocalBridgeRecord",
-      "kind": "type",
-      "file": "packages/hrc-core/src/contracts-records.ts",
-      "hash": "hrc-core|HrcLocalBridgeRecord|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailAckRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailAckRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailAckResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailAckResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailActor",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailActor|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailCatRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailCatRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailCatResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailCatResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailDeferRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailDeferRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailDeferResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailDeferResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailDispositionOutcome",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailDispositionOutcome|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailDispositionResult",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailDispositionResult|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailEnvelope",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailEnvelope|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailEnvelopeState",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailEnvelopeState|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailInboxRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailInboxRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailInboxResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailInboxResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailIngressPath",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailIngressPath|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailListRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailListRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailListResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailListResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailPayload",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailPayload|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailPayloadKind",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailPayloadKind|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailReceipt",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailReceipt|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailReplySchema",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailReplySchema|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailSendRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailSendRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMailSendResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-core|HrcMailSendResponse|type",
       "count": 1
     },
     {
@@ -3207,22 +2935,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "HrcSteerContributionRecord",
-      "kind": "type",
-      "file": "packages/hrc-core/src/delivery-contracts.ts",
-      "hash": "hrc-core|HrcSteerContributionRecord|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcSteerContributionState",
-      "kind": "type",
-      "file": "packages/hrc-core/src/delivery-contracts.ts",
-      "hash": "hrc-core|HrcSteerContributionState|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "HrcSubmissionDisposition",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
@@ -3763,14 +3475,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|ListPresentationRuntimesResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "ListRegistrationGcCandidatesResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|ListRegistrationGcCandidatesResponse|type",
       "count": 1
     },
     {
@@ -4391,42 +4095,10 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "RegisterBridgeTargetRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|RegisterBridgeTargetRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "RegisterBridgeTargetResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|RegisterBridgeTargetResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "REGISTERED_SESSION_METADATA",
       "kind": "value",
       "file": "packages/hrc-core/src/session-metadata.ts",
       "hash": "hrc-core|REGISTERED_SESSION_METADATA|value",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "RegistrationGcCandidate",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|RegistrationGcCandidate|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "RegistrationGcResult",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|RegistrationGcResult|type",
       "count": 1
     },
     {
@@ -4675,22 +4347,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
       "hash": "hrc-core|RetainedEvidenceTrigger|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "RetireRegistrationScopesRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|RetireRegistrationScopesRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "RetireRegistrationScopesResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-core|RetireRegistrationScopesResponse|type",
       "count": 1
     },
     {
@@ -5743,14 +5399,6 @@
     },
     {
       "package": "hrc-sdk",
-      "symbol": "BridgeListFilter",
-      "kind": "type",
-      "file": "packages/hrc-sdk/src/types.ts",
-      "hash": "hrc-sdk|BridgeListFilter|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
       "symbol": "BrokerForensicsOptions",
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
@@ -5831,14 +5479,6 @@
     },
     {
       "package": "hrc-sdk",
-      "symbol": "CloseBridgeRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-sdk|CloseBridgeRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
       "symbol": "CreateMessageRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
@@ -5859,22 +5499,6 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|DeleteSessionTitleResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "DeliverBridgeRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-sdk|DeliverBridgeRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "DeliverBridgeResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-sdk|DeliverBridgeResponse|type",
       "count": 1
     },
     {
@@ -6039,158 +5663,6 @@
     },
     {
       "package": "hrc-sdk",
-      "symbol": "HrcMailAckRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailAckRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailAckResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailAckResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailActor",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailActor|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailCatRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailCatRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailCatResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailCatResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailDeferRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailDeferRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailDeferResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailDeferResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailDispositionResult",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailDispositionResult|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailEnvelope",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailEnvelope|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailEnvelopeState",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailEnvelopeState|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailInboxRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailInboxRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailInboxResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailInboxResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailListRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailListRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailListResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailListResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailPayload",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailPayload|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailReceipt",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailReceipt|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailReplySchema",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailReplySchema|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailSendRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailSendRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "HrcMailSendResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
-      "hash": "hrc-sdk|HrcMailSendResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
       "symbol": "HrcResolvedAgentPlacementPaths",
       "kind": "type",
       "file": "packages/hrc-sdk/src/project-placement.ts",
@@ -6271,14 +5743,6 @@
     },
     {
       "package": "hrc-sdk",
-      "symbol": "LocalBridgeRecord",
-      "kind": "type",
-      "file": "packages/hrc-core/src/contracts-records.ts",
-      "hash": "hrc-sdk|LocalBridgeRecord|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
       "symbol": "OpenBrokerSessionRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
@@ -6355,22 +5819,6 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/project-placement.ts",
       "hash": "hrc-sdk|ProjectRegistryEntry|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "RegisterBridgeTargetRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-sdk|RegisterBridgeTargetRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "RegisterBridgeTargetResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-surfaces.ts",
-      "hash": "hrc-sdk|RegisterBridgeTargetResponse|type",
       "count": 1
     },
     {

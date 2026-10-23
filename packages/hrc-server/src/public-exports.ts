@@ -95,24 +95,6 @@ export {
   resolveCommandRunTargets,
   validateConfiguredCommandRunTarget,
 } from './command-run-targets-config.js'
-export {
-  HRC_REGISTRATION_CLASSES_FILE_ENV,
-  MAX_EXTERNAL_REGISTRATION_TTL_SECONDS,
-  loadRegistrationClassesFromEnv,
-  parseRegistrationClassesConfig,
-  resolveRegistrationClasses,
-  validateRegistrationClassConfig,
-} from './registration-classes-config.js'
-export type {
-  ExternalRegistrationClassConfig,
-  RegistrationClassConfig,
-  RegistrationClassScopeTemplate,
-} from './registration-classes-config.js'
-export { hashRegistrationCredential } from './registration-handlers.js'
-export type {
-  CreateExternalRegistrationRequest,
-  CreateExternalRegistrationResponse,
-} from './registration-handlers.js'
 // T-08504 / T-08516 protocol join (contract revision 7, slice A).
 export {
   assertReservedAddressAllowsBirth,
@@ -143,26 +125,6 @@ export type {
   RegisterParticipantRequest,
   RegisterParticipantResponse,
 } from './participant-registration-handlers.js'
-export {
-  EPR_HELLO_ERROR_CODE,
-  EPR_PROTOCOL_VERSION,
-  EPR_REPLAY_UNAVAILABLE_CODE,
-  EprHelloError,
-  connectExternalParticipant,
-  markExternalParticipantDetached,
-  parseEprHelloResponse,
-  performExternalParticipantAttach,
-  performExternalRegistrationHello,
-  runExternalRegistrationRendezvous,
-} from './external-registration-rendezvous.js'
-export type {
-  EprEstablishedDelivery,
-  EprHelloResponse,
-  ExternalParticipantCapabilities,
-  ExternalParticipantClientFactory,
-  ExternalParticipantInfo,
-  ExternalParticipantRpcClient,
-} from './external-registration-rendezvous.js'
 export {
   EXPECTED_FEDERATION_CONFIG_MODE,
   FEDERATION_CONFIG_BASENAME,

@@ -168,7 +168,6 @@ describe('T-07960 finite read JSON command contract', () => {
       ['session', 'resolve'],
       ['session', 'get'],
       ['admin', 'surface', 'list'],
-      ['admin', 'bridge', 'list'],
       ['ls'],
     ]) {
       expect(commandAt(program, path).options.some((option) => option.long === '--json')).toBe(true)
@@ -187,14 +186,6 @@ describe('T-07960 finite read JSON command contract', () => {
     )
     expect(surfaces.exitCode).toBe(0)
     expect(JSON.parse(surfaces.stdout)).toEqual([])
-
-    const bridges = await runCli(
-      ['admin', 'bridge', 'list', RUNTIME_ID, '--output', 'json'],
-      cliEnv()
-    )
-    expect(bridges.stderr).toBe('')
-    expect(bridges.exitCode).toBe(0)
-    expect(JSON.parse(bridges.stdout)).toEqual([])
 
     const transcript = await runCli(
       ['monitor', 'transcript', RUNTIME_ID, '--output', 'json'],

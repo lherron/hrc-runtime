@@ -351,19 +351,6 @@ export type HrcSurfaceBindingRecord = {
   reason?: string | undefined
 }
 
-export type HrcLocalBridgeRecord = {
-  bridgeId: string
-  hostSessionId: string
-  runtimeId?: string | undefined
-  transport: string
-  target: string
-  expectedHostSessionId?: string | undefined
-  expectedGeneration?: number | undefined
-  createdAt: string
-  closedAt?: string | undefined
-  status?: string | undefined
-}
-
 // ── Harness Broker persistence records (T-01690 W1B) ───────────────────────
 // Mirror the spaces-runtime-contracts persistence DTOs (refactor FINAL_DATATYPES
 // §17). These records are additive and inert: they are written only by the

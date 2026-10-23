@@ -7,6 +7,11 @@ import { join } from 'node:path'
 import { openHrcDatabase } from '../database.js'
 import { phase1Migrations, resolveMigrationActor } from '../migrations.js'
 
+// The store is historical up to 0122; everything from 0122 on is pending.
+const PENDING_FROM_0122 =
+  phase1Migrations.length -
+  phase1Migrations.findIndex((migration) => migration.id === '0122_session_identity_metadata')
+
 function historicalStore(path: string): void {
   const db = new Database(path)
   db.exec('CREATE TABLE hrc_migrations(id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)')
@@ -41,7 +46,11 @@ test('database open routes both upgrade diagnostics through its logger with pres
       { event: 'session.identity.backfill', data: { total: 2, unparsed: 1 } },
       {
         event: 'store.migrated',
-        data: { applied: 2, version: phase1Migrations.at(-1)!.id, ...resolveMigrationActor() },
+        data: {
+          applied: PENDING_FROM_0122,
+          version: phase1Migrations.at(-1)!.id,
+          ...resolveMigrationActor(),
+        },
       },
     ])
     expect(
@@ -99,7 +108,7 @@ test('default logger retains standalone stderr diagnostics and fresh stores omit
     openHrcDatabase(path).close()
     expect(stderr.mock.calls.map(([line]) => String(line))).toEqual([
       'hrc-store: session.identity.backfill total=2 unparsed=1\n',
-      expect.stringContaining('hrc-store: store.migrated applied=2 version='),
+      expect.stringContaining(`hrc-store: store.migrated applied=${PENDING_FROM_0122} version=`),
     ])
     stderr.mockClear()
     const events: string[] = []

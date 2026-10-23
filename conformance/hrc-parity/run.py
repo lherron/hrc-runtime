@@ -376,9 +376,6 @@ def validate_case_observations(id, observations, checks, status=None):
             for o in observations if isinstance(o, dict)))
         require('missing-field', any(o.get('status') == 400 and o.get('request') == {} for o in http('POST', '/v1/sessions/resolve')))
         require('wrong-method', any(o.get('status') == 404 for o in http('DELETE', '/v1/health')))
-        aliases = [http('POST', path) for path in ('/v1/bridges/target', '/v1/bridges/local-target')]
-        require('aliases', all(aliases) and aliases[0][0].get('status') == aliases[1][0].get('status') == 400
-                and aliases[0][0].get('body') == aliases[1][0].get('body'))
     elif id == 'direct-cli-sdk':
         for words in (['--help'], ['monitor', 'show'], ['monitor', 'watch'], ['run', 'export'], ['run', 'annotate']):
             require('CLI-' + '-'.join(words), bool(cli(words)))
@@ -631,8 +628,6 @@ def admit_mutation(profile, method, path, body, hosts, runtimes):
         return  # Exact wrong-method control.
     if path.startswith('/v1/internal/') and body == {}:
         return  # Retired callbacks have no live owner.
-    if path in ('/v1/bridges/target', '/v1/bridges/local-target') and body == {}:
-        return  # Exact missing-field alias control.
     if path == '/v1/sessions/resolve' and body in (None, {}):
         return  # Exact malformed/missing-body controls.
     if not isinstance(body, dict):

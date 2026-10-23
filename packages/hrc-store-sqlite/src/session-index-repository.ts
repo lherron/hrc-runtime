@@ -48,13 +48,6 @@ export type SessionIndexFacetCounts = {
   byAgentId: Record<string, number>
 }
 
-export type SessionIndexBackfillEvidence = {
-  migrationId: string
-  rowCount: number
-  changedRecencyCount: number
-  recordedAt: string
-}
-
 type SessionIndexRow = {
   host_session_id: string
   title: string | null
@@ -212,31 +205,5 @@ export class SessionIndexRepository {
       byExecutionMode: countMap(this.db, 'execution_mode', filters, 'executionMode'),
       byAgentId: countMap(this.db, 'agent_id', filters, 'agentId'),
     }
-  }
-
-  getBackfillEvidence(): SessionIndexBackfillEvidence | null {
-    const row = this.db
-      .query<
-        {
-          migration_id: string
-          row_count: number
-          changed_recency_count: number
-          recorded_at: string
-        },
-        []
-      >(
-        `SELECT migration_id, row_count, changed_recency_count, recorded_at
-           FROM session_index_backfill_evidence
-          WHERE migration_id = '0041_session_index'`
-      )
-      .get()
-    return row === null
-      ? null
-      : {
-          migrationId: row.migration_id,
-          rowCount: row.row_count,
-          changedRecencyCount: row.changed_recency_count,
-          recordedAt: row.recorded_at,
-        }
   }
 }

@@ -96,23 +96,6 @@ export function parseIntegerFlag(
 }
 
 /**
- * Parse the optional `--expected-generation` flag shared by the bridge
- * handlers. Returns `undefined` when the flag is absent and fatals with the
- * canonical message when present but not a non-negative integer.
- */
-export function parseExpectedGeneration(args: string[]): number | undefined {
-  const raw = parseFlag(args, '--expected-generation')
-  if (raw === undefined) {
-    return undefined
-  }
-  const value = Number.parseInt(raw, 10)
-  if (!Number.isFinite(value) || value < 0) {
-    fatal('--expected-generation must be a non-negative integer')
-  }
-  return value
-}
-
-/**
  * Parse and validate the optional `--transport` flag shared by the runtime
  * list/sweep handlers. Returns `undefined` when absent and fatals with the
  * canonical message when present but not an allowed transport.

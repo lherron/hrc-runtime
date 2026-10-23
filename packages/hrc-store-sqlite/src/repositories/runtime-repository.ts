@@ -398,7 +398,7 @@ export class RuntimeRepository {
    * Hard-delete an orphaned runtime store row plus its runtime-scoped satellite
    * rows (T-05441). `runtimes(runtime_id)` is FK-referenced (no ON DELETE
    * CASCADE, `foreign_keys = ON`) by runs, events, runtime_buffers,
-   * surface_bindings and local_bridges, so a plain `DELETE FROM runtimes` throws
+   * and surface_bindings, so a plain `DELETE FROM runtimes` throws
    * FK_CONSTRAINT whenever any dependent row exists — essentially always for a
    * real runtime. We clear the dependents inside a single transaction before
    * removing the runtime itself.
@@ -457,10 +457,6 @@ export class RuntimeRepository {
       ),
       surface_bindings: count(
         `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM surface_bindings
-         WHERE runtime_id IN (SELECT runtime_id FROM selected)`
-      ),
-      local_bridges: count(
-        `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM local_bridges
          WHERE runtime_id IN (SELECT runtime_id FROM selected)`
       ),
       runs: count(
@@ -569,7 +565,6 @@ export class RuntimeRepository {
       execute(this.db, `DELETE FROM runtime_buffers WHERE ${runScoped}`, id, id)
       // Runtime-only satellite tables.
       execute(this.db, 'DELETE FROM surface_bindings WHERE runtime_id = ?', id)
-      execute(this.db, 'DELETE FROM local_bridges WHERE runtime_id = ?', id)
       // Runs last among the dependents (their referencing rows are now gone).
       execute(this.db, 'DELETE FROM runs WHERE runtime_id = ?', id)
       const result = this.db.query('DELETE FROM runtimes WHERE runtime_id = ?').run(id) as {
@@ -719,9 +714,6 @@ export class RuntimeRepository {
       executeSelected(`DELETE FROM runtime_buffers WHERE ${runScoped}`)
       executeSelected(
         'DELETE FROM surface_bindings WHERE runtime_id IN (SELECT runtime_id FROM selected)'
-      )
-      executeSelected(
-        'DELETE FROM local_bridges WHERE runtime_id IN (SELECT runtime_id FROM selected)'
       )
       executeSelected('DELETE FROM runs WHERE runtime_id IN (SELECT runtime_id FROM selected)')
       const result = this.db
