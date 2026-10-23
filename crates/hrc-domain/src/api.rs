@@ -87,9 +87,8 @@ impl HrcApi {
         Ok(r)
     }
     pub fn get(&self, route: &str, query: &[(String, String)]) -> Result<Value, ApiError> {
-        Ok(self
-            .response(route, query, Duration::from_secs(15))?
-            .json()?)
+        let response = self.response(route, query, Duration::from_secs(15))?;
+        self.projection_body(route, response)
     }
     /// The single POST in the read set; it never mutates the HRC store.
     pub fn seats(&self, session_refs: &Value, runtime_ids: &Value) -> Result<Value, ApiError> {
@@ -105,7 +104,15 @@ impl HrcApi {
                 message: format!("{}: {}", r.status(), r.text()?),
             });
         }
-        Ok(r.json()?)
+        self.projection_body("/v1/presentation/seats/read", r)
+    }
+    fn projection_body(&self, route: &str, response: Response) -> Result<Value, ApiError> {
+        let bytes = response.bytes()?;
+        crate::projection_json::decode(route, &bytes).map_err(|()| ApiError {
+            code: "hrc_response_invalid".into(),
+            // Never include the offending response or string/key contents.
+            message: "invalid projection JSON (strict identity/key policy)".into(),
+        })
     }
     /// Stage 1b's existing owner routes. Never retries an HTTP request.
     pub fn post_owner(&self, route: &str, body: &Value) -> Result<Value, ApiError> {

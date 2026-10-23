@@ -5,6 +5,7 @@ pub mod declarations;
 pub mod ledger;
 mod preview;
 pub mod projection;
+mod projection_json;
 pub mod projector;
 pub mod restart;
 pub mod summon;
