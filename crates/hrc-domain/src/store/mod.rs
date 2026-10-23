@@ -760,3 +760,8 @@ impl TryFrom<LifecyclePage> for crate::api::EventPage {
         })
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ContinuationHistoryRepair {
+    pub sessions: i64,
+}

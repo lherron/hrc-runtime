@@ -239,3 +239,6 @@ mod collective_replication;
 mod mail_accounting;
 mod mail_delivery;
 mod outbox;
+
+mod mail_json;
+pub use mail_json::{canonical_mail_json, fingerprint_mail_json};

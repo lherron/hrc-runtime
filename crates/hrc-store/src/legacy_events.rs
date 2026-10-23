@@ -84,6 +84,9 @@ impl ReadTx<'_> {
 }
 impl WriteTx<'_> {
     pub fn append_legacy_event(&mut self, e: &LegacyEventFields) -> Result<LegacyEvent> {
+        self.savepoint(|tx| tx.append_legacy_event_inner(e))
+    }
+    fn append_legacy_event_inner(&mut self, e: &LegacyEventFields) -> Result<LegacyEvent> {
         let stream: i64 = self.db.query_row(
             "SELECT next_seq FROM event_stream_cursor WHERE id=1",
             [],

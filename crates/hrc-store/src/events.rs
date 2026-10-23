@@ -14,6 +14,14 @@ impl ReadTx<'_> {
 }
 impl WriteTx<'_> {
     pub fn append_lifecycle(&mut self, event: &LifecycleFields) -> Result<LifecycleEvent> {
+        self.savepoint(|tx| tx.append_lifecycle_within_existing_transaction(event))
+    }
+    /// Caller owns the encompassing WriteTx and must roll it back on error.
+    /// Ordinary callers use append_lifecycle, whose nested unit is atomic.
+    pub fn append_lifecycle_within_existing_transaction(
+        &mut self,
+        event: &LifecycleFields,
+    ) -> Result<LifecycleEvent> {
         let stream_seq: i64 = self.db.query_row(
             "SELECT next_seq FROM event_stream_cursor WHERE id=1",
             [],

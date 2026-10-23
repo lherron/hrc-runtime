@@ -208,3 +208,117 @@ impl WriteTx<'_> {
         Ok(changed)
     }
 }
+
+impl WriteTx<'_> {
+    /// Explicit migration-era repair; never runs as part of open or a passive read.
+    pub fn backfill_legacy_continuation_clear_barriers(&mut self) -> Result<i64> {
+        Ok(self.db.execute(
+            r#"WITH legacy_clears AS (
+         SELECT
+           raw.*,
+           json_extract(raw.event_json, '$.invocationId') AS raw_invocation_id,
+           CAST(json_extract(raw.event_json, '$.seq') AS INTEGER) AS raw_broker_seq,
+           ROW_NUMBER() OVER (
+             PARTITION BY raw.host_session_id
+             ORDER BY raw.seq DESC
+           ) AS host_rank
+         FROM events raw
+         WHERE raw.event_kind = 'broker.continuation.cleared'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM broker_invocation_events existing
+             JOIN broker_invocations existing_invocation
+               ON existing_invocation.invocation_id = existing.invocation_id
+             JOIN runtimes existing_runtime
+               ON existing_runtime.runtime_id = existing_invocation.runtime_id
+             WHERE existing_runtime.host_session_id = raw.host_session_id
+               AND existing.type = 'continuation.cleared'
+           )
+       )
+       INSERT INTO broker_invocation_events (
+         invocation_id,
+         seq,
+         time,
+         type,
+         run_id,
+         runtime_id,
+         harness_generation,
+         turn_attempt,
+         broker_event_json,
+         broker_envelope_json,
+         hrc_event_seq,
+         projection_status,
+         projection_error,
+         source_ref,
+         origin_seq,
+         created_at
+       )
+       SELECT
+         legacy.raw_invocation_id,
+         legacy.raw_broker_seq,
+         COALESCE(json_extract(legacy.event_json, '$.time'), legacy.ts),
+         'continuation.cleared',
+         COALESCE(legacy.run_id, invocation.run_id),
+         invocation.runtime_id,
+         runtime.generation,
+         NULL,
+         COALESCE(json_extract(legacy.event_json, '$.payload'), '{}'),
+         legacy.event_json,
+         legacy.seq,
+         'imported',
+         NULL,
+         ?,
+         legacy.seq,
+         legacy.ts
+       FROM legacy_clears legacy
+       JOIN broker_invocations invocation
+         ON invocation.invocation_id = legacy.raw_invocation_id
+       JOIN runtimes runtime
+         ON runtime.runtime_id = invocation.runtime_id
+        AND runtime.host_session_id = legacy.host_session_id
+       WHERE legacy.host_rank = 1"#,
+            ["backfill-T-07040"],
+        )? as i64)
+    }
+    /// Restore only missing historical continuation keys; ordinary reuse stays disabled.
+    pub fn repair_continuation_history(&mut self) -> Result<ContinuationHistoryRepair> {
+        self.savepoint(|tx| {
+            // Bun Statement.run().changes includes this statement's trigger updates.
+            // Keep compatibility local to this explicit repair, like full prune.
+            let before = tx.db.total_changes();
+            tx.db.execute(
+                r#"WITH ranked AS (
+           SELECT
+             runtime.host_session_id,
+             event.broker_event_json AS continuation_json,
+             ROW_NUMBER() OVER (
+               PARTITION BY runtime.host_session_id
+               ORDER BY event.time DESC, event.id DESC
+             ) AS rank
+           FROM broker_invocation_events event
+           JOIN runtimes runtime ON runtime.runtime_id = event.runtime_id
+           WHERE event.type = 'continuation.updated'
+             AND json_valid(event.broker_event_json)
+             AND json_type(event.broker_event_json, '$.key') = 'text'
+             AND length(trim(json_extract(event.broker_event_json, '$.key'))) > 0
+         ), latest AS (
+           SELECT host_session_id, continuation_json
+           FROM ranked
+           WHERE rank = 1
+         )
+         UPDATE sessions
+         SET continuation_json = (
+               SELECT latest.continuation_json
+               FROM latest
+               WHERE latest.host_session_id = sessions.host_session_id
+             ),
+             continuation_reuse_disabled = 1
+         WHERE continuation_json IS NULL
+           AND host_session_id IN (SELECT host_session_id FROM latest)"#,
+                [],
+            )?;
+            let sessions = (tx.db.total_changes() - before) as i64;
+            Ok(ContinuationHistoryRepair { sessions })
+        })
+    }
+}

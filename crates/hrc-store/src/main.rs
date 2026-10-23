@@ -49,6 +49,8 @@ fn run() -> Result<serde_json::Value, StoreError> {
                 || command == "replication-contract"
                 || command == "outbox-contract"
                 || command == "collective-contract"
+                || command == "append-boundary-contract"
+                || command.starts_with("continuation-maintenance-")
                 || command == "mail-accounting-contract"
                 || command == "mail-delivery-contract"
             {
@@ -78,6 +80,10 @@ fn run() -> Result<serde_json::Value, StoreError> {
         "replication-contract"=>replication_contract(store),
         "outbox-contract"=>outbox_contract(store),
         "collective-contract"=>collective_contract(store),
+        "append-boundary-contract"=>append_boundary_contract(store),
+        "continuation-maintenance-seed"=>continuation_maintenance_seed(store),
+        "continuation-maintenance-contract"=>continuation_maintenance_contract(store),
+        "continuation-maintenance-repair-only"=>{let repaired=store.write(|tx|tx.repair_continuation_history())?.value;let repeat=store.write(|tx|tx.repair_continuation_history())?.value;store.close()?;Ok(serde_json::json!({"repaired":repaired,"repeated":repeat}))},
         "snapshot-contract"=>snapshot_contract(store,&path),
         "mail-accounting-contract"=>mail_accounting_contract(store),
         "mail-delivery-contract"=>mail_delivery_contract(store),
@@ -104,6 +110,17 @@ fn run() -> Result<serde_json::Value, StoreError> {
     }
 }
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("mail-json-values") {
+        use std::io::BufRead;
+        for line in std::io::stdin().lock().lines() {
+            let value = serde_json::parse(&line.expect("input line")).expect("valid JSON input");
+            println!(
+                "{}",
+                serde_json::json!({"canonical":hrc_store::canonical_mail_json(&value),"fingerprint":hrc_store::fingerprint_mail_json(&value)})
+            );
+        }
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("json-compat-values") {
         use std::io::BufRead;
         for line in std::io::stdin().lock().lines() {
@@ -3064,4 +3081,106 @@ fn admit_scratch_path(path: &std::path::Path) -> Result<(), StoreError> {
             "scratch admission requires explicit /tmp/hrcp1-* isolated state".into(),
         ))
     }
+}
+
+fn append_boundary_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    let before = store.read_snapshot(|tx| tx.lifecycle_events().page(0, 100, None))?;
+    let mut bad = before.rows[0].fields.clone();
+    bad.event_kind = "turn.tool_result".into();
+    bad.runtime_id = None;
+    bad.payload = Some(serde_json::json!({"result":"X".repeat(40000)}));
+    let mut good = bad.clone();
+    good.event_kind = "turn.message".into();
+    good.payload = Some(serde_json::json!({"text":"after caught repository error"}));
+    let outcome = store
+        .write(|tx| {
+            let rejected = tx.append_lifecycle(&bad).is_err();
+            let caught = tx.read().lifecycle_events().page(0, 100, None)?;
+            tx.append_lifecycle(&good)?;
+            Ok((rejected, caught))
+        })?
+        .value;
+    let after = store.read_snapshot(|tx| tx.lifecycle_events().page(0, 100, None))?;
+    let mut within_caught = None;
+    let rolled_back = store
+        .write::<()>(|tx| {
+            let rejected = tx
+                .append_lifecycle_within_existing_transaction(&bad)
+                .is_err();
+            if !rejected {
+                return Err(StoreError::Invalid(
+                    "raw append should reject missing runtime".into(),
+                ));
+            }
+            within_caught = Some(tx.read().lifecycle_events().page(0, 100, None)?);
+            Err(StoreError::Invalid(
+                "caller aborts encompassing transaction".into(),
+            ))
+        })
+        .is_err();
+    let after_rollback = store.read_snapshot(|tx| tx.lifecycle_events().page(0, 100, None))?;
+    store.close()?;
+    Ok(
+        serde_json::json!({"before":before,"rejected":outcome.0,"afterCaught":outcome.1,"afterCommit":after,"withinCaught":within_caught,"callerRolledBack":rolled_back,"afterRollback":after_rollback}),
+    )
+}
+
+fn continuation_maintenance_seed(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let at = "2026-10-23T00:00:00.000Z";
+    let op = RuntimeOperation {
+        operation_id: "p1-history-operation".into(),
+        runtime_id: "p1-runtime".into(),
+        host_session_id: "p1-host".into(),
+        generation: 1,
+        operation_kind: "start".into(),
+        controller: "broker".into(),
+        startup_method: "spawn".into(),
+        status: "prepared".into(),
+        route_decision_json: "{}".into(),
+        created_at: at.into(),
+        updated_at: at.into(),
+        ..Default::default()
+    };
+    let invocation = BrokerInvocation {
+        invocation_id: "p1-history".into(),
+        operation_id: op.operation_id.clone(),
+        runtime_id: "p1-runtime".into(),
+        broker_protocol: "1".into(),
+        broker_driver: "claude".into(),
+        invocation_state: "stopped".into(),
+        capabilities_json: "{}".into(),
+        spec_hash: "fixture".into(),
+        start_request_hash: "fixture".into(),
+        selected_profile_hash: "fixture".into(),
+        created_at: at.into(),
+        updated_at: at.into(),
+        ..Default::default()
+    };
+    store.write(|tx| {
+        tx.insert_runtime_operation(&op)?;
+        tx.insert_broker_invocation(&invocation)?;
+        for (seq, key) in [(1,"old-provider"),(2,"newest-provider")] {
+            tx.append_broker_event(&BrokerEventAppend { invocation_id: invocation.invocation_id.clone(), seq, time: at.into(), r#type: "continuation.updated".into(), runtime_id: "p1-runtime".into(), payload: serde_json::json!({"key":key,"provider":"fixture"}), ..Default::default() })?;
+        }
+        for seq in [3,4] {
+            tx.append_legacy_event(&LegacyEventFields { ts: at.into(), host_session_id: "p1-host".into(), scope_ref: "agent:tabularasa:project:hrc-runtime:task:p1-store".into(), lane_ref: "main".into(), generation: 1, run_id: None, runtime_id: Some("p1-runtime".into()), source: "broker".into(), event_kind: "broker.continuation.cleared".into(), event_json: Some(serde_json::json!({"invocationId":"p1-history","seq":seq,"time":at,"payload":{"reason":"fixture-clear"}})) })?;
+        }
+        Ok(())
+    })?;
+    store.close()?;
+    Ok(serde_json::json!({"seeded":true}))
+}
+fn continuation_maintenance_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    let backfilled = store
+        .write(|tx| tx.backfill_legacy_continuation_clear_barriers())?
+        .value;
+    let repeat_backfill = store
+        .write(|tx| tx.backfill_legacy_continuation_clear_barriers())?
+        .value;
+    let repaired = store.write(|tx| tx.repair_continuation_history())?.value;
+    let repeat_repair = store.write(|tx| tx.repair_continuation_history())?.value;
+    let result = store.read_snapshot(|tx|Ok(serde_json::json!({"backfilled":backfilled,"repeatBackfill":repeat_backfill,"repaired":repaired,"repeatRepair":repeat_repair,"session":tx.sessions().get_by_host_session_id("p1-host")?,"reuseDisabled":tx.sessions().is_continuation_reuse_disabled("p1-host")?,"hasBarrier":tx.host_has_continuation_clear("p1-host")?,"events":tx.broker_events_by_invocation("p1-history")?})))?;
+    store.close()?;
+    Ok(result)
 }

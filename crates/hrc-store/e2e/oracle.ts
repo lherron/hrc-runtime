@@ -13,6 +13,54 @@ const module = await import(
   pathToFileURL(join(resolve(release), 'packages/hrc-store-sqlite/src/index.ts')).href
 )
 const db = module.openHrcDatabase(join(scratch, 'state.sqlite'), { migrate: mode === 'seed' })
+function seedHistoryCount(count: number, projection: boolean) {
+  db.sqlite.exec("DELETE FROM broker_invocation_events WHERE type='continuation.updated'")
+  for (let i = 0; i < count; i++) {
+    const hostSessionId = `history-host-${i}`
+    const runtimeId = `history-runtime-${i}`
+    const scopeRef = `agent:tabularasa:project:hrc-runtime:task:history-${i}`
+    const ts = '2026-10-23T00:00:00.000Z'
+    db.sessions.insert({
+      hostSessionId,
+      scopeRef,
+      laneRef: 'main',
+      generation: 1,
+      status: 'inactive',
+      createdAt: ts,
+      updatedAt: ts,
+    })
+    db.continuities.upsert({
+      scopeRef,
+      laneRef: 'main',
+      activeHostSessionId: hostSessionId,
+      updatedAt: ts,
+    })
+    db.runtimes.insert({
+      runtimeId,
+      hostSessionId,
+      scopeRef,
+      laneRef: 'main',
+      generation: 1,
+      transport: 'tmux',
+      harness: 'claude',
+      provider: 'anthropic',
+      status: 'dead',
+      supportsInflightInput: false,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'p1-history',
+      seq: 100 + i,
+      time: ts,
+      type: 'continuation.updated',
+      runtimeId,
+      payload: { key: `provider-${i}` },
+    })
+  }
+  if (!projection)
+    db.sqlite.exec("DELETE FROM session_index WHERE host_session_id LIKE 'history-host-%'")
+}
 try {
   if (mode === 'seed') {
     const scopeRef = 'agent:tabularasa:project:hrc-runtime:task:p1-store'
@@ -80,6 +128,62 @@ try {
         page: db.hrcEvents.page({ afterSeq: 0, limit: 10 }),
         deleted: [events[1].hrcSeq, events[3].hrcSeq],
         fixtureOnly: true,
+      })
+    )
+  } else if (mode === 'append-boundary-control') {
+    const before = db.hrcEvents.page({ afterSeq: 0, limit: 100 })
+    let afterCaught: unknown
+    let rejected = false
+    const bad = {
+      ts: '2026-10-23T00:00:00.000Z',
+      hostSessionId: 'p1-host',
+      scopeRef: 'agent:tabularasa:project:hrc-runtime:task:p1-store',
+      laneRef: 'main',
+      generation: 1,
+      category: 'turn',
+      eventKind: 'turn.tool_result',
+      payload: { result: 'X'.repeat(40000) },
+    }
+    db.sqlite
+      .transaction(() => {
+        try {
+          db.hrcEvents.append(bad)
+        } catch {
+          rejected = true
+        }
+        afterCaught = db.hrcEvents.page({ afterSeq: 0, limit: 100 })
+        db.hrcEvents.append({
+          ...bad,
+          eventKind: 'turn.message',
+          payload: { text: 'after caught repository error' },
+        })
+      })
+      .immediate()
+    const afterCommit = db.hrcEvents.page({ afterSeq: 0, limit: 100 })
+    let withinCaught: unknown
+    let callerRolledBack = false
+    try {
+      db.sqlite
+        .transaction(() => {
+          try {
+            db.hrcEvents.appendWithinExistingTransaction(bad)
+          } catch {}
+          withinCaught = db.hrcEvents.page({ afterSeq: 0, limit: 100 })
+          throw new Error('caller aborts encompassing transaction')
+        })
+        .immediate()
+    } catch {
+      callerRolledBack = true
+    }
+    console.log(
+      JSON.stringify({
+        before,
+        rejected,
+        afterCaught,
+        afterCommit,
+        withinCaught,
+        callerRolledBack,
+        afterRollback: db.hrcEvents.page({ afterSeq: 0, limit: 100 }),
       })
     )
   } else if (mode === 'placement') {
@@ -458,6 +562,69 @@ try {
       JSON.stringify({
         stats: db.transcriptIndex.stats(),
         hits: db.transcriptIndex.search('cafe', {}, { limit: 10 }),
+      })
+    )
+  } else if (mode === 'continuation-maintenance-count-seed') {
+    seedHistoryCount(Number(process.argv[5]), process.argv[6] === 'true')
+    console.log(JSON.stringify({ seeded: true }))
+  } else if (mode === 'continuation-maintenance-count-controls') {
+    const helpers = await import(
+      pathToFileURL(
+        join(resolve(release), 'packages/hrc-server/src/session-resume-continuation.ts')
+      ).href
+    )
+    const results = []
+    for (const count of [0, 1, 3])
+      for (const projection of [false, true]) {
+        db.sqlite.exec('BEGIN IMMEDIATE')
+        try {
+          seedHistoryCount(count, projection)
+          const before = db.sqlite.query('SELECT total_changes() AS value').get().value
+          const repaired = helpers.repairContinuationHistory(db)
+          const directChanges = db.sqlite.query('SELECT changes() AS value').get().value
+          const totalDelta = db.sqlite.query('SELECT total_changes() AS value').get().value - before
+          const restored = db.sqlite
+            .query(
+              "SELECT COUNT(*) AS value FROM sessions WHERE host_session_id LIKE 'history-host-%' AND continuation_json IS NOT NULL AND continuation_reuse_disabled=1"
+            )
+            .get().value
+          const repeated = helpers.repairContinuationHistory(db)
+          results.push({
+            count,
+            projection,
+            repaired,
+            directChanges,
+            totalDelta,
+            restored,
+            repeated,
+          })
+        } finally {
+          db.sqlite.exec('ROLLBACK')
+        }
+      }
+    console.log(JSON.stringify(results))
+  } else if (mode === 'continuation-maintenance-control') {
+    const helpers = await import(
+      pathToFileURL(
+        join(resolve(release), 'packages/hrc-server/src/session-resume-continuation.ts')
+      ).href
+    )
+    const backfilled = helpers.backfillLegacyContinuationClearBarriers(db)
+    const repeatBackfill = helpers.backfillLegacyContinuationClearBarriers(db)
+    const repaired = helpers.repairContinuationHistory(db)
+    const repeatRepair = helpers.repairContinuationHistory(db)
+    console.log(
+      JSON.stringify({
+        backfilled,
+        repeatBackfill,
+        repaired,
+        repeatRepair,
+        session: db.sessions.getByHostSessionId('p1-host'),
+        reuseDisabled: db.sessions.isContinuationReuseDisabled('p1-host'),
+        hasBarrier:
+          helpers.detectResumeInvalidationBarrier(db, db.sessions.getByHostSessionId('p1-host'))
+            ?.kind === 'broker_continuation_cleared',
+        events: db.brokerInvocationEvents.listByInvocationId('p1-history'),
       })
     )
   } else if (mode === 'read') {
