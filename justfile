@@ -863,6 +863,17 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
           "$aspd_supervisor" == "$aspd_label" ]]; then
       aspd_current=1
     fi
+    # An HRC deploy never moves aspd backwards. A stale aspd target from an
+    # earlier brief rolled svc back from dc36ba6f to a9fb61a4 (2026-10-23);
+    # deliberate aspd rollbacks go through agent-spaces' own activation.
+    aspd_running="$(jq -r '.release.sourceCommit // ""' <<<"$aspd_now")"
+    if (( aspd_current == 0 )) && [[ -n "$aspd_running" && "$aspd_running" != "$aspd_sha" ]]; then
+      if ! git -C "$asp_repo" cat-file -e "${aspd_running}^{commit}" 2>/dev/null; then
+        echo "[aspd] running ${aspd_running} is unknown to ${asp_repo}; cannot check direction"
+      elif git -C "$asp_repo" merge-base --is-ancestor "$aspd_sha" "$aspd_running"; then
+        fail "aspd target ${aspd_sha} is an ancestor of the running ${aspd_running}; pass the node's current aspd (just fleet-status)"
+      fi
+    fi
     (( hrc_current == 1 )) || gate_checkout "$repo" "$target_sha" hrc
 
     # Busy runtimes do not block a deploy: brokers reattach across an HRC
