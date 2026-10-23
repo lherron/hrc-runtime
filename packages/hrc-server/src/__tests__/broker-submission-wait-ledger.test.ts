@@ -9,6 +9,7 @@ import {
   LANE_REF,
   Q_HOST_SESSION_ID,
   Q_INVOCATION_ID,
+  Q_OPERATION_ID,
   Q_RUNTIME_ID,
   Q_RUN_B_ID,
   Q_SCOPE_REF,
@@ -112,22 +113,18 @@ describe('broker submission wait follows the disposition ledger', () => {
   })
 
   it('holds a cold caller invoke until compiler priming reaches terminal on the event projection', async () => {
-    const planHash = 'plan-compiler-priming'
     const submissionId = 'input-compiler-priming'
     const turnId = 'turn-compiler-priming'
-    fixture.db.compiledRuntimePlans.insert({
-      planHash,
-      compileId: 'compile-compiler-priming',
-      schemaVersion: 'agent-runtime-plan/v2',
-      compilerName: 'agent-spaces',
-      compilerVersion: 'test',
-      planProjectionJson: JSON.stringify({
-        schemaVersion: 'agent-runtime-plan/v2',
-        execution: {
-          dispatchRequest: { startRequest: { initialInput: { inputId: submissionId } } },
+    fixture.db.runtimeOperations.update(Q_OPERATION_ID, {
+      preparationJson: JSON.stringify({
+        admission: {
+          plan: { schemaVersion: 'agent-runtime-plan/v2' },
+          execution: {
+            dispatchRequest: { startRequest: { initialInput: { inputId: submissionId } } },
+          },
         },
       }),
-      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     })
     append(20, 'submission.executed', { submissionId, turnId })
 
@@ -137,7 +134,7 @@ describe('broker submission wait follows the disposition ledger', () => {
       {
         runtimeId: Q_RUNTIME_ID,
         activeInvocationId: Q_INVOCATION_ID,
-        planHash,
+        activeOperationId: Q_OPERATION_ID,
       } as never,
       new AbortController().signal
     )
@@ -298,21 +295,17 @@ describe('broker submission wait follows the disposition ledger', () => {
   })
 
   it('lost is terminal for compiler priming correlation', async () => {
-    const planHash = 'plan-lost-compiler-priming'
     const submissionId = 'input-lost-compiler-priming'
-    fixture.db.compiledRuntimePlans.insert({
-      planHash,
-      compileId: 'compile-lost-compiler-priming',
-      schemaVersion: 'agent-runtime-plan/v2',
-      compilerName: 'agent-spaces',
-      compilerVersion: 'test',
-      planProjectionJson: JSON.stringify({
-        schemaVersion: 'agent-runtime-plan/v2',
-        execution: {
-          dispatchRequest: { startRequest: { initialInput: { inputId: submissionId } } },
+    fixture.db.runtimeOperations.update(Q_OPERATION_ID, {
+      preparationJson: JSON.stringify({
+        admission: {
+          plan: { schemaVersion: 'agent-runtime-plan/v2' },
+          execution: {
+            dispatchRequest: { startRequest: { initialInput: { inputId: submissionId } } },
+          },
         },
       }),
-      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     })
     append(20, 'submission.lost', { submissionId, reason: 'turn-correlation-lost' })
 
@@ -322,7 +315,7 @@ describe('broker submission wait follows the disposition ledger', () => {
         {
           runtimeId: Q_RUNTIME_ID,
           activeInvocationId: Q_INVOCATION_ID,
-          planHash,
+          activeOperationId: Q_OPERATION_ID,
         } as never,
         new AbortController().signal
       )
