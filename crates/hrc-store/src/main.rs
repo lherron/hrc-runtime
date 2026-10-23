@@ -28,6 +28,14 @@ fn run() -> Result<serde_json::Value, StoreError> {
                 || command == "repository-contract"
                 || command == "transcript-contract"
                 || command == "execution-contract"
+                || matches!(
+                    command.as_str(),
+                    "consumer-history-contract"
+                        | "consumer-placement-active"
+                        | "consumer-placement-conflict"
+                        | "consumer-archive-history"
+                        | "consumer-append-control"
+                )
                 || command == "input-contract"
                 || command == "broker-contract"
                 || command == "recovery-contract"
@@ -71,6 +79,14 @@ fn run() -> Result<serde_json::Value, StoreError> {
         "repository-contract"=>repository_contract(store),
         "transcript-contract"=>transcript_contract(store),
         "execution-contract"=>execution_contract(store),
+        "consumer-history-contract"=>consumer_history_contract(store,&path),
+        "consumer-history-read"=>consumer_history_read(store),
+        "consumer-maintenance-read"=>{let value=store.read_snapshot(|tx|{let mut cases=serde_json::Map::new();for name in ["consumer-maint-shared","consumer-maint-different","consumer-restub-valid","consumer-restub-missing","consumer-restub-incomplete","consumer-restub-mismatch","consumer-restub-invalid","consumer-strip-payload","consumer-strip-null","consumer-strip-stripped","consumer-buffer-old","consumer-buffer-recent","consumer-buffer-live-run","consumer-buffer-live-runtime","consumer-buffer-active-run"]{cases.insert(name.into(),serde_json::json!({"brokerEvents":tx.broker_events_by_invocation(name)?,"lifecycle":tx.lifecycle_events().list(&hrc_store::LifecycleFilters{runtime_id:Some(name.into()),..Default::default()},false)?,"buffers":tx.runtime_buffers_by_runtime(name)?}));}Ok(serde_json::Value::Object(cases))})?;store.close()?;Ok(value)},
+        "consumer-placement-active"|"consumer-placement-conflict"=>consumer_placement_active(store,command.ends_with("-conflict")),
+        "consumer-archive-history"=>consumer_archive_history(store),
+        "consumer-archive-read"=>{let value=store.read_snapshot(|tx|Ok(serde_json::json!({"events":tx.legacy_events_from_seq(0,&hrc_store::LegacyEventFilters::default())?,"streamHighWater":tx.allocated_event_stream_seq()?})))?;store.close()?;Ok(value)},
+        "consumer-append-control"=>consumer_append_control(store),
+        "consumer-registry-read"=>{let mut registry=hrc_store::BindingRegistry::open_existing(value("--registry").ok_or_else(||StoreError::Invalid("explicit --registry required".into()))?,OpenOptions{mode:OpenMode::ReadOnly,..Default::default()})?;let rows=registry.read_snapshot(|tx|tx.list())?;registry.close()?;store.close()?;Ok(serde_json::json!({"bindings":rows}))},
         "consumer-reload"=>{let value=store.read_snapshot(|tx|Ok(serde_json::json!({"run":tx.run_by_id("p1-app")?,"correlationJson":tx.run_correlation_json("p1-app")?})))?;store.close()?;Ok(value)},
         "input-contract"=>input_contract(store),
         "broker-contract"=>broker_contract(store),
@@ -3391,4 +3407,231 @@ fn legacy_mail_origin_contract(mut store: Store) -> Result<serde_json::Value, St
     Ok(
         serde_json::json!({"failures":failures,"applied":applied,"repeated":repeated,"origin":origin}),
     )
+}
+
+fn consumer_placement_active(
+    mut store: Store,
+    conflicting: bool,
+) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let at = "2026-10-23T00:00:00.000Z";
+    let home = if conflicting {
+        "consumer-node-b"
+    } else {
+        "consumer-node-a"
+    };
+    let rows = store
+        .write(|tx| {
+            tx.install_active_placement(&InstallPlacement {
+                scope_ref: "agent:consumer:project:hrc-runtime:task:p1-active".into(),
+                home_node_id: home.into(),
+                created_at: None,
+                updated_at: at.into(),
+            })?;
+            tx.install_active_placement(&InstallPlacement {
+                scope_ref: "agent:consumer:project:hrc-runtime:task:p1-retired".into(),
+                home_node_id: home.into(),
+                created_at: None,
+                updated_at: at.into(),
+            })?;
+            tx.retire_placement(
+                "agent:consumer:project:hrc-runtime:task:p1-retired",
+                home,
+                "consumer retired control",
+                at,
+            )?;
+            tx.read().placements()
+        })?
+        .value;
+    store.close()?;
+    Ok(serde_json::json!({"placements":rows,"homeNodeId":home}))
+}
+fn consumer_history_read(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let value=store.read_snapshot(|tx|Ok(serde_json::json!({
+        "run":tx.run_by_id("consumer-run")?,"runtime":tx.runtime_by_id("consumer-runtime")?,
+        "session":tx.sessions().get_by_host_session_id("consumer-host")?,
+        "brokerEvents":tx.broker_events_by_invocation("consumer-invocation")?,
+        "lifecycle":tx.lifecycle_events().list_by_run("consumer-run",&LifecycleFilters::default())?,
+        "artifacts":tx.runtime_artifacts_by_operation("consumer-operation")?,
+        "head":tx.lifecycle_events().allocated_hrc_seq()?
+    })))?;
+    store.close()?;
+    Ok(value)
+}
+fn consumer_history_contract(
+    mut store: Store,
+    path: &std::path::Path,
+) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    use sha2::{Digest, Sha256};
+    let at = "2026-10-23T00:00:00.000Z";
+    let scope = "agent:consumer:project:hrc-runtime:task:p1-consumers";
+    let (mut session, mut runtime, mut run, mut fields) = store.read_snapshot(|tx| {
+        Ok((
+            tx.sessions()
+                .get_by_host_session_id("p1-host")?
+                .ok_or_else(|| StoreError::MissingRecord("oracle session".into()))?,
+            tx.runtime_by_id("p1-runtime")?
+                .ok_or_else(|| StoreError::MissingRecord("oracle runtime".into()))?,
+            tx.run_by_id("p1-run")?
+                .ok_or_else(|| StoreError::MissingRecord("oracle run".into()))?,
+            tx.lifecycle_events()
+                .page(0, 100, None)?
+                .rows
+                .into_iter()
+                .next()
+                .ok_or_else(|| StoreError::MissingRecord("oracle lifecycle".into()))?
+                .fields,
+        ))
+    })?;
+    session.host_session_id = "consumer-host".into();
+    session.scope_ref = scope.into();
+    session.identity = None;
+    session.status = "inactive".into();
+    runtime.runtime_id = "consumer-runtime".into();
+    runtime.host_session_id = session.host_session_id.clone();
+    runtime.scope_ref = scope.into();
+    runtime.transport = "headless".into();
+    runtime.harness = Some("codex-cli".into());
+    runtime.provider = Some("openai".into());
+    runtime.controller_kind = Some("harness-broker".into());
+    runtime.status = "dead".into();
+    runtime.identity = None;
+    runtime.active_run_id = None;
+    runtime.active_operation_id = None;
+    runtime.active_invocation_id = None;
+    run.run_id = "consumer-run".into();
+    run.host_session_id = session.host_session_id.clone();
+    run.runtime_id = Some(runtime.runtime_id.clone());
+    run.scope_ref = scope.into();
+    run.transport = "headless".into();
+    run.status = "completed".into();
+    run.operation_id = Some("consumer-operation".into());
+    run.invocation_id = Some("consumer-invocation".into());
+    let op = RuntimeOperation {
+        operation_id: "consumer-operation".into(),
+        runtime_id: runtime.runtime_id.clone(),
+        run_id: Some(run.run_id.clone()),
+        host_session_id: session.host_session_id.clone(),
+        generation: 1,
+        operation_kind: "start".into(),
+        controller: "broker".into(),
+        startup_method: "spawn".into(),
+        status: "completed".into(),
+        route_decision_json: "{}".into(),
+        created_at: at.into(),
+        completed_at: Some(at.into()),
+        updated_at: at.into(),
+        ..Default::default()
+    };
+    let invocation = BrokerInvocation {
+        invocation_id: "consumer-invocation".into(),
+        operation_id: op.operation_id.clone(),
+        runtime_id: runtime.runtime_id.clone(),
+        run_id: Some(run.run_id.clone()),
+        broker_protocol: "harness-broker/0.2".into(),
+        broker_driver: "codex-app-server".into(),
+        invocation_state: "stopped".into(),
+        capabilities_json: "{}".into(),
+        spec_hash: "sha256:consumer-spec".into(),
+        start_request_hash: "sha256:consumer-request".into(),
+        selected_profile_hash: "sha256:consumer-profile".into(),
+        current_harness_generation: Some(1),
+        current_turn_attempt: Some(1),
+        last_projected_seq: 3,
+        created_at: at.into(),
+        updated_at: at.into(),
+        ..Default::default()
+    };
+    let transcript=serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"consumer final answer"}]}}).stringify()+"\n";
+    let artifact_path = path
+        .parent()
+        .ok_or_else(|| StoreError::Invalid("scratch parent".into()))?
+        .join("consumer-provider.jsonl");
+    admit_scratch_path(&artifact_path)?;
+    std::fs::write(&artifact_path, transcript.as_bytes())
+        .map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let artifact = RuntimeArtifact {
+        artifact_id: "consumer-artifact".into(),
+        operation_id: op.operation_id.clone(),
+        artifact_kind: "provider-transcript-jsonl".into(),
+        media_type: "application/x-ndjson".into(),
+        storage_kind: "file-path".into(),
+        content_hash: format!("sha256:{:x}", Sha256::digest(transcript.as_bytes())),
+        artifact_json: None,
+        artifact_path: Some(artifact_path.display().to_string()),
+        created_at: at.into(),
+    };
+    fields.host_session_id = session.host_session_id.clone();
+    fields.scope_ref = scope.into();
+    fields.runtime_id = Some(runtime.runtime_id.clone());
+    fields.run_id = Some(run.run_id.clone());
+    fields.transport = Some("headless".into());
+    let expected=store.write(|tx|{
+        tx.insert_session(&session)?;tx.upsert_continuity(scope,"main",&session.host_session_id,at)?;tx.insert_runtime(&runtime)?;tx.insert_run(&run)?;tx.insert_runtime_operation(&op)?;tx.insert_broker_invocation(&invocation)?;tx.insert_runtime_artifact(&artifact)?;
+        let mut expected=vec![];
+        for (index,(kind,lifecycle,payload)) in [
+            ("user.message","turn.user_prompt",serde_json::json!({"content":"consumer prompt"})),
+            ("assistant.message.completed","turn.message",serde_json::json!({"content":"consumer final answer"})),
+            ("turn.completed","turn.completed",serde_json::json!({"status":"completed"}))
+        ].into_iter().enumerate(){
+            let seq=index as i64+1;
+            let mirror=tx.append_legacy_event(&LegacyEventFields{ts:at.into(),host_session_id:session.host_session_id.clone(),scope_ref:scope.into(),lane_ref:"main".into(),generation:1,run_id:Some(run.run_id.clone()),runtime_id:Some(runtime.runtime_id.clone()),source:"broker".into(),event_kind:format!("broker.{kind}"),event_json:Some(serde_json::json!({"invocationId":invocation.invocation_id,"seq":seq,"type":kind,"time":at,"payload":payload}))})?;
+            tx.append_broker_event(&BrokerEventAppend{invocation_id:invocation.invocation_id.clone(),seq,time:at.into(),r#type:kind.into(),runtime_id:runtime.runtime_id.clone(),run_id:Some(run.run_id.clone()),harness_generation:Some(1),turn_attempt:Some(1),payload:payload.clone(),hrc_event_seq:Some(mirror.seq),projection_status:Some("applied".into()),..Default::default()})?;
+            fields.event_kind=lifecycle.into();fields.payload=Some(payload.clone());let row=tx.append_lifecycle(&fields)?;
+            expected.push(serde_json::json!({"eventKind":lifecycle,"payload":payload,"hrcSeq":row.hrc_seq}));
+        }
+        let mut unrelated=fields.clone();unrelated.host_session_id="p1-host".into();unrelated.scope_ref="agent:tabularasa:project:hrc-runtime:task:p1-store".into();unrelated.runtime_id=Some("p1-runtime".into());unrelated.run_id=Some("p1-run".into());unrelated.payload=Some(serde_json::json!({"text":"unrelated global head"}));tx.append_lifecycle(&unrelated)?;
+        Ok(expected)
+    })?.value;
+    let readback=store.read_snapshot(|tx|Ok(serde_json::json!({"run":tx.run_by_id("consumer-run")?,"brokerEvents":tx.broker_events_by_invocation("consumer-invocation")?,"lifecycle":tx.lifecycle_events().list_by_run("consumer-run",&LifecycleFilters::default())?,"artifacts":tx.runtime_artifacts_by_operation("consumer-operation")?})))?;
+    store.close()?;
+    Ok(
+        serde_json::json!({"runId":"consumer-run","runtimeId":"consumer-runtime","hostSessionId":"consumer-host","invocationId":"consumer-invocation","scopeRef":scope,"artifactPath":artifact_path.display().to_string(),"expectedLifecycle":expected,"readback":readback}),
+    )
+}
+fn consumer_archive_history(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let rows = store
+        .write(|tx| {
+            let mut rows = vec![];
+            for (i, source) in ["legacy-claude", "broker", "legacy-codex", "tmux"]
+                .into_iter()
+                .enumerate()
+            {
+                rows.push(tx.append_legacy_event(&LegacyEventFields {
+                    ts: "2026-10-23T00:00:00.000Z".into(),
+                    host_session_id: "p1-host".into(),
+                    scope_ref: "agent:tabularasa:project:hrc-runtime:task:p1-store".into(),
+                    lane_ref: "main".into(),
+                    generation: 1,
+                    run_id: Some("p1-run".into()),
+                    runtime_id: Some("p1-runtime".into()),
+                    source: source.into(),
+                    event_kind: "legacy.consumer.control".into(),
+                    event_json: Some(
+                        serde_json::json!({"index":i,"text":"archive byte-value control"}),
+                    ),
+                })?);
+            }
+            Ok(rows)
+        })?
+        .value;
+    store.close()?;
+    Ok(serde_json::json!({"rows":rows}))
+}
+fn consumer_append_control(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    let mut fields = store
+        .read_snapshot(|tx| tx.lifecycle_events().page(0, 1, None))?
+        .rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| StoreError::MissingRecord("oracle lifecycle".into()))?
+        .fields;
+    fields.event_kind = "turn.message".into();
+    fields.payload = Some(serde_json::json!({"text":"consumer concurrent append"}));
+    let row = store.write(|tx| tx.append_lifecycle(&fields))?.value;
+    store.close()?;
+    Ok(serde_json::json!({"row":row}))
 }

@@ -1224,3 +1224,729 @@
 {"schema": true, "response": null}
 {"schema": {"$dynamicAnchor": "root", "type": "object", "properties": {"child": {"$dynamicRef": "#root"}}}, "response": {"child": {"child": {}}}}
 {"schema": true, "response": null}
+{"schema": {"type": "string", "pattern": "["}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "["}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "["}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "]"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "]"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "]"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "("}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "("}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "("}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": ")"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": ")"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": ")"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "{"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "{"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "{"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "}"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "}"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "}"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\q"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\q"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\q"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\u"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\u"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\u"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\uZZZZ"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\uZZZZ"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\uZZZZ"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\u{110000}"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\u{110000}"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\u{110000}"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\x0"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\x0"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\x0"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\8"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\8"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\8"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "a{2,1}"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "a{2,1}"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "a{2,1}"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "*a"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "*a"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "*a"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "a++"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "a++"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "a++"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "(?"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "(?"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "(?"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "(?q:a)"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "(?q:a)"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "(?q:a)"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "(?<x>a)(?<x>b)"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "(?<x>a)(?<x>b)"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "(?<x>a)(?<x>b)"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\k<x>"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\k<x>"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\k<x>"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "(?<1>a)"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "(?<1>a)"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "(?<1>a)"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "[z-a]"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "[z-a]"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "[z-a]"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "[\\d-a]"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "[\\d-a]"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "[\\d-a]"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "[a-\\d]"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "[a-\\d]"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "[a-\\d]"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\p{NotAProperty}"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\p{NotAProperty}"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\p{NotAProperty}"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\p{Script=Greek}"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\p{Script=Greek}"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\p{Script=Greek}"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "\\p{Letter}+"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "\\p{Letter}+"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "\\p{Letter}+"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "(?<=a)b"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "(?<=a)b"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "(?<=a)b"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "(?<!a)b"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "(?<!a)b"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "(?<!a)b"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "(?<name>a)\\k<name>"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "(?<name>a)\\k<name>"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "(?<name>a)\\k<name>"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "^.$"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "^.$"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "^.$"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "^\\ud800$"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "^\\ud800$"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "^\\ud800$"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "^a.$"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "^a.$"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "^a.$"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "[\\u{1F600}-\\u{1F64F}]"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "[\\u{1F600}-\\u{1F64F}]"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "[\\u{1F600}-\\u{1F64F}]"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "a{9999999999999999}"}, "response": "ab"}
+{"schema": {"type": "string", "pattern": "a{9999999999999999}"}, "response": "\ud83d\ude00"}
+{"schema": {"type": "string", "pattern": "a{9999999999999999}"}, "response": "\ud800"}
+{"schema": {"type": "string", "pattern": "a{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a{1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a{1,"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a{,1}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a{1,z}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(?=a)*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(?<=a)+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(a)\\2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\0a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\07"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\c"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\c1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\u{z}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\u{}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\p{}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\p"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\k"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\k<>"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(?<a-b>x)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(?<x>a)|(?<x>b)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\xgg"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[\\q]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[\\8]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[\\-]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[a\\]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(a))"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "((a)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(?:a))"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a*]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a+{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(?:a?){"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\q\\8"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\8\\q"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\u\\u{z}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*}2{\\b)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\(\\b2*3)\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1]a]b?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\[+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")3]]{+}{\\?)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}](?b]a\\[b{]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2)*a{*12["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1[)(b\\2){*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[\\*3a\\3[22["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2?1])(?*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?b?\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3]{{2}1]\\2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "12b3+}*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\\\))[\\}*{{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]())ba)2]+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}]{2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2b)31b3a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a2{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "++3*2\\1*((*a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[+?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?)3?\\}}31\\)3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[?3\\b})({("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a2[{?22b\\\\1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]]2*b+][2a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\+a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1[\\*22]+a{]1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2{+**2?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a11"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1\\*2{\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?a]["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(][{*?{2{aa"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b[\\["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2[1*["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b[?b1+?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a{+*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "ba1b{+2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b[[?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[[b)3b\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")]({"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?{\\1\\*]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+)?)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?1?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1b+\\33231*a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "31\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2***313(ba]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")1b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3[a}2{b*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+{["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{[b?b*)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a[13212(?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(a+1}3}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1?{2a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b(?b\\{\\]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a\\}21]?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[3?)?([]2}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a1}*\\b){}\\*("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?){1[))2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "([2[1({*12)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{?[?*}*2)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(bb1*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]3b)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[+))\\2\\3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*}))a*1](32{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b+b)}]]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")}]{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}?a*+a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")2+}a2?\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{133\\{*["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*+]+2{2[\\\\{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+a]33}+)[*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3{*{?++1(}b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1[*("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?*+)2+*\\a*["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{a{)b)(][{?3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+2?b*2("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1]\\][\\({a{b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?2a[[*a2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "()2+2]}3b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{{3)(*a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")+))+}?2b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]{*a?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "23}+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1)\\}?b*(?1?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")1\\)ab"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\*1b212\\1b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+)2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]]a(3(1?+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{\\(}+3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3]2{}{)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?+(+2(*3*[+{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{b)+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2([]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(}3}}??"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[b+a\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]})a+1)(\\))+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a2+1?[)12b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")\\3\\)(}\\[(+}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\(\\*2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2a3+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\})3\\)+]ba*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a?]{a\\+?a*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\)[]?+aa"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")2\\3[\\3}?*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?1]]a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")?{)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+)}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*(*("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?a*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[}*{}*111b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3+a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a\\)b2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?1b(a)]*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3)+[[\\{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b++b{?(}[{a}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{23[\\*(b3*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\a?2}2+]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b2){"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "baa3b2]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1()++"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\}\\?{(b}{[{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+)[2+(}?33"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{?("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "??"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}1*a?}b[311("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\*}?)\\2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{{b1{["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a?b\\?3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*?b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b])?*2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "23+[11]+{3[)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "((b1**{3)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "])*bb({+(\\3("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(]+(]+3([3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")b(*{3?b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2?a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\*\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2*[]}\\("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "){"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]1?1bab["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "++[b*)(a[{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3]+1)\\1)2{("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*bb(+1\\+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "})+*21}+(\\\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}11b[b][a{?]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")3]?))3)1[+b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a(1[(2?2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "bba}++bbb2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(13"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[{[({){]1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(*b*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+\\)}?21"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a*3*["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*b\\\\b{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b})??**"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[[+{2[?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2?3b)3*+]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?b]1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[}*}+](*(}3("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(321*{2}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2[*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b+2b3){"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3??]]2\\2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a]+]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b]b12??a(3]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "([\\)3++"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a?2{+{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*a[3+("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{a[){b)}(3*)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "()a11"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}3b+a(21){3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b*]}[[1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*2?*?{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+b}(}(("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a(a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "ab3}}1\\?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "11??))3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?2(((b+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")\\*?1+){+{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}?21[b+(a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?)}2}a}2b?*1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3(12b{}[)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}}[]23{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b}[a[a3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\12"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[{]}b["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{ab}a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*??b1a3b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\b[)baa)}3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[+)?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?1\\b*+}("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(?*\\?aa+3?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[[1((+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "})"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3+{\\]?]a["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}?)++b{}\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?2)("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "32\\b?}b(3b32"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3\\+(b3{*]]b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(({([1*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "32\\2)3*b)a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "())a}b)aa*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3a\\aa*("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[*+}1)a?}1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1\\{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}++1)b}]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]2[1{[)b{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "++?2[b]}((?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*1[)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}*?][(]b{?\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}a*+*2}?}{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+{b()2["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*[\\)}1]2(}){"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\?bb]33)?a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3?\\)3b2a[{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?a])?(*)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3ba\\}]+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{)2*2{1?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a*}}1{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a])a*}*{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\2b)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "31)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[131{22b]a["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b\\1b)2*}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}[(+*a][[?2?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[b1?)ba{+a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(+[b}3\\11]3("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\*]*++a2{(2]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}*+]23\\?+3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+]?})"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[]??"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "??)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3[\\b3a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b}*?(33b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*]?1]{b+\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}b})3]ba"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?a)?(a)[}a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b3\\3}\\*1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b3)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2?**ab]("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(\\2?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+\\())2{\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b])\\b{}a2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "++\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2}b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")b?3(3]]{+?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1?+]223)]["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1)(a\\1+{a*}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*)1\\)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?2{\\2)]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b\\b\\)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}+{)\\}?)]("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(((\\3b]\\\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b]b1[}\\}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}13**}]2+(b\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")]11)["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b*b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+])"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a3(){)*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(*ba**"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1\\]ba1\\2}1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "({]}]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(((}2+1\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a3][aa"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[()b2?*(?]3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?*+b\\a3\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[\\a3a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]a*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]3[+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{[{*2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "231]?1+]["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?]\\b){("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b*(}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[(32[a+*)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}b((2{aa(a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3]a]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\[*((??1)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}a?(]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1*[bb2\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?{]]?2a2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[]**?{]2)1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*}\\\\a)1\\3ba"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?3+a(+(2?2b("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3)]+1({(3(*\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[)]232a[)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+}3)*a*["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3+{2}b["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}b+\\a3[?)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\}()2)?a)1]{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "([(]a?3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a\\?\\}?\\\\b{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(+2+1("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "**+]b*23"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?a3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b[*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\{}{}{))13\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[]?1["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")?\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{222{[(?*2?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?1a\\\\(+*}("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "222\\1*{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b]\\\\33+1{}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?[[a?(\\12"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1?{\\)]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1a[113[*31}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}[b**"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*+b+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "??+b11?1)2??"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{{[+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}\\\\a]]a?*]b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}\\(){21"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+aa"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\])"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a?a\\b(\\2a\\a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}(+(3]\\){+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]b}[\\["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b})"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1a+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3})*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "ba\\b\\2*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2()"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2?1*("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\}2]a*(?[1{?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[(a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+)+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b{a{a)\\3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{1a)(+({a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b21b}\\**"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[?+(["}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b]+[(2*1+]]+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\1b{+b1(a{})"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*a?a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[3?}3a*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+[{babb(1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2)1[[][b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}}(+]([++"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "aa12[]?*+("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+[?a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[)21()"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*+*\\(23?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[2)b}]1)b\\+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{{?1(]2a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1*+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\2[\\3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3)?{3]b2a1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}*[[2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+2aa"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[+[a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "13}2\\]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b\\111(*[2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3(b121)\\}(}3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{22"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "*?\\bab"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b3*)?2\\{+3*]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\(2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?[(3}){"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2[\\+a{\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(?(*b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]*a31a](}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2]?[{b}{})\\\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+\\a?+++b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1]}3[3+}a[b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?{a(b+{*?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b)\\?*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a}?13323"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "]b3\\)3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?[++"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1})13a]ab?1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "([}](}(++"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?[+aa"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "))b{1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+2]\\{a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{2bb+?())1}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{+a{\\b]2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1]{})a(*{131"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}*3{(b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{){[b[{aa33"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\+{+a\\+)ba??"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}[}22((3}3[a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?a*2"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{3b\\??a\\[1+{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\{3a*2b}?[3"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a[[\\[b]]("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(\\+1"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{ba\\113a(+*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}\\)"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3({a}{33\\*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(2a)?ab32"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}]+]?2b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[3?]]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2))?b*?[2(+b"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "2))\\]a)}b\\\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "(]2?)[(\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1b\\\\(]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a*"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\2a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "1}a?\\?}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?\\?\\2?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "\\?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3()?a1+"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "a{+((a]"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "}2*32[]?("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?a]?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "3b\\?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+\\3}\\2[3{"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[+]?2)1*1a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{2({*(}a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?21*{?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "+){3\\("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "b{+\\aa{a"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "{)[("}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": ")]b1)+)?"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "?131]\\?+1}"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "[?]1}a\\"}, "response": "ab1"}
+{"schema": {"type": "string", "pattern": "31)b+1\\}+"}, "response": "ab1"}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$ref": "#x"}, "response": 1}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$ref": "#x"}, "response": "s"}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$ref": "#x"}, "response": {}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$ref": "#x"}, "response": {"a": 1}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$ref": "#x"}, "response": {"a": {"b": 1}}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$ref": "#x"}, "response": {"a": {"b": "s"}}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$ref": "#x"}, "response": {"a": {"b": {}}}}
+{"schema": {"type": "object", "properties": {"a": {"$id": "urn:p1:sub", "type": "object", "$defs": {"t": {"type": "integer"}}, "properties": {"b": {"$ref": "#/$defs/t"}}}}}, "response": 1}
+{"schema": {"type": "object", "properties": {"a": {"$id": "urn:p1:sub", "type": "object", "$defs": {"t": {"type": "integer"}}, "properties": {"b": {"$ref": "#/$defs/t"}}}}}, "response": "s"}
+{"schema": {"type": "object", "properties": {"a": {"$id": "urn:p1:sub", "type": "object", "$defs": {"t": {"type": "integer"}}, "properties": {"b": {"$ref": "#/$defs/t"}}}}}, "response": {}}
+{"schema": {"type": "object", "properties": {"a": {"$id": "urn:p1:sub", "type": "object", "$defs": {"t": {"type": "integer"}}, "properties": {"b": {"$ref": "#/$defs/t"}}}}}, "response": {"a": 1}}
+{"schema": {"type": "object", "properties": {"a": {"$id": "urn:p1:sub", "type": "object", "$defs": {"t": {"type": "integer"}}, "properties": {"b": {"$ref": "#/$defs/t"}}}}}, "response": {"a": {"b": 1}}}
+{"schema": {"type": "object", "properties": {"a": {"$id": "urn:p1:sub", "type": "object", "$defs": {"t": {"type": "integer"}}, "properties": {"b": {"$ref": "#/$defs/t"}}}}}, "response": {"a": {"b": "s"}}}
+{"schema": {"type": "object", "properties": {"a": {"$id": "urn:p1:sub", "type": "object", "$defs": {"t": {"type": "integer"}}, "properties": {"b": {"$ref": "#/$defs/t"}}}}}, "response": {"a": {"b": {}}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "urn:p1:sub2", "$ref": "#/$defs/outer"}}}, "response": 1}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "urn:p1:sub2", "$ref": "#/$defs/outer"}}}, "response": "s"}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "urn:p1:sub2", "$ref": "#/$defs/outer"}}}, "response": {}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "urn:p1:sub2", "$ref": "#/$defs/outer"}}}, "response": {"a": 1}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "urn:p1:sub2", "$ref": "#/$defs/outer"}}}, "response": {"a": {"b": 1}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "urn:p1:sub2", "$ref": "#/$defs/outer"}}}, "response": {"a": {"b": "s"}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "urn:p1:sub2", "$ref": "#/$defs/outer"}}}, "response": {"a": {"b": {}}}}
+{"schema": {"$defs": {"a": {"$anchor": "same", "type": "integer"}, "b": {"$anchor": "same", "type": "string"}}, "$ref": "#same"}, "response": 1}
+{"schema": {"$defs": {"a": {"$anchor": "same", "type": "integer"}, "b": {"$anchor": "same", "type": "string"}}, "$ref": "#same"}, "response": "s"}
+{"schema": {"$defs": {"a": {"$anchor": "same", "type": "integer"}, "b": {"$anchor": "same", "type": "string"}}, "$ref": "#same"}, "response": {}}
+{"schema": {"$defs": {"a": {"$anchor": "same", "type": "integer"}, "b": {"$anchor": "same", "type": "string"}}, "$ref": "#same"}, "response": {"a": 1}}
+{"schema": {"$defs": {"a": {"$anchor": "same", "type": "integer"}, "b": {"$anchor": "same", "type": "string"}}, "$ref": "#same"}, "response": {"a": {"b": 1}}}
+{"schema": {"$defs": {"a": {"$anchor": "same", "type": "integer"}, "b": {"$anchor": "same", "type": "string"}}, "$ref": "#same"}, "response": {"a": {"b": "s"}}}
+{"schema": {"$defs": {"a": {"$anchor": "same", "type": "integer"}, "b": {"$anchor": "same", "type": "string"}}, "$ref": "#same"}, "response": {"a": {"b": {}}}}
+{"schema": {"$defs": {"a": {"$anchor": "bad name", "type": "integer"}}}, "response": 1}
+{"schema": {"$defs": {"a": {"$anchor": "bad name", "type": "integer"}}}, "response": "s"}
+{"schema": {"$defs": {"a": {"$anchor": "bad name", "type": "integer"}}}, "response": {}}
+{"schema": {"$defs": {"a": {"$anchor": "bad name", "type": "integer"}}}, "response": {"a": 1}}
+{"schema": {"$defs": {"a": {"$anchor": "bad name", "type": "integer"}}}, "response": {"a": {"b": 1}}}
+{"schema": {"$defs": {"a": {"$anchor": "bad name", "type": "integer"}}}, "response": {"a": {"b": "s"}}}
+{"schema": {"$defs": {"a": {"$anchor": "bad name", "type": "integer"}}}, "response": {"a": {"b": {}}}}
+{"schema": {"$defs": {"a": {"$anchor": 3, "type": "integer"}}}, "response": 1}
+{"schema": {"$defs": {"a": {"$anchor": 3, "type": "integer"}}}, "response": "s"}
+{"schema": {"$defs": {"a": {"$anchor": 3, "type": "integer"}}}, "response": {}}
+{"schema": {"$defs": {"a": {"$anchor": 3, "type": "integer"}}}, "response": {"a": 1}}
+{"schema": {"$defs": {"a": {"$anchor": 3, "type": "integer"}}}, "response": {"a": {"b": 1}}}
+{"schema": {"$defs": {"a": {"$anchor": 3, "type": "integer"}}}, "response": {"a": {"b": "s"}}}
+{"schema": {"$defs": {"a": {"$anchor": 3, "type": "integer"}}}, "response": {"a": {"b": {}}}}
+{"schema": {"type": "object", "properties": {"a": {"$dynamicAnchor": "x", "type": "object", "properties": {"b": {"$dynamicRef": "#x"}}}}}, "response": 1}
+{"schema": {"type": "object", "properties": {"a": {"$dynamicAnchor": "x", "type": "object", "properties": {"b": {"$dynamicRef": "#x"}}}}}, "response": "s"}
+{"schema": {"type": "object", "properties": {"a": {"$dynamicAnchor": "x", "type": "object", "properties": {"b": {"$dynamicRef": "#x"}}}}}, "response": {}}
+{"schema": {"type": "object", "properties": {"a": {"$dynamicAnchor": "x", "type": "object", "properties": {"b": {"$dynamicRef": "#x"}}}}}, "response": {"a": 1}}
+{"schema": {"type": "object", "properties": {"a": {"$dynamicAnchor": "x", "type": "object", "properties": {"b": {"$dynamicRef": "#x"}}}}}, "response": {"a": {"b": 1}}}
+{"schema": {"type": "object", "properties": {"a": {"$dynamicAnchor": "x", "type": "object", "properties": {"b": {"$dynamicRef": "#x"}}}}}, "response": {"a": {"b": "s"}}}
+{"schema": {"type": "object", "properties": {"a": {"$dynamicAnchor": "x", "type": "object", "properties": {"b": {"$dynamicRef": "#x"}}}}}, "response": {"a": {"b": {}}}}
+{"schema": {"$defs": {"sub": {"$id": "urn:p1:sub3", "type": "integer"}}, "type": "object", "properties": {"a": {"$ref": "#/$defs/sub"}}}, "response": 1}
+{"schema": {"$defs": {"sub": {"$id": "urn:p1:sub3", "type": "integer"}}, "type": "object", "properties": {"a": {"$ref": "#/$defs/sub"}}}, "response": "s"}
+{"schema": {"$defs": {"sub": {"$id": "urn:p1:sub3", "type": "integer"}}, "type": "object", "properties": {"a": {"$ref": "#/$defs/sub"}}}, "response": {}}
+{"schema": {"$defs": {"sub": {"$id": "urn:p1:sub3", "type": "integer"}}, "type": "object", "properties": {"a": {"$ref": "#/$defs/sub"}}}, "response": {"a": 1}}
+{"schema": {"$defs": {"sub": {"$id": "urn:p1:sub3", "type": "integer"}}, "type": "object", "properties": {"a": {"$ref": "#/$defs/sub"}}}, "response": {"a": {"b": 1}}}
+{"schema": {"$defs": {"sub": {"$id": "urn:p1:sub3", "type": "integer"}}, "type": "object", "properties": {"a": {"$ref": "#/$defs/sub"}}}, "response": {"a": {"b": "s"}}}
+{"schema": {"$defs": {"sub": {"$id": "urn:p1:sub3", "type": "integer"}}, "type": "object", "properties": {"a": {"$ref": "#/$defs/sub"}}}, "response": {"a": {"b": {}}}}
+{"schema": {"$id": "urn:p1:root-unique", "$defs": {"sub": {"$id": "child", "type": "integer"}}, "$ref": "#/$defs/sub"}, "response": 1}
+{"schema": {"$id": "urn:p1:root-unique", "$defs": {"sub": {"$id": "child", "type": "integer"}}, "$ref": "#/$defs/sub"}, "response": "s"}
+{"schema": {"$id": "urn:p1:root-unique", "$defs": {"sub": {"$id": "child", "type": "integer"}}, "$ref": "#/$defs/sub"}, "response": {}}
+{"schema": {"$id": "urn:p1:root-unique", "$defs": {"sub": {"$id": "child", "type": "integer"}}, "$ref": "#/$defs/sub"}, "response": {"a": 1}}
+{"schema": {"$id": "urn:p1:root-unique", "$defs": {"sub": {"$id": "child", "type": "integer"}}, "$ref": "#/$defs/sub"}, "response": {"a": {"b": 1}}}
+{"schema": {"$id": "urn:p1:root-unique", "$defs": {"sub": {"$id": "child", "type": "integer"}}, "$ref": "#/$defs/sub"}, "response": {"a": {"b": "s"}}}
+{"schema": {"$id": "urn:p1:root-unique", "$defs": {"sub": {"$id": "child", "type": "integer"}}, "$ref": "#/$defs/sub"}, "response": {"a": {"b": {}}}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#x"}, "response": 1}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#x"}, "response": "s"}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#x"}, "response": {}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#x"}, "response": {"a": 1}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#x"}, "response": {"a": {"b": 1}}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#x"}, "response": {"a": {"b": "s"}}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#x"}, "response": {"a": {"b": {}}}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#notHere"}, "response": 1}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#notHere"}, "response": "s"}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#notHere"}, "response": {}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#notHere"}, "response": {"a": 1}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#notHere"}, "response": {"a": {"b": 1}}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#notHere"}, "response": {"a": {"b": "s"}}}
+{"schema": {"$defs": {"x": {"$anchor": "x", "type": "integer"}}, "$dynamicRef": "#notHere"}, "response": {"a": {"b": {}}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "urn:p1:missing", "$ref": "#/$defs/missing"}}}, "response": {"a": {"b": {"a": 1}}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "urn:p1:missing", "$ref": "#/$defs/outer"}}}, "response": {"a": {"b": {"a": 1}}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "https://p1.invalid/schema", "$ref": "#/$defs/missing"}}}, "response": {"a": {"b": {"a": 1}}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "https://p1.invalid/schema", "$ref": "#/$defs/outer"}}}, "response": {"a": {"b": {"a": 1}}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "child", "$ref": "#/$defs/missing"}}}, "response": {"a": {"b": {"a": 1}}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "child", "$ref": "#/$defs/outer"}}}, "response": {"a": {"b": {"a": 1}}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "#child", "$ref": "#/$defs/missing"}}}, "response": {"a": {"b": {"a": 1}}}}
+{"schema": {"$defs": {"outer": {"type": "integer"}}, "type": "object", "properties": {"a": {"$id": "#child", "$ref": "#/$defs/outer"}}}, "response": {"a": {"b": {"a": 1}}}}
+{"schema": {"type": "object", "properties": {"a": {"$dynamicAnchor": "x", "type": "object", "properties": {"b": {"$dynamicRef": "#x"}}}}}, "response": {"a": {"b": {"a": 1}}}}

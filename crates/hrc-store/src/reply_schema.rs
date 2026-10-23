@@ -127,14 +127,357 @@ fn type_matches(value: &JsValue, kind: &str) -> bool {
         _ => false,
     }
 }
-fn regex_compile_error(message: &str) -> MailSchemaCompileError {
-    let message = match message {
+fn schema_anchors(schema: &JsValue) -> Result<(), MailSchemaCompileError> {
+    fn walk(
+        value: &JsValue,
+        base: &str,
+        root: bool,
+        seen: &mut std::collections::BTreeSet<String>,
+    ) -> Result<(), MailSchemaCompileError> {
+        let Some(object) = value.as_object() else {
+            return Ok(());
+        };
+        let base = object
+            .get("$id")
+            .and_then(JsValue::as_str)
+            .unwrap_or(base)
+            .trim_end_matches('#');
+        if !root {
+            for keyword in ["$anchor", "$dynamicAnchor"] {
+                if let Some(anchor) = object.get(keyword).and_then(JsValue::as_str) {
+                    if !anchor
+                        .as_bytes()
+                        .first()
+                        .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_')
+                        || !anchor
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+                    {
+                        return Err(MailSchemaCompileError::error(format!(
+                            "invalid anchor \"{anchor}\""
+                        )));
+                    }
+                    let reference = format!("{base}#{anchor}");
+                    if !seen.insert(reference.clone()) {
+                        return Err(MailSchemaCompileError::error(
+                            format!(
+                                "reference \\\"{reference}\\\" resolves to more than one schema"
+                            )
+                            .replace("\\\"", "\""),
+                        ));
+                    }
+                }
+            }
+        }
+        for (key, child) in entries(object) {
+            let Some(key) = key.as_str() else { continue };
+            if let Some(children) = child.as_array() {
+                if matches!(key, "items" | "allOf" | "anyOf" | "oneOf") {
+                    for child in children {
+                        walk(child, base, false, seen)?;
+                    }
+                }
+            } else if matches!(
+                key,
+                "$defs" | "definitions" | "properties" | "patternProperties" | "dependencies"
+            ) {
+                if let Some(children) = child.as_object() {
+                    for (_, child) in entries(children) {
+                        walk(child, base, false, seen)?;
+                    }
+                }
+            } else if !matches!(
+                key,
+                "default"
+                    | "enum"
+                    | "const"
+                    | "required"
+                    | "maximum"
+                    | "minimum"
+                    | "exclusiveMaximum"
+                    | "exclusiveMinimum"
+                    | "multipleOf"
+                    | "maxLength"
+                    | "minLength"
+                    | "pattern"
+                    | "format"
+                    | "maxItems"
+                    | "minItems"
+                    | "uniqueItems"
+                    | "maxProperties"
+                    | "minProperties"
+            ) {
+                walk(child, base, false, seen)?;
+            }
+        }
+        Ok(())
+    }
+    walk(schema, "", true, &mut Default::default())
+}
+fn regex_diagnostic(pattern: &JsString) -> Option<&'static str> {
+    let units = pattern.utf16();
+    let mut i = 0;
+    let mut class = false;
+    let mut groups = vec![];
+    let mut atom = false;
+    let mut quantifier = false;
+    let mut lazy = false;
+    let mut behind = false;
+    let digit = |unit: u16| matches!(unit, 48..=57);
+    let hex = |unit: u16| matches!(unit,48..=57|65..=70|97..=102);
+    while i < units.len() {
+        let unit = units[i];
+        if unit == 92 {
+            i += 1;
+            let Some(&next) = units.get(i) else {
+                return Some("\\ at end of pattern");
+            };
+            match next {
+                48 if units.get(i + 1).is_some_and(|u| digit(*u)) => {
+                    return Some("invalid octal escape for Unicode pattern");
+                }
+                49..=57 if class => return Some("invalid octal escape for Unicode pattern"),
+                49..=57 => {
+                    while units.get(i + 1).is_some_and(|u| digit(*u)) {
+                        i += 1;
+                    }
+                }
+                117 => {
+                    if units.get(i + 1) == Some(&123) {
+                        i += 2;
+                        let start = i;
+                        while units.get(i).is_some_and(|u| hex(*u)) {
+                            i += 1;
+                        }
+                        if i == start
+                            || units.get(i) != Some(&125)
+                            || u32::from_str_radix(&String::from_utf16_lossy(&units[start..i]), 16)
+                                .ok()
+                                .is_none_or(|n| n > 0x10ffff)
+                        {
+                            return Some("invalid Unicode code point \\u{} escape");
+                        }
+                    } else {
+                        for _ in 0..4 {
+                            i += 1;
+                            if !units.get(i).is_some_and(|u| hex(*u)) {
+                                return Some("invalid Unicode \\u escape");
+                            }
+                        }
+                    }
+                }
+                120 => {
+                    for _ in 0..2 {
+                        i += 1;
+                        if !units.get(i).is_some_and(|u| hex(*u)) {
+                            return Some("invalid escaped character for Unicode pattern");
+                        }
+                    }
+                }
+                99 => {
+                    i += 1;
+                    if !units.get(i).is_some_and(|u| matches!(*u,65..=90|97..=122)) {
+                        return Some(if i == units.len() {
+                            "invalid escaped character for Unicode pattern"
+                        } else {
+                            "invalid \\c escape for Unicode pattern"
+                        });
+                    }
+                }
+                112 | 80 => {
+                    if units.get(i + 1) != Some(&123) {
+                        return Some("invalid property expression");
+                    }
+                    i += 2;
+                    while units.get(i).is_some_and(|u| *u != 125) {
+                        i += 1;
+                    }
+                    if i == units.len() {
+                        return Some("invalid property expression");
+                    }
+                }
+                107 => {
+                    if units.get(i + 1) != Some(&60) {
+                        return Some("invalid escaped character for Unicode pattern");
+                    }
+                    i += 2;
+                    let start = i;
+                    while units.get(i).is_some_and(|u| *u != 62) {
+                        i += 1;
+                    }
+                    if i == start || i == units.len() {
+                        return Some("invalid escaped character for Unicode pattern");
+                    }
+                }
+                45 if !class => return Some("invalid escaped character for Unicode pattern"),
+                48 | 98 | 66 | 100 | 68 | 115 | 83 | 119 | 87 | 102 | 110 | 114 | 116 | 118
+                | 94 | 36 | 92 | 46 | 42 | 43 | 63 | 40 | 41 | 91 | 93 | 123 | 125 | 47 | 124
+                | 45 => {}
+                _ => return Some("invalid escaped character for Unicode pattern"),
+            }
+            atom = class || !matches!(next, 98 | 66);
+            behind = false;
+            quantifier = false;
+            lazy = false;
+        } else if class {
+            if unit == 93 {
+                class = false;
+                atom = true;
+                quantifier = false;
+                lazy = false;
+                behind = false;
+            }
+        } else {
+            match unit {
+                91 => {
+                    class = true;
+                }
+                40 => {
+                    let is_behind = units
+                        .get(i + 1..i + 4)
+                        .is_some_and(|u| u == [63, 60, 61] || u == [63, 60, 33]);
+                    let prefix = if is_behind {
+                        3
+                    } else if units
+                        .get(i + 1..i + 3)
+                        .is_some_and(|u| matches!(u, [63, 58] | [63, 61] | [63, 33]))
+                    {
+                        2
+                    } else {
+                        0
+                    };
+                    groups.push(is_behind);
+                    i += prefix;
+                    atom = false;
+                    quantifier = false;
+                    lazy = false;
+                    if prefix == 0 && units.get(i + 1) == Some(&63) {
+                        if units.get(i + 2) == Some(&60) {
+                            i += 3;
+                            while units.get(i).is_some_and(|u| *u != 62) {
+                                i += 1;
+                            }
+                        } else {
+                            return Some("unrecognized character after (?");
+                        }
+                    }
+                }
+                41 => {
+                    let Some(kind) = groups.pop() else {
+                        return Some("unmatched parentheses");
+                    };
+                    behind = kind;
+                    atom = true;
+                    quantifier = false;
+                    lazy = false;
+                }
+                93 | 125 => return Some("unmatched ] or } bracket for Unicode pattern"),
+                123 => {
+                    let start = i + 1;
+                    let mut end = start;
+                    while units.get(end).is_some_and(|u| digit(*u)) {
+                        end += 1;
+                    }
+                    if end == start {
+                        return Some("incomplete {} quantifier for Unicode pattern");
+                    }
+                    let low = String::from_utf16_lossy(&units[start..end])
+                        .parse::<f64>()
+                        .unwrap_or(f64::INFINITY);
+                    let mut high = None;
+                    if units.get(end) == Some(&44) {
+                        end += 1;
+                        let start = end;
+                        while units.get(end).is_some_and(|u| digit(*u)) {
+                            end += 1;
+                        }
+                        if end > start {
+                            high = Some(
+                                String::from_utf16_lossy(&units[start..end])
+                                    .parse::<f64>()
+                                    .unwrap_or(f64::INFINITY),
+                            );
+                        }
+                    }
+                    if units.get(end) != Some(&125) {
+                        return Some("incomplete {} quantifier for Unicode pattern");
+                    }
+                    if !atom || quantifier {
+                        return Some("nothing to repeat");
+                    }
+                    if behind {
+                        return Some("invalid quantifier");
+                    }
+                    if high.is_some_and(|high| low > high) {
+                        return Some("numbers out of order in {} quantifier");
+                    }
+                    i = end;
+                    quantifier = true;
+                    lazy = false;
+                }
+                42 | 43 | 63 => {
+                    if unit == 63 && quantifier && !lazy {
+                        lazy = true;
+                    } else {
+                        if !atom || quantifier {
+                            return Some("nothing to repeat");
+                        }
+                        if behind {
+                            return Some("invalid quantifier");
+                        }
+                        quantifier = true;
+                        lazy = false;
+                    }
+                }
+                124 | 94 | 36 => {
+                    atom = false;
+                    quantifier = false;
+                    lazy = false;
+                    behind = false;
+                }
+                _ => {
+                    atom = true;
+                    quantifier = false;
+                    lazy = false;
+                    behind = false;
+                }
+            }
+        }
+        i += 1;
+    }
+    if class {
+        return Some("missing terminating ] for character class");
+    }
+    if !groups.is_empty() {
+        return Some("missing )");
+    }
+    None
+}
+fn regex_compile_error(message: &str, pattern: &JsString) -> MailSchemaCompileError {
+    let detail = regex_diagnostic(pattern).unwrap_or_else(|| match message {
         "Unbalanced bracket" => "missing terminating ] for character class",
+        "Unbalanced parenthesis" => "missing )",
+        "Invalid character escape" => "invalid backreference for Unicode pattern",
+        "Invalid quantifier" => "numbers out of order in {} quantifier",
+        "Quantifier not allowed here" => "nothing to repeat",
+        "Invalid group modifier" => "unrecognized character after (?",
+        "Invalid token at named capture group identifier" => "invalid group specifier name",
+        "Duplicate capture group name" => "duplicate group specifier name",
+        "Range values reversed, start char code is greater than end char code." => {
+            "range out of order in character class"
+        }
+        "Invalid character range" => "invalid range in character class for Unicode pattern",
+        "Invalid property name"
+        | "Invalid property escape"
+        | "Invalid character at property escape start" => "invalid property expression",
+        other if other.starts_with("Backreference to invalid named capture group:") => {
+            "invalid \\k<> named backreference"
+        }
         other => other,
-    };
+    });
     MailSchemaCompileError {
         name: "SyntaxError",
-        message: format!("Invalid regular expression: {message}").into(),
+        message: format!("Invalid regular expression: {detail}").into(),
     }
 }
 #[derive(Clone, Copy)]
@@ -189,6 +532,7 @@ impl<'a> SchemaData<'a> {
 struct ValidationStack {
     active: std::collections::BTreeSet<(usize, usize, u8)>,
     cycle: bool,
+    anchors: BTreeMap<Vec<u16>, usize>,
 }
 thread_local! {
     static VALIDATION_STACK: std::cell::RefCell<ValidationStack> = std::cell::RefCell::default();
@@ -215,6 +559,12 @@ impl ValidationFrame {
             if !state.active.insert(key) {
                 state.cycle = true;
                 return None;
+            }
+            if let Some(anchor) = schema.get("$dynamicAnchor").and_then(JsValue::as_js_string) {
+                state
+                    .anchors
+                    .entry(anchor.utf16().to_vec())
+                    .or_insert(std::ptr::from_ref(schema) as usize);
             }
             Some(Self(key))
         })
@@ -340,6 +690,7 @@ impl CompiledMailReplySchema {
                 "schema must be object or boolean",
             ));
         }
+        schema_anchors(schema)?;
         Self::validate_meta(schema)?;
         let mut compiled = Self {
             root: schema.clone(),
@@ -351,7 +702,7 @@ impl CompiledMailReplySchema {
             .and_then(JsValue::as_str)
             .map(|id| format!("{}#", id.trim_end_matches('#')))
             .unwrap_or_else(|| "#".into());
-        compiled.strict(schema, &base.into(), &[])?;
+        compiled.strict(schema, &base.into(), &[], schema)?;
         cache.schemas.insert(encoded, compiled.clone());
         Ok(compiled)
     }
@@ -415,7 +766,17 @@ impl CompiledMailReplySchema {
         schema: &JsValue,
         path: &JsString,
         inherited: &[String],
+        resource: &JsValue,
     ) -> Result<(), MailSchemaCompileError> {
+        let resource = if schema
+            .get("$id")
+            .and_then(JsValue::as_str)
+            .is_some_and(|id| !id.is_empty())
+        {
+            schema
+        } else {
+            resource
+        };
         if schema.is_boolean() {
             return Ok(());
         }
@@ -769,24 +1130,37 @@ impl CompiledMailReplySchema {
             }
         }
         if let Some(reference) = object.get("$ref").and_then(JsValue::as_str) {
-            let identity = format!("{reference}:{inherited:?}");
+            let identity = format!("{}:{reference}:{inherited:?}", resource.stringify());
             if self.visited_references.insert(identity) {
-                let target = self.resolve(reference).cloned().ok_or_else(|| {
-                    MailSchemaCompileError::error(format!(
-                        "can't resolve reference {reference} from id {}",
-                        self.root
-                            .get("$id")
-                            .and_then(JsValue::as_str)
-                            .unwrap_or("#")
-                    ))
-                })?;
+                let target = Self::resolve_resource(resource, reference)
+                    .cloned()
+                    .ok_or_else(|| {
+                        if resource != &self.root {
+                            return MailSchemaCompileError {
+                                name: "RangeError",
+                                message: "Maximum call stack size exceeded.".into(),
+                            };
+                        }
+                        MailSchemaCompileError::error(format!(
+                            "can't resolve reference {reference} from id {}",
+                            self.root
+                                .get("$id")
+                                .and_then(JsValue::as_str)
+                                .unwrap_or("#")
+                        ))
+                    })?;
                 let base = self
                     .root
                     .get("$id")
                     .and_then(JsValue::as_str)
                     .unwrap_or("")
                     .trim_end_matches('#');
-                self.strict(&target, &format!("{base}{reference}").into(), &types)?;
+                self.strict(
+                    &target,
+                    &format!("{base}{reference}").into(),
+                    &types,
+                    resource,
+                )?;
             }
         }
         for keyword in ["pattern"] {
@@ -798,7 +1172,7 @@ impl CompiledMailReplySchema {
                     })
                     .collect();
                 let regex = regress::Regex::from_unicode(points.into_iter(), "u")
-                    .map_err(|e| regex_compile_error(&e.to_string()))?;
+                    .map_err(|e| regex_compile_error(&e.to_string(), pattern))?;
                 self.patterns.insert(pattern.utf16().to_vec(), regex);
             }
         }
@@ -835,7 +1209,7 @@ impl CompiledMailReplySchema {
                             })
                             .collect();
                         let regex = regress::Regex::from_unicode(points.into_iter(), "u")
-                            .map_err(|e| regex_compile_error(&e.to_string()))?;
+                            .map_err(|e| regex_compile_error(&e.to_string(), key))?;
                         self.patterns.insert(key.utf16().to_vec(), regex);
                         if let Some(properties) =
                             object.get("properties").and_then(JsValue::as_object)
@@ -866,6 +1240,7 @@ impl CompiledMailReplySchema {
                         child,
                         &pointer(&pointer(path, &keyword.into()), key),
                         inherited,
+                        resource,
                     )?;
                 }
             }
@@ -881,6 +1256,7 @@ impl CompiledMailReplySchema {
                         } else {
                             &types
                         },
+                        resource,
                     )?
                 }
             }
@@ -906,12 +1282,45 @@ impl CompiledMailReplySchema {
                 } else {
                     &[]
                 };
-                self.strict(child, &pointer(path, &keyword.into()), inherited)?;
+                self.strict(child, &pointer(path, &keyword.into()), inherited, resource)?;
             }
         }
         Ok(())
     }
-    fn resolve(&self, reference: &str) -> Option<&JsValue> {
+    fn resource_for<'a>(&'a self, target: &JsValue) -> &'a JsValue {
+        fn find<'a>(
+            node: &'a JsValue,
+            target: &JsValue,
+            resource: &'a JsValue,
+        ) -> Option<&'a JsValue> {
+            let resource = if node
+                .get("$id")
+                .and_then(JsValue::as_str)
+                .is_some_and(|id| !id.is_empty())
+            {
+                node
+            } else {
+                resource
+            };
+            if std::ptr::eq(node, target) {
+                return Some(resource);
+            }
+            match node {
+                JsValue::Object(object) => object
+                    .iter()
+                    .find_map(|(_, child)| find(child, target, resource)),
+                JsValue::Array(items) => {
+                    items.iter().find_map(|child| find(child, target, resource))
+                }
+                _ => None,
+            }
+        }
+        find(&self.root, target, &self.root).unwrap_or(&self.root)
+    }
+    fn resolve(&self, reference: &str, from: &JsValue) -> Option<&JsValue> {
+        Self::resolve_resource(self.resource_for(from), reference)
+    }
+    fn resolve_resource<'a>(root: &'a JsValue, reference: &str) -> Option<&'a JsValue> {
         fn anchor<'a>(value: &'a JsValue, name: &str) -> Option<&'a JsValue> {
             if value
                 .get("$anchor")
@@ -943,15 +1352,15 @@ impl CompiledMailReplySchema {
             String::from_utf8(result).ok()
         }
         if reference == "#" {
-            return Some(&self.root);
+            return Some(root);
         }
         if let Some(name) = reference.strip_prefix('#')
             && !name.starts_with('/')
         {
-            return anchor(&self.root, &decode(name)?);
+            return anchor(root, &decode(name)?);
         }
         let tail = decode(reference.strip_prefix("#/")?)?;
-        let mut value = &self.root;
+        let mut value = root;
         for part in tail.split('/') {
             let key = part.replace("~1", "/").replace("~0", "~");
             value = if let Some(object) = value.as_object() {
@@ -1019,7 +1428,7 @@ impl CompiledMailReplySchema {
         };
         for keyword in ["$ref", "$dynamicRef"] {
             if let Some(reference) = object.get(keyword).and_then(JsValue::as_str)
-                && let Some(child) = self.resolve(reference)
+                && let Some(child) = self.resolve(reference, schema)
             {
                 merge(self.evaluated(child, data, true));
             }
@@ -1089,7 +1498,7 @@ impl CompiledMailReplySchema {
         };
         for keyword in ["$ref", "$dynamicRef"] {
             if let Some(reference) = object.get(keyword).and_then(JsValue::as_str)
-                && let Some(child) = self.resolve(reference)
+                && let Some(child) = self.resolve(reference, schema)
             {
                 result.merge(self.evaluated_items(child, data, true), false, true);
             }
@@ -1182,7 +1591,7 @@ impl CompiledMailReplySchema {
         }
         for keyword in ["$ref", "$dynamicRef"] {
             if let Some(reference) = object.get(keyword).and_then(JsValue::as_str)
-                && let Some(child) = self.resolve(reference)
+                && let Some(child) = self.resolve(reference, schema)
                 && self.dynamic_evaluated_props(child, data)
             {
                 return true;
@@ -1277,9 +1686,31 @@ impl CompiledMailReplySchema {
         for keyword in ["$ref", "$dynamicRef"] {
             if let Some(reference) = object.get(keyword).and_then(JsValue::as_str) {
                 let target = if keyword == "$dynamicRef" {
-                    Some(&self.root)
+                    fn find(node: &JsValue, address: usize) -> Option<&JsValue> {
+                        if std::ptr::from_ref(node) as usize == address {
+                            return Some(node);
+                        }
+                        match node {
+                            JsValue::Object(object) => {
+                                object.iter().find_map(|(_, child)| find(child, address))
+                            }
+                            JsValue::Array(items) => {
+                                items.iter().find_map(|child| find(child, address))
+                            }
+                            _ => None,
+                        }
+                    }
+                    let key = reference
+                        .trim_start_matches('#')
+                        .encode_utf16()
+                        .collect::<Vec<_>>();
+                    let address =
+                        VALIDATION_STACK.with(|state| state.borrow().anchors.get(&key).copied());
+                    address
+                        .and_then(|address| find(&self.root, address))
+                        .or(Some(&self.root))
                 } else {
-                    self.resolve(reference)
+                    self.resolve(reference, schema)
                 };
                 if let Some(target) = target {
                     self.visit_data(target, data, path, errors)

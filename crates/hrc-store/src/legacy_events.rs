@@ -47,6 +47,15 @@ fn filter(f: &LegacyEventFilters) -> (Vec<String>, Vec<Value>) {
     (p, v)
 }
 impl ReadTx<'_> {
+    /// Allocated local cross-ledger cursor, including pruned rows. Pure read.
+    pub fn allocated_event_stream_seq(&self) -> Result<i64> {
+        Ok(self.db.query_row(
+            "SELECT next_seq-1 FROM event_stream_cursor WHERE id=1",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
     pub fn legacy_events_from_seq(
         &self,
         from: i64,
