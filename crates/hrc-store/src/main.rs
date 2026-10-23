@@ -17,7 +17,9 @@ fn run() -> Result<serde_json::Value, StoreError> {
         value("--db").ok_or_else(|| StoreError::Invalid("explicit --db required".into()))?,
     );
     admit_scratch_path(&path)?;
-    if let Some(registry)=value("--registry"){admit_scratch_path(std::path::Path::new(&registry))?;}
+    if let Some(registry) = value("--registry") {
+        admit_scratch_path(std::path::Path::new(&registry))?;
+    }
     let mut store = Store::open_existing(
         &path,
         OpenOptions {
@@ -132,8 +134,15 @@ fn atomic_contract(
 ) -> Result<serde_json::Value, StoreError> {
     use std::{cell::RefCell, rc::Rc};
     let initial = store.read_snapshot(|tx| tx.lifecycle_events().page(0, 100, None))?;
-    let bridged=hrc_domain::api::EventPage::try_from(initial.clone())?;
-    if bridged.head!=initial.head||bridged.scanned_through!=initial.scanned_through||bridged.rows.len()!=initial.rows.len(){return Err(StoreError::Invalid("API page bridge changed coverage".into()))}
+    let bridged = hrc_domain::api::EventPage::try_from(initial.clone())?;
+    if bridged.head != initial.head
+        || bridged.scanned_through != initial.scanned_through
+        || bridged.rows.len() != initial.rows.len()
+    {
+        return Err(StoreError::Invalid(
+            "API page bridge changed coverage".into(),
+        ));
+    }
 
     let fields = initial
         .rows
@@ -3000,24 +3009,59 @@ fn collective_contract(mut store: Store) -> Result<serde_json::Value, StoreError
     )
 }
 
-fn snapshot_contract(mut store:Store,path:&std::path::Path)->Result<serde_json::Value,StoreError>{
- let read=store.read_snapshot(|tx|{
-  let before=tx.lifecycle_events().page(0,100,None)?;
-  std::fs::write(path.with_file_name("snapshot-pinned"),"read transaction pinned").map_err(|e|StoreError::Invalid(e.to_string()))?;
-  let deadline=std::time::Instant::now()+std::time::Duration::from_secs(6);
-  while !path.with_file_name("snapshot-continue").is_file(){if std::time::Instant::now()>=deadline{return Err(StoreError::Invalid("scratch writer barrier timed out".into()))}std::thread::sleep(std::time::Duration::from_millis(10));}
-  let during=tx.lifecycle_events().page(0,100,None)?;
-  Ok((before,during))
- })?;
- let after=store.read_snapshot(|tx|tx.lifecycle_events().page(0,100,None))?;store.close()?;
- Ok(serde_json::json!({"before":read.0,"during":read.1,"after":after}))
+fn snapshot_contract(
+    mut store: Store,
+    path: &std::path::Path,
+) -> Result<serde_json::Value, StoreError> {
+    let read = store.read_snapshot(|tx| {
+        let before = tx.lifecycle_events().page(0, 100, None)?;
+        std::fs::write(
+            path.with_file_name("snapshot-pinned"),
+            "read transaction pinned",
+        )
+        .map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+        while !path.with_file_name("snapshot-continue").is_file() {
+            if std::time::Instant::now() >= deadline {
+                return Err(StoreError::Invalid(
+                    "scratch writer barrier timed out".into(),
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let during = tx.lifecycle_events().page(0, 100, None)?;
+        Ok((before, during))
+    })?;
+    let after = store.read_snapshot(|tx| tx.lifecycle_events().page(0, 100, None))?;
+    store.close()?;
+    Ok(serde_json::json!({"before":read.0,"during":read.1,"after":after}))
 }
 
 /// Test-driver admission only. The library always uses its caller's explicit path.
 /// Metadata checks precede every SQLite open, including an existing file symlink.
-fn admit_scratch_path(path:&std::path::Path)->Result<(),StoreError>{
- let resolved=if path.exists(){path.canonicalize()}else{path.parent().unwrap_or_else(||std::path::Path::new("/")).canonicalize().map(|p|p.join(path.file_name().unwrap_or_default()))}.map_err(|e|StoreError::Invalid(format!("scratch admission: {e}")))?;
- let relative=resolved.strip_prefix("/private/tmp").or_else(|_|resolved.strip_prefix("/tmp"));
- let admitted=relative.ok().and_then(|p|p.components().next()).and_then(|c|c.as_os_str().to_str()).is_some_and(|name|name.starts_with("hrcp1-"));
- if admitted{Ok(())}else{Err(StoreError::Invalid("scratch admission requires explicit /tmp/hrcp1-* isolated state".into()))}
+fn admit_scratch_path(path: &std::path::Path) -> Result<(), StoreError> {
+    let resolved = if path.exists() {
+        path.canonicalize()
+    } else {
+        path.parent()
+            .unwrap_or_else(|| std::path::Path::new("/"))
+            .canonicalize()
+            .map(|p| p.join(path.file_name().unwrap_or_default()))
+    }
+    .map_err(|e| StoreError::Invalid(format!("scratch admission: {e}")))?;
+    let relative = resolved
+        .strip_prefix("/private/tmp")
+        .or_else(|_| resolved.strip_prefix("/tmp"));
+    let admitted = relative
+        .ok()
+        .and_then(|p| p.components().next())
+        .and_then(|c| c.as_os_str().to_str())
+        .is_some_and(|name| name.starts_with("hrcp1-"));
+    if admitted {
+        Ok(())
+    } else {
+        Err(StoreError::Invalid(
+            "scratch admission requires explicit /tmp/hrcp1-* isolated state".into(),
+        ))
+    }
 }

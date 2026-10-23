@@ -747,7 +747,16 @@ pub use outbox::*;
 impl TryFrom<LifecyclePage> for crate::api::EventPage {
     type Error = ::serde_json::Error;
     fn try_from(page: LifecyclePage) -> Result<Self, Self::Error> {
-        let rows=page.rows.iter().map(|event|json::to_value(event)?.try_serde_value()).collect::<Result<Vec<_>,_>>()?;
-        Ok(Self {ledger_incarnation_id:page.ledger_incarnation_id,head:page.head,rows,scanned_through:page.scanned_through})
+        let rows = page
+            .rows
+            .iter()
+            .map(|event| json::to_value(event)?.try_serde_value())
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            ledger_incarnation_id: page.ledger_incarnation_id,
+            head: page.head,
+            rows,
+            scanned_through: page.scanned_through,
+        })
     }
 }
