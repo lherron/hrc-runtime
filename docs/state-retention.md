@@ -9,7 +9,7 @@ the HRC server main thread.
 
 Non-delta observation events are **keep-forever**. Rows in `events`,
 `hrc_events`, and `broker_invocation_events` have no TTL and are not aged out by
-the scheduled job (Lance ruling, 2026-07-28). Only completed-run rows in
+the scheduled job (Lance ruling, 2026-07-28). Completed-run rows in
 `runtime_buffers` expire, on a default 1-day retention period. The launchd job
 runs `scripts/prune-hrc-event-deltas.ts` nightly; the filename and job label are
 retained for installation compatibility even though the script now enforces
@@ -19,16 +19,17 @@ Each run prints one logging-standard line to `hrc-prune-deltas.log`: event
 `error`, `data.message`) with exit 1.
 
 The policy is enforced by the tool, not merely by the launchd arguments. The
-script prunes `runtime_buffers` only unless an operator names event tables
-explicitly:
+script prunes `runtime_buffers` and expired `broker_projection_dispositions`
+metadata unless an operator names event tables explicitly:
 
 - `--tables <a,b|all>` selects which tables to prune; it defaults to
-  `runtime_buffers`. `--tables all` is available for deliberate one-off
-  maintenance.
+  `runtime_buffers,broker_projection_dispositions`. `--tables all` is available
+  for deliberate one-off maintenance.
 - Unselected tables report `stopReason: "skipped"` and delete nothing. Skipping
   is a configuration choice, so it never downgrades the run's overall
   `stopReason`.
-- The scheduled plist passes `--tables runtime_buffers` and carries no
+- The scheduled plist passes
+  `--tables runtime_buffers,broker_projection_dispositions` and carries no
   `--event-retention-days`, so a stray edit to the retention window cannot start
   deleting semantic history.
 
@@ -62,7 +63,36 @@ The prune has SQL-level safety invariants independent of cutoff arithmetic:
   this job.
 
 There is no archive migration. Observation history is retained in the live state
-database; only `runtime_buffers` rows past their window are deleted.
+database; aged `runtime_buffers` and expired disposition metadata are deleted.
+
+## Broker projection dispositions — terminal committed prefix
+
+`broker_projection_dispositions` is deduplication metadata, not an event ledger.
+The nightly batcher deletes an owning invocation's rows only when its state is
+`exited`, `failed`, or `disposed`, its `updated_at` is more than **14 days** old,
+and the row's `seq <= last_projected_seq`. The terminal projection sets
+`updated_at`; later invocation updates conservatively delay expiration. An
+unknown or invalid timestamp and every nonterminal state fail closed. Rows
+without an owning invocation are eligible immediately. Ledger-inclusive runtime
+prune deletes dispositions before deleting their invocation, in one transaction;
+ordinary runtime prune retains both.
+
+The durable per-invocation contiguous cursor survives compaction. An old replay
+below it falls through the mapper's existing skip branch without duplicating
+canonical events. Above-cursor islands remain authoritative regardless of age,
+because retained-evidence recovery can repair gaps indefinitely. T-10632's
+seven-day revivable hold bound does **not** expire incomplete outcome holds.
+The 14-day terminal window is the approved two-times margin over that hold
+bound; safety for indefinitely held evidence comes from the cursor condition.
+Full-envelope divergence detection for replay against an invocation more than
+14 days terminal is explicitly unsupported for the compacted prefix.
+
+This plan uses the same read-discovery, bounded-key writer recheck, deadline,
+busy retry and duty-cycle controls as other retention. A disposition-only run
+skips diagnostic-bundle cleanup and vacuum, leaving pages for reuse; pass
+`--no-checkpoint` to avoid a checkpoint too. The first live apply is released by
+Mable after landing. Backup-free deletion is authorized for this table alone
+(T-11700); it does not relax the backup rule for observation ledgers.
 
 ## Collaboration state — keep forever
 

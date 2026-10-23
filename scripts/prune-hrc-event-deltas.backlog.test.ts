@@ -19,14 +19,21 @@ import {
 describe('prune-hrc-event-deltas keeps non-delta events indefinitely', () => {
   test('only runtime_buffers is selected unless event tables are named explicitly', () => {
     // Lance ruling 2026-07-28: non-delta observation events retain forever.
-    expect(parsePruneStateRetentionArgs([], {}).tables).toEqual(['runtime_buffers'])
-    expect(parsePruneStateRetentionArgs(['--apply'], {}).tables).toEqual(['runtime_buffers'])
+    expect(parsePruneStateRetentionArgs([], {}).tables).toEqual([
+      'runtime_buffers',
+      'broker_projection_dispositions',
+    ])
+    expect(parsePruneStateRetentionArgs(['--apply'], {}).tables).toEqual([
+      'runtime_buffers',
+      'broker_projection_dispositions',
+    ])
 
     expect(parsePruneStateRetentionArgs(['--tables', 'all'], {}).tables).toEqual([
       'events',
       'hrc_events',
       'broker_invocation_events',
       'runtime_buffers',
+      'broker_projection_dispositions',
     ])
     expect(parsePruneStateRetentionArgs(['--tables=hrc_events,events'], {}).tables).toEqual([
       'events',

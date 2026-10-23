@@ -430,6 +430,7 @@ export class RuntimeRepository {
         .get(table)?.present === 1
     const selected = 'SELECT CAST(value AS TEXT) AS runtime_id FROM json_each(?)'
     const counts: RuntimePruneDeleteCounts = {
+      broker_projection_dispositions: 0,
       broker_invocation_events: 0,
       hrc_events: 0,
       broker_invocations: 0,
@@ -478,6 +479,13 @@ export class RuntimeRepository {
     counts.hrc_events = count(
       `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM hrc_events
        WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+    )
+    counts.broker_projection_dispositions = count(
+      `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM broker_projection_dispositions
+       WHERE invocation_id IN (
+         SELECT invocation_id FROM broker_invocations
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)
+       )`
     )
     counts.broker_invocations = count(
       `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM broker_invocations
@@ -641,6 +649,12 @@ export class RuntimeRepository {
         `DELETE FROM runtime_artifacts
          WHERE operation_id IN (
            SELECT operation_id FROM runtime_operations
+           WHERE runtime_id IN (SELECT runtime_id FROM selected)
+         )`
+      )
+      executeSelected(
+        `DELETE FROM broker_projection_dispositions WHERE invocation_id IN (
+           SELECT invocation_id FROM broker_invocations
            WHERE runtime_id IN (SELECT runtime_id FROM selected)
          )`
       )

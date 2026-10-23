@@ -733,6 +733,7 @@ export type PruneRuntimesRequest = {
 }
 
 export type RuntimePruneDeleteCounts = {
+  broker_projection_dispositions: number
   broker_invocation_events: number
   hrc_events: number
   broker_invocations: number

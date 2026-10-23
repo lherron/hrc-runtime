@@ -10,7 +10,9 @@ import { FirstTurnWatchRepository } from '../../packages/hrc-store-sqlite/src/re
 
 import { countEligible, deleteInBatches } from './batching.ts'
 import {
+  BROKER_DISPOSITION_RETENTION_DAYS,
   BROKER_INVOCATION_EVENTS_ELIGIBLE_SQL,
+  BROKER_PROJECTION_DISPOSITIONS_ELIGIBLE_SQL,
   EVENTS_ELIGIBLE_SQL,
   HRC_EVENTS_ELIGIBLE_SQL,
   MILLISECONDS_PER_DAY,
@@ -47,7 +49,8 @@ import {
 
 export function createRetentionPlans(
   eventCutoff: string,
-  runtimeBufferCutoff: string
+  runtimeBufferCutoff: string,
+  dispositionCutoff: string = eventCutoff
 ): PruneTablePlan[] {
   return [
     {
@@ -81,6 +84,14 @@ export function createRetentionPlans(
       predicateValue: runtimeBufferCutoff,
       eligibleSql: RUNTIME_BUFFERS_ELIGIBLE_SQL,
       selectionOrderSql: 'e.created_at ASC, e.rowid ASC',
+    },
+    {
+      table: 'broker_projection_dispositions',
+      alias: 'e',
+      keyColumn: 'rowid',
+      predicateValue: dispositionCutoff,
+      eligibleSql: BROKER_PROJECTION_DISPOSITIONS_ELIGIBLE_SQL,
+      selectionOrderSql: 'e.rowid ASC',
     },
   ]
 }
@@ -127,7 +138,10 @@ export async function pruneStateRetention(
   const runtimeBufferCutoff = new Date(
     options.now.getTime() - options.runtimeBufferRetentionDays * MILLISECONDS_PER_DAY
   ).toISOString()
-  const retentionPlans = createRetentionPlans(eventCutoff, runtimeBufferCutoff)
+  const dispositionCutoff = new Date(
+    options.now.getTime() - BROKER_DISPOSITION_RETENTION_DAYS * MILLISECONDS_PER_DAY
+  ).toISOString()
+  const retentionPlans = createRetentionPlans(eventCutoff, runtimeBufferCutoff, dispositionCutoff)
   const purgePlans = createPurgePlans()
   const allPlans = options.operation === PURGE_DELTA_BACKLOG_OPERATION ? purgePlans : retentionPlans
   const plans = allPlans.filter((plan) => options.tables.includes(plan.table))
@@ -212,6 +226,7 @@ export async function pruneStateRetention(
       hrc_events: 0,
       broker_invocation_events: 0,
       runtime_buffers: 0,
+      broker_projection_dispositions: 0,
     } satisfies Record<RetentionTable, number>
     const stopReasons = Object.fromEntries(
       RETENTION_TABLES.map((table) => [
@@ -224,6 +239,7 @@ export async function pruneStateRetention(
       hrc_events: options.batchSize,
       broker_invocation_events: options.batchSize,
       runtime_buffers: options.batchSize,
+      broker_projection_dispositions: options.batchSize,
     }
     let freelistBeforeVacuumPages = freelistBeforePages
     let vacuumStopReason: PrunePhaseStop = 'complete'
@@ -259,12 +275,16 @@ export async function pruneStateRetention(
         () => readPragmaNumber(db, 'freelist_count'),
         freelistBeforePages
       ).value
-      const vacuum = await incrementalVacuum(
-        db,
-        budget,
-        options.incrementalVacuumPages,
-        options.incrementalVacuumChunkPages
-      )
+      // Metadata-only maintenance leaves freed pages for reuse. In particular,
+      // the first T-11700 live pass must not run database reclamation.
+      const vacuum = plans.every((plan) => plan.table === 'broker_projection_dispositions')
+        ? { stopReason: 'skipped' as const, chunkPages: vacuumChunkPages }
+        : await incrementalVacuum(
+            db,
+            budget,
+            options.incrementalVacuumPages,
+            options.incrementalVacuumChunkPages
+          )
       vacuumStopReason = vacuum.stopReason
       vacuumChunkPages = vacuum.chunkPages
     }
@@ -274,7 +294,10 @@ export async function pruneStateRetention(
     // handful of unlink calls plus one indexed read, and it never holds the
     // writer lock across the filesystem work.
     let firstTurnBundles: FirstTurnRetentionResult | null = null
-    if (options.operation !== PURGE_DELTA_BACKLOG_OPERATION) {
+    if (
+      options.operation !== PURGE_DELTA_BACKLOG_OPERATION &&
+      !(options.tables.length === 1 && options.tables[0] === 'broker_projection_dispositions')
+    ) {
       try {
         firstTurnBundles = await pruneFirstTurnMissingBundles(
           {

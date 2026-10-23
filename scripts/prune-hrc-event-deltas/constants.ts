@@ -228,3 +228,17 @@ export const PURGE_BROKER_INVOCATION_DELTAS_ELIGIBLE_SQL = `
       AND invocation.invocation_state NOT IN (${TERMINAL_INVOCATION_STATES_SQL})
   )
 `
+
+/** T-11700: compact only the committed prefix; held repair islands remain authoritative. */
+export const BROKER_DISPOSITION_RETENTION_DAYS = 14
+export const BROKER_PROJECTION_DISPOSITIONS_ELIGIBLE_SQL = `(
+  NOT EXISTS (
+    SELECT 1 FROM broker_invocations AS i WHERE i.invocation_id = e.invocation_id
+  ) OR EXISTS (
+    SELECT 1 FROM broker_invocations AS i
+    WHERE i.invocation_id = e.invocation_id
+      AND i.invocation_state IN (${TERMINAL_INVOCATION_STATES_SQL})
+      AND julianday(i.updated_at) < julianday(?)
+      AND e.seq <= i.last_projected_seq
+  )
+)`

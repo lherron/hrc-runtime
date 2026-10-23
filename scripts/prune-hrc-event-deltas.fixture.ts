@@ -57,7 +57,13 @@ export function makeStore(incrementalAutoVacuum = true): {
     );
     CREATE TABLE broker_invocations (
       invocation_id TEXT PRIMARY KEY,
-      invocation_state TEXT NOT NULL
+      invocation_state TEXT NOT NULL,
+      updated_at TEXT,
+      last_projected_seq INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE broker_projection_dispositions (
+      invocation_id TEXT NOT NULL, seq INTEGER NOT NULL, envelope_hash TEXT NOT NULL,
+      disposition TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (invocation_id, seq)
     );
     CREATE TABLE events (
       seq INTEGER PRIMARY KEY AUTOINCREMENT,

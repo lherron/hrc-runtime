@@ -81,6 +81,7 @@ export type PruneStateRetentionResult = {
     events: PruneRetentionTableResult
     hrc_events: PruneRetentionTableResult
     broker_invocation_events: PruneRetentionTableResult
+    broker_projection_dispositions: PruneRetentionTableResult
     runtime_buffers: PruneRetentionTableResult
   }
 }
@@ -170,16 +171,20 @@ export const RETENTION_TABLES: readonly RetentionTable[] = [
   'hrc_events',
   'broker_invocation_events',
   'runtime_buffers',
+  'broker_projection_dispositions',
 ]
 
 /**
  * Lance's 2026-07-28 ruling: non-delta observation events are kept
- * indefinitely. Only terminal runtime buffers age out, so the event tables are
+ * indefinitely. Terminal runtime buffers and expired broker dedupe metadata age out, so the event tables are
  * off the retention list unless an operator names them explicitly. Encoding the
  * policy here rather than in the launchd arguments means an ad-hoc `--apply`
  * cannot quietly delete semantic history.
  */
-export const DEFAULT_RETENTION_TABLES: readonly RetentionTable[] = ['runtime_buffers']
+export const DEFAULT_RETENTION_TABLES: readonly RetentionTable[] = [
+  'runtime_buffers',
+  'broker_projection_dispositions',
+]
 
 export type PruneTablePlan = {
   table: RetentionTable

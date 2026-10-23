@@ -187,6 +187,13 @@ function seedLedgerDependents(
     createdAt: now,
     updatedAt: now,
   })
+  db.brokerInvocationEvents.recordProjectionDisposition({
+    invocationId,
+    seq: 1,
+    envelopeHash: 'sha256:prune-sentinel',
+    disposition: 'applied',
+    createdAt: now,
+  })
   db.sqlite
     .query(
       `INSERT INTO broker_invocation_events (
@@ -318,6 +325,7 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
 
       expect(db.runtimes.pruneRuntime('rt-default-ledgers')).toBe(true)
 
+      expect(countTable(db, 'broker_projection_dispositions')).toBe(1)
       expect(countTable(db, 'broker_invocation_events')).toBe(1)
       expect(countTable(db, 'hrc_events')).toBe(1)
       expect(countTable(db, 'broker_invocations')).toBe(1)
@@ -362,6 +370,7 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
       expect(
         db.runtimes.countPruneRows(['rt-ledger-cascade'], { includeLedgers: true })
       ).toMatchObject({
+        broker_projection_dispositions: 1,
         broker_invocation_events: 1,
         hrc_events: 1,
         broker_invocations: 1,
@@ -380,6 +389,7 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
       expect(db.runtimes.pruneRuntime('rt-ledger-cascade', { includeLedgers: true })).toBe(true)
 
       for (const table of [
+        'broker_projection_dispositions',
         'broker_invocation_events',
         'transcript_turns',
         'transcript_index_invocations',
