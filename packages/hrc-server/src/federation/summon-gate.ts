@@ -287,7 +287,7 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
   // an undeclared-placement refusal for a scope that can never declare one.
   //
   // This is NOT a hole in the coverage: a gateway summoning a real AGENT does it
-  // through /v1/messages/dm, which is gated on the `ensure-target` path. Only the
+  // through the gated `ensure-target` path. Only the
   // app container itself lands here.
   let scopeRef: string
   try {

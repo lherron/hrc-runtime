@@ -12,9 +12,7 @@ export type Driver = (typeof DRIVERS)[number]
 export const DOORS = {
   submission: ['invoke', 'enqueue', 'preempt', 'steer'],
   turns: ['invoke'],
-  'turns-by-selector': ['enqueue'],
   'literal-flush': ['enqueue'],
-  dm: ['enqueue'],
   'turn-handoff': ['enqueue'],
   'runtime-start-prompt': ['enqueue'],
   'prepare-attached': ['invoke'],
@@ -32,12 +30,6 @@ export const EXPECTED = {
     proof: ['invoke'],
     replay: true,
   },
-  'turns-by-selector': {
-    enabled: true,
-    freshContext: 'not on the wire contract',
-    proof: ['enqueue'],
-    replay: 'not on the wire contract; selector door has no idempotency field',
-  },
   'literal-flush': {
     enabled: true,
     freshContext: 'not on the wire contract; literal flush accepts text and enter only',
@@ -47,13 +39,6 @@ export const EXPECTED = {
       'broker literal flush requires a live tmux runtime; headless, cold and SDK rows do not submit',
     nonSubmitting:
       'enter:false and empty Enter on an empty buffer remain keystrokes, not submissions',
-  },
-  dm: {
-    enabled: true,
-    freshContext:
-      'not accepted by this door; semantic DM rejects freshContext before target lookup',
-    proof: [],
-    replay: 'not on the wire contract; semantic DM has no idempotency field',
   },
   'turn-handoff': {
     enabled: true,

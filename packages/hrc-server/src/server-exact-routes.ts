@@ -183,18 +183,13 @@ export function buildExactRouteHandlers(
     [exactRouteKey('GET', '/v1/targets/by-session-ref')]: (_request, url) =>
       server.handleGetTarget(url),
     [exactRouteKey('POST', '/v1/messages/query')]: (request) => server.handleQueryMessages(request),
-    [exactRouteKey('POST', '/v1/messages/trace')]: (request) => server.handleTraceMessage(request),
-    [exactRouteKey('POST', '/v1/messages/dm')]: (request) => server.handleSemanticDm(request),
     [exactRouteKey('POST', '/v1/messages/turn-handoff')]: (request) =>
       server.handleSemanticTurnHandoff(request),
     [exactRouteKey('POST', '/v1/targets/ensure')]: (request) => server.handleEnsureTarget(request),
-    [exactRouteKey('POST', '/v1/messages')]: (request) => server.handleCreateMessage(request),
     [exactRouteKey('POST', '/v1/capture/by-selector')]: (request) =>
       server.handleCaptureBySelector(request),
     [exactRouteKey('POST', '/v1/literal-input/by-selector')]: (request) =>
       server.handleLiteralInputBySelector(request),
-    [exactRouteKey('POST', '/v1/turns/by-selector')]: (request) =>
-      server.handleDispatchTurnBySelector(request),
     [exactRouteKey('POST', '/v1/messages/wait')]: (request) => server.handleWaitMessage(request),
     [exactRouteKey('POST', '/v1/messages/watch')]: (request) => server.handleWatchMessages(request),
     // T-07612 §8 stop gate (wave 3). The `mail` spelling is historical: the

@@ -41,11 +41,8 @@ describe('T-07155 delivery claims in the four-door vocabulary', () => {
     ).toEqual({ ...base, ttlMs: 30_000, turnPolicy: 'guarded', wait: true })
   })
 
-  it('semantic DM delivery remains durable by selecting enqueue exactly, never steer or preempt', () => {
-    const handlers = [
-      source('packages/hrc-server/src/target-message-dm-handlers.ts'),
-      source('packages/hrc-server/src/target-message-handoff-handlers.ts'),
-    ].join('\n')
+  it('semantic handoff delivery remains durable by selecting enqueue exactly, never steer or preempt', () => {
+    const handlers = source('packages/hrc-server/src/target-message-handoff-handlers.ts')
     expect(handlers).toContain("submissionDoor: 'enqueue'")
     expect(handlers).not.toContain("submissionDoor: 'preempt'")
   })

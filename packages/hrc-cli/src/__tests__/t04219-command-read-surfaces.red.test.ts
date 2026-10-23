@@ -430,16 +430,16 @@ describe('hrc show — §3 (RED: command does not exist yet)', () => {
     })
 
     it('resolves msg: selector and emits JSON with kind=message + messageId', async () => {
-      // Seed a message via the SDK
-      const { HrcClient } = await import('hrc-sdk')
-      const client = new HrcClient(socketPath)
-      const created = await client.createMessage({
+      const db = openHrcDatabase(dbPath)
+      const created = db.messages.insert({
+        messageId: 'msg-show',
         from: { kind: 'entity', entity: 'human' },
         to: { kind: 'session', sessionRef: `${testScope('show-msg')}/lane:default` },
         body: 'hello show test',
         kind: 'dm',
         phase: 'oneway',
       })
+      db.close()
       const messageId = created.messageId
 
       const result = await runCli(['show', `msg:${messageId}`, '--json'], cliEnv())
@@ -452,16 +452,17 @@ describe('hrc show — §3 (RED: command does not exist yet)', () => {
     })
 
     it('resolves seq: selector and emits JSON with kind=message + seq', async () => {
-      // Seed a message to get a sequence number
-      const { HrcClient } = await import('hrc-sdk')
-      const client = new HrcClient(socketPath)
-      await client.createMessage({
+      const db = openHrcDatabase(dbPath)
+      db.messages.insert({
+        messageId: 'msg-seq',
         from: { kind: 'entity', entity: 'human' },
         to: { kind: 'session', sessionRef: `${testScope('show-seq')}/lane:default` },
         body: 'hello seq test',
         kind: 'dm',
         phase: 'oneway',
       })
+
+      db.close()
 
       // Use seq:1 — first message in the stream
       const result = await runCli(['show', 'seq:1', '--json'], cliEnv())

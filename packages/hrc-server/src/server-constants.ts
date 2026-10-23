@@ -74,6 +74,3 @@ export const HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS = 300
 export const HRC_TMUX_AGING_INTERVAL_SECONDS = 300
 export const HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800
 export const HRC_ACTIVE_RUN_RECONCILE_ENABLED = true
-export const HRC_BUSY_HEADLESS_DM_REJECTION_CODE = 'runtime_busy_dm_rejected'
-export const HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE =
-  'target session has a busy headless runtime; hrcchat dm will not spawn a parallel runtime'

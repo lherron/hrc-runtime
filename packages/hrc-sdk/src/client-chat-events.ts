@@ -4,8 +4,6 @@ import type {
   HrcLifecycleEvent,
   HrcMessageRecord,
   HrcTargetView,
-  TraceMessageRequest,
-  TraceMessageResponse,
 } from 'hrc-core'
 import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
 import { HrcClientDiagnosticsMethods } from './client-diagnostics.js'
@@ -19,19 +17,13 @@ import {
 import type {
   CaptureBySelectorRequest,
   CaptureBySelectorResponse,
-  CreateMessageRequest,
-  CreateMessageResponse,
   DeliverLiteralBySelectorRequest,
   DeliverLiteralBySelectorResponse,
-  DispatchTurnBySelectorRequest,
-  DispatchTurnBySelectorResponse,
   EnsureTargetRequest,
   HrcEventTailOptions,
   InvocationEventEnvelope,
   LatestEventBySessionFilter,
   ListMessagesResponse,
-  SemanticDmRequest,
-  SemanticDmResponse,
   SemanticTurnHandoffRequest,
   SemanticTurnHandoffResponse,
   TargetListFilter,
@@ -68,12 +60,6 @@ export class HrcClientChatEventMethods extends HrcClientDiagnosticsMethods {
 
   // -- hrcchat: selector-based dispatch ----------------------------------------
 
-  async dispatchTurnBySelector(
-    request: DispatchTurnBySelectorRequest
-  ): Promise<DispatchTurnBySelectorResponse> {
-    return this.postJson<DispatchTurnBySelectorResponse>('/v1/turns/by-selector', request)
-  }
-
   async deliverLiteralBySelector(
     request: DeliverLiteralBySelectorRequest
   ): Promise<DeliverLiteralBySelectorResponse> {
@@ -91,24 +77,12 @@ export class HrcClientChatEventMethods extends HrcClientDiagnosticsMethods {
 
   // -- hrcchat: durable messages -----------------------------------------------
 
-  async createMessage(request: CreateMessageRequest): Promise<CreateMessageResponse> {
-    return this.postJson<CreateMessageResponse>('/v1/messages', request)
-  }
-
   async listMessages(filter?: import('hrc-core').HrcMessageFilter): Promise<ListMessagesResponse> {
     return this.postJson<ListMessagesResponse>('/v1/messages/query', filter ?? {})
   }
 
-  async traceMessage(request: TraceMessageRequest): Promise<TraceMessageResponse> {
-    return this.postJson<TraceMessageResponse>('/v1/messages/trace', request)
-  }
-
   async waitMessage(request: WaitMessageRequest): Promise<WaitMessageResponse> {
     return this.postJson<WaitMessageResponse>('/v1/messages/wait', request)
-  }
-
-  async semanticDm(request: SemanticDmRequest): Promise<SemanticDmResponse> {
-    return this.postJson<SemanticDmResponse>('/v1/messages/dm', request)
   }
 
   async semanticTurnHandoff(

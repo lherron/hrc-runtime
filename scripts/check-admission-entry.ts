@@ -5,7 +5,6 @@ import ts from 'typescript'
 /** The delivery functions, rather than their server-registration tables. */
 export const ADMISSION_EXECUTORS = new Set([
   'executeAdmittedTurn',
-  'executeSemanticTurn',
   'dispatchPublicSubmission',
   'executeHeadlessBrokerStartTurn',
   'dispatchQueuedHeadlessTurnInput',

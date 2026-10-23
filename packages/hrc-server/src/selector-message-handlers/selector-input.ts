@@ -5,20 +5,14 @@ import {
   HrcErrorCode,
   HrcNotFoundError,
   HrcRuntimeUnavailableError,
-  isCodexAppOwnedScopeRef,
 } from 'hrc-core'
 import type {
   CaptureBySelectorResponse,
   DeliverLiteralBySelectorResponse,
-  DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
-  HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from 'hrc-core'
-import type { HrcFence } from 'hrc-core'
-import { projectSemanticTurnResponse } from '../event-notification-handlers.js'
-import { assertScopeNotRetired } from '../federation/summon-gate-server.js'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper.js'
 import { normalizeTargetLane } from '../messages.js'
 import {
@@ -30,23 +24,11 @@ import { requireTmuxPane } from '../require-helpers.js'
 import { runtimeActivityPatch } from '../runtime-activity.js'
 import { findBoundSessionRuntime, findLatestRuntime } from '../runtime-select.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
-import {
-  isRecord,
-  parseJsonBody,
-  parseOptionalTurnResponseFormat,
-  parseSessionRef,
-} from '../server-parsers.js'
-import {
-  assertDispatchRunId,
-  isRuntimeUnavailableStatus,
-  json,
-  requireDispatchRuntimeId,
-  timestamp,
-} from '../server-util.js'
+import { isRecord, parseJsonBody } from '../server-parsers.js'
+import { assertDispatchRunId, isRuntimeUnavailableStatus, json, timestamp } from '../server-util.js'
 import { findTargetSession } from '../target-view.js'
 import { submissionResponse, submitThroughAdmission } from '../turn-admission/submit.js'
 import { enrichDispatchTurnResponse } from '../turn-dispatch-attached-run-handlers.js'
-import { omitPersistedSelectionForReuse } from './selection-request.js'
 
 // Broker/SDK buffers are token-stream chunks rather than terminal lines. A
 // generous fixed ratio preserves the requested line tail for normal streamed
@@ -433,149 +415,6 @@ export async function handleBrokerLiteralInputBySelector(
         return turnBody.admission === 'rejected'
           ? { kind: 'rejected_unlanded', rejection: { source: 'positive-rejection', value } }
           : { kind: 'accepted', value }
-      }
-    )
-  )
-}
-
-export async function handleDispatchTurnBySelector(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const { body, sessionRef } = await parseSelectorRequest(request)
-
-  if (typeof body['prompt'] !== 'string') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'prompt is required', {
-      field: 'prompt',
-    })
-  }
-  const responseFormat = parseOptionalTurnResponseFormat(body['responseFormat'])
-
-  if (findTargetSession(this.db, sessionRef) == null)
-    await assertScopeNotRetired(this, {
-      scopeRef: parseSessionRef(sessionRef).scopeRef,
-      path: 'archived-successor',
-      advisoryCoveredByDownstreamGate: () =>
-        findTargetSession(this.db, sessionRef) === undefined &&
-        body['createIfMissing'] === true &&
-        isRecord(body['runtimeIntent']) &&
-        !isCodexAppOwnedScopeRef(sessionRef),
-    })
-
-  let session = findTargetSession(this.db, sessionRef)
-  if (
-    !session &&
-    body['createIfMissing'] === true &&
-    // T-05161: never summon a local runtime for a Codex.app-owned address.
-    !isCodexAppOwnedScopeRef(sessionRef)
-  ) {
-    const runtimeIntent = isRecord(body['runtimeIntent'])
-      ? (body['runtimeIntent'] as HrcRuntimeIntent)
-      : undefined
-    if (!runtimeIntent) {
-      throw new HrcBadRequestError(
-        HrcErrorCode.MALFORMED_REQUEST,
-        'runtimeIntent is required when createIfMissing is true',
-        {
-          field: 'runtimeIntent',
-        }
-      )
-    }
-    session = await this.ensureTargetSession(sessionRef, runtimeIntent)
-  }
-
-  if (!session) {
-    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
-      sessionRef,
-    })
-  }
-
-  const intent = isRecord(body['runtimeIntent'])
-    ? (body['runtimeIntent'] as HrcRuntimeIntent)
-    : session.lastAppliedIntentJson === undefined
-      ? undefined
-      : omitPersistedSelectionForReuse(session.lastAppliedIntentJson)
-
-  if (!intent) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'no runtime intent available for target',
-      {
-        sessionRef,
-      }
-    )
-  }
-
-  const proof = body['establishedBrokerInvocationId']
-  if (proof !== undefined && typeof proof !== 'string')
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'establishedBrokerInvocationId must be a string',
-      { field: 'establishedBrokerInvocationId' }
-    )
-  const runId = `run-${randomUUID()}`
-  return submissionResponse(
-    await submitThroughAdmission(
-      this,
-      {
-        door: 'turns-by-selector',
-        intent: 'enqueue',
-        target: session,
-        body: body['prompt'],
-        principal: 'system',
-        runtimeIntent: intent,
-        executionFormat: 'format1',
-        responseFormat,
-        signal: request.signal,
-        fences: body['fences'] as HrcFence | undefined,
-        carried: { ownershipProof: proof as string | undefined },
-        options: {
-          runId,
-          responseFormat,
-          establishedBrokerInvocationId: proof as string | undefined,
-        },
-        replay: async () => {
-          throw new Error('selector door has no idempotency key')
-        },
-      },
-      async (plan) => {
-        const session = plan.session
-        const turnResponse = await this.executeAdmittedTurn(
-          plan,
-          plan.runtimeIntent,
-          body['prompt'] as string,
-          {
-            ...plan.options,
-          }
-        )
-        const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-        assertDispatchRunId(turnBody)
-        const transport = turnBody.transport
-
-        // T-07969: one body authority — the projection selects the turn's final
-        // message rather than joining the raw narrated buffer stream.
-        let finalOutput: string | undefined
-        if (transport !== 'tmux') {
-          const { body } = projectSemanticTurnResponse(this.db, turnBody.runId)
-          if (body.length > 0) {
-            finalOutput = body
-          }
-        }
-
-        const turnStatus = turnBody.status === 'completed' ? 'completed' : 'started'
-        const response = json({
-          runId: turnBody.runId,
-          sessionRef: formatSelectorRef(session),
-          hostSessionId: turnBody.hostSessionId,
-          generation: turnBody.generation,
-          runtimeId: requireDispatchRuntimeId(turnBody),
-          transport,
-          mode: transport === 'sdk' ? 'nonInteractive' : 'headless',
-          status: turnStatus,
-          finalOutput,
-          continuationUpdated: turnStatus === 'completed',
-        } satisfies DispatchTurnBySelectorResponse)
-        return { kind: 'accepted', value: response }
       }
     )
   )

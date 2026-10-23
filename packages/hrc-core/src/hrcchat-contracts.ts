@@ -1,9 +1,6 @@
 import type { HrcRuntimeIntent, HrcTurnResponseFormat } from './contracts.js'
 import type { HrcDeliveryOutcome, HrcDeliveryWarning } from './delivery-contracts.js'
-import type {
-  FederationOutboxDeliveryRecord,
-  FederationOutboxState,
-} from './federation-contracts.js'
+import type { FederationOutboxState } from './federation-contracts.js'
 /**
  * hrcchat — semantic directed-messaging contracts.
  *
@@ -272,30 +269,6 @@ export type GetTargetRequest = {
   sessionRef: string
 }
 
-// POST /v1/turns/by-selector
-export type DispatchTurnBySelectorRequest = {
-  selector: { sessionRef: string }
-  prompt: string
-  responseFormat?: HrcTurnResponseFormat | undefined
-  mode?: 'auto' | 'headless' | 'nonInteractive' | undefined
-  runtimeIntent?: HrcRuntimeIntent | undefined
-  createIfMissing?: boolean | undefined
-  fences?: HrcFence | undefined
-}
-
-export type DispatchTurnBySelectorResponse = {
-  runId: string
-  sessionRef: string
-  hostSessionId: string
-  generation: number
-  runtimeId: string
-  transport: 'sdk' | 'tmux' | 'headless'
-  mode: 'headless' | 'interactive' | 'nonInteractive'
-  status: 'completed' | 'started'
-  finalOutput?: string | undefined
-  continuationUpdated: boolean
-}
-
 // POST /v1/literal-input/by-selector
 export type DeliverLiteralBySelectorRequest = {
   selector: { sessionRef: string }
@@ -326,20 +299,6 @@ export type CaptureBySelectorResponse = {
   runtimeId: string
 }
 
-// POST /v1/messages (create)
-export type CreateMessageRequest = {
-  from: HrcMessageAddress
-  to: HrcMessageAddress
-  body: string
-  kind: HrcMessageKind
-  phase: HrcMessagePhase
-  replyToMessageId?: string | undefined
-  execution?: Partial<HrcMessageExecution> | undefined
-  metadataJson?: Record<string, unknown> | undefined
-}
-
-export type CreateMessageResponse = HrcMessageRecord
-
 // GET /v1/messages (query)
 export type ListMessagesRequest = HrcMessageFilter
 
@@ -350,53 +309,6 @@ export type ListMessagesResponse = {
    * emit it so callers never mistake a local outage fallback for full history.
    */
   history?: HrcMessageHistoryStatus | undefined
-}
-
-// POST /v1/messages/trace
-export type TraceMessageRequest =
-  | { messageId: string; messageSeq?: never }
-  | { messageSeq: number; messageId?: never }
-
-export type HrcMessageTraceAcceptance = {
-  acceptedByNodeId: string
-  phase: 'request' | 'response'
-  requestEpoch?: number | undefined
-  acceptedAt: string
-  /** Absent only for acceptance rows written before trace evidence existed. */
-  outcome?: 'accepted' | 'duplicate' | undefined
-}
-
-export type HrcMessageTraceDestination = {
-  nodeId: string
-  messageId: string
-  messageSeq: number
-  observedAt: string
-  execution: HrcMessageExecution
-  delivery?: HrcMessageDeliveryEvidence | undefined
-}
-
-export type HrcMessageTraceVerdict = {
-  code:
-    | 'delivered_to_runtime'
-    | 'stored_not_injected'
-    | 'runtime_delivery_failed'
-    | 'accepted_delivery_pending'
-    | 'outbox_pending'
-    | 'outbox_dead_letter'
-    | 'local_message'
-    | 'history_incomplete'
-  summary: string
-}
-
-export type TraceMessageResponse = {
-  localNodeId: string
-  message: HrcCollectiveMessageRecord
-  localRecord?: HrcMessageRecord | undefined
-  outbox?: FederationOutboxDeliveryRecord | undefined
-  acceptance?: HrcMessageTraceAcceptance | undefined
-  destination?: HrcMessageTraceDestination | undefined
-  history: HrcMessageHistoryStatus
-  verdict: HrcMessageTraceVerdict
 }
 
 // GET /v1/messages/watch (stream)
@@ -429,7 +341,7 @@ export type WaitMessageResponse =
       homeNodeId?: string | undefined
     }
 
-// POST /v1/messages/dm (atomic semantic DM helper)
+// Shared semantic message fields used by the turn-handoff parser.
 export type SemanticDmRequest = {
   from: HrcMessageAddress
   to: HrcMessageAddress
@@ -454,8 +366,7 @@ export type SemanticDmRequest = {
   allowStaleGeneration?: boolean | undefined
   /**
    * Require the destination to rotate away from every prior runtime and
-   * continuation before dispatch. Only `/v1/messages/turn-handoff` accepts
-   * this field; `/v1/messages/dm` rejects it instead of silently ignoring it.
+   * continuation before dispatch through `/v1/messages/turn-handoff`.
    */
   freshContext?: boolean | undefined
   /**
@@ -465,25 +376,6 @@ export type SemanticDmRequest = {
    * reply cannot silently land in the wrong conversation.
    */
   allowCrossScopeReply?: boolean | undefined
-}
-
-export type SemanticDmResponse = {
-  request: HrcMessageRecord
-  execution?: DispatchTurnBySelectorResponse | undefined
-  reply?: HrcMessageRecord | undefined
-  waited?: WaitMessageResponse | undefined
-  /** Sender-visible evidence that durable acceptance did not mean delivery now. */
-  warnings?: HrcDeliveryWarning[] | undefined
-  /** Present for urgent sends: how the order actually landed. */
-  delivery?: HrcDeliveryOutcome | undefined
-  /**
-   * T-07398 — whether the `runtimeIntent.provision` directive block this DM
-   * carried actually decided anything. Present only when the request carried
-   * one. Provisioning is birth-only: a DM into an already-live runtime is
-   * delivered (it never blocks) but reports `false`, so a delivered reply is
-   * never mistaken for evidence that `+model=...` took effect.
-   */
-  directivesApplied?: boolean | undefined
 }
 
 // POST /v1/messages/turn-handoff (durable request + detached semantic turn)

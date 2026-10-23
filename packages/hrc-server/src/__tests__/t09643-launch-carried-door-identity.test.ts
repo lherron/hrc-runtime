@@ -405,30 +405,6 @@ describe('T-09643 launch-carried cold birth answers the door with the broker ide
 })
 
 describe('T-10232 phase 2 cold launch and admitted queue continuation', () => {
-  it('D6 cold selector body rides the launch rather than a second input', async () => {
-    aspd.launchCarriedInitialPrompt = true
-    const s = await seedInteractive()
-    const pending = fixture.postJson('/v1/turns/by-selector', {
-      selector: { sessionRef: `${SCOPE}/lane:main` },
-      prompt: MARK,
-      runtimeIntent: driverIntent('claude-code-tmux'),
-    })
-    await settle(() => ledger.startCalls.length === 1)
-    const request = ledger.startCalls[0]?.request
-    expect(launchPrompt(request)).toContain('T9643-MARK')
-    observeLaunchTurn(String(request?.spec.invocationId))
-    expect((await pending).status).toBe(200)
-    expect(delivered).toEqual([])
-    const events = internal().db.hrcEvents.listByKind('submission.admission')
-    expect(events).toHaveLength(1)
-    expect(events[0]?.hostSessionId).toBe(s.hostSessionId)
-    expect(events[0]?.payload).toMatchObject({
-      door: 'turns-by-selector',
-      intent: 'enqueue',
-      outcome: 'routed',
-    })
-  })
-
   it('D11 legacy no-aspd cold arm refuses because its compiler fallback is retired', async () => {
     const s = await seedInteractive()
     setEnv('HRC_ASPD_SOCKET', undefined)
@@ -462,64 +438,6 @@ describe('T-10232 phase 2 cold launch and admitted queue continuation', () => {
     })
   })
 
-  for (const legacy of [false, true]) {
-    it(`D14 cold enqueue, daemon restart, drain carries body at launch (legacy=${legacy})`, async () => {
-      aspd.producerResult = producerResult()
-      const s = await session()
-      internal().db.sessions.updateIntent(
-        s.hostSessionId,
-        headlessIntent(),
-        new Date().toISOString()
-      )
-      let rejectBoot!: (error: Error) => void
-      const boot = new Promise<HrcRuntimeSnapshot>((_resolve, reject) => {
-        rejectBoot = reject
-      })
-      internal().runtimeStartOperations.set(s.hostSessionId, boot)
-      const pending = fixture.postJson('/v1/turns/by-selector', {
-        selector: { sessionRef: `${SCOPE}/lane:main` },
-        prompt: MARK,
-        runtimeIntent: headlessIntent(),
-      })
-      await settle(() =>
-        internal()
-          .db.runs.listQueuedByHostSessionId(s.hostSessionId)
-          .some((run) => run.status === 'queued')
-      )
-      const queued = internal()
-        .db.runs.listQueuedByHostSessionId(s.hostSessionId)
-        .find((run) => run.status === 'queued')
-      expect(queued).toBeDefined()
-      if (queued === undefined) throw new Error('door did not persist queue')
-      const correlation = JSON.parse(internal().db.runs.getCorrelationJson(queued.runId) ?? '{}')
-      expect(correlation.admittedIntent).toBe('enqueue')
-      expect(correlation.prompt).toBe(MARK)
-      if (legacy) {
-        correlation.admittedIntent = undefined
-        internal().db.runs.setCorrelationJson(queued.runId, JSON.stringify(correlation))
-      }
-      rejectBoot(new Error('simulated boot lost before daemon restart'))
-      expect((await pending).status).toBe(500) // Simulated boot error is the unchanged uncertain HTTP shape.
-      internal().runtimeStartOperations.delete(s.hostSessionId)
-      await server.stop()
-      await bootServer()
-      const ctx = server as unknown as HrcServerInstanceForHandlers
-      expect(ctx.db.runs.getByRunId(queued.runId)?.status).toBe('queued')
-      await ctx.drainDurableHeadlessTurnInputs(s.hostSessionId)
-      const launch = ledger.startCalls.at(-1)?.request
-      expect(initialInputText(launch)).toContain('T9643-MARK')
-      expect(delivered).toEqual([])
-      expect(ctx.db.runs.getByRunId(queued.runId)?.status).toBe('accepted')
-      expect(ctx.db.runs.getByRunId(queued.runId)?.acceptedAt).toBe(queued.acceptedAt)
-      expect(ctx.db.runs.getByRunId(queued.runId)?.dispatchIdempotencyKey).toBe(
-        queued.dispatchIdempotencyKey
-      )
-      expect(ctx.db.runs.getByRunId(queued.runId)?.invocationId).toBe(launch?.spec.invocationId)
-      // Only the original door admission was recorded; drain did not re-admit.
-      expect(ctx.db.hrcEvents.listByKind('submission.admission')).toHaveLength(1)
-      expect(ctx.queuedTurnInputDrains.size).toBe(0)
-    }, 30_000)
-  }
   it('D14 cold continuation coalesces atomically under the drain lease until acceptance', async () => {
     aspd.producerResult = producerResult()
     const s = await session()

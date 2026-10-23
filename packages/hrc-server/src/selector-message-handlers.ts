@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type {
-  CreateMessageResponse,
   EnsureTargetBirthCause,
   EnsureTargetResponse,
   HrcRuntimeIntent,
@@ -10,12 +9,11 @@ import type {
   HrcSessionRecord,
   RestartStyle,
 } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
 import { assertScopeNotRetired, withSummonAuthority } from './federation/summon-gate-server.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 
 import type { BirthTimeline } from './birth-timeline.js'
-import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
+import { normalizeTargetSessionRef } from './messages.js'
 import { assertReservedAddressAllowsBirth } from './participant-address-provisioning.js'
 import { requireSession } from './require-helpers.js'
 import { assertV2SelectionCompatibleForReuse } from './runtime-select.js'
@@ -23,7 +21,6 @@ import { handleSdkDispatchTurn } from './selector-message-handlers/sdk-dispatch.
 import {
   handleBrokerLiteralInputBySelector,
   handleCaptureBySelector,
-  handleDispatchTurnBySelector,
   handleLiteralInputBySelector,
 } from './selector-message-handlers/selector-input.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -41,7 +38,6 @@ export { handleSdkDispatchTurn } from './selector-message-handlers/sdk-dispatch.
 export {
   handleBrokerLiteralInputBySelector,
   handleCaptureBySelector,
-  handleDispatchTurnBySelector,
   handleLiteralInputBySelector,
 } from './selector-message-handlers/selector-input.js'
 
@@ -405,107 +401,6 @@ export async function handleEnsureTarget(
   return json(toTargetView(this.db, session) satisfies EnsureTargetResponse)
 }
 
-/**
- * `POST /v1/messages` — direct write to the `messages` table.
- *
- * T-07612 flag day (T-07616): like `/v1/messages/dm`, this keeps working while
- * having no caller left in the collective. Fencing an unreachable route buys
- * nothing observable and would strand the `hrc show` message-selector reads
- * that use it to seed. The writers that actually carried collaboration —
- * hrcmail and the federation accept path — are deleted outright. This route,
- * the DM route, and the table retire together in wave 5 (T-07617).
- */
-export async function handleCreateMessage(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = await parseJsonBody(request)
-  if (!isRecord(body)) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
-  }
-
-  if (typeof body['body'] !== 'string') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'body must be a string', {
-      field: 'body',
-    })
-  }
-
-  const kind = body['kind']
-  if (kind !== 'dm' && kind !== 'literal' && kind !== 'system') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'kind must be dm, literal, or system',
-      {
-        field: 'kind',
-      }
-    )
-  }
-
-  const phase = body['phase']
-  if (phase !== 'request' && phase !== 'response' && phase !== 'oneway') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'phase must be request, response, or oneway',
-      {
-        field: 'phase',
-      }
-    )
-  }
-
-  const from = parseMessageAddress(body['from'], 'from')
-  const to = parseMessageAddress(body['to'], 'to')
-
-  const replyToMessageId = body['replyToMessageId']
-  if (replyToMessageId !== undefined && typeof replyToMessageId !== 'string') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'replyToMessageId must be a string',
-      {
-        field: 'replyToMessageId',
-      }
-    )
-  }
-
-  let rootMessageId: string | undefined
-  if (replyToMessageId !== undefined) {
-    const parent = this.db.messages.getById(replyToMessageId)
-    if (!parent) {
-      throw new HrcBadRequestError(
-        HrcErrorCode.MALFORMED_REQUEST,
-        `unknown replyToMessageId "${replyToMessageId}"`,
-        {
-          field: 'replyToMessageId',
-        }
-      )
-    }
-    rootMessageId = parent.rootMessageId
-  }
-
-  const execution = isRecord(body['execution'])
-    ? (body['execution'] as Partial<{ state: string }>)
-    : undefined
-  const metadataJson = isRecord(body['metadataJson'])
-    ? (body['metadataJson'] as Record<string, unknown>)
-    : undefined
-
-  const record = this.insertAndNotifyMessage({
-    messageId: `msg-${randomUUID()}`,
-    kind,
-    phase,
-    from,
-    to,
-    body: body['body'],
-    ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
-    ...(rootMessageId !== undefined ? { rootMessageId } : {}),
-    ...(execution
-      ? { execution: execution as Parameters<HrcDatabase['messages']['insert']>[0]['execution'] }
-      : {}),
-    ...(metadataJson ? { metadataJson } : {}),
-  })
-
-  return json(record satisfies CreateMessageResponse)
-}
-
 export const selectorMessageHandlersMethods = {
   listSessionsByScope,
   listAllSessions,
@@ -515,11 +410,9 @@ export const selectorMessageHandlersMethods = {
   handleSdkDispatchTurn,
   ensureTargetSession,
   handleEnsureTarget,
-  handleCreateMessage,
   handleCaptureBySelector,
   handleLiteralInputBySelector,
   handleBrokerLiteralInputBySelector,
-  handleDispatchTurnBySelector,
 }
 
 export type SelectorMessageHandlersMethods = typeof selectorMessageHandlersMethods

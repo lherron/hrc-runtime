@@ -392,7 +392,7 @@ describe('hrcchat minimal server routes', () => {
     }
   })
 
-  it('semantic turn handoff does not synthesize completion for broker tmux reply DMs', async () => {
+  it('semantic turn handoff does not synthesize completion before the broker tmux turn finishes', async () => {
     const scopeRef = 'agent:handoff-live-broker-reply:project:agent-spaces'
     const sessionRef = `${scopeRef}/lane:main`
     const { hostSessionId, generation } = await ctx.fixture.resolveSession(scopeRef)
@@ -470,14 +470,6 @@ describe('hrcchat minimal server routes', () => {
     expect(handoffRes.status).toBe(200)
     const handoff = (await handoffRes.json()) as SemanticTurnHandoffStartedResponse
 
-    const replyRes = await ctx.fixture.postJson('/v1/messages/dm', {
-      from: { kind: 'session', sessionRef },
-      to: { kind: 'entity', entity: 'human' },
-      body: 'broker reply body',
-      replyToMessageId: handoff.messageId,
-    })
-    expect(replyRes.status).toBe(200)
-
     const verifyDb = openHrcDatabase(ctx.fixture.dbPath)
     try {
       const run = verifyDb.runs.getByRunId(handoff.runId)
@@ -492,14 +484,7 @@ describe('hrcchat minimal server routes', () => {
       expect(run?.status).toBe('accepted')
       expect(run?.completedAt).toBeUndefined()
       expect(completed).toHaveLength(0)
-      expect(responseList).toHaveLength(1)
-      expect(responseList[0]?.execution).toMatchObject({
-        state: 'completed',
-        mode: 'interactive',
-        runtimeId,
-        runId: handoff.runId,
-        transport: 'tmux',
-      })
+      expect(responseList).toHaveLength(0)
     } finally {
       verifyDb.close()
     }

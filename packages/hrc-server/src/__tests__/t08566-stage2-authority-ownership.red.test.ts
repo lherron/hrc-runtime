@@ -220,13 +220,6 @@ async function sessionDispatchRequests(
         prompt: 'retained fence probe',
       })
       .then((r) => ['turn', r] as [string, Response]),
-    fixture
-      .postJson('/v1/messages/dm', {
-        from: { kind: 'entity', entity: 'human' },
-        to: { kind: 'session', sessionRef: seeded.sessionRef },
-        body: 'retained fence probe',
-      })
-      .then((r) => ['dm', r] as [string, Response]),
   ])
 }
 
@@ -742,7 +735,7 @@ describe('T-08566 stage 2 authority and ownership', () => {
     }
   })
 
-  test('C14d crashed runtimes are revivable and DM is not retained-fenced', async () => {
+  test('C14d crashed runtimes remain revivable instead of projecting retained evidence', async () => {
     const serverFixture = await createHrcTestFixture('t08566-owner-crashed-')
     const seeded = await seedOfflineRuntime(serverFixture, 'full', { status: 'crashed' })
     const server = await createHrcServer(serverFixture.serverOpts())
@@ -754,12 +747,6 @@ describe('T-08566 stage 2 authority and ownership', () => {
       expect(refused.status).toBe(200)
       expect(await refused.json()).toMatchObject({ outcome: 'offline_read_runtime_revivable' })
       expect(existsSync(seeded.reader.recordPath)).toBe(false)
-      const dm = await serverFixture.postJson('/v1/messages/dm', {
-        from: { kind: 'entity', entity: 'human' },
-        to: { kind: 'session', sessionRef: seeded.sessionRef },
-        body: 'revivable control',
-      })
-      expect(await codeOf(dm)).not.toBe(RETAINED_FENCE)
     } finally {
       await server.stop()
       await serverFixture.cleanup()

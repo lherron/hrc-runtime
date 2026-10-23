@@ -5,17 +5,10 @@ import type {
   HrcMessageAddress,
   HrcMessageFilter,
   HrcMessageRecord,
-  HrcRuntimeIntent,
   HrcTurnResponseFormat,
-  SemanticDmRequest,
 } from 'hrc-core'
 import { parseOptionalProvisionBlock } from './parsers/provision.js'
 import { isRecord, parseOptionalTurnResponseFormat, parseSessionRef } from './server-parsers.js'
-
-/** A semantic-DM request after its wire-only directive fragment has been completed. */
-export type CompleteSemanticDmRequest = Omit<SemanticDmRequest, 'runtimeIntent'> & {
-  runtimeIntent?: HrcRuntimeIntent | undefined
-}
 
 /**
  * Format an HrcMessageAddress for display in DM delivery (e.g. "clod@agent-spaces" or "human").

@@ -655,22 +655,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "CreateMessageRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-core|CreateMessageRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "CreateMessageResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-core|CreateMessageResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "createMonitorConditionEngine",
       "kind": "value",
       "file": "packages/hrc-core/src/monitor/condition-engine.ts",
@@ -747,22 +731,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|DeliverLiteralBySelectorResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "DispatchTurnBySelectorRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-core|DispatchTurnBySelectorRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "DispatchTurnBySelectorResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-core|DispatchTurnBySelectorResponse|type",
       "count": 1
     },
     {
@@ -2243,30 +2211,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|HrcMessageSeqSelector|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMessageTraceAcceptance",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-core|HrcMessageTraceAcceptance|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMessageTraceDestination",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-core|HrcMessageTraceDestination|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcMessageTraceVerdict",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-core|HrcMessageTraceVerdict|type",
       "count": 1
     },
     {
@@ -4463,14 +4407,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "SemanticDmResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-core|SemanticDmResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "SemanticTurnHandoffPendingResponse",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
@@ -4955,22 +4891,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/tool-result-storage.ts",
       "hash": "hrc-core|ToolResultSpillDescriptor|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "TraceMessageRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-core|TraceMessageRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "TraceMessageResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-core|TraceMessageResponse|type",
       "count": 1
     },
     {
@@ -5471,22 +5391,6 @@
     },
     {
       "package": "hrc-sdk",
-      "symbol": "CreateMessageRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-sdk|CreateMessageRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "CreateMessageResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-sdk|CreateMessageResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
       "symbol": "DeleteSessionTitleResponse",
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
@@ -5515,22 +5419,6 @@
       "kind": "value",
       "file": "packages/hrc-sdk/src/discover.ts",
       "hash": "hrc-sdk|discoverSocket|value",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "DispatchTurnBySelectorRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-sdk|DispatchTurnBySelectorRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "DispatchTurnBySelectorResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-sdk|DispatchTurnBySelectorResponse|type",
       "count": 1
     },
     {
@@ -5955,14 +5843,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-sdk|SemanticDmRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "SemanticDmResponse",
-      "kind": "type",
-      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
-      "hash": "hrc-sdk|SemanticDmResponse|type",
       "count": 1
     },
     {

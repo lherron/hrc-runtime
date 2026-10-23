@@ -15,9 +15,7 @@ import type { DispatchTurnForSessionOptions } from './routes/turn-dispatch-sessi
 export type SubmissionDoorKind =
   | 'submission'
   | 'turns'
-  | 'turns-by-selector'
   | 'literal-flush'
-  | 'dm'
   | 'turn-handoff'
   | 'runtime-start-prompt'
   | 'prepare-attached'

@@ -3371,40 +3371,7 @@
       "state": "GAP",
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
     },
-    "public:POST:/v1/messages": {
-      "downstreamOwner": "T-11531",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/messages/dm": {
-      "downstreamOwner": "T-11531",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
     "public:POST:/v1/messages/query": {
-      "downstreamOwner": "T-11531",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/messages/trace": {
       "downstreamOwner": "T-11531",
       "variants": [
         "positive",
@@ -3921,17 +3888,6 @@
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
     },
     "public:POST:/v1/turns": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/turns/by-selector": {
       "downstreamOwner": "T-11530",
       "variants": [
         "positive",
@@ -10664,16 +10620,6 @@
       "state": "GAP",
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
     },
-    "source:packages/hrc-server/src/message-trace.ts": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "negative-control",
-        "durable-effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
     "source:packages/hrc-server/src/messages.ts": {
       "downstreamOwner": "T-11531",
       "variants": [
@@ -11645,16 +11591,6 @@
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
     },
     "source:packages/hrc-server/src/sweep-reconcile.ts": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "negative-control",
-        "durable-effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "source:packages/hrc-server/src/target-message-dm-handlers.ts": {
       "downstreamOwner": "T-11530",
       "variants": [
         "positive",

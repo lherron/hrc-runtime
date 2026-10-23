@@ -301,32 +301,16 @@ test('preempt without capability refuses before freshContext rotation', async ()
 })
 registerInvokeQueueConformance({ context: () => ctx, getFixture: () => fixture, seedDriver, post })
 
-function postPhase2(door: 'turns-by-selector' | 'dm' | 'prepare-attached', patch: object = {}) {
-  const ref = `${session.scopeRef}/lane:${session.laneRef}`
-  if (door === 'dm')
-    return fixture.postJson('/v1/messages/dm', {
-      from: { kind: 'entity', entity: 'human' },
-      to: { kind: 'session', sessionRef: ref },
-      body: 'phase2 conformance',
-      runtimeIntent: runtimeIntent(),
-      ...patch,
-    })
-  if (door === 'prepare-attached')
-    return fixture.postJson('/v1/runs/prepare-attached', {
-      hostSessionId: session.hostSessionId,
-      intent: runtimeIntent(),
-      prompt: 'phase2 conformance',
-      ...patch,
-    })
-  return fixture.postJson('/v1/turns/by-selector', {
-    selector: { sessionRef: ref },
+function postPhase2(_door: 'prepare-attached', patch: object = {}) {
+  return fixture.postJson('/v1/runs/prepare-attached', {
+    hostSessionId: session.hostSessionId,
+    intent: runtimeIntent(),
     prompt: 'phase2 conformance',
-    runtimeIntent: runtimeIntent(),
     ...patch,
   })
 }
 for (const driver of DRIVERS) {
-  for (const door of ['turns-by-selector', 'dm', 'prepare-attached'] as const) {
+  for (const door of ['prepare-attached'] as const) {
     test(`${door} × ${driver}: drain refuses before message or route mutation`, async () => {
       seedDriver(driver)
       await ctx.turnAdmissionGate.close({ operationId: 'phase2-close' })
@@ -342,7 +326,7 @@ for (const driver of DRIVERS) {
   }
 }
 for (const driver of DRIVERS) {
-  for (const door of ['turns-by-selector', 'dm', 'prepare-attached'] as const) {
+  for (const door of ['prepare-attached'] as const) {
     test(`${door} × ${driver}: retired refuses before rotation or message write`, async () => {
       seedDriver(driver)
       const ledger = createPlacementLedgerRepository(ctx.db.sqlite)
@@ -368,7 +352,7 @@ for (const driver of DRIVERS) {
     })
   }
 }
-for (const door of ['turns-by-selector', 'dm', 'prepare-attached'] as const) {
+for (const door of ['prepare-attached'] as const) {
   test(`${door}: frozen format mismatch refuses before stale rotation`, async () => {
     seedDriver('v2-headless')
     const createdAt = new Date(Date.now() - 120_000).toISOString()
@@ -395,29 +379,8 @@ test('D11 freshContext is inapplicable: its parser has no such request field', (
   })
   expect(Object.hasOwn(parsed, 'freshContext')).toBe(false)
 })
-for (const driver of ['format1-headless', 'v2-headless', 'tmux-live', 'participant'] as const) {
-  test(`turns-by-selector × ${driver}: carried mismatch preserves E0`, async () => {
-    seedDriver(driver)
-    const before = snapshot()
-    expect(
-      (await postPhase2('turns-by-selector', { establishedBrokerInvocationId: 'wrong' })).status
-    ).toBe(503)
-    expect(snapshot()).toEqual(before)
-    expect(admission('refused').trace[4]?.outcome).toBe('refused')
-  })
-}
-test('D8 freshContext preserves the broader existing rejection', async () => {
-  seedDriver('participant')
-  const before = snapshot()
-  expect(EXPECTED.dm.freshContext).toBe(
-    'not accepted by this door; semantic DM rejects freshContext before target lookup'
-  )
-  expect((await postPhase2('dm', { freshContext: true })).status).toBe(400)
-  expect(snapshot()).toEqual(before)
-  expect(ctx.db.hrcEvents.listByKind('submission.admission')).toHaveLength(0)
-})
 for (const driver of ['format1-headless', 'tmux-live', 'participant'] as const) {
-  for (const door of ['turns-by-selector', 'dm', 'prepare-attached'] as const) {
+  for (const door of ['prepare-attached'] as const) {
     if (door === 'prepare-attached' && driver === 'format1-headless') continue // Headless has no attach surface; admission guards above still apply.
     test(`${door} × ${driver}: delivery uses the leased plan`, async () => {
       seedDriver(driver)

@@ -28,7 +28,7 @@ These are source findings, not runtime measurements. They are checked-in snapsho
 | Proposed separation | Source evidence | Consequence |
 |---|---|---|
 | S1 reads before execution | `runtime-list-handlers.ts` reconciles liveness; `runtime-io-handlers.ts::captureRuntime` writes activity | Classifying by GET or “read” loses existing side effects. |
-| S2 messages before S4 turns | `target-message-dm-handlers.ts` calls `executeAdmittedTurn`; handoff and terminal processing share `turnResponseFinalizers` | A message route can start, recover and complete execution. Moving its subscriber set does not move its owner. |
+| S2 messages before S4 turns | `target-message-handoff-handlers.ts` calls `executeAdmittedTurn`; handoff and terminal processing share `turnResponseFinalizers` | A message route can start, recover and complete execution. Moving its subscriber set does not move its owner. |
 | S3 lifecycle before S5 federation | `scope-claim-core.ts` checks in-flight starts before row persistence; `federation/authority-lock.ts` has process-local summon/retirement/mint locks; peer callbacks directly invoke starts | Public route routing does not fence peer ingress, asynchronous occupancy or retirement. SQLite writer locking does not fix this. |
 | Shared WAL supplies event propagation | `lifecycle-append-hub.ts` uses a WeakMap keyed by a Bun Database; `notifyEvent` also triggers execution effects | Rust writes do not wake Bun observers automatically. Replaying notifications can repeat actuation. |
 | Socket swap provides rollback | Constructor starts recovery, controllers, listeners, publishers and timers; stop drains handlers before closing the store | Ownership transfer includes all these surfaces and credential incarnation, not just `hrc.sock`. |

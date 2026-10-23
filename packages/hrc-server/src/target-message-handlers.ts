@@ -1,13 +1,6 @@
 import {
-  deliverPersistedSemanticDm,
-  handleSemanticDm,
-  reattachLiveSemanticDmSubstrate,
-  rejectBusyHeadlessSemanticDm,
-} from './target-message-dm-handlers.js'
-import {
   handleQueryMessages,
   handleSemanticTurnHandoff,
-  handleTraceMessage,
   persistAndDeliverSemanticTurnHandoff,
 } from './target-message-handoff-handlers.js'
 import {
@@ -22,19 +15,13 @@ export {
   assertReplyScopeMatches,
   deliverPersistedSemanticTurnHandoff,
 } from './target-message-handoff-handlers.js'
-export { completeDirectiveOnlyIntent } from './target-message-dm-handlers.js'
 export {
   handleListTargets,
   handleGetTarget,
   handleResumeContinuation,
   handleQueryMessages,
-  handleTraceMessage,
   handleSemanticTurnHandoff,
   persistAndDeliverSemanticTurnHandoff,
-  handleSemanticDm,
-  deliverPersistedSemanticDm,
-  rejectBusyHeadlessSemanticDm,
-  reattachLiveSemanticDmSubstrate,
 }
 
 export const targetMessageHandlersMethods = {
@@ -42,13 +29,8 @@ export const targetMessageHandlersMethods = {
   handleGetTarget,
   handleResumeContinuation,
   handleQueryMessages,
-  handleTraceMessage,
   handleSemanticTurnHandoff,
   persistAndDeliverSemanticTurnHandoff,
-  handleSemanticDm,
-  deliverPersistedSemanticDm,
-  rejectBusyHeadlessSemanticDm,
-  reattachLiveSemanticDmSubstrate,
 }
 
 export type TargetMessageHandlersMethods = typeof targetMessageHandlersMethods

@@ -370,7 +370,7 @@ export async function rotation(
   if (partial.session === undefined) throw new Error('admission has no rotation target')
   if (partial.participant != null) return { outcome: 'skipped:not-applicable' }
   if (
-    (req.door === 'dm' || req.door === 'turn-handoff') &&
+    req.door === 'turn-handoff' &&
     partial.session.status === 'archived' &&
     partial.session.continuation?.key
   )

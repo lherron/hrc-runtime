@@ -14,15 +14,12 @@ import type {
   ListMessagesResponse,
   SemanticTurnHandoffRequest,
   SemanticTurnHandoffStartedResponse,
-  TraceMessageRequest,
-  TraceMessageResponse,
 } from 'hrc-core'
 import { createBirthTimeline } from './birth-timeline.js'
 import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
-import { buildMessageTrace } from './message-trace.js'
 import {
   formatDmPayload,
   formatSessionRef,
@@ -41,7 +38,6 @@ import {
   requireDispatchRuntimeId,
 } from './server-util.js'
 import {
-  isObjectRecord,
   originDispatchOption,
   requireCompleteRuntimeIntent,
   scopeRefOf,
@@ -74,94 +70,6 @@ export async function handleQueryMessages(
       },
     },
   } satisfies ListMessagesResponse)
-}
-
-export async function handleTraceMessage(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = await parseJsonBody(request)
-  if (!isObjectRecord(body)) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
-  }
-  const messageId = typeof body['messageId'] === 'string' ? body['messageId'].trim() : undefined
-  const messageSeq = body['messageSeq']
-  if (
-    (messageId === undefined) === (messageSeq === undefined) ||
-    (messageId !== undefined && messageId.length === 0) ||
-    (messageSeq !== undefined && (!Number.isSafeInteger(messageSeq) || (messageSeq as number) < 1))
-  ) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'exactly one of messageId or positive messageSeq is required'
-    )
-  }
-  const traceRequest: TraceMessageRequest =
-    messageId === undefined ? { messageSeq: messageSeq as number } : { messageId }
-  const localRecord =
-    'messageId' in traceRequest
-      ? this.db.messages.getById(traceRequest.messageId)
-      : this.db.messages.getBySeq(traceRequest.messageSeq)
-  const resolvedMessageId =
-    'messageId' in traceRequest ? traceRequest.messageId : localRecord?.messageId
-  if (resolvedMessageId === undefined) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      `message not found: ${traceRequest.messageSeq}`
-    )
-  }
-
-  const localNodeId =
-    this.collectiveHistory?.localNodeId ?? this.options.federationConfig?.nodeId ?? 'local'
-  const queried =
-    this.collectiveHistory === undefined
-      ? ({
-          messages: localRecord === undefined ? [] : [localRecord],
-          history: {
-            source: 'local',
-            complete: false,
-            authorityNodeId: 'svc',
-            queriedNodeId: localNodeId,
-            cursorKind: 'node-local',
-            pendingReplicationCount: 0,
-            degraded: {
-              code: 'collective_not_configured',
-              message: 'collective history is unavailable in this daemon mode',
-            },
-          },
-        } satisfies ListMessagesResponse)
-      : await this.collectiveHistory.query({ messageId: resolvedMessageId, limit: 1 })
-  const message = queried.messages.find((candidate) => candidate.messageId === resolvedMessageId)
-  if (message === undefined) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      `message not found: ${resolvedMessageId}`
-    )
-  }
-  const history =
-    queried.history ??
-    ({
-      source: 'local',
-      complete: false,
-      authorityNodeId: 'svc',
-      queriedNodeId: localNodeId,
-      cursorKind: 'node-local',
-      pendingReplicationCount: 0,
-      degraded: {
-        code: 'collective_not_configured',
-        message: 'trace source did not report collective-history status',
-      },
-    } as const)
-  // The federation acceptance/outbox records that once fed the trace's
-  // `acceptance` and `outbox` blocks were retired (T-11542); they are absent for
-  // every message, exactly as they already were for post-2026-08-28 traffic.
-  const response = buildMessageTrace({
-    localNodeId,
-    message,
-    ...(localRecord === undefined ? {} : { localRecord }),
-    history,
-  } satisfies Parameters<typeof buildMessageTrace>[0])
-  return json(response satisfies TraceMessageResponse)
 }
 
 /**
