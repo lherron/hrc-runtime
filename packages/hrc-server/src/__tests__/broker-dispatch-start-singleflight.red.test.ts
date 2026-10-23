@@ -420,19 +420,28 @@ describe('headless broker dispatch start single-flight', () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
-    ;(server as any).db.compiledRuntimePlans.insert({
-      planHash,
+    ;(server as any).db.runtimeOperations.insert({
+      operationId: runtime.activeOperationId,
+      runtimeId: runtime.runtimeId,
+      hostSessionId: resolved.hostSessionId,
+      generation: resolved.generation,
+      operationKind: 'broker_invocation',
+      controller: 'harness-broker',
       compileId: 'compile-t07880-joining-priming',
-      schemaVersion: 'agent-runtime-plan/v2',
-      compilerName: 'agent-spaces',
-      compilerVersion: 'test',
-      planProjectionJson: JSON.stringify({
-        schemaVersion: 'agent-runtime-plan/v2',
-        execution: {
-          dispatchRequest: { startRequest: { initialInput: { inputId: submissionId } } },
+      planHash,
+      startupMethod: 'aspd',
+      status: 'started',
+      routeDecisionJson: JSON.stringify({ selectedBy: 'producer-selected-execution' }),
+      preparationJson: JSON.stringify({
+        admission: {
+          plan: { schemaVersion: 'agent-runtime-plan/v2' },
+          execution: {
+            dispatchRequest: { startRequest: { initialInput: { inputId: submissionId } } },
+          },
         },
       }),
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     })
     ;(server as any).runtimeStartOperations.set(resolved.hostSessionId, Promise.resolve(runtime))
 
