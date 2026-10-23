@@ -619,3 +619,60 @@ describe('T-10232 phase 3 START launch carry', () => {
     expect(ledger.startCalls).toHaveLength(1)
   })
 })
+
+// T-11536: restart must use the same admitted START carry as /runtimes/start.
+// Failure modes: unrelated accepted run; boot singleflight held by completion;
+// duplicate inherited input; wrong invocation/turn owning the terminal.
+describe('T-11536 restart inherited launch prompt', () => {
+  it('correlates the successor launch and releases boot before completion', async () => {
+    aspd.launchCarriedInitialPrompt = true
+    const s = await seedInteractive(SCOPE, {
+      ...driverIntent('claude-code-tmux'),
+      initialPrompt: MARK,
+    })
+    let settled = false
+    const pending = fixture
+      .postJson('/v1/sessions/restart', {
+        hostSessionId: s.hostSessionId,
+        expectedGeneration: s.generation,
+      })
+      .then((response) => {
+        settled = true
+        return response
+      })
+    await settle(() => ledger.startCalls.length === 1)
+    const request = ledger.startCalls[0]?.request
+    const invocationId = String(request?.spec.invocationId)
+    expect(launchPrompt(request)).toBe(MARK)
+    expect(initialInputText(request)).toBeUndefined()
+    const submissionId = observeLaunchTurn(invocationId)
+    await settle(() => internal().db.runs.listRuns()[0]?.brokerSubmissionId === submissionId)
+    const run = internal().db.runs.listRuns()[0]
+    expect(run?.brokerSubmissionId).toBe(submissionId)
+    expect(run?.status).toBe('running')
+    expect(internal().runtimeStartOperations.size).toBe(0)
+    expect(settled).toBe(false)
+    const mapper = new BrokerEventMapper({ db: internal().db, now: () => new Date().toISOString() })
+    mapper.apply({
+      invocationId,
+      seq: 9003,
+      time: new Date().toISOString(),
+      type: 'turn.completed',
+      payload: { turnId: `turn_${invocationId}_1`, status: 'completed' },
+    } as InvocationEventEnvelope)
+    expect(internal().db.runs.getByRunId(run?.runId ?? '')?.status).toBe('completed')
+    const response = await pending
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as Record<string, unknown>
+    expect(body['generation']).toBe(s.generation + 1)
+    expect(body['launch']).toEqual({ status: 'started', runtimeId: run?.runtimeId })
+    expect(internal().db.runs.listRuns()).toHaveLength(1)
+    expect(ledger.startCalls).toHaveLength(1)
+    expect(delivered).toEqual([])
+    const terminal = internal().db.hrcEvents.listByRun(run?.runId ?? '', {
+      eventKind: 'turn.completed',
+    })
+    expect(terminal).toHaveLength(1)
+    expect(terminal[0]?.payload).toMatchObject({ invocationId, turnId: `turn_${invocationId}_1` })
+  })
+})

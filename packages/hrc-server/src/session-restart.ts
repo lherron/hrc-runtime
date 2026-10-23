@@ -44,6 +44,7 @@ import { requireContinuity, requireSession } from './require-helpers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { isRuntimeUnavailableStatus, json } from './server-util.js'
+import { admitRuntimeStartPrompt } from './turn-admission/start-prompt.js'
 
 type SeatProbeResult =
   | { ok: true; response: { seat: { state: string | null; turnId?: string } } }
@@ -187,11 +188,20 @@ export async function handleRestartSession(
   // Phase B: the rotation is committed; the response reports the launch either way.
   let launch: RestartSessionLaunch
   try {
-    const started = (await server.startRuntimeForSession(
-      successor,
-      successor.lastAppliedIntentJson ?? intent,
-      'fresh_pty'
-    )) as HrcRuntimeSnapshot
+    const successorIntent = successor.lastAppliedIntentJson ?? intent
+    // Inherited input is a prompted START: admit its launch carry so the
+    // broker's first turn belongs to this run. Observe completion outside the
+    // runtime-producing singleflight, just as /v1/runtimes/start does.
+    const delivery =
+      (successorIntent.initialPrompt ?? '').length > 0
+        ? await admitRuntimeStartPrompt(server, successor, successorIntent, 'fresh_pty', {
+            signal: request.signal,
+          })
+        : undefined
+    const started: HrcRuntimeSnapshot =
+      delivery === undefined
+        ? await server.startRuntimeForSession(successor, successorIntent, 'fresh_pty')
+        : await delivery.waitForCompletion()
     launch = { status: 'started', runtimeId: started.runtimeId }
   } catch (error) {
     launch = {
