@@ -265,21 +265,24 @@ describe('HrcLifecycleEventRepository.listLatestPerSession', () => {
       })
 
       // Insert a large burst of events for hsid-new so oldEvt is far out of
-      // any small bounded window.
+      // any small bounded window. One transaction: 2,500 autocommits cost ~2.5x
+      // more and timed this test out on a loaded post-push runner (9s vs 5s).
       const bulk = 2_500
       let newest: { hrcSeq: number } | null = null
-      for (let i = 0; i < bulk; i += 1) {
-        newest = db.hrcEvents.append({
-          ts: ts(10 + i),
-          hostSessionId: 'hsid-new',
-          scopeRef: scopeRef('new'),
-          laneRef: 'default',
-          generation: 1,
-          category: 'turn',
-          eventKind: 'turn.tool_result',
-          payload: { i },
-        })
-      }
+      db.sqlite.transaction(() => {
+        for (let i = 0; i < bulk; i += 1) {
+          newest = db.hrcEvents.append({
+            ts: ts(10 + i),
+            hostSessionId: 'hsid-new',
+            scopeRef: scopeRef('new'),
+            laneRef: 'default',
+            generation: 1,
+            category: 'turn',
+            eventKind: 'turn.tool_result',
+            payload: { i },
+          })
+        }
+      })()
       expect(newest?.hrcSeq).toBeGreaterThan(oldEvt.hrcSeq + 2_000)
 
       const latest = db.hrcEvents.listLatestPerSession()
