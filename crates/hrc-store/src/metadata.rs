@@ -126,21 +126,17 @@ fn validate(key: &str, value: &Value, meaning: bool) -> std::result::Result<Valu
         return Err("serialized value must be at most 4096 bytes".into());
     }
     if meaning && key == "title" {
-        let text = value.as_str().ok_or("must be a string")?;
-        if text.trim().is_empty() {
+        let text = value.as_js_string().ok_or("must be a string")?.trim();
+        if text.utf16().is_empty() {
             return Err("must be non-empty".into());
         }
-        if text.trim().encode_utf16().count() > 200 {
+        if text.utf16().len() > 200 {
             return Err("must be at most 200 characters".into());
         }
-        if text
-            .trim()
-            .chars()
-            .any(|c| (c as u32) < 32 || c == '\u{7f}')
-        {
+        if text.utf16().iter().any(|unit| *unit < 32 || *unit == 127) {
             return Err("must not contain control characters".into());
         }
-        return Ok(Value::String(text.trim().into()));
+        return Ok(Value::String(text));
     }
     if meaning
         && matches!(key, "appearance.color" | "appearance.terminalBg")
@@ -234,13 +230,13 @@ impl ReadTx<'_> {
             return Ok(None);
         };
         let metadata = self.session_metadata(&scope, &lane)?;
-        let Some(title) = metadata.metadata.get("title").and_then(Value::as_str) else {
+        let Some(title) = metadata.metadata.get("title").and_then(Value::as_js_string) else {
             return Ok(None);
         };
         let p = &metadata.metadata_sources["title"];
         Ok(Some(SessionTitle {
             host_session_id: host.into(),
-            title: title.into(),
+            title: title.clone(),
             source: "manual".into(),
             model: None,
             created_at: p.updated_at.clone(),
@@ -248,14 +244,35 @@ impl ReadTx<'_> {
         }))
     }
     pub fn list_session_titles(&self) -> Result<Vec<SessionTitle>> {
-        let hosts=self.db.prepare("SELECT s.host_session_id FROM sessions s JOIN continuities c ON s.scope_ref=c.scope_ref AND s.lane_ref=c.lane_ref ORDER BY s.host_session_id")?.query_map([],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
-        let mut titles = Vec::new();
-        for h in hosts {
-            if let Some(t) = self.session_title(&h)? {
-                titles.push(t)
-            }
-        }
-        Ok(titles)
+        // The source list facade extracts SQL TEXT rather than parsing the JSON
+        // document used by get. Its Bun binding returns an empty string for
+        // invalid UTF8 (including SQLite json_extract's encoded lone surrogate).
+        // Keep that observed conversion local to this projection.
+        let mut query = self.db.prepare(
+            r#"WITH resolved AS (
+            SELECT scope_ref,lane_ref,value_json,updated_at,
+                row_number() OVER (PARTITION BY scope_ref,lane_ref ORDER BY
+                CASE source WHEN 'api' THEN 3 WHEN 'launch' THEN 2 ELSE 1 END DESC) AS rank
+            FROM session_metadata WHERE key='title'
+        ) SELECT s.host_session_id,json_extract(m.value_json,'$') AS title,m.updated_at
+        FROM resolved m JOIN sessions s ON s.scope_ref=m.scope_ref AND s.lane_ref=m.lane_ref
+        JOIN continuities c ON c.scope_ref=s.scope_ref AND c.lane_ref=s.lane_ref
+        WHERE m.rank=1 ORDER BY s.host_session_id"#,
+        )?;
+        Ok(query
+            .query_map([], |r| {
+                let text = r.get_ref(1)?.as_bytes()?;
+                let at: String = r.get(2)?;
+                Ok(SessionTitle {
+                    host_session_id: r.get(0)?,
+                    title: std::str::from_utf8(text).unwrap_or("").into(),
+                    source: "manual".into(),
+                    model: None,
+                    created_at: at.clone(),
+                    updated_at: at,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?)
     }
 }
 impl WriteTx<'_> {

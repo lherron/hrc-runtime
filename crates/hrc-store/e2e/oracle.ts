@@ -371,7 +371,9 @@ try {
     let origin: unknown
     let originConflict = false
     if (mode === 'collective-reconstruct') {
-      const inputs = JSON.parse(await Bun.file(process.env.P1_COLLECTIVE_INPUTS!).text())
+      const inputPath = process.env.P1_COLLECTIVE_INPUTS
+      if (!inputPath) throw new Error('explicit P1_COLLECTIVE_INPUTS required')
+      const inputs = JSON.parse(await Bun.file(inputPath).text())
       for (let i = 0; i < inputs.length; i++) {
         if (i === 3) {
           try {
@@ -564,6 +566,33 @@ try {
         hits: db.transcriptIndex.search('cafe', {}, { limit: 10 }),
       })
     )
+  } else if (
+    mode === 'title-read-seed' ||
+    mode === 'title-surrogate-seed' ||
+    mode === 'title-whitespace-seed'
+  ) {
+    db.sessionTitles.upsert({
+      hostSessionId: 'p1-host',
+      title:
+        mode === 'title-surrogate-seed'
+          ? ' \ud800 title \udfff '
+          : mode === 'title-whitespace-seed'
+            ? '\ufeff\u0085 title \u0085\ufeff'
+            : ' Continuity title ',
+      source: 'generated',
+      model: 'not-persisted',
+      createdAt: '2000-01-01T00:00:00.000Z',
+      updatedAt: '2026-10-23T01:00:00.000Z',
+    })
+    console.log(JSON.stringify({ seeded: true }))
+  } else if (mode === 'title-read-control') {
+    console.log(
+      JSON.stringify({
+        one: db.sessionTitles.getByHostSessionId('p1-host'),
+        all: db.sessionTitles.listAll(),
+        missing: db.sessionTitles.getByHostSessionId('absent'),
+      })
+    )
   } else if (mode === 'legacy-mail-seed') {
     const targetSessionRef = 'agent:tabularasa:project:hrc-runtime:task:p1-store'
     const from = { kind: 'operator', principal: 'fixture' }
@@ -576,7 +605,7 @@ try {
         payload: {
           kind: i === 1 ? 'conversational' : 'request',
           body: `  fixture-${i}  `,
-          metadata: { '\ud800': '\udfff', numeric: 9007199254740993 },
+          metadata: { '\ud800': '\udfff', numeric: Number('9007199254740993') },
         },
         ...(i === 3
           ? {

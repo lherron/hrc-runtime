@@ -51,6 +51,7 @@ fn run() -> Result<serde_json::Value, StoreError> {
                 || command == "collective-contract"
                 || command == "append-boundary-contract"
                 || command.starts_with("continuation-maintenance-")
+                || command == "title-reappend-contract"
                 || command == "legacy-mail-transition-contract"
                 || command == "legacy-mail-origin-contract"
                 || command == "legacy-mail-present-caught-contract"
@@ -83,6 +84,8 @@ fn run() -> Result<serde_json::Value, StoreError> {
         "replication-contract"=>replication_contract(store),
         "outbox-contract"=>outbox_contract(store),
         "collective-contract"=>collective_contract(store),
+        "title-reappend-contract"=>{let title=store.read_snapshot(|tx|tx.session_title("p1-host"))?.expect("existing title");let value=store.write(|tx|tx.upsert_session_title(&title))?.value;store.close()?;Ok(serde_json::to_value(value)?)},
+        "title-read-contract"=>store.read_snapshot(|tx|Ok(serde_json::json!({"one":tx.session_title("p1-host")?,"all":tx.list_session_titles()?,"missing":tx.session_title("absent")?}))),
         "legacy-mail-read-contract"=>legacy_mail_read_contract(store),
         "legacy-mail-transition-contract"=>legacy_mail_transition_contract(store),
         "legacy-mail-origin-contract"=>legacy_mail_origin_contract(store),
@@ -353,7 +356,7 @@ fn session_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
     let same = store
         .read_snapshot(|tx| tx.session_title(&next.host_session_id))?
         .ok_or_else(|| StoreError::MissingRecord("successor title".into()))?;
-    if same.title != "native title" {
+    if same.title != "native title".into() {
         return Err(StoreError::Invalid("title not continuity scoped".into()));
     }
     store.write(|tx| tx.delete_session_title(&first.host_session_id, &first.updated_at))?;

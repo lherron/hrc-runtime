@@ -266,8 +266,9 @@ pub struct MetadataWriteResult {
 #[serde(rename_all = "camelCase")]
 pub struct SessionTitle {
     pub host_session_id: String,
-    pub title: String,
+    pub title: JsString,
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     pub created_at: String,
     pub updated_at: String,

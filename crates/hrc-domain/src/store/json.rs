@@ -702,7 +702,26 @@ impl PartialEq<&str> for JsValue {
 
 #[path = "json_de.rs"]
 mod json_de;
-/// ECMAScript String.trim whitespace; Rust's Unicode whitespace additionally includes U+0085.
+/// ECMAScript String.trim whitespace; Rust additionally includes U+0085.
+fn js_whitespace(unit: u32) -> bool {
+    matches!(unit,0x9..=0xd|0x20|0xa0|0x1680|0x2000..=0x200a|0x2028|0x2029|0x202f|0x205f|0x3000|0xfeff)
+}
 pub fn trim(s: &str) -> &str {
-    s.trim_matches(|c|matches!(c,'\u{9}'..='\u{d}'|'\u{20}'|'\u{a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}'))
+    s.trim_matches(|c| js_whitespace(c as u32))
+}
+impl JsString {
+    /// Trim ECMAScript whitespace without discarding unpaired UTF16 units.
+    pub fn trim(&self) -> Self {
+        let units = self.utf16();
+        let start = units
+            .iter()
+            .position(|u| !js_whitespace(*u as u32))
+            .unwrap_or(units.len());
+        let end = units
+            .iter()
+            .rposition(|u| !js_whitespace(*u as u32))
+            .map(|i| i + 1)
+            .unwrap_or(start);
+        self.slice(start, end - start)
+    }
 }
