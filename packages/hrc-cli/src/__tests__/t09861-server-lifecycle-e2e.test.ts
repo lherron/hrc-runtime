@@ -468,12 +468,7 @@ describe('T-09861 lifecycle contract against scratch daemons', () => {
       ]) {
         await expectRefused(scratch, () => hrcAs(scratch, 'clodPrimary', args), /not authorized/)
       }
-      const admission = (await (
-        await fetch('http://hrc/v1/server/turn-admission', {
-          unix: join(scratch.runtimeRoot, 'hrc.sock'),
-        })
-      ).json()) as { state: string }
-      expect(admission.state).toBe('open')
+      expect(existsSync(join(scratch.runtimeRoot, 'turn-admission.json'))).toBe(false)
 
       // FM16: an authorized caller without --reason.
       await expectRefused(

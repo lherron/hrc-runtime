@@ -127,10 +127,7 @@ POST /v1/transcript-index/rebuild
 GET /v1/events/latest-by-session
 GET /v1/server/subscribers
 POST /v1/server/subscribers/ack
-GET /v1/server/turn-admission
 POST /v1/server/lifecycle
-POST /v1/server/turn-admission/close
-POST /v1/server/turn-admission/reopen
 POST /v1/runtimes/ensure
 POST /v1/runtimes/start
 POST /v1/runtimes/restart-self

@@ -118,7 +118,6 @@ export type {
   HrcSubscriberReceiptAckRequest,
   HrcSubscriberReceiptAckResponse,
   HrcTurnAdmissionCloseRequest,
-  HrcTurnAdmissionReopenRequest,
   HrcTurnAdmissionState,
   HrcSubmissionResponse,
   PreemptAdmissionResponse,

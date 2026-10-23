@@ -62,9 +62,6 @@ import type {
   HrcActiveRunContributionRequest,
   HrcActiveRunContributionResponse,
   HrcSubmissionResponse,
-  HrcTurnAdmissionCloseRequest,
-  HrcTurnAdmissionReopenRequest,
-  HrcTurnAdmissionState,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
   InvokeSubmissionRequest,
@@ -511,10 +508,6 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
     return this.postJson<SubscriberDeclareResponse>('/v1/server/subscribers', request)
   }
 
-  async getTurnAdmission(): Promise<HrcTurnAdmissionState> {
-    return this.getJson<HrcTurnAdmissionState>('/v1/server/turn-admission')
-  }
-
   /**
    * T-09861: ask the daemon to stop or restart itself (or, with `targetNode`,
    * a peer's daemon). The daemon authorizes from `credentialHeaders` — the
@@ -554,16 +547,6 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
       await this.throwTypedError(res)
     }
     return (await res.json()) as HrcRestartSelfResponse
-  }
-
-  async closeTurnAdmission(request: HrcTurnAdmissionCloseRequest): Promise<HrcTurnAdmissionState> {
-    return this.postJson<HrcTurnAdmissionState>('/v1/server/turn-admission/close', request)
-  }
-
-  async reopenTurnAdmission(
-    request: HrcTurnAdmissionReopenRequest
-  ): Promise<HrcTurnAdmissionState> {
-    return this.postJson<HrcTurnAdmissionState>('/v1/server/turn-admission/reopen', request)
   }
 
   async prepareAttachedRun(

@@ -32,6 +32,7 @@ import { PeerToken } from '../federation/peer-token.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { createHrcServer } from '../index.js'
 import type { HrcServer, HrcServerOptions } from '../index.js'
+import type { TurnAdmissionGate } from '../turn-admission-gate.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import { federationTestHost } from './fixtures/live-tailnet-test.js'
 
@@ -45,7 +46,7 @@ const CLOD_PRIMARY = 'agent:clod:project:hrc-runtime:task:primary'
 const MABLE_MINISVC = 'agent:mable:project:hrc-runtime:task:minisvc'
 const NOW = '2026-09-28T12:00:00.000Z'
 
-type Internal = HrcServer & { db: HrcDatabase }
+type Internal = HrcServer & { db: HrcDatabase; turnAdmissionGate: TurnAdmissionGate }
 
 type Node = {
   fixture: HrcServerTestFixture
@@ -410,9 +411,7 @@ describe('T-09861 §2 authority on the local endpoint', () => {
         expect(refusalOf(result)).toBe('not_authorized')
       }
     }
-    const admission = (await (
-      await node.fixture.fetchSocket('/v1/server/turn-admission')
-    ).json()) as { state: string }
+    const admission = node.server.turnAdmissionGate.snapshot()
     expect(admission.state).toBe('open')
     expect(node.grants).toEqual([])
   })

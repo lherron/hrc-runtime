@@ -348,7 +348,6 @@ export type {
   WatchInputEvent,
   WatchInputLanding,
   WatchInputTerminal,
-  HrcTurnAdmissionReopenRequest,
   HrcTurnAdmissionState,
   InspectRuntimeRequest,
   InspectRuntimeResponse,

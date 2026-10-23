@@ -11050,31 +11050,6 @@
       ]
     },
     {
-      "id": "public:GET:/v1/server/turn-admission",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 89,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:GET:/v1/server/turn-admission"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "GET",
-      "path": "/v1/server/turn-admission",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
       "id": "public:GET:/v1/sessions",
       "kind": "public-exact",
       "source": {
@@ -12586,56 +12561,6 @@
       "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
       "method": "POST",
       "path": "/v1/server/tmux/kill-broker-leases",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
-      "id": "public:POST:/v1/server/turn-admission/close",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 93,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:POST:/v1/server/turn-admission/close"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/server/turn-admission/close",
-      "transport": "public-unix",
-      "variants": [
-        "positive",
-        "malformed",
-        "wrong-method",
-        "effects"
-      ]
-    },
-    {
-      "id": "public:POST:/v1/server/turn-admission/reopen",
-      "kind": "public-exact",
-      "source": {
-        "path": "packages/hrc-server/src/server-exact-routes.ts",
-        "symbol": "buildExactRouteHandlers",
-        "line": 95,
-        "hash": "993d4b6b52424298b34f7985c6321d284d4596bd0cc5906811609495e46738f0"
-      },
-      "caseIds": [
-        "public:POST:/v1/server/turn-admission/reopen"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/server/turn-admission/reopen",
       "transport": "public-unix",
       "variants": [
         "positive",

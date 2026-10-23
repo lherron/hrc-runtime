@@ -3135,14 +3135,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "HrcTurnAdmissionReopenRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
-      "hash": "hrc-core|HrcTurnAdmissionReopenRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "HrcTurnAdmissionState",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-dispatch.ts",

@@ -33,10 +33,6 @@ export type HrcTurnAdmissionCloseRequest = {
   reason?: string | undefined
 }
 
-export type HrcTurnAdmissionReopenRequest = {
-  operationId: string
-}
-
 export type HrcTurnAdmissionState = {
   state: 'open' | 'closed'
   activeAdmissions: number

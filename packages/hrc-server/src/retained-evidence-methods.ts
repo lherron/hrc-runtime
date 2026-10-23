@@ -3,8 +3,6 @@ import {
   HrcBadRequestError,
   HrcErrorCode,
   HrcNotFoundError,
-  type HrcTurnAdmissionCloseRequest,
-  type HrcTurnAdmissionReopenRequest,
 } from 'hrc-core'
 import {
   RETAINED_EVIDENCE_PASS_LIMIT,
@@ -144,50 +142,6 @@ export const retainedEvidenceMethods = {
       )
     }
     return json(response)
-  },
-
-  async handleCloseTurnAdmission(this: HrcServerInstance, request: Request): Promise<Response> {
-    const body = await parseJsonBody(request)
-    if (!isRecord(body) || typeof body['operationId'] !== 'string') {
-      throw new HrcBadRequestError(
-        HrcErrorCode.MALFORMED_REQUEST,
-        'turn admission close requires operationId'
-      )
-    }
-    const requestedBy = body['requestedBy']
-    const requestedRunId = body['requestedRunId']
-    const reason = body['reason']
-    if (
-      (requestedBy !== undefined && requestedBy !== null && typeof requestedBy !== 'string') ||
-      (requestedRunId !== undefined &&
-        requestedRunId !== null &&
-        typeof requestedRunId !== 'string') ||
-      (reason !== undefined && typeof reason !== 'string')
-    ) {
-      throw new HrcBadRequestError(
-        HrcErrorCode.MALFORMED_REQUEST,
-        'turn admission close attribution is malformed'
-      )
-    }
-    const input: HrcTurnAdmissionCloseRequest = {
-      operationId: body['operationId'],
-      ...(requestedBy === undefined ? {} : { requestedBy }),
-      ...(requestedRunId === undefined ? {} : { requestedRunId }),
-      ...(reason === undefined ? {} : { reason }),
-    }
-    return json(await this.turnAdmissionGate.close(input))
-  },
-
-  async handleReopenTurnAdmission(this: HrcServerInstance, request: Request): Promise<Response> {
-    const body = await parseJsonBody(request)
-    if (!isRecord(body) || typeof body['operationId'] !== 'string') {
-      throw new HrcBadRequestError(
-        HrcErrorCode.MALFORMED_REQUEST,
-        'turn admission reopen requires operationId'
-      )
-    }
-    const input: HrcTurnAdmissionReopenRequest = { operationId: body['operationId'] }
-    return json(await this.turnAdmissionGate.reopen(input.operationId))
   },
 }
 

@@ -80,14 +80,8 @@ export function buildExactRouteHandlers(
       Response.json(server.subscriberAdmissions.snapshot()),
     [exactRouteKey('POST', '/v1/server/subscribers/ack')]: (request) =>
       server.handleSubscriberReceiptAck(request),
-    [exactRouteKey('GET', '/v1/server/turn-admission')]: () =>
-      Response.json(server.turnAdmissionGate.snapshot()),
     [exactRouteKey('POST', '/v1/server/lifecycle')]: (request) =>
       server.lifecycleController.handleLocalRequest(request),
-    [exactRouteKey('POST', '/v1/server/turn-admission/close')]: (request) =>
-      server.handleCloseTurnAdmission(request),
-    [exactRouteKey('POST', '/v1/server/turn-admission/reopen')]: (request) =>
-      server.handleReopenTurnAdmission(request),
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) =>
       server.handleEnsureRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => server.handleStartRuntime(request),

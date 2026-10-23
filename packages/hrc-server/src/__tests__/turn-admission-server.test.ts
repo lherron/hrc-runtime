@@ -3,15 +3,17 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
-import { turnAdmissionMarkerPath } from '../turn-admission-gate.js'
+import { type TurnAdmissionGate, turnAdmissionMarkerPath } from '../turn-admission-gate.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 let fixture: HrcServerTestFixture
-let server: HrcServer
+let server: HrcServer & { turnAdmissionGate: TurnAdmissionGate }
 
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-turn-admission-server-')
-  server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+  server = (await createHrcServer(
+    fixture.serverOpts({ otelListenerEnabled: false })
+  )) as typeof server
 })
 
 afterEach(async () => {
@@ -38,23 +40,39 @@ function headlessIntent(): object {
 }
 
 describe('server-owned turn admission', () => {
+  it('leaves removed control routes unmatched while server subscribers still responds', async () => {
+    for (const [method, path] of [
+      ['GET', '/v1/server/turn-admission'],
+      ['POST', '/v1/server/turn-admission/close'],
+      ['POST', '/v1/server/turn-admission/reopen'],
+    ] as const) {
+      const response = await fixture.fetchSocket(path, { method })
+      const control = await fixture.fetchSocket('/v1/server/removed-route-control', { method })
+      expect(response.status).toBe(404)
+      expect(control.status).toBe(404)
+      expect(await response.text()).toBe(await control.text())
+    }
+    const live = await fixture.fetchSocket('/v1/server/subscribers')
+    expect(live.status).toBe(200)
+    expect(await live.json()).toEqual({ active: [], recentlyClosed: [] })
+  })
+
   it('rejects new central dispatch with a distinct retryable code until its owner reopens', async () => {
     const { hostSessionId } = await fixture.resolveSession(
       'agent:cody:project:hrc-runtime:task:T-06576'
     )
-    expect(await (await fixture.fetchSocket('/v1/server/turn-admission')).json()).toEqual({
+    expect(server.turnAdmissionGate.snapshot()).toEqual({
       state: 'open',
       activeAdmissions: 0,
       durable: false,
     })
 
-    const close = await fixture.postJson('/v1/server/turn-admission/close', {
+    const close = await server.turnAdmissionGate.close({
       operationId: 'restart-test',
       requestedBy: 'entity:operator',
       reason: 'test close',
     })
-    expect(close.status).toBe(200)
-    expect(await close.json()).toMatchObject({
+    expect(close).toMatchObject({
       state: 'closed',
       operationId: 'restart-test',
       activeAdmissions: 0,
@@ -81,16 +99,9 @@ describe('server-owned turn admission', () => {
       db.close()
     }
 
-    const wrong = await fixture.postJson('/v1/server/turn-admission/reopen', {
-      operationId: 'someone-else',
-    })
-    expect(wrong.status).toBe(409)
-
-    const reopened = await fixture.postJson('/v1/server/turn-admission/reopen', {
-      operationId: 'restart-test',
-    })
-    expect(reopened.status).toBe(200)
-    expect(await reopened.json()).toEqual({
+    await expect(server.turnAdmissionGate.reopen('someone-else')).rejects.toThrow()
+    const reopened = await server.turnAdmissionGate.reopen('restart-test')
+    expect(reopened).toEqual({
       state: 'open',
       activeAdmissions: 0,
       durable: false,
@@ -98,16 +109,17 @@ describe('server-owned turn admission', () => {
   })
 
   it('keeps replacement startup closed through warmup, then reopens before ready', async () => {
-    const close = await fixture.postJson('/v1/server/turn-admission/close', {
+    await server.turnAdmissionGate.close({
       operationId: 'restart-persisted',
     })
-    expect(close.status).toBe(200)
     expect(await Bun.file(turnAdmissionMarkerPath(fixture.runtimeRoot)).exists()).toBe(true)
 
     await server.stop()
-    server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+    server = (await createHrcServer(
+      fixture.serverOpts({ otelListenerEnabled: false })
+    )) as typeof server
 
-    expect(await (await fixture.fetchSocket('/v1/server/turn-admission')).json()).toEqual({
+    expect(server.turnAdmissionGate.snapshot()).toEqual({
       state: 'open',
       activeAdmissions: 0,
       durable: false,
