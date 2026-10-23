@@ -43,6 +43,7 @@ Current reference for the HRC runtime. Design records live in
 ## Approved designs
 
 - [proposals/install-publish-split.md](proposals/install-publish-split.md) — implemented design splitting local install selection from publication (T-08559).
+- [proposals/hrc-rust-parity.md](proposals/hrc-rust-parity.md) — proposed native Rust feature/gap closure: source audits, cohesive ownership, Bun compatibility and ordered acceptance packages (T-11525).
 - [proposals/hrc-rust-migration.md](proposals/hrc-rust-migration.md) — proposal: port HRC to Rust embedding cardo-runtime (shadow projector, Rust front sliced by state, TS retirement); consolidation deferred (P-00862).
 - [proposals/viewer-sidecar-spec.md](proposals/viewer-sidecar-spec.md) — approved spec extracting Ghostty presentation from hrc-server into the viewer sidecar.
 

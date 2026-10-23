@@ -1,5 +1,7 @@
 # HRC Rust migration
 
+> 2026-10-23 M1 finding: [Rust native parity closure proposal](hrc-rust-parity.md) supplies current implementation status and source-grounded gap analysis. Its proposed amendment replaces the provisional S1–S5 split-writer rollout with isolated native development and cohesive per-node execution-owner transfer, retaining standalone Bun. This amendment awaits adoption; it does not change delivered stage 1/1b behavior or authorize activation/retirement. Read it before planning from §§1–2, 5–8 or 13 below.
+
 Status: proposal r3.2, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `/v1/events/page` ledger read, a pinned side-effect-free read set, attach from the presentation read model. r3.2 answers EN-32628 F5: `contextReading` on presentation rows. r3.3: §4.6 stage 1b ops are facade calls over existing routes with no TS change, and `seat.summon` is specified first). Owner mable@hrc-runtime:primary. Campaign P-00862. **Stage 1 delivered 2026-10-20:** gate 0 T-11441 (371cc396), kernel T-11442 (8f70c9e8..5f7e1bc9), gates 0–5 graded PASS, live on max3. Cardo F7 is green; A5 (T-11426) measurements are cardo's. Stage 1b and stage 2 are not dispatched. Lance's rulings are marked **RULED**.
 
 r3 replaces r2.2's stage 1 and adds the repository rules:

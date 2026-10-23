@@ -17,6 +17,19 @@ approved_source:
   preview_amendment_task_slug: kernel-latest-event-preview
   restart_amendment_task: T-11496
   restart_amendment_task_slug: kernel-seat-restart-op
+proposed_m1_amendment:
+  task: T-11525
+  proposal: docs/proposals/hrc-rust-parity.md
+  status: design approved in EN-33646; pending Lance adoption
+  affected_sections: migration proposal sections 1, 2, 5, 6, 7, 8, 13
+  boundary: >
+    M1 source audit finds process-local claim, retirement, broker and message
+    execution coupling across provisional S1-S5 slices. Proposed replacement
+    is incremental native development on isolated state and substrate, followed
+    by a cohesive execution-owner transfer per node after parity and rollback
+    proof. Complete standalone Bun remains supported; no retirement, live Rust
+    migration ownership or activation is authorized. This proposed amendment
+    does not replace the approved predicate until adopted.
 predicate: >
   HRC embeds cardo-runtime as a library and retains ownership of its durable
   store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
