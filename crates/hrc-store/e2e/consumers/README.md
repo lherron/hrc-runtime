@@ -60,7 +60,7 @@ adapter does not modify P0 profiles, inventory, assertion law or aggregation.
 `control_checks.py` rejects inadequate assertion inputs before producer runs.
 `evidence_controls.py EVIDENCE --out NEW_DIR` tampers coherent actual artifacts
 (removes a case/assertion/command, truncates raw JSON, erases native rows, marks
-incomplete). Coherent controls also regenerate manifests after removing an annotation negative, clearing capture-hole findings, changing a nonzero monitor head, erasing native hydration, erasing a restub skip, or substituting native identity. Each must fail for its semantic reason, independent of hashes. These
+incomplete). Coherent controls also regenerate manifests after removing an annotation negative, clearing capture-hole findings, changing a nonzero monitor head, erasing native hydration, erasing a restub skip, substituting native identity, changing a typed archive payload at the same sequence, or moving a concurrent native append outside its interrupted tool interval. Each must fail for its semantic reason, independent of hashes. These
 are checker controls, never product qualification.
 
 ## Native scenario interface

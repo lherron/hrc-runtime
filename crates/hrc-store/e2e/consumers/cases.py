@@ -2,7 +2,7 @@
 import json
 import sqlite3
 from pathlib import Path
-from assertions import require, EvidenceError, export_evidence, capture_evidence, archive_evidence
+from assertions import require, EvidenceError, export_evidence, capture_evidence, archive_evidence, legacy_rows_evidence
 from harness import Gap, InfraError, rows, backup, save
 
 
@@ -281,7 +281,7 @@ def c06(c):
         require(table(root, 'events') == active, 'repeat delete stable')
         reopened = c.native_call('native-archive-reopen', 'consumer-archive-read', root)
         require(reopened['streamHighWater'] == before_head, 'native shared stream allocation must not rewind')
-        require(len(reopened['events']) == len(active) > 0 and {r['seq'] for r in reopened['events']} == {r['seq'] for r in active}, 'native typed remaining archive source rows')
+        legacy_rows_evidence(reopened['events'], active)
     # Fork before the positive deletion to retain the payload-weakness counterexample.
     wrong = c.fork(root, 'same-seq-wrong-archive')
     c.check('full-row-copy-delete-repeat-native-reopen', copy_delete)

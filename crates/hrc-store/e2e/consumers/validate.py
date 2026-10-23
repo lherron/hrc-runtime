@@ -2,6 +2,7 @@
 """Revalidate saved raw evidence for the parent P0 adapter; missing data fails closed."""
 import argparse
 import json
+import math
 from pathlib import Path
 import sys
 from assertions import require, export_evidence, capture_evidence, archive_evidence, prune_report
@@ -38,6 +39,7 @@ def validate(directory, allow_subset=False):
             if not isinstance(data, dict) or 'argv' not in data:
                 continue
             require(isinstance(data.get('exit'), int) and not data.get('timeout'), 'timeout/missing process exit')
+            require(all(type(data[k]) in (int, float) and math.isfinite(data[k]) for k in ('startedAt', 'endedAt')), 'command timestamps must be finite numeric evidence')
             require(data['endedAt'] >= data['startedAt'], 'command time evidence')
             if 'body' in data:
                 require(json.loads(data['stdout']) == data['body'], 'malformed/stale parsed output')

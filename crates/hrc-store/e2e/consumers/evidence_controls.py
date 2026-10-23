@@ -14,12 +14,22 @@ def main():
     assert not out.exists(); out.mkdir()
     validator = Path(__file__).with_name('validate.py')
     results = []
-    for control in ('remove-required-assertion', 'remove-case', 'remove-command', 'truncate-stdout', 'erase-native-rows', 'incomplete-run', 'coherent-missing-annotation-negative', 'coherent-capture-hole-cleared', 'coherent-monitor-wrong-head', 'coherent-maintenance-hydration-erased', 'coherent-restub-skip-erased', 'coherent-wrong-native-identity'):
+    for control in ('remove-required-assertion', 'remove-case', 'remove-command', 'truncate-stdout', 'erase-native-rows', 'incomplete-run', 'coherent-missing-annotation-negative', 'coherent-capture-hole-cleared', 'coherent-monitor-wrong-head', 'coherent-maintenance-hydration-erased', 'coherent-restub-skip-erased', 'coherent-wrong-native-identity', 'coherent-native-archive-payload', 'coherent-spill-append-timing'):
         with tempfile.TemporaryDirectory(prefix='hrcp1-evidence-control-') as temp:
             target = Path(temp) / 'evidence'; shutil.copytree(source, target)
             summary = json.loads((target / 'summary.json').read_text())
             coherent = control.startswith('coherent-')
-            if control == 'coherent-wrong-native-identity':
+            if control == 'coherent-native-archive-payload':
+                command = next((target / 'C06').glob('*-native-archive-reopen.json'))
+                data = json.loads(command.read_text()); body = json.loads(data['stdout'])
+                body['events'][0]['eventJson'] = {'wrong': True}
+                data['stdout'] = json.dumps(body); data['body'] = body
+                command.write_text(json.dumps(data))
+            elif control == 'coherent-spill-append-timing':
+                command = next((target / 'C05').glob('*-native-during-spill.json'))
+                data = json.loads(command.read_text()); data['startedAt'] = 946684800; data['endedAt'] = 946684801
+                command.write_text(json.dumps(data))
+            elif control == 'coherent-wrong-native-identity':
                 artifact = target / 'identity.json'
                 data = json.loads(artifact.read_text()); data['nativeRealpath'] = data['bunRealpath']
                 artifact.write_text(json.dumps(data))

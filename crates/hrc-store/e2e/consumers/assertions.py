@@ -71,3 +71,19 @@ def prune_report(command):
 def drained(report, effect):
     require(report['stopReason'] == 'complete', 'partial/busy/deadline is not complete')
     require(effect > 0, 'nonzero maintenance effect required')
+
+
+def legacy_rows_evidence(typed, raw):
+    require(bool(raw) and len(typed) == len(raw), 'nonempty exact typed legacy row count')
+    mapping = [('seq', 'seq'), ('streamSeq', 'stream_seq'), ('ts', 'ts'),
+               ('hostSessionId', 'host_session_id'), ('scopeRef', 'scope_ref'), ('laneRef', 'lane_ref'),
+               ('generation', 'generation'), ('runId', 'run_id'), ('runtimeId', 'runtime_id'),
+               ('source', 'source'), ('eventKind', 'event_kind')]
+    expected = []
+    for row in raw:
+        value = {wire: row[column] for wire, column in mapping if row[column] is not None}
+        if row['event_json'] is not None:
+            value['eventJson'] = json.loads(row['event_json'])
+        expected.append(value)
+    require(sorted(typed, key=lambda r: r['seq']) == sorted(expected, key=lambda r: r['seq']),
+            'full typed legacy fields and parsed event JSON must match independent rows')

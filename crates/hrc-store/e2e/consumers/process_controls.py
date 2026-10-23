@@ -154,6 +154,9 @@ def phase_resume(c, setup, command, phase, hydrate):
         return None
     interrupt_at(c, root, phase + '-actual-partial-killed', argv, barrier)
     require(appended and appended['row']['hrcSeq'] > 0, 'actual concurrent native appended row')
+    process_record = json.loads((c.caseout / (phase + '-actual-partial-killed.json')).read_text())
+    native_record = json.loads(next(c.caseout.glob('*-native-during-' + phase + '.json')).read_text())
+    require(process_record['startedAt'] <= native_record['startedAt'] <= native_record['endedAt'] <= process_record['endedAt'], 'native append interval inside interrupted tool interval')
     # Every committed stub must already resolve to complete matching bytes after the kill.
     for row in table(root, 'broker_invocation_events'):
         payload = json.loads(row['broker_event_json'])

@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 from urllib.parse import urlparse
-from assertions import require, EvidenceError, export_evidence, capture_evidence, archive_evidence, prune_report
+from assertions import require, EvidenceError, export_evidence, capture_evidence, archive_evidence, prune_report, legacy_rows_evidence
 from harness import rows, digest
 from requirements import REQUIRED
 
@@ -188,7 +188,7 @@ def rederive(out, selected):
                 require(record(name)['exit'] == 0, 'actual archive phase completion')
             native = body('native-archive-reopen')
             require(native['streamHighWater'] == rows(db, 'SELECT next_seq-1 AS head FROM event_stream_cursor WHERE id=1')[0]['head'] > 0, 'archive allocated highwater unchanged')
-            require({r['seq'] for r in native['events']} == {r['seq'] for r in expected['active']}, 'typed archive remaining rows'); mark('full-row-copy-delete-repeat-native-reopen')
+            legacy_rows_evidence(native['events'], expected['active']); mark('full-row-copy-delete-repeat-native-reopen')
             refusal('delete-before-copy', 'ABORT', 1)
             before_copy_db = out / case / 'databases/delete-before-copy/state/state.sqlite'
             require(equal_rows(rows(before_copy_db, 'SELECT * FROM events'), expected['eligible'] + expected['active']), 'refusal all rows unchanged'); mark('delete-before-copy-refusal')
@@ -386,7 +386,9 @@ def derive_maintenance(out, commands, proven):
             native = body(record('native-resumed-buffers'))
             require(not native['consumer-buffer-old']['buffers'] and all(len(native['consumer-buffer-' + n]['buffers']) == 1 for n in ('recent','live-run','live-runtime','active-run')), 'native post-resume preservation')
         if phase != 'strip':
-            appended = body(record('native-during-' + phase))['row']
+            native_process = record('native-during-' + phase)
+            require(process['startedAt'] <= native_process['startedAt'] <= native_process['endedAt'] <= process['endedAt'], 'native append interval must be inside interrupted ' + phase + ' process interval')
+            appended = body(native_process)['row']
             require(any(r['hrc_seq'] == appended['hrcSeq'] and json.loads(r['payload_json']) == appended['payload'] for r in resumed_after['hrc_events']), 'actual concurrent append retained')
             proven.add(phase + '-kill-resume-concurrent-append')
     concurrent = read('concurrent-strip-process.json'); require_drained(prune_report(concurrent))
