@@ -28,6 +28,11 @@ fn run() -> Result<serde_json::Value, StoreError> {
                 || command == "repository-contract"
                 || command == "transcript-contract"
                 || command == "execution-contract"
+                || command == "legacy-mail-create-ack-contract"
+                || command == "legacy-mail-origin-create-contract"
+                || command == "legacy-mail-origin-missing-receipt-contract"
+                || command == "legacy-mail-body-contract"
+                || command == "legacy-mail-origin-body-contract"
                 || matches!(
                     command.as_str(),
                     "consumer-history-contract"
@@ -79,6 +84,13 @@ fn run() -> Result<serde_json::Value, StoreError> {
         "repository-contract"=>repository_contract(store),
         "transcript-contract"=>transcript_contract(store),
         "execution-contract"=>execution_contract(store),
+        "legacy-mail-origin-create-contract"=>legacy_mail_origin_create_contract(store,false),
+        "legacy-mail-origin-missing-receipt-contract"=>legacy_mail_origin_create_contract(store,true),
+        "legacy-mail-create-ack-contract"=>legacy_mail_create_ack_contract(store),
+        "legacy-mail-body-contract"=>legacy_mail_body_contract(store,false),
+        "legacy-mail-origin-body-contract"=>legacy_mail_body_contract(store,true),
+        "legacy-mail-origin-body-read-contract"=>legacy_mail_origin_body_read_contract(store),
+        "legacy-mail-body-read-contract"=>{let envelopes=store.read_snapshot(|tx|tx.legacy_mail_inbox(&hrc_store::LegacyMailActor::Operator{principal:"fixture".into()},"agent:tabularasa:project:hrc-runtime:task:p1-store"))?;store.close()?;Ok(serde_json::json!({"envelopes":envelopes}))},
         "consumer-history-contract"=>consumer_history_contract(store,&path),
         "consumer-history-read"=>consumer_history_read(store),
         "consumer-maintenance-read"=>{let value=store.read_snapshot(|tx|{let mut cases=serde_json::Map::new();for name in ["consumer-maint-shared","consumer-maint-different","consumer-restub-valid","consumer-restub-missing","consumer-restub-incomplete","consumer-restub-mismatch","consumer-restub-invalid","consumer-strip-payload","consumer-strip-null","consumer-strip-stripped","consumer-buffer-old","consumer-buffer-recent","consumer-buffer-live-run","consumer-buffer-live-runtime","consumer-buffer-active-run"]{cases.insert(name.into(),serde_json::json!({"brokerEvents":tx.broker_events_by_invocation(name)?,"lifecycle":tx.lifecycle_events().list(&hrc_store::LifecycleFilters{runtime_id:Some(name.into()),..Default::default()},false)?,"buffers":tx.runtime_buffers_by_runtime(name)?}));}Ok(serde_json::Value::Object(cases))})?;store.close()?;Ok(value)},
@@ -3634,4 +3646,405 @@ fn consumer_append_control(mut store: Store) -> Result<serde_json::Value, StoreE
     let row = store.write(|tx| tx.append_lifecycle(&fields))?.value;
     store.close()?;
     Ok(serde_json::json!({"row":row}))
+}
+
+fn legacy_mail_observation<T: serde::Serialize>(
+    name: &str,
+    result: Result<T, StoreError>,
+) -> serde_json::Value {
+    match result {
+        Ok(value) => serde_json::json!({"name":name,"value":value}),
+        Err(StoreError::Mail {
+            code,
+            message,
+            detail,
+        }) => {
+            serde_json::json!({"name":name,"error":{"name":"HrcMailRepositoryError","code":code,"message":message,"detail":detail}})
+        }
+        Err(StoreError::ReplySchema(error)) => {
+            serde_json::json!({"name":name,"error":{"name":error.name,"message":error.message}})
+        }
+        Err(error) => {
+            serde_json::json!({"name":name,"error":{"name":"StoreError","code":error.code(),"message":error.to_string()}})
+        }
+    }
+}
+fn legacy_mail_create_ack_contract(mut store: Store) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let at = "2026-10-23T00:00:00.000Z";
+    let target = "agent:tabularasa:project:hrc-runtime:task:p1-store";
+    let actor = LegacyMailActor::Operator {
+        principal: "fixture".into(),
+    };
+    let base: LegacyMailSend = serde_json::from_value(
+        serde_json::json!({"ingressId":"create-ingress","from":actor,"targetSessionRef":format!(" {target} "),"payload":{"kind":"request","body":" preserved body ","metadata":{"b":2,"a":1}}}),
+    )?;
+    let ids = vec!["create-envelope".into()];
+    let schema_ids = vec!["schema-envelope".into()];
+    let mut results = vec![];
+    macro_rules! observe {
+        ($name:literal,$action:expr) => {
+            results.push(legacy_mail_observation(
+                $name,
+                $action.map(|committed| committed.value),
+            ));
+        };
+    }
+    observe!(
+        "create",
+        store.write(|tx| tx.create_legacy_mail(&base, Some("create-envelope"), at))
+    );
+    let mut changed = base.clone();
+    changed.materialization_intent = Some(serde_json::json!({"first":true}));
+    observe!(
+        "repeat",
+        store.write(|tx| tx.create_legacy_mail(&changed, Some("ignored-id"), at))
+    );
+    changed.materialization_intent = Some(serde_json::json!({"second":true}));
+    observe!(
+        "repeatHint",
+        store.write(|tx| tx.create_legacy_mail(&changed, None, at))
+    );
+    changed = base.clone();
+    changed.payload.body = "different".into();
+    observe!(
+        "conflict",
+        store.write(|tx| tx.create_legacy_mail(&changed, None, at))
+    );
+    changed = base.clone();
+    changed.target_session_ref = target.into();
+    observe!(
+        "trimFingerprintConflict",
+        store.write(|tx| tx.create_legacy_mail(&changed, None, at))
+    );
+    observe!(
+        "pendingAck",
+        store.write(|tx| tx.ack_legacy_mail(&actor, &ids, None, at))
+    );
+    observe!(
+        "present",
+        store.write(|tx| tx.present_pending_legacy_mail(target, 1000, at))
+    );
+    observe!(
+        "wrongActor",
+        store.write(|tx| tx.ack_legacy_mail(
+            &LegacyMailActor::Scope {
+                session_ref: "wrong".into()
+            },
+            &ids,
+            None,
+            at
+        ))
+    );
+    observe!(
+        "ack",
+        store.write(|tx| tx.ack_legacy_mail(
+            &actor,
+            &ids,
+            Some(&serde_json::json!({"b":2,"a":1})),
+            at
+        ))
+    );
+    observe!(
+        "ackRepeat",
+        store.write(|tx| tx.ack_legacy_mail(
+            &actor,
+            &["create-envelope".into(), "create-envelope".into()],
+            Some(&serde_json::json!({"a":1,"b":2})),
+            at
+        ))
+    );
+    observe!(
+        "ackConflict",
+        store.write(|tx| tx.ack_legacy_mail(&actor, &ids, Some(&serde_json::Value::Null), at))
+    );
+    changed = base.clone();
+    changed.ingress_id = "schema-ingress".into();
+    changed.reply_schema = Some(
+        serde_json::json!({"type":"object","additionalProperties":false,"required":["status"],"properties":{"status":{"const":"ok"}}}),
+    );
+    observe!(
+        "schemaCreate",
+        store.write(|tx| tx.create_legacy_mail(&changed, Some("schema-envelope"), at))
+    );
+    observe!(
+        "schemaPresent",
+        store.write(|tx| tx.present_pending_legacy_mail(target, 1000, at))
+    );
+    observe!(
+        "schemaMissing",
+        store.write(|tx| tx.ack_legacy_mail(&actor, &schema_ids, None, at))
+    );
+    observe!(
+        "schemaWrong",
+        store.write(|tx| tx.ack_legacy_mail(
+            &actor,
+            &schema_ids,
+            Some(&serde_json::json!({"status":"bad","extra":1})),
+            at
+        ))
+    );
+    observe!(
+        "batchSchema",
+        store.write(|tx| tx.ack_legacy_mail(
+            &actor,
+            &["schema-envelope".into(), "create-envelope".into()],
+            Some(&serde_json::json!({"status":"ok"})),
+            at
+        ))
+    );
+    observe!(
+        "schemaAck",
+        store.write(|tx| tx.ack_legacy_mail(
+            &actor,
+            &schema_ids,
+            Some(&serde_json::json!({"status":"ok"})),
+            at
+        ))
+    );
+    observe!(
+        "emptyAck",
+        store.write(|tx| tx.ack_legacy_mail(&actor, &[], None, at))
+    );
+    observe!(
+        "unknownAck",
+        store.write(|tx| tx.ack_legacy_mail(&actor, &["missing".into()], None, at))
+    );
+    changed = base.clone();
+    changed.reply_schema = Some(serde_json::json!({"$ref":"https://example.invalid/no"}));
+    observe!(
+        "invalidSchemaBeforeReceipt",
+        store.write(|tx| tx.create_legacy_mail(&changed, None, at))
+    );
+    changed = base.clone();
+    changed.ingress_id = " ".into();
+    observe!(
+        "emptyIngress",
+        store.write(|tx| tx.create_legacy_mail(&changed, None, at))
+    );
+    changed = base.clone();
+    changed.target_session_ref = " ".into();
+    observe!(
+        "emptyTarget",
+        store.write(|tx| tx.create_legacy_mail(&changed, None, at))
+    );
+    changed = base.clone();
+    changed.payload.body = " ".into();
+    observe!(
+        "emptyBody",
+        store.write(|tx| tx.create_legacy_mail(&changed, None, at))
+    );
+    store.close()?;
+    Ok(serde_json::json!({"results":results}))
+}
+
+fn legacy_mail_body_contract(
+    mut store: Store,
+    origin: bool,
+) -> Result<serde_json::Value, StoreError> {
+    use hrc_store::*;
+    let actor = LegacyMailActor::Operator {
+        principal: "fixture".into(),
+    };
+    let target = "agent:tabularasa:project:hrc-runtime:task:p1-store";
+    let at = "2026-10-23T00:00:00.000Z";
+    let mut results = vec![];
+    for (index, line) in include_str!("../e2e/fixtures/mail-body.jsonl")
+        .lines()
+        .enumerate()
+    {
+        let record: serde_json::Value = serde_json::parse(line)?;
+        let units = record["units"]
+            .as_array()
+            .expect("fixed array")
+            .iter()
+            .map(|v| {
+                v.as_u64()
+                    .and_then(|n| u16::try_from(n).ok())
+                    .expect("fixed u16")
+            })
+            .collect::<Vec<_>>();
+        let input = LegacyMailSend {
+            ingress_id: format!("body-ingress-{index}"),
+            from: actor.clone(),
+            target_session_ref: target.into(),
+            payload: LegacyMailPayload {
+                kind: "request".into(),
+                body: JsString::from_utf16(units),
+                metadata: Some(serde_json::json!({"case":index})),
+            },
+            reply_schema: None,
+            materialization_intent: None,
+        };
+        let id = format!("body-envelope-{index}");
+        let create = legacy_mail_observation(
+            "create",
+            store
+                .write(|tx| {
+                    if origin {
+                        tx.create_legacy_mail_federated_origin(
+                            &input,
+                            &id,
+                            &format!("body-message-{index}"),
+                            at,
+                        )
+                    } else {
+                        tx.create_legacy_mail(&input, Some(&id), at)
+                    }
+                })
+                .map(|c| c.value),
+        );
+        let retry = legacy_mail_observation(
+            "retry",
+            store
+                .write(|tx| {
+                    if origin {
+                        tx.create_legacy_mail_federated_origin(
+                            &input,
+                            &id,
+                            &format!("body-message-{index}"),
+                            at,
+                        )
+                    } else {
+                        tx.create_legacy_mail(&input, Some(&id), at)
+                    }
+                })
+                .map(|c| c.value),
+        );
+        let reappend = if let Some(body) = create
+            .get("value")
+            .and_then(|v| v.get("envelope"))
+            .and_then(|v| v.get("payload"))
+            .and_then(|v| v.get("body"))
+            .and_then(serde_json::Value::as_js_string)
+        {
+            let mut reread = input.clone();
+            reread.payload.body = body.clone();
+            legacy_mail_observation(
+                "reappend",
+                store
+                    .write(|tx| {
+                        if origin {
+                            tx.create_legacy_mail_federated_origin(
+                                &reread,
+                                &id,
+                                &format!("body-message-{index}"),
+                                at,
+                            )
+                        } else {
+                            tx.create_legacy_mail(&reread, Some(&id), at)
+                        }
+                    })
+                    .map(|c| c.value),
+            )
+        } else {
+            serde_json::Value::Null
+        };
+        results.push(serde_json::json!({"index":index,"name":record["name"],"units":record["units"],"create":create,"retry":retry,"reappend":reappend}));
+    }
+    store.close()?;
+    Ok(serde_json::json!({"results":results}))
+}
+
+fn legacy_mail_origin_create_contract(
+    mut store: Store,
+    missing: bool,
+) -> Result<serde_json::Value, StoreError> {
+    let at = "2026-10-23T00:00:00.000Z";
+    let base: hrc_store::LegacyMailSend = hrc_store::json::from_str(
+        r#"{"ingressId":"origin-ingress","from":{"kind":"operator","principal":"fixture"},"targetSessionRef":" target ","payload":{"kind":"request","body":"X\ud800Y\udfff","metadata":{"__proto__":{"kept":true},"b":2,"a":1,"\ud800":"key"}}}"#,
+    )?;
+    let mut results = vec![];
+    macro_rules! origin {
+        ($name:literal,$input:expr,$id:expr,$message:expr) => {
+            results.push(legacy_mail_observation(
+                $name,
+                store
+                    .write(|tx| tx.create_legacy_mail_federated_origin($input, $id, $message, at))
+                    .map(|c| c.value),
+            ));
+        };
+    }
+    if missing {
+        let result = store
+            .write(|tx| {
+                tx.create_legacy_mail_federated_origin(
+                    &base,
+                    "origin-envelope",
+                    "origin-message",
+                    at,
+                )
+            })
+            .map(|c| c.value);
+        results.push(match result {
+            Err(StoreError::MissingRecord(message))=>serde_json::json!({"name":"missingReceipt","error":{"name":"Error","message":message}}),
+            other=>legacy_mail_observation("missingReceipt",other)
+        });
+    } else {
+        origin!("create", &base, "origin-envelope", "origin-message");
+        origin!("repeat", &base, "ignored-envelope", "ignored-message");
+        let mut changed = base.clone();
+        changed.payload.body = "different".into();
+        origin!("conflict", &changed, "origin-envelope", "origin-message");
+        let changed: hrc_store::LegacyMailSend = hrc_store::json::from_str(
+            r#"{"ingressId":"origin-ingress","from":{"kind":"operator","principal":"fixture"},"targetSessionRef":" target ","payload":{"kind":"request","body":"X\ud800Y\udfff","metadata":{"__proto__":{"kept":false},"b":2,"a":1,"\ud800":"key"}}}"#,
+        )?;
+        origin!(
+            "prototypeOnlyRepeat",
+            &changed,
+            "origin-envelope",
+            "origin-message"
+        );
+        let mut changed = base.clone();
+        changed.reply_schema = Some(serde_json::json!({"$ref":"https://example.invalid/no"}));
+        origin!(
+            "invalidSchemaBeforeReceipt",
+            &changed,
+            "origin-envelope",
+            "origin-message"
+        );
+        let mut changed = base.clone();
+        changed.ingress_id = " ".into();
+        changed.target_session_ref = " ".into();
+        changed.payload.body = " ".into();
+        changed.payload.metadata = None;
+        origin!("blank", &changed, "blank-envelope", "blank-message");
+        let mut changed = base.clone();
+        changed.ingress_id = "local-ingress".into();
+        changed.payload.body = "local".into();
+        changed.payload.metadata = None;
+        results.push(legacy_mail_observation(
+            "local",
+            store
+                .write(|tx| tx.create_legacy_mail(&changed, Some("local-envelope"), at))
+                .map(|c| c.value),
+        ));
+        origin!("localToOrigin", &changed, "other-envelope", "other-message");
+        results.push(legacy_mail_observation(
+            "originToLocal",
+            store
+                .write(|tx| tx.create_legacy_mail(&base, Some("other-local"), at))
+                .map(|c| c.value),
+        ));
+    }
+    store.close()?;
+    Ok(serde_json::json!({"results":results}))
+}
+
+fn legacy_mail_origin_body_read_contract(
+    mut store: Store,
+) -> Result<serde_json::Value, StoreError> {
+    let envelopes = store.read_snapshot(|tx| {
+        (0..include_str!("../e2e/fixtures/mail-body.jsonl")
+            .lines()
+            .count())
+            .map(|index| {
+                tx.legacy_mail_origin_by_ingress(&format!("body-ingress-{index}"))?
+                    .map(|origin| origin.envelope)
+                    .ok_or_else(|| StoreError::MissingRecord(format!("body-ingress-{index}")))
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    store.close()?;
+    Ok(serde_json::json!({"envelopes":envelopes}))
 }

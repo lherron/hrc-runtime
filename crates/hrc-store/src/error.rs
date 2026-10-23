@@ -19,6 +19,12 @@ pub enum StoreError {
         code: &'static str,
         identity: String,
     },
+    Mail {
+        code: &'static str,
+        message: hrc_domain::store::JsString,
+        detail: Box<serde_json::Value>,
+    },
+    ReplySchema(Box<crate::MailSchemaCompileError>),
     RequiredJson(String),
     MissingRecord(String),
     Sqlite(rusqlite::Error),
@@ -34,7 +40,8 @@ impl StoreError {
             Self::Capability(_) => "store_capability_missing",
             Self::CursorInvalid { .. } => "cursor_invalid",
             Self::Invalid(_) => "malformed_request",
-            Self::Conflict { code, .. } => code,
+            Self::Conflict { code, .. } | Self::Mail { code, .. } => code,
+            Self::ReplySchema(_) => "store_reply_schema_runtime",
             Self::RequiredJson(_) => "store_required_json",
             Self::MissingRecord(_) => "store_record_missing",
             Self::Sqlite(rusqlite::Error::SqliteFailure(e, _))

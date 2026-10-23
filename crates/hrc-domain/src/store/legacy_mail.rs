@@ -29,7 +29,7 @@ impl LegacyMailActor {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LegacyMailPayload {
     pub kind: String,
-    pub body: String,
+    pub body: super::JsString,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default, deserialize_with = "present_json")]
     pub metadata: Option<JsValue>,
@@ -146,5 +146,12 @@ pub struct LegacyMailSend {
 #[serde(rename_all = "camelCase")]
 pub struct LegacyMailFederatedDisposition {
     pub outcome: String,
+    pub envelope: StoredDocument<LegacyMailEnvelope>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyMailSendResponse {
+    pub receipt: StoredDocument<LegacyMailReceipt>,
     pub envelope: StoredDocument<LegacyMailEnvelope>,
 }

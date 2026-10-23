@@ -805,7 +805,7 @@ impl RowCodec for HrcmailEnvelopesRow {
             from_ref: row.get("from_ref")?,
             target_session_ref: row.get("target_session_ref")?,
             payload_kind: row.get("payload_kind")?,
-            body: row.get("body")?,
+            body: crate::mail_body::read(row, "body")?,
             metadata_json: row.get("metadata_json")?,
             reply_schema_json: row.get("reply_schema_json")?,
             state: row.get("state")?,

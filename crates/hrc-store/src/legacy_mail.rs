@@ -25,7 +25,7 @@ fn envelope(r: HrcmailEnvelopesRow) -> Result<LegacyMailEnvelope> {
         target_session_ref: r.target_session_ref,
         payload: LegacyMailPayload {
             kind: r.payload_kind,
-            body: r.body,
+            body: r.body.into(),
             metadata: r.metadata_json.as_deref().map(json::parse).transpose()?,
         },
         reply_schema: r
@@ -79,11 +79,13 @@ impl ReadTx<'_> {
         .transpose()
     }
     pub fn require_legacy_mail_envelope(&self, id: &str) -> Result<LegacyMailEnvelope> {
-        self.legacy_mail_envelope(id)?
-            .ok_or_else(|| StoreError::Conflict {
-                code: "unknown_envelope",
-                identity: id.into(),
-            })
+        self.legacy_mail_envelope(id)?.ok_or_else(|| {
+            mail_error(
+                "unknown_envelope",
+                format!("unknown mail envelope \"{id}\""),
+                json::json!({"envelopeId":id}),
+            )
+        })
     }
     pub fn legacy_mail_ingress_receipt(
         &self,
@@ -200,7 +202,14 @@ fn authority(envelope: &LegacyMailEnvelope, actor: &LegacyMailActor) -> Result<(
     if let LegacyMailActor::Scope { session_ref } = actor
         && session_ref != &envelope.target_session_ref
     {
-        return Err(refusal("target_mismatch", &envelope.envelope_id));
+        return Err(mail_error(
+            "target_mismatch",
+            format!(
+                "envelope {} targets {}, not {session_ref}",
+                envelope.envelope_id, envelope.target_session_ref
+            ),
+            json::json!({"envelopeId":envelope.envelope_id,"targetSessionRef":envelope.target_session_ref,"claimedSessionRef":session_ref}),
+        ));
     }
     Ok(())
 }
@@ -337,6 +346,271 @@ impl WriteTx<'_> {
             let changed=tx.db.execute("UPDATE hrcmail_federated_origins SET envelope_json=?,disposition_message_id=?,disposition_fingerprint=?,updated_at=? WHERE request_message_id=? AND disposition_message_id IS NULL",params![crate::canonical_mail_json(&projected),disposition_id,fingerprint,incoming.updated_at,request_id])?;
             if changed!=1{return tx.apply_legacy_mail_federated_disposition(request_id,disposition_id,incoming)}
             Ok(LegacyMailFederatedDisposition{outcome:"applied".into(),envelope:json::from_value(projected)?})
+        })
+    }
+}
+
+fn mail_error(code: &'static str, message: impl Into<JsString>, detail: JsValue) -> StoreError {
+    StoreError::Mail {
+        code,
+        message: message.into(),
+        detail: Box::new(detail),
+    }
+}
+impl WriteTx<'_> {
+    /// Origin creation stores the original UTF-16 body in canonical JSON, independently
+    /// of the qualified local envelope SQL-text binding behavior.
+    pub fn create_legacy_mail_federated_origin(
+        &mut self,
+        input: &LegacyMailSend,
+        envelope_id: &str,
+        request_message_id: &str,
+        at: &str,
+    ) -> Result<LegacyMailSendResponse> {
+        let fingerprint = crate::fingerprint_mail_request(input)?;
+        if let Some(schema) = &input.reply_schema {
+            crate::CompiledMailReplySchema::compile(schema).map_err(|error| {
+                mail_error(
+                    "invalid_reply_schema",
+                    error.message,
+                    json::json!({"ingressId":input.ingress_id}),
+                )
+            })?;
+        }
+        self.savepoint(|tx| {
+            if let Some(existing) = tx.read().legacy_mail_origin_by_ingress(&input.ingress_id)? {
+                if existing.request_fingerprint != fingerprint {
+                    return Err(mail_error("ingress_conflict",
+                        format!("ingress id \"{}\" was already used with different mail content",input.ingress_id),
+                        json::json!({"ingressId":input.ingress_id,"envelopeId":existing.envelope_id})));
+                }
+                let receipt = tx.read().legacy_mail_ingress_receipt(&input.ingress_id)?
+                    .ok_or_else(||StoreError::MissingRecord(format!("missing federated mail receipt {}",input.ingress_id)))?;
+                return Ok(LegacyMailSendResponse{receipt,envelope:existing.envelope});
+            }
+            if let Some(receipt) = one::<HrcmailIngressReceiptsRow>(tx.db,
+                "SELECT * FROM hrcmail_ingress_receipts WHERE ingress_id=?",[&input.ingress_id])? {
+                return Err(mail_error("ingress_conflict",
+                    format!("ingress id \"{}\" already chose a different delivery path",input.ingress_id),
+                    json::json!({"ingressId":input.ingress_id,"envelopeId":receipt.envelope_id})));
+            }
+            let mut document = json::json!({
+                "envelopeId":envelope_id,"ingressId":input.ingress_id,"from":input.from,
+                "targetSessionRef":input.target_session_ref,"payload":input.payload,
+                "state":"pending","roundCount":0,"createdAt":at,"updatedAt":at
+            });
+            if let Some(schema)=&input.reply_schema {
+                document.as_object_mut().expect("envelope object").insert("replySchema".into(),schema.clone());
+            }
+            let envelope:LegacyMailEnvelope=json::from_value(document.clone())?;
+            let receipt=LegacyMailReceipt{ingress_id:input.ingress_id.clone(),envelope_id:envelope_id.into(),path:"mail".into(),created_at:at.into(),extra:Default::default()};
+            tx.db.execute("INSERT INTO hrcmail_federated_origins(ingress_id,envelope_id,request_message_id,request_fingerprint,envelope_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                params![input.ingress_id,envelope_id,request_message_id,fingerprint,crate::canonical_mail_json(&document),at,at])?;
+            tx.db.execute("INSERT INTO hrcmail_ingress_receipts(ingress_id,path_choice,envelope_id,request_fingerprint,receipt_json,created_at) VALUES(?,'mail',?,?,?,?)",
+                params![input.ingress_id,envelope_id,fingerprint,crate::canonical_mail_json(&json::to_value(&receipt)?),at])?;
+            Ok(LegacyMailSendResponse{receipt:StoredDocument::Current(receipt),envelope:StoredDocument::Current(envelope)})
+        })
+    }
+
+    pub fn create_legacy_mail(
+        &mut self,
+        input: &LegacyMailSend,
+        envelope_id: Option<&str>,
+        at: &str,
+    ) -> Result<LegacyMailSendResponse> {
+        let ingress = json::trim(&input.ingress_id);
+        let target = json::trim(&input.target_session_ref);
+        for (field, empty) in [
+            ("ingressId", ingress.is_empty()),
+            ("targetSessionRef", target.is_empty()),
+            ("payload.body", input.payload.body.trim().utf16().is_empty()),
+        ] {
+            if empty {
+                return Err(mail_error(
+                    "invalid_transition",
+                    format!("{field} must not be empty"),
+                    json::json!({"field":field}),
+                ));
+            }
+        }
+        let fingerprint = crate::fingerprint_mail_request(input)?;
+        if let Some(schema) = &input.reply_schema {
+            crate::CompiledMailReplySchema::compile(schema).map_err(|error| {
+                mail_error(
+                    "invalid_reply_schema",
+                    error.message,
+                    json::json!({"ingressId":ingress}),
+                )
+            })?;
+        }
+        self.savepoint(|tx|{
+            if let Some(existing)=one::<HrcmailIngressReceiptsRow>(tx.db,"SELECT * FROM hrcmail_ingress_receipts WHERE ingress_id=?",[ingress])?{
+                if existing.request_fingerprint!=fingerprint{return Err(mail_error("ingress_conflict",format!("ingress id \"{ingress}\" was already used with different mail content"),json::json!({"ingressId":ingress,"envelopeId":existing.envelope_id})))}
+                if let Some(intent)=&input.materialization_intent && existing.path_choice=="mail"{
+                    tx.db.execute("UPDATE hrcmail_envelopes SET materialization_intent_json=COALESCE(materialization_intent_json,?) WHERE envelope_id=?",params![crate::canonical_mail_json(intent),existing.envelope_id])?;
+                }
+                return Ok(LegacyMailSendResponse{receipt:json::from_str(&existing.receipt_json)?,envelope:StoredDocument::Current(tx.read().require_legacy_mail_envelope(&existing.envelope_id)?)});
+            }
+            let envelope_id=envelope_id.map(str::to_owned).unwrap_or_else(||format!("mail-{}",uuid::Uuid::new_v4()));
+            let body=crate::mail_body::SqlBody::new(&input.payload.body);
+            tx.db.execute("INSERT INTO hrcmail_envelopes(envelope_id,ingress_id,from_kind,from_ref,target_session_ref,payload_kind,body,metadata_json,reply_schema_json,state,materialization_intent_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?,?)",params![envelope_id,ingress,input.from.kind(),input.from.reference(),target,input.payload.kind,body,input.payload.metadata.as_ref().map(crate::canonical_mail_json),input.reply_schema.as_ref().map(crate::canonical_mail_json),input.materialization_intent.as_ref().map(crate::canonical_mail_json),at,at])?;
+            let seq:i64=tx.db.query_row("SELECT envelope_seq FROM hrcmail_envelopes WHERE envelope_id=?",[&envelope_id],|row|row.get(0))?;
+            tx.db.execute("UPDATE hrcmail_stop_refusals SET observed_envelope_seq=MAX(observed_envelope_seq,?),refusal_count=0,updated_at=? WHERE target_session_ref=?",params![seq,at,target])?;
+            let receipt=LegacyMailReceipt{ingress_id:ingress.into(),envelope_id:envelope_id.clone(),path:"mail".into(),created_at:at.into(),extra:Default::default()};
+            tx.db.execute("INSERT INTO hrcmail_ingress_receipts(ingress_id,path_choice,envelope_id,request_fingerprint,receipt_json,created_at) VALUES(?,'mail',?,?,?,?)",params![ingress,envelope_id,fingerprint,crate::canonical_mail_json(&json::to_value(&receipt)?),at])?;
+            Ok(LegacyMailSendResponse{receipt:StoredDocument::Current(receipt),envelope:StoredDocument::Current(tx.read().require_legacy_mail_envelope(&envelope_id)?)})
+        })
+    }
+}
+
+impl WriteTx<'_> {
+    pub fn ack_legacy_mail(
+        &mut self,
+        actor: &LegacyMailActor,
+        ids: &[String],
+        response: Option<&JsValue>,
+        at: &str,
+    ) -> Result<Vec<LegacyMailDisposition>> {
+        if ids.is_empty() {
+            return Err(mail_error(
+                "invalid_transition",
+                "at least one envelope id is required",
+                json::json!({}),
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let ids: Vec<_> = ids.iter().filter(|id| seen.insert(id.as_str())).collect();
+        self.savepoint(|tx| {
+            let envelopes = ids
+                .iter()
+                .map(|id| tx.read().require_legacy_mail_envelope(id))
+                .collect::<Result<Vec<_>>>()?;
+            if envelopes.len() > 1
+                && envelopes
+                    .iter()
+                    .any(|envelope| envelope.reply_schema.is_some())
+            {
+                return Err(mail_error(
+                    "batch_schema_ack",
+                    "schema-bound envelopes must be acknowledged one at a time",
+                    json::json!({}),
+                ));
+            }
+            envelopes
+                .into_iter()
+                .map(|envelope| tx.ack_legacy_mail_one(envelope, actor, response, at))
+                .collect()
+        })
+    }
+    fn ack_legacy_mail_one(
+        &mut self,
+        current: LegacyMailEnvelope,
+        actor: &LegacyMailActor,
+        response: Option<&JsValue>,
+        at: &str,
+    ) -> Result<LegacyMailDisposition> {
+        authority(&current, actor)?;
+        let fingerprint = response.map(crate::fingerprint_mail_json);
+        if current.state == "acked" {
+            let row = one::<HrcmailEnvelopesRow>(
+                self.db,
+                "SELECT * FROM hrcmail_envelopes WHERE envelope_id=?",
+                [&current.envelope_id],
+            )?
+            .ok_or_else(|| {
+                mail_error(
+                    "unknown_envelope",
+                    format!("unknown mail envelope \"{}\"", current.envelope_id),
+                    json::json!({"envelopeId":current.envelope_id}),
+                )
+            })?;
+            if row.response_present == i64::from(response.is_some())
+                && row.response_fingerprint == fingerprint
+            {
+                return Ok(LegacyMailDisposition {
+                    outcome: "idempotent".into(),
+                    envelope: current,
+                });
+            }
+            return Err(mail_error(
+                "conflicting_disposition",
+                format!(
+                    "envelope {} is already acknowledged with a different response",
+                    current.envelope_id
+                ),
+                json::json!({"envelopeId":current.envelope_id}),
+            ));
+        }
+        if !matches!(current.state.as_str(), "presented" | "deferred") {
+            return Err(mail_error(
+                "invalid_transition",
+                format!(
+                    "cannot acknowledge {} envelope {}",
+                    current.state, current.envelope_id
+                ),
+                json::json!({"envelopeId":current.envelope_id,"state":current.state}),
+            ));
+        }
+        if let Some(schema) = &current.reply_schema {
+            let response = response.ok_or_else(|| {
+                mail_error(
+                    "invalid_reply",
+                    format!("envelope {} requires a response", current.envelope_id),
+                    json::json!({"envelopeId":current.envelope_id}),
+                )
+            })?;
+            let result = crate::CompiledMailReplySchema::compile(schema)
+                .and_then(|compiled| compiled.validate(response))
+                .map_err(|error| StoreError::ReplySchema(Box::new(error)))?;
+            if let crate::MailReplyValidation::Invalid { errors, .. } = result {
+                let summaries: Vec<JsString> = errors
+                    .iter()
+                    .map(|error| {
+                        JsString::concat(&[
+                            if error.instance_path.utf16().is_empty() {
+                                "/".into()
+                            } else {
+                                error.instance_path.clone()
+                            },
+                            " ".into(),
+                            error.message.clone(),
+                        ])
+                    })
+                    .collect();
+                let mut message = format!(
+                    "response does not satisfy envelope {} reply schema: ",
+                    current.envelope_id
+                )
+                .encode_utf16()
+                .collect::<Vec<_>>();
+                for (index, summary) in summaries.iter().enumerate() {
+                    if index > 0 {
+                        message.extend("; ".encode_utf16());
+                    }
+                    message.extend(summary.utf16());
+                }
+                return Err(mail_error(
+                    "invalid_reply",
+                    JsString::from_utf16(message),
+                    json::json!({"envelopeId":current.envelope_id,"validationErrors":errors}),
+                ));
+            }
+        }
+        let changed=self.db.execute("UPDATE hrcmail_envelopes SET state='acked',response_present=?,response_json=?,response_fingerprint=?,acked_at=?,terminal_actor_kind=?,terminal_actor_ref=?,updated_at=? WHERE envelope_id=? AND state IN('presented','deferred')",params![i64::from(response.is_some()),response.map(crate::canonical_mail_json),fingerprint,at,actor.kind(),actor.reference(),at,current.envelope_id])?;
+        if changed != 1 {
+            return self.ack_legacy_mail_one(
+                self.read()
+                    .require_legacy_mail_envelope(&current.envelope_id)?,
+                actor,
+                response,
+                at,
+            );
+        }
+        Ok(LegacyMailDisposition {
+            outcome: "applied".into(),
+            envelope: self
+                .read()
+                .require_legacy_mail_envelope(&current.envelope_id)?,
         })
     }
 }

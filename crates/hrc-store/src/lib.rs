@@ -249,3 +249,5 @@ mod reply_schema;
 pub use reply_schema::{
     CompiledMailReplySchema, MailReplyValidation, MailSchemaCompileError, MailSchemaValidationError,
 };
+
+mod mail_body;

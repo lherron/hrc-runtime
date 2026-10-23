@@ -36,7 +36,8 @@ for table in schema['tables']:
                  '    fn decode(row: &Row<\'_>) -> rusqlite::Result<Self> {', '        Ok(Self {'])
     for c in columns:
         field = 'r#'+c['name'] if c['name'] in ['type','match','ref'] else c['name']
-        code.append('            '+field+': row.get("'+c['name']+'")?,')
+        decoder = 'crate::mail_body::read(row, "body")' if name == 'hrcmail_envelopes' and c['name'] == 'body' else 'row.get("'+c['name']+'")'
+        code.append('            '+field+': '+decoder+'?,')
     code.extend(['        })', '    }', '    fn values(&self) -> Vec<Value> {', '        vec!['])
     for c in columns:
         field = 'r#'+c['name'] if c['name'] in ['type','match','ref'] else c['name']

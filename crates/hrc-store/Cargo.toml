@@ -14,6 +14,7 @@ sha2 = "=0.10.9"
 icu_collator = "=2.3.0"
 icu_locale = "=2.3.0"
 regress = { version = "=0.12.0", features = ["utf16"] }
+uuid = { version = "=1.28.0", features = ["v4"] }
 
 [[bin]]
 name = "rusthrc"
