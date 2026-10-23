@@ -104,6 +104,45 @@ describe('runtime lifecycle client methods', () => {
     expect(capturedQuery).toBe('?all=true&limit=1')
   })
 
+  it('shares runtime filters across local and federated reads without forwarding pagination', async () => {
+    const requests: Array<{ path: string; query: string }> = []
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch(req) {
+        const url = new URL(req.url)
+        requests.push({ path: url.pathname, query: url.searchParams.toString() })
+        return Response.json(
+          url.pathname === '/v1/runtimes'
+            ? []
+            : { localNodeId: 'test', generatedAt: new Date().toISOString(), nodes: [] }
+        )
+      },
+    })
+    const client = new HrcClient(stubSocketPath)
+    const filter = {
+      hostSessionId: '',
+      transport: 'tmux' as const,
+      status: ['ready', 'busy'] as const,
+      stale: false,
+      olderThan: '1h',
+      scope: 'agent:astra:project:hrc-runtime',
+      agent: 'astra',
+      task: '',
+      json: true,
+      all: false,
+      limit: 7,
+      cursor: 'next/page',
+    }
+    await client.listRuntimesPage(filter)
+    await client.listFederatedRuntimes(filter)
+    const shared =
+      'transport=tmux&status=ready%2Cbusy&stale=false&olderThan=1h&scope=agent%3Aastra%3Aproject%3Ahrc-runtime&agent=astra&json=true&all=false'
+    expect(requests).toEqual([
+      { path: '/v1/runtimes', query: `${shared}&limit=7&cursor=next%2Fpage` },
+      { path: '/v1/federation/runtimes', query: shared },
+    ])
+  })
+
   it('startRuntime posts to /v1/runtimes/start and returns the typed response', async () => {
     let capturedPath = ''
     let capturedBody: unknown

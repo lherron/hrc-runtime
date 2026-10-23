@@ -144,30 +144,24 @@ export class HrcClientTransport {
   }
 
   protected async postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-    const res = await this.unixFetch(path, {
+    return this.requestJson<T>(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       ...(signal ? { signal } : {}),
     })
-
-    if (!res.ok) {
-      await this.throwTypedError(res)
-    }
-    return (await res.json()) as T
   }
 
   protected async getJson<T>(path: string): Promise<T> {
-    const res = await this.unixFetch(path, { method: 'GET' })
-
-    if (!res.ok) {
-      await this.throwTypedError(res)
-    }
-    return (await res.json()) as T
+    return this.requestJson<T>(path, { method: 'GET' })
   }
 
   protected async deleteJson<T>(path: string): Promise<T> {
-    const res = await this.unixFetch(path, { method: 'DELETE' })
+    return this.requestJson<T>(path, { method: 'DELETE' })
+  }
+
+  private async requestJson<T>(path: string, init: BunRequestInit): Promise<T> {
+    const res = await this.unixFetch(path, init)
     if (!res.ok) {
       await this.throwTypedError(res)
     }

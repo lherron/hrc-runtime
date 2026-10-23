@@ -145,18 +145,7 @@ export class HrcClientDiagnosticsMethods extends HrcClientRuntimeMethods {
   async listFederatedRuntimes(
     filter?: RuntimeListFilter
   ): Promise<FederationRuntimeProjectionReport> {
-    const path = buildPath('/v1/federation/runtimes', {
-      hostSessionId: emptyToUndefined(filter?.hostSessionId),
-      transport: emptyToUndefined(filter?.transport),
-      status: filter?.status,
-      stale: filter?.stale,
-      olderThan: emptyToUndefined(filter?.olderThan),
-      scope: emptyToUndefined(filter?.scope),
-      agent: emptyToUndefined(filter?.agent),
-      task: emptyToUndefined(filter?.task),
-      json: filter?.json,
-      all: filter?.all,
-    })
+    const path = buildPath('/v1/federation/runtimes', runtimeFilterParams(filter))
     return this.getJson<FederationRuntimeProjectionReport>(path)
   }
 
@@ -212,16 +201,7 @@ export class HrcClientDiagnosticsMethods extends HrcClientRuntimeMethods {
 
   async listRuntimesPage(filter?: RuntimeListFilter): Promise<RuntimeListPage> {
     const path = buildPath('/v1/runtimes', {
-      hostSessionId: emptyToUndefined(filter?.hostSessionId),
-      transport: emptyToUndefined(filter?.transport),
-      status: filter?.status,
-      stale: filter?.stale,
-      olderThan: emptyToUndefined(filter?.olderThan),
-      scope: emptyToUndefined(filter?.scope),
-      agent: emptyToUndefined(filter?.agent),
-      task: emptyToUndefined(filter?.task),
-      json: filter?.json,
-      all: filter?.all,
+      ...runtimeFilterParams(filter),
       limit: filter?.limit,
       cursor: emptyToUndefined(filter?.cursor),
     })
@@ -346,5 +326,21 @@ export class HrcClientDiagnosticsMethods extends HrcClientRuntimeMethods {
       limit: 1,
     })
     return runs[0] ?? null
+  }
+}
+
+/** Shared selection only; pagination belongs to the local runtime endpoint. */
+function runtimeFilterParams(filter: RuntimeListFilter | undefined) {
+  return {
+    hostSessionId: emptyToUndefined(filter?.hostSessionId),
+    transport: emptyToUndefined(filter?.transport),
+    status: filter?.status,
+    stale: filter?.stale,
+    olderThan: emptyToUndefined(filter?.olderThan),
+    scope: emptyToUndefined(filter?.scope),
+    agent: emptyToUndefined(filter?.agent),
+    task: emptyToUndefined(filter?.task),
+    json: filter?.json,
+    all: filter?.all,
   }
 }

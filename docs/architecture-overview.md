@@ -28,12 +28,11 @@ locations at a glance).
 
 ## The daemon: `hrc-server`
 
-`hrc-server` is a Bun TypeScript process (`packages/hrc-server`) that runs
-worktree source directly under Bun via the `"bun"` export condition — source
-edits take effect on the next daemon restart with no build/install step (a
-`bun run build` + atomic install is still required to update the installed
-`hrc` wrapper, since it is a `bun link`ed artifact). It is
-managed by launchd:
+`hrc-server` is a Bun TypeScript process (`packages/hrc-server`) running from
+an installed atomic release. Source edits reach it through `just install`
+and an authorized daemon restart; restarting alone does not load checkout
+changes. `hrc server status --json` reports the running release path and source
+commit (see [atomic-install.md](atomic-install.md)). It is managed by launchd:
 
 - Launchd label: `com.praesidium.hrc-server` (`ProgramArguments: hrc server serve`)
 - Unix socket: `/Users/lherron/praesidium/var/run/hrc/hrc.sock`
