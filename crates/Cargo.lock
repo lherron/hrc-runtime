@@ -375,6 +375,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hrc-native"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "hrc-store",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hrc-store"
 version = "0.1.0"
 dependencies = [
