@@ -707,8 +707,6 @@ export type HrcServerInstanceClassBodyMethods = {
     | 'handleHealth'
     | 'handleInterrupt'
     | 'handleListSessions'
-    | 'handleSetSessionTitle'
-    | 'handleDeleteSessionTitle'
     | 'handleRequest'
     | 'handleResolveSession'
     | 'handleStatus'

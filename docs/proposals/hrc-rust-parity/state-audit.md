@@ -215,8 +215,6 @@ GET /v1/runtimes
 GET /v1/inputs/:inputId
 GET /v1/inputs/:inputId/watch
 GET /v1/sessions/by-host/:hostSessionId
-POST /v1/sessions/:hostSessionId/title
-DELETE /v1/sessions/:hostSessionId/title
 GET /v1/runtimes/:runtimeId/seat
 GET /v1/active-run-contributions/:inputApplicationId
 POST /v1/internal/launches/:launchId/{continuation,wrapper-started,child-started,event,exited} (retired)

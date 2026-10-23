@@ -2,12 +2,9 @@ import { markLoopActivity } from './event-loop-lag.js'
 import type { HrcServerInstance } from './index.js'
 import { handleGetInput, handleWatchInput, matchInputRoute } from './input-handlers.js'
 import { normalizeRoute, observeRequest } from './request-metrics.js'
-import { exactRouteKey, matchRuntimeSeatRoute, matchSessionTitleRoute } from './server-routing.js'
+import { exactRouteKey, matchRuntimeSeatRoute } from './server-routing.js'
 import { errorResponse } from './server-util.js'
-import {
-  decodeSessionTitleHostSessionId,
-  refuseExecutionFormatAtSealedDoor,
-} from './session-title-helpers.js'
+import { refuseExecutionFormatAtSealedDoor } from './session-title-helpers.js'
 
 export const serverRequestMethods = {
   async handleRequest(this: HrcServerInstance, request: Request): Promise<Response> {
@@ -52,16 +49,6 @@ export const serverRequestMethods = {
       if (request.method === 'GET' && pathname.startsWith('/v1/sessions/by-host/')) {
         const hostSessionId = pathname.slice('/v1/sessions/by-host/'.length)
         return this.handleGetSessionByHost(hostSessionId)
-      }
-
-      const sessionTitleRoute = matchSessionTitleRoute(request.method, pathname)
-      if (sessionTitleRoute) {
-        const hostSessionId = decodeSessionTitleHostSessionId(
-          sessionTitleRoute.encodedHostSessionId
-        )
-        return request.method === 'POST'
-          ? await this.handleSetSessionTitle(hostSessionId, request)
-          : this.handleDeleteSessionTitle(hostSessionId)
       }
 
       const runtimeSeatRoute = matchRuntimeSeatRoute(request.method, pathname)

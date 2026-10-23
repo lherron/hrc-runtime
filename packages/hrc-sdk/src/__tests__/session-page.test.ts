@@ -90,40 +90,30 @@ describe('session page SDK methods', () => {
     expect(facets.byNodeId).toEqual({ svc: 3 })
   })
 
-  test('sets and deletes a title through the host-session resource', async () => {
-    const observed: Array<{ method: string; url: URL; body?: unknown }> = []
+  test('sets and clears a title through continuity metadata', async () => {
+    const observed: Array<{ method: string; path: string; body: unknown }> = []
     server = Bun.serve({
       unix: socketPath,
       async fetch(request) {
         observed.push({
           method: request.method,
-          url: new URL(request.url),
-          ...(request.method === 'POST' ? { body: await request.json() } : {}),
+          path: new URL(request.url).pathname,
+          body: await request.json(),
         })
-        return request.method === 'POST'
-          ? Response.json({
-              hostSessionId: 'hsid/a',
-              title: 'Friendly title',
-              source: 'manual',
-              createdAt: '2026-08-24T00:00:00.000Z',
-              updatedAt: '2026-08-24T00:00:00.000Z',
-            })
-          : Response.json({ hostSessionId: 'hsid/a', deleted: true })
+        return Response.json({ metadata: {}, metadataSources: {} })
       },
     })
     const client = new HrcClient(socketPath)
-    const stored = await client.setSessionTitle('hsid/a', {
-      title: 'Friendly title',
-      source: 'manual',
-    })
-    const deleted = await client.deleteSessionTitle('hsid/a')
-
-    expect(stored.title).toBe('Friendly title')
-    expect(deleted.deleted).toBe(true)
-    expect(observed.map(({ method, url }) => [method, url.pathname])).toEqual([
-      ['POST', '/v1/sessions/hsid%2Fa/title'],
-      ['DELETE', '/v1/sessions/hsid%2Fa/title'],
+    const target = { scopeRef: 'agent:cody:project:hrc-runtime', laneRef: 'main' }
+    await client.setSessionMetadata(target, { title: 'Friendly title' })
+    await client.clearSessionMetadata(target, ['title'])
+    expect(observed).toEqual([
+      {
+        method: 'PATCH',
+        path: '/v1/sessions/metadata',
+        body: { ...target, set: { title: 'Friendly title' } },
+      },
+      { method: 'PATCH', path: '/v1/sessions/metadata', body: { ...target, clear: ['title'] } },
     ])
-    expect(observed[0]?.body).toEqual({ title: 'Friendly title', source: 'manual' })
   })
 })

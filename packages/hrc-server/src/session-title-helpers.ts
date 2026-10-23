@@ -1,10 +1,4 @@
-import {
-  HrcBadRequestError,
-  HrcErrorCode,
-  type HrcSessionRecord,
-  HrcUnprocessableEntityError,
-  validateSessionMetadataEntry,
-} from 'hrc-core'
+import { HrcErrorCode, type HrcSessionRecord, HrcUnprocessableEntityError } from 'hrc-core'
 import { type HrcDatabase, canonicalLaneRef } from 'hrc-store-sqlite'
 import { isRecord } from './server-parsers.js'
 
@@ -53,41 +47,6 @@ export function hasControlCharacters(value: string): boolean {
     if (code < 0x20 || code === 0x7f) return true
   }
   return false
-}
-
-export type SessionTitleWriteInput = {
-  title: string
-  source: 'generated' | 'manual'
-  model?: string | undefined
-  force: boolean
-}
-
-export function parseSessionTitleWriteInput(value: unknown): SessionTitleWriteInput {
-  if (!isRecord(value)) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
-  }
-  const title = value['title']
-  const force = value['force']
-  const validated = validateSessionMetadataEntry('title', title)
-  if (validated.reason)
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, validated.reason, {
-      field: 'title',
-    })
-  return {
-    title: validated.value as string,
-    source: 'manual',
-    force: force === true,
-  }
-}
-
-export function decodeSessionTitleHostSessionId(encodedHostSessionId: string): string {
-  try {
-    const hostSessionId = decodeURIComponent(encodedHostSessionId)
-    if (hostSessionId.length > 0) return hostSessionId
-  } catch {}
-  throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'host session id is malformed', {
-    field: 'hostSessionId',
-  })
 }
 
 export function decorateSessionTitles(

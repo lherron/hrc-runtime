@@ -1,12 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type {
-  DeleteSessionTitleResponse,
   PatchSessionMetadataRequest,
   SessionGetResponse,
   SessionMetadataResponse,
   SessionMetadataTarget,
-  SessionTitleRecord,
-  SetSessionTitleRequest,
 } from 'hrc-core'
 
 import type { HrcSessionRecord, HrcSurfaceBindingRecord as SurfaceBindingRecord } from 'hrc-core'
@@ -761,23 +758,5 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
     clear: string[]
   ): Promise<SessionMetadataResponse> {
     return this.patchSessionMetadata({ ...target, clear })
-  }
-
-  /** @deprecated Use setSessionMetadata. The server maps this compatibility route to api metadata. */
-  async setSessionTitle(
-    hostSessionId: string,
-    request: SetSessionTitleRequest
-  ): Promise<SessionTitleRecord> {
-    return this.postJson<SessionTitleRecord>(
-      `/v1/sessions/${encodeURIComponent(hostSessionId)}/title`,
-      request
-    )
-  }
-
-  /** @deprecated Use clearSessionMetadata. */
-  async deleteSessionTitle(hostSessionId: string): Promise<DeleteSessionTitleResponse> {
-    return this.deleteJson<DeleteSessionTitleResponse>(
-      `/v1/sessions/${encodeURIComponent(hostSessionId)}/title`
-    )
   }
 }

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { logRequestCompletion, logRequestEscaped } from './request-log.js'
 import { writeServerLog } from './server-log.js'
-import { exactRouteKey, matchSessionTitleRoute } from './server-routing.js'
+import { exactRouteKey } from './server-routing.js'
 
 const METRICS_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
 const SERVER_METRICS_FILE_PATTERN = /^server-\d{4}-\d{2}-\d{2}\.ndjson$/
@@ -143,11 +143,6 @@ const MAIN_PATTERN_ROUTES: readonly PatternRoute[] = [
     route: '/v1/sessions/by-host/:hostSessionId',
     matches: (pathname) => pathname.startsWith('/v1/sessions/by-host/'),
   },
-  ...(['POST', 'DELETE'] as const).map((method) => ({
-    method,
-    route: '/v1/sessions/:hostSessionId/title',
-    matches: (pathname: string) => matchSessionTitleRoute(method, pathname) !== undefined,
-  })),
   {
     method: 'GET',
     route: '/v1/runtimes/:runtimeId/seat',

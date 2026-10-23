@@ -10337,26 +10337,6 @@
       ]
     },
     {
-      "id": "public:DELETE:/v1/sessions/:hostSessionId/title",
-      "kind": "public-pattern",
-      "source": {
-        "path": "packages/hrc-server/src/server-routing.ts",
-        "symbol": "<module>",
-        "line": 1,
-        "hash": "9c87857367dc2645f8df2e9f4096f516aa67e75a0c38b2d4616a9d082c54aadd"
-      },
-      "caseIds": [
-        "public:DELETE:/v1/sessions/:hostSessionId/title"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "DELETE",
-      "path": "/v1/sessions/:hostSessionId/title",
-      "transport": "public-unix",
-      "retired": false
-    },
-    {
       "id": "public:GET:/v1/active-run-contributions/:inputApplicationId",
       "kind": "public-pattern",
       "source": {
@@ -12368,26 +12348,6 @@
         "wrong-method",
         "effects"
       ]
-    },
-    {
-      "id": "public:POST:/v1/sessions/:hostSessionId/title",
-      "kind": "public-pattern",
-      "source": {
-        "path": "packages/hrc-server/src/server-routing.ts",
-        "symbol": "<module>",
-        "line": 1,
-        "hash": "9c87857367dc2645f8df2e9f4096f516aa67e75a0c38b2d4616a9d082c54aadd"
-      },
-      "caseIds": [
-        "public:POST:/v1/sessions/:hostSessionId/title"
-      ],
-      "downstreamOwner": "T-11530",
-      "coverage": "GAP",
-      "gapReason": "Behavior not yet qualified; source discovery is not a behavioral pass",
-      "method": "POST",
-      "path": "/v1/sessions/:hostSessionId/title",
-      "transport": "public-unix",
-      "retired": false
     },
     {
       "id": "public:POST:/v1/sessions/drop-continuation",

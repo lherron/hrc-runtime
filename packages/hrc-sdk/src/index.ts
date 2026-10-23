@@ -88,8 +88,6 @@ export type {
   SessionPeerStatus,
   SessionTitleRecord,
   SessionTitleSource,
-  SetSessionTitleRequest,
-  DeleteSessionTitleResponse,
   StatusResponse,
   StatusSummaryResponse,
   SurfaceListFilter,

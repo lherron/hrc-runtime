@@ -5391,14 +5391,6 @@
     },
     {
       "package": "hrc-sdk",
-      "symbol": "DeleteSessionTitleResponse",
-      "kind": "type",
-      "file": "packages/hrc-sdk/src/types.ts",
-      "hash": "hrc-sdk|DeleteSessionTitleResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
       "symbol": "DeliverLiteralBySelectorRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
@@ -6019,14 +6011,6 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|SessionTitleSource|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-sdk",
-      "symbol": "SetSessionTitleRequest",
-      "kind": "type",
-      "file": "packages/hrc-sdk/src/types.ts",
-      "hash": "hrc-sdk|SetSessionTitleRequest|type",
       "count": 1
     },
     {

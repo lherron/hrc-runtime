@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { writeFile } from 'node:fs/promises'
 
-import { openHrcDatabase } from 'hrc-store-sqlite'
+import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { createHrcServer } from '../index.js'
@@ -268,9 +268,18 @@ describe('T-07221 federated session traversal', () => {
         nodeId: 'lab',
         state: 'healthy',
       })
-      const titleResponse = await lab.postJson('/v1/sessions/hsid-lab-a/title', {
-        title: 'Title from owning lab node',
-        source: 'manual',
+      createPlacementLedgerRepository(labServer.db.sqlite).installActive({
+        scopeRef: 'agent:cody:project:hrc-runtime:task:lab-a',
+        homeNodeId: 'lab',
+        updatedAt: '2026-08-11T13:00:00.000Z',
+      })
+      const titleResponse = await lab.fetchSocket('/v1/sessions/metadata', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scopeRef: 'agent:cody:project:hrc-runtime:task:lab-a',
+          set: { title: 'Title from owning lab node' },
+        }),
       })
       expect(titleResponse.status).toBe(200)
       const recovered: SessionPageResponse['items'] = []
@@ -281,9 +290,9 @@ describe('T-07221 federated session traversal', () => {
           `/v1/sessions/page?limit=1&cursor=${encodeURIComponent(cursor)}`
         )
         expect(response.complete).toBe(true)
-        // The title shim appends metadata.changed and session.retitled on the
-        // owning node. svc wrote nothing and stays at 0.
-        expect(response.eventHighWater).toEqual({ lab: 2, svc: 0 })
+        // The metadata write appends one changed event on the owning node.
+        // svc wrote nothing and stays at 0.
+        expect(response.eventHighWater).toEqual({ lab: 1, svc: 0 })
         recovered.push(...response.items)
         cursor = response.nextCursor
       }

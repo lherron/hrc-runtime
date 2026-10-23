@@ -153,8 +153,6 @@ const patterns: [string, string, string][] = [
   ['GET', '/v1/inputs/:inputId', 'input-handlers.ts'],
   ['GET', '/v1/inputs/:inputId/watch', 'input-handlers.ts'],
   ['GET', '/v1/sessions/by-host/:hostSessionId', 'server-request-methods.ts'],
-  ['POST', '/v1/sessions/:hostSessionId/title', 'server-routing.ts'],
-  ['DELETE', '/v1/sessions/:hostSessionId/title', 'server-routing.ts'],
   ['GET', '/v1/runtimes/:runtimeId/seat', 'server-routing.ts'],
   ['GET', '/v1/active-run-contributions/:inputApplicationId', 'server-request-methods.ts'],
 ]

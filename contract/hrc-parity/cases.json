@@ -2763,16 +2763,6 @@
       "state": "GAP",
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
     },
-    "public:DELETE:/v1/sessions/:hostSessionId/title": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "negative-control",
-        "durable-effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
     "public:GET:/v1/active-run-contributions/:inputApplicationId": {
       "downstreamOwner": "T-11530",
       "variants": [
@@ -3697,16 +3687,6 @@
         "malformed",
         "wrong-method",
         "effects"
-      ],
-      "state": "GAP",
-      "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"
-    },
-    "public:POST:/v1/sessions/:hostSessionId/title": {
-      "downstreamOwner": "T-11530",
-      "variants": [
-        "positive",
-        "negative-control",
-        "durable-effects"
       ],
       "state": "GAP",
       "reason": "Behavior not yet qualified; source discovery is not a behavioral pass"

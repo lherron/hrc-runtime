@@ -4,7 +4,6 @@ import {
   HrcErrorCode,
   HrcNotFoundError,
   type HrcSessionRecord,
-  type HrcSessionRetitledEventPayload,
   type LaunchCommandScopedRunResponse,
   type ResolveSessionResponse,
 } from 'hrc-core'
@@ -55,7 +54,7 @@ import {
 } from './server-parsers.js'
 import { createHostSessionId, json, timestamp } from './server-util.js'
 import { dropSessionContinuation } from './session-continuation-reuse.js'
-import { decorateSessionTitles, parseSessionTitleWriteInput } from './session-title-helpers.js'
+import { decorateSessionTitles } from './session-title-helpers.js'
 import { findContinuitySession } from './target-view.js'
 
 function isFoundResolve(value: unknown): value is Record<string, unknown> {
@@ -490,82 +489,6 @@ export const serverSessionMethods = {
       metadata,
       ...(title === undefined ? {} : { title }),
     })
-  },
-
-  async handleSetSessionTitle(
-    this: HrcServerInstance,
-    hostSessionId: string,
-    request: Request
-  ): Promise<Response> {
-    if (!this.db.sessions.getByHostSessionId(hostSessionId)) {
-      throw new HrcNotFoundError(
-        HrcErrorCode.UNKNOWN_HOST_SESSION,
-        `unknown host session "${hostSessionId}"`,
-        { hostSessionId }
-      )
-    }
-    const input = parseSessionTitleWriteInput(await parseJsonBody(request))
-    const now = timestamp()
-    const session = this.db.sessions.getByHostSessionId(hostSessionId)!
-    this.db.sessionMetadata.write({
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      source: 'api',
-      set: { title: input.title },
-      updatedBy: request.headers.get('x-hrc-principal-ref') ?? 'unknown',
-      updatedAt: now,
-    })
-    const stored = this.db.sessionTitles.getByHostSessionId(hostSessionId)!
-    this.appendSessionRetitled(hostSessionId, stored.title, now)
-    return json(stored)
-  },
-
-  /**
-   * T-07594 §5.2 — a title write/clear becomes a ledger fact so a presentation
-   * consumer can retitle from the stream instead of polling. `null` is an
-   * explicit clear, never an absence. Best-effort by construction: the title
-   * has already been committed, and a ledger failure must not fail the write.
-   */
-  appendSessionRetitled(
-    this: HrcServerInstance,
-    hostSessionId: string,
-    title: string | null,
-    ts: string
-  ): void {
-    const session = this.db.sessions.getByHostSessionId(hostSessionId)
-    if (!session) return
-    try {
-      this.notifyEvent(
-        appendHrcEvent(this.db, 'session.retitled', {
-          ts,
-          hostSessionId,
-          scopeRef: session.scopeRef,
-          laneRef: session.laneRef,
-          generation: session.generation,
-          payload: { title } satisfies HrcSessionRetitledEventPayload,
-        })
-      )
-    } catch (error) {
-      writeServerLog('WARN', 'session_retitled.append_failed', {
-        hostSessionId,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-  },
-
-  handleDeleteSessionTitle(this: HrcServerInstance, hostSessionId: string): Response {
-    if (!this.db.sessions.getByHostSessionId(hostSessionId)) {
-      throw new HrcNotFoundError(
-        HrcErrorCode.UNKNOWN_HOST_SESSION,
-        `unknown host session "${hostSessionId}"`,
-        { hostSessionId }
-      )
-    }
-    const deleted = this.db.sessionTitles.delete(hostSessionId)
-    if (deleted) {
-      this.appendSessionRetitled(hostSessionId, null, timestamp())
-    }
-    return json({ hostSessionId, deleted })
   },
 
   async handleClearContext(this: HrcServerInstance, request: Request): Promise<Response> {

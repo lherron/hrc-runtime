@@ -45,17 +45,19 @@ predicate: >
   before continuity lookup under hrc-runtime.federated-session-read. Unknown
   authority never falls back locally, and locally retired continuity is never
   served as current continuity. This routing changes neither cosmetic metadata
-  write authority nor its source precedence. During deprecation the existing
-  POST and DELETE host-session title routes, SDK methods and retitle CLI are
-  shims over api title, preserve the
-  existing request body, accept and ignore source, model and force, and retain
-  the session.retitled compatibility event. Migration preserves the most
-  recently updated title per continuity before removing session_titles and
-  its triggers.
-authority: wrkq:T-10148 revision 3 specification etag 6, Daedalus architecture approval, 2026-10-03; Lance Herron overrides of review F1 and F2 relayed in EN-22974 and its subsequent etag correction; home-routing amendment approved by Daedalus under wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06
+  write authority nor its source precedence. Title writes and clears use
+  PATCH /v1/sessions/metadata with the continuity scopeRef and laneRef,
+  set.title or clear: [title]; the retitle CLI uses the same metadata path.
+  The deprecated POST and DELETE host-session title routes and SDK title
+  wrappers are retired after caller migration under T-11711. They return 404;
+  metadata writes emit session.metadata.changed rather than the retired
+  shim's session.retitled event. Migration preserves the most recently
+  updated title per continuity before removing session_titles and its triggers.
+authority: wrkq:T-10148 revision 3 specification etag 6, Daedalus architecture approval, 2026-10-03; Lance Herron overrides of review F1 and F2 relayed in EN-22974 and its subsequent etag correction; home-routing amendment approved by Daedalus under wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06; Daedalus approval of T-11711 title-route retirement amendment submitted in EN-35003 and EN-35006, 2026-10-23
 source:
   - wrkq:T-10148
   - wrkq:T-10418
+  - wrkq:T-11711
   - architecture/records/invariants/hrc-runtime.federated-session-read.yaml
   - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
   - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
@@ -70,10 +72,11 @@ required_tests:
   - T-10148 HRC-received scope identity parser sweep covers all four repos and lists justified human-input exceptions
   - T-10148 same-plan-hash metadata refresh, absent versus empty launch sets, omitted-key deletion, source precedence and invalid-key soft rejection
   - T-10148 prefix collisions, 129-byte keys, 65-character segments, value and distinct-key limits are enforced on launch and atomic API writes
-  - T-10148 installed multi-project viewer, rotation persistence, retitle and actual slugger POST compatibility E2E saves an artifact and reads matching changed events
+  - T-10148 installed multi-project viewer, rotation persistence, retitle and slugger metadata PATCH E2E saves an artifact and reads matching changed events
+  - T-11711 retired POST and DELETE title routes return 404 without mutation; metadata title set and clear update the roster projection
   - T-10148 metadata reads extend t07594-side-effect-free-reads without lifecycle mutation or probes
   - T-10418 sessions/get and metadata share home routing, unknown-authority refusal and retirement fencing gates
-last_verified: 2026-10-06 T-10418 home-routing amendment reviewed against source; original T-10148 implementation, migration and installed acceptance and T-10418 implementation remain pending evidence
-reopen_when: Continuity identity storage, parser ownership, historical identity absence, wire coverage, metadata grammar or limits, registered keys, source precedence, cosmetic versus lifecycle authority, last-writer launch semantics, envelope/plan placement, home-node writes, title migration or shim compatibility, event atomicity, or read side effects change.
+last_verified: 2026-10-23 T-11711 retirement amendment reviewed against title handlers, metadata repository, CLI and viewer source; caller migration and deletion acceptance pending; 2026-10-06 T-10418 home-routing amendment reviewed against source; original T-10148 implementation, migration and installed acceptance and T-10418 implementation remain pending evidence
+reopen_when: Continuity identity storage, parser ownership, historical identity absence, wire coverage, metadata grammar or limits, registered keys, source precedence, cosmetic versus lifecycle authority, last-writer launch semantics, envelope/plan placement, home-node writes, title migration, retired-route behavior or title mutation interfaces, event atomicity, or read side effects change.
 supersedes: []
 superseded_by: []
