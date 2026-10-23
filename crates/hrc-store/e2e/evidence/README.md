@@ -133,6 +133,18 @@ adapter exists, named flag assertions link to that reconstruction and receive
 `scope:semantic-source-assertion`. A claim flag cannot close its own assertion.
 Missing bindings/dynamic source paths remain explicit checker gaps.
 
+`invocations.py` reconstructs supported direct `subprocess.run` argv from the
+captured fixed source and independently pinned entry arguments. Temporary paths
+must match the exact source prefix and an observed eight-character tempfile
+suffix. A binding requires a unique source call and unique complete identified
+command with the entire argv equal; neither receipt filenames nor process order
+select it. Family identity is validated first. Helpers, conditional/loop launches,
+repeated argv, unsupported expressions and missing identity remain GAP. Process
+status/stdout/stderr predicates consume that actual command, with source, entry,
+capture and command anchors retained. These predicates remain raw-output-only;
+they add no `coverageIdentities` or operation/effect proof.
+
+
 Only the source-specific clock fields declared by the mail contracts and the
 append-control ledger incarnation are normalized. Values, optional presence,
 nulls, errors, order, cardinality, identities and other clocks are retained.
@@ -179,3 +191,9 @@ and leak an aborted roster claim. Each copy gets a freshly regenerated coherent
 manifest. Exact per-assertion reasons, baseline and full mutated revalidations are
 retained. Each regenerated manifest must also PASS independently. Overall GAP/FAIL alone
 is insufficient evidence that a control worked.
+
+Invocation controls additionally require a passing real baseline and reject a
+coherently relinked wrong scenario, an actual nonzero command exit, and a missing
+stdout field. Run `invocation_controls.py --root ROOT --identity PIN --out NEW`
+for the retained baseline and per-target reasons. They regenerate manifests and
+check manifest validity separately from rejection.

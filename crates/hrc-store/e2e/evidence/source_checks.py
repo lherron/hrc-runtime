@@ -3,7 +3,7 @@ import ast
 from itertools import product
 import json
 from common import Gap
-from expressions import Pure, Receipt
+from expressions import Pure
 from catalog import CATALOG
 
 
@@ -16,9 +16,10 @@ BUN = {'session_e2e': 'bun-readback.json', 'transcript_e2e': 'bun-read.json',
 
 class Bindings(dict):
     """Resolve only values actually needed by this source assertion."""
-    def __init__(self, c, family, expr, local):
+    def __init__(self, c, family, expr, local, assertion):
         self.c, self.family = c, family
         self.expr = expr
+        self.assertion = assertion
         self.local = local
 
     def raw(self, name):
@@ -33,21 +34,19 @@ class Bindings(dict):
         f = self.family
         native = NATIVE.get(f, 'native.json')
         bun = BUN.get(f, 'unchanged-bun.json')
+        attrs = [n for n in ast.walk(self.expr) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == key]
+        if any(n.attr in ('returncode', 'stdout', 'stderr') for n in attrs):
+            from invocations import Invocations
+            cache = getattr(self.c, '_invocations', {})
+            if f not in cache:
+                cache[f] = Invocations(self.c, f)
+                self.c._invocations = cache
+            return cache[f].receipt(key, self.assertion['line'], self.assertion['column'])
         if key in ('seed', 's'):
             for name in ('seed.json', 'bun-seed.json'):
                 if (self.c.root / f / name).is_file():
-                    return Receipt(self.raw(name)) if any(isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == key for n in ast.walk(self.expr)) else self.body(name)
-            raise Gap('seed stdout/argv not retained: ' + f)
-        # Statement-local subprocess variables and decoded bodies share names.
-        attrs = [n for n in ast.walk(self.expr) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == key]
-        if any(n.attr in ('returncode', 'stdout', 'stderr') for n in attrs):
-            selected = native
-            if key in ('bun', 'b', 'control', 'controls', 'writer'):
-                selected = {'writer': 'bun-writer.json', 'control': 'bun-read.json' if f == 'serialization_e2e' else bun,
-                            'controls': 'bun-count-controls.json'}.get(key, bun)
-            if key == 'b' and f in ('collective_e2e', 'append_boundaries_e2e'):
-                selected = 'independent-bun.json'
-            return Receipt(self.raw(selected))
+                    return self.body(name)
+            raise Gap('seed stdout not retained: ' + f)
         if key in ('r', 'n', 'v', 'd', 'data', 'checks', 'result'):
             return self.body(native)
         if key in ('b', 'bun', 'readback'):
@@ -103,18 +102,16 @@ def source_checks(c):
                 local = {loop['binding']: value for loop, value in zip(fixed, combo)}
                 suffix = ''.join(':' + k + '=' + str(v) for k, v in local.items())
                 name = assertion['id'].split(':', 1)[1] + suffix
-                def prove(f=family, expr=expression, local=local, loops=loops):
+                def prove(f=family, expr=expression, local=local, loops=loops, assertion=assertion):
                     if any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == 'get' and isinstance(n.func.value, ast.Name) and n.func.value.id in ('result', 'checks', 'data', 'd') and n.args and isinstance(n.args[0], ast.Name) and n.args[0].id in local for n in ast.walk(expr)):
                         raise Gap('native self-attestation ignored; raw operation/boundary reconstruction required')
                     if f == 'append_boundaries_e2e' and ast.unparse(expr) == 'r == expected':
                         raise Gap('declared incarnation normalization reconstructed by raw-append-boundaries adapter')
-                    if any(isinstance(n, ast.Attribute) and n.attr in ('returncode', 'stdout', 'stderr') for n in ast.walk(expr)):
-                        raise Gap('retain exact source-invocation-to-receipt linkage; reusable local process variable is not an identity receipt')
                     names = {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}
                     # Comprehension targets are local to their expression.
                     names -= {n.target.id for n in ast.walk(expr) if isinstance(n, ast.comprehension) and isinstance(n.target, ast.Name)}
                     names -= {'json', 'len', 'all', 'any', 'str', 'list', 'bytes', 'reversed', 'sorted', 'range'}
-                    bindings = Bindings(c, f, expr, local)
+                    bindings = Bindings(c, f, expr, local, assertion)
                     env = {name: bindings.get_binding(name) for name in names}
                     answer = Pure(env).expr(expr)
                     if not answer:

@@ -80,7 +80,7 @@ class Checker:
         except (AssertionError, ValueError, TypeError, sqlite3.Error, OSError) as e:
             row.update(status='FAIL', reason=type(e).__name__ + ': ' + str(e))
         if row['status'] == 'GAP':
-            row['gapKind'] = 'CHECKER_UNSUPPORTED' if any(v in row['reason'] for v in ('binding', 'source expression', 'dynamic source iteration', 'source-invocation-to-receipt', 'not yet supported')) else 'RAW_MISSING'
+            row['gapKind'] = 'CHECKER_UNSUPPORTED' if any(v in row['reason'] for v in ('binding', 'source expression', 'dynamic source iteration', 'source-invocation-to-receipt', 'not yet supported', 'unsupported', 'repeated exact source invocation', 'latest source assignment')) else 'RAW_MISSING'
         row['receipts'] = sorted(set(self.used))
         self.assertions.append(row)
         return row
@@ -597,9 +597,9 @@ def revalidate(root, expected_identity=None):
     c.check('identity', 'build-provenance', lambda: c.build_provenance(expected_identity))
     c.check('integrity', 'manifest', c.integrity)
     from source_checks import source_checks
-    source_checks(c)
     for family in CATALOG:
         c.check(family, 'identity', lambda f=family: c.family_identity(f, expected_identity))
+    source_checks(c)
     reconciliation(c)
     from observations import run as observation_checks
     observation_checks(c)
