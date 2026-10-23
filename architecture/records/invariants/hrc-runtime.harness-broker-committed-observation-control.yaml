@@ -10,7 +10,26 @@ predicate: >
   runtime run buffer continuation surface and permission state, appends canonical
   hrc_events, and advances a contiguous projection cursor or records a typed
   fenced disposition. The cursor advances across intentionally non-mirrored
-  high-volume deltas without treating mirror retention as a source gap. An
+  high-volume deltas without treating mirror retention as a source gap.
+  broker_projection_dispositions is replay/hash metadata, not a keep-forever
+  observation ledger. Standing retention may delete an orphan disposition with
+  no broker_invocations owner, or a disposition at or below its owner's durable
+  last_projected_seq when that invocation is exited, failed, or disposed and its
+  valid updated_at is strictly older than fourteen days. Terminal projection
+  stamps updated_at with projection time; later mutations must not backdate
+  that terminal-age bound. Missing or invalid timestamps and nonterminal owners
+  retain their dispositions. Every above-cursor disposition remains regardless
+  of age so gap repair cannot duplicate already projected islands. Retention
+  preserves the invocation and its scalar cursor; replay of a compacted prefix
+  remains idempotent through that cursor. Full-envelope divergence detection is
+  not guaranteed for the compacted prefix; retained mirrored rows still apply
+  their existing append conflict checks. The existing bounded retention writer
+  contract governs discovery and deletion with the complete owner, state, age,
+  and cursor predicate rechecked under writer authority. An explicit authorized
+  include-ledgers runtime cascade deletes and counts dispositions by invocation
+  owner before deleting those invocations in the same transaction. This metadata
+  policy neither expires retained-evidence outcome holds nor changes observation
+  ledger retention. An
   execution naming a native turn resolves ownership from immutable broker event
   evidence keyed by runtime, historical operation generation, invocation, native
   turn id, and harness generation or turn attempt where present. Event,
@@ -164,8 +183,14 @@ predicate: >
   /v1/internal/desktop/register, T-08567) answers 404; Desktop threads join
   through the generic participant door governed by
   hrc-runtime.participant-session-lifecycle.
-authority: wrkq:T-10632 spec revision 2 age-bound directory holds and expired-revivable death-evidence admission (Daedalus approval), 2026-10-09; wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, wrkq:T-08201 revision 5 (C-19938), and wrkq:T-08207 revisions 10 and 11 (2026-09-26)
+authority: wrkq:T-11700 broker disposition retention design approval (EN-34727; Mable rule acceptance EN-34723), 2026-10-23; wrkq:T-10632 spec revision 2 age-bound directory holds and expired-revivable death-evidence admission (Daedalus approval), 2026-10-09; wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, wrkq:T-08201 revision 5 (C-19938), and wrkq:T-08207 revisions 10 and 11 (2026-09-26)
 source:
+  - wrkq:T-11700
+  - packages/hrc-server/src/broker/event-mapper/project-envelope.ts
+  - packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts
+  - scripts/prune-hrc-event-deltas.ts
+  - docs/state-retention.md
+  - architecture/records/invariants/hrc-runtime.bounded-state-retention-writes.yaml
   - wrkq:T-10632
   - wrkq:T-08207
   - wrkq:T-08566
@@ -185,7 +210,9 @@ source:
   - packages/hrc-store-sqlite/src/migrations/broker-migrations.ts
 required_tests:
   - normalized broker append failure publishes nothing to HRC
-  - projection commit rollback idempotent replay conflict and contiguous-cursor gates cover mirrored and intentionally non-mirrored envelopes
+  - projection commit rollback idempotent replay conflict and contiguous-cursor gates cover mirrored and intentionally non-mirrored envelopes before disposition compaction
+  - T-11700 retention gates cover orphan and old-terminal eligibility, strict age boundary, invalid timestamps, nonterminal retention, above-cursor islands, bounded-key writer rechecks, and ledger-inclusive cascade counts
+  - T-11700 replay gates preserve cursor-based idempotence after prefix compaction and gap repair across retained above-cursor islands without duplicate canonical events
   - HRC crash after projection before acknowledgement replays idempotently and re-acknowledges after matching the committed projection
   - persisted scalar acknowledgement and retention floor survive broker restart while a below-floor attach becomes replay-stale without snapshot inference
   - the observer surface has no mutation or acknowledgement methods and stale control connections cannot mutate or acknowledge
@@ -215,7 +242,14 @@ required_tests:
 last_verified:
   date: 2026-09-06
   evidence: T-08098 observed-mode mapper gates verify durable own foreign and unknown attribution, no nearest-input borrowing, no foreign terminalization, later own completion, and sequence-stable idempotent replay. Earlier authority is Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws. T-08201 revision 5 was source-reviewed and approved in C-19938 on 2026-09-07; its implementation and installed gates remain pending, and this date is not refreshed by design approval.
+design_review: >
+  2026-10-23 T-11700 broker disposition retention approved by source reading:
+  project-envelope cursor fallback, contiguous advancement, terminal timestamp
+  writers, and controller gap repair. No test, build, install, restart, live
+  cleanup, or service-health result is established; implementation gates remain
+  the requester's work. Existing last_verified evidence is unchanged.
 reopen_when:
+  - disposition terminal-age bound, owner identity, orphan eligibility, compaction cursor fence, or compacted-prefix conflict guarantee changes
   - HRC projects an uncommitted broker fact or BrokerEventMapper ceases to be the sole interpreter
   - projection transaction cursor acknowledgement or post-commit ordering changes
   - another broker-ledger retention-bearing consumer is introduced
