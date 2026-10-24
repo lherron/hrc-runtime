@@ -1315,3 +1315,8 @@ The following operational facts were collapsed from `HEADLESS_TMUX.md`, `broker-
 ### A.4 Reconcile failure mode eliminated (from HEADLESS_TMUX.md)
 
 - The blanket `broker_orphaned_on_restart` GC loop (and its headless fallthrough) is **gone** (`startup-reconcile.ts`). A daemon restart no longer kills an in-flight headless broker child; durable runtimes with a verified durable endpoint + leased substrate are skipped by reconcile and reattached. Stale/identity-mismatched leases are GC'd with `broker_tmux_lease_stale_on_restart`; legacy rows migrate via `broker_protocol_legacy_unsupported_on_startup` / `broker_legacy_no_durable_endpoint_on_restart`.
+
+Permission ownership update (T-11713, 2026-10-24): the protocol methods above
+remain broker capabilities. HRC does not call `invocation.permission.respond`
+and no longer persists a separate `permission_decisions` audit table (migration
+`0127_permission_audit_removal`). HRC continues to project permission events.

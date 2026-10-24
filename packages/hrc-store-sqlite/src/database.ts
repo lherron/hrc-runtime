@@ -25,7 +25,6 @@ import {
   BrokerInvocationEventRepository,
   BrokerInvocationRepository,
   InputRepository,
-  PermissionDecisionRepository,
   RuntimeArtifactRepository,
   RuntimeOperationRepository,
   SubmissionAdmissionRepository,
@@ -104,7 +103,6 @@ export type HrcDatabase = {
   runIdOwnership: RunIdOwnershipRegistry
   brokerInvocationEvents: BrokerInvocationEventRepository
   runtimeArtifacts: RuntimeArtifactRepository
-  permissionDecisions: PermissionDecisionRepository
   firstTurnWatch: FirstTurnWatchRepository
   acpBridgeEmissions: AcpBridgeEmissionRepository
   toolResultBlobs: ToolResultBlobRepository
@@ -214,7 +212,6 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     runIdOwnership,
     brokerInvocationEvents: new BrokerInvocationEventRepository(sqlite, toolResultBlobs),
     runtimeArtifacts: new RuntimeArtifactRepository(sqlite),
-    permissionDecisions: new PermissionDecisionRepository(sqlite),
     firstTurnWatch: new FirstTurnWatchRepository(sqlite),
     acpBridgeEmissions: new AcpBridgeEmissionRepository(sqlite),
     toolResultBlobs,

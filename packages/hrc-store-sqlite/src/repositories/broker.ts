@@ -2,7 +2,6 @@ import type {
   HrcBrokerInvocationEventRecord,
   HrcBrokerInvocationRecord,
   HrcExecutionFormat,
-  HrcPermissionDecisionRecord,
   HrcRuntimeArtifactRecord,
   HrcRuntimeOperationRecord,
 } from 'hrc-core'
@@ -102,24 +101,6 @@ export type RuntimeArtifactRow = {
   artifact_json: string | null
   artifact_path: string | null
   created_at: string
-}
-
-export type PermissionDecisionRow = {
-  permission_identity_key: string
-  permission_request_id: string
-  invocation_id: string
-  harness_generation: number | null
-  turn_attempt: number | null
-  runtime_id: string
-  run_id: string | null
-  kind: string
-  subject_display_json: string
-  default_decision: string
-  decision: string
-  decided_by: string
-  policy_json: string
-  requested_at: string
-  decided_at: string
 }
 
 export const RUNTIME_OPERATION_COLUMNS = `
@@ -241,23 +222,6 @@ export const RUNTIME_ARTIFACT_COLUMNS = `
   artifact_json,
   artifact_path,
   created_at`
-
-export const PERMISSION_DECISION_COLUMNS = `
-  permission_identity_key,
-  permission_request_id,
-  invocation_id,
-  harness_generation,
-  turn_attempt,
-  runtime_id,
-  run_id,
-  kind,
-  subject_display_json,
-  default_decision,
-  decision,
-  decided_by,
-  policy_json,
-  requested_at,
-  decided_at`
 
 export function mapRuntimeOperationRow(row: RuntimeOperationRow): HrcRuntimeOperationRecord {
   return {
@@ -401,25 +365,5 @@ export function mapRuntimeArtifactRow(row: RuntimeArtifactRow): HrcRuntimeArtifa
     ...(row.artifact_json !== null ? { artifactJson: row.artifact_json } : {}),
     ...(row.artifact_path !== null ? { artifactPath: row.artifact_path } : {}),
     createdAt: row.created_at,
-  }
-}
-
-export function mapPermissionDecisionRow(row: PermissionDecisionRow): HrcPermissionDecisionRecord {
-  return {
-    permissionIdentityKey: row.permission_identity_key,
-    permissionRequestId: row.permission_request_id,
-    invocationId: row.invocation_id,
-    ...(row.harness_generation !== null ? { harnessGeneration: row.harness_generation } : {}),
-    ...(row.turn_attempt !== null ? { turnAttempt: row.turn_attempt } : {}),
-    runtimeId: row.runtime_id,
-    ...(row.run_id !== null ? { runId: row.run_id } : {}),
-    kind: row.kind,
-    subjectDisplayJson: row.subject_display_json,
-    defaultDecision: row.default_decision,
-    decision: row.decision,
-    decidedBy: row.decided_by,
-    policyJson: row.policy_json,
-    requestedAt: row.requested_at,
-    decidedAt: row.decided_at,
   }
 }

@@ -211,24 +211,6 @@ export type HrcProviderTranscriptReportedPayload = {
   harnessGeneration?: number | undefined
 }
 
-export type HrcPermissionDecisionRecord = {
-  permissionIdentityKey?: string | undefined
-  permissionRequestId: string
-  invocationId: string
-  harnessGeneration?: number | undefined
-  turnAttempt?: number | undefined
-  runtimeId: string
-  runId?: string | undefined
-  kind: string
-  subjectDisplayJson: string
-  defaultDecision: 'allow' | 'deny' | string
-  decision: 'allow' | 'deny' | string
-  decidedBy: 'policy' | 'user' | 'api' | 'timeout' | string
-  policyJson: string
-  requestedAt: string
-  decidedAt: string
-}
-
 /** Event kind carrying a session-title write or clear (T-07594 §5.2). */
 export const HRC_SESSION_RETITLED_EVENT = 'session.retitled'
 

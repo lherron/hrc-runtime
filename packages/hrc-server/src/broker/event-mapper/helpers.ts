@@ -33,20 +33,6 @@ export function lifecycleTransportFromRuntime(value: string): HrcLifecycleTransp
   return 'headless'
 }
 
-export function permissionIdentityKey(input: {
-  invocationId: string
-  harnessGeneration?: number | null | undefined
-  turnAttempt?: number | null | undefined
-  permissionRequestId: string
-}): string {
-  return JSON.stringify([
-    input.invocationId,
-    input.harnessGeneration ?? null,
-    input.turnAttempt ?? null,
-    input.permissionRequestId,
-  ])
-}
-
 /**
  * Coerce the broker `tool.call.completed.result` field (typed `unknown`) into
  * the canonical hrc-events `ToolResult` shape. Broker drivers emit

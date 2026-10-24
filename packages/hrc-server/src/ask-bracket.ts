@@ -39,8 +39,7 @@ export function isAskUserTool(toolName: string | undefined): boolean {
 /**
  * Stable composite identity for an ask bracket. Bare `toolCallId` is not enough:
  * a re-ask gets a fresh `toolCallId`, and a harness retry re-runs a turn under a
- * new `(harnessGeneration, turnAttempt)`. Mirrors `permissionIdentityKey` in the
- * event mapper.
+ * new `(harnessGeneration, turnAttempt)`.
  */
 export function askBracketIdentityKey(input: {
   invocationId: string

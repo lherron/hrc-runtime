@@ -13,9 +13,7 @@
  *   - WS-B (ca8725b): runtimes/broker_invocations carry
  *       current_harness_generation, current_turn_attempt,
  *       lifecycle_terminal_reason, last_lifecycle_escalation_json,
- *       lifecycle_policy_hash; permission_decisions is keyed by
- *       permission_identity_key = JSON([invocationId, harnessGeneration,
- *       turnAttempt, permissionRequestId]).
+ *       lifecycle_policy_hash.
  *   - WS-A (ecc972d): the lifecycle overlay is materialized + dispatched and the
  *       dispatched hash is persisted on broker_invocations.lifecycle_policy_hash.
  *
@@ -39,9 +37,6 @@
  *     - turn.retry: advance current_turn_attempt to payload.toAttempt AND
  *       current_harness_generation to payload.toHarnessGeneration.
  *     - turn.stalled: retained as evidence only; advances NOTHING.
- *     - permission.cancelled: write a cancellation audit row whose `decision`
- *       stays within {allow,deny} (fail-closed to the request defaultDecision)
- *       and whose payload records the cancellation reason. NO third decision.
  *  2. GENERATION/ATTEMPT FENCING (normative)
  *     Before ANY active-state mutation, compare envelope.harnessGeneration /
  *     envelope.turnAttempt against the persisted current values. A STALE event
@@ -51,11 +46,6 @@
  *     event (which would mis-finalize / mis-feed the live generation).
  *     Fencing engages ONLY when a current value is persisted (back-compat: legacy
  *     events with no current generation continue to project unconditionally).
- *  3. GENERATION-AWARE PERMISSION IDENTITY
- *     permission.resolved uses the generation/attempt-scoped identity key. A
- *     resolution for an OLDER generation/attempt is stale-audited under its OWN
- *     (stale) identity key and is NOT delivered to the live identity. A current
- *     resolution is recorded under the live (gen, attempt) identity key.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
@@ -77,7 +67,6 @@ import {
   type SeededFixture,
   bufferTextForRun,
   makeSeededFixture,
-  permissionRequestId,
   ts,
 } from './broker-event-mapper-fixtures'
 
@@ -124,16 +113,6 @@ function lc(
   }
 }
 
-/** Mirror WS-B's permission_identity_key serialization (repositories.ts). */
-function permIdentityKey(
-  harnessGeneration: number | null,
-  turnAttempt: number | null,
-  prid: string
-): string {
-  return JSON.stringify([INVOCATION_ID, harnessGeneration, turnAttempt, prid])
-}
-
-/** Seed the persisted "current" lifecycle counters on BOTH runtime + invocation. */
 function seedCurrent(opts: { generation?: number; attempt?: number }): void {
   const patch = {
     ...(opts.generation !== undefined ? { currentHarnessGeneration: opts.generation } : {}),
@@ -321,37 +300,6 @@ describe('lifecycle vocabulary projection', () => {
     expect(invocation.currentTurnAttempt).toBe(2)
     expect(invocation.currentHarnessGeneration).toBe(3)
   })
-
-  it('permission.cancelled writes a cancellation audit row with reason; decision stays within {allow,deny}', () => {
-    const db = fixture.db
-    const prid = permissionRequestId('perm_cancel_w3c')
-    const mapper = makeMapper()
-
-    mapper.apply(
-      lc('permission.requested', 20, {
-        permissionRequestId: prid,
-        kind: 'command',
-        subjectDisplay: { command: 'rm -rf /tmp/x' },
-        defaultDecision: 'deny',
-      })
-    )
-
-    mapper.apply(
-      lc('permission.cancelled', 21, {
-        permissionRequestId: prid,
-        reason: 'turn-failed',
-      })
-    )
-
-    const decision = db.permissionDecisions.getByPermissionRequestId('perm_cancel_w3c')
-    expect(decision).not.toBeNull()
-    // The decision enum is binary — a cancellation fail-closes to the request
-    // defaultDecision; it never introduces a third value.
-    expect(['allow', 'deny']).toContain(decision!.decision)
-    expect(decision!.decision).toBe('deny')
-    // The cancellation reason is recorded in the audit row.
-    expect(JSON.stringify(decision)).toContain('turn-failed')
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -476,95 +424,5 @@ describe('generation/attempt fencing', () => {
     expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.lifecycleTerminalReason).toBe(
       'crash'
     )
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 3. Generation-aware permission identity
-// ---------------------------------------------------------------------------
-describe('generation-aware permission identity', () => {
-  it('records a CURRENT-generation permission.resolved under the live (gen, attempt) identity key', () => {
-    const db = fixture.db
-    seedCurrent({ generation: 2, attempt: 2 })
-    const prid = permissionRequestId('perm_live_w3c')
-    const mapper = makeMapper()
-
-    mapper.apply(
-      lc(
-        'permission.requested',
-        40,
-        {
-          permissionRequestId: prid,
-          kind: 'command',
-          subjectDisplay: { command: 'ls' },
-          defaultDecision: 'deny',
-        },
-        { harnessGeneration: 2, turnAttempt: 2 }
-      )
-    )
-    mapper.apply(
-      lc(
-        'permission.resolved',
-        41,
-        { permissionRequestId: prid, decision: 'allow', decidedBy: 'user' },
-        { harnessGeneration: 2, turnAttempt: 2 }
-      )
-    )
-
-    const live = db.permissionDecisions.getByPermissionIdentityKey(
-      permIdentityKey(2, 2, 'perm_live_w3c')
-    )
-    expect(live).not.toBeNull()
-    expect(live!.decision).toBe('allow')
-    expect(live!.harnessGeneration).toBe(2)
-    expect(live!.turnAttempt).toBe(2)
-  })
-
-  it('stale-audits an OLD-generation permission.resolved under its own identity key and does NOT deliver it to the live identity', () => {
-    const db = fixture.db
-    seedCurrent({ generation: 2, attempt: 2 })
-    const prid = permissionRequestId('perm_stale_w3c')
-    const mapper = makeMapper()
-
-    mapper.apply(
-      lc(
-        'permission.requested',
-        42,
-        {
-          permissionRequestId: prid,
-          kind: 'command',
-          subjectDisplay: { command: 'rm -rf /' },
-          defaultDecision: 'deny',
-        },
-        { harnessGeneration: 1, turnAttempt: 1 }
-      )
-    )
-    // A resolution arriving for the OLD generation/attempt (the harness that
-    // requested it has since been recycled): must be stale-audited, never
-    // delivered to the live generation as an authoritative decision.
-    mapper.apply(
-      lc(
-        'permission.resolved',
-        43,
-        { permissionRequestId: prid, decision: 'allow', decidedBy: 'user' },
-        { harnessGeneration: 1, turnAttempt: 1 }
-      )
-    )
-
-    // Stale audit row exists under the OLD identity key...
-    const stale = db.permissionDecisions.getByPermissionIdentityKey(
-      permIdentityKey(1, 1, 'perm_stale_w3c')
-    )
-    expect(stale).not.toBeNull()
-    expect(stale!.harnessGeneration).toBe(1)
-    expect(stale!.turnAttempt).toBe(1)
-    // ...and it carries a stale marker (not a clean live decision).
-    expect(JSON.stringify(stale)).toContain('stale')
-
-    // ...but the stale 'allow' is NOT delivered to the live (gen 2, attempt 2)
-    // identity — the live generation has no authoritative allow from a dead gen.
-    expect(
-      db.permissionDecisions.getByPermissionIdentityKey(permIdentityKey(2, 2, 'perm_stale_w3c'))
-    ).toBeNull()
   })
 })

@@ -8,7 +8,7 @@
  */
 
 import { setTimeout as delay } from 'node:timers/promises'
-import type { HrcPermissionDecisionRecord, HrcRuntimeSnapshot } from 'hrc-core'
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 import type {
   InvocationEventEnvelope,
   InvocationId,
@@ -90,44 +90,15 @@ export const eventsMethods = {
       return this.permissionChannel.request(request)
     }
 
-    const now = this.now()
     const invocation = this.db.brokerInvocations.getByInvocationId(request.invocationId)
     const runtime = invocation ? this.db.runtimes.getByRuntimeId(invocation.runtimeId) : null
     const policy = resolveBrokerPermissionPolicy(runtime)
-    const decision = policy.mode === 'allow' ? 'allow' : 'deny'
-    if (invocation) {
-      this.insertPermissionDecisionIfAbsent({
-        permissionRequestId: request.permissionRequestId,
-        invocationId: request.invocationId,
-        runtimeId: invocation.runtimeId,
-        ...(invocation.runId !== undefined ? { runId: invocation.runId } : {}),
-        kind: request.kind,
-        subjectDisplayJson: JSON.stringify(request.subject ?? null),
-        defaultDecision: request.defaultDecision ?? 'deny',
-        decision,
-        decidedBy: 'policy',
-        policyJson: JSON.stringify(policy),
-        requestedAt: now,
-        decidedAt: now,
-      })
-    }
-
     return policy.mode === 'allow'
       ? { decision: 'allow', message: 'Allowed by HRC policy.' }
       : {
           decision: 'deny',
           message: 'Denied by HRC policy: no permission request channel is configured.',
         }
-  },
-
-  insertPermissionDecisionIfAbsent(
-    this: HarnessBrokerController,
-    record: HrcPermissionDecisionRecord
-  ): void {
-    if (this.db.permissionDecisions.getByPermissionRequestId(record.permissionRequestId)) {
-      return
-    }
-    this.db.permissionDecisions.insert(record)
   },
 
   consumeEvents(

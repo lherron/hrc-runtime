@@ -616,7 +616,7 @@ describe('HarnessBrokerController', () => {
     expect(reaped).toEqual(['runtime_w2'])
   })
 
-  it('default-denies and persists permission decisions when no request channel exists', async () => {
+  it('default-denies permission requests when no request channel exists', async () => {
     const fake = new FakeBrokerClient()
     const controller = new HarnessBrokerController({
       db: fixture.db,
@@ -640,11 +640,6 @@ describe('HarnessBrokerController', () => {
       message: 'Denied by HRC policy: no permission request channel is configured.',
     })
 
-    const row = fixture.db.permissionDecisions.getByPermissionRequestId('perm_default_deny')
-    expect(row?.decision).toBe('deny')
-    expect(row?.decidedBy).toBe('policy')
-    expect(row?.runtimeId).toBe('runtime_w2')
-
     fake.events.push(
       envelope(
         'permission.resolved',
@@ -658,9 +653,9 @@ describe('HarnessBrokerController', () => {
       )
     )
     await tick()
-    expect(
-      fixture.db.permissionDecisions.getByPermissionRequestId('perm_default_deny')
-    ).toMatchObject({ invocationId: 'invocation_w2', decision: 'deny' })
+    const resolved = fixture.db.brokerInvocationEvents.getByInvocationAndSeq('invocation_w2', 2)
+    expect(resolved?.type).toBe('permission.resolved')
+    expect(JSON.parse(resolved!.brokerEventJson)).toMatchObject({ decision: 'deny' })
   })
 
   it('uses broker.health in status/reconcile probes', async () => {

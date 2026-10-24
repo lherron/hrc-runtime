@@ -3,7 +3,6 @@
 // These cover the NEW persistence surface introduced by migrations:
 //   0019_lifecycle_policy_audit   — lifecycle_policies audit table + broker_invocations.lifecycle_policy_hash
 //   0020_runtime_lifecycle_state  — lifecycle columns on runtimes AND broker_invocations
-//   0021_permission_identity      — generation-aware permission_decisions identity
 //
 // They are EXPECTED TO FAIL until the implementer adds the migrations, the
 // repository methods, and the contract-type fields. RED is correct here.
@@ -18,11 +17,6 @@ import { join } from 'node:path'
 import { createHrcDatabase } from '../database.js'
 import { openHrcDatabase } from '../index'
 import { phase1Migrations } from '../migrations.js'
-// computePermissionIdentityKey is the stable canonical join the repo layer must
-// expose (null gen/attempt normalized consistently). Imported here so the RED
-// suite fails to resolve until it exists.
-import { computePermissionIdentityKey } from '../repositories/broker-repositories.js'
-
 let tmpDir: string
 let dbPath: string
 
@@ -57,22 +51,6 @@ function tableColumns(db: ReturnType<typeof openHrcDatabase>, table: string): st
     .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
     .all()
     .map((row) => row.name)
-}
-
-type IndexInfo = { name: string; unique: number; columns: string[] }
-
-function indexes(db: ReturnType<typeof openHrcDatabase>, table: string): IndexInfo[] {
-  return db.sqlite
-    .query<{ name: string; unique: number }, []>(`PRAGMA index_list('${table}')`)
-    .all()
-    .map((idx) => ({
-      name: idx.name,
-      unique: idx.unique,
-      columns: db.sqlite
-        .query<{ name: string }, []>(`PRAGMA index_info('${idx.name}')`)
-        .all()
-        .map((c) => c.name),
-    }))
 }
 
 /**
@@ -136,52 +114,6 @@ describe('lifecycle persistence migrations (0019/0020/0021)', () => {
     }
   })
 
-  it('makes permission_decisions generation-aware: identity-key PK/unique, composite unique, bare-id index retained', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      const cols = tableColumns(db, 'permission_decisions')
-      for (const col of [
-        'permission_identity_key',
-        'invocation_id',
-        'harness_generation',
-        'turn_attempt',
-        'permission_request_id',
-      ]) {
-        expect(cols).toContain(col)
-      }
-
-      // permission_identity_key is the new PK.
-      const pkCols = db.sqlite
-        .query<{ name: string; pk: number }, []>('PRAGMA table_info(permission_decisions)')
-        .all()
-        .filter((r) => r.pk > 0)
-        .map((r) => r.name)
-      expect(pkCols).toEqual(['permission_identity_key'])
-
-      const idx = indexes(db, 'permission_decisions')
-
-      // Composite UNIQUE over (invocation_id, harness_generation, turn_attempt, permission_request_id).
-      const hasComposite = idx.some(
-        (i) =>
-          i.unique === 1 &&
-          i.columns.length === 4 &&
-          i.columns[0] === 'invocation_id' &&
-          i.columns[1] === 'harness_generation' &&
-          i.columns[2] === 'turn_attempt' &&
-          i.columns[3] === 'permission_request_id'
-      )
-      expect(hasComposite).toBe(true)
-
-      // A NON-unique index on bare permission_request_id is retained for compat/diagnostics.
-      const hasBareNonUnique = idx.some(
-        (i) => i.unique === 0 && i.columns.length === 1 && i.columns[0] === 'permission_request_id'
-      )
-      expect(hasBareNonUnique).toBe(true)
-    } finally {
-      db.close()
-    }
-  })
-
   it('applies idempotently over a populated 0018 db and existing rows survive', () => {
     const sqlite = createPre0019Database()
     try {
@@ -218,30 +150,6 @@ describe('lifecycle persistence migrations (0019/0020/0021)', () => {
           now,
           now
         )
-
-      // A legacy permission_decisions row keyed only by the old PK (permission_request_id).
-      sqlite
-        .prepare(
-          `INSERT INTO permission_decisions (
-             permission_request_id, invocation_id, runtime_id, run_id, kind,
-             subject_display_json, default_decision, decision, decided_by,
-             policy_json, requested_at, decided_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          'perm-legacy',
-          'inv-legacy',
-          'rt-legacy',
-          null,
-          'tool.exec',
-          JSON.stringify({ tool: 'shell' }),
-          'deny',
-          'deny',
-          'policy',
-          JSON.stringify({ mode: 'default-deny' }),
-          now,
-          now
-        )
     } finally {
       sqlite.close()
     }
@@ -262,16 +170,6 @@ describe('lifecycle persistence migrations (0019/0020/0021)', () => {
       expect(runtime?.currentTurnAttempt).toBeUndefined()
       expect(runtime?.lifecycleTerminalReason).toBeUndefined()
       expect(runtime?.lastLifecycleEscalationJson).toBeUndefined()
-
-      // Legacy permission row survives the PK rebuild and gets a backfilled
-      // (non-empty) permission_identity_key; gen/attempt stay unset.
-      const perm = db.permissionDecisions.getByPermissionRequestId('perm-legacy')
-      expect(perm).not.toBeNull()
-      expect(perm?.decision).toBe('deny')
-      expect(typeof perm?.permissionIdentityKey).toBe('string')
-      expect(perm?.permissionIdentityKey?.length ?? 0).toBeGreaterThan(0)
-      expect(perm?.harnessGeneration).toBeUndefined()
-      expect(perm?.turnAttempt).toBeUndefined()
     } finally {
       db.close()
     }
@@ -279,7 +177,7 @@ describe('lifecycle persistence migrations (0019/0020/0021)', () => {
     // Re-opening a third time is a no-op (migrations already recorded).
     const reopened = openHrcDatabase(dbPath)
     try {
-      expect(reopened.permissionDecisions.getByPermissionRequestId('perm-legacy')).not.toBeNull()
+      expect(reopened.runtimes.getByRuntimeId('rt-legacy')?.status).toBe('ready')
     } finally {
       reopened.close()
     }
@@ -359,147 +257,6 @@ describe('runtime + invocation lifecycle-state round-trip', () => {
       expect(reloaded?.currentHarnessGeneration).toBe(1)
       expect(reloaded?.currentTurnAttempt).toBe(4)
       expect(reloaded?.lifecycleTerminalReason).toBe('escalation-pause')
-    } finally {
-      db.close()
-    }
-  })
-})
-
-// ── generation-aware permission identity ───────────────────────────────────
-describe('permission_decisions generation-aware identity', () => {
-  function baseDecision(overrides: Record<string, unknown>) {
-    const now = ts()
-    return {
-      permissionRequestId: 'perm-req-1',
-      invocationId: 'inv-perm',
-      runtimeId: 'rt-perm',
-      kind: 'tool.exec',
-      subjectDisplayJson: JSON.stringify({ tool: 'shell' }),
-      defaultDecision: 'deny',
-      decision: 'allow',
-      decidedBy: 'user',
-      policyJson: JSON.stringify({ mode: 'ask' }),
-      requestedAt: now,
-      decidedAt: now,
-      ...overrides,
-    }
-  }
-
-  it('computes a stable permission_identity_key and looks up by it', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      const inserted = db.permissionDecisions.insert(
-        baseDecision({ harnessGeneration: 2, turnAttempt: 1 }) as never
-      )
-
-      const expectedKey = computePermissionIdentityKey({
-        invocationId: 'inv-perm',
-        harnessGeneration: 2,
-        turnAttempt: 1,
-        permissionRequestId: 'perm-req-1',
-      })
-      expect(inserted.permissionIdentityKey).toBe(expectedKey)
-
-      const byKey = db.permissionDecisions.getByPermissionIdentityKey(expectedKey)
-      expect(byKey).not.toBeNull()
-      expect(byKey?.permissionRequestId).toBe('perm-req-1')
-      expect(byKey?.harnessGeneration).toBe(2)
-      expect(byKey?.turnAttempt).toBe(1)
-
-      // Compat lookup by bare request id still resolves.
-      const byReq = db.permissionDecisions.getByPermissionRequestId('perm-req-1')
-      expect(byReq?.permissionIdentityKey).toBe(expectedKey)
-    } finally {
-      db.close()
-    }
-  })
-
-  it('allows the same permission_request_id across different harness generations', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      const gen1 = db.permissionDecisions.insert(
-        baseDecision({ harnessGeneration: 1, turnAttempt: 0 }) as never
-      )
-      const gen2 = db.permissionDecisions.insert(
-        baseDecision({ harnessGeneration: 2, turnAttempt: 0 }) as never
-      )
-      expect(gen1.permissionIdentityKey).not.toBe(gen2.permissionIdentityKey)
-
-      // Both rows persist under the shared bare permission_request_id.
-      const count = db.sqlite
-        .query<{ n: number }, [string]>(
-          'SELECT COUNT(*) AS n FROM permission_decisions WHERE permission_request_id = ?'
-        )
-        .get('perm-req-1')
-      expect(count?.n).toBe(2)
-    } finally {
-      db.close()
-    }
-  })
-
-  it('rejects a duplicate identity (same invocation/gen/attempt/request id)', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.permissionDecisions.insert(baseDecision({ harnessGeneration: 1, turnAttempt: 0 }) as never)
-      expect(() =>
-        db.permissionDecisions.insert(
-          baseDecision({ harnessGeneration: 1, turnAttempt: 0, decision: 'deny' }) as never
-        )
-      ).toThrow()
-    } finally {
-      db.close()
-    }
-  })
-
-  it('fences duplicates even when generation/attempt are null (identity-key normalizes null)', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      // SQLite treats NULLs as distinct in a composite UNIQUE, so the
-      // permission_identity_key (null normalized to a sentinel) is what
-      // actually enforces uniqueness here.
-      db.permissionDecisions.insert(
-        baseDecision({ harnessGeneration: undefined, turnAttempt: undefined }) as never
-      )
-      expect(() =>
-        db.permissionDecisions.insert(
-          baseDecision({
-            harnessGeneration: undefined,
-            turnAttempt: undefined,
-            decision: 'deny',
-          }) as never
-        )
-      ).toThrow()
-
-      const key = computePermissionIdentityKey({
-        invocationId: 'inv-perm',
-        harnessGeneration: undefined,
-        turnAttempt: undefined,
-        permissionRequestId: 'perm-req-1',
-      })
-      expect(typeof key).toBe('string')
-      expect(key.length).toBeGreaterThan(0)
-      expect(db.permissionDecisions.getByPermissionIdentityKey(key)).not.toBeNull()
-    } finally {
-      db.close()
-    }
-  })
-
-  it('treats null and zero generation/attempt as distinct identities', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      const nullKey = computePermissionIdentityKey({
-        invocationId: 'inv-perm',
-        harnessGeneration: undefined,
-        turnAttempt: undefined,
-        permissionRequestId: 'perm-req-1',
-      })
-      const zeroKey = computePermissionIdentityKey({
-        invocationId: 'inv-perm',
-        harnessGeneration: 0,
-        turnAttempt: 0,
-        permissionRequestId: 'perm-req-1',
-      })
-      expect(nullKey).not.toBe(zeroKey)
     } finally {
       db.close()
     }

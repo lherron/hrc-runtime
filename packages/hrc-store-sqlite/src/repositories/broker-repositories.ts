@@ -22,8 +22,4 @@ export {
   type BrokerProjectionDisposition,
   type ImportedBrokerInvocationEventInput,
 } from './broker-invocation-event-types.js'
-export {
-  PermissionDecisionRepository,
-  RuntimeArtifactRepository,
-  computePermissionIdentityKey,
-} from './broker-artifact-permission-repositories.js'
+export { RuntimeArtifactRepository } from './broker-artifact-permission-repositories.js'

@@ -20,7 +20,6 @@ import {
   settlePriorAbsorbedAuxiliaries,
 } from '../turn-ownership.js'
 import type { DerivedTurnDescriptor, ProjectionContext } from './helpers'
-import { auditPermissionCancelled, auditPermissionResolved } from './permission-audit'
 
 import type { BrokerEventMapper } from '../event-mapper'
 
@@ -65,14 +64,7 @@ export const stateProjectionMethods = {
       }
       return
     }
-    if (stale) {
-      if (envelope.type === 'permission.resolved') {
-        auditPermissionResolved(this.db, envelope, ctx, now, true)
-      } else if (envelope.type === 'permission.cancelled') {
-        auditPermissionCancelled(this.db, envelope, ctx, now, true)
-      }
-      return
-    }
+    if (stale) return
 
     // Per-family projectors keep behavior byte-identical to the prior single
     // switch; each handles its slice of `envelope.type` and is a no-op for
@@ -143,7 +135,6 @@ export const stateProjectionMethods = {
       case 'permission.requested':
       case 'permission.resolved':
       case 'permission.cancelled':
-        this.projectPermission(envelope, ctx, now)
         return
 
       case 'usage.updated':
@@ -206,10 +197,8 @@ export const stateProjectionMethods = {
         return
       }
       case 'permission.resolved':
-        auditPermissionResolved(db, envelope, ctx, now, true)
         return
       case 'permission.cancelled':
-        auditPermissionCancelled(db, envelope, ctx, now, true)
         return
     }
     if (stale) return

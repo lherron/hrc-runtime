@@ -2407,14 +2407,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "HrcPermissionDecisionRecord",
-      "kind": "type",
-      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
-      "hash": "hrc-core|HrcPermissionDecisionRecord|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "HrcPresentationIntent",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-intents.ts",

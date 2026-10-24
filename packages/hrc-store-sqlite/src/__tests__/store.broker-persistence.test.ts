@@ -24,7 +24,6 @@ const BROKER_TABLES = [
   'broker_invocations',
   'broker_invocation_events',
   'runtime_artifacts',
-  'permission_decisions',
 ] as const
 
 beforeEach(async () => {
@@ -501,7 +500,7 @@ describe('BrokerInvocationEventRepository.appendEvent idempotency', () => {
 })
 
 describe('broker record repositories round-trip', () => {
-  it('persists and reloads operations, invocations, artifacts, and permission decisions', () => {
+  it('persists and reloads operations, invocations, and artifacts', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
@@ -561,21 +560,6 @@ describe('broker record repositories round-trip', () => {
       })
       expect(artifact.artifactKind).toBe('broker-start-request')
       expect(db.runtimeArtifacts.insertIdempotent(artifact)).toEqual(artifact)
-
-      const decision = db.permissionDecisions.insert({
-        permissionRequestId: 'perm-1',
-        invocationId: 'inv-1',
-        runtimeId: 'rt-1',
-        kind: 'tool.exec',
-        subjectDisplayJson: JSON.stringify({ tool: 'shell' }),
-        defaultDecision: 'deny',
-        decision: 'deny',
-        decidedBy: 'policy',
-        policyJson: JSON.stringify({ mode: 'default-deny' }),
-        requestedAt: now,
-        decidedAt: now,
-      })
-      expect(decision.decision).toBe('deny')
 
       // Runtime broker-state columns round-trip through RuntimeRepository.
       db.sessions.insert({

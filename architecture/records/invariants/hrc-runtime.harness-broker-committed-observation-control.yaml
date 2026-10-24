@@ -169,10 +169,10 @@ predicate: >
   provider effect; effects return as later committed observations. The wrkq
   kicker acts only when committed terminal execution truth and authoritative
   pending-obligation truth agree, no newer input or turn supersedes them, and the
-  one-reminder bound permits the attempt. Explicit policy operator and API
-  permission decisions are HRC-owned and persist before permission.respond on
-  the fenced control connection. A deadline fallback is broker-owned; HRC later
-  projects its already committed permission.resolved timeout fact. HRC exposes
+  one-reminder bound permits the attempt. Permission decisions and deadline
+  fallback are broker-owned. HRC projects committed permission.* observations
+  into its event ledgers and transcripts, without a separate permission audit
+  table or an invocation.permission.respond caller (T-11713). HRC exposes
   no launch-wrapper hook, OTEL, or launch-callback ingest: POST
   /v1/internal/hooks/ingest and
   /v1/internal/launches/:launchId/{wrapper-started,child-started,continuation,event,exited}
@@ -217,7 +217,7 @@ required_tests:
   - persisted scalar acknowledgement and retention floor survive broker restart while a below-floor attach becomes replay-stale without snapshot inference
   - the observer surface has no mutation or acknowledgement methods and stale control connections cannot mutate or acknowledge
   - kicker actuation requires committed terminal truth pending wrkq obligation truth no superseding input or turn and exactly one reminder
-  - explicit permission decisions persist before fenced response while disconnected timeout fallback projects only from the broker's committed fact
+  - broker-owned permission decisions and timeout fallback project from committed permission events without a separate HRC audit table
   - control RPC acceptance remains distinct from committed input turn permission and effect observations
   - T-08098 observed-mode replay proves foreign and unknown turn rows never resolve to a pending run, later own rows do, terminals affect only the own run, and replay preserves every resolution
   - T-08201 exact ownership gates cover multiple absorbed steers, delayed own attribution and old terminals after newer starts, repeated native ids across epochs, pre-fix borrowed rows, and first-launch-only compatibility

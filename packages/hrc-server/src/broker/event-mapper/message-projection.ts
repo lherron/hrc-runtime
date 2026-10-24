@@ -19,7 +19,6 @@ import {
 } from '../../reported-model'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import type { DerivedTurnDescriptor, ProjectionContext } from './helpers'
-import { auditPermissionCancelled, auditPermissionResolved } from './permission-audit'
 import {
   isRuntimeAwaitingInput,
   markRuntimeAwaitingInput,
@@ -229,31 +228,6 @@ export const messageProjectionMethods = {
       ...(payload.paneId !== undefined ? { paneId: payload.paneId } : {}),
       boundAt: now,
     })
-  },
-
-  // ── Permission audit ────────────────────────────────────────────────────
-  projectPermission(
-    this: BrokerEventMapper,
-    envelope: InvocationEventEnvelope,
-    ctx: ProjectionContext,
-    now: string
-  ): void {
-    switch (envelope.type) {
-      case 'permission.requested': {
-        // Audit/projection only: the request is recorded as a broker HRC event.
-        // permission_decisions PK is permission_request_id and has no update API,
-        // so the authoritative row is inserted on resolution below.
-        break
-      }
-      case 'permission.resolved': {
-        auditPermissionResolved(this.db, envelope, ctx, now, false)
-        break
-      }
-      case 'permission.cancelled': {
-        auditPermissionCancelled(this.db, envelope, ctx, now, false)
-        break
-      }
-    }
   },
 
   updateLifecyclePosition(

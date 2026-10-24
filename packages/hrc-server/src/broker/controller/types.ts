@@ -40,8 +40,6 @@ import type {
   InvocationEventsSinceResponse,
   InvocationInterruptRequest,
   InvocationInterruptResponse,
-  InvocationPermissionRespondRequest,
-  InvocationPermissionRespondResponse,
   InvocationRuntimeContext,
   InvocationSnapshot,
   InvocationSnapshotRequest,
@@ -133,18 +131,15 @@ export type BrokerClientLike = {
 /**
  * T-01810 (T-01801 Phase 1) — the v2 durability surface a Unix-socket broker
  * client adds OVER AND ABOVE the stdio BrokerClientLike shape: re-attach to a
- * surviving invocation, read a state snapshot, replay/ack the durable event log,
- * and respond to a pending permission request out-of-band. Wire-level connect
- * logic lands Phase 3; replay logic lands Phase 2 — this only pins the contract.
+ * surviving invocation, read a state snapshot, and replay/ack the durable event log.
+ * The endpoint guard below preserves legacy v2 admission independently of the
+ * operations HRC calls.
  */
 export type DurableBrokerClientLike = BrokerClientLike & {
   attach(req: BrokerAttachRequest): Promise<BrokerAttachResponse>
   snapshot(req: InvocationSnapshotRequest): Promise<InvocationSnapshot>
   eventsSince(req: InvocationEventsSinceRequest): Promise<InvocationEventsSinceResponse>
   ackEvents(req: InvocationAckEventsRequest): Promise<InvocationAckEventsResponse>
-  permissionRespond(
-    req: InvocationPermissionRespondRequest
-  ): Promise<InvocationPermissionRespondResponse>
   /**
    * T-08349 participant bootstrap. Optional only so pre-bootstrap scripted
    * durable-client fixtures remain usable; the participant path fails closed
@@ -177,6 +172,8 @@ export function isDurableBrokerClient(client: unknown): client is DurableBrokerC
     typeof candidate['snapshot'] === 'function' &&
     typeof candidate['eventsSince'] === 'function' &&
     typeof candidate['ackEvents'] === 'function' &&
+    // Preserve endpoint admission: legacy v2 clients must expose the complete
+    // durability surface even though HRC never calls permissionRespond (T-11713).
     typeof candidate['permissionRespond'] === 'function'
   )
 }

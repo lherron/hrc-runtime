@@ -36,49 +36,13 @@
 import { describe, expect, it } from 'bun:test'
 import type { TurnId } from 'spaces-harness-broker-protocol'
 
-import {
-  INVOCATION_ID,
-  RUNTIME_ID,
-  RUN_ID,
-  envelope,
-  permissionRequestId,
-  ts,
-} from './broker-event-mapper-fixtures'
+import { INVOCATION_ID, RUNTIME_ID, RUN_ID, envelope, ts } from './broker-event-mapper-fixtures'
 
 import { createBrokerEventMapperTestFixture } from './broker-event-mapper.test.fixture.js'
 
 const harness = createBrokerEventMapperTestFixture()
 
 describe('auxiliary projections', () => {
-  it('audits permission.resolved through permission_decisions', () => {
-    const mapper = harness.makeMapper()
-    const prid = permissionRequestId('perm_w3a_1')
-
-    mapper.apply(
-      envelope('permission.requested', 30, {
-        permissionRequestId: prid,
-        kind: 'command',
-        subjectDisplay: { command: 'rm -rf /tmp/x' },
-        defaultDecision: 'deny',
-      })
-    )
-
-    mapper.apply(
-      envelope('permission.resolved', 31, {
-        permissionRequestId: prid,
-        decision: 'deny',
-        decidedBy: 'policy',
-      })
-    )
-
-    const decision = harness.fixture.db.permissionDecisions.getByPermissionRequestId('perm_w3a_1')
-    expect(decision).not.toBeNull()
-    expect(decision!.decision).toBe('deny')
-    expect(decision!.decidedBy).toBe('policy')
-    expect(decision!.invocationId).toBe(INVOCATION_ID)
-    expect(decision!.runtimeId).toBe(RUNTIME_ID)
-  })
-
   it('binds a terminal surface on terminal.surface.reported', () => {
     const mapper = harness.makeMapper()
     mapper.apply(

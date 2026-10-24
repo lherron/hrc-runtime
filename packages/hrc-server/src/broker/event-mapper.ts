@@ -214,7 +214,7 @@ export class BrokerEventMapper {
    * artifacts; the runtime buffer of the envelope's own historical run;
    * absorbed-auxiliary settlement against exact historical owners; terminal
    * invocation state for that invocation; run terminals only where the run has
-   * no recorded terminal; permission audit as stale.
+   * no recorded terminal.
    *
    * Everything else is fenced by construction (an allowlist, not per-writer
    * suppression): no runtime status/active run/invocation/operation/policy/

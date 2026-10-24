@@ -221,3 +221,9 @@ POST /v1/internal/launches/:launchId/{continuation,wrapper-started,child-started
 ```
 
 Computed registrations: `index.ts` invokes `runtime-list-handlers.ts::createRuntimeListRoutes`. Pattern routing: `server-request-methods.ts::dispatchRequest`, `server-routing.ts`, `input-handlers.ts::matchInputRoute`. Unmatched requests preserve 404/error behavior. Separate peer/registry listeners and ingest/forwarder transports are required coverage beyond this public-socket manifest.
+
+Permission table audit update (T-11713, 2026-10-24): `permission_decisions`
+was write-only and is dropped by migration `0127_permission_audit_removal`.
+It is no longer a store surface to port. Broker policy and protocol ownership
+remain in ASP; HRC preserves permission event projection and transcript rendering.
+The frozen `contract/hrc-parity` inventory records the historical pre-drop surface.

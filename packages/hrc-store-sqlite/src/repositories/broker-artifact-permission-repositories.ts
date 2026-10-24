@@ -1,11 +1,8 @@
 import type { Database } from 'bun:sqlite'
-import type { HrcPermissionDecisionRecord, HrcRuntimeArtifactRecord } from 'hrc-core'
+import type { HrcRuntimeArtifactRecord } from 'hrc-core'
 import {
-  PERMISSION_DECISION_COLUMNS,
-  type PermissionDecisionRow,
   RUNTIME_ARTIFACT_COLUMNS,
   type RuntimeArtifactRow,
-  mapPermissionDecisionRow,
   mapRuntimeArtifactRow,
 } from './broker.js'
 import { execute, requireRecord } from './shared.js'
@@ -109,100 +106,4 @@ function sameRuntimeArtifact(
     (existing.artifactPath ?? null) === (next.artifactPath ?? null) &&
     existing.createdAt === next.createdAt
   )
-}
-
-export function computePermissionIdentityKey(input: {
-  invocationId: string
-  harnessGeneration?: number | null | undefined
-  turnAttempt?: number | null | undefined
-  permissionRequestId: string
-}): string {
-  return JSON.stringify([
-    input.invocationId,
-    input.harnessGeneration ?? null,
-    input.turnAttempt ?? null,
-    input.permissionRequestId,
-  ])
-}
-
-export class PermissionDecisionRepository {
-  constructor(private readonly db: Database) {}
-
-  insert(record: HrcPermissionDecisionRecord): HrcPermissionDecisionRecord {
-    const permissionIdentityKey =
-      record.permissionIdentityKey ??
-      computePermissionIdentityKey({
-        invocationId: record.invocationId,
-        harnessGeneration: record.harnessGeneration,
-        turnAttempt: record.turnAttempt,
-        permissionRequestId: record.permissionRequestId,
-      })
-
-    execute(
-      this.db,
-      `
-        INSERT INTO permission_decisions (
-          permission_identity_key,
-          permission_request_id,
-          invocation_id,
-          harness_generation,
-          turn_attempt,
-          runtime_id,
-          run_id,
-          kind,
-          subject_display_json,
-          default_decision,
-          decision,
-          decided_by,
-          policy_json,
-          requested_at,
-          decided_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      permissionIdentityKey,
-      record.permissionRequestId,
-      record.invocationId,
-      record.harnessGeneration ?? null,
-      record.turnAttempt ?? null,
-      record.runtimeId,
-      record.runId ?? null,
-      record.kind,
-      record.subjectDisplayJson,
-      record.defaultDecision,
-      record.decision,
-      record.decidedBy,
-      record.policyJson,
-      record.requestedAt,
-      record.decidedAt
-    )
-
-    return requireRecord(
-      this.getByPermissionIdentityKey(permissionIdentityKey),
-      `failed to reload permission decision ${permissionIdentityKey}`
-    )
-  }
-
-  getByPermissionIdentityKey(permissionIdentityKey: string): HrcPermissionDecisionRecord | null {
-    const row = this.db
-      .query<PermissionDecisionRow, [string]>(
-        `SELECT ${PERMISSION_DECISION_COLUMNS} FROM permission_decisions
-          WHERE permission_identity_key = ?`
-      )
-      .get(permissionIdentityKey)
-
-    return row ? mapPermissionDecisionRow(row) : null
-  }
-
-  getByPermissionRequestId(permissionRequestId: string): HrcPermissionDecisionRecord | null {
-    const row = this.db
-      .query<PermissionDecisionRow, [string]>(
-        `SELECT ${PERMISSION_DECISION_COLUMNS} FROM permission_decisions
-          WHERE permission_request_id = ?
-          ORDER BY requested_at ASC, permission_identity_key ASC
-          LIMIT 1`
-      )
-      .get(permissionRequestId)
-
-    return row ? mapPermissionDecisionRow(row) : null
-  }
 }

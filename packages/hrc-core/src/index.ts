@@ -230,7 +230,6 @@ export type {
   HrcBrokerInvocationRecord,
   HrcBrokerInvocationEventRecord,
   HrcRuntimeArtifactRecord,
-  HrcPermissionDecisionRecord,
   HrcReleaseStatus,
   HrcRunRecord,
   HrcSurfaceBindingRecord,

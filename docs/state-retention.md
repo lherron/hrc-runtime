@@ -390,3 +390,12 @@ matters at this row count:
   to that host session's small result set. The obsolete launch-record lookup
   was removed in T-10146; current ACP read paths do not justify a new
   `runtimes` index.
+
+## Retired permission audit (T-11713)
+
+Migration `0127_permission_audit_removal` drops the write-only
+`permission_decisions` table and all its indexes. Its rows have no retention
+requirement after Lance’s 2026-10-24 ruling. Broker policy still decides
+permissions; HRC retains `permission.*` observations in `broker_invocation_events`,
+`hrc_events`, and transcripts under the existing event retention rules. HRC has
+no production caller of `invocation.permission.respond`.
