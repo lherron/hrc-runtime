@@ -191,12 +191,11 @@ export type {
   RegistryAuthPeer,
   RegistryAuthToken,
 } from './federation/registry-endpoint.js'
+export { RegistryRefusedError, RegistryUnreachableError } from './federation/registry-client.js'
 export {
   HttpBindingRegistryClient,
-  RegistryRefusedError,
-  RegistryUnreachableError,
   createBindingRegistryClient,
-} from './federation/registry-client.js'
+} from './federation/registry-http-client.js'
 export type {
   BindingRegistryClient,
   BindingRegistryClientOptions,

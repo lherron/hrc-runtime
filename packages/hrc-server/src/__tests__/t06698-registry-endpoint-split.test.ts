@@ -98,7 +98,7 @@ describe('role-specific peer origins', () => {
 
         // Exercise the concrete client with a captured fetch to prove URL selection.
         let requested = ''
-        const { HttpBindingRegistryClient } = await import('../federation/registry-client.js')
+        const { HttpBindingRegistryClient } = await import('../federation/registry-http-client.js')
         const captured = new HttpBindingRegistryClient(instrumentedPeer!, {
           fetch: (url) => {
             requested = String(url)
@@ -115,7 +115,7 @@ describe('role-specific peer origins', () => {
   test('legacy endpoint-only peer remains the registry transport fallback', async () => {
     const selected = peer({ nodeId: 'svc', endpoint: 'http://svc.example.ts.net:18491' })
     let requested = ''
-    const { HttpBindingRegistryClient } = await import('../federation/registry-client.js')
+    const { HttpBindingRegistryClient } = await import('../federation/registry-http-client.js')
     const client = new HttpBindingRegistryClient(selected, {
       fetch: (url) => {
         requested = String(url)

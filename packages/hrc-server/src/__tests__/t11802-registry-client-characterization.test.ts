@@ -5,12 +5,12 @@ import type { BindingRegistry, BirthDesignationRecord, PlacementBinding } from '
 import type { PeerEntry } from '../federation/federation-config.js'
 import { PeerToken } from '../federation/peer-token.js'
 import {
-  HttpBindingRegistryClient,
-  LocalBindingRegistryClient,
   type RegistryClientFetch,
   RegistryRefusedError,
   RegistryUnreachableError,
 } from '../federation/registry-client.js'
+import { HttpBindingRegistryClient } from '../federation/registry-http-client.js'
+import { LocalBindingRegistryClient } from '../federation/registry-local-client.js'
 
 /**
  * T-11802 — characterization of the registry client's observable surface,

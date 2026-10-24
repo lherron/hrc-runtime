@@ -8,10 +8,10 @@ import type { BindingRegistry } from 'hrc-store-sqlite'
 
 import type { PeerEntry } from '../federation/federation-config.js'
 import { PeerToken } from '../federation/peer-token.js'
-import { HttpBindingRegistryClient } from '../federation/registry-client.js'
 import type { RegistryClientFetch } from '../federation/registry-client.js'
 import { createBindingRegistryRequestHandler } from '../federation/registry-endpoint.js'
 import type { RegistryAuthPeer } from '../federation/registry-endpoint.js'
+import { HttpBindingRegistryClient } from '../federation/registry-http-client.js'
 
 /**
  * T-07661 — the unborn-designation read across the HTTP boundary.

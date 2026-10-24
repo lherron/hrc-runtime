@@ -14,7 +14,7 @@ import type { BirthEnvelopeReader } from './birth-designation.js'
 import { BirthEnvelopeUnavailableError, designateBirthOnHost } from './birth-designation.js'
 import type { RegistryListenerConfig } from './registry-bind.js'
 import type { BindingRegistryClient } from './registry-client.js'
-import { createLocalBindingRegistryClient } from './registry-client.js'
+import { createLocalBindingRegistryClient } from './registry-local-client.js'
 
 export const BINDING_REGISTRY_BASENAME = 'binding-registry.sqlite'
 

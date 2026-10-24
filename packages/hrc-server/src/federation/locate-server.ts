@@ -3,7 +3,7 @@
  *
  * Locate has to run on the DAEMON, not in the CLI, for three reasons that all
  * point the same way: the placement ledger lives in the daemon's own SQLite; a
- * registry consult needs a peer token, and `registry-client.ts` is the single
+ * registry consult needs a peer token, and `registry-http-client.ts` is the single
  * sanctioned egress site for one; and observed-runtime truth is daemon state.
  * A CLI-side implementation would have to reach into all three and would put a
  * second, subtly different placement reader next to the gate's.

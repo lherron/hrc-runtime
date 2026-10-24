@@ -16,11 +16,8 @@ import type { FederationConfig, PeerEntry } from '../federation/federation-confi
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { PeerToken } from '../federation/peer-token.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
-import {
-  type BindingRegistryClient,
-  HttpBindingRegistryClient,
-  type RegistryConsultResult,
-} from '../federation/registry-client.js'
+import type { BindingRegistryClient, RegistryConsultResult } from '../federation/registry-client.js'
+import { HttpBindingRegistryClient } from '../federation/registry-http-client.js'
 import { resolveFederationRegistryClient } from '../federation/registry-resolution.js'
 import { SUMMON_GATE_REFUSAL_EVENT } from '../federation/summon-gate.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'

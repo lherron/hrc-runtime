@@ -11,10 +11,8 @@ import {
   designateBirthOnHost,
 } from '../federation/birth-designation.js'
 import type { BirthEnvelopeReader } from '../federation/birth-designation.js'
-import {
-  HttpBindingRegistryClient,
-  RegistryUnreachableError,
-} from '../federation/registry-client.js'
+import { RegistryUnreachableError } from '../federation/registry-client.js'
+import { HttpBindingRegistryClient } from '../federation/registry-http-client.js'
 
 /**
  * T-07655 — the registry HOST's designation routine.

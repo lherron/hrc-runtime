@@ -10,7 +10,6 @@ import type { PeerEntry } from '../federation/federation-config.js'
 import { PeerToken } from '../federation/peer-token.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
 import {
-  HttpBindingRegistryClient,
   type RegistryClientFetch,
   RegistryRefusedError,
   RegistryUnreachableError,
@@ -19,6 +18,7 @@ import {
   type BindingRegistryEndpointControl,
   startBindingRegistryEndpoint,
 } from '../federation/registry-endpoint.js'
+import { HttpBindingRegistryClient } from '../federation/registry-http-client.js'
 import {
   federationTestConfigUrl,
   federationTestHost,
@@ -313,7 +313,7 @@ describe('T-06663 construction and secret egress', () => {
           /^packages\/hrc-server\/src\/federation\/peer-request\.ts:\d+:.*token\.reveal\(\)/
         ),
         expect.stringMatching(
-          /^packages\/hrc-server\/src\/federation\/registry-client\.ts:\d+:.*token\.reveal\(\)/
+          /^packages\/hrc-server\/src\/federation\/registry-http-client\.ts:\d+:.*token\.reveal\(\)/
         ),
       ])
     )

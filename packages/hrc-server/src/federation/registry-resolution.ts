@@ -8,7 +8,8 @@
 
 import type { FederationConfig } from './federation-config.js'
 import type { BindingRegistryClient } from './registry-client.js'
-import { RegistryUnreachableError, createBindingRegistryClient } from './registry-client.js'
+import { RegistryUnreachableError } from './registry-client.js'
+import { createBindingRegistryClient } from './registry-http-client.js'
 
 export function createUnavailableRegistryClient(reason: string): BindingRegistryClient {
   return {
