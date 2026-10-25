@@ -144,8 +144,6 @@ type HrcServerInstanceDataForHandlers = {
   readonly options: HrcServerOptions
   readonly db: HrcDatabase
   readonly tmux: ServerTmuxManager
-  /** T-07214: per-peer default-deny remote-preemption authority (see index.ts). */
-  readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
   /** Peers that just failed at the transport level; session-index reads skip them briefly. */
   readonly peerReachability: PeerReachability
   readonly federationRegistryClient: BindingRegistryClient | undefined

@@ -1,5 +1,4 @@
-import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcTurnResponseFormat } from './contracts.js'
-import type { HrcMessageAddress, HrcMessageKind, HrcMessagePhase } from './hrcchat-contracts.js'
+import type { HrcRuntimeSnapshot } from './contracts.js'
 
 /**
  * Federation wire vocabulary shared by the daemon, the SDK, and the CLI.
@@ -82,50 +81,6 @@ export type BirthDesignationResult =
 /** Gate enforcement level for this node. */
 export type FederationGateModeValue = 'off' | 'advisory' | 'enforce'
 
-// -- Peer message envelope ---------------------------------------------------
-
-/** Destination home named by an origin before it enters the retained outbox store. */
-export type FederationExpectedPlacement = {
-  readonly homeNodeId: string
-}
-
-/**
- * Optional delivery context needed to preserve today's local summon/queue
- * behavior after the receiver durably inserts the transcript row.
- *
- * It deliberately excludes wait, which stays origin-local.
- */
-export type FederationMessageDelivery = {
-  readonly runtimeIntent?: HrcRuntimeIntent | undefined
-  readonly createIfMissing?: boolean | undefined
-  readonly respondTo?: HrcMessageAddress | undefined
-  readonly responseFormat?: HrcTurnResponseFormat | undefined
-  readonly allowStaleGeneration?: boolean | undefined
-  /**
-   * Additive discriminator for `/v1/messages/turn-handoff`.
-   *
-   * Older peers deliberately do not receive this payload: the origin first
-   * requires the `semanticTurnHandoff` peer-health capability so an old
-   * tolerant reader cannot silently downgrade a turn into an ordinary DM.
-   */
-  readonly semanticTurnHandoff?:
-    | { readonly version: 1 }
-    | { readonly version: 2; readonly freshContext: true }
-    | undefined
-  /**
-   * T-07155 — urgent (preemptive) delivery marker.
-   *
-   * Versioned and strict-validated so an unknown version is refused rather than
-   * ignored. Note this member never reaches an old tolerant reader at all:
-   * urgent envelopes ride `/v1/federation/accept-urgent`, which a peer without
-   * the feature refuses at the transport before parsing anything. The marker is
-   * belt-and-braces for peers that DO have the route but an older parse.
-   */
-  readonly urgent?: { readonly version: 1 } | undefined
-  /** Explicit admission door selected by the origin. */
-  readonly submissionDoor?: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
-}
-
 export type FederationSemanticTurnIdentity = {
   readonly sessionRef: string
   readonly scopeRef: string
@@ -162,47 +117,6 @@ export type FederationSemanticTurnSignal =
       readonly errorMessage?: string | undefined
     }
 
-/**
- * Narrow cross-node lifecycle projection for an interactive semantic turn.
- * This is deliberately not a general event-stream protocol: it carries only
- * the AskUserQuestion start needed by an origin-side interface to render and
- * route the human's answer.
- */
-export type FederationInteractiveLifecycleSignal = {
-  readonly version: 1
-  readonly type: 'ask_user_question'
-  readonly sourceHrcSeq: number
-  readonly acpRunId?: string | undefined
-  readonly event: {
-    readonly eventKind: 'turn.tool_call'
-    readonly ts: string
-    readonly hostSessionId: string
-    readonly scopeRef: string
-    readonly laneRef: string
-    readonly generation: number
-    readonly runtimeId?: string | undefined
-    readonly runId: string
-    readonly transport?: 'sdk' | 'tmux' | 'headless' | undefined
-    readonly payload: Readonly<Record<string, unknown>>
-  }
-}
-
-/** Federation v1 tolerant-reader envelope (spec §6). */
-export type FederationMessageEnvelope = {
-  readonly messageId: string
-  readonly kind: HrcMessageKind
-  readonly phase: HrcMessagePhase
-  readonly from: HrcMessageAddress
-  readonly to: HrcMessageAddress
-  readonly body: string
-  readonly rootMessageId: string
-  readonly replyToMessageId?: string | undefined
-  readonly expected: FederationExpectedPlacement
-  readonly delivery?: FederationMessageDelivery | undefined
-  readonly semanticTurnSignal?: FederationSemanticTurnSignal | undefined
-  readonly interactiveSignal?: FederationInteractiveLifecycleSignal | undefined
-}
-
 /** Exact durable placement tuple returned by authority establishment. */
 export type FederationPlacementBinding = LocateBindingRecord & {
   readonly scopeRef: string
@@ -231,9 +145,6 @@ export type FederationRemoteEstablishResult =
       readonly homeNodeId?: string | undefined
     }
 
-/** Message payload retained durably before an authority fence exists. */
-export type FederationPendingMessageEnvelope = Omit<FederationMessageEnvelope, 'expected'>
-
 // -- Origin outbox operator surface -----------------------------------------
 
 /** Durable origin-side delivery lifecycle exposed to operators in F3. */
@@ -243,53 +154,6 @@ export type FederationOutboxState =
   | 'peer_unreachable'
   | 'delivered'
   | 'dead_letter'
-
-/** Public typed failure retained with a durable delivery. */
-export type FederationOutboxError = {
-  readonly code: string
-  readonly message: string
-  readonly reason?: string | undefined
-  readonly retryable: boolean
-  readonly homeNodeId?: string | undefined
-}
-
-/**
- * One durable delivery attempt stream. The envelope remains available in the
- * JSON projection for forensic use; the human CLI intentionally renders only
- * routing, age, attempt, and last-error fields.
- */
-type FederationOutboxDeliveryCommon = {
-  deliveryId: string
-  messageId: string
-  peerNodeId: string
-  state: FederationOutboxState
-  totalAttempts: number
-  cycleAttempts: number
-  replayCount: number
-  retryWindowStartedAt: string
-  nextAttemptAt?: string | undefined
-  lastAttemptAt?: string | undefined
-  deliveredAt?: string | undefined
-  deadLetteredAt?: string | undefined
-  lastErrorCode?: string | undefined
-  lastErrorMessage?: string | undefined
-  lastError?: FederationOutboxError | undefined
-  createdAt: string
-  updatedAt: string
-}
-
-export type FederationOutboxDeliveryRecord = FederationOutboxDeliveryCommon &
-  (
-    | {
-        stage: 'establishing'
-        establish: FederationRemoteEstablishRequest
-        envelope: FederationPendingMessageEnvelope
-      }
-    | {
-        stage: 'delivering'
-        envelope: FederationMessageEnvelope
-      }
-  )
 
 // -- F3 peer health and all-node runtime projections ------------------------
 

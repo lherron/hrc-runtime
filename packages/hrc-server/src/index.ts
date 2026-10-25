@@ -329,12 +329,6 @@ export class HrcServerInstance implements HrcServer {
   public readonly federationRegistryEndpoint: string | undefined
   readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
   public readonly federationPeerEndpoint: string | undefined
-  /**
-   * T-07214 — per-peer remote-preemption authority, the same default-deny
-   * predicate the accept-urgent fence consults, exposed so federation ingress
-   * can gate the tolerant best-effort delivery class with one meaning.
-   */
-  readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Last successful peer answers are isolated by node and effective runtime filter. */
   readonly peerRuntimeProjectionCache = new PeerRuntimeProjectionCache()
@@ -491,7 +485,6 @@ export class HrcServerInstance implements HrcServer {
     this.collectiveHistory = federation.collectiveHistory
     this.peerProtocolEndpoint = federation.peerProtocolEndpoint
     this.federationPeerEndpoint = federation.federationPeerEndpoint
-    this.isPeerUrgentDeliveryAuthorized = federation.isPeerUrgentDeliveryAuthorized
     this.collectiveHistory?.start()
 
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)

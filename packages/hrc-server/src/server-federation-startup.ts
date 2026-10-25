@@ -61,7 +61,6 @@ export type FederationServices = {
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
   readonly federationPeerEndpoint: string | undefined
-  readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
 }
 
 /**
@@ -306,15 +305,6 @@ export function startFederationServices(
     }
   }
 
-  const isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined =
-    federationConfig === undefined
-      ? undefined
-      : (nodeId: string) => {
-          const peer = [...federationConfig.peers.values()].find(
-            (candidate) => String(candidate.nodeId) === String(nodeId)
-          )
-          return peer?.allowUrgentDelivery === true
-        }
   return {
     bindingRegistryEndpoint,
     federationRegistryEndpoint,
@@ -322,6 +312,5 @@ export function startFederationServices(
     collectiveHistory,
     peerProtocolEndpoint,
     federationPeerEndpoint,
-    isPeerUrgentDeliveryAuthorized,
   }
 }

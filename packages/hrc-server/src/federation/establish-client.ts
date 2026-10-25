@@ -57,7 +57,7 @@ async function responseBody(response: Response, surface: string): Promise<Record
   return body
 }
 
-/** One authority-only establishment attempt. Durable retries belong to the outbox. */
+/** One authority-only establishment attempt. */
 export async function sendRemoteEstablish(
   options: SendRemoteEstablishOptions
 ): Promise<FederationRemoteEstablishResult> {

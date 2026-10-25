@@ -650,8 +650,7 @@ export function createPeerProtocolRequestHandler(
       // not disabled. Cross-node agent talk is the shared wrkq ledger, which
       // both nodes already read over rpc://; federation keeps birth, placement,
       // summon and locate authority only. A peer still on the old build gets the
-      // unmatched-path 404 below, which its outbox treats as a terminal refusal
-      // rather than a retry.
+      // unmatched-path 404 below.
       const historyResponse = await handleCollectiveHistoryRequest({
         request,
         url,
