@@ -11,3 +11,4 @@ reqwest.workspace = true
 libc = "0.2"
 hrc-store = { path = "../hrc-store" }
 chrono.workspace = true
+uuid = { version = "1", features = ["v4"] }

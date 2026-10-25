@@ -1,8 +1,18 @@
-//! Native operator CLI. The command declaration is generated from the Bun spec;
-//! execution, transport, parsing and rendering are Rust and need no JS runtime.
+//! Native operator commands, with same-release Bun exec for postponed commands.
+//! The command declaration is generated from the Bun specification.
+macro_rules! cli_print {
+    ($($arg:tt)*) => {crate::metrics::stdout(format_args!($($arg)*))};
+}
+macro_rules! cli_println {
+    ($($arg:tt)*) => {crate::metrics::stdout(format_args!("{}\n",format_args!($($arg)*)))};
+}
+pub(crate) use cli_print;
+pub(crate) use cli_println;
+
 mod client;
 mod commands;
 mod inspect;
+mod metrics;
 mod parse;
 mod passthrough;
 mod selectors;
@@ -36,6 +46,7 @@ pub(crate) type Result<T> = std::result::Result<T, Error>;
 
 pub fn run(args: Vec<String>) -> i32 {
     if args == ["--version"] {
+        metrics::begin(&args, &Value::Null);
         // Resolve the PATH symlink so the manifest is found beside the release.
         let manifest = std::env::current_exe()
             .and_then(std::fs::canonicalize)
@@ -56,10 +67,11 @@ pub fn run(args: Vec<String>) -> i32 {
             .as_ref()
             .and_then(|v| v["releaseId"].as_str())
             .unwrap_or("development");
-        println!(
+        crate::cli_println!(
             "rusthrc {} (releaseId {release_id}, sourceCommit {commit})",
             env!("CARGO_PKG_VERSION")
         );
+        metrics::finish(0);
         return 0;
     }
 
@@ -74,6 +86,9 @@ pub fn run(args: Vec<String>) -> i32 {
         || parsed
             .as_ref()
             .is_ok_and(|p| passthrough::native_command(&p.path()));
+    if native {
+        metrics::begin(&args, &surface);
+    }
     let result = if !native {
         passthrough::exec(&args)
     } else {
@@ -98,7 +113,7 @@ pub fn run(args: Vec<String>) -> i32 {
                     return Ok(2);
                 }
                 if parsed.help {
-                    print!("{help}");
+                    crate::cli_print!("{help}");
                 } else {
                     eprint!("{help}");
                 }
@@ -108,7 +123,7 @@ pub fn run(args: Vec<String>) -> i32 {
             Ok(0)
         })
     };
-    match result {
+    let code = match result {
         Ok(code) => code,
         Err(error) => {
             if let Some(domain) = error.domain {
@@ -134,11 +149,13 @@ pub fn run(args: Vec<String>) -> i32 {
             }
             error.code
         }
-    }
+    };
+    metrics::finish(code);
+    code
 }
 
 pub(crate) fn print_json(value: &Value) {
-    println!(
+    crate::cli_println!(
         "{}",
         serde_json::to_string_pretty(value).expect("JSON value")
     );

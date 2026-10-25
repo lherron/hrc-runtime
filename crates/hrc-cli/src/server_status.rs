@@ -29,7 +29,7 @@ fn fallback(value: &Value, default: &str) -> String {
 fn yes(value: &Value) -> &'static str {
     if value == true { "yes" } else { "no" }
 }
-fn state_root() -> Result<PathBuf> {
+pub(crate) fn state_root() -> Result<PathBuf> {
     for (key, suffix) in [
         ("HRC_STATE_DIR", ""),
         ("HOME", "praesidium/var/state/hrc"),
@@ -378,10 +378,11 @@ pub(crate) fn command(args: &Parsed<'_>) -> Result<()> {
     if args.flag("json") {
         print_json(&status);
     } else {
-        print!("{}", render(&status));
+        crate::cli_print!("{}", render(&status));
     }
     let code = status["exitCode"].as_i64().unwrap_or(3) as i32;
     if code != 0 {
+        crate::metrics::finish(code);
         std::process::exit(code);
     }
     Ok(())

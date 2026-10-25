@@ -46,7 +46,7 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
                 }
                 print_json(&body);
             } else {
-                println!(
+                crate::cli_println!(
                     "runtime {}: {}\ncapture: {}",
                     text(&result["runtimeId"]),
                     text(&result["status"]),
@@ -68,7 +68,7 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
                 print_json(&json!({"hrc":hrc,"broker":broker}));
                 Ok(())
             } else {
-                print!(
+                crate::cli_print!(
                     "runtime inspect {id}\n\nHRC authority (source: HRC runtime store)\n{}\nBroker authority (source: {})\n{}",
                     crate::inspect::runtime(&hrc),
                     text(&broker["source"]),
@@ -169,7 +169,7 @@ fn runtime_list(args: &Parsed<'_>) -> Result<()> {
             print_json(&report);
             return Ok(());
         }
-        print!("{}", crate::inspect::federation(&report));
+        crate::cli_print!("{}", crate::inspect::federation(&report));
         return Ok(());
     }
     query.push(("limit".into(), "500".into()));
@@ -193,7 +193,7 @@ fn runtime_list(args: &Parsed<'_>) -> Result<()> {
         query.push(("cursor".into(), cursor));
     }
     let body = format!("{}\n", serde_json::to_string_pretty(&runtimes).unwrap());
-    print!("{body}");
+    crate::cli_print!("{body}");
     if runtimes.len() > 100 {
         eprintln!(
             "hrc: runtime list returned {} runtimes ({} bytes) — narrow with --task/--scope/--agent/--status/--transport/--session",
@@ -216,7 +216,7 @@ fn session_list(args: &Parsed<'_>) -> Result<()> {
     let sessions = Daemon::connect()?.get("/v1/sessions", &query)?;
     if args.flag("porcelain") {
         for session in sessions.as_array().into_iter().flatten() {
-            println!(
+            crate::cli_println!(
                 "{}\t{}\t{}\tg{}\t{}\t{}\t{}",
                 text(&session["hostSessionId"]),
                 text(&session["scopeRef"]),
@@ -244,7 +244,7 @@ fn show(args: &Parsed<'_>) -> Result<()> {
                 value["runtimeId"] = id.into();
                 print_json(&value);
             } else {
-                print!("kind: runtime\n{}", crate::inspect::runtime(&value));
+                crate::cli_print!("kind: runtime\n{}", crate::inspect::runtime(&value));
             }
         }
         Target::Host(id) => {
@@ -257,7 +257,7 @@ fn show(args: &Parsed<'_>) -> Result<()> {
                 value["hostSessionId"] = id.into();
                 print_json(&value);
             } else {
-                println!("kind: host-session\nhostSessionId: {id}");
+                crate::cli_println!("kind: host-session\nhostSessionId: {id}");
                 print_json(&value);
             }
         }
@@ -287,7 +287,7 @@ fn show(args: &Parsed<'_>) -> Result<()> {
                 v["seq"] = message["messageSeq"].clone();
                 print_json(&v);
             } else {
-                println!(
+                crate::cli_println!(
                     "message {}\n  kind          message\n  seq           {}\n  messageKind   {}\n  phase         {}\n  createdAt     {}\n  body          {}",
                     text(&message["messageId"]),
                     message["messageSeq"],

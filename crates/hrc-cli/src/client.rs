@@ -21,7 +21,9 @@ impl Daemon {
                 socket.display()
             )));
         }
-        let mut builder = Client::builder().unix_socket(socket);
+        let mut builder = Client::builder()
+            .unix_socket(socket)
+            .user_agent(concat!("rusthrc/", env!("CARGO_PKG_VERSION")));
         if let Some(timeout) = timeout {
             builder = builder.timeout(timeout);
         }
@@ -41,21 +43,39 @@ impl Daemon {
         query: &[(String, String)],
         body: Option<Value>,
     ) -> Result<(Value, Option<String>)> {
+        let span = crate::metrics::Span::begin(path, method);
         let mut request = self
             .client
             .request(method.parse().unwrap(), format!("http://localhost{path}"))
             .query(query);
+        if let Some(span) = span.as_ref() {
+            request = request.header("x-hrc-request-id", &span.id);
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }
-        let response = request.send().map_err(|e| Error::failure(e.to_string()))?;
+        let response = request.send().map_err(|e| {
+            if let Some(span) = span.as_ref() {
+                span.finish(0, 0);
+            }
+            Error::failure(e.to_string())
+        })?;
         let status = response.status();
+        if let Some(span) = span.as_ref() {
+            span.finish(
+                status.as_u16(),
+                response.content_length().unwrap_or(0) as usize,
+            );
+        }
         let cursor = response
             .headers()
             .get("x-hrc-next-cursor")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
         let text = response.text().map_err(|e| Error::failure(e.to_string()))?;
+        if let Some(span) = span.as_ref() {
+            span.finish(status.as_u16(), text.len());
+        }
         let value: Value = serde_json::from_str(&text).map_err(|_| {
             Error::failure(format!(
                 "HRC request failed with status {}: {text}",

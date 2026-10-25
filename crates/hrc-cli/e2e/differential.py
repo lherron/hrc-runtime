@@ -100,7 +100,11 @@ def main():
         status_args += ['--runtime-root', str(args.runtime_root.resolve()), '--state-root', str(args.state_root.resolve())]
     status = subprocess.run(status_args, cwd=ROOT)
     passthrough = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/passthrough.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'passthrough')], cwd=ROOT)
-    return int(bool(report['fail']) or status.returncode != 0 or passthrough.returncode != 0)
+    metric_args = ['python3', str(ROOT / 'crates/hrc-cli/e2e/metrics.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'metrics')]
+    if args.runtime_root:
+        metric_args += ['--runtime-root', str(args.runtime_root.resolve())]
+    metrics = subprocess.run(metric_args, cwd=ROOT)
+    return int(bool(report['fail']) or status.returncode != 0 or passthrough.returncode != 0 or metrics.returncode != 0)
 
 
 if __name__ == '__main__':

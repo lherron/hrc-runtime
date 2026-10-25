@@ -56,7 +56,7 @@ def main():
     for selector in (rid, 'runtime:' + rid, host, 'host:' + host, 'scope:' + scope, 'msg:missing', 'seq:1'):
         for flags in ([], ['--json']):
             cases.append(['show', selector] + flags)
-    for command in (['session', 'list', '--porcelain'], ['session', 'list', '--all'], ['runtime', 'list', '--scope', 'scope:' + scope], ['runtime', 'inspect', rid, '--probe', '--json'], ['runtime', 'list', '--all-nodes'], ['runtime', 'list', '--all-nodes', '--json'], ['ls', 'messages']):
+    for command in (['session', 'list', '--porcelain'], ['session', 'list', '--all'], ['runtime', 'list', '--scope', 'scope:' + scope], ['runtime', 'list', '--all-nodes'], ['runtime', 'list', '--all-nodes', '--json'], ['ls', 'messages'], ['runtime', 'inspect', rid, '--probe', '--json']):
         cases.append(command)
     results = []
     bun = shutil.which("bun")
