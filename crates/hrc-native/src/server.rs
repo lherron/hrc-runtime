@@ -1,3 +1,6 @@
+mod aspc;
+mod rpc;
+
 use anyhow::{Context, Result, bail};
 use axum::{
     Json, Router,
@@ -122,6 +125,19 @@ struct ApiError {
     detail: Option<Value>,
 }
 impl ApiError {
+    fn domain(
+        status: StatusCode,
+        code: &'static str,
+        message: impl Into<String>,
+        detail: Option<Value>,
+    ) -> Self {
+        Self {
+            status,
+            code,
+            message: message.into(),
+            detail,
+        }
+    }
     fn bad(message: impl Into<String>, detail: Option<Value>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
@@ -167,7 +183,32 @@ async fn dispatch(
     body: Bytes,
 ) -> Response {
     let started = Instant::now();
-    let result = handle(&server, &method, uri.path(), &query, &body);
+    let result = if method == Method::GET && uri.path() == "/v1/status" {
+        match status(&server, &query) {
+            Ok(mut value) => {
+                value["aspd"] = aspc::service_status().await;
+                value["aspToolchain"] = json!({"toolchainRootActive":false,"binaries":[]});
+                Ok(Json(value).into_response())
+            }
+            Err(error) => Err(error),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/declarations/resolve" {
+        match parse_body(&body) {
+            Ok(value) => aspc::resolve_intent(value)
+                .await
+                .map(|v| Json(v).into_response()),
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/placements/resolve" {
+        match parse_body(&body) {
+            Ok(value) => aspc::resolve_placement(value)
+                .await
+                .map(|v| Json(v).into_response()),
+            Err(e) => Err(e),
+        }
+    } else {
+        handle(&server, &method, uri.path(), &query, &body)
+    };
     let response = result.unwrap_or_else(IntoResponse::into_response);
     eprintln!(
         "{}",
@@ -207,7 +248,7 @@ fn handle(
         return Ok(Json(json!({"ok":true})).into_response());
     }
     if method == Method::GET && path == "/v1/status" {
-        return status(server, query);
+        return status(server, query).map(|value| Json(value).into_response());
     }
     if method == Method::POST && path == "/v1/sessions/resolve" {
         let b = parse_body(body)?;
@@ -321,7 +362,7 @@ fn handle(
 fn status(
     server: &Server,
     query: &HashMap<String, String>,
-) -> std::result::Result<Response, ApiError> {
+) -> std::result::Result<Value, ApiError> {
     if let Some(v) = query.get("includeSessions")
         && v != "true"
         && v != "false"
@@ -342,5 +383,5 @@ fn status(
                 .collect::<Vec<_>>()
         );
     }
-    Ok(Json(value).into_response())
+    Ok(value)
 }

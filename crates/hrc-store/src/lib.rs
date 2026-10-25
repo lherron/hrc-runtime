@@ -35,12 +35,19 @@ fn assert_schema(db: &Connection) -> Result<()> {
 }
 
 impl Store {
+    /// Direct-store clients must never take schema or journal ownership.
+    pub fn open_readonly(path: &Path) -> Result<Self> {
+        let sqlite = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .context("schema: cannot open existing Bun store")?;
+        assert_schema(&sqlite)?;
+        sqlite.busy_timeout(Duration::from_secs(5))?;
+        Ok(Self { sqlite })
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         // In particular, no journal_mode, CREATE TABLE, auto_vacuum or parent
         // creation may precede admission. A missing path is never created.
-        let ro = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .context("schema: cannot open existing Bun store")?;
-        assert_schema(&ro)?;
+        let ro = Self::open_readonly(path)?;
         drop(ro);
         let sqlite = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         // Check the handle we will actually use too, before the first write.

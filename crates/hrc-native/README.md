@@ -9,8 +9,12 @@ never creates or migrates it. Production installation is not authorized by N1.
 The first N1 landing provides schema admission, the Unix HTTP listener,
 Bun-compatible ownership files, health/status, session resolve/list/by-host,
 and stored runtime listing. Other routes answer Bun's unknown-route 404.
-Provisioning, claims, participant registration and the remaining N1 route
-semantics are subsequent N1 work; this landing does not claim N1 parity.
+ASP-backed declaration and placement observation now share a native NDJSON
+JSON-RPC client. Status probes the actual configured aspd. Observation creates
+no broker or runtime rows. Provisioning, claims, participant registration and
+the remaining N1 route semantics are still in progress; this does not claim
+N1 parity. Direct-store readers use `Store::open_readonly`; the daemon uses
+`Store::open`.
 
 Schema admission extracts migration names from the checked-out Bun migration
 source graph at build time. It checks both a read-only connection and the
