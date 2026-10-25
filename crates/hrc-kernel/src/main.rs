@@ -16,7 +16,7 @@ use std::{
     num::NonZeroUsize,
     path::PathBuf,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 struct NoWork;
@@ -168,7 +168,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "registry.enable",
         hrc_domain::declarations::declarations(),
     )?;
-    let opened = call(
+    call(
         &client,
         "document.open",
         json!({"document_id":"hrc","rebuildable":true,"ingest_only":true,"durability":{"mode":"none"}}),
@@ -178,10 +178,33 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "ingest.attach",
         json!({"document_id":"hrc","binding":"hrc","operation":"hrc.project","config":{},"interval_ms":1000,"resync_every_ms":600000}),
     )?;
+    // Ready means caught up: a client's first read must be HRC's seat set, not
+    // revision 0's empty one. Under Loggia's 30 s ready window, an HRC still not
+    // caught up is served anyway; `bootstrapping` stays true on every read.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let revision = loop {
+        let snapshot = client.snapshot().map_err(|e| e.message)?;
+        let document = snapshot
+            .documents
+            .get("hrc")
+            .ok_or("document hrc is not open")?;
+        let bootstrapping = match &document.authored {
+            Ok(authored) => authored.get("bootstrapping") != Some(&Value::Bool(false)),
+            Err(failure) => return Err(failure.message.clone().into()),
+        };
+        if !bootstrapping {
+            break document.revision;
+        }
+        if Instant::now() >= deadline {
+            eprintln!("hrc-kernel: HRC not caught up within 20 s; serving while bootstrapping");
+            break document.revision;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
     let server = wire::bind(client, &socket)?;
     println!(
         "{}",
-        json!({"status":"serving","socket":socket,"pid":std::process::id(),"document":"hrc","revision":opened["revision"]})
+        json!({"status":"serving","socket":socket,"pid":std::process::id(),"document":"hrc","revision":revision})
     );
     server.run()?;
     drop(owner);

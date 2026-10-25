@@ -60,7 +60,7 @@ def main():
                    contextReading=dict(turnId='turn-1', usedTokens=10, observedAt=now),
                    tmux=dict(socketPath='/tmp/absent-hrc-tmux.sock', attachTarget='seat:tui'))
     state = dict(incarnation='ledger-1', head=0, events=[], sessions=[record], runtimes=[runtime], down=False,
-                 wake_revision=0, stream_opens=0, stopping=False)
+                 wake_revision=0, stream_opens=0, stopping=False, slow_first_load=True)
     # Bootstrap with a tool result hidden behind category-turn bookkeeping.
     preview_call = dict(record, hrcSeq=1, category='turn', eventKind='turn.tool_call', ts=now,
                         payload=dict(toolUseId='call-1', toolName='Bash', input=dict(command='git status -sb')))
@@ -108,6 +108,12 @@ def main():
                         wake.wait_for(lambda: state['wake_revision'] != s['wake_revision'] or state['stopping'])
                         s = copy.deepcopy(state)
                 return
+            if u.path == '/v1/sessions' and s['slow_first_load']:
+                # Real HRC takes visible time on a first load; a kernel that
+                # announces before it lands is caught here (R-00477).
+                with lock:
+                    state['slow_first_load'] = False
+                time.sleep(1.5)
             status = 200
             if s['down']:
                 status, value = 503, dict(error=dict(code='unavailable'))
@@ -206,7 +212,12 @@ def main():
             discovery = wire.call('registry.discover')
             assert {n['name'] for n in discovery['node_types']} >= {'hrc.seat', 'hrc.runtime', 'hrc.project'}
             query = lambda: wire.call('document.query', dict(document_id='hrc', type='hrc.seat'))
-            first = wait_for(lambda: (r if (r := query())['rows'] and not r['bootstrapping'] else None), 'bootstrap')
+            # Ready means caught up: the first read after "serving" is the real
+            # seat set, never revision 0's empty one (R-00477).
+            first = query()
+            assert first['rows'] and not first['bootstrapping'], ('served before first load', first)
+            resynced = wire.call('resync')
+            assert resynced['documents']['hrc']['revision'] > 0, resynced['documents']['hrc']
             row = first['rows'][0]
             assert row['payload']['contextReading']['usedTokens'] == 10, row
             assert row['payload']['latestEvent']['preview'] == 'ran: Bash', row
