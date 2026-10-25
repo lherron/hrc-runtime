@@ -26,6 +26,14 @@ adopted_m1_amendment:
   status: adopted by Lance; design approved EN-33646 and concrete P0/amendment intent EN-33680
   affected_sections: migration proposal sections 1, 2, 5, 6, 7, 8, 13 and surviving old-premise statements
   boundary: independently isolated native development; whole coupled execution-owner transfer per node after parity and real rollback; standalone Bun preserved
+parity_r2_amendment:
+  task: T-11816
+  task_slug: parity-plan-r2
+  revision: 7aa89563
+  proposal: docs/proposals/hrc-rust-parity.md
+  status: design approved by Daedalus 2026-10-25 on EN-35271; Lance's go to arm N0 remains separate
+  replaces: r1 P0-P8 work map and frozen inventory qualification, not the M1 ownership boundary
+  boundary: current-main coverage and N0-N6 product workflows; no implementation or activation grade implied
 predicate: >
   HRC embeds cardo-runtime as a library and retains ownership of its durable
   store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
@@ -163,16 +171,37 @@ predicate: >
   Bun-owned. Native scratch initialization uses canonical Bun machinery;
   unknown or incomplete schemas refuse. A Rust canonical migration runner
   is test-only until separately authorized for production.
-  P0 inventories exact/computed/pattern routes, aliases/refusals, protocols,
-  schema/repositories, direct tools, exports, jobs and files, mapped to cases
-  and downstream owners. Inventory closure is separate from mandatory real
-  Bun baseline and full parity. Missing, empty, skipped, baseline-failed or
-  fixture-only cases do not pass. Native qualification requires the Bun
-  daemon unavailable for its subject; facade success is not native parity.
-  P1-P6 and P7 build independent native behavior under reviewed component
-  contracts and prerequisite grades. Ordinary Bun changes refresh source
-  inventory and real baseline tuples before affected native requalification.
-  P8 separately reviews whole-owner activation/rollback: admission closes,
+  R2 replaces the frozen source-hash inventory with a coverage report
+  regenerated from current main at each gate. Exact/computed/pattern main
+  routes, peer/registry/ingest routes, CLI commands and recurring jobs map
+  to a passing case, a named gap or a listed explicitly unsupported case.
+  Schema, repositories, direct tools and external consumers retain their
+  compatibility obligations in migration section 6; discovery is not a
+  behavior pass, and a named gap remains unqualified behavior. N0 removes
+  the frozen inventory/schema pins and their otherwise unused exported
+  HrcCompiledRuntimePlanRecord and HrcLifecyclePolicyRecord types, retains
+  cases.json and the nine mandatory runner workflows pruned of deleted
+  surface, establishes the real installed Bun scratch baseline and proves
+  a deliberately broken subject fails. Missing, empty, skipped,
+  baseline-failed or fixture-only cases do not pass. Native qualification
+  requires the Bun daemon unavailable for its subject; facade success is
+  not native parity.
+  N0 precedes N1 native store/daemon foundation, N2 broker turns/recovery,
+  N3 messages/streams, N4 surviving federation/operations/native kernel,
+  then N6 whole-node handoff. N5 rusthrc starts after N1 and qualifies
+  commands as their daemon packages land. Packages close on the submitted
+  three-to-five real workflows through the existing socket-parameterized
+  conformance runner against Bun and Rust scratch subjects. Mable grades
+  runner artifacts and git; package designs return to Daedalus when they
+  depart from this plan. Ordinary Bun changes refresh current-main coverage
+  and the real baseline before affected native requalification. N4 includes
+  whatever federation surface survives T-11712's ruled deletions.
+  R2 excludes deleted main surface, older-than-paired Bun fallback releases,
+  split writers, production Rust migration authority and mechanism races
+  with no broker/client product path. This does not change the existing
+  state-model or ownership invariants. Fixed performance budgets remain
+  unsupported; N4 records resource use and latency for Lance's ruling.
+  N6 separately reviews whole-owner activation/rollback: admission closes,
   pending work settles or records durable uncertainty, old ingress,
   controllers, credentials, jobs and publishers relinquish control before
   the replacement starts. Preserve surviving brokers, generation, sequence,
@@ -206,8 +235,17 @@ authority: >
   recorded with T-11527; no runtime parity is implied by design approval.
   Daedalus approval of T-11538 kernel-surrogate-ledger-recovery policy,
   task specification etag 4 submitted in EN-34147, 2026-10-23.
+  Lance's 2026-10-25 restart-from-main ruling as recorded in T-11816 and
+  EN-35271; Daedalus source-review approval of parity r2 at 7aa89563,
+  submitted in EN-35271, 2026-10-25. Arming N0 remains Lance's decision;
+  design approval does not grade N0 or N1 behavior.
 source:
   - docs/proposals/hrc-rust-parity.md
+  - commit:7aa89563
+  - wrkq:T-11816
+  - wrkc:EN-35271
+  - conformance/hrc-parity/run.py
+  - contract/hrc-parity/cases.json
   - docs/proposals/hrc-rust-parity/state-audit.md
   - docs/proposals/hrc-rust-parity/operations-audit.md
   - wrkq:T-11527
@@ -302,11 +340,11 @@ validation_scope: >
   delivery. Canonical install and authorized activation remain separate from
   live acceptance: cursor advancement beyond the poison row to current head
   and prompt fresh-seat projection. These gates are not claimed passed here.
-  Stage 2 requires P0 executable inventory closure, real standalone Bun
+  Stage 2 requires N0 generated coverage closure, real standalone Bun
   baseline, discriminating missing-route/field/duplicate-effect/wrong-owner
   controls, explicit downstream gaps and isolated real ASP/wrkq/broker
   evidence. Component gates require both-implementation compatibility and
-  native ownership discriminators. P8 requires forward/reverse same-history
+  native ownership discriminators. N6 requires forward/reverse same-history
   owner transfer with one executor for every ingress/controller/job and
   named compatible Bun fallback. Worktree checks, canonical installed
   acceptance and independent grading remain separate. These are future
@@ -358,6 +396,13 @@ last_verified: >
   replay-before records cursor 3101357 with source_unavailable on row 3101358;
   this is requester evidence, not a test run by the reviewer. No builds,
   tests, installs or service operations were run; recovery remains unverified.
+  2026-10-25 parity r2 at 7aa89563 approved by reading the plan, migration
+  proposal, active records, runner/cases and current route, claim-lock,
+  broker projection/ACK, lifecycle append-hub and shutdown code. The new
+  work map preserves whole-owner transfer and state semantics; current-main
+  coverage replaces frozen pins and Mable grades product workflows. No
+  builds, tests, installs or service operations were run; N0-N6 gates remain
+  unverified. T-11712's federation deletions remain in flight, not assumed.
 reopen_when: >
   Migration authority, repository or release boundaries, execution ownership or
   rollback completeness, schema ownership, stage prerequisites, page coverage
