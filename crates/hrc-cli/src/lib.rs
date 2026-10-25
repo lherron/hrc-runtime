@@ -44,6 +44,17 @@ impl Error {
 }
 pub(crate) type Result<T> = std::result::Result<T, Error>;
 
+/// Record a native daemon invocation for its whole process lifetime. Daemon
+/// HTTP accounting belongs to the server and is independent of this CLI record.
+pub fn begin_invocation(args: &[String]) {
+    let surface = serde_json::from_str(include_str!("../surface.json")).expect("CLI declaration");
+    metrics::begin(args, &surface);
+}
+
+pub fn finish_invocation(exit_code: i32) {
+    metrics::finish(exit_code);
+}
+
 pub fn run(args: Vec<String>) -> i32 {
     if args == ["--version"] {
         metrics::begin(&args, &Value::Null);

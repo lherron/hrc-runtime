@@ -104,7 +104,8 @@ def main():
     if args.runtime_root:
         metric_args += ['--runtime-root', str(args.runtime_root.resolve())]
     metrics = subprocess.run(metric_args, cwd=ROOT)
-    return int(bool(report['fail']) or status.returncode != 0 or passthrough.returncode != 0 or metrics.returncode != 0)
+    daemon = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/daemon_entrypoints.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'daemon-entrypoints')], cwd=ROOT)
+    return int(bool(report['fail']) or any(p.returncode != 0 for p in (status, passthrough, metrics, daemon)))
 
 
 if __name__ == '__main__':

@@ -19,8 +19,8 @@
     },
     {
       "command": "admin broker-verify candidates",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "admin broker-verify run",
@@ -34,8 +34,8 @@
     },
     {
       "command": "admin events drain",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "admin metrics",
@@ -44,13 +44,13 @@
     },
     {
       "command": "admin metrics report",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "admin metrics routes",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "admin runs",
@@ -59,8 +59,8 @@
     },
     {
       "command": "admin runs reconcile-active",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "admin runs recover-unstarted",
@@ -69,8 +69,8 @@
     },
     {
       "command": "admin runs sweep-zombies",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "admin runtime",
@@ -119,8 +119,8 @@
     },
     {
       "command": "admin worktrees audit",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "admin worktrees prune",
@@ -184,8 +184,8 @@
     },
     {
       "command": "info",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "ls",
@@ -304,8 +304,8 @@
     },
     {
       "command": "runtime prune",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "runtime send",
@@ -319,8 +319,8 @@
     },
     {
       "command": "runtime sweep",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "runtime terminate",
@@ -344,8 +344,8 @@
     },
     {
       "command": "server serve",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "server start",
@@ -364,8 +364,8 @@
     },
     {
       "command": "server subscribers",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "server tmux",
@@ -379,8 +379,8 @@
     },
     {
       "command": "server tmux status",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
     },
     {
       "command": "session",
