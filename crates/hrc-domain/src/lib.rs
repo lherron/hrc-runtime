@@ -8,6 +8,7 @@ pub mod projection;
 mod projection_json;
 pub mod projector;
 pub mod restart;
+pub mod send;
 pub mod summon;
 
 use cardo_core::{CoreEdit, Refusal, decode_core_edit};

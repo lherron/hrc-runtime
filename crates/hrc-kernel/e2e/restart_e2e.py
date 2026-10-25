@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from kernel_e2e import Wire
+from kernel_e2e import Wire, serve_empty_ledger
 from summon_e2e import raw
 
 
@@ -49,10 +49,7 @@ def main():
             self.wfile.write(data)
 
         def do_GET(self):
-            self.send_response(503)
-            self.send_header('Content-Length', '2')
-            self.end_headers()
-            self.wfile.write(b'{}')
+            serve_empty_ledger(self)
 
         def log_message(self, *_):
             pass

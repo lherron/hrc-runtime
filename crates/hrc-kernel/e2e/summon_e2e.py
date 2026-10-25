@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from kernel_e2e import Wire
+from kernel_e2e import Wire, serve_empty_ledger
 
 
 def raw(wire, op, args):
@@ -75,11 +75,7 @@ def main():
             self.wfile.write(data)
 
         def do_GET(self):
-            data = b'{"error":{"code":"unavailable"}}'
-            self.send_response(503)
-            self.send_header('Content-Length', str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            serve_empty_ledger(self)
 
         def log_message(self, *_):
             pass

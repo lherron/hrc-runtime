@@ -5,13 +5,17 @@ use crossbeam_channel::Sender;
 use hrc_domain::{
     api::HrcApi,
     restart::{self, Restart},
+    send::{self, SeatSend},
     summon::{self, Summon},
 };
 use serde_json::json;
 use std::{collections::BTreeSet, sync::Arc};
 
 fn owner_operation(operation: &str) -> bool {
-    matches!(operation, summon::OPERATION | restart::OPERATION)
+    matches!(
+        operation,
+        summon::OPERATION | restart::OPERATION | send::OPERATION
+    )
 }
 
 pub struct HrcAdapter {
@@ -71,6 +75,9 @@ impl DispatchAdapter for HrcAdapter {
             restart::OPERATION => {
                 Restart::parse(command.arguments.clone())?;
             }
+            send::OPERATION => {
+                SeatSend::parse(command.arguments.clone())?;
+            }
             _ => {
                 Summon::parse(command.arguments.clone())?;
             }
@@ -112,18 +119,19 @@ impl DispatchAdapter for HrcAdapter {
             return self.core.start_work(work, completion, executor);
         }
         let api = self.api.clone();
+        let refused = |e: DispatchFailure| ExecutorFailure {
+            code: e.code,
+            message: e.message,
+        };
         let run: Box<dyn FnOnce() -> Result<serde_json::Value, DispatchFailure> + Send> =
             if work.kind == restart::OPERATION {
-                let args = Restart::parse(work.input).map_err(|e| ExecutorFailure {
-                    code: e.code,
-                    message: e.message,
-                })?;
+                let args = Restart::parse(work.input).map_err(refused)?;
+                Box::new(move || args.run(&api))
+            } else if work.kind == send::OPERATION {
+                let args = SeatSend::parse(work.input).map_err(refused)?;
                 Box::new(move || args.run(&api))
             } else {
-                let args = Summon::parse(work.input).map_err(|e| ExecutorFailure {
-                    code: e.code,
-                    message: e.message,
-                })?;
+                let args = Summon::parse(work.input).map_err(refused)?;
                 Box::new(move || args.run(&api))
             };
         std::thread::spawn(move || {

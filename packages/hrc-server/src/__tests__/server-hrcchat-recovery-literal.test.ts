@@ -289,6 +289,72 @@ describe('hrcchat minimal server routes', () => {
     }
   })
 
+  it('refuses a literal send whose host session or generation fence is stale (T-11812)', async () => {
+    const tmux = new TmuxManager(ctx.fixture.tmuxSocketPath)
+    await tmux.initialize()
+
+    const scopeRef = 'agent:larry:project:agent-spaces:task:T-11812-fenced-literal'
+    const sessionRef = `${scopeRef}/lane:main`
+    const { hostSessionId, generation } = await ctx.fixture.resolveSession(scopeRef)
+    const pane = await tmux.ensurePane(hostSessionId, 'fresh_pty')
+    await setTmuxPanePrompt(tmux, pane.paneId, 'hrc-test> ', 'HRC_FENCED_LITERAL_PROMPT_READY')
+    const timestamp = ctx.fixture.now()
+
+    const db = openHrcDatabase(ctx.fixture.dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId: `rt-fenced-literal-${Date.now()}`,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'tmux',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        tmuxJson: pane,
+        supportsInflightInput: false,
+        lastActivityAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    } finally {
+      db.close()
+    }
+
+    for (const fences of [
+      { expectedHostSessionId: hostSessionId, expectedGeneration: generation + 1 },
+      { expectedHostSessionId: 'hsid-successor', expectedGeneration: generation },
+    ]) {
+      const stale = await ctx.fixture.postJson('/v1/literal-input/by-selector', {
+        selector: { sessionRef },
+        text: 'must not land',
+        enter: true,
+        fences,
+      })
+      expect(stale.status).toBe(409)
+      expect((await stale.json()).error.code).toBe('stale_context')
+    }
+
+    const res = await ctx.fixture.postJson('/v1/literal-input/by-selector', {
+      selector: { sessionRef },
+      text: 'fenced send lands',
+      enter: true,
+      fences: { expectedHostSessionId: hostSessionId, expectedGeneration: generation },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ delivered: true, hostSessionId, generation })
+
+    let captured = ''
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await Bun.sleep(50)
+      captured = await tmux.capture(pane.paneId)
+      if (captured.includes('fenced send lands')) break
+    }
+    expect(captured).toContain('fenced send lands')
+    expect(captured).not.toContain('must not land')
+  })
+
   it('routes split literal sends for broker tmux runtimes through broker input', async () => {
     const scopeRef = 'agent:literal-live-broker:project:agent-spaces'
     const sessionRef = `${scopeRef}/lane:main`

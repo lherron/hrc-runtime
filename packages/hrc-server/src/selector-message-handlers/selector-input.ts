@@ -2,9 +2,11 @@ import { randomUUID } from 'node:crypto'
 
 import {
   HrcBadRequestError,
+  HrcConflictError,
   HrcErrorCode,
   HrcNotFoundError,
   HrcRuntimeUnavailableError,
+  validateFence,
 } from 'hrc-core'
 import type {
   CaptureBySelectorResponse,
@@ -15,6 +17,7 @@ import type {
 } from 'hrc-core'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper.js'
 import { normalizeTargetLane } from '../messages.js'
+import { parseFenceInput } from '../parsers/common.js'
 import {
   participantDeliveryUnavailable,
   resolveParticipantDelivery,
@@ -175,6 +178,16 @@ export async function handleLiteralInputBySelector(
     throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
       sessionRef,
     })
+  }
+  // A fenced send to a seat that rotated must refuse, not land in the successor.
+  if (body['fences'] !== undefined) {
+    const fence = validateFence(parseFenceInput(body['fences']), {
+      activeHostSessionId: session.hostSessionId,
+      generation: session.generation,
+    })
+    if (!fence.ok) {
+      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, fence.message, fence.detail)
+    }
   }
 
   const participant = resolveParticipantDelivery(this, session)

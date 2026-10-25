@@ -43,6 +43,25 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
 
+# An empty, caught-up HRC ledger. The kernel announces ready only once its first
+# load lands, so an owner-op fixture serves this rather than refusing reads.
+EMPTY_READS = {
+    '/v1/events/page': dict(ledgerIncarnationId='ledger-1', head=0, rows=[], scannedThrough=0),
+    '/v1/events/latest-by-session': [],
+    '/v1/sessions': [],
+    '/v1/presentation/runtimes': dict(ok=True, runtimes=[]),
+}
+
+
+def serve_empty_ledger(handler):
+    value = EMPTY_READS.get(handler.path.split('?')[0])
+    data = json.dumps(value if value is not None else dict(error=dict(code='unavailable'))).encode()
+    handler.send_response(503 if value is None else 200)
+    handler.send_header('Content-Length', str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', required=True)

@@ -120,6 +120,7 @@ impl HrcApi {
     pub fn post_owner(&self, route: &str, body: &Value) -> Result<Value, ApiError> {
         if ![
             "/v1/declarations/resolve",
+            "/v1/literal-input/by-selector",
             "/v1/runtimes/start",
             "/v1/sessions/restart",
         ]

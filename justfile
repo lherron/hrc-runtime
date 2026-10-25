@@ -169,6 +169,7 @@ cargo-check:
     python3 crates/hrc-kernel/e2e/surrogate_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-surrogate-e2e-$(date +%s)-$$}/surrogate"
     python3 crates/hrc-kernel/e2e/summon_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-summon-e2e-$(date +%s)-$$}/summon"
     python3 crates/hrc-kernel/e2e/restart_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-restart-e2e-$(date +%s)-$$}/restart"
+    python3 crates/hrc-kernel/e2e/send_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-send-e2e-$(date +%s)-$$}/send"
 
 # -- Ephemeral development environment (T-06896) -----------------------------
 #
