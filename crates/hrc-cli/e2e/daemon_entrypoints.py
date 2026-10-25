@@ -31,7 +31,7 @@ def main():
         env.update(HRC_STATE_DIR=str(root / 'source-state'), HRC_RUNTIME_DIR=str(root / 'source-run'))
         source = root / 'source.sqlite'
         subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts"; openHrcDatabase(process.argv[1]).close()', str(source)], cwd=ROOT, env=env, check=True, capture_output=True)
-        for argv in (['server'], ['server', 'serve']):
+        for argv in (['server'], ['server', 'serve'], ['--agent', 'server', 'serve'], ['server', 'serve', '--human']):
             case = root / '-'.join(argv)
             state = case / 'state'
             state.mkdir(parents=True)
@@ -56,7 +56,7 @@ def main():
             good = listening and proc.returncode == 0 and not stdout and len(records) == 1
             if good:
                 r = records[0]
-                good = (r['bin'], r['cmd'], r['exitCode'], r['pid'], r['stdoutBytes'], r['rpc']) == ('rusthrc', ' '.join(argv), 0, proc.pid, 0, []) and r['durMs'] >= 0
+                good = (r['bin'], r['cmd'], r['exitCode'], r['pid'], r['stdoutBytes'], r['rpc']) == ('rusthrc', ' '.join(a for a in argv if not a.startswith('--')), 0, proc.pid, 0, []) and r['durMs'] >= 0
             results.append(dict(argv=argv, listening=listening, exit=proc.returncode, stdout=stdout.decode(), records=records, **{'pass': good}))
     report = dict(cases=results, **{'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results)})
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')

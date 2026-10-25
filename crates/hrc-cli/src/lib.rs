@@ -45,6 +45,14 @@ impl Error {
 }
 pub(crate) type Result<T> = std::result::Result<T, Error>;
 
+/// The native daemon owns these action paths. Help and rejected arguments still
+/// pass through the ordinary CLI parser so they cannot accidentally start it.
+pub fn is_daemon_invocation(args: &[String]) -> bool {
+    let surface = serde_json::from_str(include_str!("../surface.json")).expect("CLI declaration");
+    parse::parse(&surface, args)
+        .is_ok_and(|p| !p.help && ["server", "server serve"].contains(&p.path().as_str()))
+}
+
 /// Record a native daemon invocation for its whole process lifetime. Daemon
 /// HTTP accounting belongs to the server and is independent of this CLI record.
 pub fn begin_invocation(args: &[String]) {
