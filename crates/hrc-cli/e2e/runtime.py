@@ -58,6 +58,14 @@ def main():
             cases.append(['show', selector] + flags)
     for command in (['session', 'list', '--porcelain'], ['session', 'list', '--all'], ['runtime', 'list', '--scope', 'scope:' + scope], ['runtime', 'list', '--all-nodes'], ['runtime', 'list', '--all-nodes', '--json'], ['ls', 'messages'], ['runtime', 'inspect', rid, '--probe', '--json']):
         cases.append(command)
+    for command in (['session', 'get'], ['session', 'meta', 'get']):
+        for selector in (host, 'host:' + host, scope, 'scope:' + scope, 'session:' + ref, ref, 'tabularasa@hrc-runtime:n5-11819-acceptance', 'hsid-missing', 'host:hsid-missing', rid, 'runtime:' + rid, 'msg:missing', 'seq:1', 'wat:foo'):
+            cases.append(command + [selector])
+    for selector in (host, 'host:' + host, 'scope:' + scope, 'session:' + ref, 'runtime:' + rid, 'hsid-missing'):
+        cases.append(['session', 'get', selector, '--live'])
+    cases.extend([['admin', 'status'], ['admin', 'status', '--json']])
+    for flags in (['--since', '1d'], ['--since', '0s'], ['--since', 'bad'], ['--all', '--since', 'bad']):
+        cases.append(['session', 'list', '--porcelain'] + flags)
     results = []
     bun = shutil.which("bun")
     for argv in cases:

@@ -90,7 +90,7 @@
     {
       "command": "admin status",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "admin surface",
@@ -395,7 +395,7 @@
     {
       "command": "session get",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "session list",
@@ -415,7 +415,7 @@
     {
       "command": "session meta get",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "session meta set",
