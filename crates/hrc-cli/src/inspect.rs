@@ -353,3 +353,217 @@ pub(crate) fn federation(report: &Value) -> String {
     }
     lines.join("\n") + "\n"
 }
+
+pub(crate) fn skew_constraint(skew: &Value) -> String {
+    match skew["kind"].as_str().unwrap_or_default() {
+        "pin-vs-binding" => format!(
+            "pin \"{}\" = {}",
+            field(skew, "pinKey"),
+            field(skew, "pinnedNodeId")
+        ),
+        "task-default-vs-binding" => format!(
+            "task-default \"{}\" = {}",
+            field(skew, "taskKey"),
+            field(skew, "taskDefaultNodeId")
+        ),
+        "default-home-vs-binding" => {
+            format!("default_home_node = {}", field(skew, "defaultHomeNodeId"))
+        }
+        _ => "undefined".into(),
+    }
+}
+pub(crate) fn location(v: &Value) -> String {
+    let mut lines = vec![
+        format!("scope:      {}", field(v, "scopeRef")),
+        format!(
+            "this node:  {} (gate: {})",
+            field(v, "localNodeId"),
+            field(v, "gateMode")
+        ),
+        String::new(),
+    ];
+    let declared = &v["declared"];
+    let source = declared["source"].as_str().unwrap_or_default();
+    let description = match source {
+        "pin" => format!(
+            "pin \"{}\" = {}",
+            field(declared, "pinKey"),
+            field(declared, "nodeId")
+        ),
+        "pin-invalid" => format!(
+            "pin \"{}\" = {} (INVALID)",
+            field(declared, "pinKey"),
+            field(declared, "rawValue")
+        ),
+        "task-default" => format!(
+            "task-default \"{}\" = {}",
+            field(declared, "taskKey"),
+            field(declared, "nodeId")
+        ),
+        "task-default-invalid" => format!(
+            "task-default \"{}\" = {} (INVALID)",
+            field(declared, "taskKey"),
+            field(declared, "rawValue")
+        ),
+        "default_home_node" => format!("default_home_node = {}", field(declared, "nodeId")),
+        "default_home_node(local)" => format!(
+            "default_home_node = \"local\" -> {}",
+            field(declared, "nodeId")
+        ),
+        "none" => "none declared".into(),
+        "unavailable" => "unavailable".into(),
+        _ => "unrecognized".into(),
+    };
+    lines.push(format!("declared:   {description}"));
+    if let Some(path) = declared.get("profilePath") {
+        lines.push(format!("            {}", text(Some(path))));
+    }
+    if ["unavailable", "none", "pin-invalid", "task-default-invalid"].contains(&source) {
+        lines.push(format!("            {}", field(declared, "detail")));
+    }
+    let authority = &v["authority"];
+    let description = match authority["state"].as_str().unwrap_or_default() {
+        "bound" => format!(
+            "{}{}",
+            field(&authority["record"], "homeNodeId"),
+            if authority["isLocal"] == true {
+                " (this node)"
+            } else {
+                ""
+            }
+        ),
+        "unbound" => "unbound (no binding established yet)".into(),
+        "unknown" => format!("UNKNOWN — {}", field(authority, "detail")),
+        _ => "unrecognized".into(),
+    };
+    lines.push(format!("authority:  {description}"));
+    if authority["state"] == "bound" {
+        lines.push(format!(
+            "            source: {}",
+            field(authority, "source")
+        ));
+    }
+    let ledger = &v["ledger"];
+    lines.push(format!(
+        "ledger:     {}",
+        if ledger["state"] == "absent" {
+            "no row on this node".into()
+        } else {
+            format!(
+                "{} -> {}",
+                field(ledger, "state"),
+                field(&ledger["record"], "homeNodeId")
+            )
+        }
+    ));
+    let registry = &v["registry"];
+    lines.push(format!(
+        "registry:   {}",
+        match registry["outcome"].as_str().unwrap_or_default() {
+            "bound" => format!("bound -> {}", field(&registry["record"], "homeNodeId")),
+            "unbound" => "unbound".into(),
+            _ => format!(
+                "{} — {}",
+                field(registry, "outcome"),
+                field(registry, "detail")
+            ),
+        }
+    ));
+    if let Some(d) = v.get("designation").filter(|d| !d.is_null()) {
+        let record = &d["record"];
+        lines.push(format!(
+            "designation:{}",
+            match d["outcome"].as_str().unwrap_or_default() {
+                "designated" => format!(
+                    " {} ({}, epoch {})",
+                    field(record, "homeNodeId"),
+                    field(record, "provenance"),
+                    field(record, "designationEpoch")
+                ),
+                "superseded" => format!(
+                    " {} SUPERSEDED by {}",
+                    field(record, "homeNodeId"),
+                    fallback(record, "supersededBy", "a declared tier")
+                ),
+                "none" => " none".into(),
+                _ => format!(" {} — {}", field(d, "outcome"), field(d, "detail")),
+            }
+        ));
+        if ["designated", "superseded"]
+            .iter()
+            .any(|s| d["outcome"] == *s)
+        {
+            lines.push(format!(
+                "            follows {} via {}",
+                field(record, "senderScopeRef"),
+                field(record, "birthEnvelopeId")
+            ));
+        }
+    }
+    let observed = &v["observed"];
+    lines.push(format!(
+        "observed:   {} (local-node truth only)",
+        if observed["runtimeCount"] == 0 {
+            format!("no runtimes on {}", field(observed, "nodeId"))
+        } else {
+            format!(
+                "{} runtime(s) on {}",
+                field(observed, "runtimeCount"),
+                field(observed, "nodeId")
+            )
+        }
+    ));
+    let runtime_lines = |o: &Value| {
+        list(o, "runtimes")
+            .iter()
+            .map(|r| {
+                format!(
+                    "            {}  {}  {}",
+                    field(r, "runtimeId"),
+                    field(r, "laneRef"),
+                    field(r, "status")
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    lines.extend(runtime_lines(observed));
+    if let Some(peer) = v.get("peerResolution") {
+        if peer["state"] == "answered" {
+            let observed = &peer["location"]["observed"];
+            lines.push(format!(
+                "peer:       {} answered {} in {}ms; {} runtime(s) observed on {}",
+                field(peer, "nodeId"),
+                field(peer, "answeredAt"),
+                field(peer, "latencyMs"),
+                field(observed, "runtimeCount"),
+                field(observed, "nodeId")
+            ));
+            lines.extend(runtime_lines(observed));
+        } else {
+            lines.push(format!(
+                "peer:       {} {} (checked {}, {}ms) — {}",
+                field(peer, "nodeId"),
+                field(peer, "state").to_uppercase(),
+                field(peer, "checkedAt"),
+                field(peer, "latencyMs"),
+                field(peer, "detail")
+            ));
+        }
+    }
+    if let Some(skew) = v.get("skew") {
+        lines.push(String::new());
+        lines.push("!! SKEW".into());
+        lines.extend(field(skew, "detail").split('\n').map(|l| format!("   {l}")));
+    }
+    let notes = list(v, "notes")
+        .into_iter()
+        .filter(|n| n["code"] != "pin-honored")
+        .collect::<Vec<_>>();
+    if !notes.is_empty() {
+        lines.push(String::new());
+        for note in notes {
+            lines.push(format!("note: {}", field(&note, "detail")));
+        }
+    }
+    lines.join("\n") + "\n"
+}

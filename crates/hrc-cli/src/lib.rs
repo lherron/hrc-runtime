@@ -15,6 +15,7 @@ mod inspect;
 mod metrics;
 mod parse;
 mod passthrough;
+mod scope;
 mod selectors;
 mod server_status;
 

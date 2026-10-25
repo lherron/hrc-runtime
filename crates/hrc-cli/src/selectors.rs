@@ -24,7 +24,7 @@ const HOST_FORMS: &str = "host-session selectors: raw hostSessionId, host:<hostS
 fn invalid(raw: &str, message: impl std::fmt::Display) -> Error {
     Error::usage(format!("invalid selector \"{raw}\": {message}"))
 }
-fn token(value: &str, label: &str) -> std::result::Result<(), String> {
+pub(crate) fn token(value: &str, label: &str) -> std::result::Result<(), String> {
     let n = value.encode_utf16().count();
     if !(1..=64).contains(&n) {
         return Err(format!("{label} must be 1..64 characters, got {n}"));
@@ -39,7 +39,7 @@ fn token(value: &str, label: &str) -> std::result::Result<(), String> {
     }
     Ok(())
 }
-fn validate_scope(scope: &str) -> std::result::Result<(), String> {
+pub(crate) fn validate_scope(scope: &str) -> std::result::Result<(), String> {
     let p = scope.split(':').collect::<Vec<_>>();
     if p.len() < 2 || p[0] != "agent" {
         return Err("ScopeRef must start with \"agent:<agentId>\"".into());

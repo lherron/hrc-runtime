@@ -5,6 +5,91 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
     let path = args.path();
     match path.as_str() {
         "server status" => crate::server_status::command(args),
+        "target locate" => {
+            let raw = &args.positionals[0];
+            let qualified = crate::scope::Qualified::parse(raw, false).map_err(|e| {
+                Error::usage(format!(
+                    "could not resolve \"{raw}\" to a scope: {}",
+                    e.message
+                ))
+            })?;
+            let location = Daemon::connect()?.get(
+                "/v1/federation/locate",
+                &[("scopeRef".into(), qualified.scope)],
+            )?;
+            if args.flag("json") {
+                print_json(&location);
+            } else {
+                crate::cli_print!("{}", crate::inspect::location(&location));
+            }
+            if location.get("skew").is_some() && args.flag("fail-on-skew") {
+                crate::finish_invocation(1);
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        "target bindings" => {
+            let report = Daemon::connect()?.get("/v1/federation/bindings", &[])?;
+            if args.flag("json") {
+                print_json(&report);
+                return Ok(());
+            }
+            crate::cli_println!(
+                "node: {}  federation: {}",
+                text(&report["localNodeId"]),
+                if report["federationConfigured"] == true {
+                    text(&report["gateMode"])
+                } else {
+                    "not configured"
+                }
+            );
+            crate::cli_println!(
+                "bindings: {}  skewed: {}  policy-unreadable: {}",
+                report["scan"]["scanned"],
+                report["scan"]["skewed"]
+                    .as_array()
+                    .map(Vec::len)
+                    .unwrap_or(0),
+                report["scan"]["unreadable"]
+                    .as_array()
+                    .map(Vec::len)
+                    .unwrap_or(0)
+            );
+            for finding in report["scan"]["skewed"].as_array().into_iter().flatten() {
+                crate::cli_println!(
+                    "  SKEW {}: {} vs established {}",
+                    text(&finding["scopeRef"]),
+                    crate::inspect::skew_constraint(&finding["skew"]),
+                    text(&finding["skew"]["boundNodeId"])
+                );
+            }
+            Ok(())
+        }
+        "peek" => {
+            let client = Daemon::connect()?;
+            let mut qualified = crate::scope::Qualified::parse(&args.positionals[0], true)?;
+            qualified.observe(&client)?;
+            let raw = args.value("lines").unwrap_or("80").trim_start();
+            let sign = if raw.starts_with('-') { -1 } else { 1 };
+            let raw = raw.strip_prefix(['-', '+']).unwrap_or(raw);
+            let digits = raw.bytes().take_while(u8::is_ascii_digit).count();
+            let lines = raw[..digits]
+                .parse::<i64>()
+                .ok()
+                .and_then(|n| n.checked_mul(sign));
+            let result = client.post("/v1/capture/by-selector",json!({"selector":{"sessionRef":format!("{}/lane:{}",qualified.scope,qualified.lane)},"lines":lines}))?;
+            if args.flag("json") {
+                print_json(&result);
+            } else {
+                let text = text(&result["text"]);
+                crate::cli_print!("{text}");
+                if !text.ends_with('\n') {
+                    crate::cli_println!("");
+                }
+            }
+            Ok(())
+        }
+
         "runtime list" => runtime_list(args),
         "show" => show(args),
         "ls" => match args.positionals[0].as_str() {
