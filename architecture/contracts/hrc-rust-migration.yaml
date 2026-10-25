@@ -246,8 +246,7 @@ source:
   - wrkc:EN-35271
   - conformance/hrc-parity/run.py
   - contract/hrc-parity/cases.json
-  - docs/proposals/hrc-rust-parity/state-audit.md
-  - docs/proposals/hrc-rust-parity/operations-audit.md
+  - commit:d5f9c555
   - wrkq:T-11527
   - wrkc:EN-33680
   - docs/proposals/hrc-rust-migration.md

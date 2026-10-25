@@ -23,7 +23,7 @@ These were sound, are approved (EN-33646), and stay:
 
 ## Surface on main at r2
 
-92 exact routes on the main socket (`packages/hrc-server/src/server-exact-routes.ts`; r1 counted 112), plus pattern routes, 18 peer routes, 6 registry routes and 1 ingest route. hrc-server is about 95k lines of non-test TypeScript, hrc-cli 27k and hrc-store-sqlite 21k. r1's source audits in `hrc-rust-parity/` are snapshots of the surface before the cleanup. They are kept as the evidence behind EN-33646, not as the r2 inventory. Federation scope is not final: T-11712 is producing a list of federation routes and code to delete, and N4's scope is whatever survives it.
+92 exact routes on the main socket (`packages/hrc-server/src/server-exact-routes.ts`; r1 counted 112), plus pattern routes, 18 peer routes, 6 registry routes and 1 ingest route. hrc-server is about 95k lines of non-test TypeScript, hrc-cli 27k and hrc-store-sqlite 21k. r1's source audits (`hrc-rust-parity/{state,operations}-audit.md`, commit d5f9c555) described the surface before the cleanup. They are the evidence behind EN-33646 and are retired from the tree; read them from that commit. Federation scope is not final: T-11712 is producing a list of federation routes and code to delete, and N4's scope is whatever survives it.
 
 ## Packages
 
