@@ -3,6 +3,7 @@
 mod client;
 mod commands;
 mod parse;
+mod passthrough;
 mod server_status;
 
 use serde_json::Value;
@@ -64,36 +65,47 @@ pub fn run(args: Vec<String>) -> i32 {
         serde_json::from_str(include_str!("../surface.json")).expect("CLI declaration");
     let json_errors = args.windows(2).any(|a| a == ["--output", "json"])
         || args.iter().any(|a| a == "--output=json");
-    let result = parse::parse(&surface, &args).and_then(|parsed| {
-        if parsed.help
-            || args.is_empty()
-            || parsed.node["children"]
-                .as_array()
-                .is_some_and(|a| !a.is_empty())
-        {
-            let human = parsed.flag("human")
-                || (!parsed.flag("agent")
-                    && ["ASP_AGENT_ID", "AGENT_ID", "HRC_SESSION_REF"]
-                        .iter()
-                        .all(|k| std::env::var(k).unwrap_or_default().trim().is_empty())
-                    && std::io::IsTerminal::is_terminal(&std::io::stdout()));
-            let help = parsed.node[if human { "humanHelp" } else { "help" }]
-                .as_str()
-                .unwrap_or_default();
-            if args.is_empty() {
-                eprint!("{help}");
-                return Ok(2);
+    let parsed = parse::parse(&surface, &args);
+    // Parse only to select an already implemented native command. Postponed
+    // commands (including their help/grammar failures) receive the original argv.
+    let native = passthrough::native_intent(&args)
+        || parsed
+            .as_ref()
+            .is_ok_and(|p| passthrough::NATIVE_COMMANDS.contains(&p.path().as_str()));
+    let result = if !native {
+        passthrough::exec(&args)
+    } else {
+        parsed.and_then(|parsed| {
+            if parsed.help
+                || args.is_empty()
+                || parsed.node["children"]
+                    .as_array()
+                    .is_some_and(|a| !a.is_empty())
+            {
+                let human = parsed.flag("human")
+                    || (!parsed.flag("agent")
+                        && ["ASP_AGENT_ID", "AGENT_ID", "HRC_SESSION_REF"]
+                            .iter()
+                            .all(|k| std::env::var(k).unwrap_or_default().trim().is_empty())
+                        && std::io::IsTerminal::is_terminal(&std::io::stdout()));
+                let help = parsed.node[if human { "humanHelp" } else { "help" }]
+                    .as_str()
+                    .unwrap_or_default();
+                if args.is_empty() {
+                    eprint!("{help}");
+                    return Ok(2);
+                }
+                if parsed.help {
+                    print!("{help}");
+                } else {
+                    eprint!("{help}");
+                }
+                return Ok(0);
             }
-            if parsed.help {
-                print!("{help}");
-            } else {
-                eprint!("{help}");
-            }
-            return Ok(0);
-        }
-        commands::execute(&parsed)?;
-        Ok(0)
-    });
+            commands::execute(&parsed)?;
+            Ok(0)
+        })
+    };
     match result {
         Ok(code) => code,
         Err(error) => {
