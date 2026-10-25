@@ -132,3 +132,17 @@ pub(crate) fn runtime_root() -> PathBuf {
     PathBuf::from(env("TMPDIR").unwrap_or_else(|| "/tmp".into()))
         .join(format!("hrc-{}", unsafe { libc::getuid() }))
 }
+
+/// JavaScript encodeURIComponent semantics for IDs embedded in route paths.
+pub(crate) fn path_segment(value: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            write!(out, "%{byte:02X}").unwrap();
+        }
+    }
+    out
+}

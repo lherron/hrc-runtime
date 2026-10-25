@@ -1,0 +1,476 @@
+{
+  "sourceTask": "T-11820",
+  "decision": "Lance 2026-10-25: observed route plus confirmed exact CLI use",
+  "commands": [
+    {
+      "command": "",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin broker-verify",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin broker-verify candidates",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin broker-verify run",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin events",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin events drain",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin metrics",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin metrics report",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin metrics routes",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin runs",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin runs reconcile-active",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin runs recover-unstarted",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin runs sweep-zombies",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin runtime",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin runtime ensure",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin runtime prune",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin status",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "admin surface",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin surface bind",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "admin surface list",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin surface unbind",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin worktrees",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin worktrees audit",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "admin worktrees prune",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "attach",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "capture",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "capture recover",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "capture release",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "capture status",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "doctor",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "federation",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "federation retire",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "index",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "index rebuild",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "index status",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "info",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "ls",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "monitor",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "monitor events",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "monitor search",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "monitor session-report",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "monitor show",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "monitor stats",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "monitor transcript",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "monitor wait",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "monitor watch",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "peek",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "restart",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "restartme",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "resume",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "run",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "run annotate",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "run export",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "runtime",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "runtime capture",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "runtime diagnostics",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "runtime inspect",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "runtime interrupt",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "runtime list",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "runtime prune",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "runtime send",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "runtime status",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "runtime sweep",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "runtime terminate",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "send",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "server",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "server restart",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "server serve",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "server start",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "server status",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "server stop",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "server subscribers",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "server tmux",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "server tmux kill",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "server tmux status",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "session",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "session drop-continuation",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "session get",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "session list",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "session meta",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "session meta clear",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "session meta get",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "session meta set",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "session resolve",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "session retitle",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "session rotate",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "show",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "start",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "summon",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "target",
+      "disposition": "POSTPONED",
+      "implementation": "bun"
+    },
+    {
+      "command": "target bindings",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "target locate",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    },
+    {
+      "command": "turn",
+      "disposition": "IMPLEMENT",
+      "implementation": "pending"
+    }
+  ]
+}

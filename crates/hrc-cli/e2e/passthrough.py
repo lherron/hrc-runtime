@@ -39,7 +39,7 @@ def main():
         link = root / 'rusthrc'
         link.symlink_to(native)
         env = dict(os.environ, HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'), NO_COLOR='1', FORCE_COLOR='0', HRC_METRICS='0')
-        cases = [['session', 'list', '--json'], ['session', 'resolve'], ['runtime', 'status', 'rt-missing', '--json'], ['run', 'export', 'run-missing'], ['run', 'annotate', 'run-missing', '-'], ['admin', 'metrics', 'report', '--json'], ['index', 'status', '--json']]
+        cases = [['session', 'meta', 'set'], ['capture', 'release'], ['runtime', 'prune', '--wat'], ['run', 'export', 'run-missing'], ['run', 'annotate', 'run-missing', '-'], ['admin', 'metrics', 'report', '--json'], ['index', 'status', '--json']]
         for argv in cases:
             observed = []
             for command in (['bun', str(args.oracle.resolve())], [str(link)]):
@@ -70,6 +70,19 @@ def main():
             value = {}
         good = child.returncode == 37 and err == 'forwarded stderr\n' and value == dict(pid=child.pid, argv=[str(native.resolve().parents[1] / 'packages/hrc-cli/bin/hrc.js'), 'run', 'annotate', 'literal $(not shell)', '-'], stdin='exact stdin\n')
         results.append(dict(case='exec identity and literal argv/stdin/stderr/exit', subject=dict(exit=child.returncode, stdout=out, stderr=err), **{'pass': good}))
+        scope = json.loads((ROOT / 'crates/hrc-cli/command-scope.json').read_text())
+        for command in scope['commands']:
+            if command['disposition'] != 'POSTPONED' or command['command'] == 'server':
+                continue  # bare rusthrc server is N1's native engine entrypoint
+            argv = command['command'].split()
+            child = subprocess.Popen([str(link)] + argv, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            out, err = child.communicate('postponed stdin\n', timeout=10)
+            try:
+                value = json.loads(out)
+            except json.JSONDecodeError:
+                value = {}
+            good = child.returncode == 37 and value == dict(pid=child.pid, argv=[str(native.resolve().parents[1] / 'packages/hrc-cli/bin/hrc.js')] + argv, stdin='postponed stdin\n') and err == 'forwarded stderr\n'
+            results.append(dict(case='postponed exact path exec', argv=argv, subject=dict(exit=child.returncode, stdout=out, stderr=err), **{'pass': good}))
     report = dict(cases=results, **{'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results)})
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))

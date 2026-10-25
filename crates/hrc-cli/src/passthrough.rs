@@ -2,23 +2,61 @@
 use crate::{Error, Result};
 use std::{os::unix::process::CommandExt, path::PathBuf, process::Command};
 
-pub(crate) const NATIVE_COMMANDS: &[&str] = &["server status", "runtime list", "runtime inspect"];
+pub(crate) fn native_command(path: &str) -> bool {
+    let scope: serde_json::Value = serde_json::from_str(include_str!("../command-scope.json"))
+        .expect("command scope declaration");
+    scope["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c["command"] == path && c["implementation"] == "native")
+}
 
 /// Identify the native command even when its argument parser refuses input, so
 /// implemented commands' grammar errors do not acquire a Bun dependency.
-pub(crate) fn native_intent(args: &[String]) -> bool {
+pub(crate) fn native_intent(surface: &serde_json::Value, args: &[String]) -> bool {
+    let mut node = surface;
     let mut index = 0;
     while let Some(arg) = args.get(index) {
         match arg.as_str() {
-            "--agent" | "--human" => index += 1,
-            "--output" => index += 2,
-            _ if arg.starts_with("--output=") => index += 1,
-            _ => break,
+            "--agent" | "--human" => {
+                index += 1;
+                continue;
+            }
+            "--output" => {
+                index += 2;
+                continue;
+            }
+            _ if arg.starts_with("--output=") => {
+                index += 1;
+                continue;
+            }
+            _ => {}
         }
+        let child = node["children"].as_array().and_then(|children| {
+            children.iter().find(|c| {
+                c["name"] == *arg
+                    || c["aliases"]
+                        .as_array()
+                        .is_some_and(|a| a.iter().any(|v| v == arg))
+            })
+        });
+        let Some(child) = child else {
+            break;
+        };
+        node = child;
+        index += 1;
     }
-    args.get(index)
-        .zip(args.get(index + 1))
-        .is_some_and(|(a, b)| NATIVE_COMMANDS.contains(&format!("{a} {b}").as_str()))
+    let path = node["path"]
+        .as_array()
+        .map(|p| {
+            p.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    native_command(&path)
 }
 
 fn script() -> Result<PathBuf> {

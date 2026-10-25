@@ -6,9 +6,14 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
     match path.as_str() {
         "server status" => crate::server_status::command(args),
         "runtime list" => runtime_list(args),
+        "show" => show(args),
         "ls" => match args.positionals[0].as_str() {
             "runtimes" => runtime_list(args),
             "sessions" => session_list(args),
+            "messages" => {
+                print_json(&Daemon::connect()?.post("/v1/messages/query", json!({}))?["messages"]);
+                Ok(())
+            }
             noun => Err(Error::usage(format!(
                 "unknown ls noun \"{noun}\"; accepted: runtimes | sessions | messages"
             ))),
@@ -27,7 +32,11 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
             Ok(())
         }
         "runtime status" => {
-            let id = &args.positionals[0];
+            let id = crate::selectors::runtime(
+                &args.positionals[0],
+                &Daemon::connect()?,
+                args.flag("latest"),
+            )?;
             let result =
                 Daemon::connect()?.post("/v1/runtimes/inspect", json!({"runtimeId":id}))?;
             if args.flag("json") {
@@ -48,7 +57,7 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
         }
         "runtime inspect" => {
             let client = Daemon::connect()?;
-            let id = &args.positionals[0];
+            let id = crate::selectors::runtime(&args.positionals[0], &client, args.flag("latest"))?;
             let hrc = client.post("/v1/runtimes/inspect", json!({"runtimeId":id}))?;
             let mut body = json!({"runtimeId":id});
             if args.flag("probe") {
@@ -59,9 +68,13 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
                 print_json(&json!({"hrc":hrc,"broker":broker}));
                 Ok(())
             } else {
-                Err(Error::failure(
-                    "runtime inspect human renderer is pending N5 implementation",
-                ))
+                print!(
+                    "runtime inspect {id}\n\nHRC authority (source: HRC runtime store)\n{}\nBroker authority (source: {})\n{}",
+                    crate::inspect::runtime(&hrc),
+                    text(&broker["source"]),
+                    crate::inspect::broker(&broker)
+                );
+                Ok(())
             }
         }
         _ => Err(Error::failure(format!(
@@ -72,7 +85,7 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
 fn text(value: &Value) -> &str {
     value.as_str().unwrap_or("undefined")
 }
-fn capture(value: Option<&Value>) -> String {
+pub(crate) fn capture(value: Option<&Value>) -> String {
     let Some(value) = value else {
         return "(unavailable)".into();
     };
@@ -120,7 +133,24 @@ fn runtime_list(args: &Parsed<'_>) -> Result<()> {
         ("task", "task"),
     ] {
         if let Some(value) = args.value(key) {
-            query.push((param.into(), value.into()));
+            if value.is_empty() {
+                continue;
+            }
+            let value = if key == "scope" {
+                crate::selectors::scope_filter(value)?
+            } else if key == "status" {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            } else {
+                value.into()
+            };
+            if !value.is_empty() {
+                query.push((param.into(), value));
+            }
         }
     }
     if let Some(value) = args.value("session") {
@@ -139,9 +169,8 @@ fn runtime_list(args: &Parsed<'_>) -> Result<()> {
             print_json(&report);
             return Ok(());
         }
-        return Err(Error::failure(
-            "federated human renderer is pending N5 implementation",
-        ));
+        print!("{}", crate::inspect::federation(&report));
+        return Ok(());
     }
     query.push(("limit".into(), "500".into()));
     let mut runtimes = Vec::new();
@@ -186,10 +215,89 @@ fn session_list(args: &Parsed<'_>) -> Result<()> {
     }
     let sessions = Daemon::connect()?.get("/v1/sessions", &query)?;
     if args.flag("porcelain") {
-        return Err(Error::failure(
-            "session porcelain renderer is pending N5 implementation",
-        ));
+        for session in sessions.as_array().into_iter().flatten() {
+            println!(
+                "{}\t{}\t{}\tg{}\t{}\t{}\t{}",
+                text(&session["hostSessionId"]),
+                text(&session["scopeRef"]),
+                text(&session["laneRef"]),
+                session["generation"],
+                text(&session["status"]),
+                text(&session["createdAt"]),
+                text(&session["updatedAt"])
+            );
+        }
+        return Ok(());
     }
     print_json(&sessions);
+    Ok(())
+}
+
+fn show(args: &Parsed<'_>) -> Result<()> {
+    use crate::selectors::{Snapshot, Target};
+    let client = Daemon::connect()?;
+    match Snapshot::fetch(&client)?.show(&args.positionals[0], &client)? {
+        Target::Runtime(id) => {
+            let mut value = client.post("/v1/runtimes/inspect", json!({"runtimeId":id}))?;
+            if args.flag("json") {
+                value["kind"] = "runtime".into();
+                value["runtimeId"] = id.into();
+                print_json(&value);
+            } else {
+                print!("kind: runtime\n{}", crate::inspect::runtime(&value));
+            }
+        }
+        Target::Host(id) => {
+            let mut value = client.get(
+                &format!("/v1/sessions/by-host/{}", crate::client::path_segment(&id)),
+                &[],
+            )?;
+            if args.flag("json") {
+                value["kind"] = "host-session".into();
+                value["hostSessionId"] = id.into();
+                print_json(&value);
+            } else {
+                println!("kind: host-session\nhostSessionId: {id}");
+                print_json(&value);
+            }
+        }
+        target @ (Target::Message(_) | Target::Sequence(_)) => {
+            let messages = client.post("/v1/messages/query", json!({}))?;
+            let message = messages["messages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|m| match &target {
+                    Target::Message(id) => m["messageId"] == *id,
+                    Target::Sequence(seq) => m["messageSeq"] == *seq,
+                    _ => false,
+                });
+            let Some(message) = message else {
+                let name = match target {
+                    Target::Message(id) => id,
+                    Target::Sequence(seq) => format!("seq:{seq}"),
+                    _ => unreachable!(),
+                };
+                return Err(Error::usage(format!("no message found for {name}")));
+            };
+            if args.flag("json") {
+                let mut v = message.clone();
+                v["messageKind"] = message["kind"].clone();
+                v["kind"] = "message".into();
+                v["seq"] = message["messageSeq"].clone();
+                print_json(&v);
+            } else {
+                println!(
+                    "message {}\n  kind          message\n  seq           {}\n  messageKind   {}\n  phase         {}\n  createdAt     {}\n  body          {}",
+                    text(&message["messageId"]),
+                    message["messageSeq"],
+                    text(&message["kind"]),
+                    text(&message["phase"]),
+                    text(&message["createdAt"]),
+                    text(&message["body"])
+                );
+            }
+        }
+    }
     Ok(())
 }

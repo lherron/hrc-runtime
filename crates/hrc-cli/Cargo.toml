@@ -10,3 +10,4 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 reqwest.workspace = true
 libc = "0.2"
 hrc-store = { path = "../hrc-store" }
+chrono.workspace = true

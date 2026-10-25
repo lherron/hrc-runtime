@@ -80,6 +80,7 @@ def main():
         inventory_dir = args.artifacts / 'inventory'
         subprocess.run(['python3', str(ROOT / 'conformance/hrc-parity/run.py'), 'inventory', '--source-ref', 'HEAD', '--out', str(inventory_dir)], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
         coverage = json.loads((inventory_dir / 'coverage-report.json').read_text())
+    scope = json.loads((ROOT / 'crates/hrc-cli/command-scope.json').read_text())
     unsupported = []
     for item in coverage['items']:
         if item['target'] != 'GAP:N5':
@@ -89,7 +90,7 @@ def main():
             'partial execution cases; full flags/PTY/failure qualification pending N5' if command in supported
             else 'help/error cases only; execution implementation pending N5' if item['kind'] == 'cli-command'
             else 'implementation/qualification pending N5'})
-    report = {'normalization': NORMALIZATION, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'unsupported': unsupported}
+    report = {'commandScope': scope, 'normalization': NORMALIZATION, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'unsupported': unsupported}
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
     for r in results:

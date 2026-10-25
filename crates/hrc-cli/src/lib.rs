@@ -2,8 +2,10 @@
 //! execution, transport, parsing and rendering are Rust and need no JS runtime.
 mod client;
 mod commands;
+mod inspect;
 mod parse;
 mod passthrough;
+mod selectors;
 mod server_status;
 
 use serde_json::Value;
@@ -68,10 +70,10 @@ pub fn run(args: Vec<String>) -> i32 {
     let parsed = parse::parse(&surface, &args);
     // Parse only to select an already implemented native command. Postponed
     // commands (including their help/grammar failures) receive the original argv.
-    let native = passthrough::native_intent(&args)
+    let native = passthrough::native_intent(&surface, &args)
         || parsed
             .as_ref()
-            .is_ok_and(|p| passthrough::NATIVE_COMMANDS.contains(&p.path().as_str()));
+            .is_ok_and(|p| passthrough::native_command(&p.path()));
     let result = if !native {
         passthrough::exec(&args)
     } else {
