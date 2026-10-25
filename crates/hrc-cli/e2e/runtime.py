@@ -63,7 +63,7 @@ def main():
             cases.append(command + [selector])
     for selector in (host, 'host:' + host, 'scope:' + scope, 'session:' + ref, 'runtime:' + rid, 'hsid-missing'):
         cases.append(['session', 'get', selector, '--live'])
-    cases.extend([['admin', 'status'], ['admin', 'status', '--json']])
+    cases.extend([['admin', 'status'], ['admin', 'status', '--json'], ['--agent', 'runtime', 'list', '--json'], ['--agent', 'runtime', 'list', '--agent', 'tabularasa', '--json']])
     for flags in (['--since', '1d'], ['--since', '0s'], ['--since', 'bad'], ['--all', '--since', 'bad']):
         cases.append(['session', 'list', '--porcelain'] + flags)
     results = []

@@ -7,9 +7,13 @@ pub(crate) struct Parsed<'a> {
     pub options: BTreeMap<String, String>,
     pub positionals: Vec<String>,
     pub help: bool,
+    global_agent: bool,
 }
 impl Parsed<'_> {
     pub fn flag(&self, key: &str) -> bool {
+        if key == "agent" {
+            return self.global_agent;
+        }
         self.options.get(key).is_some_and(|v| v == "true")
     }
     pub fn value(&self, key: &str) -> Option<&str> {
@@ -32,6 +36,7 @@ pub(crate) fn parse<'a>(surface: &'a Value, args: &[String]) -> Result<Parsed<'a
         options: BTreeMap::new(),
         positionals: Vec::new(),
         help: false,
+        global_agent: false,
     };
     let mut index = 0;
     let mut literal = false;
@@ -91,7 +96,13 @@ pub(crate) fn parse<'a>(surface: &'a Value, args: &[String]) -> Result<Parsed<'a
                     ),
                 ));
             }
-            parsed.options.insert(key, value);
+            // The global presentation flag and runtime list's --agent <id>
+            // have distinct Commander owners despite sharing a spelling.
+            if key == "agent" && !takes_value {
+                parsed.global_agent = value == "true";
+            } else {
+                parsed.options.insert(key, value);
+            }
         } else if !literal && parsed.positionals.is_empty() {
             let child = parsed.node["children"]
                 .as_array()
