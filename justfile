@@ -165,6 +165,8 @@ cargo-check:
     cargo clippy --manifest-path crates/Cargo.toml --workspace --all-targets --locked -- -D warnings
     cargo test --manifest-path crates/Cargo.toml --workspace --locked
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-kernel
+    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native
+    python3 crates/hrc-native/e2e/foundation.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
     python3 crates/hrc-kernel/e2e/kernel_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-e2e-$(date +%s)-$$}"
     python3 crates/hrc-kernel/e2e/surrogate_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-surrogate-e2e-$(date +%s)-$$}/surrogate"
     python3 crates/hrc-kernel/e2e/summon_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-summon-e2e-$(date +%s)-$$}/summon"
