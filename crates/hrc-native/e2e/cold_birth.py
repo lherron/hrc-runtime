@@ -138,6 +138,8 @@ def main():
         status = command('native-status', ['hrc', 'server', 'status', '--json'])
         listed = command('native-runtime-list', ['hrc', 'runtime', 'list', '--json'])
         assert status['ok'] is True and any(r['runtimeId'] == runtime for r in listed)
+        refs_status, refs_raw = http('GET', '/v1/runtimes/live-refs')
+        assert refs_status == 200 and any(r['runtimeId'] == runtime for r in json.loads(refs_raw)['refs'])
         invocation = rows('SELECT * FROM broker_invocations WHERE runtime_id=?', (runtime,))[0]
         assert (invocation.get('last_projected_seq') or 0) == 0
         assert not rows("SELECT * FROM hrc_events WHERE run_id=? AND event_kind='turn.completed'", (first_run,))

@@ -1,14 +1,16 @@
 mod aspc;
 mod broker;
 mod compile;
+mod proxy;
 mod rpc;
+mod sessions;
 
 use anyhow::{Context, Result, bail};
 use axum::{
     Json, Router,
-    body::Bytes,
-    extract::{Query, State},
-    http::{Method, StatusCode, Uri},
+    body::to_bytes,
+    extract::{Query, Request, State},
+    http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
 };
 use hrc_store::{Store, timestamp};
@@ -30,6 +32,7 @@ struct Server {
     store: Mutex<Store>,
     brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
     runtime: PathBuf,
+    bun_passthrough: Option<PathBuf>,
     state: PathBuf,
     started_at: String,
     started: Instant,
@@ -92,13 +95,31 @@ pub async fn serve() -> Result<()> {
     );
     // Schema refusal precedes all filesystem effects, including ownership files.
     let store = Store::open(&state.join("state.sqlite"))?;
+    let bun_passthrough = env::var("HRC_BUN_PASSTHROUGH_SOCKET")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from);
+    if let Some(path) = &bun_passthrough {
+        if !path.is_absolute() {
+            bail!("HRC_BUN_PASSTHROUGH_SOCKET must be absolute");
+        }
+        if path == &runtime.join("hrc.sock") {
+            bail!("Bun pass-through socket must not be the native listener");
+        }
+    }
     let owner = Owner::acquire(&runtime)?;
     let listener = UnixListener::bind(&owner.socket)?;
+    if let Some(target) = &bun_passthrough
+        && target.canonicalize().ok() == owner.socket.canonicalize().ok()
+    {
+        bail!("Bun pass-through socket must not be the native listener");
+    }
     fs::set_permissions(&owner.socket, fs::Permissions::from_mode(0o600))?;
     let server = Arc::new(Server {
         store: Mutex::new(store),
         brokers: Mutex::new(HashMap::new()),
         runtime,
+        bun_passthrough,
         state,
         started_at: timestamp(),
         started: Instant::now(),
@@ -180,14 +201,32 @@ impl IntoResponse for ApiError {
         (self.status, Json(value)).into_response()
     }
 }
-async fn dispatch(
-    State(server): State<Shared>,
-    method: Method,
-    uri: Uri,
-    Query(query): Query<HashMap<String, String>>,
-    body: Bytes,
-) -> Response {
+async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
     let started = Instant::now();
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+    let headers = request.headers().clone();
+    if !implemented(&method, uri.path()) {
+        let response = proxy::forward(
+            server.bun_passthrough.as_deref(),
+            method.clone(),
+            uri.clone(),
+            headers,
+            request.into_body(),
+        )
+        .await
+        .unwrap_or_else(IntoResponse::into_response);
+        log_request(&method, uri.path(), response.status(), started);
+        return response;
+    }
+    let query = match Query::<HashMap<String, String>>::try_from_uri(&uri) {
+        Ok(Query(query)) => query,
+        Err(error) => return error.into_response(),
+    };
+    let body = match to_bytes(request.into_body(), usize::MAX).await {
+        Ok(body) => body,
+        Err(_) => return ApiError::bad("request body must be valid JSON", None).into_response(),
+    };
     let result = if method == Method::GET && uri.path() == "/v1/status" {
         match status(&server, &query) {
             Ok(mut value) => {
@@ -217,14 +256,40 @@ async fn dispatch(
             Err(e) => Err(e),
         }
     } else {
-        handle(&server, &method, uri.path(), &query, &body)
+        handle(&server, &method, uri.path(), &query, &body, &headers)
     };
     let response = result.unwrap_or_else(IntoResponse::into_response);
+    log_request(&method, uri.path(), response.status(), started);
+    response
+}
+fn log_request(method: &Method, path: &str, status: StatusCode, started: Instant) {
     eprintln!(
         "{}",
-        json!({"ts":timestamp(),"level":"info","component":"server","event":"http.request","data":{"method":method.as_str(),"path":uri.path(),"listener":"main","status":response.status().as_u16(),"durationMs":started.elapsed().as_secs_f64()*1000.0}})
+        json!({"ts":timestamp(),"level":"info","component":"server","event":"http.request","data":{"method":method.as_str(),"path":path,"route":path,"listener":"main","status":status.as_u16(),"durationMs":started.elapsed().as_secs_f64()*1000.0}})
     );
-    response
+}
+fn implemented(method: &Method, path: &str) -> bool {
+    (*method == Method::GET
+        && ([
+            "/v1/status",
+            "/v1/health",
+            "/v1/sessions",
+            "/v1/sessions/get",
+            "/v1/sessions/metadata",
+            "/v1/runtimes",
+            "/v1/runtimes/live-refs",
+        ]
+        .contains(&path)
+            || path.starts_with("/v1/sessions/by-host/")))
+        || (*method == Method::POST
+            && [
+                "/v1/sessions/resolve",
+                "/v1/turns",
+                "/v1/placements/resolve",
+                "/v1/declarations/resolve",
+            ]
+            .contains(&path))
+        || (*method == Method::PATCH && path == "/v1/sessions/metadata")
 }
 fn parse_body(body: &[u8]) -> std::result::Result<Value, ApiError> {
     serde_json::from_slice(body).map_err(|_| ApiError::bad("request body must be valid JSON", None))
@@ -252,7 +317,11 @@ fn handle(
     path: &str,
     query: &HashMap<String, String>,
     body: &[u8],
+    headers: &HeaderMap,
 ) -> std::result::Result<Response, ApiError> {
+    if let Some(response) = sessions::handle(server, method, path, query, body, headers)? {
+        return Ok(response);
+    }
     // Keep unimplemented families indistinguishable from Bun unknown routes.
     if method == Method::GET && path == "/v1/health" {
         return Ok(Json(json!({"ok":true})).into_response());
@@ -331,25 +400,57 @@ fn handle(
                     == s["generation"].as_i64().unwrap()
             });
         }
-        if let Some(status) = query.get("status") {
+        if let Some(status) = query.get("status").filter(|v| !v.trim().is_empty()) {
+            if status != "active" && status != "archived" {
+                return Err(ApiError::bad(
+                    "status must be one of active, archived",
+                    Some(json!({"field":"status","value":status})),
+                ));
+            }
             sessions.retain(|s| s["status"] == *status);
         }
-        if let Some(limit) = query.get("limit") {
-            let n = limit.parse::<usize>().map_err(|_| {
+        if let Some(limit) = query.get("limit").filter(|s| !s.trim().is_empty()) {
+            let number = limit
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|v| v.is_finite() && v.fract() == 0.0 && *v >= 1.0);
+            let n = number.ok_or_else(|| {
                 ApiError::bad(
-                    "limit must be a positive integer",
+                    "limit must be an integer >= 1",
                     Some(json!({"field":"limit","value":limit})),
                 )
             })?;
-            sessions.truncate(n);
+            sessions.truncate(n as usize);
         }
         for s in &mut sessions {
             s["identity"] = db.identity(
                 s["scopeRef"].as_str().unwrap(),
                 s["laneRef"].as_str().unwrap(),
             )?;
+            let metadata = db.metadata(
+                s["scopeRef"].as_str().unwrap(),
+                hrc_store::storage_lane(s["laneRef"].as_str().unwrap()),
+            )?;
+            if let Some(title) = metadata["metadata"].get("title").filter(|v| v.is_string()) {
+                s["title"] = title.clone();
+            }
         }
-        return Ok(Json(json!(sessions)).into_response());
+        let total = db.count("sessions")?;
+        let mut response = Json(json!(sessions)).into_response();
+        for (key, value) in [
+            ("x-hrc-session-total", total),
+            ("x-hrc-session-returned", sessions.len() as i64),
+            (
+                "x-hrc-session-withheld",
+                (total - sessions.len() as i64).max(0),
+            ),
+        ] {
+            response
+                .headers_mut()
+                .insert(key, value.to_string().parse().unwrap());
+        }
+        return Ok(response);
     }
     if method == Method::GET && path.starts_with("/v1/sessions/by-host/") {
         let host = path.trim_start_matches("/v1/sessions/by-host/");
@@ -361,7 +462,22 @@ fn handle(
             s["scopeRef"].as_str().unwrap(),
             s["laneRef"].as_str().unwrap(),
         )?;
+        s["metadata"] = db.metadata(
+            s["scopeRef"].as_str().unwrap(),
+            hrc_store::storage_lane(s["laneRef"].as_str().unwrap()),
+        )?["metadata"]
+            .clone();
+        if let Some(title) = s["metadata"]
+            .get("title")
+            .filter(|v| v.is_string())
+            .cloned()
+        {
+            s["title"] = title;
+        }
         return Ok(Json(s).into_response());
+    }
+    if method == Method::GET && path == "/v1/runtimes/live-refs" {
+        return Ok(Json(json!({"refs":server.store.lock().unwrap().live_refs()?})).into_response());
     }
     if method == Method::GET && path == "/v1/runtimes" {
         let db = server.store.lock().unwrap();

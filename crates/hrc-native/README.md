@@ -18,8 +18,12 @@ notifications remain unACKed for Bun recovery. Startup reattaches these durable
 brokers after checking their release and endpoint roots. Existing-seat turns
 name N2 in the unknown-route refusal.
 
-Claims, participant registration, complete admission/error semantics and the
-remaining N1 routes are still in progress; this does not claim N1 parity. Direct-store readers use `Store::open_readonly`; the daemon uses
+Session continuity and layered metadata reads/writes now preserve Bun lane
+formatting, validation, source precedence, lifecycle events and idempotent writes.
+Session lists expose the same count headers and resolved title. Live refs read
+the committed runtime ledger. Participants, complete admission/error semantics
+and remaining observed-use N1 routes are still in progress; this does not claim
+N1 parity. Direct-store readers use `Store::open_readonly`; the daemon uses
 `Store::open`.
 
 Schema admission extracts migration names from the checked-out Bun migration
@@ -56,3 +60,14 @@ python3 crates/hrc-native/e2e/cold_birth.py --binary crates/target/debug/rusthrc
   --aspd-socket /Users/lherron/praesidium/var/aspd/run/aspd.sock \
   --scratch-root /tmp/hrcn1-fresh --artifacts /tmp/hrcn1-results
 ```
+
+Set `HRC_BUN_PASSTHROUGH_SOCKET` to an absolute Unix socket path to forward
+unimplemented routes to a separately managed Bun listener. Rust preserves the
+request method, URI, headers and streaming body, and relays response status,
+headers and body without buffering live responses. It never launches Bun.
+Without this setting, unimplemented routes return the ordinary 404. N1 tests
+use separate native/Bun state roots; N6 owns the serve-only production design.
+
+`e2e/passthrough.py` drives that separate-state workflow against the named Bun
+copy, including large requests, malformed JSON, query strings, postponed N1
+routes and a live bounded-event stream.

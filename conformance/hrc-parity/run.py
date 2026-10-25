@@ -530,6 +530,12 @@ def validate_case_observations(id, observations, checks, status=None, installed_
 
 
 def compare(args, checks):
+    if getattr(args, 'suite', None) == 'n1-routes':
+        from n1_routes import compare as compare_n1_routes
+        return compare_n1_routes(args, checks)
+    if getattr(args, 'suite', None) == 'n1-passthrough':
+        from n1_routes import compare_passthrough
+        return compare_passthrough(args, checks)
     a, b = Path(args.baseline), Path(args.candidate)
     baseline = json.loads((a / 'summary.json').read_text())
     candidate = json.loads((b / 'summary.json').read_text())
@@ -1275,7 +1281,7 @@ def coverage_report(observed, definitions):
         # requires an explicit plan reason allowlist here, not arbitrary prose.
         if target not in cases and target not in {'GAP:N' + str(i) for i in range(1, 7)}:
             target = None
-        items.append({**item, 'target': target})
+        items.append({**item, 'target': target, **({'reason': definitions['coverageReasons'][item['id']]} if item['id'] in definitions.get('coverageReasons', {}) else {})})
     counts = Counter({'GAP:N' + str(i): 0 for i in range(1, 7)})
     counts['UNSUPPORTED'] = 0
     counts.update(i['target'] or 'UNMAPPED' for i in items)

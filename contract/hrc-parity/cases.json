@@ -83,6 +83,24 @@
         "explicit-downstream-gaps"
       ],
       "requiredInP0": true
+    },
+    "n1-session-routes": {
+      "assertionIds": [
+        "sessions-read",
+        "metadata-write-read-clear",
+        "malformed-errors",
+        "metadata-effects"
+      ],
+      "requiredInP0": false
+    },
+    "n1-bun-passthrough": {
+      "assertionIds": [
+        "method-query-body-status-headers",
+        "live-stream",
+        "separate-stores",
+        "no-socket-refusal"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [
@@ -266,6 +284,30 @@
     "file:lifecycle-credentials": "GAP:N1",
     "file:broker-leases-raw-provider-artifacts": "GAP:N2",
     "file:session-publication-cursor": "GAP:N3",
-    "file:server-publication-cursor": "GAP:N3"
+    "file:server-publication-cursor": "GAP:N3",
+    "public:GET:/v1/sessions": "n1-session-routes",
+    "public:GET:/v1/sessions/by-host/:hostSessionId": "n1-session-routes",
+    "public:GET:/v1/sessions/get": "n1-session-routes",
+    "public:GET:/v1/sessions/metadata": "n1-session-routes",
+    "public:PATCH:/v1/sessions/metadata": "n1-session-routes",
+    "public:GET:/v1/runtimes/live-refs": "n1-session-routes",
+    "public:POST:/v1/surfaces/unbind": "n1-bun-passthrough",
+    "public:POST:/v1/runtimes/sweep": "n1-bun-passthrough",
+    "public:POST:/v1/runtimes/prune": "n1-bun-passthrough",
+    "public:POST:/v1/runtimes/ensure": "n1-bun-passthrough",
+    "public:POST:/v1/runtimes/attach": "n1-bun-passthrough",
+    "public:GET:/v1/targets": "n1-bun-passthrough",
+    "public:GET:/v1/surfaces": "n1-bun-passthrough",
+    "public:GET:/v1/placement/bindings": "n1-bun-passthrough"
+  },
+  "coverageReasons": {
+    "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
+    "public:POST:/v1/runtimes/sweep": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
+    "public:POST:/v1/runtimes/prune": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
+    "public:POST:/v1/runtimes/ensure": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
+    "public:POST:/v1/runtimes/attach": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
+    "public:GET:/v1/targets": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
+    "public:GET:/v1/surfaces": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
+    "public:GET:/v1/placement/bindings": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through."
   }
 }

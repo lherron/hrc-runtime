@@ -19,6 +19,8 @@ tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 libc = "0.2"
 sha2 = "0.10"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 
 [build-dependencies]
 serde_json.workspace = true

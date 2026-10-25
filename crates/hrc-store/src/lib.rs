@@ -9,6 +9,21 @@ use std::{collections::BTreeSet, path::Path, time::Duration};
 use uuid::Uuid;
 
 mod broker;
+mod metadata;
+pub use metadata::{MetadataWrite, validate_metadata};
+
+pub fn canonical_lane(lane: &str) -> String {
+    if lane == "main" || lane == "lane:main" {
+        "main".into()
+    } else if lane.starts_with("lane:") {
+        lane.into()
+    } else {
+        format!("lane:{lane}")
+    }
+}
+pub fn storage_lane(lane: &str) -> &str {
+    lane.strip_prefix("lane:").unwrap_or(lane)
+}
 
 include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
 
@@ -103,6 +118,7 @@ impl Store {
     }
 
     pub fn identity(&self, scope: &str, lane: &str) -> Result<Value> {
+        let lane = storage_lane(lane);
         Ok(self.sqlite.query_row("SELECT scope_kind,agent_id,project_id,task_id,role_name FROM continuities WHERE scope_ref=? AND lane_ref=?", params![scope,lane], |row| {
             let mut result = json!({"kind":row.get::<_,String>(0)?,"agentId":row.get::<_,String>(1)?});
             for (i,key) in [(2,"projectId"),(3,"taskId"),(4,"roleName")] {
@@ -147,6 +163,11 @@ impl Store {
                 .context("created session disappeared")?,
             true,
         ))
+    }
+
+    pub fn live_refs(&self) -> Result<Vec<Value>> {
+        let mut stmt=self.sqlite.prepare("SELECT scope_ref,lane_ref,runtime_id,host_session_id FROM runtimes WHERE status IN ('starting','ready','busy','awaiting_input','stopping') AND scope_ref LIKE 'agent:%' ORDER BY scope_ref,lane_ref,runtime_id")?;
+        Ok(stmt.query_map([],|r|Ok(json!({"scopeRef":r.get::<_,String>(0)?,"laneRef":r.get::<_,String>(1)?,"runtimeId":r.get::<_,String>(2)?,"hostSessionId":r.get::<_,String>(3)?})))?.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     pub fn runtimes(&self) -> Result<Vec<Value>> {
@@ -201,7 +222,7 @@ fn fields(
 }
 
 fn session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
-    fields(
+    let mut result = fields(
         row,
         &[
             ("host_session_id", "hostSessionId"),
@@ -216,7 +237,9 @@ fn session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
             ("last_applied_intent_json", "lastAppliedIntentJson"),
             ("continuation_json", "continuation"),
         ],
-    )
+    )?;
+    result["laneRef"] = canonical_lane(result["laneRef"].as_str().unwrap()).into();
+    Ok(result)
 }
 
 fn runtime_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {

@@ -164,3 +164,26 @@ The deliberate store fixture calls the installed canonical exported
 `createPlacementLedgerRepository(db.sqlite)` factory. It initializes the lazy
 placement ledger extension and records its side effect and row count. Fresh
 explicit-local daemon startup does not create this table.
+
+N1's finite session/metadata workflow also uses `compare`:
+
+```sh
+python3 conformance/hrc-parity/run.py compare --suite n1-routes \
+  --baseline /absolute/artifacts/bun --candidate /absolute/artifacts/native \
+  --out /absolute/artifacts/compare
+```
+
+`crates/hrc-native/e2e/routes.py` drives both real owners from the same
+Bun-created scratch snapshot and writes those observations. This suite compares
+full HTTP bodies, statuses, list headers and metadata lifecycle effects. It
+checks newly written metadata timestamps against the request interval and
+preserves their identity across subsequent reads. Shared snapshot timestamps
+and identities compare exactly. This suite does not qualify the nine P0
+workflows or full parity.
+
+`compare --suite n1-passthrough` compares the separate-state Bun proxy workflow
+from `crates/hrc-native/e2e/passthrough.py`. It requires every postponed N1 route,
+a nonempty Bun target response, and a live event-stream response. The workflow
+also verifies no-socket refusal, request-size transparency and separate stores.
+The observed-use route list is published under T-11820; postponed routes stay
+on Bun until use is confirmed.
