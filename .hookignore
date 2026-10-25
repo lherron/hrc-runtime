@@ -33,3 +33,5 @@ architecture/
 
 # Rust has its own cargo leg (.hookignore-cargo); no bun suite consumes it.
 /crates/
+# TypeScript generators under crates/ are code.
+!/crates/**/*.ts

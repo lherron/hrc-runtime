@@ -3,5 +3,9 @@ import { phase1Migrations } from '../../packages/hrc-store-sqlite/src/migrations
 
 await Bun.write(
   new URL('./migration-order.json', import.meta.url),
-  `${JSON.stringify(phase1Migrations.map((migration) => migration.id), null, 2)}\n`
+  `${JSON.stringify(
+    phase1Migrations.map((migration) => migration.id),
+    null,
+    2
+  )}\n`
 )
