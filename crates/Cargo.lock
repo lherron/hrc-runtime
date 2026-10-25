@@ -419,6 +419,7 @@ dependencies = [
 name = "hrc-cli"
 version = "0.1.0"
 dependencies = [
+ "hrc-store",
  "libc",
  "reqwest",
  "serde",

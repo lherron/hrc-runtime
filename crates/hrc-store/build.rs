@@ -34,6 +34,19 @@ fn main() {
         ids.len() > 100,
         "migration extraction must not silently be empty"
     );
+    // Declaration order matters to diagnostics even though admission compares sets.
+    // Regenerate with `bun crates/hrc-store/generate-migration-order.ts`.
+    println!("cargo:rerun-if-changed=migration-order.json");
+    let order = fs::read_to_string("migration-order.json").expect("migration order");
+    let ordered_ids = regex::Regex::new(r#""([0-9]{4}_[^"]+)""#)
+        .unwrap()
+        .captures_iter(&order)
+        .map(|c| c[1].to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        ordered_ids, ids,
+        "regenerate native migration order declaration"
+    );
     let source = format!(
         "pub const MIGRATIONS: &[&str] = &{:?};\n",
         ids.into_iter().collect::<Vec<_>>()

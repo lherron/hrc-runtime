@@ -28,6 +28,7 @@ def main():
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--oracle', type=Path, default=ROOT / 'packages/hrc-cli/bin/hrc.js')
     p.add_argument('--runtime-root', type=Path)
+    p.add_argument('--state-root', type=Path)
     p.add_argument('--inventory', type=Path)
     p.add_argument('--artifacts', type=Path, required=True)
     args = p.parse_args()
@@ -36,7 +37,9 @@ def main():
     if args.runtime_root:
         assert not str(args.runtime_root.resolve()).startswith(str(Path.home() / 'praesidium/var'))
         assert (args.runtime_root / 'hrc.sock').exists()
+        assert args.state_root, '--state-root is required with --runtime-root'
         env['HRC_RUNTIME_DIR'] = str(args.runtime_root.resolve())
+        env['HRC_STATE_DIR'] = str(args.state_root.resolve())
     surface = json.loads((ROOT / 'crates/hrc-cli/surface.json').read_text())
     cases = []
     for node in nodes(surface):
@@ -83,7 +86,11 @@ def main():
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
     for r in results:
         if not r['pass']: print('FAIL', r['case'])
-    return int(bool(report['fail']))
+    status_args = ['python3', str(ROOT / 'crates/hrc-cli/e2e/status.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'status')]
+    if args.runtime_root:
+        status_args += ['--runtime-root', str(args.runtime_root.resolve()), '--state-root', str(args.state_root.resolve())]
+    status = subprocess.run(status_args, cwd=ROOT)
+    return int(bool(report['fail']) or status.returncode != 0)
 
 
 if __name__ == '__main__':

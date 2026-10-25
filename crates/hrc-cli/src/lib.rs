@@ -3,6 +3,7 @@
 mod client;
 mod commands;
 mod parse;
+mod server_status;
 
 use serde_json::Value;
 

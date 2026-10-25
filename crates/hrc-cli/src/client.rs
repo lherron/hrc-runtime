@@ -7,7 +7,13 @@ pub(crate) struct Daemon {
     client: Client,
 }
 impl Daemon {
+    pub fn diagnostic() -> Result<Self> {
+        Self::with_timeout(Some(std::time::Duration::from_secs(5)))
+    }
     pub fn connect() -> Result<Self> {
+        Self::with_timeout(None)
+    }
+    fn with_timeout(timeout: Option<std::time::Duration>) -> Result<Self> {
         let socket = runtime_root().join("hrc.sock");
         if !socket.exists() {
             return Err(Error::failure(format!(
@@ -15,10 +21,11 @@ impl Daemon {
                 socket.display()
             )));
         }
-        let client = Client::builder()
-            .unix_socket(socket)
-            .build()
-            .map_err(|e| Error::failure(e.to_string()))?;
+        let mut builder = Client::builder().unix_socket(socket);
+        if let Some(timeout) = timeout {
+            builder = builder.timeout(timeout);
+        }
+        let client = builder.build().map_err(|e| Error::failure(e.to_string()))?;
         Ok(Self { client })
     }
     pub fn get(&self, path: &str, query: &[(String, String)]) -> Result<Value> {
@@ -65,9 +72,35 @@ impl Daemon {
                 if domain["detail"].is_null() {
                     domain["detail"] = serde_json::json!({});
                 }
+                if domain["code"] == "internal_error" {
+                    let bounded = |key: &str| {
+                        domain["detail"][key]
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty())
+                            .map(|v| {
+                                let mut text = v.chars().take(200).collect::<String>();
+                                if v.chars().count() > 200 {
+                                    text.push('…');
+                                }
+                                text
+                            })
+                    };
+                    let cause = bounded("cause")
+                        .map(|v| format!(": {v}"))
+                        .unwrap_or_default();
+                    let request = bounded("requestId")
+                        .map(|v| format!(" (requestId={v})"))
+                        .unwrap_or_default();
+                    domain["message"] = format!(
+                        "{} [internal_error]{cause}{request}",
+                        domain["message"].as_str().unwrap_or_default()
+                    )
+                    .into();
+                }
                 domain["usage"] = usage.into();
                 return Err(Error {
-                    message: String::new(),
+                    message: domain["message"].as_str().unwrap_or_default().to_owned(),
                     code: if usage { 2 } else { 1 },
                     domain: Some(domain),
                 });

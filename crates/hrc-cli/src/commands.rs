@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
     let path = args.path();
     match path.as_str() {
+        "server status" => crate::server_status::command(args),
         "runtime list" => runtime_list(args),
         "ls" => match args.positionals[0].as_str() {
             "runtimes" => runtime_list(args),

@@ -1,4 +1,7 @@
 //! Canonical HRC SQLite access. Bun owns migrations; native opens fail closed.
+mod schema_state;
+pub use schema_state::read_schema_state;
+
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::{Map, Value, json};
