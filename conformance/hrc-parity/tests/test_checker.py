@@ -46,7 +46,7 @@ class CheckerBehavior(unittest.TestCase):
         p.mkdir()
         status = json.loads(OBSERVED.read_text())
         data = {'schema': 1, 'claim': 'checker-control', 'complete': True,
-                'inventoryHash': 'same-source', 'status': status,
+                'coverageReportHash': 'same-source', 'status': status,
                 'cases': [{'id': 'cold-second-turn', 'status': 'PASS',
                            'assertions': [{'id': 'terminal', 'pass': True, 'validator': 'turn-evidence'}],
                            'evidence': ['events.json']}],
@@ -120,7 +120,7 @@ class CheckerBehavior(unittest.TestCase):
         self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
 
     def test_drifted_inventory_is_not_pass(self):
-        p = self.compare(lambda d: d.__setitem__('inventoryHash', 'different-source'))
+        p = self.compare(lambda d: d.__setitem__('coverageReportHash', 'different-source'))
         self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
 
     def test_empty_events_and_effects_fail(self):

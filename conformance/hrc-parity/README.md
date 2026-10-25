@@ -1,16 +1,16 @@
-# HRC P0 compatibility runner
+# HRC compatibility runner
 
-P0 freezes the Bun compatibility contract and exercises a real, isolated Bun
-subject. `rusthrc` is the future Rust CLI. The installed `hrc` remains Bun.
+N0 generates a coverage report from current main and exercises a real, isolated
+installed Bun subject. `rusthrc` is the future Rust CLI. The installed `hrc` remains Bun.
 The approved adoption records are `docs/proposals/hrc-rust-parity.md`,
 `docs/proposals/hrc-rust-migration.md` and its architecture contract.
 
 Run from this repository using Python 3.11+ and the workspace Bun dependencies:
 
 ```sh
-python3 conformance/hrc-parity/run.py inventory --source-ref HEAD --schema-db /absolute/scratch/state/state.sqlite --out /absolute/artifacts/inventory
+python3 conformance/hrc-parity/run.py inventory --source-ref HEAD --out /absolute/artifacts/inventory
 python3 conformance/hrc-parity/run.py controls --out /absolute/artifacts/controls
-python3 conformance/hrc-parity/profile.py --scratch-root /tmp/hrcp0-NAME --release-root /absolute/frozen/release --cli /absolute/frozen/release/packages/hrc-cli/src/cli.ts --asp-evidence /absolute/artifacts/asp-resolution.json --node p0-NAME --out /absolute/artifacts/profile.json
+python3 conformance/hrc-parity/profile.py --scratch-root /tmp/hrcp0-NAME --release-root /tmp/hrcp0-NAME/installed-copy --installed-release-root /absolute/installed/release --cli /tmp/hrcp0-NAME/installed-copy/packages/hrc-cli/src/cli.ts --asp-evidence /absolute/artifacts/asp-resolution.json --node p0-NAME --out /absolute/artifacts/profile.json
 python3 conformance/hrc-parity/run.py run --profile /absolute/artifacts/profile.json --out /absolute/artifacts/baseline
 python3 conformance/hrc-parity/run.py compare --baseline /absolute/artifacts/baseline --candidate /absolute/artifacts/candidate --out /absolute/artifacts/comparison
 ```
@@ -34,15 +34,21 @@ compares events/effects with an explicit bijection of allowed identity fields.
 The synthetic `checker-control` claim can test the checker but cannot qualify a
 baseline or full parity.
 
-Inventory completeness means the source extractor resolved its registrations
-and they equal the frozen inventory, including source hashes. It does not mean
-that every item passed behavior tests. Every inventory obligation retains an
-explicit GAP and downstream owner until that behavior is qualified. Full parity
-requires clearing all such gaps; the nine mandatory P0 workflows cannot be moved
-to downstream GAPs. A complete P0 Bun run is a compatibility baseline, not Rust
-parity. Frozen actual SQLite tables, columns, FKs, indexes and SQL objects live
-in `contract/hrc-parity/store-schema.json`; `--schema-db` compares an actual
-readonly store with that snapshot.
+`inventory` runs the source extractor at `--source-ref` (HEAD by default), then
+writes `coverage-report.json` and `summary.json`. Every discovered item has one
+`target`: a case id, `GAP:N1` through `GAP:N6`, or an explicitly unsupported plan
+reason. Current main has no UNSUPPORTED mappings. `cases.json` holds an ordered,
+first-match rule table and exact overrides; overrides win. Unknown kinds, unresolved
+source expressions, duplicate ids and invalid targets exit 2. Additions and removals
+are ordinary report changes. No generated report or schema snapshot is checked in.
+
+A case mapping is an obligation, not a behavioral PASS. Only `run` decides the case
+result. The nine mandatory workflows qualify a Bun compatibility baseline; named
+gaps remain for downstream packages. `compare` requires a nonempty identical hash
+of the generated report in both runs, so source changes require recapturing the
+baseline. Full parity additionally requires every report item to map to a passing
+case. Source hashes in discovery are provenance, never equality pins against a
+checked-in inventory. SQLite behavior is exercised on the real scratch store.
 
 ## Provision the real subject
 
@@ -104,12 +110,24 @@ then `runtimes/start` by host ID. Implicit provisioning requires federation
 placement enforcement; do not confuse that refusal with failure of this
 explicit local path. Local bounded reads use host/generation fences.
 
-Launch the exact frozen Bun CLI **in a new clean ghostmux terminal**, clearing
-harness markers in that terminal, as `bun /absolute/cli server serve`. Capture
-its PID in owner.pid and its JSON log in serve.log. Never use server start,
-launchd, installs or shared service restarts. The runner preflights real status,
-PID argv, destinations and fresh exact scope before mutations, and guards every
-mutating selector against the born scratch IDs. It cannot dispatch agent seats.
+Copy the selected installed release with `cp -R` into `scratchRoot/installed-copy`.
+Its parent must **not** be named `hrc-runtime-releases`: an atomic daemon can
+prune shared releases at startup. Record the original release id/sourceCommit
+from `praesidium-release.json`. Launch the copy's CLI **in a new clean ghostmux
+terminal**, clearing harness markers, as `bun /tmp/.../installed-copy/packages/hrc-cli/src/cli.ts server serve`.
+Capture its PID in owner.pid and its JSON log in serve.log. Never use server
+start, launchd, installs or shared service restarts. Pass `--installed-release-root` to `profile.py`; it records `installedReleaseRoot`
+(the original atomic directory) and `copiedReleaseRoot` in the generated profile.
+The runner hashes every file and symlink in both trees, binds the retained
+manifest, and requires the observed unmanaged owner paths to name the copy.
+This is installed-byte acceptance; it does not require an atomic status identity.
+The unavailable-authority owner must use that same copy. No release bytes change.
+
+The runner preflights real status, PID argv, destinations and fresh exact scope
+before mutations, and guards every mutating selector against the born scratch
+IDs. It cannot dispatch agent seats. Before and after running, retain warmup
+counts, runtime/broker leases and their paths; every attachment must belong to
+the fresh scratch subject, with no production broker rows or paths.
 
 The runner closes its followers and terminates only runtime IDs of its newly
 admitted exact scope, including successors discovered after a timed-out birth.
@@ -142,9 +160,7 @@ Stop only this owned PID, retain its exit and prove it disappeared. The runner
 reads these raw observations directly and binds installed negative-leg source
 identity to the successful subject's release. CLI refusal alone is insufficient.
 
-The deliberate store fixture also calls the installed canonical exported
+The deliberate store fixture calls the installed canonical exported
 `createPlacementLedgerRepository(db.sqlite)` factory. It initializes the lazy
-placement_ledger extension before complete-schema comparison, reporting that
-side effect and row count in its JSON artifact. Fresh explicit-local daemon
-startup does not create this table. The first installed run discovered this
-setup distinction and remains preserved; the schema requirement is retained.
+placement ledger extension and records its side effect and row count. Fresh
+explicit-local daemon startup does not create this table.

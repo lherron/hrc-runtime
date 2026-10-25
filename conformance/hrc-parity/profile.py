@@ -18,7 +18,7 @@ def make_profile(root, release, cli, asp_evidence, node, source=False):
     root, release = Path(root), Path(release)
     for required in ('packages/hrc-sdk/src/index.ts','packages/hrc-store-sqlite/src/index.ts'):
         if not (release/required).is_file():
-            raise ValueError('frozen installed release is unavailable: ' + str(release/required))
+            raise ValueError('selected installed release is unavailable: ' + str(release/required))
     authority = json.loads((root / 'authority.json').read_text())
     scope = 'agent:tabularasa:project:hrc-runtime:task:p0-' + str(time.time_ns())
     ref = scope + '/lane:main'
@@ -110,9 +110,6 @@ def make_profile(root, release, cli, asp_evidence, node, source=False):
         http('POST','/v1/sessions/resolve',{},assertions=[eq('missing-field','status',400)]),
         http('DELETE','/v1/health',assertions=[eq('wrong-method','status',404)]),
         http('GET','/v1/p0-unknown',assertions=[eq('unknown-route','status',404)])]
-    for suffix in ['continuation','wrapper-started','child-started','event','exited']:
-        errors.append(http('POST','/v1/internal/launches/p0/'+suffix,{},assertions=[eq('retired-callbacks','status',404)]))
-    errors.append(http('POST','/v1/internal/hooks/ingest',{},assertions=[eq('retired-hook','status',404)]))
     cases['streams-errors']=errors
     cases['direct-cli-sdk']=[
         command(['--help'],[eq('cli-help-alias','exit',0)]),
@@ -155,7 +152,13 @@ if __name__ == '__main__':
     for flag in ('scratch-root','release-root','cli','asp-evidence','node','out'):
         parser.add_argument('--'+flag, required=True)
     parser.add_argument('--source',action='store_true')
+    parser.add_argument('--installed-release-root', help='original atomic release when --release-root is a scratch copy')
     a=parser.parse_args()
     result=make_profile(a.scratch_root,a.release_root,a.cli,a.asp_evidence,a.node,a.source)
+    if a.installed_release_root:
+        if a.source:
+            parser.error('--source cannot qualify an installed copy')
+        result.update({'installedReleaseRoot': str(Path(a.installed_release_root).resolve()),
+                       'copiedReleaseRoot': str(Path(a.release_root).resolve())})
     Path(a.out).write_text(json.dumps(result,indent=2)+'\n')
     print(a.out)

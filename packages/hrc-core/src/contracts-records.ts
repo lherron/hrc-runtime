@@ -411,24 +411,6 @@ export type HrcBrokerInvocationState =
 
 export type HrcBrokerEventProjectionStatus = 'pending' | 'applied' | 'duplicate' | 'failed' | string
 
-export type HrcLifecyclePolicyRecord = {
-  policyId: string
-  lifecyclePolicyHash: string
-  canonicalPolicyJson: string
-  schemaVersion: string
-  createdAt: string
-}
-
-export type HrcCompiledRuntimePlanRecord = {
-  planHash: string
-  compileId: string
-  schemaVersion: string
-  compilerName: string
-  compilerVersion: string
-  planProjectionJson: string
-  createdAt: string
-}
-
 export type HrcRuntimeOperationRecord = {
   operationId: string
   runtimeId: string

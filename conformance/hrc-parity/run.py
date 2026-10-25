@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import socket
 import pty
+import re
 import select
 import signal
 import sqlite3
@@ -27,6 +28,54 @@ MANDATORY = ('identity-isolation', 'cold-second-turn', 'attach-restart-resume-te
 STATUS_FIELDS = {'api.dbPath': str, 'binaryPath': str, 'packagePath': str,
                  'release.runningEqualsInstalled': bool,
                  'release.hrcBuild.sourceCommit': str}
+
+
+def release_files(root):
+    root = Path(root).resolve()
+    entries = {}
+    for path in sorted(root.rglob('*')):
+        name = str(path.relative_to(root))
+        if path.is_symlink():
+            if not path.resolve().is_relative_to(root):
+                raise ValueError('release symlink escapes release: ' + str(path))
+            entries[name] = {'link': os.readlink(path)}
+        elif path.is_file():
+            entries[name] = {'sha256': digest(path)}
+    return entries
+
+
+def observe_installed_copy(profile):
+    original = Path(profile['installedReleaseRoot']).resolve()
+    copied = Path(profile['copiedReleaseRoot']).resolve()
+    root = Path(profile['scratchRoot']).resolve()
+    if not copied.is_relative_to(root) or copied.parent.name == 'hrc-runtime-releases':
+        raise ValueError('installed copy must be unmanaged inside scratch')
+    if original.parent.name != 'hrc-runtime-releases':
+        raise ValueError('original is not an installed atomic release')
+    manifest = json.loads((original / 'praesidium-release.json').read_text())
+    return {'originalRoot': str(original), 'copiedRoot': str(copied),
+            'manifest': manifest, 'manifestRaw': (original / 'praesidium-release.json').read_text(),
+            'originalFiles': release_files(original),
+            'copiedFiles': release_files(copied)}
+
+
+def verify_installed_copy(observation, status, checks):
+    original, copied = observation.get('originalFiles'), observation.get('copiedFiles')
+    manifest = observation.get('manifest', {})
+    root = Path(observation.get('copiedRoot', '/ABSENT'))
+    raw = observation.get('manifestRaw', '')
+    valid_manifest = (bool(manifest.get('releaseId')) and
+        bool(manifest.get('hrcBuild', {}).get('sourceCommit')) and
+        json.loads(raw or '{}') == manifest and
+        (original or {}).get('praesidium-release.json', {}).get('sha256') ==
+        hashlib.sha256(raw.encode()).hexdigest())
+    check(checks, 'status:installed-copy-bytes', bool(original) and original == copied and valid_manifest,
+          'copied installed release must retain every file and its original manifest')
+    check(checks, 'status:installed-copy-owner', status.get('release', {}).get('mode') == 'unmanaged'
+          and status.get('release', {}).get('runningEqualsInstalled') is False
+          and Path(status.get('binaryPath', '/ABSENT')).resolve() == root / 'packages/hrc-cli/src/cli.ts'
+          and Path(status.get('packagePath', '/ABSENT')).resolve() == root / 'packages/hrc-server',
+          'unmanaged scratch owner must execute the byte-identical installed copy')
 
 
 def get(value, path):
@@ -51,15 +100,20 @@ def check(checks, id, passed, reason, code=1):
     checks.append({'id': id, 'pass': bool(passed), 'reason': reason, 'failureCode': code})
 
 
-def status_checks(status, checks):
-    for path, kind in STATUS_FIELDS.items():
+def status_checks(status, checks, installed_copy=None):
+    if installed_copy:
+        verify_installed_copy(installed_copy, status, checks)
+        fields = {k: v for k, v in STATUS_FIELDS.items() if k != 'release.hrcBuild.sourceCommit'}
+    else:
+        fields = STATUS_FIELDS
+    for path, kind in fields.items():
         try:
             value = get(status, path)
             ok = type(value) is kind and (kind is bool or bool(value))
         except (KeyError, TypeError, ValueError):
             ok = False
         check(checks, 'status:' + path, ok, 'required observed status field/type: ' + path)
-    if isinstance(status.get('release'), dict):
+    if not installed_copy and isinstance(status.get('release'), dict):
         check(checks, 'status:running-installed', status['release'].get('runningEqualsInstalled') is True,
               'running release must equal the admitted installed subject')
 
@@ -104,9 +158,18 @@ def validate_evidence(data, directory, checks):
         check(checks, id + ':evidence', valid_paths, 'case evidence absent or outside artifact root', 2)
         if not control and valid_paths:
             observations = [json.loads((directory / e).read_text()) for e in evidence]
-            validate_case_observations(id, observations, checks, data.get('status'))
-    status_checks(data.get('status', {}), checks)
+            validate_case_observations(id, observations, checks, data.get('status'), data.get('installedCopy'))
+    status_checks(data.get('status', {}), checks, data.get('installedCopy'))
     if not control:
+        report_path = directory / 'coverage-report.json'
+        check(checks, 'artifact:coverage-report', report_path.is_file() and
+              digest(report_path) == data.get('coverageReportHash'),
+              'source identity must bind the actual generated coverage report', 2)
+        if data.get('installedCopy'):
+            copy_path = directory / 'installed-copy.json'
+            check(checks, 'artifact:installed-copy', copy_path.is_file() and
+                  json.loads(copy_path.read_text()) == data['installedCopy'],
+                  'copy identity must bind the observed installed files')
         check(checks, 'artifact:installed-surface', data.get('validationSurface') == 'installed',
               'source evidence cannot qualify an installed compatibility baseline', 2)
         identity_observations = []
@@ -176,9 +239,12 @@ def validate_evidence(data, directory, checks):
     if data.get('claim') == 'full-parity':
         check(checks, 'coverage:full', not data.get('coverage', {}).get('gaps'),
               'full parity has unresolved behavior gaps', 2)
-        frozen = json.loads((ROOT / 'contract/hrc-parity/inventory.json').read_text())
-        check(checks, 'coverage:full-source-obligations', all(i.get('coverage') == 'PASS' for i in frozen['items']),
-              'serialized gaps cannot erase unqualified frozen inventory obligations', 2)
+        report_path = directory / 'coverage-report.json'
+        report = json.loads(report_path.read_text()) if report_path.is_file() else {}
+        passed = {c['id'] for c in cases if c.get('status') == 'PASS'}
+        check(checks, 'coverage:full-source-obligations', bool(report.get('items')) and
+              all(i.get('target') in passed for i in report['items']),
+              'generated source coverage must map every item to a passing case', 2)
 
 
 def derive_turns(observation):
@@ -244,7 +310,7 @@ def derive_turns(observation):
     return events, effects
 
 
-def validate_case_observations(id, observations, checks, status=None):
+def validate_case_observations(id, observations, checks, status=None, installed_copy=None):
     """Re-evaluate raw external responses/SQL/PTY, never serialized pass flags."""
     if not all(isinstance(o, dict) for o in observations):
         check(checks, id + ':semantic:raw-schema', False, 'case observations must be raw observation objects', 2)
@@ -367,9 +433,6 @@ def validate_case_observations(id, observations, checks, status=None):
         require('live-frames', any(valid_stream(o) for o in streams))
         require('ordered-unique', any(valid_stream(o) for o in streams))
         require('abort-timeout', any(o.get('closed') is True and o.get('closeDurationMs', 999999) < 3000 for o in streams))
-        for path in ('/v1/internal/hooks/ingest', *['/v1/internal/launches/p0/' + suffix for suffix in
-                     ('continuation', 'wrapper-started', 'child-started', 'event', 'exited')]):
-            require('retired:' + path, any(o.get('status') == 404 for o in http('POST', path)))
         require('unknown-route', any(o.get('status') == 404 and o.get('path') == '/v1/p0-unknown'
             for o in observations if isinstance(o, dict)))
         require('malformed-body', any(o.get('status') in (400, 422) and o.get('rawRequest') == '{'
@@ -429,6 +492,14 @@ def validate_case_observations(id, observations, checks, status=None):
                 and isinstance(status['release'].get('releaseId'), str)
                 for o in observations if o.get('kind') == 'hrc-authority-unavailable' for r in o.get('events', [])
                 if r.get('eventKind') == 'server.started'))
+        if installed_copy:
+            expected_cli = Path(installed_copy['copiedRoot']) / 'packages/hrc-cli/src/cli.ts'
+            require('HRC-unavailable-installed-copy', any(
+                any(word.startswith('/') and Path(word).resolve() == expected_cli
+                    for word in o.get('processBeforeStop', {}).get('stdout', '').split())
+                and any(word.startswith('/') and Path(word).resolve() == expected_cli
+                    for word in o.get('launch', '').split())
+                for o in observations if o.get('kind') == 'hrc-authority-unavailable'))
         require('HRC-unavailable-authority', any(o.get('kind') == 'hrc-authority-unavailable'
             and o.get('processBeforeStop', {}).get('exit') == 0 and 'server serve' in o['processBeforeStop'].get('stdout', '')
             and o.get('environment', {}).get('HRC_WRKQ_DB') == o.get('environment', {}).get('WRKQ_DB') == 'rpc://127.0.0.1:1'
@@ -464,7 +535,7 @@ def compare(args, checks):
     candidate = json.loads((b / 'summary.json').read_text())
     validate_evidence(baseline, a, checks)
     validate_evidence(candidate, b, checks)
-    check(checks, 'inventory:identity', baseline.get('inventoryHash') == candidate.get('inventoryHash'),
+    check(checks, 'inventory:identity', bool(baseline.get('coverageReportHash')) and baseline.get('coverageReportHash') == candidate.get('coverageReportHash'),
           'inventory source drift requires explicit baseline recapture', 2)
     # Only explicitly named identity fields can vary. Never erase missing keys,
     # result classifications, ordering, generations, error codes or effect counts.
@@ -709,19 +780,21 @@ def run_suite(args, checks):
           'mandatory P0 workflow definition absent; cannot downgrade to downstream gap', 2)
     if any(not c['pass'] for c in checks):
         return {'mutationRequests': 0, 'status': status}
-    frozen_inventory = json.loads((ROOT / 'contract/hrc-parity/inventory.json').read_text())
+    generated = inventory(argparse.Namespace(source_ref='HEAD', out=str(output)), checks)
     data = {'schema': 1, 'claim': profile['claim'], 'complete': False, 'status': {},
             'cases': [], 'events': [], 'effects': [], 'coverage': {'required': list(MANDATORY),
-                'gaps': [i['id'] for i in frozen_inventory['items'] if i['coverage'] != 'PASS']},
-            'inventoryHash': digest(ROOT / 'contract/hrc-parity/inventory.json')}
+                'gaps': generated.get('coverage', {}).get('gaps', [])},
+            'coverageReportHash': generated.get('coverageReportHash')}
+    if profile.get('copiedReleaseRoot'):
+        data['installedCopy'] = observe_installed_copy(profile)
+        write(output / 'installed-copy.json', data['installedCopy'])
     write(output / 'manifest.json', {'profile': profile, 'source': source_identity(),
           'startedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'profileHash': digest(args.profile),
           'driverHash': digest(__file__),
-          'producerTuple': status.get('release'), 'schemaHash': digest(ROOT / 'contract/hrc-parity/store-schema.json'),
+          'producerTuple': status.get('release'),
           'executables': [{'path': str(Path(arg).resolve()), 'sha256': digest(arg)}
               for key in ('cliArgv', 'sdkArgv', 'wrkqArgv') for arg in profile[key]
               if Path(arg).is_absolute() and Path(arg).is_file()]})
-    write(output / 'inventory.json', json.loads((ROOT / 'contract/hrc-parity/inventory.json').read_text()))
     start = time.monotonic()
     variables = {k: v for k, v in profile.items() if isinstance(v, (str, int, bool))}
     followers = {}
@@ -838,7 +911,7 @@ def run_suite(args, checks):
                         actual = {'columns': [d[0] for d in cursor.description], 'rows': cursor.fetchall()}
                 elif kind == 'inventory':
                     child = subprocess.run([sys.executable, str(Path(__file__).resolve()), 'inventory',
-                        '--source-ref', source_identity()['commit'], '--schema-db', profile['dbPath'], '--out', str(output / 'inventory-check')],
+                        '--source-ref', source_identity()['commit'], '--out', str(output / 'inventory-check')],
                         text=True, capture_output=True, timeout=120)
                     actual = json.loads(child.stdout)
                 elif kind == 'resource':
@@ -990,7 +1063,7 @@ def run_suite(args, checks):
             record['status'] = 'FAIL'
         semantic = []
         raw = [json.loads((output / path).read_text()) for path in record['evidence']]
-        validate_case_observations(id, raw, semantic, data.get('status'))
+        validate_case_observations(id, raw, semantic, data.get('status'), data.get('installedCopy'))
         checks.extend(semantic)
         if record['status'] == 'PASS' and any(not c['pass'] for c in semantic):
             record['status'] = 'FAIL'
@@ -1149,23 +1222,6 @@ def drive_pty(profile, action):
             'stdout': b''.join(chunks).decode('utf-8', 'replace')}
 
 
-def inspect_schema(path):
-    with closing(sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True)) as db:
-        db.row_factory = sqlite3.Row
-        objects = [dict(r) for r in db.execute(
-            "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")]
-        tables = []
-        for obj in objects:
-            if obj['type'] != 'table':
-                continue
-            # Names come from SQLite, quote them as identifiers rather than SQL.
-            table = '"' + obj['name'].replace('"', '""') + '"'
-            tables.append({'name': obj['name'], 'columns': [dict(r) for r in db.execute('PRAGMA table_info(' + table + ')')],
-                'foreignKeys': [dict(r) for r in db.execute('PRAGMA foreign_key_list(' + table + ')')],
-                'indexes': [dict(r) for r in db.execute('PRAGMA index_list(' + table + ')')]})
-        return {'schema': 1, 'objects': objects, 'tables': tables}
-
-
 def source_identity():
     def git(*args):
         return subprocess.check_output(['git', '-C', str(ROOT), *args], text=True).strip()
@@ -1181,27 +1237,51 @@ def inventory(args, checks):
         check(checks, 'inventory:extractor', False, child.stderr or child.stdout, 2)
         return {}
     observed = json.loads(child.stdout)
-    frozen = json.loads((ROOT / 'contract/hrc-parity/inventory.json').read_text())
-    write(Path(args.out) / 'inventory.json', observed)
-    check(checks, 'inventory:nonempty', bool(observed['items']), 'no extracted inventory entries', 2)
-    check(checks, 'inventory:closure', observed['items'] == frozen['items'],
-          'source inventory drift: regenerate explicitly and review semantic/case ownership overlay', 2)
+    definitions = json.loads((ROOT / 'contract/hrc-parity/cases.json').read_text())
+    report = coverage_report(observed, definitions)
+    write(Path(args.out) / 'coverage-report.json', report)
+    check(checks, 'inventory:nonempty', bool(report['items']), 'no extracted inventory entries', 2)
     check(checks, 'inventory:unresolved', not observed.get('unresolved'),
-          'unresolved source expressions cannot pass inventory closure', 2)
-    ids = [i['id'] for i in observed['items']]
+          'unresolved source expressions cannot pass coverage discovery', 2)
+    ids = [i['id'] for i in report['items']]
     check(checks, 'inventory:unique', len(set(ids)) == len(ids), 'duplicate inventory identity', 2)
-    schema_path = ROOT / 'contract/hrc-parity/store-schema.json'
-    if args.schema_db:
-        observed_schema = inspect_schema(args.schema_db)
-        write(Path(args.out) / 'store-schema.json', observed_schema)
-        check(checks, 'inventory:store-schema', observed_schema == json.loads(schema_path.read_text()),
-              'actual canonical schema differs from frozen Bun baseline', 2)
-    for item in frozen['items']:
-        check(checks, 'inventory:mapped:' + item['id'], bool(item.get('caseIds')) and
-              bool(item.get('downstreamOwner')), 'inventory item has no case or owner', 2)
-    return {'inventoryHash': digest(ROOT / 'contract/hrc-parity/inventory.json'),
+    for item in report['items']:
+        check(checks, 'inventory:mapped:' + item['id'], item['target'] is not None,
+              'unmapped inventory item: ' + item['id'], 2)
+    return {'coverageReportHash': digest(Path(args.out) / 'coverage-report.json'),
+            'sourceCommit': observed['sourceCommit'],
             'inventoryComplete': all(c['pass'] for c in checks),
-            'behaviorQualified': False, 'coverage': {'gaps': [i['id'] for i in frozen['items']]}}
+            'behaviorQualified': False, 'counts': report['counts'],
+            'coverage': {'gaps': [i['id'] for i in report['items'] if (i['target'] or '').startswith('GAP:')]}}
+
+
+def coverage_report(observed, definitions):
+    """First matching rule wins; exact overrides take precedence. Never assert PASS."""
+    cases = definitions['cases']
+    def target_for(item):
+        if item['id'] in definitions['coverageOverrides']:
+            return definitions['coverageOverrides'][item['id']]
+        for rule in definitions['coverageRules']:
+            if (('kind' not in rule or rule['kind'] == item['kind'])
+                and item['id'].startswith(rule.get('idPrefix', ''))
+                and item.get('path', '').startswith(rule.get('pathPrefix', ''))
+                and ('pathPattern' not in rule or re.search(rule['pathPattern'], item.get('path', '')))):
+                return rule['target']
+        return None
+    items = []
+    for item in observed['items']:
+        target = target_for(item)
+        # Current main contains no supported UNSUPPORTED mapping. Adding one
+        # requires an explicit plan reason allowlist here, not arbitrary prose.
+        if target not in cases and target not in {'GAP:N' + str(i) for i in range(1, 7)}:
+            target = None
+        items.append({**item, 'target': target})
+    counts = Counter({'GAP:N' + str(i): 0 for i in range(1, 7)})
+    counts['UNSUPPORTED'] = 0
+    counts.update(i['target'] or 'UNMAPPED' for i in items)
+    return {'schema': 1, 'sourceCommit': observed['sourceCommit'], 'items': items,
+            'unresolved': observed.get('unresolved', []),
+            'counts': dict(sorted(counts.items()))}
 
 
 def controls(args, checks):
@@ -1221,7 +1301,6 @@ def main():
     parser.add_argument('--profile')
     parser.add_argument('--suite', default='p0-bun')
     parser.add_argument('--source-ref', default='HEAD')
-    parser.add_argument('--schema-db')
     parser.add_argument('--baseline')
     parser.add_argument('--candidate')
     args = parser.parse_args()

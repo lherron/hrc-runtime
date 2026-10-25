@@ -478,7 +478,7 @@ const CLAIM_START_ROUTES: readonly ClaimStartRoute[] = [
 
 /**
  * The peer listener's whole route table, for request metrics (T-11541). Kept
- * beside the dispatchers it mirrors; `conformance/hrc-parity` freezes the set.
+ * beside the dispatchers it mirrors; `conformance/hrc-parity` extracts the current set.
  */
 export const PEER_PROTOCOL_ROUTE_KEYS: ReadonlySet<string> = new Set([
   'GET /v1/federation/health',

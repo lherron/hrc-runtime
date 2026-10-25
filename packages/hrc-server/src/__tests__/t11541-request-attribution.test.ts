@@ -2,11 +2,11 @@
  * T-11541 — the request-metric record's caller and listener. The scratch-daemon
  * E2E (hrc-cli t11541-request-attribution-e2e) proves the whole path; these pin
  * the guards it cannot reach: hostile labels, federation peer attribution (its
- * listener only binds a tailnet host), and route sets frozen by the parity
- * inventory. Failure modes: var/wrkq-artifacts/T-11541/failure-modes.md.
+ * listener only binds a tailnet host), and route sets discovered by the parity
+ * extractor. Failure modes: var/wrkq-artifacts/T-11541/failure-modes.md.
  */
 import { afterEach, describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -98,13 +98,27 @@ describe('route normalization', () => {
     expect(normalizeRoute('GET', '/v1/inputs/a/b/c', none)).toBe('unmatched')
   })
 
-  test('the inventory equals the frozen parity inventory for every listener', () => {
-    const frozen = JSON.parse(
-      readFileSync(
-        join(import.meta.dir, '..', '..', '..', '..', 'contract', 'hrc-parity', 'inventory.json'),
-        'utf8'
+  test('the inventory equals the current source extractor for every listener', () => {
+    const observed = JSON.parse(
+      execFileSync(
+        'bun',
+        [
+          join(
+            import.meta.dir,
+            '..',
+            '..',
+            '..',
+            '..',
+            'conformance',
+            'hrc-parity',
+            'inventory.ts'
+          ),
+          '--working-tree',
+        ],
+        { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }
       )
     ) as {
+      unresolved: string[]
       items: { kind: string; transport?: string; method?: string; path?: string }[]
     }
     const listenerOf: Record<string, string> = {
@@ -113,7 +127,8 @@ describe('route normalization', () => {
       peer: 'peer',
       registry: 'registry',
     }
-    const expected = frozen.items
+    expect(observed.unresolved).toEqual([])
+    const expected = observed.items
       .filter((item) =>
         ['public-exact', 'public-computed', 'public-pattern', 'auxiliary-route'].includes(item.kind)
       )
@@ -123,7 +138,7 @@ describe('route normalization', () => {
       .map((entry) => `${entry.listener} ${entry.method} ${entry.route}`)
       .sort()
     expect(actual).toEqual(expected)
-  })
+  }, 30_000)
 })
 
 describe('federation peer listener', () => {

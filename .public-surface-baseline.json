@@ -1607,14 +1607,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "HrcCompiledRuntimePlanRecord",
-      "kind": "type",
-      "file": "packages/hrc-core/src/contracts-records.ts",
-      "hash": "hrc-core|HrcCompiledRuntimePlanRecord|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "HrcConcreteSelector",
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
@@ -2051,14 +2043,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|HrcLifecycleIngestItem|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcLifecyclePolicyRecord",
-      "kind": "type",
-      "file": "packages/hrc-core/src/contracts-records.ts",
-      "hash": "hrc-core|HrcLifecyclePolicyRecord|type",
       "count": 1
     },
     {

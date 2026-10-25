@@ -32,7 +32,7 @@ if (mode === 'health') {
   try {
     // This lazy canonical extension is not created by explicit-local startup.
     // Exercise its public constructor in deliberate scratch setup, before the
-    // strict complete-schema comparison. Never hand-write its DDL or rows.
+    // schema observation. Never hand-write its DDL or rows.
     const placementRows = createPlacementLedgerRepository(db.sqlite).list().length
     const base = {
       ts: new Date().toISOString(),
