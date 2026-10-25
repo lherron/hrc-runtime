@@ -294,6 +294,8 @@ export async function bootstrapInstalledSurface(
     await realpath(paths.currentLink)
   }
 
+  await atomicSymlink(join(paths.currentLink, 'bin', 'rusthrc'), join(paths.binDir, 'rusthrc'))
+
   for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
     await atomicSymlink(
       join(paths.currentLink, 'packages', packageName),

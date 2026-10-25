@@ -9,6 +9,7 @@ name = "rusthrc"
 path = "src/main.rs"
 
 [dependencies]
+hrc-cli = { path = "../hrc-cli" }
 hrc-store = { path = "../hrc-store" }
 serde_json.workspace = true
 chrono.workspace = true

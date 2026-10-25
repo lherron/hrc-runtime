@@ -166,6 +166,7 @@ cargo-check:
     cargo test --manifest-path crates/Cargo.toml --workspace --locked
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-kernel
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native
+    python3 crates/hrc-cli/e2e/differential.py --binary crates/target/debug/rusthrc --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
     python3 crates/hrc-native/e2e/foundation.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
     python3 crates/hrc-kernel/e2e/kernel_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-e2e-$(date +%s)-$$}"
     python3 crates/hrc-kernel/e2e/surrogate_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-surrogate-e2e-$(date +%s)-$$}/surrogate"
@@ -781,7 +782,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     # ~/.zshenv. svc's does not add ~/.bun/bin or Homebrew, so `hrc` and `just`
     # are both MISSING over ssh there while they resolve fine on hrcdev.
     # Prepend the canonical locations rather than requiring every node's dotfiles
-    # to agree. `just install` builds hrc-kernel, so cargo is required too:
+    # to agree. `just install` builds hrc-kernel and rusthrc, so cargo is required too:
     # rustup-init puts it in ~/.cargo/bin, Homebrew's keg-only rustup (hrcdev)
     # in /opt/homebrew/opt/rustup/bin.
     export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
@@ -803,7 +804,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     command -v jq >/dev/null 2>&1 || fail 'jq is not available'
     command -v just >/dev/null 2>&1 || fail 'just is not available'
     command -v bun >/dev/null 2>&1 || fail 'bun is not available'
-    command -v cargo >/dev/null 2>&1 || fail 'cargo is not available (install builds hrc-kernel)'
+    command -v cargo >/dev/null 2>&1 || fail 'cargo is not available (install builds hrc-kernel and rusthrc)'
     [[ -d "$repo/.git" ]] || fail "checkout not found at $repo"
     [[ -d "$asp_repo/.git" ]] || fail "agent-spaces checkout not found at $asp_repo"
     [[ -f "$aspd_ns/service/config.json" ]] ||

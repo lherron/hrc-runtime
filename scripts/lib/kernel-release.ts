@@ -45,41 +45,38 @@ export async function prepareKernelRelease(
   run: (command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) => Promise<void>
 ): Promise<void> {
   const digest = await inputDigest(releasePath)
-  const destination = join(releasePath, 'bin', 'hrc-kernel')
-  await mkdir(join(releasePath, 'bin'), { recursive: true })
-  let reusable = false
-  try {
-    reusable =
-      (await readFile(join(previousRelease, 'bin', 'hrc-kernel.inputs'), 'utf8')).trim() === digest
-    if (reusable) await copyFile(join(previousRelease, 'bin', 'hrc-kernel'), destination)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    reusable = false
+  for (const [binary, crate] of [
+    ['hrc-kernel', 'hrc-kernel'],
+    ['rusthrc', 'hrc-native'],
+  ] as const) {
+    const destination = join(releasePath, 'bin', binary)
+    await mkdir(join(releasePath, 'bin'), { recursive: true })
+    let reusable = false
+    try {
+      reusable =
+        (await readFile(join(previousRelease, 'bin', `${binary}.inputs`), 'utf8')).trim() === digest
+      if (reusable) await copyFile(join(previousRelease, 'bin', binary), destination)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      reusable = false
+    }
+    if (reusable) {
+      console.log(`[install] Rust/shared inputs unchanged; reusing ${binary}`)
+    } else {
+      console.log(`[install] building ${binary} from selected release inputs`)
+      await run(
+        'cargo',
+        ['build', '--release', '--locked', '--manifest-path', 'crates/Cargo.toml', '-p', crate],
+        releasePath,
+        {
+          ...process.env,
+          CARGO_TARGET_DIR: join(sourceRoot, 'crates', 'target'),
+        }
+      )
+      await copyFile(join(sourceRoot, 'crates', 'target', 'release', binary), destination)
+    }
+    await chmod(destination, 0o755)
+    await writeFile(join(releasePath, 'bin', `${binary}.inputs`), `${digest}\n`)
+    await run(destination, ['--help'], releasePath)
   }
-  if (reusable) {
-    console.log('[install] Rust/shared inputs unchanged; reusing hrc-kernel')
-  } else {
-    console.log('[install] building hrc-kernel from selected release inputs')
-    await run(
-      'cargo',
-      [
-        'build',
-        '--release',
-        '--locked',
-        '--manifest-path',
-        'crates/Cargo.toml',
-        '-p',
-        'hrc-kernel',
-      ],
-      releasePath,
-      {
-        ...process.env,
-        CARGO_TARGET_DIR: join(sourceRoot, 'crates', 'target'),
-      }
-    )
-    await copyFile(join(sourceRoot, 'crates', 'target', 'release', 'hrc-kernel'), destination)
-  }
-  await chmod(destination, 0o755)
-  await writeFile(join(releasePath, 'bin', 'hrc-kernel.inputs'), `${digest}\n`)
-  await run(destination, ['--help'], releasePath)
 }
