@@ -1,6 +1,6 @@
 # HRC Rust migration
 
-> 2026-10-23 adopted M1 amendment: [Rust native parity](hrc-rust-parity.md), authorized by Lance and reviewed in EN-33646/EN-33680, replaces the provisional slice-writer rollout with independently isolated native development and cohesive per-node execution-owner transfer. Standalone Bun and the delivered kernel/facades remain supported. No activation, retirement or production migration transfer is authorized. Campaign P-00866 owns P0–P8 closure.
+> 2026-10-25: native parity is now [hrc-rust-parity.md](hrc-rust-parity.md) r2 (packages N0–N6 against current main). r1 (adopted 2026-10-23, EN-33646/EN-33680) introduced independent native development and whole-node owner transfer, and r2 keeps both. Lance deleted r1's branch after the P-00869 cleanup removed the surface it was porting. Standalone Bun and the delivered kernel/facades remain supported. No activation, retirement or production migration transfer is authorized. Campaign P-00866.
 
 Status: proposal r3.2, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `/v1/events/page` ledger read, a pinned side-effect-free read set, attach from the presentation read model. r3.2 answers EN-32628 F5: `contextReading` on presentation rows. r3.3: §4.6 stage 1b ops are facade calls over existing routes with no TS change, and `seat.summon` is specified first). Owner mable@hrc-runtime:primary. Campaign P-00862. **Stage 1 delivered 2026-10-20:** gate 0 T-11441 (371cc396), kernel T-11442 (8f70c9e8..5f7e1bc9), gates 0–5 graded PASS, live on max3. Cardo F7 is green; A5 (T-11426) measurements are cardo's. Summon and restart facade amendments have since landed; native parity proceeds under P-00866, beginning with the reviewed P0 baseline. No native execution-owner transfer is delivered. Lance's rulings are marked **RULED**.
 
@@ -55,7 +55,7 @@ hrc-runtime/
 
 - **No cross-imports.** `packages/` and `crates/` meet only through the HTTP API, the cardo wire and the store. Neither builds the other.
 - **`contract/` is owned by neither side.** It holds the route table, request and response schemas, event kinds, and the schema version the store is at. TS and Rust either generate their types from it, or check them against it by example in the conformance suite. It starts empty at stage 1, because the kernel consumes the HTTP API as a client (plus two additive TS store reads, §4.2 and §4.3). P0 populates its inventory and qualification contracts; they do not route split production writers.
-- **The inventory states compatibility obligations.** Exact/computed/pattern routes, protocols, aliases/refusals, stores, direct tools, exports, jobs and files map to cases and owning packages. It does not assign production route slices; one coupled execution owner controls the node after P8 qualification.
+- **The coverage report states compatibility obligations.** It is regenerated from main at each gate. Exact/computed/pattern routes, protocols, CLI commands and jobs map to a case, a named gap or an explicitly unsupported line. It does not assign production route slices; one coupled execution owner controls the node after N6 qualification.
 - **Hooks are path-scoped** through the existing `hook-scope`/`.hookignore` mechanism:
   - a TS-only change skips cargo;
   - a `crates/`-only change skips the bun suites;
@@ -65,7 +65,7 @@ hrc-runtime/
 
 ### 2.2 Independent implementations and behavior drift
 
-Complete Bun remains independently usable without Rust, with existing `hrc`, SDK and package exports unchanged. The native CLI is `rusthrc`. Ordinary Bun fixes continue; P0 refreshes source inventories, real baseline observations and release/config/producer tuples before affected Rust behavior can be graded current. A contract change is complete only after both implementations pass the affected conformance obligations; unimplemented native cases remain explicit gaps.
+Complete Bun remains independently usable without Rust, with existing `hrc`, SDK and package exports unchanged. The native CLI is `rusthrc`. Ordinary Bun fixes continue; the regenerated coverage report and a fresh Bun baseline run catch them before affected Rust behavior can be graded current. A contract change is complete only after both implementations pass the affected conformance obligations; unimplemented native cases remain explicit gaps.
 
 Production migrations stay Bun-owned. Rust refuses unknown/incomplete schemas and uses canonical Bun scratch initialization during coexistence. A named same-release Bun fallback must read and continue native-written history. A Rust migration runner is separately reviewed test-only tooling until production authority changes explicitly. Development packages are not permission to transfer execution owners or retire Bun.
 
@@ -277,11 +277,11 @@ The M1 state and operational audits resolve the provisional slice finding: proce
 
 Develop on separate state/runtime roots AND scope identities, tmux leases, sockets/ports, registry, ASP preparation configuration, wrkq authority and publication destinations. Never attach or reap production brokers from copied rows. Preserve the current API-fed Cardo kernel until equivalent native ledger integration is qualified; summon/restart remain honest facades over Bun in their delivered mode.
 
-The executable package sequence is P0 baseline → P1 store → P2 lifecycle foundation → P3 broker/turn/recovery → P4 messages/streams/publication → P5 federation/ingest → P6 operational/kernel closure → P8 reversible node qualification. P7 rusthrc/tools requires P1 and qualifies execution commands against P3–P6. Each package gets its own task-seat design ruling, real checks and independent grade. The full [closure ledger](hrc-rust-parity.md) and audits define the obligations, including direct store writers and every startup/recurring/controller job.
+The package sequence, gates and explicitly unsupported cases live in [hrc-rust-parity.md](hrc-rust-parity.md) r2: N0 re-baseline → N1 native daemon foundation → N2 broker turns/recovery → N3 messages/streams → N4 federation/operations/kernel → N6 node handoff, with N5 `rusthrc` alongside from N1.
 
-P0 inventory completeness is separate from its mandatory real Bun baseline, and both are separate from full native/tooling parity. Missing, empty, skipped or fixture-only cases cannot pass. Native qualification requires the Bun daemon unavailable for its subject; external ASP/brokers and unchanged Bun clients may remain. Performance budgets are measured proposals until separately approved.
+The coverage report is regenerated from main at each gate (N0) instead of frozen. Missing, empty, skipped or fixture-only cases cannot pass. Native qualification requires the Bun daemon unavailable for its subject; external ASP/brokers and unchanged Bun clients may remain. Performance budgets are measured proposals until separately approved.
 
-Transfer the entire coupled execution owner per node only through P8: close admission, settle or durably classify pending work, stop/fence old ingress/controllers/jobs/publishers/credentials, establish relinquishment, then start and verify the new owner. Preserve surviving brokers, replay/ACK, queued input, incarnations and publisher cursors. Rollback stops/fences the candidate before restoring the named compatible Bun release and demonstrates continued real turns on the same history/substrate. A socket swap is insufficient.
+Transfer the entire coupled execution owner per node only through N6: close admission, settle or durably classify pending work, stop/fence old ingress/controllers/jobs/publishers/credentials, establish relinquishment, then start and verify the new owner. Preserve surviving brokers, replay/ACK, queued input, incarnations and publisher cursors. Rollback stops/fences the candidate before restoring the named compatible Bun release and demonstrates continued real turns on the same history/substrate. A socket swap is insufficient.
 
 Intended qualification order is isolated scratch → hrcdev → svc → max3, using a reviewed supported pilot procedure. Existing deploy-fleet runs max3 → svc → hrcdev and cannot be cited as implementing the pilot order. No production transfer or activation is authorized by this plan.
 
@@ -289,13 +289,13 @@ Intended qualification order is isolated scratch → hrcdev → svc → max3, us
 
 ### 6.1 HTTP API
 
-All exact, computed and pattern routes on `hrc.sock`, refreshed by P0 rather than a historical count, with the same request and response shapes, error codes and NDJSON follow semantics. Clients:
+All exact, computed and pattern routes on `hrc.sock`, as listed by the coverage report regenerated from main, with the same request and response shapes, error codes and NDJSON follow semantics. Clients:
 - `hrc-sdk` and the `hrc` CLI; hcs (Go); ACP (gateway, dashboard, injector); agent-loop;
 - the hook bridges shipped in ASP releases;
 - federation peers;
 - **the stage-1 kernel** (§4.2).
 
-P0 writes the executable contract in `contract/hrc-parity/` and external runner in `conformance/hrc-parity/`. Federation runs mixed-version during cutover, so the peer protocol (`docs/federation-peer-protocol.md`) is unchanged until stage 3.
+Cases live in `contract/hrc-parity/cases.json` and the external runner in `conformance/hrc-parity/`; N0 replaces the frozen inventory with a generated coverage report. Federation runs mixed-version during cutover, so the peer protocol (`docs/federation-peer-protocol.md`) is unchanged until stage 3.
 
 ### 6.2 Schema
 
@@ -354,7 +354,7 @@ The ACP port is ACP's own document. What this page fixes:
 |---|---|---|
 | M1 ownership finding (§5) | P-00866 | resolved by source audits; executable P0 closure remains required |
 | ACP direct consumers | ACP | refresh call-site inventory; preserve exports and current behavior |
-| HRC's wrkq client in Rust | wrkq/HRC | external authority contract before P4 |
+| HRC's wrkq client in Rust | wrkq/HRC | external authority contract before N3 |
 | `contract/` format | T-11527 P0 | neutral manifest and external runner approved EN-33680; behavior evidence required |
 | Stage 1b ops | Lance | include, after the read-only gates pass |
 | Kernel supervision: Loggia or launchd | Lance | Loggia, until a second consumer exists |
