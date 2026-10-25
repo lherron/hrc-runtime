@@ -19,6 +19,8 @@ import tempfile
 import socketserver
 import threading
 
+from metrics_isolation import isolated_suite
+
 ROOT = Path(__file__).resolve().parents[3]
 # Only clock observations can vary between the two sequential diagnostic calls.
 NORMALIZATION = {
@@ -56,6 +58,7 @@ class FaultHandler(socketserver.StreamRequestHandler):
         self.wfile.write(b'HTTP/1.1 ' + code + b'\r\nContent-Length: ' + str(len(body)).encode() + b'\r\nConnection: close\r\n\r\n' + body)
 
 
+@isolated_suite
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)

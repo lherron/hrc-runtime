@@ -13,9 +13,12 @@ import subprocess
 import sys
 import tempfile
 
+from metrics_isolation import isolated_suite
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
+@isolated_suite
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)

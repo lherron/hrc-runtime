@@ -11,6 +11,9 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
+
+from metrics_isolation import isolated_suite
 
 ROOT = Path(__file__).resolve().parents[3]
 # Declared normalization: created IDs and timestamps can change between calls.
@@ -23,6 +26,7 @@ def nodes(node):
         yield from nodes(child)
 
 
+@isolated_suite
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
@@ -33,7 +37,11 @@ def main():
     p.add_argument('--artifacts', type=Path, required=True)
     args = p.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, NO_COLOR='1', FORCE_COLOR='0')
+    # Grammar/help oracles write metrics too. Never inherit either live root.
+    scratch = tempfile.TemporaryDirectory(prefix='n5-cli-e2e-', dir='/tmp')
+    env = dict(os.environ, NO_COLOR='1', FORCE_COLOR='0',
+               HRC_RUNTIME_DIR=str(Path(scratch.name) / 'run'),
+               HRC_STATE_DIR=str(Path(scratch.name) / 'state'))
     if args.runtime_root:
         assert not str(args.runtime_root.resolve()).startswith(str(Path.home() / 'praesidium/var'))
         assert (args.runtime_root / 'hrc.sock').exists()
