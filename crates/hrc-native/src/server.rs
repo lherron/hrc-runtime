@@ -1,4 +1,6 @@
 mod aspc;
+mod broker;
+mod compile;
 mod rpc;
 
 use anyhow::{Context, Result, bail};
@@ -26,6 +28,7 @@ use tokio::net::UnixListener;
 type Shared = Arc<Server>;
 struct Server {
     store: Mutex<Store>,
+    brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
     runtime: PathBuf,
     state: PathBuf,
     started_at: String,
@@ -94,11 +97,13 @@ pub async fn serve() -> Result<()> {
     fs::set_permissions(&owner.socket, fs::Permissions::from_mode(0o600))?;
     let server = Arc::new(Server {
         store: Mutex::new(store),
+        brokers: Mutex::new(HashMap::new()),
         runtime,
         state,
         started_at: timestamp(),
         started: Instant::now(),
     });
+    broker::reattach(&server).await?;
     let app = Router::new().fallback(dispatch).with_state(server);
     eprintln!(
         "{}",
@@ -191,6 +196,11 @@ async fn dispatch(
                 Ok(Json(value).into_response())
             }
             Err(error) => Err(error),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/turns" {
+        match parse_body(&body) {
+            Ok(value) => broker::turn(&server, value).await,
+            Err(e) => Err(e),
         }
     } else if method == Method::POST && uri.path() == "/v1/declarations/resolve" {
         match parse_body(&body) {

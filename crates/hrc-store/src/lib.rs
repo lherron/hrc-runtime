@@ -5,6 +5,8 @@ use serde_json::{Map, Value, json};
 use std::{collections::BTreeSet, path::Path, time::Duration};
 use uuid::Uuid;
 
+mod broker;
+
 include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
 
 pub struct Store {

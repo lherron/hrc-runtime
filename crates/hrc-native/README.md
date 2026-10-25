@@ -11,9 +11,15 @@ Bun-compatible ownership files, health/status, session resolve/list/by-host,
 and stored runtime listing. Other routes answer Bun's unknown-route 404.
 ASP-backed declaration and placement observation now share a native NDJSON
 JSON-RPC client. Status probes the actual configured aspd. Observation creates
-no broker or runtime rows. Provisioning, claims, participant registration and
-the remaining N1 route semantics are still in progress; this does not claim
-N1 parity. Direct-store readers use `Store::open_readonly`; the daemon uses
+no broker or runtime rows. The cold format-1 `/v1/turns` path now compiles via
+ASP, commits the frozen preparation before hosting, starts the external worker
+in its own tmux server, and persists the canonical start graph. The worker's
+notifications remain unACKed for Bun recovery. Startup reattaches these durable
+brokers after checking their release and endpoint roots. Existing-seat turns
+name N2 in the unknown-route refusal.
+
+Claims, participant registration, complete admission/error semantics and the
+remaining N1 routes are still in progress; this does not claim N1 parity. Direct-store readers use `Store::open_readonly`; the daemon uses
 `Store::open`.
 
 Schema admission extracts migration names from the checked-out Bun migration
@@ -37,3 +43,16 @@ the scratch root with a parent other than `hrc-runtime-releases`. A daemon
 running from the actual atomic release tree can prune shared releases even
 when runtime/state roots are isolated. The copy must report `unmanaged`, emit
 no `server.start.release_prune`, and leave the shared release list unchanged.
+
+The real birth/replacement workflow runs in a clean ghostmux terminal with an
+explicit named copied Bun release and the shared aspd socket. It requires a fresh
+scratch root, creates its own project and ledger, and cleans only its own broker
+leases. It verifies native birth, native restart ownership, held-event replay
+through Bun, and a second completed prompt on the same seat:
+
+```
+python3 crates/hrc-native/e2e/cold_birth.py --binary crates/target/debug/rusthrc \
+  --bun-release /tmp/hrcn1-T11818/bun-release/release-20261025170058436-58302 \
+  --aspd-socket /Users/lherron/praesidium/var/aspd/run/aspd.sock \
+  --scratch-root /tmp/hrcn1-fresh --artifacts /tmp/hrcn1-results
+```

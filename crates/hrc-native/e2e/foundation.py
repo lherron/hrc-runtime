@@ -88,7 +88,8 @@ def main():
                         break
                     time.sleep(.05)
                 assert request('GET', '/v1/health') == (200, '{"ok":true}')
-                assert request('POST', '/v1/turns', {}) == (404, 'Not Found')
+                status, raw = request('POST', '/v1/turns', {})
+                assert status == 400 and json.loads(raw) == {'error': {'code': 'malformed_request', 'message': 'hostSessionId is required', 'detail': {'field': 'hostSessionId'}}}
                 assert request('GET', '/v1/nonexistent') == (404, 'Not Found')
                 status, raw = request('POST', '/v1/sessions/resolve', {})
                 assert status == 400 and json.loads(raw) == {'error': {'code': 'malformed_request', 'message': 'sessionRef is required', 'detail': {'field': 'sessionRef'}}}
