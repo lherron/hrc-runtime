@@ -23,7 +23,17 @@ These were sound, are approved (EN-33646), and stay:
 
 ## Surface on main at r2
 
-92 exact routes on the main socket (`packages/hrc-server/src/server-exact-routes.ts`; r1 counted 112), plus pattern routes, 18 peer routes, 6 registry routes and 1 ingest route. hrc-server is about 95k lines of non-test TypeScript, hrc-cli 27k and hrc-store-sqlite 21k. r1's source audits (`hrc-rust-parity/{state,operations}-audit.md`, commit d5f9c555) described the surface before the cleanup. They are the evidence behind EN-33646 and are retired from the tree; read them from that commit. Federation scope is not final: T-11712 is producing a list of federation routes and code to delete, and N4's scope is whatever survives it.
+92 exact routes on the main socket (`packages/hrc-server/src/server-exact-routes.ts`; r1 counted 112), plus pattern routes, 18 peer routes, 6 registry routes and 1 ingest route. hrc-server is about 95k lines of non-test TypeScript, hrc-cli 27k and hrc-store-sqlite 21k. r1's source audits (`hrc-rust-parity/{state,operations}-audit.md`, commit d5f9c555) described the surface before the cleanup. They are the evidence behind EN-33646 and are retired from the tree; read them from that commit. T-11712 finished the federation audit: no peer, registry or ingest route was deleted.
+
+## Scope: used endpoints only
+
+Lance ruling, 2026-10-25: this campaign implements only routes and CLI commands with confirmed use. Every other route or command is postponed and kept as Bun pass-through until it is known to be used. Nothing is deleted on this basis.
+
+- **Evidence.** A route is used if day metrics or the L3 request log on any node show calls in the evidence window. The first window, 2026-10-23T20:14Z → 10-25T19:57Z across max3, svc and hrcdev, showed 60 of 99 registered main routes with traffic and 39 with none (`var/wrkq-artifacts/T-11816/main-route-usage-48h.txt`). T-11820 extends the window and publishes the authoritative list, tiered T1 hot / T2 used / postponed, in `route-priority.md`. A CLI command is used if it calls a used route and there's evidence it is run. The list is regenerated before each package grade and before N6. A postponed route that starts receiving traffic moves to the implement list of the next open package.
+- **Order.** Within each package, T1 routes first: the steady loops of the kernel, the mail injector, ACP, the brokers and CLI status reads. Gates use those clients unchanged where possible.
+- **CLI pass-through (N5).** `rusthrc <postponed command>` execs the same release's `packages/hrc-cli/bin/hrc.js` under bun with identical argv, stdio and exit code.
+- **Daemon pass-through (N1).** `rusthrc server` forwards any route it does not implement, verbatim and including streams, to an optional configured Bun socket. With none configured, it returns the unknown-route envelope.
+- **Open, decided in N6's design.** On a Rust-owned node the pass-through target cannot be a full Bun daemon, because that is two execution owners. The candidate is a Bun serve-only mode on a private socket: store and HTTP handlers, with no recovery, controllers, timers, broker attach, publishers or listeners other than that socket. Postponed routes that only need the store work through it. Postponed routes that need a live controller (e.g. clear-context, in-flight-input, runtime attach, the run sweeps) would fail on a Rust-owned node. If one fires, that is evidence it is used: implement it or roll the node back. A serve-only mode is a Bun change, so it needs Lance's go and Daedalus review before N6.
 
 ## Packages
 
