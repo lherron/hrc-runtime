@@ -462,6 +462,7 @@ dependencies = [
  "chrono",
  "hrc-cli",
  "hrc-store",
+ "http-body",
  "hyper",
  "hyper-util",
  "libc",

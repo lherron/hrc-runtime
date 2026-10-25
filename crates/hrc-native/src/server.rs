@@ -1,3 +1,4 @@
+mod accounting;
 mod aspc;
 mod broker;
 mod compile;
@@ -30,6 +31,7 @@ use tokio::net::UnixListener;
 type Shared = Arc<Server>;
 struct Server {
     store: Mutex<Store>,
+    accounting: Arc<accounting::Accounting>,
     brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
     runtime: PathBuf,
     bun_passthrough: Option<PathBuf>,
@@ -115,7 +117,19 @@ pub async fn serve() -> Result<()> {
         bail!("Bun pass-through socket must not be the native listener");
     }
     fs::set_permissions(&owner.socket, fs::Permissions::from_mode(0o600))?;
+    let accounting = accounting::Accounting::new();
+    let mut writer = accounting.writer(state.clone());
+    let (stop_writer, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
+    let writer_task = tokio::task::spawn_blocking(move || {
+        while let Err(tokio::sync::oneshot::error::TryRecvError::Empty) = writer_stopped.try_recv()
+        {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            writer.flush();
+        }
+        writer.flush();
+    });
     let server = Arc::new(Server {
+        accounting,
         store: Mutex::new(store),
         brokers: Mutex::new(HashMap::new()),
         runtime,
@@ -133,6 +147,8 @@ pub async fn serve() -> Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
         .await?;
+    let _ = stop_writer.send(());
+    writer_task.await?;
     // No child kills or broker disposal: the owner can be replaced by Bun.
     drop(owner);
     Ok(())
@@ -202,7 +218,11 @@ impl IntoResponse for ApiError {
     }
 }
 async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
-    let started = Instant::now();
+    let entry = accounting::Entry::new(&request);
+    let response = dispatch_inner(&server, request).await;
+    entry.observe(server.accounting.clone(), response)
+}
+async fn dispatch_inner(server: &Shared, request: Request) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();
     let headers = request.headers().clone();
@@ -216,7 +236,6 @@ async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
         )
         .await
         .unwrap_or_else(IntoResponse::into_response);
-        log_request(&method, uri.path(), response.status(), started);
         return response;
     }
     let query = match Query::<HashMap<String, String>>::try_from_uri(&uri) {
@@ -228,7 +247,7 @@ async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
         Err(_) => return ApiError::bad("request body must be valid JSON", None).into_response(),
     };
     let result = if method == Method::GET && uri.path() == "/v1/status" {
-        match status(&server, &query) {
+        match status(server, &query) {
             Ok(mut value) => {
                 value["aspd"] = aspc::service_status().await;
                 value["aspToolchain"] = json!({"toolchainRootActive":false,"binaries":[]});
@@ -238,7 +257,7 @@ async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
         }
     } else if method == Method::POST && uri.path() == "/v1/turns" {
         match parse_body(&body) {
-            Ok(value) => broker::turn(&server, value).await,
+            Ok(value) => broker::turn(server, value).await,
             Err(e) => Err(e),
         }
     } else if method == Method::POST && uri.path() == "/v1/declarations/resolve" {
@@ -256,17 +275,9 @@ async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
             Err(e) => Err(e),
         }
     } else {
-        handle(&server, &method, uri.path(), &query, &body, &headers)
+        handle(server, &method, uri.path(), &query, &body, &headers)
     };
-    let response = result.unwrap_or_else(IntoResponse::into_response);
-    log_request(&method, uri.path(), response.status(), started);
-    response
-}
-fn log_request(method: &Method, path: &str, status: StatusCode, started: Instant) {
-    eprintln!(
-        "{}",
-        json!({"ts":timestamp(),"level":"info","component":"server","event":"http.request","data":{"method":method.as_str(),"path":path,"route":path,"listener":"main","status":status.as_u16(),"durationMs":started.elapsed().as_secs_f64()*1000.0}})
-    );
+    result.unwrap_or_else(IntoResponse::into_response)
 }
 fn implemented(method: &Method, path: &str) -> bool {
     (*method == Method::GET

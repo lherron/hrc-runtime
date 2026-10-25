@@ -95,3 +95,48 @@ def compare_passthrough(args, checks):
         cases.append({'id': name, 'pass': passed})
     return {'suite': 'n1-passthrough', 'cases': cases,
             'behaviorQualified': bool(checks) and all(c['pass'] for c in checks)}
+
+
+def compare_accounting(args, checks):
+    expected = {'GET /v1/health n1-accounting/health': 50,
+                'GET /v1/targets n1-accounting/targets': 50,
+                'GET /v1/sessions n1-accounting/sessions': 50,
+                'GET /v1/health n1-accounting/request-id': 7,
+                'GET /v1/sessions/by-host/:hostSessionId n1-accounting/error': 13,
+                'GET /v1/events/bounded-stream n1-accounting/stream': 1}
+    cases = []
+    populations = {}
+    for kind, directory in [('bun', args.baseline), ('native', args.candidate)]:
+        report = json.loads((Path(directory) / 'accounting.json').read_text())
+        records, logs, observations = report['metrics'], report['logs'], report['observations']
+        counts = {}
+        shape = bool(records)
+        for r in records:
+            shape = shape and r.get('v') == 1 and r.get('kind') == 'server' and 'listener' not in r and 'peer' not in r
+            shape = shape and isinstance(r.get('ts'), str) and isinstance(r.get('ms'), (float, int)) and r['ms'] >= 0
+            shape = shape and isinstance(r.get('status'), int) and (('bytes' in r) != ('stream' in r))
+            key = r['method'] + ' ' + r['route'] + ' ' + r['client'].replace('/' + kind + '/', '/')
+            counts[key] = counts.get(key, 0) + r.get('sampleWeight', 1)
+            if 'sampleWeight' in r:
+                shape = shape and r['sampleWeight'] == 20 and r['status'] < 400 and r['ms'] < 25 and 'reqId' not in r
+            if 'bytes' in r:
+                # Every tested finite route has a stable representation within
+                # one owner's mix; compare metric bytes to actual HTTP bytes.
+                matching = [o for o in observations if o['client'] == r['client'] and o['status'] == r['status']]
+                shape = shape and bool(matching) and all(o['bytes'] == r['bytes'] for o in matching)
+        ids = sorted(r['reqId'] for r in records if 'reqId' in r)
+        shape = shape and ids == ['id-' + str(i) for i in range(7)]
+        polls = [r for r in logs if r['event'] == 'http.request' and r['data']['route'] == '/v1/sessions' and r['data']['status'] < 400]
+        errors = [r for r in logs if r['event'] == 'http.request' and r['data']['client'].endswith('/error')]
+        log_ok = not polls and len(errors) == 13 and all(r['level'] == 'warn' and r['component'] == 'http' and r['data'].get('code') == 'unknown_host_session' and r['data'].get('message') for r in errors)
+        log_ok = log_ok and all('?' not in r['data']['path'] for r in logs)
+        log_ok = log_ok and any(r['event'] == 'http.stream.open' for r in logs) and any(r['event'] == 'http.stream.close' for r in logs)
+        for name, passed in [('weighted-counts', counts == expected), ('schema-bytes-and-sampling', shape), ('L3', log_ok)]:
+            case = {'id': kind + ':' + name, 'pass': bool(passed)}
+            cases.append(case)
+            checks.append({**case, 'reason': 'the real request mix must retain Bun accounting semantics', 'failureCode': 1})
+        populations[kind] = counts
+    checks.append({'id': 'accounting:weighted-count-parity', 'pass': populations['bun'] == populations['native'] == expected,
+                   'reason': 'native and forwarded routes must have the same per-route weighted population as Bun', 'failureCode': 1})
+    return {'suite': 'n1-accounting', 'cases': cases,
+            'behaviorQualified': bool(checks) and all(c['pass'] for c in checks)}

@@ -101,6 +101,15 @@
         "no-socket-refusal"
       ],
       "requiredInP0": false
+    },
+    "n1-request-accounting": {
+      "assertionIds": [
+        "weighted-counts",
+        "schema-bytes-and-sampling",
+        "L3",
+        "drop-recovery-retention-day-cap"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [
@@ -292,22 +301,22 @@
     "public:PATCH:/v1/sessions/metadata": "n1-session-routes",
     "public:GET:/v1/runtimes/live-refs": "n1-session-routes",
     "public:POST:/v1/surfaces/unbind": "n1-bun-passthrough",
-    "public:POST:/v1/runtimes/sweep": "n1-bun-passthrough",
-    "public:POST:/v1/runtimes/prune": "n1-bun-passthrough",
+    "public:POST:/v1/runtimes/sweep": "GAP:N1",
+    "public:POST:/v1/runtimes/prune": "GAP:N1",
     "public:POST:/v1/runtimes/ensure": "n1-bun-passthrough",
-    "public:POST:/v1/runtimes/attach": "n1-bun-passthrough",
+    "public:POST:/v1/runtimes/attach": "GAP:N1",
     "public:GET:/v1/targets": "n1-bun-passthrough",
     "public:GET:/v1/surfaces": "n1-bun-passthrough",
-    "public:GET:/v1/placement/bindings": "n1-bun-passthrough"
+    "public:GET:/v1/placement/bindings": "GAP:N1"
   },
   "coverageReasons": {
     "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:POST:/v1/runtimes/sweep": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:POST:/v1/runtimes/prune": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
+    "public:POST:/v1/runtimes/sweep": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending.",
+    "public:POST:/v1/runtimes/prune": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending.",
     "public:POST:/v1/runtimes/ensure": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:POST:/v1/runtimes/attach": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
+    "public:POST:/v1/runtimes/attach": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending.",
     "public:GET:/v1/targets": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:GET:/v1/surfaces": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:GET:/v1/placement/bindings": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through."
+    "public:GET:/v1/placement/bindings": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending."
   }
 }
