@@ -84,7 +84,7 @@ export type { RestartStyle, TmuxManagerOptions }
 
 export { UnreachableWrkqLedger, WrkqStdioLedgerClient } from './wrkq/ledger-client.js'
 export type { WrkqLedgerClient } from './wrkq/ledger-client.js'
-export { drainEventDatabase } from './event-ingest.js'
+export { drainEventDatabase } from './event-ingest/forwarder.js'
 
 export type { BrokerRunPreview } from './broker-run-preview.js'
 export { resolvePreviewIntent } from './broker-run-preview.js'

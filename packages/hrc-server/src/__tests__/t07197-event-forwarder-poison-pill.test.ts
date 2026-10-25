@@ -6,12 +6,9 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import type { HrcEventIngestBatch, HrcLifecycleEvent } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
-import {
-  HRC_INGEST_MAX_BODY_BYTES,
-  eventForwardRetryDelayMs,
-  forwardAvailableEvents,
-  startEventForwarder,
-} from '../event-ingest.js'
+import { forwardAvailableEvents } from '../event-ingest/forward-sweep.js'
+import { eventForwardRetryDelayMs, startEventForwarder } from '../event-ingest/forwarder.js'
+import { HRC_INGEST_MAX_BODY_BYTES } from '../event-ingest/protocol.js'
 
 const roots: string[] = []
 const servers: Array<ReturnType<typeof Bun.serve>> = []

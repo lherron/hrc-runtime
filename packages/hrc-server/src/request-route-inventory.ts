@@ -1,4 +1,4 @@
-import { EVENT_INGEST_ROUTE_KEYS } from './event-ingest.js'
+import { EVENT_INGEST_ROUTE_KEYS } from './event-ingest/protocol.js'
 import { PEER_PROTOCOL_ROUTE_KEYS } from './federation/peer-protocol.js'
 import { BINDING_REGISTRY_ROUTE_KEYS } from './federation/registry-endpoint.js'
 import type { HrcServerInstance } from './index.js'

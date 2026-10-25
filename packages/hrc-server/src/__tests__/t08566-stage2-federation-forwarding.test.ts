@@ -16,7 +16,8 @@ import type {
 } from 'hrc-core'
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 
-import { forwardAvailableEvents, startEventIngestListener } from '../event-ingest.js'
+import { forwardAvailableEvents } from '../event-ingest/forward-sweep.js'
+import { startEventIngestListener } from '../event-ingest/listener.js'
 
 const roots: string[] = []
 const stops: Array<() => void | Promise<void>> = []

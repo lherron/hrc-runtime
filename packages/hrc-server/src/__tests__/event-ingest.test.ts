@@ -12,13 +12,10 @@ import type {
 } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
-import {
-  drainEventDatabase,
-  forwardAvailableEvents,
-  resolveEventForwardTarget,
-  resolveEventIngestTcpPort,
-  startEventIngestListener,
-} from '../event-ingest.js'
+import { forwardAvailableEvents } from '../event-ingest/forward-sweep.js'
+import { drainEventDatabase } from '../event-ingest/forwarder.js'
+import { startEventIngestListener } from '../event-ingest/listener.js'
+import { resolveEventForwardTarget, resolveEventIngestTcpPort } from '../event-ingest/protocol.js'
 
 const roots: string[] = []
 

@@ -32,18 +32,16 @@ import type { HarnessBrokerController } from './broker/controller.js'
 import { recoverColdBootInputContinuations } from './cold-boot-input-recovery.js'
 import { resolveCommandRunTargets } from './command-run-targets-config.js'
 import { type EventHandlersMethods, eventHandlersMethods } from './event-handlers.js'
+import { type EventForwarder, startEventForwarder } from './event-ingest/forwarder.js'
+import { type EventIngestListener, startEventIngestListener } from './event-ingest/listener.js'
 import {
-  type EventForwarder,
-  type EventIngestListener,
   HRC_EVENT_FORWARD_SOURCE_REF_ENV,
   HRC_EVENT_FORWARD_URL_ENV,
   HRC_EVENT_INGEST_SOCKET_ENV,
   HRC_EVENT_INGEST_TCP_PORT_ENV,
   resolveEventForwardTarget,
   resolveEventIngestTcpPort,
-  startEventForwarder,
-  startEventIngestListener,
-} from './event-ingest.js'
+} from './event-ingest/protocol.js'
 import { EventLoopLagMonitor } from './event-loop-lag.js'
 import {
   type EventNotificationHandlersMethods,
