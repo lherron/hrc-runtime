@@ -187,3 +187,20 @@ a nonempty Bun target response, and a live event-stream response. The workflow
 also verifies no-socket refusal, request-size transparency and separate stores.
 The observed-use route list is published under T-11820; postponed routes stay
 on Bun until use is confirmed.
+
+`compare --suite n1-participants` compares direct registration and attachment
+from `crates/hrc-native/e2e/participants.py`: full responses and canonical rows,
+typed allocation bijections, request-bounded clocks, immutable retries, metadata,
+descriptor validation, and exhausted connection retries. Its external endpoint
+is deliberately absent; it does not claim successful broker activation.
+
+`crates/hrc-native/e2e/participant_live.py` qualifies that success separately with
+a real shared-aspd compile of the blank tabularasa/claude profile and a real
+participant-owned bootstrap broker on isolated roots. Use `compare --suite
+n1-participant-live` with its artifact directory as both baseline and candidate.
+It checks the installed identity, ensure graph, actual tmux presentation, durable
+activation, identical retry, and broker survival after each owner stops. Native
+holds events without ACK; Bun's subsequent event/seat projection belongs to N2
+and is excluded from this establishment comparison. Both workflows require a
+clean terminal and the named copied Bun release; every Bun CLI has isolated
+`HRC_STATE_DIR`. Neither suite substitutes for final gates 1–4.

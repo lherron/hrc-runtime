@@ -176,6 +176,23 @@
         "read-only-row-preservation"
       ],
       "requiredInP0": false
+    },
+    "n1-participants": {
+      "assertionIds": [
+        "direct-identity-and-reservation",
+        "full-descriptor-and-start-validation",
+        "write-once-attachment-and-metadata",
+        "durable-retry-exhaustion-and-no-fake-runtime"
+      ],
+      "requiredInP0": false
+    },
+    "n1-participant-live": {
+      "assertionIds": [
+        "real-ASP-participant-owned-claude-broker",
+        "install-ensure-attach-activation-graph",
+        "retained-unACKed-events-and-broker-survival"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [
@@ -404,7 +421,9 @@
     "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:insert:7639": "n1-target-placement",
     "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:listByScopeRef:8826": "n1-target-placement",
     "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:updateIntent:9330": "n1-target-placement",
-    "store-source:packages/hrc-store-sqlite/src/repositories/session-repositories.ts": "n1-target-placement"
+    "store-source:packages/hrc-store-sqlite/src/repositories/session-repositories.ts": "n1-target-placement",
+    "public:POST:/v1/participants/register": "n1-participants",
+    "public:POST:/v1/participants/attach": "n1-participants"
   },
   "coverageReasons": {
     "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",

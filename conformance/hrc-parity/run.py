@@ -530,6 +530,12 @@ def validate_case_observations(id, observations, checks, status=None, installed_
 
 
 def compare(args, checks):
+    if getattr(args, 'suite', None) == 'n1-participant-live':
+        from n1_participants import compare_live
+        return compare_live(args, checks)
+    if getattr(args, 'suite', None) == 'n1-participants':
+        from n1_participants import compare as compare_participants
+        return compare_participants(args, checks)
     if getattr(args, 'suite', None) == 'n1-session-projection':
         from n1_session_projection import compare as compare_projection
         return compare_projection(args, checks)

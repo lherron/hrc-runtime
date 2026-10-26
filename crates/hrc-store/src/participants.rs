@@ -281,3 +281,244 @@ impl Store {
         Ok(ParticipantJoin::Registered(reply))
     }
 }
+
+impl Store {
+    /// Canonical participant rows used to fence attachment against the latest epoch.
+    pub fn participant_registration(&self, id: &str) -> Result<Option<Value>> {
+        registration(&self.sqlite, id)
+    }
+    pub fn participant_latest_attempt(&self, registration_id: &str) -> Result<Option<Value>> {
+        latest(&self.sqlite, registration_id)
+    }
+    pub fn participant_attempt(&self, id: &str) -> Result<Option<Value>> {
+        Ok(self
+            .sqlite
+            .query_row(
+                "SELECT * FROM participant_registration_attempts WHERE attempt_id=?",
+                [id],
+                raw_row,
+            )
+            .optional()?)
+    }
+    pub fn participant_resume_unsupported(&self, attempt: &Value, reason: &str) -> Result<bool> {
+        Ok(self.sqlite.execute("UPDATE participant_registration_attempts SET continuation_resume_state='unsupported',continuation_resume_reason=?,updated_at=? WHERE attempt_id=? AND attach_epoch=?",params![reason,timestamp(),attempt["attempt_id"].as_str(),attempt["attach_epoch"].as_i64()])?==1)
+    }
+    /// The profile and dispatch environment are paired write-once columns.
+    /// A converging caller compares the already frozen descriptor after false.
+    pub fn freeze_participant_descriptor(
+        &mut self,
+        registration: &Value,
+        attempt: &Value,
+        body: &Value,
+    ) -> Result<bool> {
+        let now = timestamp();
+        let tx = self.sqlite.transaction()?;
+        let prepared=tx.execute("UPDATE participant_registration_attempts SET prepared_profile_json=?,adapter_dispatch_env_json=?,attach_socket_path=COALESCE(?,attach_socket_path),continuation_resume_state=?,state='PREPARED',establishment_work_state='pending',establishment_attempt_count=0,establishment_next_attempt_at=NULL,establishment_last_error=NULL,updated_at=? WHERE attempt_id=? AND attach_epoch=? AND state='IDENTITY_MINTED' AND prepared_profile_json IS NULL AND adapter_dispatch_env_json IS NULL",params![body["descriptor"].to_string(),body.get("dispatchEnv").unwrap_or(&Value::Null).to_string(),body["socketPath"].as_str(),if attempt["continuation_carried"]==1{"requested"}else{"not_requested"},now,attempt["attempt_id"].as_str(),attempt["attach_epoch"].as_i64()])?==1;
+        if !prepared {
+            return Ok(false);
+        }
+        if let Some(socket) = body["socketPath"].as_str() {
+            tx.execute("UPDATE participant_registrations SET serving_socket_path=?,updated_at=? WHERE registration_id=? AND serving_socket_path IS NULL",params![socket,now,registration["registration_id"].as_str()])?;
+        }
+        if let Some(binding) = attempt["host_binding_id"].as_str() {
+            tx.execute("UPDATE participant_host_bindings SET state='BOUND',updated_at=?,bound_at=COALESCE(bound_at,?) WHERE binding_id=? AND state IN ('BINDING','DETACHED')",params![now,now,binding])?;
+        }
+        tx.commit()?;
+        Ok(true)
+    }
+    /// Persist a hosting boundary without rewriting a previously frozen value.
+    pub fn participant_snapshot_if_absent(
+        &self,
+        attempt_id: &str,
+        column: &str,
+        snapshot: &Value,
+    ) -> Result<bool> {
+        anyhow::ensure!(
+            [
+                "hosting_intent_json",
+                "realized_hosting_json",
+                "dispatch_json",
+                "broker_identity_json"
+            ]
+            .contains(&column),
+            "unknown participant snapshot column"
+        );
+        Ok(self.sqlite.execute(&format!("UPDATE participant_registration_attempts SET {column}=?,updated_at=? WHERE attempt_id=? AND {column} IS NULL"),params![snapshot.to_string(),timestamp(),attempt_id])?==1)
+    }
+    pub fn participant_transition(
+        &self,
+        attempt_id: &str,
+        from: &[&str],
+        to: &str,
+    ) -> Result<bool> {
+        let placeholders = vec!["?"; from.len()].join(",");
+        let now = timestamp();
+        let values = std::iter::once(to)
+            .chain(std::iter::once(now.as_str()))
+            .chain(std::iter::once(attempt_id))
+            .chain(from.iter().copied());
+        Ok(self.sqlite.execute(&format!("UPDATE participant_registration_attempts SET state=?,updated_at=? WHERE attempt_id=? AND state IN ({placeholders})"),rusqlite::params_from_iter(values))?==1)
+    }
+}
+
+impl Store {
+    pub fn pending_participant_work(&self) -> Result<Vec<(String, String)>> {
+        Ok(self.sqlite.prepare("SELECT registration_id,attempt_id FROM participant_registration_attempts WHERE establishment_work_state IN ('pending','retry_wait') AND prepared_profile_json IS NOT NULL AND hosting_intent_json IS NOT NULL")?.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+    pub fn participant_work_failed(
+        &self,
+        attempt: &Value,
+        error: &str,
+        delay_ms: i64,
+    ) -> Result<()> {
+        let now = timestamp();
+        let next = self.sqlite.query_row(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%fZ',?,? || ' seconds')",
+            params![now, delay_ms as f64 / 1000.0],
+            |r| r.get::<_, String>(0),
+        )?;
+        self.sqlite.execute("UPDATE participant_registration_attempts SET establishment_attempt_count=establishment_attempt_count+1,establishment_work_state=CASE WHEN establishment_attempt_count+1>=5 THEN 'exhausted' ELSE 'retry_wait' END,establishment_next_attempt_at=CASE WHEN establishment_attempt_count+1>=5 THEN NULL ELSE ? END,establishment_last_error=?,updated_at=? WHERE attempt_id=? AND attach_epoch=? AND establishment_work_state IN ('pending','retry_wait')",params![next,error,now,attempt["attempt_id"].as_str(),attempt["attach_epoch"].as_i64()])?;
+        Ok(())
+    }
+    pub fn participant_broker_graph(
+        &self,
+        reg: &Value,
+        attempt: &Value,
+        hello: &Value,
+    ) -> Result<()> {
+        let descriptor: Value = serde_json::from_str(
+            attempt["prepared_profile_json"]
+                .as_str()
+                .context("missing descriptor")?,
+        )?;
+        let intent: Value = serde_json::from_str(
+            attempt["hosting_intent_json"]
+                .as_str()
+                .context("missing hosting intent")?,
+        )?;
+        let realized: Value = serde_json::from_str(
+            attempt["realized_hosting_json"]
+                .as_str()
+                .context("missing realized hosting")?,
+        )?;
+        let dispatch: Value = serde_json::from_str(
+            attempt["dispatch_json"]
+                .as_str()
+                .context("missing dispatch")?,
+        )?;
+        let start = &dispatch["startRequest"];
+        let now = timestamp();
+        let transport = if realized["presentation"]["kind"] == "tmux-tui" {
+            "tmux"
+        } else {
+            "headless"
+        };
+        let harness = match start["spec"]["harness"]["frontend"].as_str().unwrap_or("") {
+            "claude-code-cli" => "claude-code",
+            "claude-agent-sdk" => "agent-sdk",
+            "pi-cli" => "pi-cli",
+            "pi-sdk" => "pi-sdk",
+            "muse-cli" => "muse-cli",
+            _ => "codex-cli",
+        };
+        let provider = match start["spec"]["harness"]["provider"].as_str() {
+            Some("openai") => "openai",
+            Some("anthropic") => "anthropic",
+            _ => "participant-adapter",
+        };
+        anyhow::ensure!(
+            hello["protocolVersion"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "participant broker hello did not report its negotiated protocol"
+        );
+        let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":attempt["runtime_id"],"hostSessionId":reg["host_session_id"],"generation":reg["generation"],"status":"starting","lifecycleOwner":"external","participantRegistration":{"registrationId":reg["registration_id"],"attemptId":attempt["attempt_id"],"attachEpoch":attempt["attach_epoch"],"join":reg["join_direction"]},"broker":{"protocolVersion":hello["protocolVersion"],"endpoint":realized["endpoint"],"substrate":realized["substrate"],"presentation":realized["presentation"]},"invocation":{"invocationId":attempt["invocation_id"],"state":"ready","driver":descriptor["brokerDriver"]},"control":{"mode":"broker-ipc","brokerAttached":false}});
+        let tx = self.sqlite.unchecked_transaction()?;
+        let existing=tx.query_row("SELECT host_session_id,scope_ref,lane_ref,generation,status,active_operation_id,active_invocation_id,selected_profile_hash FROM runtimes WHERE runtime_id=?",[attempt["runtime_id"].as_str()],raw_row).optional()?;
+        if let Some(existing) = existing {
+            anyhow::ensure!(
+                existing["status"] != "terminated"
+                    && existing["host_session_id"] == reg["host_session_id"]
+                    && existing["scope_ref"] == reg["scope_ref"]
+                    && existing["lane_ref"] == reg["lane_ref"]
+                    && existing["generation"] == reg["generation"]
+                    && existing["active_operation_id"] == attempt["operation_id"]
+                    && existing["active_invocation_id"] == attempt["invocation_id"]
+                    && existing["selected_profile_hash"] == descriptor["descriptorHash"],
+                "participant runtime bookkeeping conflicts with the committed attempt"
+            );
+        } else {
+            tx.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,harness,provider,status,status_changed_at,supports_inflight_input,controller_kind,active_operation_id,active_invocation_id,selected_profile_hash,runtime_state_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'starting',?,1,'harness-broker',?,?,?,?,?,?)",params![attempt["runtime_id"].as_str(),reg["host_session_id"].as_str(),reg["scope_ref"].as_str(),reg["lane_ref"].as_str(),reg["generation"].as_i64(),transport,harness,provider,now,attempt["operation_id"].as_str(),attempt["invocation_id"].as_str(),descriptor["descriptorHash"].as_str(),state.to_string(),now,now])?;
+        }
+        tx.execute("INSERT INTO runtime_operations(operation_id,runtime_id,host_session_id,generation,operation_kind,controller,selected_profile_id,selected_profile_hash,startup_method,turn_delivery,status,route_decision_json,capability_resolution_json,created_at,started_at,updated_at) SELECT ?,?,?,?,'broker_invocation','harness-broker',?,?,'broker.ensureInvocation','invocation.input','starting',?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM runtime_operations WHERE operation_id=?)",params![attempt["operation_id"].as_str(),attempt["runtime_id"].as_str(),reg["host_session_id"].as_str(),reg["generation"].as_i64(),descriptor["descriptorId"].as_str(),descriptor["descriptorHash"].as_str(),json!({"origin":"participant-registration","join":reg["join_direction"]}).to_string(),json!({"brokerHello":hello.get("capabilities").unwrap_or(&json!({}))}).to_string(),now,now,now,attempt["operation_id"].as_str()])?;
+        let existing=tx.query_row("SELECT operation_id,runtime_id,start_request_hash,selected_profile_hash FROM broker_invocations WHERE invocation_id=?",[attempt["invocation_id"].as_str()],raw_row).optional()?;
+        if let Some(existing) = existing {
+            anyhow::ensure!(
+                existing["operation_id"] == attempt["operation_id"]
+                    && existing["runtime_id"] == attempt["runtime_id"]
+                    && existing["start_request_hash"]
+                        == descriptor["harnessInvocation"]["startRequestHash"]
+                    && existing["selected_profile_hash"] == descriptor["descriptorHash"],
+                "participant broker invocation bookkeeping conflicts with the committed attempt"
+            );
+        } else {
+            tx.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,execution_format,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,start_request_projection_json,lifecycle_policy_hash,created_at,updated_at) VALUES (?,?,?,'format1',?,?,'ready',?,?,?,?,?,?,?,?,?)",params![attempt["invocation_id"].as_str(),attempt["operation_id"].as_str(),attempt["runtime_id"].as_str(),hello["protocolVersion"].as_str(),descriptor["brokerDriver"].as_str(),hello.get("capabilities").unwrap_or(&json!({})).to_string(),descriptor["harnessInvocation"]["specHash"].as_str(),descriptor["harnessInvocation"]["startRequestHash"].as_str(),descriptor["descriptorHash"].as_str(),start["spec"].to_string(),start.to_string(),intent["lifecyclePolicy"]["policyHash"].as_str(),now,now])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    /// Commit continuity activation before publishing the held controller.
+    pub fn activate_participant(&self, reg: &Value, attempt: &Value) -> Result<()> {
+        let now = timestamp();
+        let tx = self.sqlite.unchecked_transaction()?;
+        let current = tx.query_row(
+            "SELECT * FROM participant_registration_attempts WHERE attempt_id=?",
+            [attempt["attempt_id"].as_str()],
+            raw_row,
+        )?;
+        anyhow::ensure!(
+            current["attach_epoch"] == attempt["attach_epoch"],
+            "participant activation work is stale"
+        );
+        if current["state"] == "ATTACH_CONFIRMED"
+            && current["initial_activation_confirmed_at"].is_null()
+        {
+            let changed=tx.execute("UPDATE participant_registration_attempts SET state='ACTIVE',initial_activation_confirmed_at=?,updated_at=? WHERE attempt_id=? AND state='ATTACH_CONFIRMED' AND initial_activation_confirmed_at IS NULL",params![now,now,attempt["attempt_id"].as_str()])?;
+            anyhow::ensure!(changed == 1, "participant activation compare-and-set lost");
+            let raw: String = tx.query_row(
+                "SELECT runtime_state_json FROM runtimes WHERE runtime_id=?",
+                [attempt["runtime_id"].as_str()],
+                |r| r.get(0),
+            )?;
+            let mut state: Value = serde_json::from_str(&raw)?;
+            let classification = current["activation_classification"]
+                .as_str()
+                .unwrap_or("attached_unknown");
+            state["participantActivation"] = json!({"attemptId":attempt["attempt_id"],"attachEpoch":attempt["attach_epoch"],"classification":classification,"activatedAt":now});
+            tx.execute(
+                "UPDATE runtimes SET runtime_state_json=?,updated_at=? WHERE runtime_id=?",
+                params![state.to_string(), now, attempt["runtime_id"].as_str()],
+            )?;
+            let seq:i64=tx.query_row("UPDATE event_stream_cursor SET next_seq=next_seq+1 WHERE id=1 RETURNING next_seq-1",[],|r|r.get(0))?;
+            let transport = if state["broker"]["presentation"]["kind"] == "tmux-tui" {
+                "tmux"
+            } else {
+                "headless"
+            };
+            tx.execute("INSERT INTO hrc_events(stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,runtime_id,category,event_kind,transport,payload_json) VALUES (?,?,?,?,?,?,?,'runtime','runtime.ensured',?,?)",params![seq,now,reg["host_session_id"].as_str(),reg["scope_ref"].as_str(),reg["lane_ref"].as_str(),reg["generation"].as_i64(),attempt["runtime_id"].as_str(),transport,json!({"source":"participant-activation","attemptId":attempt["attempt_id"],"attachEpoch":attempt["attach_epoch"],"classification":classification}).to_string()])?;
+        } else if current["state"] == "ATTACH_CONFIRMED"
+            && !current["initial_activation_confirmed_at"].is_null()
+        {
+            tx.execute("UPDATE participant_registration_attempts SET state='ACTIVE',updated_at=? WHERE attempt_id=?",params![now,attempt["attempt_id"].as_str()])?;
+        } else {
+            anyhow::ensure!(
+                current["state"] == "ACTIVE"
+                    && !current["initial_activation_confirmed_at"].is_null(),
+                "participant activation requires current attach confirmation"
+            );
+        }
+        tx.execute("UPDATE participant_registration_attempts SET establishment_work_state='completed',establishment_next_attempt_at=NULL,updated_at=? WHERE attempt_id=? AND attach_epoch=? AND establishment_work_state IN ('pending','retry_wait')",params![now,attempt["attempt_id"].as_str(),attempt["attach_epoch"].as_i64()])?;
+        tx.commit()?;
+        Ok(())
+    }
+}

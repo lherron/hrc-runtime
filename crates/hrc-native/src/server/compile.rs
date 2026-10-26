@@ -362,7 +362,7 @@ pub fn neutral_spec(spec: &Value) -> Value {
     }
     spec
 }
-pub fn neutral_start_hash(start: &Value) -> String {
+pub fn neutral_start(start: &Value) -> Value {
     let mut value = start.clone();
     value["spec"] = neutral_spec(&start["spec"]);
     if let Some(input) = start.get("initialInput") {
@@ -374,7 +374,10 @@ pub fn neutral_start_hash(start: &Value) -> String {
         }
         value["initialInput"] = neutral;
     }
-    digest(canonical(&value).as_bytes())
+    value
+}
+pub fn neutral_start_hash(start: &Value) -> String {
+    digest(canonical(&neutral_start(start)).as_bytes())
 }
 
 /// Re-run immediately before launch from the persisted preparation, never PATH.

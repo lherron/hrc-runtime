@@ -4,6 +4,7 @@ mod broker;
 mod compile;
 mod front;
 mod index;
+mod participants;
 mod proxy;
 mod rpc;
 mod runtime_views;
@@ -23,7 +24,7 @@ use axum::{
 use hrc_store::{Store, timestamp};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     fs::{self, OpenOptions},
     io::Write,
@@ -39,6 +40,7 @@ struct Server {
     store: Mutex<Store>,
     accounting: Arc<accounting::Accounting>,
     brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
+    participant_work: Mutex<HashSet<String>>,
     runtime: PathBuf,
     bun_passthrough: Option<PathBuf>,
     /// Front-door role: only front::is_front_safe routes are served natively.
@@ -211,6 +213,7 @@ pub async fn serve(front: Option<front::FrontConfig>) -> Result<()> {
         accounting,
         store: Mutex::new(store),
         brokers: Mutex::new(HashMap::new()),
+        participant_work: Mutex::new(HashSet::new()),
         runtime,
         bun_passthrough,
         front: front.is_some(),
@@ -221,6 +224,7 @@ pub async fn serve(front: Option<front::FrontConfig>) -> Result<()> {
     // The front controls no brokers; Bun behind it owns execution.
     if !server.front {
         broker::reattach(&server).await?;
+        participants::resume(&server)?;
     }
     let role = if server.front { "front" } else { "native" };
     let bun_socket = server.bun_passthrough.clone();
@@ -388,6 +392,22 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
                 Err(e)
             }
         }
+    } else if method == Method::POST && uri.path() == "/v1/participants/attach" {
+        match parse_body(&body) {
+            Ok(value) => participants::attach(server, value).await,
+            Err(mut error) => {
+                error.detail = Some(json!({}));
+                Err(error)
+            }
+        }
+    } else if method == Method::POST && uri.path() == "/v1/participants/register" {
+        match parse_body(&body) {
+            Ok(value) => participants::register(server, value),
+            Err(mut error) => {
+                error.detail = Some(json!({}));
+                Err(error)
+            }
+        }
     } else if method == Method::POST && uri.path() == "/v1/targets/ensure" {
         match parse_body(&body) {
             Ok(value) => targets::ensure(server, value).await,
@@ -479,6 +499,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/runtimes/attach",
                 "/v1/surfaces/bind",
                 "/v1/targets/ensure",
+                "/v1/participants/register",
+                "/v1/participants/attach",
                 "/v1/placements/resolve",
                 "/v1/declarations/resolve",
             ]

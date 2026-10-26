@@ -41,6 +41,10 @@ impl JsonRpc {
         Ok(Self { calls, timeout })
     }
 
+    pub fn is_closed(&self) -> bool {
+        self.calls.is_closed()
+    }
+
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
         let (reply, receive) = oneshot::channel();
         let pending = async {
