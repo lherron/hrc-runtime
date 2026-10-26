@@ -3,6 +3,7 @@ mod aspc;
 mod broker;
 mod compile;
 mod front;
+pub use front::Role;
 mod index;
 mod participants;
 mod proxy;
@@ -145,8 +146,8 @@ pub fn runtime_root() -> Result<PathBuf> {
     )))
 }
 
-/// Recognize a front-door argv; see front::invocation.
-pub fn front_invocation(args: &[String]) -> Result<Option<front::FrontConfig>> {
+/// Recognize an explicit daemon role argv; see front::invocation.
+pub fn front_invocation(args: &[String]) -> Result<Option<front::Role>> {
     front::invocation(args, &runtime_root()?)
 }
 
@@ -160,7 +161,7 @@ pub fn stderr_json(level: &str, component: &str, event: &str, data: Value) {
     );
 }
 
-pub async fn serve(front: Option<front::FrontConfig>) -> Result<()> {
+pub async fn serve(role: front::Role) -> Result<()> {
     std::panic::set_hook(Box::new(|info| {
         let payload = info.payload();
         let message = payload
@@ -185,35 +186,24 @@ pub async fn serve(front: Option<front::FrontConfig>) -> Result<()> {
     );
     // Schema refusal precedes all filesystem effects, including ownership files.
     // The front never writes: a read-only handle makes that structural.
-    let store = if front.is_some() {
+    let front = role.is_front();
+    let store = if front {
         Store::open_readonly(&state.join("state.sqlite"))?
     } else {
         Store::open(&state.join("state.sqlite"))?
     };
-    let bun_passthrough = match &front {
-        Some(front) => Some(front.bun_socket.clone()),
-        None => env::var("HRC_BUN_PASSTHROUGH_SOCKET")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .map(PathBuf::from),
-    };
-    if let Some(front) = &front
-        && let Err(error) = std::os::unix::net::UnixStream::connect(&front.bun_socket)
+    // front::invocation validated the path; only the front needs Bun up now.
+    // The native pass-through forwards lazily (502 runtime_unavailable).
+    let bun_passthrough = role.bun_socket().map(PathBuf::from);
+    if let Role::Front { bun_socket } = &role
+        && let Err(error) = std::os::unix::net::UnixStream::connect(bun_socket)
     {
         bail!(
             "--bun-socket {} is unreachable: {error}",
-            front.bun_socket.display()
+            bun_socket.display()
         );
     }
-    if let Some(path) = &bun_passthrough {
-        if !path.is_absolute() {
-            bail!("HRC_BUN_PASSTHROUGH_SOCKET must be absolute");
-        }
-        if path == &runtime.join("hrc.sock") {
-            bail!("Bun pass-through socket must not be the native listener");
-        }
-    }
-    let owner = if front.is_some() {
+    let owner = if front {
         Owner::acquire_front(&runtime)?
     } else {
         Owner::acquire(&runtime)?
@@ -243,7 +233,7 @@ pub async fn serve(front: Option<front::FrontConfig>) -> Result<()> {
         participant_work: Mutex::new(HashSet::new()),
         runtime,
         bun_passthrough,
-        front: front.is_some(),
+        front,
         state,
         started_at: timestamp(),
         started: Instant::now(),

@@ -22,15 +22,36 @@ pub fn is_front_safe(method: &Method, path: &str) -> bool {
     FRONT_SAFE.iter().any(|(m, p)| m == method && *p == path)
 }
 
+/// The daemon's role, chosen by explicit serve arguments, never env.
 #[derive(Debug, Clone)]
-pub struct FrontConfig {
-    pub bun_socket: PathBuf,
+pub enum Role {
+    /// Today's native daemon; `--bun-socket` forwards what it does not implement.
+    Native { passthrough: Option<PathBuf> },
+    /// `--front --bun-socket`: front door for the Bun owner behind it.
+    Front { bun_socket: PathBuf },
+}
+impl Default for Role {
+    fn default() -> Self {
+        Role::Native { passthrough: None }
+    }
+}
+impl Role {
+    pub fn is_front(&self) -> bool {
+        matches!(self, Role::Front { .. })
+    }
+    pub fn bun_socket(&self) -> Option<&Path> {
+        match self {
+            Role::Native { passthrough } => passthrough.as_deref(),
+            Role::Front { bun_socket } => Some(bun_socket),
+        }
+    }
 }
 
-/// Recognize the daemon argv before CLI dispatch. `Ok(None)` leaves the native
-/// role (or the CLI) unchanged. An explicit listener other than the public
-/// socket is Bun's role and is refused here, never ignored.
-pub fn invocation(args: &[String], runtime: &Path) -> Result<Option<FrontConfig>> {
+/// Recognize the daemon argv before CLI dispatch. `Ok(None)` (no `--front` or
+/// `--bun-socket`) leaves the plain native role or the CLI unchanged. An
+/// explicit listener other than the public socket is Bun's role and is refused
+/// here, never ignored.
+pub fn invocation(args: &[String], runtime: &Path) -> Result<Option<Role>> {
     let rest = match args {
         [server, serve, rest @ ..] if server == "server" && serve == "serve" => rest,
         [server, rest @ ..] if server == "server" => rest,
@@ -69,25 +90,28 @@ pub fn invocation(args: &[String], runtime: &Path) -> Result<Option<FrontConfig>
             runtime.join("hrc.sock").display()
         );
     }
-    if !front {
-        if bun_socket.is_some() {
-            bail!("--bun-socket requires --front");
-        }
+    if !front && bun_socket.is_none() {
         return Ok(None);
     }
+    let flag = if front { "--front" } else { "--bun-socket" };
     if let Some(arg) = other.first() {
-        bail!("{arg} is not supported with --front");
+        bail!("{arg} is not supported with {flag}");
     }
-    let Some(bun_socket) = bun_socket else {
+    if front && bun_socket.is_none() {
         bail!("--front requires --bun-socket <absolute path>");
-    };
-    if !bun_socket.is_absolute() {
-        bail!("--bun-socket must be absolute");
     }
-    if bun_socket == runtime.join("hrc.sock") {
-        bail!("--bun-socket must not be the public socket");
+    if let Some(socket) = &bun_socket {
+        if !socket.is_absolute() {
+            bail!("--bun-socket must be absolute");
+        }
+        if *socket == runtime.join("hrc.sock") {
+            bail!("--bun-socket must not be the public socket");
+        }
     }
-    Ok(Some(FrontConfig { bun_socket }))
+    Ok(Some(match (front, bun_socket) {
+        (true, Some(bun_socket)) => Role::Front { bun_socket },
+        (_, passthrough) => Role::Native { passthrough },
+    }))
 }
 
 #[cfg(test)]
@@ -107,14 +131,20 @@ mod tests {
                 .is_none()
         );
         let f = invocation(&args("server --front --bun-socket /r/hrc-bun.sock"), rt).unwrap();
-        assert_eq!(f.unwrap().bun_socket, Path::new("/r/hrc-bun.sock"));
+        let f = f.unwrap();
+        assert!(f.is_front() && f.bun_socket() == Some(Path::new("/r/hrc-bun.sock")));
         let f = invocation(&args("server serve --bun-socket=/r/b.sock --front"), rt).unwrap();
-        assert_eq!(f.unwrap().bun_socket, Path::new("/r/b.sock"));
+        assert_eq!(f.unwrap().bun_socket(), Some(Path::new("/r/b.sock")));
+        let n = invocation(&args("server serve --bun-socket /r/b.sock"), rt).unwrap();
+        let n = n.unwrap();
+        assert!(!n.is_front() && n.bun_socket() == Some(Path::new("/r/b.sock")));
         for bad in [
             "server --front",
             "server --front --bun-socket rel.sock",
             "server --front --bun-socket /r/hrc.sock",
-            "server --bun-socket /r/b.sock",
+            "server --bun-socket rel.sock",
+            "server --bun-socket /r/hrc.sock",
+            "server start --bun-socket /r/b.sock",
             "server --front --bun-socket /r/b.sock --allow-persona x",
             "server serve --listen-socket /r/hrc-bun.sock",
             "server --front --bun-socket",

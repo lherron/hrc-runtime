@@ -61,11 +61,13 @@ python3 crates/hrc-native/e2e/cold_birth.py --binary crates/target/debug/rusthrc
   --scratch-root /tmp/hrcn1-fresh --artifacts /tmp/hrcn1-results
 ```
 
-Set `HRC_BUN_PASSTHROUGH_SOCKET` to an absolute Unix socket path to forward
-unimplemented routes to a separately managed Bun listener. Rust preserves the
+`rusthrc server [serve] --bun-socket <abs>` forwards unimplemented routes to a
+separately managed Bun listener (an explicit argument; the environment carries
+no role, and `HRC_BUN_PASSTHROUGH_SOCKET` is no longer read). Rust preserves the
 request method, URI, headers and streaming body, and relays response status,
-headers and body without buffering live responses. It never launches Bun.
-Without this setting, unimplemented routes return the ordinary 404. N1 tests
+headers and body without buffering live responses. It never launches Bun; an
+unreachable Bun answers 502 `runtime_unavailable` per request. Without the
+argument, unimplemented routes return the ordinary 404. N1 tests
 use separate native/Bun state roots; N6 owns the serve-only production design.
 
 `e2e/passthrough.py` drives that separate-state workflow against the named Bun
