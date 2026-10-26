@@ -545,7 +545,7 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n2-attached':
         from n2_attached import compare as compare_n2_attached
         return compare_n2_attached(args, checks)
-    if getattr(args, 'suite', None) in ('n3-events','n3-subscribers','n3-mail','n3-presentation','n3-replay'):
+    if getattr(args, 'suite', None) in ('n3-events','n3-subscribers','n3-mail','n3-presentation','n3-replay', 'n3-publication','n3-edges'):
         from n3_routes import compare as compare_n3
         return compare_n3(args, checks)
     if getattr(args, 'suite', None) == 'n4-federation':

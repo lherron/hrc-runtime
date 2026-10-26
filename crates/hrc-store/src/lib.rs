@@ -19,6 +19,7 @@ mod metadata;
 mod monitor_read;
 mod participants;
 mod presentation;
+mod publication;
 mod surfaces;
 mod targets;
 pub use metadata::{MetadataWrite, validate_metadata};

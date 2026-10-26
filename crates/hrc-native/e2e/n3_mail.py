@@ -55,6 +55,7 @@ def main():
         s.down(bun)
         with sqlite3.connect(snapshot) as source,sqlite3.connect(s.db_path) as target:source.backup(target)
         s.up('native','mail');actual=exercise(s,scope,runtime,host,generation)
+        s.assert_no_duplicate_turn_messages()
         cases={k:{'bun':v,'native':actual[k],'pass':v==actual[k]} for k,v in expected.items()}
         (a.artifacts/'mail-compares.json').write_text(json.dumps(cases,indent=2)+'\n')
         for side,observations in [('bun',expected),('native',actual)]:

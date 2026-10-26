@@ -40,3 +40,8 @@ class Scratch(BaseScratch):
         assert any(p.get('slug')==self.project_id or p.get('path')==self.project_id for p in projects),projects
         self.authority={'locator':self.env['HRC_WRKQ_DB'],'dbPath':str(self.root/'wrkq.db'),'pid':proc.pid,'port':port}
         (self.artifacts/'authority.json').write_text(json.dumps(self.authority,indent=2)+'\n')
+
+    def assert_no_duplicate_turn_messages(self):
+        # Mable: aspd's Stop-fallback fix is live for births after 08:39Z.
+        duplicates=self.rows("SELECT e.runtime_id,e.run_id,e.payload_json,COUNT(*) AS count FROM hrc_events e JOIN runtimes r ON r.runtime_id=e.runtime_id WHERE e.event_kind='turn.message' AND e.source_ref IS NULL AND julianday(r.created_at)>=julianday('2026-10-26T08:39:00Z') GROUP BY e.runtime_id,e.run_id,e.payload_json HAVING COUNT(*)>1")
+        assert not duplicates,('post-fix duplicate turn.message',duplicates)

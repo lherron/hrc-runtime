@@ -161,8 +161,8 @@ pub fn handle(
         tx.commit().map_err(anyhow::Error::from)?;
         return Ok(Json(json!({"events":rows,"ledgerIncarnationId":incarnation,"headHrcSeq":head,"truncated":truncated})).into_response());
     }
-    let q = filters(q)?;
     if path == "/v1/events/latest-by-session" {
+        let q = filters(q)?;
         let db = server.store.lock().unwrap();
         let rows = db.event_history(&q, 0, None, None, true, true)?;
         let mut seen = HashSet::new();
@@ -177,7 +177,8 @@ pub fn handle(
             .collect();
         return Ok(Json(rows).into_response());
     }
-    let receipt = normalized(&q, "receipt");
+    let from = from_seq(q)?;
+    let receipt = normalized(q, "receipt");
     if let Some(r) = receipt
         && r != "consumer-ack-v1"
     {
@@ -192,7 +193,7 @@ pub fn handle(
             Some(json!({"field":"follow"})),
         ));
     }
-    let from = from_seq(&q)?;
+    let q = filters(q)?;
     let rows = server
         .store
         .lock()

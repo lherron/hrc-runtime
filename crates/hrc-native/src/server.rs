@@ -13,6 +13,7 @@ mod front;
 mod ledger;
 mod mail;
 mod streams;
+mod submissions;
 mod subscribers;
 pub use front::Role;
 mod index;
@@ -26,6 +27,7 @@ mod projection;
 mod proxy;
 mod reconcile;
 mod recovery;
+mod publication;
 mod rpc;
 mod runs;
 mod runtime_views;
@@ -68,6 +70,7 @@ struct Server {
     projection: Mutex<projection::Memory>,
     subscribers: Mutex<subscribers::Registry>,
     wrkq: ledger::Client,
+    publication: publication::State,
     controller: controller::State,
     /// Runtimes whose user-exit lease reap already fired.
     reaped: Mutex<HashSet<String>>,
@@ -279,6 +282,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         projection: Mutex::new(projection::Memory::default()),
         subscribers: Mutex::new(subscribers::Registry::default()),
         wrkq: ledger::Client::default(),
+        publication: publication::State::default(),
         controller: controller::State::default(),
         reaped: Mutex::new(HashSet::new()),
         ledger: tokio::sync::watch::Sender::new(0),
@@ -295,6 +299,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
     });
     // The front controls no brokers; Bun behind it owns execution.
     if !server.front {
+        publication::start(&server)?;
         broker::reattach(&server).await?;
         recovery::start(&server);
         participants::resume(&server)?;
@@ -533,9 +538,24 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
             Ok(value) => turns::dispatch_turn(server, value).await,
             Err(e) => Err(e),
         }
-    } else if method == Method::POST && uri.path() == "/v1/submissions/invoke" {
+    } else if method == Method::POST
+        && matches!(
+            uri.path(),
+            "/v1/submissions/invoke"
+                | "/v1/submissions/steer"
+                | "/v1/submissions/enqueue"
+                | "/v1/submissions/preempt"
+        )
+    {
         match parse_body(&body) {
-            Ok(value) => turns::submission(server, "invoke", value).await,
+            Ok(value) => {
+                turns::submission(server, uri.path().rsplit('/').next().unwrap(), value).await
+            }
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/submissions/withdraw" {
+        match parse_body(&body) {
+            Ok(value) => submissions::withdraw(server, value).await,
             Err(e) => Err(e),
         }
     } else if method == Method::POST && uri.path() == "/v1/runs/reconcile-active" {
@@ -712,6 +732,10 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/sessions/drop-continuation",
                 "/v1/runs/sweep-zombies",
                 "/v1/runs/reconcile-active",
+                "/v1/submissions/steer",
+                "/v1/submissions/enqueue",
+                "/v1/submissions/preempt",
+                "/v1/submissions/withdraw",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
                 "/v1/runtimes/prune",

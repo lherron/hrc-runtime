@@ -58,6 +58,7 @@ db.hrcEvents.append({ts:'2026-01-01T00:00:00.000Z',hostSessionId:'hrc-server',sc
         for side,v in [('bun',expected),('native',actual)]:
             directory=a.artifacts/side;directory.mkdir(exist_ok=True);(directory/'replay.json').write_text(json.dumps(v,indent=1)+'\n')
         runner=Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py';result=subprocess.run(['python3',str(runner),'compare','--suite','n3-replay','--baseline',str(a.artifacts/'bun'),'--candidate',str(a.artifacts/'native'),'--out',str(a.artifacts/'compare')],capture_output=True,text=True)
+        s.assert_no_duplicate_turn_messages()
         (a.artifacts/'compare.stdout').write_text(result.stdout);(a.artifacts/'compare.stderr').write_text(result.stderr);assert result.returncode==0,(result.stdout[-4000:],result.stderr)
         print(json.dumps({'pass':True,'compared':len(expected),'artifacts':str(a.artifacts)}))
     finally:s.cleanup('agent:tabularasa:project:n3-t11839:task:')

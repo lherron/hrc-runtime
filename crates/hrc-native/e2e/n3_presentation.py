@@ -38,6 +38,7 @@ def main():
         s.up('native','presentation');actual=exercise(s,scope,runtime)
         for side,v in [('bun',expected),('native',actual)]:
             directory=a.artifacts/side;directory.mkdir(exist_ok=True);(directory/'presentation.json').write_text(json.dumps(v,indent=2)+'\n')
+        s.assert_no_duplicate_turn_messages()
         cases={k:{'bun':v,'native':actual[k],'pass':v==actual[k]} for k,v in expected.items()};(a.artifacts/'presentation-compares.json').write_text(json.dumps(cases,indent=2)+'\n')
         runner=Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py'
         result=subprocess.run(['python3',str(runner),'compare','--suite','n3-presentation','--baseline',str(a.artifacts/'bun'),'--candidate',str(a.artifacts/'native'),'--out',str(a.artifacts/'compare')],capture_output=True,text=True)

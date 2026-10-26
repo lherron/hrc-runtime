@@ -57,6 +57,7 @@ def main():
         s.down(bun)
         with sqlite3.connect(snapshot) as source,sqlite3.connect(s.db_path) as target:source.backup(target)
         s.up('native','subscribers');actual=exercise(s,runtime)
+        s.assert_no_duplicate_turn_messages()
         cases={k:{'bun':v,'native':actual[k],'pass':normalize(v)==normalize(actual[k]),'keyOrderPass':json.dumps(normalize(v),separators=(',',':'))==json.dumps(normalize(actual[k]),separators=(',',':'))} for k,v in expected.items()}
         (a.artifacts/'subscriber-compares.json').write_text(json.dumps(cases,indent=2)+'\n')
         for side,observations in [('bun',expected),('native',actual)]:

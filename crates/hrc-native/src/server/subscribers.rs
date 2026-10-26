@@ -61,7 +61,7 @@ impl Registry {
             ));
         }
         let name = input["name"].as_str().unwrap_or("").trim();
-        if name.is_empty() || name.chars().count() > 128 {
+        if name.is_empty() || name.encode_utf16().count() > 128 {
             return Err(ApiError::bad(
                 "name must be a non-empty string of at most 128 characters",
                 Some(json!({"field":"name"})),
@@ -92,7 +92,9 @@ impl Registry {
         if let Some(a) = self
             .active
             .iter()
-            .find(|a| a.entry["name"] == name && a.entry["route"] == route)
+            .rev()
+            .find(|a| a.entry["name"] == name)
+            .filter(|a| a.entry["route"] == route)
         {
             let mut v = json!({"subscriberId":a.entry["subscriberId"],"name":name,"route":route,"receiptMode":a.entry["receiptMode"]});
             if let Some(t) = &a.token {
