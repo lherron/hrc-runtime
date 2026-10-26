@@ -1,9 +1,11 @@
 import { CliUsageError, parseDuration } from 'cli-kit'
-import type {
-  HrcSubmissionResponse,
-  HrcTurnResponseFormat,
-  SemanticTurnHandoffPendingResponse,
-  SemanticTurnHandoffResponse,
+import {
+  HrcDomainError,
+  HrcErrorCode,
+  type HrcSubmissionResponse,
+  type HrcTurnResponseFormat,
+  type SemanticTurnHandoffPendingResponse,
+  type SemanticTurnHandoffResponse,
 } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 
@@ -158,6 +160,29 @@ export function writeDoorDowngrade(
   )
 }
 
+/**
+ * T-11928: a session that never applied an intent (the mail injector mints
+ * sessions with persistIntent:false, and its first birth failed) gives the
+ * steer door nothing to replay, so every server refuses it
+ * `missing_runtime_intent`. Undefined sends the caller on to the handoff door,
+ * which carries this command's resolved intent, persists it, and births.
+ */
+async function steerOrBirth(
+  steer: () => Promise<HrcSubmissionResponse>
+): Promise<HrcSubmissionResponse | undefined> {
+  try {
+    return await steer()
+  } catch (error) {
+    if (!(error instanceof HrcDomainError) || error.code !== HrcErrorCode.MISSING_RUNTIME_INTENT) {
+      throw error
+    }
+    process.stderr.write(
+      'notice: the session has no applied runtime intent; birthing it with the resolved intent\n'
+    )
+    return undefined
+  }
+}
+
 export async function prepareDispatchedTurn(
   client: HrcClient,
   opts: TurnOptions,
@@ -249,17 +274,24 @@ export async function prepareDispatchedTurn(
     // with no session row has no seat to steer yet; its birth turn is the turn
     // the steer would start, and the handoff below is the door that births it.
     const existing = await client.resolveSession({ sessionRef, create: false })
-    if (existing.found) {
-      if (waitMode === 'final') {
-        const waited = await withWaitDeadline(output, 'steer', (signal) =>
+    if (existing.found && waitMode === 'final') {
+      const waited = await steerOrBirth(() =>
+        withWaitDeadline(output, 'steer', (signal) =>
           client.steer({ ...submissionRequest, wait: true }, { signal })
         )
+      )
+      if (waited !== undefined) {
         writeDoorDowngrade(waited)
         printJsonLine(waited)
         exitIfWaitedTurnFailed(waited)
         return undefined
       }
-      const steered = await client.steer(submissionRequest)
+    }
+    const steered =
+      existing.found && waitMode !== 'final'
+        ? await steerOrBirth(() => client.steer(submissionRequest))
+        : undefined
+    if (steered !== undefined) {
       writeDoorDowngrade(steered)
       // Format-2 admission has no execution run or lifecycle cursor yet; its
       // receipt is input-based and cannot be followed as a legacy run.
