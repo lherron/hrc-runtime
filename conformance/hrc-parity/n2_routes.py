@@ -44,6 +44,11 @@ def mask_owner(value):
         if isinstance(value.get('blockedUnknown'), list):
             value = dict(value, blockedUnknown=[dict(b, count='<harness>') if isinstance(b, dict) else b
                                                 for b in value['blockedUnknown']])
+        # Both owners single-flight one seat probe per runtime; whichever is in
+        # flight (periodic-monitor tick or the broker-event probe) records the cause.
+        if isinstance(value.get('seatTransitions'), list):
+            value = dict(value, seatTransitions=[dict(t, cause='<probe>') if isinstance(t, dict) else t
+                                                 for t in value['seatTransitions']])
         return {k: ('<owner>' if k in OWNER_DERIVED else mask_owner(v)) for k, v in value.items()}
     if isinstance(value, list):
         return [mask_owner(v) for v in value]

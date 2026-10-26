@@ -54,6 +54,14 @@ class KeyOrderControls(unittest.TestCase):
         nearby = ({'invocations': [{'contextReading': {'b': 1, 'a': 2}}]}, {'invocations': [{'contextReading': {'a': 2, 'b': 1}}]})
         self.assertEqual(compare_records('n2-turns', [('x', '/', nearby[0])], [('x', '/', nearby[1])])['failedCases'], 1)
 
+    def test_case_scoped_exclusion_covers_only_its_case(self):
+        bun, native = {'runtimeId': 'r', 'source': 's'}, {'runtimeId': 'r', 'retainedEvidence': [], 'source': 's'}
+        report = compare_records('n2-routes', [('broker-inspect:terminated', '/', bun)],
+                                 [('broker-inspect:terminated', '/', native)])
+        self.assertEqual((report['failedCases'], len(report['excluded'])), (0, 1))
+        self.assertEqual(compare_records('n2-routes', [('broker-inspect:live', '/', bun)],
+                                         [('broker-inspect:live', '/', native)])['failedCases'], 1)
+
     def test_cli_json_order_and_text(self):
         self.assertFalse(cli_orders({'stdout': '{"z":1,"a":2}', 'stderr': ''},
                                     {'stdout': '{"a":2,"z":1}', 'stderr': ''})['pass'])

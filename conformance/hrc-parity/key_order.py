@@ -8,18 +8,24 @@ from pathlib import Path
 import re
 
 
-# Named, ruled exclusions: (suite, object-path pattern) -> why the order is not
-# an owner difference. Excluded differences are reported, never dropped.
+# Named, ruled exclusions: (suite or suite:case, object-path pattern) -> why the
+# order is not an owner difference. Excluded differences are reported, never dropped.
 EXCLUSIONS = {
     ('n2-turns', r'^\$\.invocations\[\d+\]\.context(?=$|[.\[])'):
         'broker.listInvocations context passes through verbatim; turnId presence follows Claude '
         'statusline timing relative to turn.completed (mable EN-36677 / N2).',
+    ('n1-runtime-inspect:runtimes', r'^\$\[\d+\]\.runtimeStateJson$'):
+        'brokerReplay is written at broker reattach; the sweep read Bun before any reattach and native '
+        'after its startup reattach, and both write identical keys after one (EN-36677 / N2).',
+    ('n2-routes:broker-inspect:terminated', r'^\$$'):
+        'retainedEvidence appears on either owner only after the retained pass records an outcome '
+        '(Bun runtime-inspect-handlers.ts, native runtime_views.rs); its presence is that timing (N2).',
 }
 
 
-def excluded(suite, path):
+def excluded(suite, path, case=''):
     return next((reason for (name, pattern), reason in EXCLUSIONS.items()
-                 if name == suite and re.search(pattern, path)), None)
+                 if name in (suite, f'{suite}:{case}') and re.search(pattern, path)), None)
 
 
 def differences(bun, native, path='$'):
@@ -102,7 +108,7 @@ def compare_records(suite, bun, native):
     for name, (route, value) in a.items():
         delta = []
         for d in differences(value, b[name][1]):
-            reason = excluded(suite, d['path'])
+            reason = excluded(suite, d['path'], name)
             if reason:
                 exclusions.append({'case': name, 'object path': d['path'], 'reason': reason})
             else:
