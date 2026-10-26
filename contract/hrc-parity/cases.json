@@ -1229,7 +1229,7 @@
     "cli:hrc run annotate": "direct-cli-sdk",
     "cli:hrc run export": "direct-cli-sdk",
     "file:state-wal-shm": "n1-schema-refusal",
-    "file:lifecycle-credentials": "GAP:N4",
+    "file:lifecycle-credentials": "GAP:N5",
     "file:broker-leases-raw-provider-artifacts": "GAP:N2",
     "file:session-publication-cursor": "GAP:N3",
     "file:server-publication-cursor": "GAP:N3",
@@ -1396,7 +1396,8 @@
     "store-op:packages/hrc-store-sqlite/src/collective-history-repository.ts:CollectiveHistoryRepository:recordObservation:6691": "GAP:N4",
     "store-op:packages/hrc-store-sqlite/src/collective-history-repository.ts:CollectiveHistoryRepository:selectRows:12966": "GAP:N4",
     "store-source:packages/hrc-store-sqlite/src/collective-history-columns.ts": "GAP:N4",
-    "store-source:packages/hrc-store-sqlite/src/collective-history-repository.ts": "GAP:N4"
+    "store-source:packages/hrc-store-sqlite/src/collective-history-repository.ts": "GAP:N4",
+    "public:POST:/v1/server/lifecycle": "GAP:N5"
   },
   "coverageReasons": {
     "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
@@ -1418,7 +1419,7 @@
     "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
     "public:POST:/v1/surfaces/bind": "Real ready-seat Bun/native attach and surface workflow compares full descriptors, binding fences, retries, tty displacement and committed surface events.",
     "store-source:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts": "Surface binding queries and writes exercised by the N1 bind workflow; other bridge operations remain separate operation gaps.",
-    "file:lifecycle-credentials": "N4 owns the consuming POST /v1/server/lifecycle authorization workflow and its credential-file compatibility.",
+    "file:lifecycle-credentials": "N5 execution-owner lifecycle authorization and credential rotation/reconcile (mable EN-35963); the front stays writer-free.",
     "store-source:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2. Other operations retain individual workflow owners.",
     "store-source:packages/hrc-store-sqlite/src/participant-registration-repository.ts": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2. Other operations retain individual workflow owners.",
     "store-source:packages/hrc-store-sqlite/src/participant-registration-rows.ts": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2. Other operations retain individual workflow owners.",
@@ -1554,6 +1555,7 @@
     "store-op:packages/hrc-store-sqlite/src/collective-history-repository.ts:CollectiveHistoryRepository:recordObservation:6691": "federation collective-history replication → N4",
     "store-op:packages/hrc-store-sqlite/src/collective-history-repository.ts:CollectiveHistoryRepository:selectRows:12966": "federation collective-history replication → N4",
     "store-source:packages/hrc-store-sqlite/src/collective-history-columns.ts": "federation collective-history replication → N4",
-    "store-source:packages/hrc-store-sqlite/src/collective-history-repository.ts": "federation collective-history replication → N4"
+    "store-source:packages/hrc-store-sqlite/src/collective-history-repository.ts": "federation collective-history replication → N4",
+    "public:POST:/v1/server/lifecycle": "N4 → N5 by mable EN-35963: grant-authorized local execution-owner stop/restart plus canonical lifecycle rows; native qualification pending."
   }
 }

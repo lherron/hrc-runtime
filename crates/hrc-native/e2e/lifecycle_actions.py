@@ -46,6 +46,7 @@ def main(isolation):
     processes=[]
     owned=[]
     contexts={}
+    hosts={}
     cases=[]
     production=Path.home()/'praesidium/var/run/hrc'
     def production_owner():
@@ -120,6 +121,7 @@ def main(isolation):
         runtime=call('/v1/runtimes/start',dict(hostSessionId=host,intent=intent))['runtimeId']
         owned.append(runtime)
         contexts[agent]=(runtime,ref)
+        hosts[agent]=host
     def normalized_response(value):
         value=json.loads(json.dumps(value))
         value['grant']['requestId']='<lifecycle request id>'
@@ -166,6 +168,20 @@ def main(isolation):
                 status,response=raw('/v1/server/lifecycle',body,headers('mable'))
                 assert status==200 and response['ok'] is True and response['accepted'] is True,(status,response)
                 (a.artifacts/f'{owner}-{index}-ack.json').write_text(json.dumps(dict(beforePid=old,response=response,negative=negative),indent=2)+'\n')
+                if flags.get('drain'):
+                    def run_ids():
+                        with sqlite3.connect('file:'+str(root/'state/state.sqlite')+'?mode=ro',uri=True) as db:
+                            return list(db.execute('SELECT run_id FROM runs ORDER BY run_id'))
+                    prior_runs=run_ids()
+                    refused=raw('/v1/turns',dict(hostSessionId=hosts['tabularasa'],
+                        prompt='This drained request must never launch a turn.',
+                        idempotencyKey='n5-drain-refused-'+uuid.uuid4().hex,waitFor='accepted'))
+                    (a.artifacts/f'{owner}-{index}-drain-refused.json').write_text(json.dumps(dict(response=refused,beforeRuns=prior_runs,afterRuns=run_ids()),indent=2)+'\n')
+                    assert refused[0]==503 and refused[1]['error']['code']=='server_draining',refused
+                    detail=refused[1]['error']['detail']
+                    assert detail['retryable'] is True and detail['operationId'].startswith('restart-drain-')
+                    assert detail['requestedBy']==response['grant']['requestedBy'] and detail['closedAt']
+                    assert run_ids()==prior_runs,'closed admission created a run'
                 if action=='restart':
                     new,new_status=ready(old)
                     (a.artifacts/f'{owner}-{index}-successor.json').write_text(json.dumps(dict(afterPid=new,status=new_status),indent=2)+'\n')
