@@ -8,12 +8,22 @@ use std::{
     time::Duration,
 };
 
-pub struct HrcApiLedger {
-    pub api: HrcApi,
+pub trait LedgerReader: Clone + Send + Sync + 'static {
+    fn page(
+        &self,
+        after: i64,
+        limit: usize,
+        incarnation: Option<&str>,
+    ) -> Result<crate::api::EventPage, crate::api::ApiError>;
+    fn wake(&self) -> Wake;
+}
+pub type HrcApiLedger = HrcLedger<HrcApi>;
+pub struct HrcLedger<R: LedgerReader> {
+    pub api: R,
     expected: Mutex<Option<String>>,
 }
-impl HrcApiLedger {
-    pub fn new(api: HrcApi) -> Self {
+impl<R: LedgerReader> HrcLedger<R> {
+    pub fn new(api: R) -> Self {
         Self {
             api,
             expected: Mutex::new(None),
@@ -28,7 +38,7 @@ impl HrcApiLedger {
         self.expected.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
-impl LedgerSource for HrcApiLedger {
+impl<R: LedgerReader> LedgerSource for HrcLedger<R> {
     fn source(&self) -> &str {
         "hrc"
     }
@@ -113,8 +123,25 @@ impl LedgerSource for HrcApiLedger {
         })
     }
     fn wake(&self) -> Wake {
+        self.api.wake()
+    }
+    fn fence_database(&self) -> Option<PathBuf> {
+        None
+    }
+}
+
+impl LedgerReader for HrcApi {
+    fn page(
+        &self,
+        after: i64,
+        limit: usize,
+        incarnation: Option<&str>,
+    ) -> Result<crate::api::EventPage, crate::api::ApiError> {
+        HrcApi::page(self, after, limit, incarnation)
+    }
+    fn wake(&self) -> Wake {
         let (waker, wake) = Wake::pair();
-        let api = self.api.clone();
+        let api = self.clone();
         let spawned = std::thread::Builder::new()
             .name("hrc-wake".into())
             .spawn(move || {
@@ -163,9 +190,6 @@ impl LedgerSource for HrcApiLedger {
                 Wake::never()
             }
         }
-    }
-    fn fence_database(&self) -> Option<PathBuf> {
-        None
     }
 }
 

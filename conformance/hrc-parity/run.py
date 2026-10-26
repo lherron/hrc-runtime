@@ -575,6 +575,9 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n4-home':
         from n4_routes import compare_home
         return compare_home(args, checks)
+    if getattr(args, 'suite', None) == 'n4-kernel':
+        from n4_kernel import compare as compare_kernel
+        return compare_kernel(args, checks)
     if getattr(args, 'suite', None) == 'n4-status':
         from n4_status import compare as compare_status
         return compare_status(args, checks)
@@ -992,7 +995,7 @@ def run_suite(args, checks):
                         raise ValueError('hrc start/turn orchestration commands prohibited; use HTTP')
                     if kind == 'cli' and action.get('args', [])[:2] in (["server", "start"], ["server", "stop"], ["server", "restart"]):
                         raise ValueError('shared service lifecycle is not a conformance action')
-                    env = {k: v for k, v in os.environ.items() if not k.startswith(('HRC_', 'ASP_', 'WRKQ'))}
+                    env = {k: v for k, v in os.environ.items() if not k.startswith(('HRC_', 'ASP_', 'WRKQ', 'HARNESS_', 'TMUX'))}
                     env.update(profile['env'])
                     child = subprocess.run(argv, text=True, capture_output=True, env=env,
                                            cwd=profile['projectRoot'], timeout=action.get('timeoutSec', 30))
@@ -1054,7 +1057,7 @@ def run_suite(args, checks):
                     actual = {'kind': 'publication', 'nodeId': profile['nodeId'], 'facts': facts,
                               'cursorsBefore': expand(action['before']), 'cursorsAfter': cursors}
                 elif kind == 'authority-unavailable':
-                    env = {k: v for k, v in os.environ.items() if not k.startswith(('HRC_', 'ASP_', 'WRKQ'))}
+                    env = {k: v for k, v in os.environ.items() if not k.startswith(('HRC_', 'ASP_', 'WRKQ', 'HARNESS_', 'TMUX'))}
                     env.update({'WRKQ_DB': 'rpc://127.0.0.1:1', 'WRKQD_TOKEN': '', 'WRKQD_TOKEN_FILE': ''})
                     result = subprocess.run(profile['wrkqArgv'] + ['projects', '--json'], env=env,
                                             capture_output=True, text=True, timeout=10, cwd=profile['projectRoot'])
@@ -1227,8 +1230,10 @@ def run_suite(args, checks):
 
 
 def drive_pty(profile, action):
-    attach = request(profile, 'GET', action['path'])
-    descriptor = attach.get('body', {})
+    descriptor = action.get('descriptor')
+    if descriptor is None:
+        attach = request(profile, 'GET', action['path'])
+        descriptor = attach.get('body', {})
     argv = descriptor.get('argv', [])
     if not argv or '-S' not in argv or '-t' not in argv:
         raise ValueError('PTY descriptor must identify the scratch tmux socket and target')
@@ -1238,20 +1243,22 @@ def drive_pty(profile, action):
     target = argv[argv.index('-t') + 1]
     expected_session, _, expected_window = target.partition(':')
     prefix = [argv[0], '-S', sock]
+    child_env = {k:v for k,v in os.environ.items() if not k.startswith(('HRC_', 'ASP_', 'WRKQ', 'HARNESS_', 'TMUX'))}
+    child_env.update(profile.get('env', {}))
     def clients():
         result = subprocess.run(prefix + ['list-clients', '-F',
             '#{client_pid}\t#{client_tty}\t#{session_name}\t#{window_name}'],
-            text=True, capture_output=True, timeout=5)
+            text=True, capture_output=True, env=child_env, timeout=5)
         return [{'pid': int(fields[0]), 'tty': fields[1], 'session': fields[2], 'window': fields[3]}
                 for line in result.stdout.splitlines() if len(fields := line.split('\t')) == 4]
     def runtime_alive():
         return subprocess.run(prefix + ['has-session', '-t', expected_session],
-            capture_output=True, timeout=5).returncode == 0
+            capture_output=True, env=child_env, timeout=5).returncode == 0
     before = clients()
     alive_before = runtime_alive()
     child_pid, master = pty.fork()
     if child_pid == 0:
-        env = {k: v for k, v in os.environ.items() if not k.startswith(('HRC_', 'ASP_', 'WRKQ'))}
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('HRC_', 'ASP_', 'WRKQ', 'HARNESS_', 'TMUX'))}
         env.update(profile.get('env', {}))
         env['TERM'] = 'xterm-256color'
         os.chdir(profile['projectRoot'])

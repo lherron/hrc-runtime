@@ -9,7 +9,7 @@ use cardo_runtime::{
     wire,
 };
 use crossbeam_channel::Sender;
-use hrc_domain::{api::HrcApi, ledger::HrcApiLedger, projector::SeatProjector};
+use hrc_domain::{api::HrcApi, ledger::HrcLedger, native::NativeRead, projector::SeatProjector};
 use serde_json::{Value, json};
 use std::{
     fs::{File, OpenOptions},
@@ -78,6 +78,7 @@ fn call(client: &KernelClient, operation: &str, arguments: Value) -> Result<Valu
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut root = None;
     let mut hrc_socket = None;
+    let mut ledger_path = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -86,6 +87,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     args.next().ok_or("--runtime-root needs a path")?,
                 ))
             }
+            "--ledger-path" => {
+                ledger_path = Some(PathBuf::from(
+                    args.next().ok_or("--ledger-path needs a path")?,
+                ));
+            }
             "--hrc-socket" => {
                 hrc_socket = Some(PathBuf::from(
                     args.next().ok_or("--hrc-socket needs a path")?,
@@ -93,7 +99,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--help" | "-h" => {
                 println!(
-                    "hrc-kernel [--runtime-root PATH] [--hrc-socket PATH]\nHRC kernel at <runtime-root>/hrc-kernel.sock"
+                    "hrc-kernel [--runtime-root PATH] [--hrc-socket PATH] [--ledger-path PATH]\nHRC kernel at <runtime-root>/hrc-kernel.sock"
                 );
                 return Ok(());
             }
@@ -123,7 +129,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let api = HrcApi::new(&hrc_socket.unwrap_or_else(|| root.join("hrc.sock")))?;
-    let source = Arc::new(HrcApiLedger::new(api.clone()));
+    let ledger_path = ledger_path
+        .or_else(|| {
+            std::env::var_os("HRC_STATE_DIR").map(|p| PathBuf::from(p).join("state.sqlite"))
+        })
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|home| PathBuf::from(home).join("praesidium/var/state/hrc/state.sqlite"))
+        })
+        .ok_or("set --ledger-path or HRC_STATE_DIR when HOME is unset")?;
+    let native = NativeRead::new(&ledger_path);
+    let source = Arc::new(HrcLedger::new(native.clone()));
     let mut adapter = CoreAdapter::<CoreDomain>::new(
         || CoreDomain,
         hrc_domain::decode_edits,
@@ -136,7 +152,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Box::new(LedgerIngest::new(
             "hrc.project",
             worker_source.clone(),
-            SeatProjector { api: api.clone() },
+            SeatProjector {
+                api: native.clone(),
+            },
         ))
     });
     adapter.attacher("hrc.seat", hrc_domain::attach::attach);

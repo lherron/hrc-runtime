@@ -38,7 +38,8 @@ def copy_release(installed, destination):
     assert (installed / 'praesidium-release.json').is_file(), installed
     assert 'hrc-runtime-releases' not in destination.absolute().parts
     if not destination.exists():
-        subprocess.run(['/bin/cp', '-R', str(installed), str(destination)], check=True)
+        subprocess.run(['/bin/cp', '-R', str(installed), str(destination)], check=True,
+                       env={k:v for k,v in os.environ.items() if not k.startswith(LEAK_PREFIXES)})
     assert (destination / 'praesidium-release.json').read_bytes() == (installed / 'praesidium-release.json').read_bytes()
     return destination.resolve()
 
@@ -197,7 +198,7 @@ class Scratch:
                 for record in self.rows('SELECT scope_ref FROM runtimes'):
                     assert record['scope_ref'].startswith(scope_prefix), record['scope_ref']
                 for path in self.tmux_sockets():
-                    subprocess.run(['tmux', '-S', path, 'kill-server'], capture_output=True, timeout=5)
+                    subprocess.run(['tmux', '-S', path, 'kill-server'], env=self.env, capture_output=True, timeout=5)
         finally:
             for owner in self.owners:
                 if owner.poll() is None:

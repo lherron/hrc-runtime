@@ -114,7 +114,7 @@ impl Release {
             .is_some_and(|p| {
                 value["releasePath"]
                     .as_str()
-                    .is_some_and(|root| p == PathBuf::from(root))
+                    .is_some_and(|root| p == std::path::Path::new(root))
             })
             .into();
         value

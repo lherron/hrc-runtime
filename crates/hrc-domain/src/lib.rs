@@ -3,6 +3,7 @@ pub mod api;
 pub mod attach;
 pub mod declarations;
 pub mod ledger;
+pub mod native;
 mod preview;
 pub mod projection;
 mod projection_json;

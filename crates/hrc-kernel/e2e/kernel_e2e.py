@@ -4,6 +4,7 @@
 Uses the shapes sampled from real HRC reads before building this fixture.
 Real installed/live gates are separate; this drives deterministic failure cases.
 """
+from native_fixture import NativeFixture, clean_env
 import argparse
 import copy
 import datetime
@@ -214,15 +215,16 @@ def main():
     with tempfile.TemporaryDirectory(prefix='hk-e2e-', dir='/tmp') as root:
         root = pathlib.Path(root)
         tmux_socket = str(root / 'tmux.sock')
-        subprocess.run(['tmux', '-S', tmux_socket, 'new-session', '-d', '-s', 'seat', '-n', 'tui', 'sleep 600'], check=True)
-        subprocess.run(['tmux', '-S', tmux_socket, 'new-window', '-d', '-t', 'seat', '-n', 'keepalive', 'sleep 600'], check=True)
+        subprocess.run(['tmux', '-S', tmux_socket, 'new-session', '-d', '-s', 'seat', '-n', 'tui', 'sleep 600'], env=clean_env(), check=True)
+        subprocess.run(['tmux', '-S', tmux_socket, 'new-window', '-d', '-t', 'seat', '-n', 'keepalive', 'sleep 600'], env=clean_env(), check=True)
         state['runtimes'][0]['tmux']['socketPath'] = tmux_socket
         api = root / 'hrc.sock'
         server = Server(str(api), Handler)
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=.01), daemon=True)
         thread.start()
+        ledger=NativeFixture(root);ledger.mirror(state,lock,outage_read)
         log = open(evidence / 'kernel.stderr.log', 'w')
-        process = subprocess.Popen([binary, '--runtime-root', str(root)], stdin=subprocess.DEVNULL,
+        process = subprocess.Popen(ledger.argv(binary,root), env=clean_env(), stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=log, text=True)
         try:
             ready = json.loads(process.stdout.readline())
@@ -241,28 +243,29 @@ def main():
             assert row['payload']['contextReading']['usedTokens'] == 10, row
             assert row['payload']['latestEvent']['preview'] == 'ran: Bash', row
             assert row['payload']['lastHrcSeq'] == 14, row
-            assert any(q.get('category') == ['turn'] and q.get('beforeHrcSeq') for q in tail_queries), tail_queries
+            assert not paths, paths
             attachment = wire.call('resource.attach', dict(document_id='hrc', id=row['id']))
             assert attachment['descriptor']['socket'] == tmux_socket
             assert '-r' in attachment['descriptor']['argv']
             subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name('live_probe.py')),
-                            '--socket', ready['socket'], '--artifacts', str(evidence/'probe')], check=True, timeout=20)
+                            '--socket', ready['socket'], '--artifacts', str(evidence/'probe')], env=clean_env(), check=True, timeout=20)
             # A stale presentation row remains projected, but a dead window must
             # refuse descriptor issuance without reconciling or mutating HRC.
-            subprocess.run(['tmux', '-S', tmux_socket, 'kill-window', '-t', 'seat:tui'], check=True)
+            subprocess.run(['tmux', '-S', tmux_socket, 'kill-window', '-t', 'seat:tui'], env=clean_env(), check=True)
             wire.file.write((json.dumps(dict(id='ended', op='resource.attach', args=dict(document_id='hrc', id=row['id'])))+'\n').encode())
             ended = json.loads(wire.file.readline())
             assert not ended['ok'] and ended['error']['code'] == 'resource_unavailable', ended
             assert ended['error']['details']['reason'] == 'ended', ended
             assert query()['rows'][0]['id'] == row['id'], 'attach probe changed the projection'
-            subprocess.run(['tmux', '-S', tmux_socket, 'new-window', '-d', '-t', 'seat', '-n', 'tui', 'sleep 600'], check=True)
-            duplicate = subprocess.run([binary, '--runtime-root', str(root)], capture_output=True, timeout=3)
+            subprocess.run(['tmux', '-S', tmux_socket, 'new-window', '-d', '-t', 'seat', '-n', 'tui', 'sleep 600'], env=clean_env(), check=True)
+            duplicate = subprocess.run(ledger.argv(binary,root), env=clean_env(), capture_output=True, timeout=3)
             assert duplicate.returncode != 0, 'second kernel took over socket'
             with wake:
                 state['down'] = True
                 state['wake_revision'] += 1
                 wake.notify_all()
-            assert outage_read.wait(20), 'kernel never observed the API outage'
+            assert outage_read.wait(20), 'fixture did not expose a ledger schema outage'
+            outage_status=wait_for(lambda:(s if (s:=wire.call('ingest.status',dict(document_id='hrc'))['bindings'][0])['last_error'] else None),'kernel observed ledger schema outage')
             assert process.poll() is None and query()['rows'][0]['id'] == row['id']
             with wake:
                 state['down'] = False
@@ -285,9 +288,9 @@ def main():
             assert after['rows'][0]['id'] == row['id'], 'seat row changed across generation'
             assert after['rows'][0]['payload']['contextReading']['usedTokens'] == 20
             assert after['rows'][0]['payload']['latestEvent']['preview'] == 'ran: git status -sb', after
-            assert any(q['generation'] == ['2'] for q in tail_queries), tail_queries
+            assert not paths, paths
             assert after['rows'][0]['payload']['lastHrcSeq'] == 25, after
-            assert any(q.get('category') == ['turn'] and q['generation'] == ['2'] for q in tail_queries), tail_queries
+            assert not paths, paths
             legacy = wire.call('resource.attach', dict(document_id='hrc', id=row['id'], mode='normal'))
             assert legacy['descriptor']['target'] == 'seat' and '-r' not in legacy['descriptor']['argv']
             status = wire.call('ingest.status', dict(document_id='hrc'))['bindings'][0]
@@ -321,14 +324,14 @@ def main():
             assert 'cursor' in subscribed
             sub.close()
             allowed = {'/v1/events/tail', '/v1/presentation/seats/read', '/v1/events/page', '/v1/events/bounded-stream', '/v1/events/latest-by-session', '/v1/presentation/runtimes', '/v1/sessions'}
-            assert '/v1/presentation/seats/read' in paths, paths
+            assert not paths, paths
             assert set(paths) <= allowed, set(paths)
-            assert state['stream_opens'] >= 2, 'wake stream never reconnected after EOF'
+            assert state['stream_opens'] == 0, 'native projection opened an API stream'
             report = dict(ready=ready, types=[n['name'] for n in discovery['node_types']],
                           initial=first, replay=after, cursor_before_replace=cursor,
                           replacement=replaced, new_generation=new_generation, resync=resync, ended=ended, legacy_attach=legacy, tail_queries=tail_queries, paths=sorted(set(paths)), pass_=True)
             (evidence / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
-            print('PASS bootstrap, API outage recovery, sparse/spill replay, stable generation row, attach, incarnation reset, subscribe/replay, pinned reads')
+            print('PASS bootstrap, ledger outage recovery, sparse/spill replay, stable generation row, attach, incarnation reset, subscribe/replay, pinned reads')
             wire.close()
         finally:
             process.terminate()
@@ -337,9 +340,10 @@ def main():
             with wake:
                 state['stopping'] = True
                 wake.notify_all()
+            ledger.close()
             server.shutdown()
             server.server_close()
-            subprocess.run(['tmux', '-S', tmux_socket, 'kill-server'], check=False, capture_output=True)
+            subprocess.run(['tmux', '-S', tmux_socket, 'kill-server'], env=clean_env(), check=False, capture_output=True)
 
 
 if __name__ == '__main__':

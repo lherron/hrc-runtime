@@ -3,6 +3,7 @@
 
 Never logs response bodies: the real artifact may contain private tool output.
 """
+from native_fixture import NativeFixture, clean_env
 import argparse
 import datetime
 import hashlib
@@ -97,10 +98,13 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix='surrogate-', dir='/tmp') as root:
         root = pathlib.Path(root)
+        ledger=NativeFixture(root)
+        fixture={'incarnation':incarnation,'head':poison_seq-1,'events':[],'sessions':[],'runtimes':[]}
+        ledger.replace(fixture)
         server = Server(str(root / 'hrc.sock'), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         with (evidence / 'kernel.stderr.log').open('w') as log:
-            process = subprocess.Popen([str(pathlib.Path(opts.binary).resolve()), '--runtime-root', str(root)],
+            process = subprocess.Popen(ledger.argv(pathlib.Path(opts.binary).resolve(),root), env=clean_env(),
                                        stdout=subprocess.PIPE, stderr=log, text=True)
             try:
                 ready = json.loads(process.stdout.readline())
@@ -121,11 +125,13 @@ def main():
                 before = status()
                 assert before['cursor']['seq'] == poison_seq - 1
                 state['phase'] = 1
+                fixture.update(head=captured['head'],events=captured['rows']);ledger.replace(fixture)
                 until(lambda: status()['cursor']['seq'] >= captured['head'])
                 recovered = status()
-                assert state['served'] > 0
+                assert not state['reads'],state['reads']
                 assert recovered['last_error'] is None
                 state['phase'] = 2
+                fixture.update(head=next_seq,events=captured['rows']+[later],sessions=[session]);ledger.replace(fixture)
                 start = time.monotonic()
                 until(lambda: status()['cursor']['seq'] == next_seq)
                 query = wire.call('document.query', dict(document_id='hrc', type='hrc.seat'))
@@ -136,7 +142,7 @@ def main():
                 final = status()
                 assert final['resync']['last_resync_at_ms'] is None
                 result = dict(rawBytes=len(raw), rawSha256=hashlib.sha256(raw).hexdigest(),
-                              exactPageServed=state['served'], before=before, recovered=recovered,
+                              nativeLedgerRows=len(captured['rows']), before=before, recovered=recovered,
                               final=final, freshSeatSeq=payload['lastHrcSeq'], freshSeatSeconds=time.monotonic()-start,
                               pageAfterSeq=state['reads'])
                 (evidence / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
@@ -147,6 +153,7 @@ def main():
                 state['stopped'] = True
                 process.terminate()
                 process.wait(timeout=5)
+                ledger.close()
                 server.shutdown()
 
 

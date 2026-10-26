@@ -4,6 +4,7 @@ refusals (stale fence, no live runtime) pass through untouched, the request
 carries the selector, fence and enter flag, and a success is never cached.
 The success payload is the shape HRC's literal-input route returns.
 """
+from native_fixture import NativeFixture, clean_env
 import argparse
 import http.server
 import json
@@ -60,10 +61,11 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix='hk-send-', dir='/tmp') as root:
         root = pathlib.Path(root)
+        ledger = NativeFixture(root)
         server = Server(str(root/'hrc.sock'), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         with open(evidence/'stderr.log', 'w') as log:
-            process = subprocess.Popen([binary, '--runtime-root', str(root)], stdout=subprocess.PIPE, stderr=log, text=True)
+            process = subprocess.Popen(ledger.argv(binary,root), env=clean_env(), stdout=subprocess.PIPE, stderr=log, text=True)
             try:
                 ready = json.loads(process.stdout.readline())
                 w = Wire(ready['socket'])

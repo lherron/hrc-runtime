@@ -8,10 +8,29 @@ use chrono::{Duration, Utc};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub struct SeatProjector {
-    pub api: HrcApi,
+pub trait ProjectionReader: crate::ledger::LedgerReader {
+    fn get(&self, route: &str, query: &[(String, String)]) -> Result<Value, crate::api::ApiError>;
+    fn seats(
+        &self,
+        session_refs: &Value,
+        runtime_ids: &Value,
+    ) -> Result<Value, crate::api::ApiError>;
+    fn snapshot(&self) -> Result<Box<dyn Send>, crate::api::ApiError> {
+        Ok(Box::new(()))
+    }
 }
-impl SeatProjector {
+impl ProjectionReader for HrcApi {
+    fn get(&self, route: &str, query: &[(String, String)]) -> Result<Value, crate::api::ApiError> {
+        HrcApi::get(self, route, query)
+    }
+    fn seats(&self, refs: &Value, ids: &Value) -> Result<Value, crate::api::ApiError> {
+        HrcApi::seats(self, refs, ids)
+    }
+}
+pub struct SeatProjector<R: ProjectionReader = HrcApi> {
+    pub api: R,
+}
+impl<R: ProjectionReader> SeatProjector<R> {
     fn error(e: impl std::fmt::Display) -> ProjectorError {
         ProjectorError::new("hrc_read_failed", e.to_string())
     }
@@ -209,7 +228,7 @@ impl SeatProjector {
 fn edit_id(e: &Value) -> String {
     format!("{}:{}", text(e, "type"), e["key"])
 }
-impl Projector for SeatProjector {
+impl<R: ProjectionReader> Projector for SeatProjector<R> {
     fn bootstrap(
         &mut self,
         page: Option<Value>,
@@ -218,6 +237,7 @@ impl Projector for SeatProjector {
         if limit == 0 {
             return Err(Self::error("zero bootstrap limit"));
         }
+        let _snapshot = self.api.snapshot().map_err(Self::error)?;
         // Capture at BEFORE reading state; any race is replayed after bootstrap.
         let p = self.api.page(0, 1, None).map_err(Self::error)?;
         let at = Cursor::new(p.ledger_incarnation_id, p.head);
@@ -236,6 +256,7 @@ impl Projector for SeatProjector {
                 handled: 0,
             });
         }
+        let _snapshot = self.api.snapshot().map_err(Self::error)?;
         let mut keys = BTreeSet::new();
         let mut runtime_ids = BTreeSet::new();
         for row in rows {
@@ -332,7 +353,8 @@ fn apply_indexed(
         handled += 1;
     }
     if handled == 0 && !rows.is_empty() {
-        return Err(SeatProjector::error(
+        return Err(ProjectorError::new(
+            "hrc_read_failed",
             "edit limit too small for a single event",
         ));
     }
