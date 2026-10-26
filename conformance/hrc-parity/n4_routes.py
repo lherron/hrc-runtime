@@ -163,3 +163,23 @@ def compare_gate(args, checks):
                        'failureCode': 1})
         cases.append({'id': name, 'pass': passed})
     return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}
+
+
+# Operations reads: Bun and native answer the same cases on one frozen store,
+# so nothing is minted per owner and every field compares exactly.
+OPS_CASES = 19
+
+
+def compare_ops(args, checks):
+    a = json.loads((Path(args.baseline) / 'ops.json').read_text())
+    b = json.loads((Path(args.candidate) / 'ops.json').read_text())
+    checks.append({'id': 'case-matrix', 'pass': len(a) == OPS_CASES and set(a) == set(b),
+                   'reason': 'bindings, runtime-diagnostics and broker-forensics cases on both owners', 'failureCode': 1})
+    cases = []
+    for name in a:
+        passed = name in b and canonical(a[name]) == canonical(b[name])
+        checks.append({'id': 'compare:' + name, 'pass': passed,
+                       'reason': 'status, fields, values and key order must match Bun on the same store',
+                       'failureCode': 1})
+        cases.append({'id': name, 'pass': passed})
+    return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}

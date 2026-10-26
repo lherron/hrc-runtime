@@ -10,7 +10,7 @@ pub mod registry_listener;
 mod routing;
 pub mod summon;
 
-pub use locate::{designations, locate};
+pub use locate::{bindings, designations, locate};
 pub use routing::{route_request, scope_of};
 
 use super::stderr_json;

@@ -3,7 +3,8 @@
 //! and `GET /v1/federation/designations` (placement-federation-handlers.ts).
 use super::policy::{Policy, policy_for, scope_parts};
 use super::{
-    Authority, Designation, Node, ledger_row, log, resolve_home, transport_text, user_agent,
+    Authority, Binding, Designation, Node, ledger_row, log, resolve_home, transport_text,
+    user_agent,
 };
 use crate::server::{ApiError, Server, stderr_json};
 use axum::{
@@ -332,4 +333,128 @@ pub async fn designations(
         }
     };
     Ok(Json(json!({"localNodeId":node.node_id(),"designations":designations})).into_response())
+}
+
+const BINDINGS_SCAN_BUDGET: std::time::Duration = std::time::Duration::from_millis(20_000);
+const BINDINGS_SCAN_SLOW_MS: u64 = 5_000;
+
+/// Concurrent doctor reads share one in-flight scan (T-09760).
+static BINDINGS_SCAN: std::sync::Mutex<Option<tokio::sync::watch::Receiver<Option<Value>>>> =
+    std::sync::Mutex::new(None);
+
+/// `GET /v1/federation/bindings` (locate-server.ts scanServerLedgerForSkew):
+/// every active binding's declared policy against the binding it holds.
+pub async fn bindings(server: &Server) -> Result<Response, ApiError> {
+    let (sender, owner) = {
+        let mut slot = BINDINGS_SCAN.lock().unwrap();
+        match slot.as_ref() {
+            Some(rx) => (None, Some(rx.clone())),
+            None => {
+                let (tx, rx) = tokio::sync::watch::channel(None);
+                *slot = Some(rx);
+                (Some(tx), None)
+            }
+        }
+    };
+    if let Some(mut rx) = owner {
+        let report = rx
+            .wait_for(Option::is_some)
+            .await
+            .map(|v| v.clone().unwrap_or(Value::Null))
+            .unwrap_or(Value::Null);
+        return Ok(Json(report).into_response());
+    }
+    let report = scan_bindings(server).await;
+    *BINDINGS_SCAN.lock().unwrap() = None;
+    if let Some(tx) = sender {
+        let _ = tx.send(Some(report.clone()));
+    }
+    Ok(Json(report).into_response())
+}
+
+async fn scan_bindings(server: &Server) -> Value {
+    let node = &server.federation;
+    // A pre-federation store has no placement table: nothing is bound here.
+    let rows: Vec<(String, Binding)> = server
+        .store
+        .lock()
+        .unwrap()
+        .sqlite
+        .prepare(
+            "SELECT scope_ref, home_node_id, created_at, updated_at FROM placement_ledger
+              WHERE state = 'active' ORDER BY scope_ref",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    Binding {
+                        home: r.get(1)?,
+                        created_at: r.get(2)?,
+                        updated_at: r.get(3)?,
+                    },
+                ))
+            })?
+            .collect()
+        })
+        .unwrap_or_default();
+    let started = Instant::now();
+    let (mut skewed, mut unreadable, mut slowest) = (vec![], vec![], Vec::<(String, u64)>::new());
+    let mut scanned = 0;
+    let mut truncated = None;
+    for (index, (scope, binding)) in rows.iter().enumerate() {
+        let remaining = BINDINGS_SCAN_BUDGET.saturating_sub(started.elapsed());
+        let resolve_started = Instant::now();
+        let declared = match tokio::time::timeout(remaining, declared(server, scope)).await {
+            Ok(declared) if !remaining.is_zero() => declared,
+            _ => {
+                truncated = Some(
+                    json!({"budgetMs":BINDINGS_SCAN_BUDGET.as_millis() as u64,"notAssessed":rows.len() - index,"inFlightScopeRef":scope}),
+                );
+                break;
+            }
+        };
+        slowest.push((scope.clone(), resolve_started.elapsed().as_millis() as u64));
+        slowest.sort_by_key(|(_, ms)| std::cmp::Reverse(*ms));
+        slowest.truncate(5);
+        scanned += 1;
+        if declared["source"] == "unavailable" {
+            unreadable.push(json!({"scopeRef":scope,"detail":declared["detail"]}));
+            continue;
+        }
+        let authority = Authority::Bound {
+            source: "ledger",
+            local: binding.home == node.node_id(),
+            binding: binding.clone(),
+        };
+        if let (Some(skew), _) = assess_skew(&declared, &authority) {
+            skewed.push(json!({"scopeRef":scope,"skew":skew}));
+        }
+    }
+    let duration = started.elapsed().as_millis() as u64;
+    let mut scan = json!({"scanned":scanned,"skewed":skewed,"unreadable":unreadable});
+    if truncated.is_some() || duration >= BINDINGS_SCAN_SLOW_MS {
+        let mut data = json!({"scanned":scanned,"durMs":duration,"budgetMs":BINDINGS_SCAN_BUDGET.as_millis() as u64});
+        if let Some(t) = &truncated {
+            data["notAssessed"] = t["notAssessed"].clone();
+            data["inFlightScopeRef"] = t["inFlightScopeRef"].clone();
+        }
+        data["slowest"] = slowest
+            .iter()
+            .map(|(s, ms)| json!({"scopeRef":s,"ms":ms}))
+            .collect();
+        log(
+            "warn",
+            if truncated.is_some() {
+                "federation.bindings.scan_truncated"
+            } else {
+                "federation.bindings.scan_slow"
+            },
+            data,
+        );
+    }
+    if let Some(t) = truncated {
+        scan["truncated"] = t;
+    }
+    json!({"localNodeId":node.node_id(),"federationConfigured":node.configured(),"gateMode":node.config.gate_mode,"scan":scan})
 }

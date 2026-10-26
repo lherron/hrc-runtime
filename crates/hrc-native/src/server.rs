@@ -6,9 +6,11 @@ mod compile;
 mod context;
 mod control;
 mod controller;
+mod diagnostics;
 mod events;
 mod evidence;
 mod federation;
+mod forensics;
 mod front;
 mod ledger;
 mod lifecycle;
@@ -258,6 +260,12 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         federation::locate(server, &query).await
     } else if method == Method::GET && uri.path() == "/v1/federation/designations" {
         federation::designations(server, &query).await
+    } else if method == Method::GET && uri.path() == "/v1/federation/bindings" {
+        federation::bindings(server).await
+    } else if method == Method::GET && uri.path() == "/v1/runtime-diagnostics" {
+        diagnostics::handle(server, &query)
+    } else if method == Method::GET && uri.path() == "/v1/broker-forensics" {
+        forensics::handle(server, &query)
     } else if method == Method::GET
         && (uri.path() == "/v1/events/bounded-stream"
             || uri.path() == "/v1/broker-events"
@@ -515,6 +523,9 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/placement/bindings",
                 "/v1/federation/locate",
                 "/v1/federation/designations",
+                "/v1/federation/bindings",
+                "/v1/runtime-diagnostics",
+                "/v1/broker-forensics",
             ]
             .contains(&path)
                 || path.starts_with("/v1/sessions/by-host/")
