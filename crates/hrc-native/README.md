@@ -95,3 +95,20 @@ workflow checks titles, nonempty pages, cursor termination, malformed input,
 and each owner's actual ledger high-water. Peer aggregation remains N4's
 federation workflow. Native query parsing preserves URLSearchParams semantics,
 including the first duplicate value and lossy UTF-8 decoding.
+
+Runtime list, inspect, injector seat and target reads share persisted hosting
+projections and the live broker seat probe. Runtime lists validate filters,
+terminal visibility and keyset cursors, decorate continuity identity, and read
+first-turn health trips. Inspect redacts token references and exposes reported
+model/context, control and hosting facts. Both successful and failed seat
+observations are retained. Reattach refreshes owner diagnostics while retaining
+only the previously recorded ACK position; it sends no event ACK.
+
+`e2e/runtime_reads.py` births and completes a real blank seat through the named
+Bun CLI, establishes a real acknowledged checkpoint, and compares sequential
+Bun/native readers of the same scratch snapshot. It includes historical terminal
+rows, pagination, filters and error cases. Bun finishes its legacy historical-row
+startup classification before the shared snapshot; the N2 startup job is not
+claimed by this N1 read case. `compare --suite n1-runtime-reads` verifies full
+responses and persisted probes, bounding dynamic timestamps and ages before
+normalization.

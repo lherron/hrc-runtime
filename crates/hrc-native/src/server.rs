@@ -5,6 +5,8 @@ mod compile;
 mod index;
 mod proxy;
 mod rpc;
+mod runtime_views;
+mod runtimes;
 mod sessions;
 
 use anyhow::{Context, Result, bail};
@@ -287,6 +289,21 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
             }
             Err(error) => Err(error),
         }
+    } else if method == Method::GET && uri.path() == "/v1/targets/by-session-ref" {
+        runtime_views::target(server, &query).await
+    } else if method == Method::GET && runtime_seat_id(uri.path()).is_some() {
+        match decode_path(runtime_seat_id(uri.path()).unwrap()) {
+            Ok(id) => runtimes::seat(server, &id).await,
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/runtimes/inspect" {
+        match parse_body(&body) {
+            Ok(value) => runtime_views::inspect(server, value).await,
+            Err(mut e) => {
+                e.detail = Some(json!({}));
+                Err(e)
+            }
+        }
     } else if method == Method::POST && uri.path() == "/v1/turns" {
         match parse_body(&body) {
             Ok(value) => broker::turn(server, value).await,
@@ -311,6 +328,39 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
     };
     result.unwrap_or_else(IntoResponse::into_response)
 }
+fn runtime_seat_id(path: &str) -> Option<&str> {
+    path.strip_prefix("/v1/runtimes/")?
+        .strip_suffix("/seat")
+        .filter(|s| !s.is_empty() && !s.contains('/'))
+}
+fn decode_path(raw: &str) -> Result<String, ApiError> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    let malformed = || {
+        ApiError::domain(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "URI malformed",
+            Some(json!({})),
+        )
+    };
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return Err(malformed());
+            }
+            let high = (bytes[i + 1] as char).to_digit(16).ok_or_else(malformed)?;
+            let low = (bytes[i + 2] as char).to_digit(16).ok_or_else(malformed)?;
+            out.push((high * 16 + low) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).map_err(|_| malformed())
+}
 fn implemented(method: &Method, path: &str) -> bool {
     (*method == Method::GET
         && ([
@@ -322,15 +372,18 @@ fn implemented(method: &Method, path: &str) -> bool {
             "/v1/sessions/facets",
             "/v1/sessions/metadata",
             "/v1/runtimes",
+            "/v1/targets/by-session-ref",
             "/v1/runtimes/live-refs",
             "/v1/placement/bindings",
         ]
         .contains(&path)
-            || path.starts_with("/v1/sessions/by-host/")))
+            || path.starts_with("/v1/sessions/by-host/")
+            || runtime_seat_id(path).is_some()))
         || (*method == Method::POST
             && [
                 "/v1/sessions/resolve",
                 "/v1/turns",
+                "/v1/runtimes/inspect",
                 "/v1/placements/resolve",
                 "/v1/declarations/resolve",
             ]
@@ -532,8 +585,7 @@ fn handle(
         return Ok(Json(json!({"refs":server.store.lock().unwrap().live_refs()?})).into_response());
     }
     if method == Method::GET && path == "/v1/runtimes" {
-        let db = server.store.lock().unwrap();
-        return Ok(Json(json!(db.runtimes()?)).into_response());
+        return runtimes::list(server, query);
     }
     Ok((StatusCode::NOT_FOUND, "Not Found").into_response())
 }

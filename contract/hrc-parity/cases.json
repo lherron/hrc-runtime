@@ -129,6 +129,16 @@
         "expected-failed-cli-usage"
       ],
       "requiredInP0": false
+    },
+    "n1-runtime-reads": {
+      "assertionIds": [
+        "real-completed-seat-and-model",
+        "runtime-filters-terminal-history-keyset",
+        "inspect-seat-target-wire-errors",
+        "live-and-unavailable-probe-persistence",
+        "validated-owner-and-request-time-facts"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [
@@ -335,7 +345,17 @@
     "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:mapRow:3205": "n1-session-index",
     "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:facets:5765": "n1-session-index",
     "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:listPage:4590": "n1-session-index",
-    "store-source:packages/hrc-store-sqlite/src/session-index-repository.ts": "n1-session-index"
+    "store-source:packages/hrc-store-sqlite/src/session-index-repository.ts": "n1-session-index",
+    "public:GET:/v1/runtimes": "n1-runtime-reads",
+    "public:GET:/v1/runtimes/:runtimeId/seat": "n1-runtime-reads",
+    "public:GET:/v1/targets/by-session-ref": "n1-runtime-reads",
+    "public:POST:/v1/runtimes/inspect": "n1-runtime-reads",
+    "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:maxBrokerSeq:29770": "n1-runtime-reads",
+    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:decorate:2821": "n1-runtime-reads",
+    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getByRuntimeId:5766": "n1-runtime-reads",
+    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAll:10826": "n1-runtime-reads",
+    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByHostSessionId:6433": "n1-runtime-reads",
+    "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "n1-runtime-reads"
   },
   "coverageReasons": {
     "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
@@ -355,6 +375,16 @@
     "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:facets:5765": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
     "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:listPage:4590": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
     "store-source:packages/hrc-store-sqlite/src/session-index-repository.ts": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
-    "file:state-wal-shm": "EN-35424 gate3: six real refusal cases preserve main DB and WAL frames, permit SQLite SHM coordination, preserve control files and list the failed CLI usage record."
+    "file:state-wal-shm": "EN-35424 gate3: six real refusal cases preserve main DB and WAL frames, permit SQLite SHM coordination, preserve control files and list the failed CLI usage record.",
+    "public:GET:/v1/runtimes": "Real completed-seat Bun/native comparison: full list/filter/cursor, inspect, live/failing seat and target responses; probe observations persist. Event projection and startup reconciliation remain N2.",
+    "public:GET:/v1/runtimes/:runtimeId/seat": "Real completed-seat Bun/native comparison: full list/filter/cursor, inspect, live/failing seat and target responses; probe observations persist. Event projection and startup reconciliation remain N2.",
+    "public:GET:/v1/targets/by-session-ref": "Real completed-seat Bun/native comparison: full list/filter/cursor, inspect, live/failing seat and target responses; probe observations persist. Event projection and startup reconciliation remain N2.",
+    "public:POST:/v1/runtimes/inspect": "Real completed-seat Bun/native comparison: full list/filter/cursor, inspect, live/failing seat and target responses; probe observations persist. Event projection and startup reconciliation remain N2.",
+    "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:maxBrokerSeq:29770": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
+    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:decorate:2821": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
+    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getByRuntimeId:5766": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
+    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAll:10826": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
+    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByHostSessionId:6433": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
+    "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps."
   }
 }

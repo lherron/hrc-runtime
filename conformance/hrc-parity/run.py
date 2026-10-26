@@ -530,6 +530,9 @@ def validate_case_observations(id, observations, checks, status=None, installed_
 
 
 def compare(args, checks):
+    if getattr(args, 'suite', None) == 'n1-runtime-reads':
+        from n1_runtime_reads import compare as compare_runtime
+        return compare_runtime(args, checks)
     if getattr(args, 'suite', None) == 'n1-index':
         from n1_index import compare as compare_index
         return compare_index(args, checks)

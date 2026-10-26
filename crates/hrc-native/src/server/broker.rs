@@ -502,7 +502,48 @@ async fn attach_one(server: &Shared, runtime: &Value) -> Result<JsonRpc> {
         attach["retentionFloorSeq"].as_i64().unwrap_or(0) <= seq + 1,
         "broker_replay_retention_gap"
     );
-    server.store.lock().unwrap().sqlite.execute("UPDATE broker_invocations SET owner_server_instance_id=?,updated_at=? WHERE invocation_id=?",[format!("hrc-server:{}",std::process::id()),hrc_store::timestamp(),string(runtime,"activeInvocationId")?.to_owned()])?;
+    let snapshot = client
+        .request(
+            "invocation.snapshot",
+            json!({"invocationId":runtime["activeInvocationId"]}),
+        )
+        .await?;
+    let now = hrc_store::timestamp();
+    let mut refreshed = runtime["runtimeStateJson"].clone();
+    refreshed["updatedAt"] = now.clone().into();
+    refreshed["control"] = json!({"mode":"broker-ipc","brokerAttached":true});
+    // N1 does not project or ACK. Preserve the last ACK actually recorded by
+    // an earlier owner, never claim that attaching acknowledged new events.
+    let acked = refreshed["brokerReplay"]["ackedThroughSeq"]
+        .as_i64()
+        .unwrap_or(0)
+        .min(seq);
+    refreshed["brokerReplay"] = json!({"brokerInstanceId":attach["brokerInstanceId"],"activeControllerInstanceId":attach["activeControllerInstanceId"],"lastProjectedSeq":seq,"replayedThroughSeq":seq,"ackedThroughSeq":acked,"currentSeq":attach["currentSeq"].as_i64().unwrap_or(0).max(snapshot["currentSeq"].as_i64().unwrap_or(0)),"retentionFloorSeq":attach["retentionFloorSeq"].as_i64().unwrap_or(0).max(snapshot["retentionFloorSeq"].as_i64().unwrap_or(0))});
+    {
+        let db = server.store.lock().unwrap();
+        let tx = db.sqlite.unchecked_transaction()?;
+        tx.execute("UPDATE broker_invocations SET owner_server_instance_id=?,updated_at=? WHERE invocation_id=?",[format!("hrc-server:{}",std::process::id()),now.clone(),string(runtime,"activeInvocationId")?.to_owned()])?;
+        tx.execute(
+            "UPDATE runtimes SET runtime_state_json=?,updated_at=? WHERE runtime_id=?",
+            [
+                refreshed.to_string(),
+                now,
+                string(runtime, "runtimeId")?.to_owned(),
+            ],
+        )?;
+        tx.commit()?;
+    }
+    let mut observed = runtime.clone();
+    observed["runtimeStateJson"] = refreshed;
+    if let Ok(probe) = client
+        .request(
+            "seat.probe",
+            json!({"invocationId":runtime["activeInvocationId"]}),
+        )
+        .await
+    {
+        super::runtimes::record_probe(server, &observed, &probe, "binding-established")?;
+    }
     eprintln!(
         "{}",
         json!({"ts":hrc_store::timestamp(),"level":"info","component":"broker","event":"broker.reattach.complete","data":{"runtimeId":runtime["runtimeId"],"invocationId":runtime["activeInvocationId"],"currentSeq":attach["currentSeq"],"lastProjectedSeq":seq,"eventsHeld":true}})
