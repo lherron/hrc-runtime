@@ -145,11 +145,11 @@ pub fn hosting(runtime: &Value) -> Option<Value> {
     };
     Some(json!({"broker":broker,"substrate":substrate,"presentation":presentation}))
 }
+const UNAVAILABLE: [&str; 5] = ["terminated", "dead", "stale", "crashed", "detached"];
 fn available(runtime: &Value) -> bool {
-    !matches!(
-        runtime["status"].as_str(),
-        Some("terminated" | "dead" | "stale" | "crashed" | "detached")
-    )
+    !runtime["status"]
+        .as_str()
+        .is_some_and(|s| UNAVAILABLE.contains(&s))
 }
 fn project(db: &Store, r: &Value) -> Result<Value, anyhow::Error> {
     let scope = r["scopeRef"].as_str().unwrap();
@@ -230,7 +230,7 @@ fn project(db: &Store, r: &Value) -> Result<Value, anyhow::Error> {
 }
 pub fn runtimes(db: &Store) -> anyhow::Result<Value> {
     Ok(
-        json!({"ok":true,"runtimes":db.presentation_runtimes(None,None)?.iter().filter(|r|available(r)).map(|r|project(db,r)).collect::<anyhow::Result<Vec<_>>>()?}),
+        json!({"ok":true,"runtimes":db.runtimes_where("status NOT IN (SELECT value FROM json_each(?))",[json!(UNAVAILABLE).to_string()])?.iter().filter(|r|available(r)).map(|r|project(db,r)).collect::<anyhow::Result<Vec<_>>>()?}),
     )
 }
 pub fn seats(db: &Store, keys: Vec<(String, String)>) -> anyhow::Result<Value> {

@@ -143,6 +143,16 @@ impl Store {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// `sessions()` narrowed to one scope, in the same order.
+    pub fn sessions_in_scope(&self, scope: &str) -> Result<Vec<Value>> {
+        let mut stmt = self.sqlite.prepare(
+            "SELECT * FROM sessions WHERE scope_ref=? ORDER BY updated_at DESC, host_session_id DESC",
+        )?;
+        Ok(stmt
+            .query_map([scope], session_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn session(&self, host: &str) -> Result<Option<Value>> {
         Ok(self
             .sqlite
@@ -265,6 +275,25 @@ impl Store {
         Ok(stmt
             .query_map([], runtime_row)?
             .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// `runtimes()` narrowed in SQL, in the same order. Hot routes read the
+    /// rows they need instead of hydrating every runtime's JSON (T-11919).
+    pub fn runtimes_where(
+        &self,
+        clause: &str,
+        values: impl rusqlite::Params,
+    ) -> Result<Vec<Value>> {
+        let mut stmt = self.sqlite.prepare(&format!(
+            "SELECT * FROM runtimes WHERE {clause} ORDER BY created_at, runtime_id"
+        ))?;
+        Ok(stmt
+            .query_map(values, runtime_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn runtime(&self, id: &str) -> Result<Option<Value>> {
+        Ok(self.runtimes_where("runtime_id=?", [id])?.pop())
     }
 }
 

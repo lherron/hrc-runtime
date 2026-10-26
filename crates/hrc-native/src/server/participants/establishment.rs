@@ -455,9 +455,7 @@ async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> 
         .store
         .lock()
         .unwrap()
-        .runtimes()?
-        .into_iter()
-        .find(|r| r["runtimeId"] == a["runtime_id"])
+        .runtime(a["runtime_id"].as_str().unwrap_or(""))?
         .context("participant runtime disappeared before replay release")?;
     controller::attach_and_replay(
         server,

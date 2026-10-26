@@ -56,38 +56,30 @@ fn date_ms(v: &Value) -> Option<i64> {
         .ok()
         .map(|d| d.timestamp_millis())
 }
+const TERMINAL: [&str; 10] = [
+    "archived",
+    "crashed",
+    "dead",
+    "disposed",
+    "exited",
+    "failed",
+    "stale",
+    "stopped",
+    "terminal",
+    "terminated",
+];
 fn terminal(v: &Value) -> bool {
-    [
-        "archived",
-        "crashed",
-        "dead",
-        "disposed",
-        "exited",
-        "failed",
-        "stale",
-        "stopped",
-        "terminal",
-        "terminated",
-    ]
-    .iter()
-    .any(|s| v["status"] == *s)
+    TERMINAL.iter().any(|s| v["status"] == *s)
 }
 pub fn runtime(server: &Server, id: &str) -> Result<Value, ApiError> {
-    server
-        .store
-        .lock()
-        .unwrap()
-        .runtimes()?
-        .into_iter()
-        .find(|r| r["runtimeId"] == id)
-        .ok_or_else(|| {
-            ApiError::domain(
-                StatusCode::NOT_FOUND,
-                "unknown_runtime",
-                format!("unknown runtime \"{id}\""),
-                Some(json!({"runtimeId":id})),
-            )
-        })
+    server.store.lock().unwrap().runtime(id)?.ok_or_else(|| {
+        ApiError::domain(
+            StatusCode::NOT_FOUND,
+            "unknown_runtime",
+            format!("unknown runtime \"{id}\""),
+            Some(json!({"runtimeId":id})),
+        )
+    })
 }
 /// runtime-list-handlers.ts `queryRuntimesForProjection`: the filtered,
 /// ordered snapshots with health. `paginate` applies cursor and limit; the
@@ -161,8 +153,27 @@ pub fn query(
         stale_threshold_sec() as f64 * 1000.0
     };
     let now = chrono::Utc::now().timestamp_millis();
+    // SQL only narrows what gets hydrated; `retain` below stays the filter.
+    let mut clause = vec!["1"];
+    let mut values = Vec::<String>::new();
+    if !all {
+        clause.push("status NOT IN (SELECT value FROM json_each(?))");
+        values.push(json!(TERMINAL).to_string());
+    }
+    if !statuses.is_empty() {
+        clause.push("status IN (SELECT value FROM json_each(?))");
+        values.push(json!(statuses).to_string());
+    }
+    if let Some(host) = optional(q, "hostSessionId") {
+        clause.push("host_session_id=?");
+        values.push(host.to_owned());
+    }
+    if let Some(scope) = optional(q, "scope") {
+        clause.push("substr(scope_ref,1,length(?))=?");
+        values.extend([scope.to_owned(), scope.to_owned()]);
+    }
     let db = server.store.lock().unwrap();
-    let mut rows = db.runtimes()?;
+    let mut rows = db.runtimes_where(&clause.join(" AND "), rusqlite::params_from_iter(values))?;
     for r in &mut rows {
         if let Ok(identity) = db.identity(
             r["scopeRef"].as_str().unwrap_or(""),

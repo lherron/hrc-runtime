@@ -506,10 +506,14 @@ async fn steps(
             })
             .map_err(anyhow::Error::from)?;
         let mut after = HashMap::new();
-        for r in db.runtimes()?.into_iter().filter(|r| {
-            r["hostSessionId"] == session["hostSessionId"]
-                && r["controllerKind"] == "harness-broker"
-        }) {
+        for r in db
+            .runtimes_where(
+                "host_session_id=?",
+                [session["hostSessionId"].as_str().unwrap_or("")],
+            )?
+            .into_iter()
+            .filter(|r| r["controllerKind"] == "harness-broker")
+        {
             if let Some(inv) = r["activeInvocationId"].as_str() {
                 let seq: i64 = db.sqlite.query_row("SELECT COALESCE(MAX(seq),0) FROM broker_invocation_events WHERE invocation_id=?", [inv], |x| x.get(0)).map_err(anyhow::Error::from)?;
                 after.insert(inv.to_owned(), seq);

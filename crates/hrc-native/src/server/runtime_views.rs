@@ -280,7 +280,7 @@ pub fn find_target_session(server: &Server, raw: &str) -> Result<Option<Value>, 
     let mut session = {
         let db = server.store.lock().unwrap();
         let mut sessions: Vec<_> = db
-            .sessions()?
+            .sessions_in_scope(scope)?
             .into_iter()
             .filter(|s| {
                 s["scopeRef"] == scope
@@ -342,11 +342,11 @@ pub async fn target_session_view(
         raw_lane
     }
     .to_owned();
-    let runtimes = server.store.lock().unwrap().runtimes()?;
-    let rows: Vec<_> = runtimes
-        .iter()
-        .filter(|r| r["hostSessionId"] == session["hostSessionId"])
-        .collect();
+    let runtimes = server.store.lock().unwrap().runtimes_where(
+        "host_session_id=?",
+        [session["hostSessionId"].as_str().unwrap_or("")],
+    )?;
+    let rows: Vec<_> = runtimes.iter().collect();
     let r = rows
         .iter()
         .rev()

@@ -48,7 +48,7 @@ fn target_sessions(server: &Shared, raw: &str) -> Result<Vec<Value>, ApiError> {
         .store
         .lock()
         .unwrap()
-        .sessions()?
+        .sessions_in_scope(scope)?
         .into_iter()
         .filter(|s| {
             s["scopeRef"] == scope
