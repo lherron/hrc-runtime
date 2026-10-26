@@ -531,7 +531,9 @@ launchd-install injector-version:
     refused=0
     for src in "$repo"/launchd/*.plist; do
       label="$(basename "$src" .plist)"
-      [[ "$label" == com.praesidium.hrc-mail-injector ]] && continue
+      # The injector and the T-11822 front door have their own renderers
+      # (install-mail-injector-launchd, front-door-enable).
+      [[ "$label" == com.praesidium.hrc-mail-injector || "$label" == com.praesidium.rusthrc-server ]] && continue
       dst="$HOME/Library/LaunchAgents/${label}.plist"
       [[ -f "$dst" ]] || continue
       sed -e "s|/Users/lherron|$(esc "$HOME")|g" "$src" > "$dst.next"
@@ -548,7 +550,9 @@ launchd-install injector-version:
     fi
     for src in "$repo"/launchd/*.plist; do
       label="$(basename "$src" .plist)"
-      [[ "$label" == com.praesidium.hrc-mail-injector ]] && continue
+      # The injector and the T-11822 front door have their own renderers
+      # (install-mail-injector-launchd, front-door-enable).
+      [[ "$label" == com.praesidium.hrc-mail-injector || "$label" == com.praesidium.rusthrc-server ]] && continue
       dst="$HOME/Library/LaunchAgents/${label}.plist"
       sed -e "s|/Users/lherron|$(esc "$HOME")|g" "$src" > "$dst.next"
       # A fronted node keeps Bun on its private socket (T-11822, front-door-enable).
@@ -578,7 +582,7 @@ launchd-uninstall:
     set -euo pipefail
     repo="$(git rev-parse --show-toplevel)"
     domain="gui/$(id -u)"
-    for src in "$repo"/launchd/front-door/*.plist "$repo"/launchd/*.plist; do
+    for src in "$repo"/launchd/*.plist; do
       label="$(basename "$src" .plist)"
       launchctl bootout "$domain/$label" 2>/dev/null || true
       rm -f "$HOME/Library/LaunchAgents/${label}.plist"
@@ -604,11 +608,13 @@ front-door-enable reason *stop-flags:
     [[ -f "$server_plist" ]] || fail "no installed $server_plist"
     [[ ! -f "$front_plist" ]] || fail "already fronted ($front_plist exists); see just front-door-status"
     rusthrc="$(plutil -extract EnvironmentVariables.HOME raw -o - "$server_plist")/.bun/bin/rusthrc"
-    "$rusthrc" server --front 2>&1 | grep -q -- '--front requires --bun-socket' ||
+    # The probe exits non-zero by design, so match its output, not a pipeline.
+    probe="$("$rusthrc" server --front 2>&1 || true)"
+    [[ "$probe" == *'--front requires --bun-socket'* ]] ||
       fail "$rusthrc does not know the front role; install a release that does first"
     bun_socket="$(bun "$repo/scripts/front-door.ts" bun-socket "$server_plist")"
     public="$(dirname "$bun_socket")/hrc.sock"
-    bun "$repo/scripts/front-door.ts" render "$repo/launchd/front-door/com.praesidium.rusthrc-server.plist" "$front_plist.next" "$server_plist"
+    bun "$repo/scripts/front-door.ts" render "$repo/launchd/com.praesidium.rusthrc-server.plist" "$front_plist.next" "$server_plist"
     cp "$server_plist" "$server_plist.pre-front-door"
     bun "$repo/scripts/front-door.ts" listen-args add "$server_plist" "$bun_socket"
     hrc server stop --reason '{{ reason }}' {{ stop-flags }}

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- T-11822 front door. Rendered and loaded only by `just front-door-enable`,
-     never by launchd-install: it binds the public hrc.sock, so it may run only
-     while Bun's job listens on __BUN_SOCKET__. -->
+<!-- T-11822 front door. Rendered and loaded only by `just front-door-enable`;
+     launchd-install skips this label: it binds the public hrc.sock, so it may
+     run only while Bun's job listens on the private socket in its args. -->
 <plist version="1.0">
 <dict>
 	<key>EnvironmentVariables</key>
@@ -37,9 +37,9 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>__HOME__/praesidium/var/logs/hrc-runtime/rusthrc-server.log</string>
+	<string>__HOME__/praesidium/var/logs/hrc-runtime/rusthrc-server.err.log</string>
 	<key>StandardOutPath</key>
-	<string>__HOME__/praesidium/var/logs/hrc-runtime/rusthrc-server.out.log</string>
+	<string>__HOME__/praesidium/var/logs/hrc-runtime/rusthrc-server.log</string>
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
 	<key>WorkingDirectory</key>

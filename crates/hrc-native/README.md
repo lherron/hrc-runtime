@@ -90,9 +90,13 @@ role refuses an explicit non-default `--listen-socket`.
 On a node, `just front-door-enable '<reason>'` and `just front-door-disable
 '<reason>'` move between the two modes (one HRC restart each; Mable seats with
 restart authority on the node only), and `just front-door-status` reports the
-mode. The rusthrc job template lives in `launchd/front-door/`, outside the
-`launchd-install` glob, and `launchd-install` keeps Bun's `--listen-socket` on a
-fronted node.
+mode. The rusthrc job is `launchd/com.praesidium.rusthrc-server.plist`, which
+`launchd-install` skips (front-door-enable is its only renderer); on a fronted
+node `launchd-install` keeps Bun's `--listen-socket`. Its L1 logs are
+`var/logs/hrc-runtime/rusthrc-server.log` (stdout, which carries the L3 request
+lines, as Bun's `hrc-server.log` does) and `rusthrc-server.err.log` (stderr);
+access metrics stay in
+`<stateRoot>/metrics/rusthrc-server-<day>.ndjson`.
 
 `e2e/front_door.py` is the scratch workflow for gates 1-3: Bun on the private
 socket, front refusals, the installed `hrc` CLI and a real model turn through
