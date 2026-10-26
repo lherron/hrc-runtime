@@ -154,7 +154,12 @@ def main():
                 row.update(reason=OUTSIDE_NATIVE)
                 unsupported.append(row)
         qualification.append(row)
-    report = {'commandScope': scope, 'normalization': NORMALIZATION, 'rustHelpAddition': {'paths': ['server', 'server serve'], 'text': rust_server_help}, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'qualification': qualification, 'qualificationNote': 'Suite names are coverage obligations, not behavioral PASS results. Aggregate qualification supplies their actual results.', 'unsupported': unsupported}
+    # The contract's UNSUPPORTED lines and this driver's outside-native lines
+    # must be the same set, or a rule silently stopped (or started) matching.
+    contract = {i['id'] for i in coverage['items'] if i['target'] == 'UNSUPPORTED' and i.get('reason') == OUTSIDE_NATIVE}
+    agreement = {'contractOnly': sorted(contract - {r['line'] for r in unsupported}),
+                 'driverOnly': sorted({r['line'] for r in unsupported} - contract)}
+    report = {'contractAgreement': agreement, 'commandScope': scope, 'normalization': NORMALIZATION, 'rustHelpAddition': {'paths': ['server', 'server serve'], 'text': rust_server_help}, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'qualification': qualification, 'qualificationNote': 'Suite names are coverage obligations, not behavioral PASS results. Aggregate qualification supplies their actual results.', 'unsupported': unsupported}
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
     for r in results:
@@ -170,7 +175,10 @@ def main():
     metrics = subprocess.run(metric_args, cwd=ROOT)
     daemon = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/daemon_entrypoints.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'daemon-entrypoints')], cwd=ROOT)
     transport = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/client_errors.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'client-errors')], cwd=ROOT)
-    return int(bool(report['fail']) or any(p.returncode != 0 for p in (status, passthrough, metrics, daemon, transport)))
+    disagree = bool(agreement['contractOnly'] or agreement['driverOnly'])
+    if disagree:
+        print('FAIL contract/driver UNSUPPORTED disagreement', json.dumps(agreement))
+    return int(bool(report['fail']) or disagree or any(p.returncode != 0 for p in (status, passthrough, metrics, daemon, transport)))
 
 
 if __name__ == '__main__':

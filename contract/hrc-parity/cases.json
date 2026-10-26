@@ -1217,25 +1217,25 @@
     },
     {
       "kind": "direct-store-call",
-      "pathPrefix": "scripts/",
+      "idPrefix": "direct:scripts/",
       "target": "UNSUPPORTED",
       "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
     },
     {
       "kind": "direct-store-open",
-      "pathPrefix": "scripts/",
+      "idPrefix": "direct-open:scripts/",
       "target": "UNSUPPORTED",
       "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
     },
     {
       "kind": "direct-store-call",
-      "pathPrefix": "packages/hrc-cli/src/run-invocation.ts",
+      "idPrefix": "direct:packages/hrc-cli/src/run-invocation.ts:",
       "target": "UNSUPPORTED",
       "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
     },
     {
       "kind": "direct-store-call",
-      "pathPrefix": "packages/hrc-capture-verifier/",
+      "idPrefix": "direct:packages/hrc-capture-verifier/",
       "target": "UNSUPPORTED",
       "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
     },
