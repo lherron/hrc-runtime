@@ -13,10 +13,19 @@ terminated seat.
 Failure modes: a skew judged differently, a retired binding scanned, a trip
 or bundle projected with other keys, parseInt edge cases, forensics events
 decoded or ordered differently, and refusal text/status drift.
+
+POST /v1/previews/run compiles real intents (resolved once, under Bun) on both
+owners against the same aspd: with and without a first turn, interactive, a
+lane-qualified ref, two selections ASP refuses (compile-not-ok), and the body
+refusals. Dry-run ids, hashes, profile ids, session names, compile ids and
+phase timings are masked by role so the compare still sees every key in order.
+The startup retained-evidence pass is settled first: it lands the terminated
+broker's disposal, which would otherwise race the first owner's reads.
 """
 import argparse
 import json
 from pathlib import Path
+import re
 import sqlite3
 from urllib.parse import quote
 
@@ -28,6 +37,57 @@ PROMPT = 'Reply with exactly the word OK and nothing else. No tools.'
 
 def scope(agent, task):
     return f'agent:{agent}:project:{PROJECT}:task:{task}'
+
+
+DRY = re.compile(r'dry-(req|op|rt|inv|input|run|trace)-[0-9a-f-]{36}')
+HASH = re.compile(r'\b(sha256:)?[0-9a-f]{64}\b')
+PROFILE = re.compile(r'\bprofile_[0-9a-f]{32}\b')
+UUID = re.compile(r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b')
+SESSION = re.compile(rf'\b(\w+-{PROJECT})-[a-z0-9]{{4}}\b')
+VOLATILE = {'compileId', 'planHash', 'createdAt', 'ms'}
+
+
+def mask(value):
+    """Mask per-compile values by role; keys and their order are kept."""
+    if isinstance(value, dict):
+        return {k: '<' + k + '>' if k in VOLATILE and value[k] is not None else mask(x) for k, x in value.items()}
+    if isinstance(value, list):
+        return [mask(x) for x in value]
+    if isinstance(value, str):
+        value = DRY.sub(lambda m: f'dry-{m.group(1)}-<id>', value)
+        value = SESSION.sub(lambda m: m.group(1) + '-<name>', PROFILE.sub('profile_<id>', value))
+        return UUID.sub('<uuid>', HASH.sub('<hash>', value))
+    return value
+
+
+def preview_cases(s):
+    """Preview bodies from intents the Bun owner resolves for real scopes."""
+    def resolve(name, **extra):
+        status, value = s.http('POST', '/v1/declarations/resolve', {'scopeRef': name, **extra})
+        assert status == 200, (status, value)
+        return value['intent']
+    seat = scope('tabularasa', 'preview')
+    prompted = resolve(seat, initialPrompt=PROMPT)
+    bare = resolve(seat)
+    interactive = resolve(seat, interactive=True, preferredMode='interactive')
+    def selecting(**selection):
+        intent = json.loads(json.dumps(bare))
+        intent['selection'] = selection
+        return intent
+    return [
+        ('preview:prompted', {'intent': prompted, 'sessionRef': seat}),
+        ('preview:bare', {'intent': bare, 'sessionRef': seat}),
+        ('preview:interactive', {'intent': interactive, 'sessionRef': seat}),
+        ('preview:lane-ref', {'intent': prompted, 'sessionRef': seat + '/lane:main'}),
+        ('preview:refused-model', {'intent': selecting(model='n4-no-such-model'), 'sessionRef': seat}),
+        ('preview:refused-pairing', {'intent': selecting(harness='codex', modelProvider='anthropic'),
+                                     'sessionRef': seat}),
+        ('preview:not-object', []),
+        ('preview:no-intent', {'sessionRef': seat}),
+        ('preview:no-harness', {'intent': {'placement': prompted['placement']}, 'sessionRef': seat}),
+        ('preview:no-ref', {'intent': prompted}),
+        ('preview:blank-ref', {'intent': prompted, 'sessionRef': '  '}),
+    ]
 
 
 def main():
@@ -76,6 +136,13 @@ def main():
         source_rows = s.rows('SELECT source_ref FROM broker_invocation_events WHERE runtime_id=? AND source_ref IS NOT NULL LIMIT 1', (runtime,))
         source = source_rows[0]['source_ref'] if source_rows else 'none'
         s.down(proc)
+        # The terminated broker's disposal arrives as retained evidence that
+        # the next owner's startup pass projects; settle it before reading.
+        proc = s.up('bun', 'settle')
+        settle_log = args.artifacts / 'bun-settle.log'
+        s.wait(lambda: 'retained_evidence.pass_complete' in settle_log.read_text(), timeout=60,
+               what='startup retained-evidence pass')
+        s.down(proc)
         cases = [
             ('bindings', '/v1/federation/bindings'),
             ('diagnostics:list', '/v1/runtime-diagnostics'),
@@ -101,11 +168,17 @@ def main():
             ('fedruntimes:local', '/v1/federation/runtimes'),
             ('fedruntimes:not-all', '/v1/federation/runtimes?all=false'),
         ]
+        previews = None
         for owner in ('bun', 'native'):
             proc = s.up(owner, 'reads')
             for name, path in cases:
                 status, value = s.http('GET', path)
                 out[owner][name] = {'status': status, 'body': value}
+            if previews is None:
+                previews = preview_cases(s)
+            for name, body in previews:
+                status, value = s.http('POST', '/v1/previews/run', body)
+                out[owner][name] = {'status': status, 'body': mask(value)}
             s.down(proc)
         for owner, observations in out.items():
             (args.artifacts / owner).mkdir(exist_ok=True)

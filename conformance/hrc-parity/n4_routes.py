@@ -166,15 +166,17 @@ def compare_gate(args, checks):
 
 
 # Operations reads: Bun and native answer the same cases on one frozen store,
-# so nothing is minted per owner and every field compares exactly.
-OPS_CASES = 21
+# so nothing is minted per owner and every field compares exactly. Run
+# previews mint dry ids and hashes per compile; the e2e masks those by role.
+OPS_CASES = 32
 
 
 def compare_ops(args, checks):
     a = json.loads((Path(args.baseline) / 'ops.json').read_text())
     b = json.loads((Path(args.candidate) / 'ops.json').read_text())
     checks.append({'id': 'case-matrix', 'pass': len(a) == OPS_CASES and set(a) == set(b),
-                   'reason': 'bindings, runtime-diagnostics and broker-forensics cases on both owners', 'failureCode': 1})
+                   'reason': 'bindings, runtime-diagnostics, broker-forensics, federation runtimes and run-preview '
+                             'cases on both owners', 'failureCode': 1})
     cases = []
     for name in a:
         passed = name in b and canonical(a[name]) == canonical(b[name])

@@ -222,7 +222,7 @@ fn nonempty(value: &Value) -> bool {
     value.as_str().is_some_and(|v| !v.is_empty())
 }
 
-fn admit(response: &Value, request: &Value, operator: Option<&str>) -> Result<()> {
+pub(super) fn admit(response: &Value, request: &Value, operator: Option<&str>) -> Result<()> {
     ensure!(
         response["schemaVersion"] == "aspc-compile-harness-invocation-response/v2",
         "v2-envelope-required"

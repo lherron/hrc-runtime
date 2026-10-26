@@ -31,6 +31,7 @@ mod maintenance;
 mod participants;
 mod placement;
 mod presentation;
+mod preview;
 mod projection;
 mod proxy;
 mod publication;
@@ -440,6 +441,11 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
                 .map(|v| Json(v).into_response()),
             Err(e) => Err(e),
         }
+    } else if method == Method::POST && uri.path() == "/v1/previews/run" {
+        match parse_body(&body) {
+            Ok(value) => preview::handle(value).await,
+            Err(e) => Err(e),
+        }
     } else if method == Method::POST && uri.path() == "/v1/placements/resolve" {
         match parse_body(&body) {
             Ok(value) => aspc::resolve_placement(server, value)
@@ -536,6 +542,7 @@ fn implemented(method: &Method, path: &str) -> bool {
         || (*method == Method::POST
             && [
                 "/v1/sessions/resolve",
+                "/v1/previews/run",
                 "/v1/turns",
                 "/v1/submissions/invoke",
                 "/v1/interrupt",
