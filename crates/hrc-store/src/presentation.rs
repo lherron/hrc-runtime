@@ -15,8 +15,10 @@ impl Store {
                 "SELECT * FROM runtimes WHERE scope_ref=? AND lane_ref=? ORDER BY created_at ASC,runtime_id ASC",
                 vec![s, l],
             ),
+            // Unkeyed is only the bootstrap list, which drops what `available`
+            // drops; filtering here spares decoding every terminal row (T-11927).
             _ => (
-                "SELECT * FROM runtimes ORDER BY created_at ASC,runtime_id ASC",
+                "SELECT * FROM runtimes WHERE status IS NULL OR status NOT IN ('terminated','dead','stale','crashed','detached') ORDER BY created_at ASC,runtime_id ASC",
                 vec![],
             ),
         };
