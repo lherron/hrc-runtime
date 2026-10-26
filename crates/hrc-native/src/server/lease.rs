@@ -430,6 +430,50 @@ pub async fn reap(server: &Shared, runtime_id: &str, reason: &str) {
     }
 }
 
+/// DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS
+const SUMMARY_REAP_GRACE: Duration = Duration::from_millis(500);
+static PENDING_REAPS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// scheduleBrokerTmuxLeaseReapAfterSummary: a prompt exit (/quit, logout)
+/// reaps the lease once invocation.summary is recorded, or after a short
+/// grace. invocation.exited still reaps on its own; `reap` runs once.
+pub fn reap_after_summary(server: &Shared, runtime_id: &str, reason: &str) {
+    if server.reaped.lock().unwrap().contains(runtime_id) {
+        return;
+    }
+    let summarized = {
+        let db = server.store.lock().unwrap();
+        db::runtime(&db.sqlite, runtime_id)
+            .ok()
+            .flatten()
+            .is_some_and(|rt| {
+                rt.state_object()
+                    .get("finalSummary")
+                    .is_some_and(|s| !s.is_null())
+            })
+    };
+    let server = server.clone();
+    let (runtime_id, reason) = (runtime_id.to_owned(), reason.to_owned());
+    if summarized {
+        tokio::spawn(async move { reap(&server, &runtime_id, &reason).await });
+        return;
+    }
+    if !PENDING_REAPS.lock().unwrap().insert(runtime_id.clone()) {
+        return;
+    }
+    tokio::spawn(async move {
+        tokio::time::sleep(SUMMARY_REAP_GRACE).await;
+        PENDING_REAPS.lock().unwrap().remove(&runtime_id);
+        reap(
+            &server,
+            &runtime_id,
+            &format!("{reason}:summary_grace_elapsed"),
+        )
+        .await;
+    });
+}
+
 /// hasBrokerLeasedTmux
 pub fn has_leased_tmux(rt: &db::Rt) -> bool {
     !controller::is_external_lifecycle_owner(rt)

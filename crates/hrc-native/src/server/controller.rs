@@ -574,6 +574,20 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
             probe_in_background(server, runtime, &format!("broker-event:{kind}"));
         }
     }
+    // Lever 2 graceful exit: a user-exit continuation clear schedules a
+    // summary-aware lease reap (BROKER_TMUX_PROMPT_EXIT_REASONS).
+    if kind == "continuation.cleared"
+        && let Some(reason) = envelope["payload"]["reason"]
+            .as_str()
+            .filter(|r| matches!(*r, "prompt_input_exit" | "logout"))
+    {
+        log(
+            "info",
+            "broker-tmux prompt exit; scheduling summary-aware lease reap",
+            json!({"runtimeId":runtime,"reason":reason,"graceMs":500}),
+        );
+        super::lease::reap_after_summary(server, runtime, &format!("prompt_exit:{reason}"));
+    }
     if kind == "invocation.summary" {
         let db = server.store.lock().unwrap();
         if let Ok(Some(rt)) = db::runtime(&db.sqlite, runtime) {
