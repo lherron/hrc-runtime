@@ -2,7 +2,7 @@ id: hrc-runtime.rust-migration
 kind: contract
 status: active
 owner_project: hrc-runtime
-scope: Rust migration, delivered API-fed kernel/facades, isolated native parity and cohesive per-node owner transfer
+scope: Rust migration, delivered API-fed kernel/facades, isolated native parity, Rust front door and cohesive per-node owner transfer
 approved_source:
   revision: d04a6f9d
   draft: r3.3 (facade-first ruling, seat.summon, and scoped preview and seat.restart amendments)
@@ -34,6 +34,14 @@ parity_r2_amendment:
   status: design approved by Daedalus 2026-10-25 on EN-35271; Lance's go to arm N0 remains separate
   replaces: r1 P0-P8 work map and frozen inventory qualification, not the M1 ownership boundary
   boundary: current-main coverage and N0-N6 product workflows; no implementation or activation grade implied
+front_door_amendment:
+  task: T-11822
+  task_slug: f-front-door
+  revision: 13bdbdc6
+  proposal: docs/proposals/hrc-rust-parity.md
+  status: design approved by Daedalus 2026-10-25 on EN-35519; closes F1 and F2 from EN-35517
+  authority: Lance's 2026-10-25 both-processes and Rust access-logging direction, submitted by Mable in EN-35516
+  boundary: both processes on each node with one execution owner; front-safe native reads before flip and front-safe Bun reads after flip
 predicate: >
   HRC embeds cardo-runtime as a library and retains ownership of its durable
   store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
@@ -165,8 +173,48 @@ predicate: >
   is rusthrc. Incremental native packages use isolated state, scopes, tmux
   leases, sockets/ports, registry, ASP configuration and wrkq/publication
   destinations. No copied row grants production broker control. One coupled
-  execution owner controls each node/state/substrate; there is no production
-  slice-writer front/private-Bun topology. External direct writers/readers
+  execution owner controls each node/state/substrate; production route slices
+  never divide authority or lifecycle writes between Bun and Rust.
+  F adds a Rust front door after N1 alongside N2-N4: rusthrc binds public
+  hrc.sock, Bun binds private hrc-bun.sock in the same runtime directory
+  and uses the same state root. Both processes run on each node during
+  transition. While Bun owns execution, Rust serves only implemented,
+  compare-qualified routes in the pinned kernel read set that are free of
+  side effects and dependence on Bun process memory. Everything else
+  forwards verbatim to Bun. Reconciliation and activity-on-read routes
+  remain with the owner. Status, subscriber admission snapshots and live
+  transcript-index status are outside the front-safe set. Follows and
+  streams forward until Rust has an independent wake source and its added
+  latency is measured; existing bounded observation, home routing,
+  cancellation, backpressure and cursor contracts remain unchanged. Broker
+  execution IPC stays on the owner's direct broker connections, preserving
+  projection-before-ACK. After N6 Rust alone owns authority writes. Bun
+  runs serve-only with no controllers, recovery, timers, publishers,
+  followers or listeners except its private socket. Only postponed routes
+  proven store-backed, side-effect-free and independent of Bun process
+  memory may reach it. Rust refuses every other postponed route before
+  mutation with postponed_on_rust_owner naming the route, and logs the
+  refusal. This includes controller-independent authority and lifecycle
+  mutations such as federation retirement and surface unbind. Real use
+  moves a postponed route into implementation or requires a reverse flip.
+  Configurable Bun listen socket and serve-only mode are deployment roles,
+  not feature flags. Front-stage rollback stops Rust and restarts Bun on
+  the public socket with brokers reattached; execution-owner rollback
+  remains N6's whole-owner procedure, not a socket swap.
+  Rust access metrics use metrics/rusthrc-server-<day>.ndjson and its own
+  L3 log, with servedBy native or bun; forwarded requests also appear in
+  Bun's unchanged metrics/server-<day>.ndjson and hrc-server.log. No file
+  has both processes as writers. Headers, including User-Agent and supplied
+  request IDs, pass verbatim; Rust mints no IDs for forwarded requests.
+  Both retain Bun's schema, sampling, retention and suppression contract.
+  Exact cross-file joins apply to client-ID requests; ordinary no-ID
+  traffic supports per-route hourly weighted-count comparison within
+  sampling error, not a universal per-request join or presence guarantee.
+  The usage audit treats Rust as the fronted request population and Bun
+  as its forwarded subset, never summing the two; CLI records remain one
+  per invocation. Rust adds an API availability dependency, supervised by
+  launchd and reversible through the submitted front-stage rollback.
+  External direct writers/readers
   remain explicit compatibility consumers. Production schema migrations stay
   Bun-owned. Native scratch initialization uses canonical Bun machinery;
   unknown or incomplete schemas refuse. A Rust canonical migration runner
@@ -184,8 +232,10 @@ predicate: >
   surface, establishes the real installed Bun scratch baseline and proves
   a deliberately broken subject fails. Missing, empty, skipped,
   baseline-failed or fixture-only cases do not pass. Native qualification
-  requires the Bun daemon unavailable for its subject; facade success is
-  not native parity.
+  requires the Bun daemon unavailable for its native subject; F's proxy
+  qualification instead requires Bun behind Rust and proves front-mode
+  compatibility, not native execution parity. Facade success is not native
+  parity.
   N0 precedes N1 native store/daemon foundation, N2 broker turns/recovery,
   N3 messages/streams, N4 surviving federation/operations/native kernel,
   then N6 whole-node handoff. N5 rusthrc starts after N1 and qualifies
@@ -239,8 +289,18 @@ authority: >
   EN-35271; Daedalus source-review approval of parity r2 at 7aa89563,
   submitted in EN-35271, 2026-10-25. Arming N0 remains Lance's decision;
   design approval does not grade N0 or N1 behavior.
+  Lance's 2026-10-25 direction that both daemons run on each node and Rust
+  owns front-door access logging, submitted in EN-35516; Daedalus approval
+  of the revised front-door amendment at 13bdbdc6 submitted in EN-35519.
+  The revision closes EN-35517 F1's second authority writer and F2's
+  impossible universal log-join guarantee. Activation remains separate.
 source:
   - docs/proposals/hrc-rust-parity.md
+  - commit:13bdbdc6
+  - wrkq:T-11822
+  - wrkc:EN-35516
+  - wrkc:EN-35517
+  - wrkc:EN-35519
   - commit:7aa89563
   - wrkq:T-11816
   - wrkc:EN-35271
@@ -348,6 +408,18 @@ validation_scope: >
   named compatible Bun fallback. Worktree checks, canonical installed
   acceptance and independent grading remain separate. These are future
   implementation obligations, not successful runtime evidence.
+  F requires a scratch Rust front and Bun owner on the same isolated state
+  root, native front-safe reads and forwarded remaining routes, unchanged
+  CLI/kernel/injector compatibility and a real turn through the front.
+  Below the per-route-minute unsampled head, each request appears once in
+  Rust and each forwarded request once in Bun: supplied IDs join exactly,
+  no-ID SDK traffic matches by route/minute counts, and no file has shared
+  writers. The 24-hour hrcdev run reports per-route hourly weighted counts
+  side by side as measurements, not a gate. Front rollback restores Bun on
+  hrc.sock with brokers reattached. The pilot requires 24 hours on hrcdev
+  without front-attributable request errors before svc and then max3.
+  N6 inherits the serve-only boundary and pre-mutation refusal contract.
+  Design approval authorizes none of these installs or activations.
 last_verified: >
   2026-10-20 design approval by source and contract reading against HRC
   e159381c and cardo main 1796e1c. Reviewed page coverage, presentation and
@@ -402,6 +474,13 @@ last_verified: >
   coverage replaces frozen pins and Mable grades product workflows. No
   builds, tests, installs or service operations were run; N0-N6 gates remain
   unverified. T-11712's federation deletions remain in flight, not assumed.
+  2026-10-25 T-11822 front-door amendment at 13bdbdc6 approved by reading
+  the revision against the prior source review of pinned reads, owner-local
+  subscriptions, direct broker projection/ACK, process-local scope locks,
+  postponed retirement/surface mutations, optional SDK request IDs and
+  metric sampling. F1 and F2 from EN-35517 are closed in the design.
+  No builds, tests, installs or service operations were run for the ruling;
+  F and N6 implementation and installed acceptance remain unverified.
 reopen_when: >
   Migration authority, repository or release boundaries, execution ownership or
   rollback completeness, schema ownership, stage prerequisites, page coverage
@@ -411,4 +490,6 @@ reopen_when: >
   durable JSON preservation or the spill pair-cut compatibility delta
   changes; or the stage-1b no-TypeScript-growth rule, summon request/receipt,
   restart request/receipt, daemon authority, retry or cancellation semantics
-  or unsupported cases change.
+  or unsupported cases change; or front/private socket roles, front-safe
+  eligibility, serve-only effects, postponed-route refusal, forwarded stream
+  semantics, access-log ownership, sampling, joins or audit population change.
