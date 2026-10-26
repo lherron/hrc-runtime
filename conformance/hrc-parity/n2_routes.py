@@ -11,11 +11,7 @@ from pathlib import Path
 from n2_turns import Norm, TIMED, UNPOSITIONED, born_after_fix, fallback_duplicates
 
 CURSORS = ('fromSeq', 'afterSeq')
-# Bun answers a scope-filtered read through the federation home registry
-# (forwardScopedGet); rusthrc reads no federation.json yet and answers locally,
-# as Bun does with no federation config.
-GAPS = {'runs:scope': 'GAP:N4 scope-home routing of scoped GET /v1/runs',
-        'broker-inspect:terminated': 'GAP:N2 retained-evidence terminal outcome (N2 recovery landing)'}
+GAPS = {'broker-inspect:terminated': 'GAP:N2 retained-evidence terminal outcome (N2 recovery landing)'}
 
 
 def strip_cursors(value):
