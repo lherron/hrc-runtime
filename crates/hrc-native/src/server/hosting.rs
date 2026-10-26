@@ -120,6 +120,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         recovery::start(&server);
         participants::resume(&server)?;
         sweeps::start(&server);
+        first_turn::start(&server);
         reconcile::start(&server);
         startup::start_gc(&server);
         sweeps::start_retention(&server);
