@@ -9,12 +9,16 @@ use std::{collections::BTreeSet, path::Path, time::Duration};
 use uuid::Uuid;
 
 mod broker;
+mod broker_reads;
+mod events;
 mod index;
 mod maintenance;
 pub use maintenance::fail_unresolved_absorbed;
+mod mail;
 mod metadata;
 mod monitor_read;
 mod participants;
+mod presentation;
 mod surfaces;
 mod targets;
 pub use metadata::{MetadataWrite, validate_metadata};

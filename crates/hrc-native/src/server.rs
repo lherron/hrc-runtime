@@ -3,12 +3,19 @@ mod aspc;
 mod broker;
 mod compile;
 mod controller;
+mod events;
+mod evidence;
 mod front;
+mod ledger;
+mod mail;
+mod streams;
+mod subscribers;
 pub use front::Role;
 mod index;
 mod lease;
 mod maintenance;
 mod participants;
+mod presentation;
 mod projection;
 mod proxy;
 mod rpc;
@@ -49,6 +56,8 @@ struct Server {
     participant_work: Mutex<HashSet<String>>,
     /// Broker projection memory; lock after `store`.
     projection: Mutex<projection::Memory>,
+    subscribers: Mutex<subscribers::Registry>,
+    wrkq: ledger::Client,
     controller: controller::State,
     /// Runtimes whose user-exit lease reap already fired.
     reaped: Mutex<HashSet<String>>,
@@ -246,6 +255,8 @@ pub async fn serve(role: front::Role) -> Result<()> {
         brokers: Mutex::new(HashMap::new()),
         participant_work: Mutex::new(HashSet::new()),
         projection: Mutex::new(projection::Memory::default()),
+        subscribers: Mutex::new(subscribers::Registry::default()),
+        wrkq: ledger::Client::default(),
         controller: controller::State::default(),
         reaped: Mutex::new(HashSet::new()),
         ledger: tokio::sync::watch::Sender::new(0),
@@ -430,7 +441,18 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
         Ok(body) => body,
         Err(_) => return ApiError::bad("request body must be valid JSON", None).into_response(),
     };
-    let result = if method == Method::GET && uri.path() == "/v1/status" {
+    let result = if method == Method::GET
+        && (uri.path() == "/v1/events/bounded-stream"
+            || uri.path() == "/v1/broker-events"
+            || (uri.path() == "/v1/events"
+                && query.get("follow").map(String::as_str) == Some("true")))
+    {
+        streams::open(server, uri.path(), &query)
+    } else if method == Method::POST && uri.path() == "/v1/internal/mail/stop-decision" {
+        Ok(mail::stop(server, &body).await)
+    } else if method == Method::POST && uri.path() == "/v1/internal/mail/hint-decision" {
+        Ok(mail::hint(server, &body))
+    } else if method == Method::GET && uri.path() == "/v1/status" {
         match status(server, &query) {
             Ok(mut value) => {
                 value["aspd"] = aspc::service_status().await;
@@ -554,22 +576,42 @@ fn decode_path(raw: &str) -> Result<String, ApiError> {
 }
 fn implemented(method: &Method, path: &str) -> bool {
     (*method == Method::GET
-        && ([
-            "/v1/status",
-            "/v1/health",
-            "/v1/sessions",
-            "/v1/sessions/get",
-            "/v1/sessions/page",
-            "/v1/sessions/facets",
-            "/v1/sessions/metadata",
-            "/v1/runtimes",
-            "/v1/targets/by-session-ref",
-            "/v1/runtimes/live-refs",
-            "/v1/placement/bindings",
+        && [
+            "/v1/broker-events/follow",
+            "/v1/broker-events/query",
+            "/v1/broker-events",
+            "/v1/events/bounded-stream",
+            "/v1/server/subscribers",
+            "/v1/presentation/runtimes",
         ]
-        .contains(&path)
-            || path.starts_with("/v1/sessions/by-host/")
-            || runtime_seat_id(path).is_some()))
+        .contains(&path))
+        || (*method == Method::POST
+            && [
+                "/v1/server/subscribers",
+                "/v1/server/subscribers/ack",
+                "/v1/presentation/seats/read",
+                "/v1/internal/mail/hint-decision",
+                "/v1/internal/mail/stop-decision",
+            ]
+            .contains(&path))
+        || events::implements(method, path)
+        || (*method == Method::GET
+            && ([
+                "/v1/status",
+                "/v1/health",
+                "/v1/sessions",
+                "/v1/sessions/get",
+                "/v1/sessions/page",
+                "/v1/sessions/facets",
+                "/v1/sessions/metadata",
+                "/v1/runtimes",
+                "/v1/targets/by-session-ref",
+                "/v1/runtimes/live-refs",
+                "/v1/placement/bindings",
+            ]
+            .contains(&path)
+                || path.starts_with("/v1/sessions/by-host/")
+                || runtime_seat_id(path).is_some()))
         || (*method == Method::POST
             && [
                 "/v1/sessions/resolve",
@@ -636,6 +678,32 @@ fn handle(
     }
     if let Some(response) = sessions::handle(server, method, path, query, body, headers)? {
         return Ok(response);
+    }
+    if *method == Method::GET && path == "/v1/presentation/runtimes" {
+        return presentation::list(server);
+    }
+    if *method == Method::POST && path == "/v1/presentation/seats/read" {
+        return presentation::seats(server, body);
+    }
+    if *method == Method::GET && path == "/v1/broker-events/follow" {
+        return evidence::follow(server, query, headers);
+    }
+    if *method == Method::GET && path == "/v1/broker-events/query" {
+        return evidence::query(server, query);
+    }
+    if path == "/v1/server/subscribers" || path == "/v1/server/subscribers/ack" {
+        let mut registry = server.subscribers.lock().unwrap();
+        let value = if *method == Method::GET {
+            registry.snapshot()
+        } else if path.ends_with("/ack") {
+            registry.acknowledge(body)?
+        } else {
+            registry.declare(body)?
+        };
+        return Ok(Json(value).into_response());
+    }
+    if events::implements(method, path) {
+        return events::handle(server, path, query);
     }
     // Keep unimplemented families indistinguishable from Bun unknown routes.
     if method == Method::GET && path == "/v1/health" {

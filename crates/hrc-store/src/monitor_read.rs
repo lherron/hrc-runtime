@@ -144,7 +144,10 @@ fn tool_result_from_broker(result: Value) -> Value {
 }
 
 impl Store {
-    fn hydrate(&self, mut payload: Value) -> Result<Value> {
+    pub(crate) fn hydrate(&self, payload: Value) -> Result<Value> {
+        self.hydrate_payload(payload, true)
+    }
+    pub(crate) fn hydrate_payload(&self, mut payload: Value, canonical: bool) -> Result<Value> {
         let spill = &payload["result"]["details"]["spill"];
         let bytes_ok = spill["bytes"]
             .as_f64()
@@ -174,7 +177,7 @@ impl Store {
             return Ok(payload);
         }
         let stored: Value = serde_json::from_str(&result_json)?;
-        payload["result"] = if blob_kind == "broker_raw" {
+        payload["result"] = if canonical && blob_kind == "broker_raw" {
             tool_result_from_broker(stored)
         } else {
             stored
@@ -424,80 +427,100 @@ impl Store {
             sql.push_str(" LIMIT ?");
             values.push(Sql::Integer(limit));
         }
-        let rows = {
-            let mut stmt = self.sqlite.prepare(&sql)?;
-            stmt.query_map(rusqlite::params_from_iter(values), |r| {
-                let mut v = Map::new();
-                v.insert("hrcSeq".into(), r.get::<_, i64>("hrc_seq")?.into());
-                v.insert("streamSeq".into(), r.get::<_, i64>("stream_seq")?.into());
-                if let Some(s) = opt(r, "source_ref")? {
-                    v.insert("sourceRef".into(), s.into());
+        self.lifecycle_rows(&sql, &values, true)
+    }
+
+    /// Shared lifecycle wire mapping. HTTP history uses stored payloads for
+    /// covering pages while retaining canonical lanes and session identity.
+    pub fn lifecycle_rows(&self, sql: &str, values: &[Sql], hydrate: bool) -> Result<Vec<Value>> {
+        let mut out = Vec::new();
+        self.lifecycle_scan(sql, values, hydrate, &mut |event| {
+            out.push(event);
+            true
+        })?;
+        Ok(out)
+    }
+    /// Visit rows lazily so bounded replay never materializes unbounded history.
+    pub(crate) fn lifecycle_scan(
+        &self,
+        sql: &str,
+        values: &[Sql],
+        hydrate: bool,
+        visit: &mut dyn FnMut(Value) -> bool,
+    ) -> Result<bool> {
+        let mut stmt = self.sqlite.prepare(sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(values.iter()), |r| {
+            let mut v = Map::new();
+            v.insert("hrcSeq".into(), r.get::<_, i64>("hrc_seq")?.into());
+            v.insert("streamSeq".into(), r.get::<_, i64>("stream_seq")?.into());
+            if let Some(s) = opt(r, "source_ref")? {
+                v.insert("sourceRef".into(), s.into());
+            }
+            if let Some(s) = r.get::<_, Option<i64>>("origin_seq")? {
+                v.insert("originSeq".into(), s.into());
+            }
+            v.insert("ts".into(), r.get::<_, String>("ts")?.into());
+            v.insert(
+                "hostSessionId".into(),
+                r.get::<_, String>("host_session_id")?.into(),
+            );
+            v.insert("scopeRef".into(), r.get::<_, String>("scope_ref")?.into());
+            v.insert("laneRef".into(), r.get::<_, String>("lane_ref")?.into());
+            v.insert("generation".into(), r.get::<_, i64>("generation")?.into());
+            for (col, key) in [
+                ("runtime_id", "runtimeId"),
+                ("run_id", "runId"),
+                ("launch_id", "launchId"),
+                ("app_id", "appId"),
+                ("app_session_key", "appSessionKey"),
+            ] {
+                if let Some(s) = opt(r, col)? {
+                    v.insert(key.into(), s.into());
                 }
-                if let Some(s) = r.get::<_, Option<i64>>("origin_seq")? {
-                    v.insert("originSeq".into(), s.into());
+            }
+            v.insert("category".into(), r.get::<_, String>("category")?.into());
+            v.insert("eventKind".into(), r.get::<_, String>("event_kind")?.into());
+            for (col, key) in [("transport", "transport"), ("error_code", "errorCode")] {
+                if let Some(s) = opt(r, col)? {
+                    v.insert(key.into(), s.into());
                 }
-                v.insert("ts".into(), r.get::<_, String>("ts")?.into());
-                v.insert(
-                    "hostSessionId".into(),
-                    r.get::<_, String>("host_session_id")?.into(),
-                );
-                v.insert("scopeRef".into(), r.get::<_, String>("scope_ref")?.into());
-                v.insert("laneRef".into(), r.get::<_, String>("lane_ref")?.into());
-                v.insert("generation".into(), r.get::<_, i64>("generation")?.into());
-                for (col, key) in [
-                    ("runtime_id", "runtimeId"),
-                    ("run_id", "runId"),
-                    ("launch_id", "launchId"),
-                    ("app_id", "appId"),
-                    ("app_session_key", "appSessionKey"),
-                ] {
-                    if let Some(s) = opt(r, col)? {
-                        v.insert(key.into(), s.into());
-                    }
-                }
-                v.insert("category".into(), r.get::<_, String>("category")?.into());
-                v.insert("eventKind".into(), r.get::<_, String>("event_kind")?.into());
-                for (col, key) in [("transport", "transport"), ("error_code", "errorCode")] {
-                    if let Some(s) = opt(r, col)? {
-                        v.insert(key.into(), s.into());
-                    }
-                }
-                v.insert(
-                    "replayed".into(),
-                    (r.get::<_, i64>("replayed")? != 0).into(),
-                );
-                if opt(r, "evidence_origin")?.as_deref() == Some("retained") {
-                    v.insert("evidenceOrigin".into(), "retained".into());
-                }
-                // Corrupt JSON reads as an absent payload, like parseJson.
-                let payload = parse_json(opt(r, "payload_json")?);
-                if !payload.is_null() || opt(r, "payload_json")?.as_deref() == Some("null") {
-                    v.insert("payload".into(), payload);
-                }
-                Ok(Value::Object(v))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        rows.into_iter()
-            .map(|mut event| {
-                if let Some(payload) = event.get_mut("payload") {
-                    *payload = self.hydrate(payload.take())?;
-                }
-                let scope = event["scopeRef"].as_str().unwrap_or_default().to_owned();
-                let lane = event["laneRef"].as_str().unwrap_or_default().to_owned();
-                let identity = identity(self, &scope, &lane)?;
-                // session-identity canonicalLaneRef: "main" and "lane:*" verbatim.
-                event["laneRef"] = if lane == "main" || lane.starts_with("lane:") {
-                    lane.clone()
-                } else {
-                    format!("lane:{lane}")
-                }
-                .into();
-                if let Some(identity) = identity {
-                    event["identity"] = identity;
-                }
-                Ok(event)
-            })
-            .collect()
+            }
+            v.insert(
+                "replayed".into(),
+                (r.get::<_, i64>("replayed")? != 0).into(),
+            );
+            if opt(r, "evidence_origin")?.as_deref() == Some("retained") {
+                v.insert("evidenceOrigin".into(), "retained".into());
+            }
+            // Corrupt JSON reads as an absent payload, like parseJson.
+            let payload = parse_json(opt(r, "payload_json")?);
+            if !payload.is_null() || opt(r, "payload_json")?.as_deref() == Some("null") {
+                v.insert("payload".into(), payload);
+            }
+            Ok(Value::Object(v))
+        })?;
+        for event in rows {
+            let mut event = event?;
+            if hydrate && let Some(payload) = event.get_mut("payload") {
+                *payload = self.hydrate(payload.take())?;
+            }
+            let scope = event["scopeRef"].as_str().unwrap_or_default().to_owned();
+            let lane = event["laneRef"].as_str().unwrap_or_default().to_owned();
+            let identity = identity(self, &scope, &lane)?;
+            // session-identity canonicalLaneRef: "main" and "lane:*" verbatim.
+            event["laneRef"] = if lane == "main" || lane.starts_with("lane:") {
+                lane.clone()
+            } else {
+                format!("lane:{lane}")
+            }
+            .into();
+            if let Some(identity) = identity {
+                event["identity"] = identity;
+            }
+            if !visit(event) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }

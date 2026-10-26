@@ -12,7 +12,7 @@ path = "src/main.rs"
 hrc-cli = { path = "../hrc-cli" }
 hrc-store = { path = "../hrc-store" }
 rusqlite = { version = "0.39", features = ["bundled"] }
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
 chrono.workspace = true
 anyhow = "1"
 axum = "0.8"

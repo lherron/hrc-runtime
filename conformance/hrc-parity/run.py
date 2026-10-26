@@ -536,6 +536,9 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n2-routes':
         from n2_routes import compare as compare_n2_routes
         return compare_n2_routes(args, checks)
+    if getattr(args, 'suite', None) in ('n3-events','n3-subscribers','n3-mail','n3-presentation','n3-replay'):
+        from n3_routes import compare as compare_n3
+        return compare_n3(args, checks)
     if getattr(args, 'suite', None) == 'n2-turns':
         from n2_turns import compare as compare_n2_turns
         return compare_n2_turns(args, checks)
