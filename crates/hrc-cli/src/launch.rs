@@ -8,6 +8,159 @@ use std::{
     time::{Duration, Instant},
 };
 
+fn legacy_scope_input<'a>(args: &'a Parsed<'_>) -> Option<&'a str> {
+    if let Some(input) = args.positionals.first() {
+        return Some(input);
+    }
+    // Legacy scope argv puts string options before booleans, negations and -p.
+    let options = args.node["options"].as_array()?;
+    for values in [true, false] {
+        for option in options {
+            let Some(long) = option["long"].as_str() else {
+                continue;
+            };
+            let key = long.trim_start_matches('-');
+            if ["output", "agent", "human"].contains(&key) || option["negate"] == true {
+                continue;
+            }
+            if (option["required"] == true || option["optional"] == true) == values
+                && args.value(key).is_some()
+            {
+                return Some(long);
+            }
+        }
+    }
+    for option in options {
+        if option["negate"] == true
+            && let Some(long) = option["long"].as_str()
+            && args.flag(long.trim_start_matches('-'))
+        {
+            return Some(long);
+        }
+    }
+    args.value("p").map(|_| "-p")
+}
+
+pub(crate) fn resume(args: &Parsed<'_>) -> Result<()> {
+    if args.flag("prior") && args.value("host-session").is_some() {
+        return Err(Error::usage(
+            "hrc resume accepts either --prior or --host-session, not both",
+        ));
+    }
+    let Some(input) = legacy_scope_input(args) else {
+        if let Some(usage) = args.node["actionUsage"].as_str() {
+            crate::cli_print!("{usage}");
+        }
+        return Ok(());
+    };
+    let prompt = prompt(args, "run")?;
+    let mut reference = None;
+    let result = (|| {
+        let (scope, placement) = Qualified::managed(input, args)?;
+        let session_ref = format!("{}/lane:{}", scope.scope, scope.lane);
+        reference = Some(session_ref.clone());
+        let client = Daemon::connect()?;
+        let runtime_intent = intent(args, "run", &scope, &placement, prompt.as_deref(), &client)?;
+        if args.flag("dry-run") {
+            crate::cli_println!(
+                "hrc resume {input} --dry-run  (local plan preview — no server state consulted)"
+            );
+            if let Some(reason) = placement["resolution"]["reason"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+            {
+                crate::cli_println!("  placement:    {reason}");
+            }
+            crate::cli_println!(
+                "\n  sessionRef:   {session_ref}\n  projectRoot:  {}\n  cwd:          {}",
+                runtime_intent["placement"]["projectRoot"]
+                    .as_str()
+                    .unwrap_or("(none)"),
+                text(&runtime_intent["placement"]["cwd"])
+            );
+            let selection = if args.flag("prior") {
+                "immediate predecessor of the active session (--prior)".into()
+            } else if let Some(host) = args.value("host-session") {
+                format!("exact host session {host}")
+            } else {
+                "latest recorded continuation (default)".into()
+            };
+            crate::cli_println!(
+                "  selection:    {selection}\n  action:       POST /v1/sessions/resume-continuation (mint successor from the\n                selected recorded continuation), then prepare/start against it with\n                allowStaleGeneration:true. Fails if no captured continuation exists.\n  attach:       {}\n  initialPrompt: {}\n\n  Note: this preview does not resolve the session or inspect continuation state.\n  Run without --dry-run to execute.",
+                if args.flag("no-attach") {
+                    "no (--no-attach)"
+                } else {
+                    "yes"
+                },
+                prompt
+                    .as_ref()
+                    .map(|p| format!("{} chars", p.encode_utf16().count()))
+                    .unwrap_or_else(|| "(none)".into())
+            );
+            return Ok(());
+        }
+        let mut prior = args.value("host-session").map(str::to_owned);
+        if args.flag("prior") {
+            let current = client.post(
+                "/v1/sessions/resolve",
+                json!({"sessionRef":session_ref,"create":false}),
+            )?;
+            if current["found"] != true {
+                return Err(Error::failure(format!(
+                    "cannot resume prior session for \"{input}\": no session exists"
+                )));
+            }
+            prior = Some(current["session"]["priorHostSessionId"].as_str().ok_or_else(||Error::failure(format!("cannot resume prior session for \"{input}\": the current session has no predecessor")))?.into());
+        }
+        let mut body = json!({"sessionRef":session_ref,"intent":runtime_intent});
+        if let Some(host) = prior {
+            body["priorHostSessionId"] = host.into();
+        }
+        let resumed = client.post("/v1/sessions/resume-continuation", body)?;
+        let host = &resumed["hostSessionId"];
+        let has_prompt = prompt.as_ref().is_some_and(|p| !p.is_empty());
+        if args.flag("no-attach") {
+            let runtime = if has_prompt {
+                client.post("/v1/turns",json!({"hostSessionId":host,"prompt":prompt,"runtimeIntent":runtime_intent,"allowStaleGeneration":true,"origin":local_origin()}))?
+            } else {
+                client.post("/v1/runtimes/start",json!({"hostSessionId":host,"intent":runtime_intent,"restartStyle":"reuse_pty","allowStaleGeneration":true}))?
+            };
+            print_json(
+                &json!({"sessionRef":session_ref,"hostSessionId":host,"priorHostSessionId":resumed["priorHostSessionId"],"continuation":resumed["continuation"],"runtime":runtime}),
+            );
+            return Ok(());
+        }
+        let mut body = json!({"hostSessionId":host,"intent":runtime_intent,"restartStyle":"reuse_pty","allowStaleGeneration":true});
+        if has_prompt {
+            body["prompt"] = prompt.as_ref().unwrap().clone().into();
+        }
+        let prepared = client.post("/v1/runs/prepare-attached", body)?;
+        let mut child = spawn_attach(&client, &prepared["attach"], false, || {})?;
+        if prepared["status"] == "prepared" {
+            client.post(
+                "/v1/runs/resume-attached",
+                json!({"pendingStartId":prepared["pendingStartId"]}),
+            )?;
+        }
+        wait_attach(&mut child, Some(&client), host.as_str())?;
+        session_summary(
+            &client,
+            text(&prepared["attach"]["bindingFence"]["runtimeId"]),
+            input,
+        );
+        Ok(())
+    })();
+    result.map_err(|error| {
+        scope_error(
+            "resume",
+            input,
+            reference.as_deref(),
+            args.flag("json"),
+            error,
+        )
+    })
+}
+
 pub(crate) fn command(args: &Parsed<'_>) -> Result<()> {
     let path = args.path();
     let command = if path == "run" && args.flag("attach-only") {
@@ -280,7 +433,7 @@ pub(crate) fn intent(
     if let Some(prompt) = prompt {
         body["initialPrompt"] = prompt.into();
     }
-    if let Some((_, directives)) = args.positionals[0].split_once('+') {
+    if let Some((_, directives)) = args.positionals.first().and_then(|s| s.split_once('+')) {
         let mut scalars = json!({});
         for directive in directives.split('+') {
             if let Some((key, value)) = directive.split_once('=') {
@@ -357,23 +510,7 @@ fn execute_start(
         Some("completed" | "true") => "terminal",
         _ => "accepted",
     };
-    let username = unsafe {
-        let entry = libc::getpwuid(libc::geteuid());
-        if entry.is_null() {
-            None
-        } else {
-            Some(
-                std::ffi::CStr::from_ptr((*entry).pw_name)
-                    .to_string_lossy()
-                    .into_owned(),
-            )
-        }
-    };
-    let actor = username
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("human:{s}"))
-        .unwrap_or_else(|| "human".into());
-    let result = client.post("/v1/turns",json!({"hostSessionId":host,"idempotencyKey":args.value("idempotency-key").map(str::to_owned).unwrap_or_else(||format!("hrc-start-{}",uuid::Uuid::new_v4())),"prompt":prompt,"runtimeIntent":intent,"origin":{"actor":actor,"kind":"human"},"waitFor":wait,"waitForCompletion":wait=="terminal"}))?;
+    let result = client.post("/v1/turns",json!({"hostSessionId":host,"idempotencyKey":args.value("idempotency-key").map(str::to_owned).unwrap_or_else(||format!("hrc-start-{}",uuid::Uuid::new_v4())),"prompt":prompt,"runtimeIntent":intent,"origin":local_origin(),"waitFor":wait,"waitForCompletion":wait=="terminal"}))?;
     if result["execution"]["state"] == "failed" {
         return Err(Error::failure(
             result["execution"]["errorMessage"]
@@ -401,6 +538,25 @@ fn execute_start(
         ));
     }
     Ok(result)
+}
+fn local_origin() -> Value {
+    let username = unsafe {
+        let entry = libc::getpwuid(libc::geteuid());
+        if entry.is_null() {
+            None
+        } else {
+            Some(
+                std::ffi::CStr::from_ptr((*entry).pw_name)
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        }
+    };
+    let actor = username
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("human:{s}"))
+        .unwrap_or_else(|| "human".into());
+    json!({"actor":actor,"kind":"human"})
 }
 fn follow(scope: &str) -> Value {
     let parts = scope.split(':').collect::<Vec<_>>();

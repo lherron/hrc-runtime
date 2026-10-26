@@ -255,7 +255,7 @@
     {
       "command": "resume",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "run",

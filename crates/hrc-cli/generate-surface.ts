@@ -3,9 +3,10 @@ import type { Command } from 'commander'
 import { buildProgram } from '../../packages/hrc-cli/src/cli/build-program'
 import { cmdAttach } from '../../packages/hrc-cli/src/cli/handlers-scope-attach'
 import { printManagedScopeUsage } from '../../packages/hrc-cli/src/cli/handlers-scope-managed'
+import { cmdResumeContinuation } from '../../packages/hrc-cli/src/cli/handlers-scope-start'
 import { buildInfoText, renderRootHelp } from '../../packages/hrc-cli/src/cli/help'
 const actionUsage: Record<string, string> = {}
-for (const name of ['start', 'run', 'attach'] as const) {
+for (const name of ['start', 'run', 'attach', 'resume'] as const) {
   let text = ''
   const original = process.stdout.write
   process.stdout.write = ((chunk: string) => {
@@ -14,6 +15,7 @@ for (const name of ['start', 'run', 'attach'] as const) {
   }) as typeof original
   try {
     if (name === 'attach') await cmdAttach([])
+    else if (name === 'resume') await cmdResumeContinuation([])
     else printManagedScopeUsage(name)
   } finally {
     process.stdout.write = original
