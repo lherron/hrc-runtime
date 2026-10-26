@@ -34,6 +34,7 @@ impl Store {
         hello: &Value,
         allocation: &Value,
         origin: Option<&Value>,
+        prompt_length: usize,
     ) -> Result<()> {
         let id = &record["admission"]["identity"];
         let execution = &record["admission"]["execution"];
@@ -68,7 +69,7 @@ impl Store {
                 Some("headless"),
                 "turn",
                 "turn.accepted",
-                &json!({"promptLength":record["intent"]["initialPrompt"].as_str().unwrap_or("").encode_utf16().count(),"authority":"durable-start-graph"}),
+                &json!({"promptLength":prompt_length,"authority":"durable-start-graph"}),
             )?;
         }
         tx.commit()?;

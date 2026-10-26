@@ -295,6 +295,7 @@ fn not_live(server: &Server, runtime_id: &str, payload: Value) -> Result<()> {
         None => mark_stale(&tx, &rt, &payload)?,
     }
     tx.commit()?;
+    server.ledger_committed();
     Ok(())
 }
 
@@ -336,6 +337,7 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
             ],
         )?;
         tx.commit()?;
+        server.ledger_committed();
         return Ok(());
     }
     let Some(socket) = socket_path(&rt) else {

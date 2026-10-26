@@ -6,26 +6,98 @@ use sha2::{Digest, Sha256};
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 use uuid::Uuid;
 
-pub fn allocate(session: &Value, initial: bool) -> Value {
-    let mut identity =
-        json!({"hostSessionId":session["hostSessionId"],"generation":session["generation"]});
-    for (key, prefix) in [
-        ("requestId", "req"),
-        ("operationId", "op"),
-        ("runtimeId", "rt"),
-        ("invocationId", "inv"),
-        ("traceId", "trace"),
-    ] {
-        identity[key] = format!("{prefix}-{}", Uuid::new_v4()).into();
-    }
-    if initial {
-        identity["initialInputId"] = format!("input-{}", Uuid::new_v4()).into();
-        identity["runId"] = format!("run-{}", Uuid::new_v4()).into();
+/// RuntimeIdentityAllocation in Bun's key order; a first user turn carries the
+/// admission-time run id.
+pub fn allocate(session: &Value, run_id: Option<&str>) -> Value {
+    let id = |prefix: &str| format!("{prefix}-{}", Uuid::new_v4());
+    let mut identity = json!({"requestId":id("req"),"operationId":id("op"),"hostSessionId":session["hostSessionId"],"generation":session["generation"],"runtimeId":id("rt"),"invocationId":id("inv"),"traceId":id("trace")});
+    if let Some(run) = run_id {
+        identity["initialInputId"] = id("input").into();
+        identity["runId"] = run.into();
     }
     identity
 }
 
-pub fn request(intent: &Value, scope: &str, identity: &Value, dispatch_env: Value) -> Value {
+/// The session's automatic continuation as a runtime-continuation/v1 ref
+/// (session-continuation-reuse.ts + broker-decisions-harness.ts).
+pub fn continuation_ref(session: &Value, reuse_disabled: bool) -> Option<Value> {
+    if reuse_disabled {
+        return None;
+    }
+    let c = &session["continuation"];
+    let key = c["key"].as_str()?;
+    let provider = match c["provider"].as_str()? {
+        "anthropic" => "anthropic",
+        "openai" | "codex" | "openai-codex" => "openai",
+        "meta" | "muse" => "meta",
+        _ => return None,
+    };
+    let mut broker = json!({"provider":c["provider"]});
+    if let Some(kind) = c.get("kind") {
+        broker["kind"] = kind.clone();
+    }
+    broker["continuationId"] = key.into();
+    broker["key"] = key.into();
+    Some(
+        json!({"schemaVersion":"runtime-continuation/v1","hrc":{"provider":provider,"continuationId":key,"key":key},"broker":broker,"source":"harness-broker","observedAt":hrc_store::timestamp()}),
+    )
+}
+
+/// normalizeDispatchIntent's placement, in the key order Bun's compile carries.
+pub fn normalize_placement(mut intent: Value, session: &Value, run_id: Option<&str>) -> Value {
+    let p = intent["placement"].clone();
+    let cwd = ["cwd", "projectRoot", "agentRoot"]
+        .iter()
+        .find_map(|k| p.get(*k).filter(|v| v.is_string()).cloned())
+        .unwrap_or_else(|| {
+            json!(
+                std::env::current_dir()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_default()
+            )
+        });
+    let project = p
+        .get("projectRoot")
+        .filter(|v| v.is_string())
+        .cloned()
+        .unwrap_or_else(|| cwd.clone());
+    let agent = p
+        .get("agentRoot")
+        .filter(|v| v.is_string())
+        .cloned()
+        .unwrap_or_else(|| project.clone());
+    let mut placement = json!({"agentRoot":agent,"projectRoot":project,"cwd":cwd,"runMode":p.get("runMode").cloned().unwrap_or(json!("task")),"bundle":p.get("bundle").cloned().unwrap_or(json!({"kind":"compose","compose":[]})),"dryRun":p.get("dryRun").cloned().unwrap_or(json!(true))});
+    if let Value::Object(rest) = &p {
+        for (k, v) in rest {
+            if placement.get(k).is_none() && k != "correlation" {
+                placement[k] = v.clone();
+            }
+        }
+    }
+    let mut correlation = json!({"sessionRef":{"scopeRef":session["scopeRef"],"laneRef":session["laneRef"]},"hostSessionId":session["hostSessionId"]});
+    if let Some(run) = run_id {
+        correlation["runId"] = run.into();
+    }
+    correlation["generation"] = session["generation"].clone();
+    placement["correlation"] = correlation;
+    if intent["execution"]["preferredMode"] == "headless"
+        && intent["harness"]["interactive"] == true
+    {
+        intent["harness"]["interactive"] = false.into();
+    }
+    intent["placement"] = placement;
+    intent
+}
+
+/// buildV2CompileRequest, in Bun's key order.
+pub fn request(
+    intent: &Value,
+    scope: &str,
+    identity: &Value,
+    dispatch_env: Value,
+    continuation: Option<Value>,
+    response_format: Option<&Value>,
+) -> Value {
     let agent = hrc_store::derive_identity(scope);
     let mut placement = intent["placement"].clone();
     let mut correlation = placement
@@ -41,7 +113,7 @@ pub fn request(intent: &Value, scope: &str, identity: &Value, dispatch_env: Valu
         "initialInputId",
         "runId",
     ] {
-        correlation.as_object_mut().unwrap().remove(key);
+        correlation.as_object_mut().unwrap().shift_remove(key);
         if let Some(value) = identity.get(key) {
             correlation[key] = value.clone();
         }
@@ -55,7 +127,7 @@ pub fn request(intent: &Value, scope: &str, identity: &Value, dispatch_env: Valu
         _ => {}
     }
     let mut material = json!({});
-    for key in ["initialPrompt", "omitPriming", "taskContext"] {
+    for key in ["initialPrompt", "omitPriming"] {
         if let Some(value) = intent.get(key) {
             material[key] = value.clone();
         }
@@ -71,32 +143,50 @@ pub fn request(intent: &Value, scope: &str, identity: &Value, dispatch_env: Valu
             value
         }).collect();
     }
-    let mut correlation = json!({"scopeRef":scope});
-    for key in [
-        "requestId",
-        "operationId",
-        "hostSessionId",
-        "generation",
-        "runtimeId",
-        "invocationId",
-        "traceId",
-        "runId",
+    if let Some(value) = intent.get("taskContext") {
+        material["taskContext"] = value.clone();
+    }
+    if let Some(format) = response_format.filter(|f| f["kind"] == "json_schema") {
+        material["responseFormat"] = format.clone();
+    }
+    let mut correlation = json!({});
+    for (key, field) in [
+        ("requestId", "requestId"),
+        ("operationId", "operationId"),
+        ("hostSessionId", "hostSessionId"),
+        ("generation", "generation"),
+        ("runtimeId", "runtimeId"),
+        ("invocationId", "invocationId"),
+        ("inputId", "initialInputId"),
+        ("traceId", "traceId"),
+        ("runId", "runId"),
     ] {
-        if let Some(value) = identity.get(key) {
+        if let Some(value) = identity.get(field) {
             correlation[key] = value.clone();
         }
     }
-    if let Some(value) = identity.get("initialInputId") {
-        correlation["inputId"] = value.clone();
-    }
-    let mut request = json!({"schemaVersion":"agent-runtime-compile-request/v2","agent":{"id":agent["agentId"]},"identity":identity,"placement":placement,"requested":requested,"materialization":material,"hrcPolicy":{},"correlation":correlation});
+    correlation["scopeRef"] = scope.into();
+    let mut request = json!({"schemaVersion":"agent-runtime-compile-request/v2","agent":{"id":agent["agentId"]},"identity":identity,"placement":placement});
     if intent["summonDirectives"]
         .as_object()
         .is_some_and(|m| !m.is_empty())
     {
         request["selectionContext"] = json!({"summonDirectives":intent["summonDirectives"]});
     }
+    request["requested"] = requested;
+    request["materialization"] = material;
+    request["hrcPolicy"] = json!({});
+    if let Some(continuation) = continuation {
+        request["continuation"] = continuation;
+    }
+    request["correlation"] = correlation;
     request
+}
+
+/// getAspHome: ASP_HOME, else ~/.asp.
+pub fn asp_home() -> String {
+    std::env::var("ASP_HOME")
+        .unwrap_or_else(|_| format!("{}/.asp", std::env::var("HOME").unwrap_or_default()))
 }
 
 pub struct Compiled {
@@ -111,7 +201,7 @@ impl Compiled {
         let response = asp
             .call(
                 "aspc.compileHarnessInvocation",
-                json!({"compileRequest":request}),
+                json!({"compileRequest":request,"dispatchEnv":request["placement"]["dispatchEnv"],"aspHome":asp_home()}),
             )
             .await?;
         admit(&response, &request, operator).map_err(ApiError::from)?;

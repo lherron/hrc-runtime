@@ -17,6 +17,7 @@ mod runtimes;
 mod sessions;
 mod surfaces;
 mod targets;
+mod turns;
 
 use anyhow::{Context, Result, bail};
 use axum::{
@@ -51,6 +52,10 @@ struct Server {
     controller: controller::State,
     /// Runtimes whose user-exit lease reap already fired.
     reaped: Mutex<HashSet<String>>,
+    /// Bumped after every committed ledger write; followers re-query on change.
+    ledger: tokio::sync::watch::Sender<u64>,
+    /// Runtimes with a seat probe in flight (probeSeatInBackground).
+    probing: Mutex<HashSet<String>>,
     runtime: PathBuf,
     bun_passthrough: Option<PathBuf>,
     /// Front-door role: only front::is_front_safe routes are served natively.
@@ -243,6 +248,8 @@ pub async fn serve(role: front::Role) -> Result<()> {
         projection: Mutex::new(projection::Memory::default()),
         controller: controller::State::default(),
         reaped: Mutex::new(HashSet::new()),
+        ledger: tokio::sync::watch::Sender::new(0),
+        probing: Mutex::new(HashSet::new()),
         runtime,
         bun_passthrough,
         front,
@@ -377,9 +384,20 @@ impl IntoResponse for ApiError {
         (self.status, Json(value)).into_response()
     }
 }
+impl Server {
+    /// A wake carries no data: something committed, so followers query again.
+    pub(super) fn ledger_committed(&self) {
+        self.ledger.send_modify(|g| *g = g.wrapping_add(1));
+    }
+}
 async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
     let entry = accounting::Entry::new(&request);
+    let mutating = request.method() != Method::GET;
     let response = dispatch_inner(&server, request).await;
+    // Every request-path transaction has committed once its response exists.
+    if mutating {
+        server.ledger_committed();
+    }
     entry.observe(server.accounting.clone(), response)
 }
 async fn dispatch_inner(server: &Shared, request: Request) -> Response {
@@ -474,7 +492,12 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
         }
     } else if method == Method::POST && uri.path() == "/v1/turns" {
         match parse_body(&body) {
-            Ok(value) => broker::turn(server, value).await,
+            Ok(value) => turns::dispatch_turn(server, value).await,
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/submissions/invoke" {
+        match parse_body(&body) {
+            Ok(value) => turns::submission(server, "invoke", value).await,
             Err(e) => Err(e),
         }
     } else if method == Method::POST && uri.path() == "/v1/declarations/resolve" {
@@ -551,6 +574,7 @@ fn implemented(method: &Method, path: &str) -> bool {
             && [
                 "/v1/sessions/resolve",
                 "/v1/turns",
+                "/v1/submissions/invoke",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
                 "/v1/runtimes/prune",

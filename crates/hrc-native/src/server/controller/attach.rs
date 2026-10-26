@@ -1,9 +1,9 @@
 //! Durable reattach (dispatch-attach.ts attachAndReplay, dispatch-probe.ts,
 //! lifecycle.ts failReplayStale).
 use super::{
-    PROBE_TIMEOUT, after_mapped, apply_one, consume, delete_active, flush,
+    PROBE_TIMEOUT, after_mapped, apply_one, bind, consume, delete_active, flush,
     is_external_lifecycle_owner, last_projected, log, mark_closing, project_capture_state,
-    server_instance_id, set_active,
+    server_instance_id,
 };
 use crate::server::{
     Server, Shared,
@@ -72,7 +72,7 @@ pub async fn attach_and_replay(
         let replay = client.request("invocation.eventsSince", json!({"invocationId":invocation,"afterSeq":last})).await?;
         let mut replayed = last;
         // Publish the client before replay so ACK and capture refresh reach it.
-        set_active(server, &runtime_id, &invocation, client.clone());
+        bind(server, &runtime_id, &invocation, client.clone());
         for envelope in replay["events"].as_array().cloned().unwrap_or_default() {
             let outcome = apply_one(server, &envelope)?;
             replayed = replayed.max(envelope["seq"].as_i64().unwrap_or(0));
@@ -175,6 +175,7 @@ pub async fn attach_and_replay(
             ],
         )?;
         tx.commit()?;
+        server.ledger_committed();
     }
     if let Err(error) = project_capture_state(server, &runtime_id, &snapshot["capture"]) {
         log(
@@ -263,5 +264,6 @@ pub fn fail_replay_stale(
         )?;
     }
     tx.commit()?;
+    server.ledger_committed();
     Ok(())
 }

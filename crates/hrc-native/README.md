@@ -30,6 +30,27 @@ replays `invocation.eventsSince` from that cursor and re-ACKs even when the
 replay is empty; arrival gaps are backfilled from the ledger after a short
 debounce. Format-2 invocations are refused (none exist in production).
 
+## Turn doors (N2)
+
+`POST /v1/turns` and `POST /v1/submissions/invoke` run Bun's nine-step
+admission (`server/turns/admission.rs`) and record its trace as
+`submission.admission`. A live broker seat takes the turn through
+`controller::submit` (invoke falls back to the queue class without the
+exclusive admission class); otherwise the turn births a seat. Responses are
+Bun's receipt and wait-stage projection (`accepted` 202, `turn_started`,
+`terminal`), including idempotent replay. Every compile sends Bun's request:
+the normalized intent, `dispatchEnv` (also top level), `aspHome`, and the
+session's stored continuation unless reuse is disabled. Not yet native:
+stale-generation auto-rotation and fresh-context rotation (refused with
+`runtime_unavailable`), participant delivery, and format 2. Every committed
+ledger write bumps `Server.ledger` (a data-free watch counter followers re-query on).
+
+`e2e/n2_routes.py` records per-case requests on a real seat for
+`run.py compare --suite n2-routes`. `e2e/n2_continuation.py` re-births a seat
+on a stored continuation behind a logging aspd proxy; `--suite
+n2-continuation` compares both compile requests field for field and requires
+the re-born harness to recall the first birth's code word.
+
 `e2e/n2_turns.py` runs one workflow on a named Bun copy or rusthrc; compare
 two dumps with `run.py compare --suite n2-turns`. Each side's raw rows are
 checked against its own broker ledger, then the sides are compared on raw key

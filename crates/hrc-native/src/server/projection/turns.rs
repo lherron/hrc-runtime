@@ -688,3 +688,58 @@ pub fn emit_derived(
     events::append(db, kind, ev, &payload)?;
     Ok(())
 }
+
+/// armFirstTurnWatch (first-turn-watch.ts): one deadline per generation, never
+/// re-armed once its first turn started.
+pub fn arm_first_turn(
+    db: &Connection,
+    identity: &Value,
+    session: &Value,
+    transport: &str,
+    timeout_ms: Option<i64>,
+) {
+    let runtime = identity["runtimeId"].as_str().unwrap_or("");
+    let generation = identity["generation"].as_i64().unwrap_or(0);
+    let result: Result<()> = (|| {
+        if db::exists(
+            db,
+            "SELECT 1 FROM runs WHERE runtime_id = ? AND generation = ? AND started_at IS NOT NULL LIMIT 1",
+            params![runtime, generation],
+        )? {
+            return Ok(());
+        }
+        let timeout = timeout_ms.filter(|t| *t > 0).unwrap_or_else(|| {
+            std::env::var("HRC_FIRST_TURN_TIMEOUT_MS")
+                .ok()
+                .and_then(|v| v.trim().parse::<i64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(120_000)
+        });
+        let now = hrc_store::timestamp();
+        let Some(at) = db::parse_ms(&now) else {
+            return Ok(());
+        };
+        let deadline = chrono::DateTime::from_timestamp_millis(at + timeout)
+            .map(|d| d.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+            .unwrap_or_default();
+        let armed = db.execute(
+            "INSERT INTO runtime_first_turn_watch (runtime_id, generation, host_session_id, scope_ref, lane_ref, run_id, invocation_id, transport, priming_dispatched_at, first_turn_deadline_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(runtime_id, generation) DO UPDATE SET run_id = COALESCE(runtime_first_turn_watch.run_id, excluded.run_id), invocation_id = COALESCE(runtime_first_turn_watch.invocation_id, excluded.invocation_id), transport = COALESCE(runtime_first_turn_watch.transport, excluded.transport), priming_dispatched_at = excluded.priming_dispatched_at, first_turn_deadline_at = excluded.first_turn_deadline_at, updated_at = excluded.updated_at WHERE runtime_first_turn_watch.priming_dispatched_at IS NULL AND runtime_first_turn_watch.first_turn_at IS NULL AND runtime_first_turn_watch.first_turn_missing_tripped_at IS NULL AND runtime_first_turn_watch.disarmed_at IS NULL",
+            params![runtime, generation, session["hostSessionId"].as_str(), session["scopeRef"].as_str(), session["laneRef"].as_str(), identity["runId"].as_str(), identity["invocationId"].as_str(), transport, now, deadline, now, now],
+        )?;
+        if armed > 0 {
+            crate::server::stderr_json(
+                "info",
+                "runtime",
+                "runtime.first_turn_watch_armed",
+                json!({"runtimeId":runtime,"generation":generation,"scopeRef":session["scopeRef"],"runId":identity["runId"],"timeoutMs":timeout,"firstTurnDeadlineAt":deadline}),
+            );
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        log(
+            "runtime.first_turn_watch_arm_failed",
+            json!({"runtimeId":runtime,"generation":generation,"error":error.to_string()}),
+        );
+    }
+}

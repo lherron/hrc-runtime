@@ -1,0 +1,460 @@
+//! The turn-admission pipeline (turn-admission/admit.ts, submit.ts, steps.ts).
+//! Every door runs the same nine steps under one trace; the outcome and trace
+//! are recorded as `submission.admission` once the route has answered.
+use crate::server::{
+    ApiError, Shared,
+    projection::{db, events},
+};
+use axum::http::StatusCode;
+use rusqlite::OptionalExtension;
+use serde_json::{Value, json};
+use std::collections::HashMap;
+
+pub const STEPS: [&str; 9] = [
+    "drain-lease",
+    "retired-persona",
+    "fence",
+    "participant-resolution",
+    "ownership-proof",
+    "capability-authority",
+    "execution-presentation",
+    "rotation",
+    "launch-carry-observation",
+];
+
+pub struct Request<'a> {
+    /// The HTTP door: turns | submission.
+    pub door: &'a str,
+    /// The requested submission intent: invoke | steer | enqueue | preempt.
+    pub intent: &'a str,
+    pub session: Value,
+    pub fences: Option<&'a Value>,
+    pub idempotency_key: Option<&'a str>,
+    pub established: Option<&'a str>,
+    pub fresh_context: Option<bool>,
+    pub runtime_intent: Option<&'a Value>,
+    pub allow_stale_generation: bool,
+    pub run_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Observation {
+    pub lifecycle_from_seq: i64,
+    pub broker_after: HashMap<String, i64>,
+}
+pub struct Plan {
+    pub session: Value,
+    pub effective_door: String,
+    /// submissionDoorReport: {effectiveDoor, requestedDoor?, downgradeReason?}
+    pub door_report: Value,
+    pub report_runtime: Option<db::Rt>,
+    pub run_id: Option<String>,
+    pub intent: Value,
+    pub observation: Observation,
+}
+pub enum Admitted {
+    Replayed(Value),
+    Plan(Box<Plan>),
+}
+
+/// The admission trace and the partial target it was computed over.
+pub struct Trace {
+    steps: Vec<(&'static str, &'static str)>,
+    pub session: Value,
+    pub run_id: Option<String>,
+    pub effective_door: String,
+}
+impl Trace {
+    fn push(&mut self, outcome: &'static str) {
+        let step = STEPS[self.steps.len()];
+        self.steps.push((step, outcome));
+    }
+    fn complete(&mut self, remainder: &'static str) {
+        while self.steps.len() < STEPS.len() {
+            self.push(remainder);
+        }
+    }
+}
+pub enum Outcome<'a> {
+    Refused(&'a ApiError),
+    Replayed,
+    Routed { accepted: bool },
+    PossibleWrite(&'a ApiError),
+}
+
+fn refusal_code(e: &ApiError) -> String {
+    let detail = e.detail.as_ref();
+    let code = detail
+        .and_then(|d| d["code"].as_str().or_else(|| d["reason"].as_str()))
+        .unwrap_or(e.code);
+    match code {
+        "server_draining" => "daemon_draining",
+        "scope-retired" => "session_retired",
+        "local-persona-not-allowed" | "app-session-not-allowed" => "persona_mismatch",
+        "participant_rotation_unsupported" => "fresh_context_on_participant",
+        other => other,
+    }
+    .to_owned()
+}
+
+/// The `submission.admission` record (submit.ts `record`).
+pub fn record(server: &Shared, req: &Request<'_>, trace: &mut Trace, outcome: Outcome<'_>) {
+    trace.complete(match outcome {
+        Outcome::Replayed => "skipped:replay",
+        _ => "not-reached",
+    });
+    let mut payload = json!({"door":req.door,"intent":req.intent,"effectiveDoor":trace.effective_door,"trace":trace.steps.iter().map(|(s,o)|json!({"step":s,"outcome":o})).collect::<Vec<_>>()});
+    match outcome {
+        Outcome::Refused(e) => {
+            payload["outcome"] = "refused".into();
+            payload["refusalCode"] = refusal_code(e).into();
+        }
+        Outcome::Replayed => payload["outcome"] = "replayed".into(),
+        Outcome::Routed { accepted } => {
+            payload["outcome"] = "routed".into();
+            payload["routeOutcome"] = if accepted {
+                "accepted"
+            } else {
+                "rejected_unlanded"
+            }
+            .into();
+        }
+        Outcome::PossibleWrite(e) => {
+            payload["outcome"] = "possible_write".into();
+            payload["uncertainCause"] = json!({"name":"Error","message":e.message});
+        }
+    }
+    let s = &trace.session;
+    let ev = events::Ev {
+        ts: hrc_store::timestamp(),
+        host_session_id: s["hostSessionId"].as_str().unwrap_or("").into(),
+        scope_ref: s["scopeRef"].as_str().unwrap_or("").into(),
+        lane_ref: s["laneRef"].as_str().unwrap_or("").into(),
+        generation: s["generation"].as_i64().unwrap_or(0),
+        run_id: trace.run_id.clone(),
+        ..Default::default()
+    };
+    let result = {
+        let db = server.store.lock().unwrap();
+        events::append(&db.sqlite, "submission.admission", &ev, &payload)
+    };
+    if let Err(error) = result {
+        crate::server::stderr_json(
+            "warn",
+            "turns",
+            "submission.admission.record_failed",
+            json!({"error":error.to_string()}),
+        );
+    }
+    server.ledger_committed();
+}
+
+fn stale(message: &str, detail: Value) -> ApiError {
+    ApiError::domain(StatusCode::CONFLICT, "stale_context", message, Some(detail))
+}
+pub fn unavailable(message: impl Into<String>, detail: Value) -> ApiError {
+    ApiError::domain(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "runtime_unavailable",
+        message,
+        Some(detail),
+    )
+}
+
+/// activeBrokerRuntimeForSession
+pub fn active_broker_runtime(
+    conn: &rusqlite::Connection,
+    host: &str,
+) -> anyhow::Result<Option<db::Rt>> {
+    let ids: Vec<String> = conn
+        .prepare("SELECT runtime_id FROM runtimes WHERE host_session_id=? ORDER BY created_at ASC, runtime_id ASC")?
+        .query_map([host], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut found = None;
+    for id in ids {
+        if let Some(rt) = db::runtime(conn, &id)?
+            && rt.controller_kind.as_deref() == Some("harness-broker")
+            && rt.active_invocation_id.is_some()
+            && !crate::server::lease::unavailable(&rt.status)
+        {
+            found = Some(rt);
+        }
+    }
+    Ok(found)
+}
+fn admission_classes(conn: &rusqlite::Connection, rt: &db::Rt) -> Option<Vec<String>> {
+    let inv = db::invocation(conn, rt.active_invocation_id.as_deref()?)
+        .ok()
+        .flatten()?;
+    let caps: Value = serde_json::from_str(&inv.capabilities_json).ok()?;
+    caps["admission"]["classes"].as_array().map(|a| {
+        a.iter()
+            .filter_map(|c| c.as_str().map(str::to_owned))
+            .collect()
+    })
+}
+/// submissionDoorReport
+fn door_report(
+    conn: &rusqlite::Connection,
+    session: &Value,
+    door: &str,
+) -> anyhow::Result<(Value, Option<db::Rt>)> {
+    if door != "steer" && door != "invoke" {
+        return Ok((json!({"effectiveDoor":door}), None));
+    }
+    let rt = active_broker_runtime(conn, session["hostSessionId"].as_str().unwrap_or(""))?;
+    let keep = match &rt {
+        None => true,
+        Some(rt) => {
+            let classes = admission_classes(conn, rt);
+            if door == "steer" {
+                !classes.is_some_and(|c| !c.iter().any(|x| x == "steer"))
+            } else {
+                classes.is_some_and(|c| c.iter().any(|x| x == "exclusive"))
+            }
+        }
+    };
+    if keep {
+        return Ok((json!({"effectiveDoor":door}), None));
+    }
+    let reason = if door == "steer" {
+        "steer_not_supported"
+    } else {
+        "invoke_exclusive_not_supported"
+    };
+    Ok((
+        json!({"effectiveDoor":"enqueue","requestedDoor":door,"downgradeReason":reason}),
+        rt,
+    ))
+}
+
+fn continuity_active(server: &Shared, session: &Value) -> Result<Value, ApiError> {
+    let db = server.store.lock().unwrap();
+    let active = db
+        .continuity_session(
+            session["scopeRef"].as_str().unwrap_or(""),
+            session["laneRef"].as_str().unwrap_or(""),
+        )?
+        .ok_or_else(|| ApiError::missing_host(session["hostSessionId"].as_str().unwrap_or("")))?;
+    Ok(active)
+}
+
+fn stale_threshold_sec() -> i64 {
+    match std::env::var("HRC_STALE_GENERATION_HOURS")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+    {
+        Some(h) if h.is_finite() && h >= 0.0 => (h * 3600.0).floor() as i64,
+        _ => 24 * 60 * 60,
+    }
+}
+fn stale_enabled() -> bool {
+    match std::env::var("HRC_STALE_GENERATION_ENABLED") {
+        Err(_) => true,
+        Ok(v) => !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no"),
+    }
+}
+
+/// Steps 1-9 up to the route; the caller routes and then records.
+pub async fn admit(server: &Shared, req: &Request<'_>) -> (Result<Admitted, ApiError>, Trace) {
+    let mut trace = Trace {
+        steps: Vec::new(),
+        session: req.session.clone(),
+        run_id: req.run_id.clone(),
+        effective_door: req.intent.to_owned(),
+    };
+    let result = steps(server, req, &mut trace).await;
+    (result, trace)
+}
+
+async fn steps(
+    server: &Shared,
+    req: &Request<'_>,
+    trace: &mut Trace,
+) -> Result<Admitted, ApiError> {
+    trace.push("passed"); // drain-lease
+    trace.push("passed"); // retired-persona (no local persona allowlist; retired-scope gate is N4)
+    // fence
+    let mut session = req.session.clone();
+    let mut fence_outcome = "skipped:not-carried";
+    if req.fences.is_some() || req.door == "turns" {
+        let active = continuity_active(server, &session).inspect_err(|_| trace.push("refused"))?;
+        let fence = req.fences.cloned().unwrap_or(json!({}));
+        if fence["followLatest"] != true {
+            if let Some(expected) = fence["expectedHostSessionId"].as_str()
+                && active["hostSessionId"] != expected
+            {
+                trace.push("refused");
+                return Err(stale(
+                    "host session fence is stale",
+                    json!({"expectedHostSessionId":expected,"activeHostSessionId":active["hostSessionId"]}),
+                ));
+            }
+            if let Some(expected) = fence["expectedGeneration"].as_i64()
+                && active["generation"].as_i64() != Some(expected)
+            {
+                trace.push("refused");
+                return Err(stale(
+                    "generation fence is stale",
+                    json!({"expectedGeneration":expected,"activeGeneration":active["generation"]}),
+                ));
+            }
+        }
+        session = active;
+        trace.session = session.clone();
+        if req.fences.is_some() {
+            fence_outcome = "passed";
+        }
+    }
+    if let Some(key) = req.idempotency_key {
+        let existing: Option<String> = {
+            let db = server.store.lock().unwrap();
+            db.sqlite
+                .query_row(
+                    "SELECT run_id FROM runs WHERE host_session_id=? AND dispatch_idempotency_key=? LIMIT 1",
+                    rusqlite::params![session["hostSessionId"].as_str(), key],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(anyhow::Error::from)?
+        };
+        if let Some(run_id) = existing {
+            trace.push("replayed");
+            trace.run_id = Some(run_id.clone());
+            return Ok(Admitted::Replayed(super::replay_body(server, &run_id)?));
+        }
+        fence_outcome = "passed";
+    }
+    trace.push(fence_outcome);
+    // participant-resolution
+    let participant = {
+        let db = server.store.lock().unwrap();
+        db.sqlite
+            .query_row(
+                "SELECT registration_id FROM participant_registrations WHERE scope_ref=? LIMIT 1",
+                [session["scopeRef"].as_str()],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(anyhow::Error::from)?
+    };
+    if let Some(registration) = participant {
+        trace.push("refused");
+        return Err(unavailable(
+            "participant delivery is not yet served natively",
+            json!({"scopeRef":session["scopeRef"],"registrationId":registration,"reason":"participant_native_unsupported"}),
+        ));
+    }
+    trace.push("skipped:not-applicable");
+    // ownership-proof
+    match req.established {
+        None => trace.push("skipped:not-carried"),
+        Some(carried) => {
+            let rt = {
+                let db = server.store.lock().unwrap();
+                active_broker_runtime(&db.sqlite, session["hostSessionId"].as_str().unwrap_or(""))?
+            };
+            if req.intent == "steer"
+                || rt
+                    .as_ref()
+                    .is_some_and(|r| r.active_invocation_id.as_deref() != Some(carried))
+            {
+                trace.push("refused");
+                return Err(unavailable(
+                    "caller-surface-reuse-refusal",
+                    json!({"hostSessionId":session["hostSessionId"],"runtimeId":rt.as_ref().map(|r|r.runtime_id.clone()),"route":if rt.as_ref().is_some_and(|r|r.transport=="tmux"){"interactive-broker"}else{"headless-broker"},"reason":"caller-surface-reuse-refusal","expectedInvocationId":carried,"actualInvocationId":rt.as_ref().and_then(|r|r.active_invocation_id.clone())}),
+                ));
+            }
+            trace.push("passed");
+        }
+    }
+    // capability-authority
+    let (report, report_runtime) = {
+        let db = server.store.lock().unwrap();
+        door_report(&db.sqlite, &session, req.intent)?
+    };
+    trace.effective_door = report["effectiveDoor"]
+        .as_str()
+        .unwrap_or(req.intent)
+        .to_owned();
+    trace.push("passed");
+    // execution-presentation
+    let intent = match req.runtime_intent {
+        Some(i) => i.clone(),
+        None => {
+            let mut stored = session["lastAppliedIntentJson"].clone();
+            if let Some(m) = stored.as_object_mut() {
+                m.shift_remove("selection");
+            }
+            stored
+        }
+    };
+    trace.push("passed");
+    // rotation
+    if req.intent != "steer" && stale_enabled() && !req.allow_stale_generation {
+        let age = db::parse_ms(session["createdAt"].as_str().unwrap_or(""))
+            .map(|c| (chrono::Utc::now().timestamp_millis() - c).max(0) / 1000)
+            .unwrap_or(0);
+        let threshold = stale_threshold_sec();
+        if threshold > 0 && age >= threshold {
+            let live = {
+                let db = server.store.lock().unwrap();
+                db.runtimes()?
+                    .into_iter()
+                    .rfind(|r| r["hostSessionId"] == session["hostSessionId"])
+                    .is_some_and(|r| {
+                        !crate::server::lease::unavailable(r["status"].as_str().unwrap_or(""))
+                    })
+            };
+            if !live {
+                trace.push("refused");
+                return Err(unavailable(
+                    "stale-generation auto-rotation is not yet served natively",
+                    json!({"hostSessionId":session["hostSessionId"],"ageSec":age,"thresholdSec":threshold,"reason":"stale_generation_rotation_native_gap"}),
+                ));
+            }
+        }
+    }
+    if req.fresh_context == Some(true) {
+        trace.push("refused");
+        return Err(unavailable(
+            "fresh-context rotation is not yet served natively",
+            json!({"hostSessionId":session["hostSessionId"],"reason":"fresh_context_native_gap"}),
+        ));
+    }
+    trace.push("passed");
+    // launch-carry-observation
+    let observation = {
+        let db = server.store.lock().unwrap();
+        let from: i64 = db
+            .sqlite
+            .query_row("SELECT COALESCE(MAX(hrc_seq),0) FROM hrc_events", [], |r| {
+                r.get(0)
+            })
+            .map_err(anyhow::Error::from)?;
+        let mut after = HashMap::new();
+        for r in db.runtimes()?.into_iter().filter(|r| {
+            r["hostSessionId"] == session["hostSessionId"]
+                && r["controllerKind"] == "harness-broker"
+        }) {
+            if let Some(inv) = r["activeInvocationId"].as_str() {
+                let seq: i64 = db.sqlite.query_row("SELECT COALESCE(MAX(seq),0) FROM broker_invocation_events WHERE invocation_id=?", [inv], |x| x.get(0)).map_err(anyhow::Error::from)?;
+                after.insert(inv.to_owned(), seq);
+            }
+        }
+        Observation {
+            lifecycle_from_seq: from + 1,
+            broker_after: after,
+        }
+    };
+    trace.push("passed");
+    Ok(Admitted::Plan(Box::new(Plan {
+        session,
+        effective_door: trace.effective_door.clone(),
+        door_report: report,
+        report_runtime,
+        run_id: req.run_id.clone(),
+        intent,
+        observation,
+    })))
+}

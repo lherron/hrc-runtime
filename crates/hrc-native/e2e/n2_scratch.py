@@ -18,7 +18,7 @@ import sqlite3
 import subprocess
 import time
 
-LEAK_PREFIXES = ('HRC_', 'ASP_', 'AGENT_', 'AGENTCHAT_', 'WRKQ', 'CLAUDE', 'CODEX', 'ACP_')
+LEAK_PREFIXES = ('HRC_', 'ASP_', 'AGENT_', 'AGENTCHAT_', 'WRKQ', 'CLAUDE', 'CODEX', 'ACP_', 'HARNESS_', 'TMUX')
 
 
 class UnixHTTP(HTTPConnection):

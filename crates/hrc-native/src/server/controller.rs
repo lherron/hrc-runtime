@@ -19,6 +19,8 @@ use std::{
 use tokio::sync::mpsc;
 
 mod attach;
+pub mod seat;
+pub mod submit;
 mod terminal;
 pub use attach::attach_and_replay;
 use terminal::{broker_pane_alive, user_exit_reason};
@@ -67,6 +69,11 @@ pub fn set_active(server: &Server, runtime: &str, invocation: &str, client: Json
         .lock()
         .unwrap()
         .insert(runtime.to_owned(), client);
+}
+/// Publish an active binding and start its seat monitor (startSeatMonitor).
+pub fn bind(server: &Shared, runtime: &str, invocation: &str, client: JsonRpc) {
+    set_active(server, runtime, invocation, client.clone());
+    seat::monitor(server, runtime, client);
 }
 pub fn delete_active(server: &Server, runtime: &str) {
     server.controller.active.lock().unwrap().remove(runtime);
@@ -172,12 +179,20 @@ fn busy(error: &anyhow::Error) -> bool {
 pub(super) fn apply_one(server: &Server, envelope: &Value) -> Result<Outcome> {
     let db = server.store.lock().unwrap();
     let mut mem = server.projection.lock().unwrap();
-    projection::apply(&db.sqlite, &mut mem, envelope)
+    let outcome = projection::apply(&db.sqlite, &mut mem, envelope)?;
+    drop((mem, db));
+    if !outcome.idempotent {
+        server.ledger_committed();
+    }
+    Ok(outcome)
 }
 pub(super) fn flush(server: &Server, invocation: &str) -> Result<i64> {
     let db = server.store.lock().unwrap();
     let mut mem = server.projection.lock().unwrap();
-    projection::flush(&db.sqlite, &mut mem, invocation)
+    let through = projection::flush(&db.sqlite, &mut mem, invocation)?;
+    drop((mem, db));
+    server.ledger_committed();
+    Ok(through)
 }
 
 /// projectBrokerEventWithBusyRetry
@@ -444,6 +459,7 @@ pub fn project_capture_state(server: &Server, runtime_id: &str, capture: &Value)
         )?;
     }
     tx.commit()?;
+    server.ledger_committed();
     Ok(())
 }
 
@@ -490,6 +506,7 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
                 return Ok(());
             }
             tx.commit()?;
+            server.ledger_committed();
             Ok(())
         })();
         if let Err(error) = result {
@@ -552,21 +569,7 @@ pub fn is_external_lifecycle_owner(rt: &db::Rt) -> bool {
 }
 
 pub fn probe_in_background(server: &Shared, runtime_id: &str, cause: &str) {
-    let server = server.clone();
-    let runtime_id = runtime_id.to_owned();
-    let cause = cause.to_owned();
-    tokio::spawn(async move {
-        let runtime = {
-            let db = server.store.lock().unwrap();
-            db.runtimes().ok().and_then(|all| {
-                all.into_iter()
-                    .find(|r| r["runtimeId"] == runtime_id.as_str())
-            })
-        };
-        if let Some(runtime) = runtime {
-            let _ = super::runtimes::probe(&server, &runtime, &cause).await;
-        }
-    });
+    seat::probe_in_background(server, runtime_id, cause);
 }
 
 /// consumeEvents: project the live stream until the transport closes.

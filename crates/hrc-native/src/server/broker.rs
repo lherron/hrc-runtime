@@ -2,11 +2,7 @@
 //! and ACKs the broker ledger; startup reattach replays from the durable cursor.
 use super::{ApiError, Shared, compile, controller, rpc::JsonRpc};
 use anyhow::{Context, Result, ensure};
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
+use axum::http::StatusCode;
 use serde_json::{Value, json};
 use std::{
     env, fs,
@@ -25,56 +21,65 @@ fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-pub async fn turn(server: &Shared, body: Value) -> Result<Response, ApiError> {
-    let host = body["hostSessionId"]
-        .as_str()
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| {
-            ApiError::bad(
-                "hostSessionId is required",
-                Some(json!({"field":"hostSessionId"})),
-            )
-        })?;
-    let prompt = body["prompt"]
-        .as_str()
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| ApiError::bad("prompt is required", Some(json!({"field":"prompt"}))))?;
-    let session = {
-        let db = server.store.lock().unwrap();
-        let session = db
-            .session(host)?
-            .ok_or_else(|| ApiError::missing_host(host))?;
-        if db.runtimes()?.iter().any(|r| {
-            r["hostSessionId"] == host
-                && !["terminated", "failed", "stale"]
-                    .iter()
-                    .any(|s| r["status"] == *s)
-        }) {
-            return Ok((
-                StatusCode::NOT_FOUND,
-                "Not Found: existing-seat turns belong to N2",
-            )
-                .into_response());
-        }
-        session
-    };
-    let mut intent = body["runtimeIntent"].clone();
+/// The cold-birth route of an admitted turn: compile through ASP, commit the
+/// frozen preparation, host the worker and persist the start graph.
+pub struct Birth<'a> {
+    pub session: Value,
+    pub intent: Value,
+    pub prompt: &'a str,
+    pub run_id: &'a str,
+    pub idempotency: Option<&'a Value>,
+    pub origin: Option<&'a Value>,
+    pub response_format: Option<&'a Value>,
+    pub first_turn_timeout_ms: Option<i64>,
+}
+pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError> {
+    let Birth {
+        session,
+        intent,
+        prompt,
+        run_id,
+        idempotency,
+        origin,
+        response_format,
+        first_turn_timeout_ms,
+    } = birth;
+    let host = string(&session, "hostSessionId")?.to_owned();
     if !intent["placement"].is_object() {
         return Err(ApiError::bad("runtimeIntent.placement is required", None));
     }
-    intent["initialPrompt"] = prompt.into();
-    let identity = compile::allocate(&session, true);
+    let reuse_disabled = server
+        .store
+        .lock()
+        .unwrap()
+        .sqlite
+        .query_row(
+            "SELECT continuation_reuse_disabled FROM sessions WHERE host_session_id=?",
+            [&host],
+            |r| r.get::<_, i64>(0),
+        )
+        .map_err(anyhow::Error::from)?
+        != 0;
+    let continuation = compile::continuation_ref(&session, reuse_disabled);
+    let identity = compile::allocate(&session, Some(run_id));
     let scope = string(&session, "scopeRef")?;
-    let dispatch_env = dispatch_environment(&session, &intent, &server.runtime)?;
-    let request = compile::request(&intent, scope, &identity, dispatch_env);
+    // The persisted intent is the normalized, promptless one (record.intent).
+    let intent = compile::normalize_placement(intent, &session, Some(run_id));
+    let dispatch_env = dispatch_environment(&session, &intent, &server.runtime, run_id)?;
+    let stored = intent.clone();
+    let mut intent = intent;
+    intent["initialPrompt"] = prompt.into();
+    let request = compile::request(
+        &intent,
+        scope,
+        &identity,
+        dispatch_env,
+        continuation,
+        response_format,
+    );
     let prepared =
         compile::Compiled::prepare(request, intent["presentation"]["operator"].as_str()).await?;
-    let record = preparation(
-        &prepared,
-        &intent,
-        &server.runtime,
-        body.get("idempotencyKey"),
-    )?;
+    let record = preparation(&prepared, &stored, &server.runtime, idempotency)?;
     {
         let mut db = server.store.lock().unwrap();
         db.prepare_broker(&record)?;
@@ -92,8 +97,20 @@ pub async fn turn(server: &Shared, body: Value) -> Result<Response, ApiError> {
             &session,
             &hello,
             &allocation,
-            body.get("origin"),
+            origin,
+            prompt.encode_utf16().count(),
         )?;
+        crate::server::projection::turns::arm_first_turn(
+            &server.store.lock().unwrap().sqlite,
+            &record["admission"]["identity"],
+            &session,
+            if allocation.get("tuiWindow").is_some() {
+                "tmux"
+            } else {
+                "headless"
+            },
+            first_turn_timeout_ms,
+        );
     }
     let execution = &record["admission"]["execution"];
     let mut params = json!({"startRequest":execution["dispatchRequest"]["startRequest"],"dispatchEnv":record["dispatch"]["dispatchEnv"],"lifecyclePolicy":record["dispatch"]["lifecyclePolicy"]});
@@ -150,19 +167,8 @@ pub async fn turn(server: &Shared, body: Value) -> Result<Response, ApiError> {
     )?;
     let runtime_id = string(&identity, "runtimeId")?.to_owned();
     let invocation_id = string(&identity, "invocationId")?.to_owned();
-    controller::set_active(server, &runtime_id, &invocation_id, client.clone());
+    controller::bind(server, &runtime_id, &invocation_id, client.clone());
     controller::consume(server, &runtime_id, events, client);
-    // Bun records the established binding's first seat observation at birth.
-    let born = server
-        .store
-        .lock()
-        .unwrap()
-        .runtimes()?
-        .into_iter()
-        .find(|r| r["runtimeId"] == runtime_id.as_str());
-    if let Some(runtime) = born {
-        let _ = super::runtimes::probe(server, &runtime, "binding-established").await;
-    }
     let from_seq = server
         .store
         .lock()
@@ -175,35 +181,50 @@ pub async fn turn(server: &Shared, body: Value) -> Result<Response, ApiError> {
     let selector = json!({"runId":identity["runId"],"runtimeId":identity["runtimeId"],"generation":identity["generation"]});
     let mut broker_selector = selector.clone();
     broker_selector["invocationId"] = identity["invocationId"].clone();
-    let mut response = json!({"runId":identity["runId"],"hostSessionId":host,"generation":identity["generation"],"runtimeId":identity["runtimeId"],"transport":"headless","status":"accepted","supportsInFlightInput":false,"admission":"admitted","startIdentity":{"kind":"broker","invocationId":identity["invocationId"]},"observation":{"lifecycle":{"selector":selector,"fromSeq":from_seq},"broker":{"selector":broker_selector,"afterSeq":0}},"stage":"accepted","replayed":false,"executionFormat":"format1"});
+    let response = json!({"runId":identity["runId"],"hostSessionId":host,"generation":identity["generation"],"runtimeId":identity["runtimeId"],"transport":"headless","status":"accepted","supportsInFlightInput":false,"admission":"admitted","startIdentity":{"kind":"broker","invocationId":identity["invocationId"]},"observation":{"lifecycle":{"selector":selector,"fromSeq":from_seq},"broker":{"selector":broker_selector,"afterSeq":0}},"stage":"accepted","replayed":false,"executionFormat":"format1"});
+    let mut response = response;
     if let Some(id) = submission {
         response["submissionId"] = id.into();
     }
-    Ok((StatusCode::ACCEPTED, Json(response)).into_response())
+    Ok(response)
 }
 
-fn dispatch_environment(session: &Value, intent: &Value, root: &Path) -> Result<Value> {
+/// buildManagedBrokerDispatchEnv over buildHrcCorrelationEnv + the launch
+/// config, in Bun's key order.
+fn dispatch_environment(
+    session: &Value,
+    intent: &Value,
+    root: &Path,
+    run_id: &str,
+) -> Result<Value> {
     let scope = string(session, "scopeRef")?;
     let lane = string(session, "laneRef")?;
+    let lane_ref = if lane == "main" || lane == "lane:main" {
+        "main".to_owned()
+    } else if lane.starts_with("lane:") {
+        lane.to_owned()
+    } else {
+        format!("lane:{lane}")
+    };
+    let lane_id = if lane_ref == "main" {
+        "main".to_owned()
+    } else {
+        lane_ref["lane:".len()..].to_owned()
+    };
+    let session_ref = format!("{scope}/lane:{lane_id}");
     let id = hrc_store::derive_identity(scope);
-    let mut envs = json!({"AGENT_SCOPE_REF":scope,"ASP_SCOPE_REF":scope,"AGENT_LANE_REF":lane,"AGENT_LANE":lane,"AGENT_SESSION_REF":format!("{scope}/lane:{lane}"),"HRC_SESSION_REF":format!("{scope}/lane:{lane}"),"HRC_MAIL_STOP_SOCKET":root.join("hrc.sock")});
+    let mut envs = json!({"AGENT_SCOPE_REF":scope,"AGENT_LANE_REF":lane_ref,"AGENT_LANE":lane_id,"AGENT_SESSION_REF":session_ref,"HRC_SESSION_REF":session_ref,"ASP_SCOPE_REF":scope});
     for key in ["AGENT_ID", "AGENT_ACTOR", "WRKQ_ACTOR", "ASP_AGENT_ID"] {
         envs[key] = id["agentId"].clone();
     }
-    for key in ["AGENT_HOST_SESSION_ID", "HRC_HOST_SESSION_ID"] {
-        envs[key] = session["hostSessionId"].clone();
-    }
-    for key in ["AGENT_GENERATION", "HRC_GENERATION"] {
-        envs[key] = session["generation"].to_string().into();
-    }
-    for key in ["AGENT_PROJECT", "ASP_PROJECT"] {
-        if let Some(v) = id.get("projectId") {
-            envs[key] = v.clone();
-        }
-    }
-    for key in ["AGENT_TASK", "ASP_TASK_ID"] {
-        if let Some(v) = id.get("taskId") {
-            envs[key] = v.clone();
+    for (keys, field) in [
+        (["AGENT_PROJECT", "ASP_PROJECT"], "projectId"),
+        (["AGENT_TASK", "ASP_TASK_ID"], "taskId"),
+    ] {
+        if let Some(v) = id.get(field) {
+            for key in keys {
+                envs[key] = v.clone();
+            }
         }
     }
     let mut handle = string(&id, "agentId")?.to_owned();
@@ -215,11 +236,77 @@ fn dispatch_environment(session: &Value, intent: &Value, root: &Path) -> Result<
         handle.push(':');
         handle.push_str(task);
     }
+    if lane_id != "main" {
+        handle.push('~');
+        handle.push_str(&lane_id);
+    }
     envs["ASP_HANDLE"] = handle.into();
-    if let Some(v) = intent["placement"].get("projectRoot") {
+    for key in ["AGENT_HOST_SESSION_ID", "HRC_HOST_SESSION_ID"] {
+        envs[key] = session["hostSessionId"].clone();
+    }
+    for key in ["AGENT_RUN_ID", "HRC_RUN_ID"] {
+        envs[key] = run_id.into();
+    }
+    for key in ["AGENT_GENERATION", "HRC_GENERATION"] {
+        envs[key] = session["generation"].to_string().into();
+    }
+    if let Some(v) = intent["placement"]
+        .get("projectRoot")
+        .filter(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+    {
         for key in ["AGENT_PROJECT_ROOT", "ASP_PROJECT_ROOT"] {
             envs[key] = v.clone();
         }
+    }
+    let task = &intent["taskContext"];
+    if let Some(t) = task["taskId"].as_str() {
+        envs["HRC_TASK_ID"] = t.into();
+        if envs.get("ASP_TASK_ID").is_none() {
+            envs["ASP_TASK_ID"] = t.into();
+        }
+    }
+    for (key, field) in [
+        ("HRC_TASK_PHASE", "phase"),
+        ("HRC_TASK_ROLE", "role"),
+        ("HRC_TASK_HINTS", "hintsText"),
+    ] {
+        if let Some(v) = task[field].as_str().filter(|s| !s.is_empty()) {
+            envs[key] = v.into();
+        }
+    }
+    if let Some(kinds) = task["requiredEvidenceKinds"].as_array() {
+        envs["HRC_TASK_REQUIRED_EVIDENCE"] = kinds
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(",")
+            .into();
+    }
+    let launch = &intent["launch"];
+    if let Some(overrides) = launch["env"].as_object() {
+        for (k, v) in overrides {
+            envs[k] = v.clone();
+        }
+    }
+    if let (Some(unset), Some(map)) = (launch["unsetEnv"].as_array(), envs.as_object_mut()) {
+        for k in unset.iter().filter_map(Value::as_str) {
+            map.shift_remove(k);
+        }
+    }
+    if let Some(prepend) = launch["pathPrepend"].as_array().filter(|a| !a.is_empty()) {
+        let prepend = prepend
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(":");
+        envs["PATH"] = match envs["PATH"].as_str().filter(|p| !p.is_empty()) {
+            Some(current) => format!("{prepend}:{current}"),
+            None => prepend,
+        }
+        .into();
+    }
+    if let Some(map) = envs.as_object_mut() {
+        map.shift_remove("WRKQD_TOKEN");
     }
     envs["WRKQ_DB"] = env::var("HRC_WRKQ_DB")
         .or_else(|_| env::var("WRKQ_DB"))
@@ -227,6 +314,7 @@ fn dispatch_environment(session: &Value, intent: &Value, root: &Path) -> Result<
         .into();
     envs["WRKQ_DB_PATH"] = "".into();
     envs["WRKQ_DB_PATH_FILE"] = "".into();
+    envs["HRC_MAIL_STOP_SOCKET"] = json!(root.join("hrc.sock"));
     Ok(envs)
 }
 
@@ -518,24 +606,5 @@ async fn attach_one(server: &Shared, runtime: &Value) -> Result<()> {
     .await?;
     hello(&client, &state["executionRelease"]).await?;
     controller::attach_and_replay(server, runtime, client.clone(), events, token_path).await?;
-    let mut observed = runtime.clone();
-    observed["runtimeStateJson"] = server
-        .store
-        .lock()
-        .unwrap()
-        .runtimes()?
-        .into_iter()
-        .find(|r| r["runtimeId"] == runtime["runtimeId"])
-        .map(|r| r["runtimeStateJson"].clone())
-        .unwrap_or(Value::Null);
-    if let Ok(probe) = client
-        .request(
-            "seat.probe",
-            json!({"invocationId":runtime["activeInvocationId"]}),
-        )
-        .await
-    {
-        super::runtimes::record_probe(server, &observed, &probe, "binding-established")?;
-    }
     Ok(())
 }

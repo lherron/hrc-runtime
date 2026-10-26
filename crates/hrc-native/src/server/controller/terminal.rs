@@ -172,6 +172,7 @@ pub async fn mark_invocation_terminal(
             )?;
         }
         tx.commit()?;
+        server.ledger_committed();
         user_exit
     };
     if active(server, runtime_id).is_some_and(|(i, _)| i == invocation) {
@@ -292,6 +293,7 @@ pub fn mark_crash_terminal(
     };
     projection::events::append(&tx, "runtime.crashed", &ev, &payload)?;
     tx.commit()?;
+    server.ledger_committed();
     Ok(())
 }
 

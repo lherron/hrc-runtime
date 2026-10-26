@@ -17,6 +17,9 @@ LEASE = re.compile(r'btmux/[a-z-]+--rt-[0-9a-f-]+\.sock')
 TS = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z')
 # Rows whose presence and order follow broker/probe timing, not projection rules.
 TIMED = {'broker.seat.transition', 'runtime.context.updated', 'server.started'}
+# Recorded when the admitting route returns; on a cold birth that races the
+# harness's first turn. Compared as their own ordered list, not by position.
+UNPOSITIONED = {'submission.admission'}
 
 
 def load(directory, name):
@@ -81,7 +84,7 @@ def turns(d):
         payload = json.loads(e['payload_json'] or '{}')
         if e['event_kind'] in ('broker.turn.origin',) and payload.get('turnId'):
             current = payload['turnId'].rsplit('_', 1)[-1]
-        if e['event_kind'] in TIMED:
+        if e['event_kind'] in TIMED or e['event_kind'] in UNPOSITIONED:
             continue
         by_turn.setdefault(current, []).append(e)
     return by_turn
@@ -103,7 +106,8 @@ def compare(args, checks):
         ledger_checks(side, d, check)
         # One reply row per broker message on each side. The claude-code-tmux
         # broker may add a Stop-hook fallback final beside the transcript's
-        # (hook-events.ts last_assistant_message): broker timing, not projection.
+        # (hook-events.ts last_assistant_message): broker defect agent-spaces
+        # T-11837, not projection.
         messages = len([r for r in d['broker_invocation_events'] if r['type'] == 'assistant.message.completed'])
         replies = len([e for e in d['hrc_events'] if e['event_kind'] == 'turn.message'])
         check(side + ':reply-rows', messages == replies, f'{replies} turn.message rows for {messages} broker messages')
@@ -192,6 +196,11 @@ def compare(args, checks):
             return out
         a, b = shape(tb[turn], nb), shape(tn.get(turn, []), nn)
         case(f'lifecycle-turn-{turn}', a == b, json.dumps({'bun': a, 'native': b}, default=str)[:3000])
+    def admissions(d, norm):
+        return [(e['run_id'] is not None, norm(json.loads(e['payload_json']))) for e in d['hrc_events']
+                if e['event_kind'] in UNPOSITIONED]
+    ab, an = admissions(bun, nb), admissions(native, nn)
+    case('submission-admission', ab == an, json.dumps({'bun': ab, 'native': an})[:3000])
     human = [e for e in native['hrc_events'] if e['event_kind'] == 'broker.turn.origin'
              and json.loads(e['payload_json']).get('origin') == 'local-interactive']
     case('human-turn-origin', len(human) == 1 and human[0]['run_id'] is None,

@@ -530,6 +530,12 @@ def validate_case_observations(id, observations, checks, status=None, installed_
 
 
 def compare(args, checks):
+    if getattr(args, 'suite', None) == 'n2-continuation':
+        from n2_continuation import compare as compare_n2_continuation
+        return compare_n2_continuation(args, checks)
+    if getattr(args, 'suite', None) == 'n2-routes':
+        from n2_routes import compare as compare_n2_routes
+        return compare_n2_routes(args, checks)
     if getattr(args, 'suite', None) == 'n2-turns':
         from n2_turns import compare as compare_n2_turns
         return compare_n2_turns(args, checks)
