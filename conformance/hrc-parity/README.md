@@ -204,3 +204,13 @@ holds events without ACK; Bun's subsequent event/seat projection belongs to N2
 and is excluded from this establishment comparison. Both workflows require a
 clean terminal and the named copied Bun release; every Bun CLI has isolated
 `HRC_STATE_DIR`. Neither suite substitutes for final gates 1–4.
+
+Foundry's real host wire shapes are a required additional N1 qualification:
+run `participants.py --foundry-client /path/to/foundry/host/src/hrc.ts` with its
+ordinary scratch arguments, then `compare --suite n1-foundry-participants`.
+This requires register/attach cases for continuation absent, `continue`, and
+`fresh`, using the actual exported pure `fleetDescriptor` builder, fresh private
+projects and absent private endpoints. No Foundry host or harness is launched.
+The checker independently recomputes the allocation-derived descriptor hash and
+anchors it to the actual request before comparing the complete frozen bytes.
+This covers initial registration; replacement/carried continuation remains N2.

@@ -4,6 +4,7 @@ UUIDs may vary only through a typed bijection anchored in the durable graph.
 Clocks are checked at the request which first writes them; birth clocks and
 immutable frozen bytes are also checked within each subject before comparison.
 """
+import copy
 import datetime
 import hashlib
 import json
@@ -73,6 +74,33 @@ IDENTITIES = {
 }
 
 
+def foundry_descriptor_hash(descriptor):
+    """Recompute the published hash of the real client's finite descriptor shape.
+
+    The Foundry builder has no initialInput, floating-point fields or overlays.
+    Check those bounds rather than silently apply a partial hash projection.
+    """
+    material=copy.deepcopy(descriptor)
+    material.pop('descriptorHash',None)
+    material.pop('compatibilityHash',None)
+    start=material['harnessInvocation']['startRequest']
+    if set(start)!={'spec'}:
+        return None
+    start['spec'].pop('invocationId',None)
+    start['spec'].pop('correlation',None)
+    material['observability']={'correlation':{'generation':descriptor['observability']['correlation']['generation']}}
+    def canonical(value):
+        if isinstance(value,dict):
+            keys=sorted((k for k in value if not k.endswith(('_at','At','_ts','Ts','timestamp','Timestamp'))),key=lambda k:k.encode('utf-16-be'))
+            return '{'+','.join(json.dumps(k,ensure_ascii=False)+':'+canonical(value[k]) for k in keys)+'}'
+        if isinstance(value,list):
+            return '['+','.join(canonical(v) for v in value)+']'
+        if isinstance(value,float):
+            raise ValueError('Foundry fixture unexpectedly contains a floating-point hash value')
+        return json.dumps(value,ensure_ascii=False,separators=(',',':'))
+    return hashlib.sha256(canonical(material).encode()).hexdigest()
+
+
 def compare(args, checks):
     def check(name, passed, reason):
         checks.append({'id': name, 'pass': bool(passed), 'reason': reason, 'failureCode': 1})
@@ -101,6 +129,14 @@ def compare(args, checks):
             if not attempt['hosting_intent_json']:
                 continue
             descriptor = json.loads(attempt['prepared_profile_json'])
+            sent = next((r['request']['descriptor'] for r in rows if isinstance(r['request'],dict) and r['request'].get('attemptId')==attempt['attempt_id'] and isinstance(r['body'],dict) and r['body'].get('prepared') is True and r['body'].get('status')=='attached'),None)
+            check(kind+':frozen-from-request:'+attempt['attempt_id'],sent==descriptor,'stored descriptor must exactly match the actual successful attachment request, before any hash/identity normalization')
+            if sent and sent['brokerDriver']=='foundry-resident':
+                check(kind+':foundry-descriptor-id:'+attempt['attempt_id'],sent['descriptorId']=='descriptor-'+attempt['attempt_id'] and sent['descriptorHash']==foundry_descriptor_hash(sent) and re.fullmatch(r'[0-9a-f]{64}',sent['descriptorHash']) and sent['harnessInvocation']['startRequest']['spec']['correlation']['selectedProfileHash']==sent['descriptorHash'],'Foundry descriptor id and its correlated digest are allocation-derived, not arbitrary comparison exclusions')
+                # Foundry includes descriptor-<attemptId> in neutral hash material.
+                # Anchor this digest ONLY to the actual request, after validating
+                # the unchanged frozen bytes; an altered stored hash still fails.
+                mapping[sent['descriptorHash']]='<foundry-descriptor-hash:'+mapping[attempt['runtime_id']]+ '>'
             intent = json.loads(attempt['hosting_intent_json'])
             token = intent['endpoint']['attachTokenRef']['path']
             leaf = hashlib.sha256((descriptor['brokerDriver'] + ':' + attempt['runtime_id']).encode()).hexdigest()[:12]
@@ -129,6 +165,16 @@ def compare(args, checks):
                 check(kind + ':birth-clock', len(set(clocks)) == 1 and after['events'][0]['ts'] == clocks[0], 'the session, registration, attempt and birth event must share the transaction clock; the reservation precedes that allocation')
             check(kind + ':' + name + ':no-runtime', all(not after[t] for t in ('runtimes', 'runtime_operations', 'broker_invocations')), 'identity admission or failed external endpoint must never fabricate a runtime')
         by_name = {r['case']: r for r in rows}
+        foundry_required=getattr(args,'suite',None)=='n1-foundry-participants'
+        if foundry_required or any(name.startswith('foundry-') for name in by_name):
+            for label in ('absent','continue','fresh'):
+                registration=by_name.get('foundry-register-'+label,{})
+                attachment=by_name.get('foundry-attach-'+label,{})
+                request=registration.get('request',{})
+                expected={'registrationMode','requestedSessionRef','hostIncarnationId','laneRef','workspaceCwd','socketPath'}|({'continuation'} if label!='absent' else set())
+                check(kind+':foundry-register:'+label,registration.get('status')==200 and set(request)==expected and (label=='absent' or request.get('continuation')==label),'Foundry registration must use its actual host request shape for absent/continue/fresh')
+                request=attachment.get('request',{})
+                check(kind+':foundry-attach:'+label,attachment.get('status')==200 and set(request)=={'registrationId','attemptId','attachEpoch','socketPath','descriptor'} and request['descriptor']['brokerDriver']=='foundry-resident' and 'continuation' not in request['descriptor']['harnessInvocation']['startRequest']['spec'],'fresh Foundry attach carries its native-worker descriptor, with no invented top-level or unselected continuation')
         prepared = by_name.get('attach-prepared', {}).get('durable', {}).get('participant_registration_attempts', [{}])[0]
         check(kind + ':retry-exhaustion', prepared.get('state') == 'DISPATCH_FROZEN' and prepared.get('establishment_work_state') == 'exhausted' and prepared.get('establishment_attempt_count') == 5 and prepared.get('establishment_next_attempt_at') is None and prepared.get('establishment_last_error') == 'Failed to connect to broker unix socket' and prepared.get('broker_identity_json') is None, 'five failed connections exhaust only work, preserving immutable dispatch and nonterminal identity')
         if 'attach-prepared' in by_name:
@@ -173,7 +219,7 @@ def compare(args, checks):
         passed = data['bun'][name] == data['native'].get(name)
         check('compare:' + name, passed, 'full HTTP request/status/body and every captured canonical row must agree after typed identity and bounded-clock normalization')
         results.append({'id': name, 'pass': passed})
-    return {'suite': 'n1-participants', 'cases': results, 'behaviorQualified': all(c['pass'] for c in checks)}
+    return {'suite': getattr(args,'suite','n1-participants'), 'cases': results, 'behaviorQualified': all(c['pass'] for c in checks)}
 
 
 def compare_live(args, checks):

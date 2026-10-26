@@ -533,7 +533,7 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n1-participant-live':
         from n1_participants import compare_live
         return compare_live(args, checks)
-    if getattr(args, 'suite', None) == 'n1-participants':
+    if getattr(args, 'suite', None) in ('n1-participants','n1-foundry-participants'):
         from n1_participants import compare as compare_participants
         return compare_participants(args, checks)
     if getattr(args, 'suite', None) == 'n1-session-projection':

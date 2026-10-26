@@ -193,6 +193,14 @@
         "retained-unACKed-events-and-broker-survival"
       ],
       "requiredInP0": false
+    },
+    "n1-foundry-participants": {
+      "assertionIds": [
+        "actual-host-register-shape-absent-continue-fresh",
+        "actual-host-native-worker-attach-shape",
+        "request-anchored-descriptor-hash-and-frozen-bytes"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [

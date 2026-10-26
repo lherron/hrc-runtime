@@ -15,6 +15,7 @@ from foundation import UnixHTTP
 
 p=argparse.ArgumentParser()
 for name in ['binary','bun-release','scratch-root','artifacts']:p.add_argument('--'+name,type=Path,required=True)
+p.add_argument('--foundry-client',type=Path)
 a=p.parse_args();root=a.scratch_root.absolute();assert not root.exists();root.mkdir(parents=True);a.artifacts.mkdir(parents=True,exist_ok=True)
 release=a.bun_release.resolve();assert release.parent.name!='hrc-runtime-releases'
 assert not any(os.environ.get(k) for k in ['CLAUDECODE','CLAUDE_CODE_ENTRYPOINT','CODEX_SANDBOX'])
@@ -22,6 +23,7 @@ config=root/'federation.json';config.write_text(json.dumps({'nodeId':socket.geth
 e=dict(os.environ,HRC_RUNTIME_DIR=str(root/'run'),HRC_STATE_DIR=str(root/'state'),HRC_PEER_CONFIG_FILE=str(config),HRC_WRKQ_DB=str(root/'wrkq.db'),WRKQ_DB=str(root/'wrkq.db'),HRC_ACP_WEBHOOK_URL='',HRC_EVENT_INGEST_SOCKET=str(root/'run/ingest.sock'))
 for k in ['HRC_SESSION_REF','HRC_RUNTIME_ID','HRC_RUN_ID','HRC_HOST_SESSION_ID','HRC_EVENT_FORWARD_URL','HRC_EVENT_INGEST_TCP_PORT','HRC_EVENT_FORWARD_SOURCE_REF','WRKQ_DB_PATH','WRKQ_DB_PATH_FILE','WRKQD_UNIX','WRKQD_TOKEN','WRKQD_TOKEN_FILE','WRKQD_NODE_TOKENS','WRKQD_NODE_TOKENS_FILE','HRC_BUN_PASSTHROUGH_SOCKET']:e.pop(k,None)
 proc=log=None;results={};dbpath=root/'state/state.sqlite'
+foundry_scopes=['agent:foundry:project:n1-t11818-'+str(time.time_ns())+'-'+label+':task:primary' for label in (['absent','continue','fresh'] if a.foundry_client else [])]
 scope='agent:tabularasa:project:n1-t11818:task:participant-'+str(time.time_ns());host='n1-incarnation-'+str(time.time_ns())
 
 def call(path,body,raw=False):
@@ -54,7 +56,9 @@ def snapshot():
   db.row_factory=sqlite3.Row
   names=['participant_address_reservations','participant_host_bindings','participant_registrations','participant_registration_attempts','sessions','continuities','session_metadata','runtimes','runtime_operations','broker_invocations']
   d={name:[dict(r) for r in db.execute('SELECT * FROM '+name)] for name in names}
-  d['events']=[dict(r) for r in db.execute('SELECT * FROM hrc_events WHERE scope_ref IN (?,?) ORDER BY hrc_seq',(scope,scope+'-classful'))]
+  scopes=[scope,scope+'-classful',*foundry_scopes]
+  placeholders=','.join('?' for _ in scopes)
+  d['events']=[dict(r) for r in db.execute('SELECT * FROM hrc_events WHERE scope_ref IN ('+placeholders+') ORDER BY hrc_seq',scopes)]
  return d
 
 try:
@@ -70,7 +74,7 @@ try:
    if settle and status==200:
     for _ in range(200):
      tables=snapshot();attempts=tables['participant_registration_attempts']
-     if attempts and attempts[0]['establishment_work_state']=='exhausted':break
+     if any(t['attempt_id']==body.get('attemptId') and t['establishment_work_state']=='exhausted' for t in attempts):break
      time.sleep(.05)
     else:raise RuntimeError(kind+' participant retries did not settle')
    rows.append({'case':name,'path':path,'request':body,'status':status,'body':value,'before':before,'after':time.time(),'beforeDurable':before_rows,'durable':snapshot()});return value
@@ -114,6 +118,26 @@ try:
   record('attach-changed-descriptor',attach,dict(body,descriptor=json.loads(rewritten.stdout)))
   record('join-after-attach',reg,base)
   record('join-classful',reg,dict(base,requestedSessionRef=scope+'-classful',hostIncarnationId=host+'-classful',classId='n1-scratch-class',participantKey='n1-scratch-key',workspaceCwd=str(root)))
+  if a.foundry_client:
+   (a.artifacts/'foundry-source.json').write_text(json.dumps({'path':str(a.foundry_client.resolve()),'sha256':hashlib.sha256(a.foundry_client.read_bytes()).hexdigest(),'registerFunction':'registerFleetSeat','descriptorFunction':'fleetDescriptor','attachFunction':'attachFleetSeat','boundary':'fresh private scopes and absent own endpoints; no Foundry host, broker or harness is launched'},indent=2)+'\n')
+  for label,declared_scope in zip(['absent','continue','fresh'],foundry_scopes):
+   # Exact registerFleetSeat keys; fresh scope/project and endpoint are ours.
+   project=declared_scope.split(':project:')[1].split(':task:')[0]
+   workspace=root/project;workspace.mkdir(exist_ok=True)
+   socket_path=str(workspace/'participant.sock')
+   body={'registrationMode':'direct','requestedSessionRef':declared_scope,'hostIncarnationId':host+'-foundry-'+label,'laneRef':'main','workspaceCwd':str(workspace),'socketPath':socket_path}
+   if label!='absent':body['continuation']=label
+   joined=record('foundry-register-'+label,reg,body)
+   assert joined['status']=='registered' and joined['continuation']=={'carried':False,'reason':'no_continuation','selected':None,'resumeState':'not_requested'},joined
+   request={'joined':joined,'options':{'project':project,'root':str(workspace),'agentRoot':'/Users/lherron/praesidium/var/agents/foundry','aspHome':'/Users/lherron/praesidium/var/spaces-repo','provider':'anthropic','modelId':'opus','authMode':'oauth','thinkingLevel':'high'}}
+   generated=subprocess.run(['bun',str(Path(__file__).with_name('participant_foundry_descriptor.mjs')),str(a.foundry_client.resolve())],input=json.dumps(request),capture_output=True,text=True,env=e,check=True)
+   descriptor=json.loads(generated.stdout)
+   assert descriptor['harnessInvocation']['startRequest']['spec']['driver']['kind']=='foundry-resident'
+   assert ('continuation' in descriptor['harnessInvocation']['startRequest']['spec']) is False
+   attach_body={k:joined['identity'][k] for k in ['registrationId','attemptId','attachEpoch']};attach_body.update(socketPath=socket_path,descriptor=descriptor)
+   assert set(attach_body)=={'registrationId','attemptId','attachEpoch','socketPath','descriptor'}
+   answer=record('foundry-attach-'+label,attach,attach_body,settle=True)
+   assert answer['status']=='attached' and answer['prepared'] is True,answer
   tokens=[]
   for token in (root/'run/bipc').glob('*/attach.token'):
    tokens.append({'path':str(token),'mode':stat.S_IMODE(token.stat().st_mode),'parentMode':stat.S_IMODE(token.parent.stat().st_mode),'value':token.read_text()})
