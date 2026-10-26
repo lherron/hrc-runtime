@@ -1,5 +1,6 @@
 /** Shared mock client and command runner for the `hrc turn` suites. */
-import { afterEach, expect } from 'bun:test'
+import { afterEach, expect, jest } from 'bun:test'
+import { resolveQualifiedScopeInput } from 'agent-scope'
 import type {
   EnqueueSubmissionRequest,
   HrcLifecycleEvent,
@@ -218,5 +219,70 @@ export function fakeTurnDependencies(cleanups?: string[]): TurnCommandDependenci
         },
       }
     },
+  }
+}
+
+/** Run timer-driven command behavior without wall time or placement-daemon I/O. */
+export async function runClockedTurnCommand(
+  client: HrcClient,
+  opts: TurnOptions,
+  positionals: string[],
+  dependencies: TurnCommandDependencies = fakeTurnDependencies()
+): Promise<CommandResult> {
+  const clockedDependencies: TurnCommandDependencies = {
+    async resolveLaunchTarget(input) {
+      const base = resolveQualifiedScopeInput(input, { projectId: 'agent-spaces' })
+      return {
+        resolved: {
+          ...base,
+          projectOrigin: 'explicit',
+          placement: {
+            agentRoot: '/tmp/turn-fixture/agent',
+            projectRoot: '/tmp/turn-fixture/project',
+            cwd: '/tmp/turn-fixture/project',
+            warnings: [],
+            resolution: { source: 'explicit-override', reason: 'in-memory turn fixture' },
+          },
+        },
+        sessionRef: `${base.scopeRef}/lane:${base.laneId}`,
+        runtimeIntent: {
+          placement: {
+            agentRoot: '/tmp/turn-fixture/agent',
+            cwd: '/tmp/turn-fixture/project',
+            runMode: 'task',
+            bundle: { kind: 'agent-project', agentName: base.parsed.agentId },
+          },
+          harness: { interactive: false },
+        },
+      }
+    },
+    ...dependencies,
+  }
+  jest.useFakeTimers()
+  jest.setSystemTime(Date.parse('2026-05-13T18:00:00.000Z'))
+  try {
+    let settled = false
+    const pending = runTurnCommand(client, opts, positionals, clockedDependencies)
+    void pending.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+    // Drain command/iterator microtasks before advancing to the next timer.
+    // The bound also catches a watch or interval that never terminates.
+    for (let cycle = 0; cycle < 100 && !settled; cycle++) {
+      for (let micro = 0; micro < 100 && !settled; micro++) await Promise.resolve()
+      if (!settled && jest.getTimerCount() > 0) jest.advanceTimersToNextTimer()
+    }
+    expect(settled).toBe(true)
+    const result = await pending
+    expect(jest.getTimerCount()).toBe(0)
+    return result
+  } finally {
+    jest.clearAllTimers()
+    jest.useRealTimers()
   }
 }

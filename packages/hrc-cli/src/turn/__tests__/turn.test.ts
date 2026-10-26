@@ -8,7 +8,12 @@ import type {
 } from 'hrc-core'
 import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
-import { TURN_EXIT_RUNTIME_DEAD, TURN_EXIT_SIGINT, TURN_EXIT_STALL } from '../commands/turn.js'
+import {
+  TURN_EXIT_RUNTIME_DEAD,
+  TURN_EXIT_SIGINT,
+  TURN_EXIT_STALL,
+  type TurnOptions,
+} from '../commands/turn.js'
 
 import { installOldEngineDaemon } from '../../__tests__/old-engine-daemon.js'
 import {
@@ -17,6 +22,7 @@ import {
   makeHandoff,
   makeLifecycleEvent,
   makeSteerResponse,
+  runClockedTurnCommand,
   runTurnCommand,
 } from './turn-test-harness.js'
 
@@ -83,7 +89,7 @@ describe('hrcchat turn — stall-after', () => {
       },
     } as HrcClient
 
-    const result = await runTurnCommand(client, { stallAfter: '1s' }, [
+    const result = await runClockedTurnCommand(client, { stallAfter: '1s' }, [
       'cody@agent-spaces',
       'hello',
     ])
@@ -321,7 +327,7 @@ function parseStackedLines(stdout: string): Array<Record<string, unknown>> {
 
 describe('hrcchat turn — --stacked monitor stream', () => {
   it('--stacked 1s emits turn_stacked ndjson with version and monotonic stackSeq', async () => {
-    const client = createTurnClient({
+    const base = createTurnClient({
       handoff: makeHandoff({
         messageId: 'msg-request-1',
         sessionRef: 'agent:larry:project:agent-spaces:task:T-01449/lane:main',
@@ -343,14 +349,28 @@ describe('hrcchat turn — --stacked monitor stream', () => {
       ],
     })
 
-    const result = await runTurnCommand(client, { stacked: '1s' } as TurnOptions, [
+    const client = {
+      ...base,
+      async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
+        for await (const event of base.watch(options)) {
+          yield event
+          if (event.eventKind === 'turn.tool_call') {
+            await new Promise<void>((resolve) => setTimeout(resolve, 1_000))
+          }
+        }
+      },
+    } as HrcClient
+
+    const result = await runClockedTurnCommand(client, { stacked: '1s' } as TurnOptions, [
       'larry@agent-spaces:T-01449',
       'work on the task',
     ])
 
     expect(result.exitCode).toBe(0)
     const lines = parseStackedLines(result.stdout)
-    expect(lines.length).toBeGreaterThanOrEqual(1)
+    expect(lines.length).toBeGreaterThanOrEqual(2)
+    expect(lines.some((line) => line['flush'] === 'interval')).toBe(true)
+    expect(lines.at(-1)).toMatchObject({ phase: 'final', finalBody: 'done' })
     expect(lines.every((line) => line['type'] === 'turn_stacked')).toBe(true)
     expect(lines.every((line) => line['version'] === 1)).toBe(true)
     expect(lines.map((line) => line['stackSeq'])).toEqual(
@@ -364,7 +384,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
       { stacked: '1s', format: 'compact' },
       { stacked: '1s', pretty: true },
     ]) {
-      const result = await runTurnCommand(createTurnClient({}), opts as TurnOptions, [
+      const result = await runClockedTurnCommand(createTurnClient({}), opts as TurnOptions, [
         'larry@agent-spaces:T-01449',
         'hello',
       ])
@@ -376,7 +396,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
 
   it('accepts --stacked with ndjson and json formats', async () => {
     for (const format of ['ndjson', 'json']) {
-      const result = await runTurnCommand(
+      const result = await runClockedTurnCommand(
         createTurnClient({
           events: [makeLifecycleEvent({ eventKind: 'turn.completed', payload: { body: 'done' } })],
         }),
@@ -391,7 +411,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
 
   it('propagates parseDuration errors for zero or invalid stacked durations', async () => {
     for (const stacked of ['0', 'not-a-duration']) {
-      const result = await runTurnCommand(createTurnClient({}), { stacked } as TurnOptions, [
+      const result = await runClockedTurnCommand(createTurnClient({}), { stacked } as TurnOptions, [
         'larry@agent-spaces:T-01449',
         'hello',
       ])
@@ -424,7 +444,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
       },
     } as HrcClient
 
-    const result = await runTurnCommand(
+    const result = await runClockedTurnCommand(
       client,
       { stacked: '1s', replyTo: 'msg-prior-reply', queue: true } as TurnOptions,
       ['larry@agent-spaces:T-01449', 'follow up']
@@ -461,7 +481,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
       ],
     })
 
-    const result = await runTurnCommand(client, { stacked: '1s' } as TurnOptions, [
+    const result = await runClockedTurnCommand(client, { stacked: '1s' } as TurnOptions, [
       'larry@agent-spaces:T-01449',
       'finish',
     ])
@@ -489,7 +509,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
       ],
     })
 
-    const result = await runTurnCommand(client, { stacked: '1s' } as TurnOptions, [
+    const result = await runClockedTurnCommand(client, { stacked: '1s' } as TurnOptions, [
       'larry@agent-spaces:T-01449',
       'finish',
     ])
@@ -507,7 +527,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
   })
 
   it('extracts taskId from scoped targets and leaves it undefined when absent', async () => {
-    const scoped = await runTurnCommand(
+    const scoped = await runClockedTurnCommand(
       createTurnClient({
         handoff: makeHandoff({
           sessionRef: 'agent:larry:project:agent-spaces:task:T-01449/lane:main',
@@ -518,7 +538,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
       { stacked: '1s' } as TurnOptions,
       ['larry@agent-spaces:T-01449', 'finish']
     )
-    const unscoped = await runTurnCommand(
+    const unscoped = await runClockedTurnCommand(
       createTurnClient({
         handoff: makeHandoff({
           sessionRef: 'agent:larry:project:agent-spaces/lane:main',
@@ -551,7 +571,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
       ],
     })
 
-    const result = await runTurnCommand(client, { stacked: '1s' } as TurnOptions, [
+    const result = await runClockedTurnCommand(client, { stacked: '1s' } as TurnOptions, [
       'larry@agent-spaces:T-01449',
       'needs approval',
     ])
@@ -570,7 +590,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
 
   it('cleans the summarizer exactly once on success, error, stall, and SIGINT', async () => {
     const successCleanups: string[] = []
-    const success = await runTurnCommand(
+    const success = await runClockedTurnCommand(
       createTurnClient({
         events: [makeLifecycleEvent({ eventKind: 'turn.completed', payload: { body: 'done' } })],
       }),
@@ -582,7 +602,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
     expect(successCleanups).toEqual(['cleanup'])
 
     const errorCleanups: string[] = []
-    const error = await runTurnCommand(
+    const error = await runClockedTurnCommand(
       createTurnClient({
         events: [makeLifecycleEvent({ eventKind: 'run_failed', payload: { message: 'failed' } })],
       }),
@@ -602,7 +622,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
         await waitForAbort(options?.signal)
       },
     } as HrcClient
-    const stall = await runTurnCommand(
+    const stall = await runClockedTurnCommand(
       stallClient,
       { stacked: '1h', stallAfter: '5ms' },
       ['larry@agent-spaces:T-01449', 'stall'],
@@ -624,7 +644,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
         await waitForAbort(options?.signal)
       },
     } as HrcClient
-    const sigint = await runTurnCommand(
+    const sigint = await runClockedTurnCommand(
       sigintClient,
       { stacked: '1h' },
       ['larry@agent-spaces:T-01449', 'interrupt'],
