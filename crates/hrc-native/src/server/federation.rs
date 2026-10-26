@@ -2,7 +2,8 @@
 //! registry-http-client.ts, registry-local-client.ts, registry-attempt.ts,
 //! registry-reply.ts) and the one home-authority resolution
 //! (home-authority.ts) that locate and scope-read routing share.
-mod gate;
+pub mod claim_start;
+pub(super) mod gate;
 mod locate;
 pub mod peer_listener;
 mod policy;

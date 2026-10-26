@@ -33,8 +33,16 @@ type Locks = LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
 static SCOPE_LOCKS: Locks = LazyLock::new(Default::default);
 static SESSION_LOCKS: Locks = LazyLock::new(Default::default);
 
+static NAMESPACE_LOCKS: Locks = LazyLock::new(Default::default);
+
 fn lock_for(locks: &Locks, key: String) -> Arc<tokio::sync::Mutex<()>> {
     locks.lock().unwrap().entry(key).or_default().clone()
+}
+
+/// withScopeClaimMutex: one `roster:<agent>:<project>` lock serializes every
+/// claim-and-start in that namespace, suffix and exact alike.
+pub fn namespace_lock(key: String) -> Arc<tokio::sync::Mutex<()>> {
+    lock_for(&NAMESPACE_LOCKS, key)
 }
 
 /// withScopeSummonLock, then withSessionMintLock when a lane is named.

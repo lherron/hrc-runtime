@@ -91,7 +91,7 @@ fn pin_key(scope: &str) -> Option<String> {
     let (_, project, task) = super::policy::scope_parts(scope);
     Some(format!("{}:{}", project?, task?))
 }
-const ROSTER_SLOT_TOKENS: [&str; 10] = [
+pub(crate) const ROSTER_SLOT_TOKENS: [&str; 10] = [
     "nova", "comet", "pulsar", "quasar", "meteor", "aurora", "zenith", "eclipse", "orbit", "cosmos",
 ];
 fn home_declaration(scope: &str, homes: &Value) -> Option<(String, String)> {

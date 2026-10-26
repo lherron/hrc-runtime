@@ -20,6 +20,8 @@ pub struct Rotation {
     pub drop_continuation: bool,
     pub runtime_intent: Option<Value>,
     pub reason: Option<String>,
+    /// A claim-and-start's roster_claims row, committed with the successor.
+    pub claim: Option<super::start::ClaimRow>,
 }
 
 /// parseClearContextRequest
@@ -71,6 +73,7 @@ fn request(body: &Value) -> Result<(String, Rotation), ApiError> {
             drop_continuation,
             runtime_intent,
             reason: None,
+            claim: None,
         },
     ))
 }
@@ -275,6 +278,11 @@ pub async fn rotate(server: &Shared, session: &Value, o: Rotation) -> Result<Val
         if let Some(r) = &o.reason {
             cleared["reason"] = r.as_str().into();
         }
+        if let Some(claim) = &o.claim {
+            claim
+                .insert(&tx, &scope, &next, &now)
+                .map_err(anyhow::Error::from)?;
+        }
         events::append(&tx, "context.cleared", &base(&host, generation), &cleared)?;
         events::append(
             &tx,
@@ -364,6 +372,7 @@ pub async fn auto_rotate(
             drop_continuation: true,
             runtime_intent: None,
             reason: Some("stale-generation-auto-rotate".into()),
+            claim: None,
         },
     )
     .await?;

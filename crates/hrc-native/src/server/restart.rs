@@ -223,6 +223,7 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
                 }
                 .into(),
             ),
+            claim: None,
         },
     )
     .await?;

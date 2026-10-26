@@ -171,6 +171,18 @@ impl Store {
         intent: Option<&Value>,
         payload: &Value,
     ) -> Result<(Value, bool)> {
+        self.create_session_then(scope, lane, intent, payload, |_, _, _| Ok(()))
+    }
+    /// Create a session, running `then(tx, hostSessionId, now)` inside the
+    /// creating transaction (a claim row commits with the session it names).
+    pub fn create_session_then(
+        &mut self,
+        scope: &str,
+        lane: &str,
+        intent: Option<&Value>,
+        payload: &Value,
+        then: impl FnOnce(&Connection, &str, &str) -> rusqlite::Result<()>,
+    ) -> Result<(Value, bool)> {
         let tx = self
             .sqlite
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -199,6 +211,7 @@ impl Store {
             "session.created",
             payload,
         )?;
+        then(&tx, &host, &now)?;
         tx.commit()?;
         Ok((
             self.session(&host)?

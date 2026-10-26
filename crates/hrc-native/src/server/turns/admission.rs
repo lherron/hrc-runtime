@@ -487,6 +487,7 @@ async fn steps(
                 drop_continuation: true,
                 runtime_intent: req.runtime_intent.cloned(),
                 reason: Some(format!("submission-{}-fresh-context", req.intent)),
+                claim: None,
             },
         )
         .await

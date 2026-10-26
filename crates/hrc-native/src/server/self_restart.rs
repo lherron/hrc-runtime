@@ -299,6 +299,7 @@ async fn execute(server: &Shared, intent: Intent, terminal_seq: i64) -> Result<(
             drop_continuation: true,
             runtime_intent: None,
             reason: Some("self-restart".into()),
+            claim: None,
         },
     )
     .await?;

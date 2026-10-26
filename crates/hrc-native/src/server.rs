@@ -49,6 +49,7 @@ mod runtime_views;
 mod runtimes;
 mod self_restart;
 mod sessions;
+mod start;
 mod startup;
 mod surfaces;
 mod sweeps;
@@ -319,6 +320,11 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
     } else if method == Method::GET && runtime_seat_id(uri.path()).is_some() {
         match decode_path(runtime_seat_id(uri.path()).unwrap()) {
             Ok(id) => runtimes::seat(server, &id).await,
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/runtimes/start" {
+        match parse_body(&body) {
+            Ok(value) => start::handle(server, value).await,
             Err(e) => Err(e),
         }
     } else if method == Method::POST && uri.path() == "/v1/runtimes/inspect" {
@@ -596,6 +602,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/runtimes/restart-self",
                 "/v1/submissions/preempt/admission",
                 "/v1/runtimes/inspect",
+                "/v1/runtimes/start",
                 "/v1/runtimes/attach",
                 "/v1/runtimes/prune",
                 "/v1/runtimes/sweep",
