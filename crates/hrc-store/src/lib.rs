@@ -12,10 +12,12 @@ mod broker;
 mod index;
 mod metadata;
 mod monitor_read;
+mod participants;
 mod surfaces;
 mod targets;
 pub use metadata::{MetadataWrite, validate_metadata};
 pub use monitor_read::{MonitorFilters, escape_like, parse_task_id};
+pub use participants::ParticipantJoin;
 
 pub fn canonical_lane(lane: &str) -> String {
     if lane == "main" || lane == "lane:main" {
@@ -213,12 +215,22 @@ impl Store {
 }
 
 pub fn append_event(db: &Connection, session: &Value, kind: &str, payload: &Value) -> Result<i64> {
+    append_event_at(db, session, kind, payload, &timestamp())
+}
+
+fn append_event_at(
+    db: &Connection,
+    session: &Value,
+    kind: &str,
+    payload: &Value,
+    at: &str,
+) -> Result<i64> {
     let seq: i64 = db.query_row(
         "UPDATE event_stream_cursor SET next_seq=next_seq+1 WHERE id=1 RETURNING next_seq-1",
         [],
         |r| r.get(0),
     )?;
-    db.execute("INSERT INTO hrc_events(stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,category,event_kind,payload_json) VALUES (?,?,?,?,?,?,'session',?,?)", params![seq,timestamp(),session["hostSessionId"].as_str(),session["scopeRef"].as_str(),session["laneRef"].as_str(),session["generation"].as_i64(),kind,payload.to_string()])?;
+    db.execute("INSERT INTO hrc_events(stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,category,event_kind,payload_json) VALUES (?,?,?,?,?,?,'session',?,?)", params![seq,at,session["hostSessionId"].as_str(),session["scopeRef"].as_str(),session["laneRef"].as_str(),session["generation"].as_i64(),kind,payload.to_string()])?;
     Ok(db.last_insert_rowid())
 }
 
