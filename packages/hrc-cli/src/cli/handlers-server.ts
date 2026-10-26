@@ -321,7 +321,9 @@ async function requireStopProof(
   while (Date.now() < deadline) {
     const observed = await collectServerRuntimeStatus({ includeTmux: false })
     const oldAlive = before.pid !== undefined && isLiveProcess(before.pid)
-    if (!observed.socketResponsive && !oldAlive) return
+    // Behind a front door (T-11822) the public socket keeps answering, so the
+    // proof is that no healthy daemon is behind it, not that it went silent.
+    if (!observed.running && !oldAlive) return
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
   process.stderr.write(
