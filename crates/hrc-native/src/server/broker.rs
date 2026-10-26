@@ -433,6 +433,14 @@ fn dispatch_environment(
         .into();
     envs["WRKQ_DB_PATH"] = "".into();
     envs["WRKQ_DB_PATH_FILE"] = "".into();
+    // injectRuntimeWrkqAuthority: the daemon's token file path, never its contents.
+    if let Some(file) = env::var("HRC_WRKQD_TOKEN_FILE")
+        .ok()
+        .map(|f| f.trim().to_owned())
+        .filter(|f| !f.is_empty())
+    {
+        envs["WRKQD_TOKEN_FILE"] = file.into();
+    }
     envs["HRC_MAIL_STOP_SOCKET"] = json!(root.join("hrc.sock"));
     Ok(envs)
 }
