@@ -175,6 +175,35 @@ def main():
         case('capture-status:terminated', 'POST', status_door, {'runtimeId': runtime})
         case('capture-selector:terminated', 'POST', by_selector, {'selector': {'sessionRef': session_ref}})
         case('broker-inspect:terminated', 'POST', inspect, {'runtimeId': runtime})
+        clear = '/v1/clear-context'
+        case('clear:not-object', 'POST', clear, 'x')
+        case('clear:no-host', 'POST', clear, {})
+        case('clear:bad-relaunch', 'POST', clear, {'hostSessionId': host, 'relaunch': 'yes'})
+        case('clear:bad-intent', 'POST', clear, {'hostSessionId': host, 'runtimeIntent': 'x'})
+        case('clear:unknown-host', 'POST', clear, {'hostSessionId': 'hsid-00000000-0000-0000-0000-000000000000'})
+        case('clear:rotate', 'POST', clear, {'hostSessionId': host})
+        case('clear:stale', 'POST', clear, {'hostSessionId': host})
+        gen2 = s.rows("SELECT host_session_id FROM sessions WHERE scope_ref=? AND status='active'", (scope,))[0]['host_session_id']
+        case('clear:relaunch', 'POST', clear, {'hostSessionId': gen2, 'relaunch': True, 'dropContinuation': True})
+        gen3 = s.rows("SELECT host_session_id FROM sessions WHERE scope_ref=? AND status='active'", (scope,))[0]['host_session_id']
+        s.wait(lambda: s.rows("SELECT 1 FROM runtimes WHERE host_session_id=? AND status='ready'", (gen3,)), 300, 'relaunched seat ready')
+        time.sleep(1)
+        case('invoke:fresh-context', 'POST', invoke, {'target': session_ref, 'body': PROMPT, 'origin': origin, 'freshContext': True}, settle=False)
+        fresh = observations[-1]['body'].get('runId') if isinstance(observations[-1]['body'], dict) else None
+        if fresh:
+            s.wait_completed(fresh)
+            # The rows this case caused, through the turn's completion.
+            mark = s.rows("SELECT MIN(hrc_seq) AS m FROM hrc_events WHERE event_kind='context.cleared' AND json_extract(payload_json, '$.reason') LIKE '%fresh-context'")[0]['m']
+            observations[-1]['eventKinds'] = [r['event_kind'] for r in s.rows('SELECT event_kind FROM hrc_events WHERE hrc_seq>=? ORDER BY hrc_seq', (mark,))]
+        observations[-1]['sessions'] = s.rows('SELECT generation, status, prior_host_session_id IS NOT NULL AS has_prior, continuation_json IS NOT NULL AS has_continuation, continuation_reuse_disabled FROM sessions WHERE scope_ref=? ORDER BY generation', (scope,))
+        observations[-1]['runtimes'] = s.rows('SELECT generation, status FROM runtimes WHERE scope_ref=? ORDER BY created_at', (scope,))
+        drop = '/v1/sessions/drop-continuation'
+        active = s.rows("SELECT host_session_id FROM sessions WHERE scope_ref=? AND status='active'", (scope,))[0]['host_session_id']
+        case('drop:no-host', 'POST', drop, {})
+        case('drop:bad-reason', 'POST', drop, {'hostSessionId': active, 'reason': 3})
+        case('drop:unknown', 'POST', drop, {'hostSessionId': 'hsid-00000000-0000-0000-0000-000000000000'})
+        case('drop:ok', 'POST', drop, {'hostSessionId': active, 'reason': ' n2 case '})
+        case('drop:again', 'POST', drop, {'hostSessionId': active})
         if not args.only or 'terminate:final' in args.only.split(','):
             [o for o in observations if o['case'] == 'terminate:final'][0]['finalRows'] = {
                 'runtime': s.rows('SELECT status, active_run_id, active_invocation_id FROM runtimes WHERE runtime_id=?', (runtime,)),
@@ -182,6 +211,10 @@ def main():
                 'invocation': s.rows('SELECT invocation_state FROM broker_invocations WHERE runtime_id=? ORDER BY created_at DESC LIMIT 1', (runtime,)),
                 'lease': s.rows("SELECT event_kind, payload_json FROM hrc_events WHERE runtime_id=? AND event_kind IN ('runtime.terminated','runtime.crashed','runtime.stale','runtime.dead') ORDER BY hrc_seq", (runtime,)),
             }
+        for o in observations:
+            # The provider's continuation key is its own session id on each owner.
+            if isinstance(o['body'], dict) and isinstance(o['body'].get('previousContinuationKey'), str):
+                o['body']['previousContinuationKey'] = '<continuation-key>'
         for o in observations:
             # Broker-reported pass-through: transcript diagnostic counts and the
             # live seq/context reading move with harness timing, not with HRC.

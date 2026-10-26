@@ -133,13 +133,15 @@ fn start_response(server: &Shared, runtime_id: &str) -> Result<Value, ApiError> 
 
 /// startRuntimeForSession on the attached door: the scope's live broker
 /// runtime is selected as-is; otherwise a promptless birth parks on the gate.
-async fn start(
+pub async fn start(
     server: &Shared,
     session: Value,
     intent: Value,
     fresh_pty: bool,
-    gate: &Mutex<Option<broker::AttachGate>>,
+    gate: Option<&Mutex<Option<broker::AttachGate>>>,
 ) -> Result<Value, ApiError> {
+    // The attached door marks the selected seat operator-attach-pending.
+    let attach_door = gate.is_some();
     let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
     let existing = {
         let db = server.store.lock().unwrap();
@@ -171,11 +173,11 @@ async fn start(
         None => None,
     };
     if let Some(rt) = live.filter(|_| !fresh_pty) {
-        turns::publish_presentation(server, &rt.runtime_id, true)?;
+        turns::publish_presentation(server, &rt.runtime_id, attach_door)?;
         return start_response(server, &rt.runtime_id);
     }
     let run_id = format!("run-{}", Uuid::new_v4());
-    let attach = gate.lock().unwrap().take();
+    let attach = gate.and_then(|g| g.lock().unwrap().take());
     let body = broker::birth(
         server,
         broker::Birth {
@@ -192,7 +194,11 @@ async fn start(
     )
     .await?;
     let runtime_id = body["runtimeId"].as_str().unwrap_or("").to_owned();
-    turns::publish_presentation(server, &runtime_id, true)?;
+    // The birth published its presentation; the attached door publishes again
+    // (attachedRunSelected), an ordinary start does not.
+    if attach_door {
+        turns::publish_presentation(server, &runtime_id, true)?;
+    }
     start_response(server, &runtime_id)
 }
 
@@ -212,11 +218,12 @@ pub async fn prepare(server: &Shared, body: Value) -> Result<Response, ApiError>
         db.session(&req.host)?
     }
     .ok_or_else(|| ApiError::missing_host(&req.host))?;
-    if req.prompt.is_none()
-        && let Some(refusal) = turns::admission::stale_refusal(server, &session, req.allow_stale)?
-    {
-        return Err(refusal);
-    }
+    let session = if req.prompt.is_none() {
+        super::context::auto_rotate(server, session, req.allow_stale, "prepare-attached-run")
+            .await?
+    } else {
+        session
+    };
     let started_at = Instant::now();
     let pending_start_id = format!("attached-{}", Uuid::new_v4());
     let (ready_tx, ready_rx) = oneshot::channel();
@@ -243,7 +250,7 @@ pub async fn prepare(server: &Shared, body: Value) -> Result<Response, ApiError>
                     )
                     .await
                 }
-                None => start(&server, session, req.intent, req.fresh_pty, &gate).await,
+                None => start(&server, session, req.intent, req.fresh_pty, Some(&gate)).await,
             }
         })
     };

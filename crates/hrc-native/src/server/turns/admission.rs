@@ -420,19 +420,37 @@ async fn steps(
     };
     trace.push("passed");
     // rotation
-    if req.intent != "steer"
-        && let Some(refusal) = stale_refusal(server, &session, req.allow_stale_generation)?
-    {
-        trace.push("refused");
-        return Err(refusal);
+    if req.intent != "steer" {
+        let trigger = if req.door == "submission" {
+            format!("submission-{}", req.intent)
+        } else {
+            "dispatch-turn".to_owned()
+        };
+        session = crate::server::context::auto_rotate(
+            server,
+            session,
+            req.allow_stale_generation,
+            &trigger,
+        )
+        .await
+        .inspect_err(|_| trace.push("refused"))?;
     }
     if req.fresh_context == Some(true) {
-        trace.push("refused");
-        return Err(unavailable(
-            "fresh-context rotation is not yet served natively",
-            json!({"hostSessionId":session["hostSessionId"],"reason":"fresh_context_native_gap"}),
-        ));
+        let next = crate::server::context::rotate(
+            server,
+            &session,
+            crate::server::context::Rotation {
+                relaunch: false,
+                drop_continuation: true,
+                runtime_intent: req.runtime_intent.cloned(),
+                reason: Some(format!("submission-{}-fresh-context", req.intent)),
+            },
+        )
+        .await
+        .inspect_err(|_| trace.push("refused"))?;
+        session = crate::server::context::session(server, &next)?;
     }
+    trace.session = session.clone();
     trace.push("passed");
     // launch-carry-observation
     let observation = {
@@ -572,34 +590,15 @@ async fn origin_owns_active_turn(
     }))
 }
 
-/// maybeAutoRotateStaleSession's trigger: a stale generation with no live
-/// runtime would rotate, which is not yet served natively.
-pub fn stale_refusal(
-    server: &Shared,
-    session: &Value,
-    allow_stale: bool,
-) -> Result<Option<ApiError>, ApiError> {
+/// maybeAutoRotateStaleSession's staleness: (ageSec, thresholdSec) when the
+/// generation is past the threshold and rotation is enabled and not waived.
+pub fn stale_age(session: &Value, allow_stale: bool) -> Option<(i64, i64)> {
     if !stale_enabled() || allow_stale {
-        return Ok(None);
+        return None;
     }
     let age = db::parse_ms(session["createdAt"].as_str().unwrap_or(""))
         .map(|c| (chrono::Utc::now().timestamp_millis() - c).max(0) / 1000)
         .unwrap_or(0);
     let threshold = stale_threshold_sec();
-    if threshold <= 0 || age < threshold {
-        return Ok(None);
-    }
-    let live = {
-        let db = server.store.lock().unwrap();
-        db.runtimes()?
-            .into_iter()
-            .rfind(|r| r["hostSessionId"] == session["hostSessionId"])
-            .is_some_and(|r| !crate::server::lease::unavailable(r["status"].as_str().unwrap_or("")))
-    };
-    Ok((!live).then(|| {
-        unavailable(
-            "stale-generation auto-rotation is not yet served natively",
-            json!({"hostSessionId":session["hostSessionId"],"ageSec":age,"thresholdSec":threshold,"reason":"stale_generation_rotation_native_gap"}),
-        )
-    }))
+    (threshold > 0 && age >= threshold).then_some((age, threshold))
 }

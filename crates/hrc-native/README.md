@@ -66,6 +66,14 @@ A birth (promptless, or with a prompt through admission door
 answers `prepared` with the attach descriptor, and starts its invocation only
 after resume and an attached tmux client. `e2e/n2_attached.py` drives the
 unchanged Bun `hrc run` on a pty for `--suite n2-attached`.
+`POST /v1/clear-context` (`server/context.rs`) is rotateSessionContext: the
+continuity fence, every live runtime of the host disposed and finalized,
+surfaces unbound, the session archived and its successor (generation + 1)
+activated in one transaction, `context.cleared` and `session.created`, and an
+optional relaunch. Admission now rotates a stale generation
+(`session.generation_auto_rotated`, skipped while a live tmux runtime holds it)
+and a `freshContext` submission. `POST /v1/sessions/drop-continuation` disables
+continuation reuse once (`session.continuation_dropped`).
 A broker client's `close()` half-closes and drains the
 frames the broker already sent (`invocation.disposed` follows the dispose
 reply). While a terminate finalizes a runtime, its projected exit writes no

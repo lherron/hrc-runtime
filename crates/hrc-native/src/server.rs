@@ -3,6 +3,7 @@ mod aspc;
 mod attached;
 mod broker;
 mod compile;
+mod context;
 mod control;
 mod controller;
 mod events;
@@ -530,6 +531,16 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
             Ok(value) => turns::submission(server, "invoke", value).await,
             Err(e) => Err(e),
         }
+    } else if method == Method::POST && uri.path() == "/v1/sessions/drop-continuation" {
+        match parse_body(&body) {
+            Ok(value) => context::drop_continuation(server, value),
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/clear-context" {
+        match parse_body(&body) {
+            Ok(value) => context::clear_context(server, value).await,
+            Err(e) => Err(e),
+        }
     } else if method == Method::POST
         && ["/v1/runs/prepare-attached", "/v1/runs/resume-attached"].contains(&uri.path())
     {
@@ -680,6 +691,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/active-run-contributions",
                 "/v1/runs/prepare-attached",
                 "/v1/runs/resume-attached",
+                "/v1/clear-context",
+                "/v1/sessions/drop-continuation",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
                 "/v1/runtimes/prune",

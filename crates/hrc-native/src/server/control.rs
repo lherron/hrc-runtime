@@ -491,7 +491,7 @@ async fn terminate_runtime(
 }
 
 /// finalizeRuntimeTermination
-fn finalize(db: &Connection, rt: &db::Rt, now: &str) -> anyhow::Result<()> {
+pub(super) fn finalize(db: &Connection, rt: &db::Rt, now: &str) -> anyhow::Result<()> {
     if let Some(run) = &rt.active_run_id {
         db.execute(
             "UPDATE runtimes SET active_run_id=NULL, updated_at=? WHERE runtime_id=?",
@@ -548,7 +548,12 @@ fn settle_disposed(db: &Connection, rt: &db::Rt, now: &str) -> anyhow::Result<()
 }
 
 /// disposeBrokerRuntime: a failure other than not-active is logged, never thrown.
-async fn dispose_logged(server: &Shared, runtime_id: &str, reason: Option<&str>, message: &str) {
+pub(super) async fn dispose_logged(
+    server: &Shared,
+    runtime_id: &str,
+    reason: Option<&str>,
+    message: &str,
+) {
     if let Err(error) = dispose(server, runtime_id, reason).await
         && error.code != "broker_runtime_not_active"
     {
