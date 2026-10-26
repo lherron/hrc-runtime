@@ -1,6 +1,6 @@
 //! Layered continuity metadata. API writes validate before their transaction;
 //! launch writes retain valid fields and record each rejected field.
-use crate::{Store, append_event, timestamp};
+use crate::{Store, append_session_event, timestamp};
 use anyhow::{Context, Result, ensure};
 use rusqlite::params;
 use serde_json::{Map, Value, json};
@@ -287,7 +287,7 @@ impl Store {
                 })
                 .transpose()?
                 .unwrap_or(Value::Null);
-            append_event(
+            append_session_event(
                 &tx,
                 &session,
                 "session.metadata.changed",
@@ -295,7 +295,7 @@ impl Store {
             )?;
         }
         for rejection in &rejected {
-            append_event(&tx, &session, "session.metadata.rejected", rejection)?;
+            append_session_event(&tx, &session, "session.metadata.rejected", rejection)?;
         }
         tx.commit()?;
         let mut result = self.metadata(scope, lane)?;

@@ -272,24 +272,7 @@ pub fn seats(db: &Store, keys: Vec<(String, String)>) -> Result<Value> {
         if let Some(s) = selected
             && seen_sessions.insert(s["hostSessionId"].clone().to_string())
         {
-            let mut session = json!({});
-            for key in [
-                "hostSessionId",
-                "scopeRef",
-                "laneRef",
-                "generation",
-                "status",
-                "priorHostSessionId",
-                "createdAt",
-                "updatedAt",
-                "lastAppliedIntentJson",
-                "continuation",
-            ] {
-                if let Some(v) = s.get(key) {
-                    session[key] = v.clone();
-                }
-            }
-            session["laneRef"] = canonical_lane(lane).into();
+            let mut session = s.clone();
             if let Some(identity) = db.optional_identity(&scope, lane)? {
                 session["identity"] = identity;
             }

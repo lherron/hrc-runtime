@@ -442,187 +442,41 @@ fn local_blobs(store: &hrc_store::Store, after: i64) -> Result<Vec<Blob>> {
         .map_err(sql_error)
 }
 
-fn parse_json(text: &str) -> Result<Value> {
-    serde_json::from_str(text)
-        .map(json_roundtrip)
-        .map_err(|e| Error::failure(e.to_string()))
-}
-
-/// event-repositories.ts `mapRow(row, { hydrate: false })`.
+/// Store-owned lifecycle and broker row shapes; drain retains strict parsing
+/// and JS JSON number/key ordering at its serialization boundary.
 fn lifecycle_events(store: &hrc_store::Store, from: i64) -> Result<Vec<(i64, Value, bool)>> {
-    let mut statement = store
-        .sqlite
-        .prepare(
-            "SELECT hrc_seq, stream_seq, source_ref, origin_seq, ts, host_session_id, scope_ref,
-                    lane_ref, generation, runtime_id, run_id, launch_id, app_id, app_session_key,
-                    category, event_kind, transport, error_code, replayed, evidence_origin, payload_json
-               FROM hrc_events
-              WHERE stream_seq >= ? AND source_ref IS NULL
-              ORDER BY stream_seq ASC LIMIT ?",
-        )
-        .map_err(sql_error)?;
-    let rows = statement
-        .query_map((from, MAX_BATCH_EVENTS), |row| {
-            let text = |i: usize| row.get::<_, Option<String>>(i);
-            let int = |i: usize| row.get::<_, Option<i64>>(i);
-            let mut event = Map::new();
-            event.insert("hrcSeq".into(), int(0)?.into());
-            event.insert("streamSeq".into(), int(1)?.into());
-            if let Some(v) = text(2)? {
-                event.insert("sourceRef".into(), v.into());
-            }
-            if let Some(v) = int(3)? {
-                event.insert("originSeq".into(), v.into());
-            }
-            event.insert("ts".into(), text(4)?.into());
-            event.insert("hostSessionId".into(), text(5)?.into());
-            event.insert("scopeRef".into(), text(6)?.into());
-            let lane = text(7)?.unwrap_or_default();
-            let canonical = if lane == "main" || lane.starts_with("lane:") {
-                lane.clone()
-            } else {
-                format!("lane:{lane}")
-            };
-            event.insert("laneRef".into(), canonical.into());
-            event.insert("generation".into(), int(8)?.into());
-            for (i, key) in [
-                (9, "runtimeId"),
-                (10, "runId"),
-                (11, "launchId"),
-                (12, "appId"),
-                (13, "appSessionKey"),
-            ] {
-                if let Some(v) = text(i)? {
-                    event.insert(key.into(), v.into());
-                }
-            }
-            event.insert("category".into(), text(14)?.into());
-            event.insert("eventKind".into(), text(15)?.into());
-            for (i, key) in [(16, "transport"), (17, "errorCode")] {
-                if let Some(v) = text(i)? {
-                    event.insert(key.into(), v.into());
-                }
-            }
-            event.insert("replayed".into(), (int(18)? != Some(0)).into());
-            let retained = text(19)?.as_deref() == Some("retained");
-            if retained {
-                event.insert("evidenceOrigin".into(), "retained".into());
-            }
-            Ok((event, lane, text(20)?.unwrap_or_default(), retained))
-        })
+    store
+        .drain_lifecycle_events(from, MAX_BATCH_EVENTS)
         .map_err(sql_error)?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(sql_error)?;
-    let mut events = vec![];
-    for (mut event, lane, payload, retained) in rows {
-        event.insert("payload".into(), parse_json(&payload)?);
-        let scope = event["scopeRef"].as_str().unwrap_or_default().to_owned();
-        if let Some(identity) = identity(store, &scope, &lane)? {
-            event.insert("identity".into(), identity);
-        }
-        let origin = event["streamSeq"].as_i64().unwrap_or_default();
-        events.push((origin, Value::Object(event), retained));
-    }
-    Ok(events)
-}
-
-/// session-identity.ts `readSessionIdentity`.
-fn identity(store: &hrc_store::Store, scope: &str, lane: &str) -> Result<Option<Value>> {
-    let mut statement = store
-        .sqlite
-        .prepare("SELECT scope_kind, agent_id, project_id, task_id, role_name FROM continuities WHERE scope_ref=? AND lane_ref=?")
-        .map_err(sql_error)?;
-    let mut rows = statement
-        .query_map((scope, lane), |row| {
-            let mut identity = Map::new();
-            identity.insert("kind".into(), row.get::<_, Option<String>>(0)?.into());
-            identity.insert("agentId".into(), row.get::<_, Option<String>>(1)?.into());
-            for (i, key) in [(2, "projectId"), (3, "taskId"), (4, "roleName")] {
-                if let Some(v) = row.get::<_, Option<String>>(i)? {
-                    identity.insert(key.into(), v.into());
-                }
-            }
-            Ok(Value::Object(identity))
+        .into_iter()
+        .map(|mut event| {
+            event["payload"] = json_roundtrip(event["payload"].take());
+            Ok((
+                event["streamSeq"].as_i64().unwrap_or_default(),
+                event.clone(),
+                event["evidenceOrigin"] == "retained",
+            ))
         })
-        .map_err(sql_error)?;
-    rows.next().transpose().map_err(sql_error)
+        .collect()
 }
 
-/// broker.ts `mapBrokerInvocationEventRow` (hydrate: false).
 fn broker_events(store: &hrc_store::Store, after: i64) -> Result<Vec<(i64, Value, bool)>> {
-    let mut statement = store
-        .sqlite
-        .prepare(
-            "SELECT id, invocation_id, seq, time, type, run_id, runtime_id, harness_generation,
-                    turn_attempt, broker_event_json, broker_envelope_json, hrc_event_seq,
-                    projection_status, projection_error, source_ref, origin_seq, evidence_origin,
-                    created_at
-               FROM broker_invocation_events
-              WHERE source_ref IS NULL AND id > ? ORDER BY id ASC LIMIT ?",
+    Ok(store
+        .broker_events_stored(
+            "WHERE source_ref IS NULL AND id > ? ORDER BY id ASC LIMIT ?",
+            &[after.into(), MAX_BATCH_EVENTS.into()],
+            json_roundtrip,
         )
-        .map_err(sql_error)?;
-    let rows = statement
-        .query_map((after, MAX_BATCH_EVENTS), |row| {
-            let text = |i: usize| row.get::<_, Option<String>>(i);
-            let int = |i: usize| row.get::<_, Option<i64>>(i);
-            let id = int(0)?.unwrap_or_default();
-            let event_json = text(9)?.unwrap_or_default();
-            let envelope =
-                text(10)?.map(|envelope| match serde_json::from_str::<Value>(&envelope) {
-                    Ok(Value::Object(object)) if !object.contains_key("payload") => {
-                        match serde_json::from_str::<Value>(&event_json) {
-                            Ok(payload) => {
-                                let mut object = object;
-                                object.insert("payload".into(), payload);
-                                json_roundtrip(Value::Object(object)).to_string()
-                            }
-                            Err(_) => envelope,
-                        }
-                    }
-                    _ => envelope,
-                });
-            let mut event = Map::new();
-            event.insert("id".into(), id.into());
-            event.insert("invocationId".into(), text(1)?.into());
-            event.insert("seq".into(), int(2)?.into());
-            event.insert("time".into(), text(3)?.into());
-            event.insert("type".into(), text(4)?.into());
-            if let Some(v) = text(5)? {
-                event.insert("runId".into(), v.into());
-            }
-            event.insert("runtimeId".into(), text(6)?.into());
-            for (i, key) in [(7, "harnessGeneration"), (8, "turnAttempt")] {
-                if let Some(v) = int(i)? {
-                    event.insert(key.into(), v.into());
-                }
-            }
-            event.insert("brokerEventJson".into(), event_json.into());
-            if let Some(envelope) = envelope {
-                event.insert("brokerEnvelopeJson".into(), envelope.into());
-            }
-            if let Some(v) = int(11)? {
-                event.insert("hrcEventSeq".into(), v.into());
-            }
-            event.insert("projectionStatus".into(), text(12)?.into());
-            if let Some(v) = text(13)? {
-                event.insert("projectionError".into(), v.into());
-            }
-            if let Some(v) = text(14)? {
-                event.insert("sourceRef".into(), v.into());
-            }
-            if let Some(v) = int(15)? {
-                event.insert("originSeq".into(), v.into());
-            }
-            let retained = text(16)?.as_deref() == Some("retained");
-            if retained {
-                event.insert("evidenceOrigin".into(), "retained".into());
-            }
-            event.insert("createdAt".into(), text(17)?.into());
-            Ok((id, Value::Object(event), retained))
+        .map_err(sql_error)?
+        .into_iter()
+        .map(|event| {
+            (
+                event["id"].as_i64().unwrap_or_default(),
+                event.clone(),
+                event["evidenceOrigin"] == "retained",
+            )
         })
-        .map_err(sql_error)?;
-    rows.collect::<std::result::Result<_, _>>()
-        .map_err(sql_error)
+        .collect())
 }
 
 /// T-08566 `originRuns`: maximal same-origin runs, retained rows on version 2.

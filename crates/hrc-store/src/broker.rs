@@ -209,12 +209,23 @@ fn event(
     kind: &str,
     payload: &Value,
 ) -> Result<()> {
-    let seq: i64 = db.query_row(
-        "UPDATE event_stream_cursor SET next_seq=next_seq+1 WHERE id=1 RETURNING next_seq-1",
-        [],
-        |r| r.get(0),
+    crate::append_event(
+        db,
+        &crate::EventWrite {
+            ts: &timestamp(),
+            host_session_id: Some(s(session, "hostSessionId")?),
+            scope_ref: Some(s(session, "scopeRef")?),
+            lane_ref: Some(crate::storage_lane(s(session, "laneRef")?)),
+            generation: session["generation"].as_i64(),
+            runtime_id: id["runtimeId"].as_str(),
+            run_id: id["runId"].as_str(),
+            category,
+            event_kind: kind,
+            transport,
+            payload_json: &payload.to_string(),
+            ..Default::default()
+        },
     )?;
-    db.execute("INSERT INTO hrc_events(stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,runtime_id,run_id,category,event_kind,transport,payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",params![seq,timestamp(),s(session,"hostSessionId")?,s(session,"scopeRef")?,crate::storage_lane(s(session,"laneRef")?),session["generation"].as_i64(),id["runtimeId"].as_str(),id["runId"].as_str(),category,kind,transport,payload.to_string()])?;
     Ok(())
 }
 

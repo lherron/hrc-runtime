@@ -107,20 +107,25 @@ pub fn append(db: &Connection, kind: &str, ev: &Ev, payload: &Value) -> Result<i
     let Some(category) = category(kind) else {
         bail!("unknown hrc event kind: {kind}");
     };
-    let seq: i64 = db.query_row(
-        "SELECT next_seq FROM event_stream_cursor WHERE id = 1",
-        [],
-        |r| r.get(0),
+    let hrc_seq = hrc_store::append_event(
+        db,
+        &hrc_store::EventWrite {
+            ts: &ev.ts,
+            host_session_id: Some(&ev.host_session_id),
+            scope_ref: Some(&ev.scope_ref),
+            lane_ref: Some(&ev.lane_ref),
+            generation: Some(ev.generation),
+            runtime_id: ev.runtime_id.as_deref(),
+            run_id: ev.run_id.as_deref(),
+            category,
+            event_kind: kind,
+            transport: ev.transport.as_deref(),
+            error_code: ev.error_code.as_deref(),
+            evidence_origin: ev.evidence_origin.as_deref(),
+            payload_json: &payload.to_string(),
+            ..Default::default()
+        },
     )?;
-    db.execute(
-        "UPDATE event_stream_cursor SET next_seq = next_seq + 1 WHERE id = 1",
-        [],
-    )?;
-    db.execute(
-        "INSERT INTO hrc_events (stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,runtime_id,run_id,launch_id,app_id,app_session_key,category,event_kind,transport,error_code,replayed,evidence_origin,payload_json) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?,?,0,?,?)",
-        params![seq, ev.ts, ev.host_session_id, ev.scope_ref, ev.lane_ref, ev.generation, ev.runtime_id, ev.run_id, category, kind, ev.transport, ev.error_code, ev.evidence_origin, payload.to_string()],
-    )?;
-    let hrc_seq = db.last_insert_rowid();
     spill_lifecycle_result(db, hrc_seq, kind, ev, payload)?;
     Ok(hrc_seq)
 }

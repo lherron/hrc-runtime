@@ -42,37 +42,31 @@ impl NativeRead {
         let _tx = db.sqlite.unchecked_transaction().map_err(Self::error)?;
         read(&db).map_err(Self::error)
     }
-    // SQL row mappers intentionally treat undecodable durable JSON as absent.
-    // Projection alone retains the existing narrow UTF-16 display recovery:
-    // re-read only an omitted payload and run the same strict key/identity
-    // decoder used by the API-fed kernel. Durable bytes never change.
+    // Projection retains narrow UTF-16 display recovery; raw durable payloads
+    // come from the store and serialization preserves them without splicing.
     fn display_payloads(db: &Store, events: &mut [Value]) -> anyhow::Result<()> {
+        #[derive(serde::Serialize)]
+        struct DisplayEvent<'a> {
+            #[serde(flatten)]
+            event: &'a Value,
+            payload: &'a serde_json::value::RawValue,
+        }
         for event in events {
             if event.get("payload").is_some() {
                 continue;
             }
-            let raw: Option<String> = db.sqlite.query_row(
-                "SELECT payload_json FROM hrc_events WHERE hrc_seq=?",
-                [event["hrcSeq"].as_i64().unwrap()],
-                |r| r.get(0),
-            )?;
-            let Some(raw) = raw else {
+            let Some(raw) = db.event_payload_raw(event["hrcSeq"].as_i64().unwrap_or_default())?
+            else {
                 continue;
             };
-            if serde_json::from_str::<&serde_json::value::RawValue>(&raw).is_err() {
+            let Ok(payload) = serde_json::from_str::<&serde_json::value::RawValue>(&raw) else {
                 continue;
-            }
-            let mut text = serde_json::to_string(event)?;
-            text.pop();
-            text.push_str(",\"payload\":");
-            text.push_str(&raw);
-            text.push('}');
-            let bytes = format!("[{text}]");
-            let decoded =
-                crate::projection_json::decode("/v1/events/latest-by-session", bytes.as_bytes())
-                    .map_err(|()| {
-                        anyhow::anyhow!("invalid projection JSON (strict identity/key policy)")
-                    })?;
+            };
+            let bytes = serde_json::to_vec(&[DisplayEvent { event, payload }])?;
+            let decoded = crate::projection_json::decode("/v1/events/latest-by-session", &bytes)
+                .map_err(|()| {
+                    anyhow::anyhow!("invalid projection JSON (strict identity/key policy)")
+                })?;
             *event = decoded[0].clone();
         }
         Ok(())

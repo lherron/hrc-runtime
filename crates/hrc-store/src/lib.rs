@@ -27,7 +27,7 @@ mod surfaces;
 pub use statement_telemetry::{SlowStatement, Sqlite};
 mod targets;
 pub use metadata::{MetadataWrite, validate_metadata};
-pub use monitor_read::{MonitorFilters, escape_like, parse_task_id};
+pub use monitor_read::{MonitorFilters, escape_like, event_row, parse_task_id};
 pub use participants::ParticipantJoin;
 
 pub fn canonical_lane(lane: &str) -> String {
@@ -210,14 +210,11 @@ impl Store {
     }
     /// System summary sessions may have no continuity or identity.
     pub fn optional_identity(&self, scope: &str, lane: &str) -> Result<Option<Value>> {
-        let lane = storage_lane(lane);
-        Ok(self.sqlite.query_row("SELECT scope_kind,agent_id,project_id,task_id,role_name FROM continuities WHERE scope_ref=? AND lane_ref=?", params![scope,lane], |row| {
-            let mut result = json!({"kind":row.get::<_,String>(0)?,"agentId":row.get::<_,String>(1)?});
-            for (i,key) in [(2,"projectId"),(3,"taskId"),(4,"roleName")] {
-                if let Some(v) = row.get::<_,Option<String>>(i)? { result[key] = v.into(); }
-            }
-            Ok(result)
-        }).optional()?)
+        self.stored_identity(scope, storage_lane(lane))
+    }
+    /// Exact stored lane spelling for ledger readers (no normalization).
+    pub fn stored_identity(&self, scope: &str, lane: &str) -> Result<Option<Value>> {
+        Ok(self.sqlite.query_row("SELECT scope_kind,agent_id,project_id,task_id,role_name FROM continuities WHERE scope_ref=? AND lane_ref=?", params![scope,lane], identity_row).optional()?)
     }
 
     pub fn create_session(&mut self, scope: &str, lane: &str) -> Result<(Value, bool)> {
@@ -277,7 +274,7 @@ impl Store {
         let identity = derive_identity(scope);
         tx.execute("INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,created_at,updated_at,last_applied_intent_json) VALUES (?,?,?,1,'active',?,?,?)", params![host,scope,lane,now,now,intent.map(Value::to_string)])?;
         tx.execute("INSERT INTO continuities(scope_ref,lane_ref,active_host_session_id,updated_at,scope_kind,agent_id,project_id,task_id,role_name) VALUES (?,?,?,?,?,?,?,?,?)", params![scope,lane,host,now,identity["kind"].as_str(),identity["agentId"].as_str(),identity["projectId"].as_str(),identity["taskId"].as_str(),identity["roleName"].as_str()])?;
-        append_event(
+        append_session_event(
             &tx,
             &json!({"hostSessionId":host,"scopeRef":scope,"laneRef":lane,"generation":1}),
             "session.created",
@@ -313,12 +310,7 @@ impl Store {
         clause: &str,
         values: impl rusqlite::Params,
     ) -> Result<Vec<Value>> {
-        let mut stmt = self.sqlite.prepare(&format!(
-            "SELECT * FROM runtimes WHERE {clause} ORDER BY created_at, runtime_id"
-        ))?;
-        Ok(stmt
-            .query_map(values, runtime_row)?
-            .collect::<rusqlite::Result<_>>()?)
+        runtime_records_where(&self.sqlite, clause, values)
     }
 
     pub fn runtime(&self, id: &str) -> Result<Option<Value>> {
@@ -326,7 +318,26 @@ impl Store {
     }
 }
 
-pub fn append_event(db: &Connection, session: &Value, kind: &str, payload: &Value) -> Result<i64> {
+/// Connection-level runtime reads for projections already inside a transaction.
+pub fn runtime_records_where(
+    db: &Connection,
+    clause: &str,
+    values: impl rusqlite::Params,
+) -> Result<Vec<Value>> {
+    let mut stmt = db.prepare(&format!(
+        "SELECT * FROM runtimes WHERE {clause} ORDER BY created_at, runtime_id"
+    ))?;
+    Ok(stmt
+        .query_map(values, runtime_row)?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn append_session_event(
+    db: &Connection,
+    session: &Value,
+    kind: &str,
+    payload: &Value,
+) -> Result<i64> {
     append_event_at(db, session, kind, payload, &timestamp())
 }
 
@@ -337,13 +348,77 @@ fn append_event_at(
     payload: &Value,
     at: &str,
 ) -> Result<i64> {
+    append_event(
+        db,
+        &EventWrite {
+            ts: at,
+            host_session_id: session["hostSessionId"].as_str(),
+            scope_ref: session["scopeRef"].as_str(),
+            lane_ref: session["laneRef"].as_str(),
+            generation: session["generation"].as_i64(),
+            category: "session",
+            event_kind: kind,
+            payload_json: &payload.to_string(),
+            ..Default::default()
+        },
+    )
+}
+
+/// Full lifecycle write contract. Absent optional columns retain SQLite's
+/// historical NULL/0 defaults. The caller owns the enclosing transaction.
+#[derive(Default)]
+pub struct EventWrite<'a> {
+    pub ts: &'a str,
+    pub host_session_id: Option<&'a str>,
+    pub scope_ref: Option<&'a str>,
+    pub lane_ref: Option<&'a str>,
+    pub generation: Option<i64>,
+    pub runtime_id: Option<&'a str>,
+    pub run_id: Option<&'a str>,
+    pub launch_id: Option<&'a str>,
+    pub app_id: Option<&'a str>,
+    pub app_session_key: Option<&'a str>,
+    pub category: &'a str,
+    pub event_kind: &'a str,
+    pub transport: Option<&'a str>,
+    pub error_code: Option<&'a str>,
+    pub replayed: bool,
+    pub evidence_origin: Option<&'a str>,
+    pub source_ref: Option<&'a str>,
+    pub origin_seq: Option<i64>,
+    pub payload_json: &'a str,
+}
+
+pub fn append_event(db: &Connection, e: &EventWrite<'_>) -> Result<i64> {
     let seq: i64 = db.query_row(
         "UPDATE event_stream_cursor SET next_seq=next_seq+1 WHERE id=1 RETURNING next_seq-1",
         [],
         |r| r.get(0),
     )?;
-    db.execute("INSERT INTO hrc_events(stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,category,event_kind,payload_json) VALUES (?,?,?,?,?,?,'session',?,?)", params![seq,at,session["hostSessionId"].as_str(),session["scopeRef"].as_str(),session["laneRef"].as_str(),session["generation"].as_i64(),kind,payload.to_string()])?;
+    db.execute("INSERT INTO hrc_events(stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,runtime_id,run_id,launch_id,app_id,app_session_key,category,event_kind,transport,error_code,replayed,evidence_origin,source_ref,origin_seq,payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        params![seq,e.ts,e.host_session_id,e.scope_ref,e.lane_ref,e.generation,e.runtime_id,e.run_id,e.launch_id,e.app_id,e.app_session_key,e.category,e.event_kind,e.transport,e.error_code,e.replayed,e.evidence_origin,e.source_ref,e.origin_seq,e.payload_json])?;
     Ok(db.last_insert_rowid())
+}
+
+pub fn identity_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    let mut result = json!({"kind":row.get::<_,String>("scope_kind")?,"agentId":row.get::<_,String>("agent_id")?});
+    for (col, key) in [
+        ("project_id", "projectId"),
+        ("task_id", "taskId"),
+        ("role_name", "roleName"),
+    ] {
+        if let Some(v) = row.get::<_, Option<String>>(col)? {
+            result[key] = v.into();
+        }
+    }
+    Ok(result)
+}
+/// Select a consumer's keys in its wire order without re-reading the row.
+pub fn select_keys(value: &Value, keys: &[&str]) -> Value {
+    keys.iter()
+        .filter_map(|key| value.get(*key).map(|v| ((*key).into(), v.clone())))
+        .collect::<Map<_, _>>()
+        .into()
 }
 
 fn fields(
@@ -352,88 +427,107 @@ fn fields(
     optional: &[(&str, &str)],
     json_fields: &[(&str, &str)],
 ) -> rusqlite::Result<Value> {
-    let mut result = Map::new();
-    for &(col, key) in required {
-        result.insert(key.into(), row.get::<_, String>(col)?.into());
-    }
-    for &(col, key) in optional {
-        if let Some(v) = row.get::<_, Option<String>>(col)? {
-            result.insert(key.into(), v.into());
-        }
-    }
-    for &(col, key) in json_fields {
-        if let Some(v) = row.get::<_, Option<String>>(col)? {
-            let value = serde_json::from_str(&v).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    row.as_ref().column_index(col).unwrap_or(0),
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })?;
-            result.insert(key.into(), value);
-        }
-    }
-    result.insert("generation".into(), row.get::<_, i64>("generation")?.into());
-    Ok(result.into())
+    let columns = required
+        .iter()
+        .chain(optional)
+        .chain(json_fields)
+        .copied()
+        .chain(std::iter::once(("generation", "generation")))
+        .collect::<Vec<_>>();
+    record_row(row, &columns)
 }
 
-fn session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
-    let mut result = fields(
+/// Ordered ledger records. Schema-required text columns are non-NULL; optional
+/// columns are omitted. JSON decoding and scalar exceptions are shared here.
+pub(crate) fn record_row(
+    row: &rusqlite::Row<'_>,
+    columns: &[(&str, &str)],
+) -> rusqlite::Result<Value> {
+    let mut out = Map::new();
+    for &(column, key) in columns {
+        let value = match key {
+            "generation" | "hrcSeq" | "streamSeq" | "id" | "seq" => {
+                row.get::<_, i64>(column)?.into()
+            }
+            "originSeq" | "harnessGeneration" | "turnAttempt" | "hrcEventSeq" => {
+                let Some(value) = row.get::<_, Option<i64>>(column)? else {
+                    continue;
+                };
+                value.into()
+            }
+            "supportsInflightInput" | "replayed" => (row.get::<_, i64>(column)? != 0).into(),
+            "statusChangedAt" => row
+                .get::<_, Option<String>>(column)?
+                .unwrap_or_else(|| "unknown".into())
+                .into(),
+            _ => {
+                let Some(text) = row.get::<_, Option<String>>(column)? else {
+                    continue;
+                };
+                if column == "evidence_origin" && text != "retained" {
+                    continue;
+                }
+                if matches!(
+                    key,
+                    "tmuxJson"
+                        | "runtimeStateJson"
+                        | "presentation"
+                        | "continuation"
+                        | "lastAppliedIntentJson"
+                ) {
+                    serde_json::from_str(&text).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            row.as_ref().column_index(column).unwrap_or(0),
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?
+                } else {
+                    text.into()
+                }
+            }
+        };
+        out.insert(key.into(), value);
+    }
+    Ok(out.into())
+}
+
+pub fn session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    let mut result = record_row(
         row,
         &[
             ("host_session_id", "hostSessionId"),
             ("scope_ref", "scopeRef"),
             ("lane_ref", "laneRef"),
+            ("generation", "generation"),
             ("status", "status"),
+            ("prior_host_session_id", "priorHostSessionId"),
             ("created_at", "createdAt"),
             ("updated_at", "updatedAt"),
-        ],
-        &[("prior_host_session_id", "priorHostSessionId")],
-        &[
             ("last_applied_intent_json", "lastAppliedIntentJson"),
             ("continuation_json", "continuation"),
         ],
     )?;
-    result["laneRef"] = canonical_lane(result["laneRef"].as_str().unwrap()).into();
-    // hrc-store-sqlite mapSessionRow key order.
-    let mut fields = result.as_object().cloned().unwrap_or_default();
-    let mut ordered = Map::new();
-    for key in [
-        "hostSessionId",
-        "scopeRef",
-        "laneRef",
-        "generation",
-        "status",
-        "priorHostSessionId",
-        "createdAt",
-        "updatedAt",
-        "lastAppliedIntentJson",
-        "continuation",
-    ] {
-        if let Some(v) = fields.remove(key) {
-            ordered.insert(key.into(), v);
-        }
-    }
-    ordered.extend(fields);
-    Ok(ordered.into())
+    result["laneRef"] = canonical_lane(result["laneRef"].as_str().unwrap_or_default()).into();
+    Ok(result)
 }
 
-fn runtime_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
-    let mut result = fields(
+pub fn runtime_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    record_row(
         row,
         &[
             ("runtime_id", "runtimeId"),
             ("host_session_id", "hostSessionId"),
             ("scope_ref", "scopeRef"),
             ("lane_ref", "laneRef"),
+            ("generation", "generation"),
             ("transport", "transport"),
-            ("status", "status"),
-            ("created_at", "createdAt"),
-            ("updated_at", "updatedAt"),
-        ],
-        &[
             ("harness", "harness"),
             ("provider", "provider"),
+            ("status", "status"),
+            ("status_changed_at", "statusChangedAt"),
+            ("tmux_json", "tmuxJson"),
+            ("supports_inflight_input", "supportsInflightInput"),
             ("active_run_id", "activeRunId"),
             ("last_activity_at", "lastActivityAt"),
             ("controller_kind", "controllerKind"),
@@ -441,54 +535,13 @@ fn runtime_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
             ("active_invocation_id", "activeInvocationId"),
             ("plan_hash", "planHash"),
             ("selected_profile_hash", "selectedProfileHash"),
-            ("lifecycle_terminal_reason", "lifecycleTerminalReason"),
-        ],
-        &[
-            ("tmux_json", "tmuxJson"),
             ("runtime_state_json", "runtimeStateJson"),
+            ("lifecycle_terminal_reason", "lifecycleTerminalReason"),
             ("presentation_json", "presentation"),
+            ("created_at", "createdAt"),
+            ("updated_at", "updatedAt"),
         ],
-    )?;
-    result["supportsInflightInput"] = (row.get::<_, i64>("supports_inflight_input")? != 0).into();
-    result["statusChangedAt"] = row
-        .get::<_, Option<String>>("status_changed_at")?
-        .unwrap_or_else(|| "unknown".into())
-        .into();
-    // hrc-store-sqlite mapRuntimeRow key order.
-    let mut fields = result.as_object().cloned().unwrap_or_default();
-    let mut ordered = Map::new();
-    for key in [
-        "runtimeId",
-        "hostSessionId",
-        "scopeRef",
-        "laneRef",
-        "generation",
-        "transport",
-        "harness",
-        "provider",
-        "status",
-        "statusChangedAt",
-        "tmuxJson",
-        "supportsInflightInput",
-        "activeRunId",
-        "lastActivityAt",
-        "controllerKind",
-        "activeOperationId",
-        "activeInvocationId",
-        "planHash",
-        "selectedProfileHash",
-        "runtimeStateJson",
-        "lifecycleTerminalReason",
-        "presentation",
-        "createdAt",
-        "updatedAt",
-    ] {
-        if let Some(v) = fields.remove(key) {
-            ordered.insert(key.into(), v);
-        }
-    }
-    ordered.extend(fields);
-    Ok(ordered.into())
+    )
 }
 
 pub fn derive_identity(scope: &str) -> Value {
