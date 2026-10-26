@@ -1,5 +1,5 @@
 //! Session continuity and layered metadata HTTP boundary.
-use super::{ApiError, Server, parse_body, parse_session_ref};
+use super::{ApiError, Server, Shared, parse_body, parse_session_ref};
 use axum::{
     Json,
     http::{HeaderMap, Method, StatusCode},
@@ -220,4 +220,91 @@ fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, Ap
             .insert(key, value.to_string().parse().unwrap());
     }
     Ok(response)
+}
+
+/// POST /v1/sessions/resolve. A create funnels through the summon seam like
+/// Bun's handleResolveSession; scoped read-only resolves are routed earlier.
+pub async fn resolve(server: &Shared, body: &[u8]) -> Result<Response, ApiError> {
+    let b = parse_body(body)?;
+    if !b.is_object() {
+        return Err(ApiError::bad("request body must be an object", None));
+    }
+    let raw = b["sessionRef"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            ApiError::bad(
+                "sessionRef is required",
+                Some(json!({"field":"sessionRef"})),
+            )
+        })?;
+    if b.get("create").is_some_and(|v| !v.is_boolean()) {
+        return Err(ApiError::bad(
+            "create must be a boolean",
+            Some(json!({"field":"create"})),
+        ));
+    }
+    if b.get("runtimeIntent").is_some_and(|v| !v.is_object()) {
+        return Err(ApiError::bad(
+            "runtimeIntent must be an object",
+            Some(json!({"field":"runtimeIntent"})),
+        ));
+    }
+    if b.get("summonIntent")
+        .is_some_and(|v| v != "explicit_local" && v != "implicit")
+    {
+        return Err(ApiError::bad(
+            "summonIntent must be one of explicit_local, implicit",
+            Some(json!({"field":"summonIntent"})),
+        ));
+    }
+    let (scope, lane) = parse_session_ref(raw)?;
+    let create = b["create"] == true;
+    let existing = server
+        .store
+        .lock()
+        .unwrap()
+        .continuity_session(scope, lane)?;
+    let (mut session, created) = match existing {
+        Some(s) => {
+            // `resolve --create` is a summon surface even over existing
+            // continuity: a retired scope regains no authority from a row.
+            if create {
+                super::federation::summon::assert_scope_not_retired(server, scope, "resolve-session").await?;
+            }
+            (s, false)
+        }
+        None if create => {
+            // hrc run / hrc start send explicit_local; every other caller is implicit.
+            let runtime_intent = &b["runtimeIntent"];
+            let mut hint = serde_json::Map::new();
+            for key in ["placement", "harness"] {
+                if let Some(v) = runtime_intent.get(key) {
+                    hint.insert(key.into(), v.clone());
+                }
+            }
+            let summon = super::federation::summon::SummonRequest {
+                scope_ref: scope,
+                lane_ref: Some(lane),
+                path: "resolve-session",
+                intent: if b["summonIntent"] == "explicit_local" { "explicit_local" } else { "implicit" },
+                known_session: None,
+                origin: None,
+                capability_hint: runtime_intent.is_object().then(|| Value::Object(hint)),
+                provision: runtime_intent.get("provision").cloned(),
+            };
+            super::federation::summon::with_summon_authority(server, summon, || async {
+                let mut db = server.store.lock().unwrap();
+                Ok(match db.continuity_session(scope, lane)? {
+                    Some(raced) => (raced, false),
+                    None => db.create_session(scope, lane)?,
+                })
+            })
+            .await?
+        }
+        None=>return Ok(Json(json!({"found":false,"hostSessionId":null,"generation":null,"created":false,"session":null})).into_response()),
+    };
+    let identity = server.store.lock().unwrap().identity(scope, lane)?;
+    session["identity"] = identity.clone();
+    Ok(Json(json!({"found":true,"hostSessionId":session["hostSessionId"],"generation":session["generation"],"created":created,"session":session,"identity":identity})).into_response())
 }

@@ -462,6 +462,8 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
                 .map(|v| Json(v).into_response()),
             Err(e) => Err(e),
         }
+    } else if method == Method::POST && uri.path() == "/v1/sessions/resolve" {
+        sessions::resolve(server, &body).await
     } else if method == Method::POST && uri.path() == "/v1/previews/run" {
         match parse_body(&body) {
             Ok(value) => preview::handle(value).await,
@@ -682,52 +684,6 @@ fn handle(
     }
     if method == Method::GET && path == "/v1/status" {
         return status(server, query).map(|value| Json(value).into_response());
-    }
-    if method == Method::POST && path == "/v1/sessions/resolve" {
-        let b = parse_body(body)?;
-        if !b.is_object() {
-            return Err(ApiError::bad("request body must be an object", None));
-        }
-        let raw = b["sessionRef"]
-            .as_str()
-            .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| {
-                ApiError::bad(
-                    "sessionRef is required",
-                    Some(json!({"field":"sessionRef"})),
-                )
-            })?;
-        if b.get("create").is_some_and(|v| !v.is_boolean()) {
-            return Err(ApiError::bad(
-                "create must be a boolean",
-                Some(json!({"field":"create"})),
-            ));
-        }
-        if b.get("runtimeIntent").is_some_and(|v| !v.is_object()) {
-            return Err(ApiError::bad(
-                "runtimeIntent must be an object",
-                Some(json!({"field":"runtimeIntent"})),
-            ));
-        }
-        if b.get("summonIntent")
-            .is_some_and(|v| v != "explicit_local" && v != "implicit")
-        {
-            return Err(ApiError::bad(
-                "summonIntent must be one of explicit_local, implicit",
-                Some(json!({"field":"summonIntent"})),
-            ));
-        }
-        let (scope, lane) = parse_session_ref(raw)?;
-        let mut db = server.store.lock().unwrap();
-        let existing = db.continuity_session(scope, lane)?;
-        let (mut session,created)=match existing {
-            Some(s)=>(s,false),
-            None if b["create"]==true =>db.create_session(scope,lane)?,
-            None=>return Ok(Json(json!({"found":false,"hostSessionId":null,"generation":null,"created":false,"session":null})).into_response()),
-        };
-        let identity = db.identity(scope, lane)?;
-        session["identity"] = identity.clone();
-        return Ok(Json(json!({"found":true,"hostSessionId":session["hostSessionId"],"generation":session["generation"],"created":created,"session":session,"identity":identity})).into_response());
     }
     if method == Method::GET && path.starts_with("/v1/sessions/by-host/") {
         let host = path.trim_start_matches("/v1/sessions/by-host/");
