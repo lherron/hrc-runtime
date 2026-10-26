@@ -23,7 +23,7 @@ pub fn handle(
     query: &HashMap<String, String>,
 ) -> Result<Response, ApiError> {
     let page = path == "/v1/sessions/page";
-    let local = super::local_node_id();
+    let local = server.federation.node_id().to_owned();
     let known = vec![local.clone()];
     let mut filters = HashMap::new();
     for field in [

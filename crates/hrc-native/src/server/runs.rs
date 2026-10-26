@@ -1,6 +1,6 @@
 //! GET /v1/runs (runtime-list-handlers.ts handleListRuns, parsers/runtime.ts
-//! parseListRunsFilter, RunRepository.listRuns). A scope-filtered read is
-//! answered locally: rusthrc runs single-node (scope forwarding is N4).
+//! parseListRunsFilter, RunRepository.listRuns). A scope-filtered read
+//! reaches here only once federation routing has ruled it local.
 use super::{ApiError, Server};
 use axum::{
     Json,

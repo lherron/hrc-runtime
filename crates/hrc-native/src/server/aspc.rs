@@ -644,7 +644,7 @@ pub fn placement_bindings(
             Some(json!({"field":"home"})),
         ));
     }
-    let local = super::local_node_id();
+    let local = server.federation.node_id().to_owned();
     let db = server.store.lock().unwrap();
     // Bun also returns an empty enumeration for an absent pre-federation
     // ledger or a repository read error. This route never creates the table.

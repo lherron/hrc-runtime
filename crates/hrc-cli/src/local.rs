@@ -5,6 +5,7 @@ use serde_json::Value;
 mod diagnostics;
 mod doctor;
 mod federation;
+pub use federation::{FederationConfig, FederationPeer, load_config as load_federation_config};
 mod info;
 pub(crate) mod jsc_json;
 mod server;

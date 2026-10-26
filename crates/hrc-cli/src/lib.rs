@@ -32,6 +32,8 @@ mod server_start;
 mod server_status;
 mod turn;
 
+/// federation.json for the daemon (federation-config.ts resolveFederationConfig).
+pub use local::{FederationConfig, FederationPeer, load_federation_config};
 /// Validate a canonical agent ScopeRef using the operator CLI's shared grammar.
 pub use selectors::validate_scope;
 

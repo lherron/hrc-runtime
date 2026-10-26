@@ -6,6 +6,7 @@ mod control;
 mod controller;
 mod events;
 mod evidence;
+mod federation;
 mod front;
 mod ledger;
 mod mail;
@@ -70,6 +71,8 @@ struct Server {
     probing: Mutex<HashSet<String>>,
     runtime: PathBuf,
     bun_passthrough: Option<PathBuf>,
+    /// federation.json identity, peers and registry client (resolved at boot).
+    federation: federation::Node,
     /// Front-door role: only front::is_front_safe routes are served natively.
     front: bool,
     state: PathBuf,
@@ -229,6 +232,12 @@ pub async fn serve(role: front::Role) -> Result<()> {
             bun_socket.display()
         );
     }
+    // Node identity resolves before ownership: a malformed federation config
+    // refuses loudly rather than letting the daemon come up as the wrong node.
+    let federation = federation::Node::new(
+        hrc_cli::load_federation_config(&state.to_string_lossy()).map_err(anyhow::Error::msg)?,
+        &state,
+    )?;
     let owner = if front {
         Owner::acquire_front(&runtime)?
     } else {
@@ -266,6 +275,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         probing: Mutex::new(HashSet::new()),
         runtime,
         bun_passthrough,
+        federation,
         front,
         state,
         started_at: timestamp(),
@@ -302,33 +312,6 @@ pub async fn serve(role: front::Role) -> Result<()> {
     drop(owner);
     Ok(())
 }
-fn local_node_id() -> String {
-    let mut bytes = [0u8; 256];
-    // gethostname has no filesystem side effects and matches node:os.hostname.
-    if unsafe { libc::gethostname(bytes.as_mut_ptr().cast(), bytes.len()) } != 0 {
-        return "unknown-node".into();
-    }
-    let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-    let raw = String::from_utf8_lossy(&bytes[..end]);
-    let short = raw.trim().split('.').next().unwrap_or("").to_lowercase();
-    let result: String = short
-        .chars()
-        .take(64)
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || "._-".contains(c) {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    if result.is_empty() || result == "local" {
-        "unknown-node".into()
-    } else {
-        result
-    }
-}
-
 async fn shutdown() {
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("install SIGTERM handler");
@@ -444,7 +427,17 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
         Ok(body) => body,
         Err(_) => return ApiError::bad("request body must be valid JSON", None).into_response(),
     };
-    let result = if method == Method::GET
+    // T-10418: a scope-keyed read is answered by the scope's home.
+    if let Some(scoped) = federation::scope_of(&method, uri.path(), &query, &body)
+        && let Some(response) = federation::route_request(server, scoped, &uri, &headers).await
+    {
+        return response;
+    }
+    let result = if method == Method::GET && uri.path() == "/v1/federation/locate" {
+        federation::locate(server, &query).await
+    } else if method == Method::GET && uri.path() == "/v1/federation/designations" {
+        federation::designations(server, &query).await
+    } else if method == Method::GET
         && (uri.path() == "/v1/events/bounded-stream"
             || uri.path() == "/v1/broker-events"
             || (uri.path() == "/v1/events"
@@ -639,6 +632,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/targets/by-session-ref",
                 "/v1/runtimes/live-refs",
                 "/v1/placement/bindings",
+                "/v1/federation/locate",
+                "/v1/federation/designations",
             ]
             .contains(&path)
                 || path.starts_with("/v1/sessions/by-host/")
@@ -844,7 +839,7 @@ fn status(
     }
     let db = server.store.lock().unwrap();
     let binary = env::current_exe().map_err(anyhow::Error::from)?;
-    let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":{"mode":"unmanaged","packagePath":binary.parent(),"processStartedAt":server.started_at,"runningEqualsInstalled":false},"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"lastRestart":null,"mailKicker":"absent","node":{"nodeId":env::var("HOSTNAME").unwrap_or_else(|_|"localhost".into()),"nodeIdProvenance":"derived","mode":"single-node","configPath":server.state.join("federation.json"),"configExists":false,"peerCount":0,"peers":[]},"capabilities":{"semanticCore":{"sessions":true,"ensureRuntime":false,"dispatchTurn":false,"inFlightInput":false,"capture":false,"attach":false,"clearContext":false},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":false,"literalInput":false,"surfaceBindings":false,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":{"available":false}},"serverLifecycle":false,"selfRestart":false,"sessionRestart":false,"federatedSessionRead":false}});
+    let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":{"mode":"unmanaged","packagePath":binary.parent(),"processStartedAt":server.started_at,"runningEqualsInstalled":false},"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"lastRestart":null,"mailKicker":"absent","node":server.federation.config.summary(),"capabilities":{"semanticCore":{"sessions":true,"ensureRuntime":false,"dispatchTurn":false,"inFlightInput":false,"capture":false,"attach":false,"clearContext":false},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":false,"literalInput":false,"surfaceBindings":false,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":{"available":false}},"serverLifecycle":false,"selfRestart":false,"sessionRestart":false,"federatedSessionRead":false}});
     if query.get("includeSessions").is_some_and(|v| v == "true") {
         value["sessions"] = json!(
             db.sessions()?

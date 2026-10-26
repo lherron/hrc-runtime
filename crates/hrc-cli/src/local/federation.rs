@@ -255,11 +255,65 @@ fn stringify(value: Option<&Value>) -> String {
     value.map_or_else(|| "undefined".into(), js_json)
 }
 
+/// One `peers` entry; the tokens stay in daemon memory and never reach a summary.
+#[derive(Clone, Debug)]
+pub struct FederationPeer {
+    pub node_id: String,
+    /// Peer-protocol origin, as WHATWG `URL.toString()` normalized it.
+    pub endpoint: String,
+    pub registry_endpoint: Option<String>,
+    pub token: String,
+    pub accepted_tokens: Vec<String>,
+}
+
+/// federation-config.ts `FederationConfig`, with secrets.
+#[derive(Clone, Debug)]
+pub struct FederationConfig {
+    pub node_id: String,
+    pub node_id_provenance: &'static str,
+    pub source_path: String,
+    pub source_exists: bool,
+    pub peers: Vec<FederationPeer>,
+    /// Trimmed `registry.bind`, present only on the registry host.
+    pub registry_bind: Option<String>,
+    pub peer_listener_bind: Option<String>,
+    pub gate_mode: String,
+    pub registry_host: Option<String>,
+}
+
+impl FederationConfig {
+    /// `summarizeFederationConfig`: tokens are absent by construction.
+    pub fn summary(&self) -> Value {
+        let peers: Vec<Value> = self.peers.iter().map(FederationPeer::summary).collect();
+        json!({
+            "nodeId": self.node_id,
+            "nodeIdProvenance": self.node_id_provenance,
+            "mode": if peers.is_empty() { "single-node" } else { "federated" },
+            "configPath": self.source_path,
+            "configExists": self.source_exists,
+            "peerCount": peers.len(),
+            "peers": peers,
+        })
+    }
+}
+
+impl FederationPeer {
+    fn summary(&self) -> Value {
+        let mut summary = json!({"nodeId": self.node_id, "endpoint": self.endpoint});
+        if let Some(registry) = &self.registry_endpoint {
+            summary["registryEndpoint"] = registry.clone().into();
+        }
+        summary
+    }
+}
+
 struct Parsed {
     declared: Option<String>,
-    peers: Vec<Value>,
-    registry: bool,
-    peer_listener: bool,
+    peers: Vec<FederationPeer>,
+    registry: Option<String>,
+    peer_listener: Option<String>,
+    gate_mode: Option<String>,
+    registry_host: Option<String>,
 }
 
 fn parse_document(value: &Value, source: &str) -> Fallible<Parsed> {
@@ -361,15 +415,23 @@ fn parse_document(value: &Value, source: &str) -> Fallible<Parsed> {
                 }
             }
             let endpoint = validate_peer_endpoint(crate::js::trim(endpoint), &place)?;
-            let mut summary = json!({"nodeId": peer_id, "endpoint": endpoint});
-            if let Some(raw) = raw_registry.and_then(Value::as_str) {
-                summary["registryEndpoint"] =
-                    validate_registry_endpoint(crate::js::trim(raw), &registry_place)?.into();
-            }
-            peers.push(summary);
+            let registry_endpoint = match raw_registry.and_then(Value::as_str) {
+                Some(raw) => Some(validate_registry_endpoint(
+                    crate::js::trim(raw),
+                    &registry_place,
+                )?),
+                None => None,
+            };
+            peers.push(FederationPeer {
+                node_id: peer_id.clone(),
+                endpoint,
+                registry_endpoint,
+                token: token.to_owned(),
+                accepted_tokens: accepted,
+            });
         }
     }
-    let mut registry = false;
+    let mut registry = None;
     if let Some(raw) = doc.get("registry") {
         let Some(raw) = raw.as_object() else {
             return Err(format!(
@@ -382,9 +444,9 @@ fn parse_document(value: &Value, source: &str) -> Fallible<Parsed> {
             ));
         };
         parse_bind(bind, &format!("{source} registry"), "a ")?;
-        registry = true;
+        registry = Some(crate::js::trim(bind).to_owned());
     }
-    let mut peer_listener = false;
+    let mut peer_listener = None;
     if let Some(raw) = doc.get("peerListener") {
         let Some(raw) = raw.as_object() else {
             return Err(format!(
@@ -397,8 +459,9 @@ fn parse_document(value: &Value, source: &str) -> Fallible<Parsed> {
             ));
         };
         parse_bind(bind, &format!("{source} peerListener"), "a specific ")?;
-        peer_listener = true;
+        peer_listener = Some(crate::js::trim(bind).to_owned());
     }
+    let (mut gate_mode, mut registry_host) = (None, None);
     if let Some(raw) = doc.get("gate") {
         let place = format!("{source} field \"gate\"");
         let Some(raw) = raw.as_object() else {
@@ -421,35 +484,39 @@ fn parse_document(value: &Value, source: &str) -> Fallible<Parsed> {
                     "{place} field \"registryHost\" must be a string nodeId"
                 ));
             };
-            parse_node_id(host, &format!("{place} field \"registryHost\""))?;
+            registry_host = Some(parse_node_id(
+                host,
+                &format!("{place} field \"registryHost\""),
+            )?);
         }
+        gate_mode = mode.and_then(Value::as_str).map(str::to_owned);
     }
     Ok(Parsed {
         declared,
         peers,
         registry,
         peer_listener,
+        gate_mode,
+        registry_host,
     })
 }
 
-/// The summarized config, or the error `resolveFederationConfig` throws.
-fn resolve(source: &str) -> Fallible<Value> {
-    let summary = |node_id: String, provenance: &str, exists: bool, peers: Vec<Value>| {
-        json!({
-            "nodeId": node_id,
-            "nodeIdProvenance": provenance,
-            "mode": if peers.is_empty() { "single-node" } else { "federated" },
-            "configPath": source,
-            "configExists": exists,
-            "peerCount": peers.len(),
-            "peers": peers,
-        })
+/// The config, or the error `resolveFederationConfig` throws.
+fn resolve(source: &str) -> Fallible<FederationConfig> {
+    let absent = FederationConfig {
+        node_id: derive_node_id(),
+        node_id_provenance: "derived",
+        source_path: source.to_owned(),
+        source_exists: false,
+        peers: vec![],
+        registry_bind: None,
+        peer_listener_bind: None,
+        gate_mode: "off".into(),
+        registry_host: None,
     };
     let raw = match super::read_text(source) {
         Ok(raw) => raw,
-        Err((Some(libc::ENOENT), _)) => {
-            return Ok(summary(derive_node_id(), "derived", false, vec![]));
-        }
+        Err((Some(libc::ENOENT), _)) => return Ok(absent),
         Err((_, message)) => {
             return Err(format!(
                 "federation config {source} could not be read: {message}"
@@ -465,39 +532,57 @@ fn resolve(source: &str) -> Fallible<Value> {
             doc.peers.len()
         ));
     }
-    if doc.declared.is_none() && doc.registry {
+    if doc.declared.is_none() && doc.registry.is_some() {
         return Err(format!(
             "federation config {source} registry listener requires a declared \"nodeId\" (a hostname-derived id is valid only in single-node mode)"
         ));
     }
-    if doc.declared.is_none() && doc.peer_listener {
+    if doc.declared.is_none() && doc.peer_listener.is_some() {
         return Err(format!(
             "federation config {source} peer listener requires a declared \"nodeId\" (a hostname-derived id is valid only in single-node mode)"
         ));
     }
-    if doc.peer_listener && doc.peers.is_empty() {
+    if doc.peer_listener.is_some() && doc.peers.is_empty() {
         return Err(format!(
             "federation config {source} peer listener requires at least one configured peer for bearer authentication"
         ));
     }
-    Ok(match doc.declared {
-        Some(id) => summary(id, "declared", true, doc.peers),
-        None => summary(derive_node_id(), "derived", true, doc.peers),
+    let (node_id, node_id_provenance) = match doc.declared {
+        Some(id) => (id, "declared"),
+        None => (absent.node_id, "derived"),
+    };
+    Ok(FederationConfig {
+        node_id,
+        node_id_provenance,
+        source_exists: true,
+        peers: doc.peers,
+        registry_bind: doc.registry,
+        peer_listener_bind: doc.peer_listener,
+        gate_mode: doc.gate_mode.unwrap_or_else(|| "off".into()),
+        registry_host: doc.registry_host,
+        ..absent
     })
+}
+
+/// `resolveFederationConfig` for daemon startup: a malformed file refuses.
+pub fn load_config(state_root: &str) -> Fallible<FederationConfig> {
+    resolve(&config_path(state_root))
 }
 
 /// help.ts `resolveNodeIdentitySummary`.
 pub(super) fn node_summary(state_root: &str) -> Value {
     let source = config_path(state_root);
-    resolve(&source).unwrap_or_else(|error| {
-        let mut node = Map::new();
-        node.insert("nodeId".into(), "(unresolved)".into());
-        node.insert("nodeIdProvenance".into(), "unresolved".into());
-        node.insert("mode".into(), "unresolved".into());
-        node.insert("configPath".into(), source.into());
-        node.insert("configExists".into(), true.into());
-        node.insert("peerCount".into(), 0.into());
-        node.insert("error".into(), error.into());
-        Value::Object(node)
-    })
+    resolve(&source)
+        .map(|config| config.summary())
+        .unwrap_or_else(|error| {
+            let mut node = Map::new();
+            node.insert("nodeId".into(), "(unresolved)".into());
+            node.insert("nodeIdProvenance".into(), "unresolved".into());
+            node.insert("mode".into(), "unresolved".into());
+            node.insert("configPath".into(), source.into());
+            node.insert("configExists".into(), true.into());
+            node.insert("peerCount".into(), 0.into());
+            node.insert("error".into(), error.into());
+            Value::Object(node)
+        })
 }
