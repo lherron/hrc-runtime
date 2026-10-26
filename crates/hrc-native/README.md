@@ -59,6 +59,13 @@ buffers broker literal text until Enter, sends an empty Enter to the pane, and
 flushes the prompt through admission as door `literal-flush`.
 `POST /v1/active-run-contributions` records `active_input_deliveries`, types an
 answer into a pending AskUserQuestion, and otherwise recommends the queue.
+`POST /v1/runs/prepare-attached` and `/v1/runs/resume-attached`
+(`server/attached.rs`) are the `hrc run` door. A live seat answers `started`.
+A birth (promptless, or with a prompt through admission door
+`prepare-attached`) parks after its start graph commits (`broker::AttachGate`),
+answers `prepared` with the attach descriptor, and starts its invocation only
+after resume and an attached tmux client. `e2e/n2_attached.py` drives the
+unchanged Bun `hrc run` on a pty for `--suite n2-attached`.
 A broker client's `close()` half-closes and drains the
 frames the broker already sent (`invocation.disposed` follows the dispose
 reply). While a terminate finalizes a runtime, its projected exit writes no

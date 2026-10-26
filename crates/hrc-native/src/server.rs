@@ -1,5 +1,6 @@
 mod accounting;
 mod aspc;
+mod attached;
 mod broker;
 mod compile;
 mod control;
@@ -72,6 +73,8 @@ struct Server {
     probing: Mutex<HashSet<String>>,
     /// runtime -> literal text buffered until an Enter (pendingBrokerLiteralInputs).
     literal: Mutex<HashMap<String, String>>,
+    /// pendingStartId -> prepared attached start (attachedRunOperations).
+    attached: Mutex<HashMap<String, attached::Pending>>,
     runtime: PathBuf,
     bun_passthrough: Option<PathBuf>,
     /// federation.json identity, peers and registry client (resolved at boot).
@@ -277,6 +280,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         ledger: tokio::sync::watch::Sender::new(0),
         probing: Mutex::new(HashSet::new()),
         literal: Mutex::new(HashMap::new()),
+        attached: Mutex::new(HashMap::new()),
         runtime,
         bun_passthrough,
         federation,
@@ -526,6 +530,16 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
             Ok(value) => turns::submission(server, "invoke", value).await,
             Err(e) => Err(e),
         }
+    } else if method == Method::POST
+        && ["/v1/runs/prepare-attached", "/v1/runs/resume-attached"].contains(&uri.path())
+    {
+        match parse_body(&body) {
+            Ok(value) if uri.path() == "/v1/runs/prepare-attached" => {
+                attached::prepare(server, value).await
+            }
+            Ok(value) => attached::resume(server, value).await,
+            Err(e) => Err(e),
+        }
     } else if method == Method::POST && uri.path() == "/v1/active-run-contributions" {
         match parse_body(&body) {
             Ok(value) => input::contribution(server, value).await,
@@ -664,6 +678,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/capture/by-selector",
                 "/v1/literal-input/by-selector",
                 "/v1/active-run-contributions",
+                "/v1/runs/prepare-attached",
+                "/v1/runs/resume-attached",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
                 "/v1/runtimes/prune",

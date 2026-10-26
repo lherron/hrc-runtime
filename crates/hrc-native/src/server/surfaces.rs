@@ -75,6 +75,10 @@ pub fn attach(server: &Server, body: Value) -> Result<Response, ApiError> {
 /// attachRuntimeEffectfully over an already-reconciled runtime; `strict` marks
 /// the GET /v1/attach door (strictRuntimeId on the replacement refusal).
 pub fn descriptor(server: &Server, id: &str, strict: bool) -> Result<Response, ApiError> {
+    Ok(Json(descriptor_value(server, id, strict)?).into_response())
+}
+/// attachRuntime's descriptor body.
+pub fn descriptor_value(server: &Server, id: &str, strict: bool) -> Result<Value, ApiError> {
     let runtime = runtimes::runtime(server, id)?;
     let detail = json!({"runtimeId":id,"transport":runtime["transport"]});
     if runtime["transport"] == "sdk" {
@@ -192,7 +196,9 @@ pub fn descriptor(server: &Server, id: &str, strict: bool) -> Result<Response, A
             fence[key] = v.clone();
         }
     }
-    Ok(Json(json!({"transport":"tmux","argv":[tmux_binary(),"-S",socket,"attach-session","-t",target],"bindingFence":fence})).into_response())
+    Ok(
+        json!({"transport":"tmux","argv":[tmux_binary(),"-S",socket,"attach-session","-t",target],"bindingFence":fence}),
+    )
 }
 pub fn bind(server: &Server, body: Value) -> Result<Response, ApiError> {
     object(&body)?;

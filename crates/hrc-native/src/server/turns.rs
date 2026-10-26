@@ -4,6 +4,7 @@
 pub mod admission;
 pub mod parse;
 mod route;
+pub use route::publish_presentation;
 
 use crate::server::{ApiError, Shared, projection::db};
 use admission::{Admitted, Outcome, Request};
@@ -602,6 +603,7 @@ pub async fn dispatch_turn(server: &Shared, body: Value) -> Result<Response, Api
         idempotency_key: req.idempotency_key.as_deref(),
         repair: req.repair.as_ref(),
         first_turn_timeout_ms: req.first_turn_timeout_ms,
+        attach: None,
     };
     let admission = Request {
         door: "turns",
@@ -676,6 +678,7 @@ pub async fn submission(server: &Shared, door: &str, body: Value) -> Result<Resp
         idempotency_key: req.idempotency_key.as_deref(),
         repair: None,
         first_turn_timeout_ms: None,
+        attach: None,
     };
     let admission = Request {
         door: "submission",
@@ -758,6 +761,7 @@ pub async fn literal_flush(
         idempotency_key: None,
         repair: None,
         first_turn_timeout_ms: None,
+        attach: None,
     };
     // enrichDispatchTurnResponse only: no public receipt projection here.
     let body = match route::deliver(server, &plan, rt, &options)
@@ -788,4 +792,78 @@ pub async fn literal_flush(
         },
     );
     Ok(value)
+}
+
+/// The attached door with a prompt (handlePrepareAttachedRun → executeAdmittedTurn):
+/// admission as door prepare-attached / intent invoke, then the turn routes
+/// into the live seat or a birth parked on `gate`.
+pub async fn attached_turn(
+    server: &Shared,
+    session: Value,
+    intent: &Value,
+    prompt: &str,
+    allow_stale_generation: bool,
+    gate: &std::sync::Mutex<Option<crate::server::broker::AttachGate>>,
+) -> Result<Value, ApiError> {
+    let run_id = format!("run-{}", Uuid::new_v4());
+    let req = Request {
+        door: "prepare-attached",
+        intent: "invoke",
+        session,
+        fences: None,
+        idempotency_key: None,
+        established: None,
+        fresh_context: None,
+        runtime_intent: Some(intent),
+        allow_stale_generation,
+        run_id: Some(run_id.clone()),
+        origin: None,
+    };
+    let (result, mut trace) = admission::admit(server, &req).await;
+    let plan = match result {
+        Err(error) => {
+            admission::record(server, &req, &mut trace, Outcome::Refused(&error));
+            return Err(error);
+        }
+        Ok(Admitted::Rejected { code, body }) => {
+            admission::record(server, &req, &mut trace, Outcome::RefusedWith(code));
+            return Ok(body);
+        }
+        Ok(Admitted::Replayed(body)) => {
+            admission::record(server, &req, &mut trace, Outcome::Replayed);
+            return Ok(body);
+        }
+        Ok(Admitted::Plan(plan)) => plan,
+    };
+    let options = route::Options {
+        run_id: &run_id,
+        prompt,
+        wait_for_completion: false,
+        origin: None,
+        submission_origin: None,
+        response_format: None,
+        fresh_context: None,
+        ttl_ms: None,
+        turn_policy: None,
+        idempotency_key: None,
+        repair: None,
+        first_turn_timeout_ms: None,
+        attach: Some(gate),
+    };
+    let body = match route::execute(server, &plan, &options).await {
+        Ok(body) => body,
+        Err(error) => {
+            admission::record(server, &req, &mut trace, Outcome::PossibleWrite(&error));
+            return Err(error);
+        }
+    };
+    admission::record(
+        server,
+        &req,
+        &mut trace,
+        Outcome::Routed {
+            accepted: body["admission"] != "rejected",
+        },
+    );
+    Ok(body)
 }

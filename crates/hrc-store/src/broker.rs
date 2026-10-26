@@ -75,6 +75,7 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn finish_broker_start(
         &mut self,
         record: &Value,
@@ -83,6 +84,7 @@ impl Store {
         started: &Value,
         snapshot: &Value,
         submission: Option<&str>,
+        operator_attach_pending: bool,
     ) -> Result<()> {
         let id = &record["admission"]["identity"];
         let execution = &record["admission"]["execution"];
@@ -117,7 +119,8 @@ impl Store {
             .cloned()
             .unwrap_or(json!({}));
         let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":id["runtimeId"],"hostSessionId":id["hostSessionId"],"generation":id["generation"],"status":status,"executionRelease":release,"selection":plan["selection"],"hrcPolicy":{},"createdAt":now,"updatedAt":now,"compile":{"compileId":plan["compileId"],"planHash":plan["planHash"],"selectedProfileId":execution["profile"]["profileId"],"selectedProfileHash":execution["profile"]["profileHash"],"specHash":record["admission"]["specHash"],"startRequestHash":execution["profile"]["startRequestHash"],"selection":plan["selection"]},"broker":broker,"control":{"mode":"broker-ipc","brokerAttached":true},"tmux":tmux,"invocation":{"invocationId":id["invocationId"],"state":snapshot["state"],"driver":execution["driver"],"harnessRuntime":plan["selection"]["harness"],"capabilities":capabilities},"permission":{"negotiated":true,"pending":[]},"input":{"pendingDepth":0}});
-        let presentation = json!({"operatorAttachable":allocation.get("tuiWindow").is_some(),"viewerRequested":plan["selection"]["presentation"]});
+        // An operator attaching through the attached door needs no viewer window.
+        let presentation = json!({"operatorAttachable":allocation.get("tuiWindow").is_some(),"viewerRequested":plan["selection"]["presentation"] == true && !operator_attach_pending});
         let tx = self.sqlite.transaction()?;
         tx.execute("UPDATE runtimes SET status=?,status_changed_at=?,runtime_state_json=?,presentation_json=?,updated_at=? WHERE runtime_id=?",params![status,now,state.to_string(),presentation.to_string(),now,s(id,"runtimeId")?])?;
         tx.execute("UPDATE broker_invocations SET invocation_state=?,capabilities_json=?,updated_at=? WHERE invocation_id=?",params![snapshot["state"].as_str().unwrap_or("ready"),capabilities.to_string(),now,s(id,"invocationId")?])?;
@@ -143,7 +146,7 @@ impl Store {
                 None,
                 "runtime",
                 "runtime.presentation",
-                &json!({"invocation":{"operatorAttachPending":false},"presentation":presentation,"tmux":{"socketPath":paths["btmuxSocketPath"],"attachTarget":format!("{}:tui",s(paths,"sessionName")?)}}),
+                &json!({"invocation":{"operatorAttachPending":operator_attach_pending},"presentation":presentation,"tmux":{"socketPath":paths["btmuxSocketPath"],"attachTarget":format!("{}:tui",s(paths,"sessionName")?)}}),
             )?;
         }
         tx.commit()?;

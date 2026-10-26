@@ -1,7 +1,7 @@
 //! Durable external broker ownership: birth, then controller::consume projects
 //! and ACKs the broker ledger; startup reattach replays from the durable cursor.
 use super::{ApiError, Shared, compile, controller, rpc::JsonRpc};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 use std::{
@@ -32,6 +32,42 @@ pub struct Birth<'a> {
     pub origin: Option<&'a Value>,
     pub response_format: Option<&'a Value>,
     pub first_turn_timeout_ms: Option<i64>,
+    /// The attached door's gate (attachBeforeInvocationStart).
+    pub attach: Option<AttachGate>,
+}
+
+/// pauseForAttachedInvocationStart: a birth with an operator lease parks after
+/// its start graph commits, reports the runtime ready, and starts the
+/// invocation only once the attached client resumes it.
+pub struct AttachGate {
+    pub pending_start_id: String,
+    pub ready: tokio::sync::oneshot::Sender<String>,
+    /// Ok to resume; Err(reason) when the attached start is cancelled.
+    pub resume: tokio::sync::oneshot::Receiver<std::result::Result<(), String>>,
+}
+const ATTACHED_RESUME_TIMEOUT: Duration = Duration::from_millis(120_000);
+
+/// waitForAttachedTerminal: the operator's tmux client is on the lease's tui window.
+async fn wait_attached_client(lease: &Value) -> Result<()> {
+    let socket = string(lease, "socketPath")?;
+    let session = string(lease, "sessionName")?;
+    let window = lease["windowId"].as_str();
+    let format = if window.is_some() {
+        "#{window_id}"
+    } else {
+        "#{window_name}"
+    };
+    let wanted = window.unwrap_or(lease["windowName"].as_str().unwrap_or("tui"));
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(5_000);
+    while tokio::time::Instant::now() <= deadline {
+        if let Ok(out) = tmux(socket, &["list-clients", "-t", session, "-F", format]).await
+            && out.lines().any(|l| l.trim() == wanted)
+        {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    bail!("tmux target has no attached client: {session}")
 }
 pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError> {
     let Birth {
@@ -43,6 +79,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         origin,
         response_format,
         first_turn_timeout_ms,
+        attach,
     } = birth;
     let host = string(&session, "hostSessionId")?.to_owned();
     if !intent["placement"].is_object() {
@@ -61,14 +98,18 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         .map_err(anyhow::Error::from)?
         != 0;
     let continuation = compile::continuation_ref(&session, reuse_disabled);
-    let identity = compile::allocate(&session, Some(run_id));
+    // A promptless start (the attached door without a prompt) has no run.
+    let run = (!prompt.is_empty()).then_some(run_id);
+    let identity = compile::allocate(&session, run);
     let scope = string(&session, "scopeRef")?;
     // The persisted intent is the normalized, promptless one (record.intent).
-    let intent = compile::normalize_placement(intent, &session, Some(run_id));
-    let dispatch_env = dispatch_environment(&session, &intent, &server.runtime, run_id)?;
+    let intent = compile::normalize_placement(intent, &session, run);
+    let dispatch_env = dispatch_environment(&session, &intent, &server.runtime, run)?;
     let stored = intent.clone();
     let mut intent = intent;
-    intent["initialPrompt"] = prompt.into();
+    if run.is_some() {
+        intent["initialPrompt"] = prompt.into();
+    }
     let request = compile::request(
         &intent,
         scope,
@@ -100,17 +141,43 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
             origin,
             prompt.encode_utf16().count(),
         )?;
-        crate::server::projection::turns::arm_first_turn(
-            &server.store.lock().unwrap().sqlite,
-            &record["admission"]["identity"],
-            &session,
-            if allocation.get("tuiWindow").is_some() {
-                "tmux"
-            } else {
-                "headless"
-            },
-            first_turn_timeout_ms,
-        );
+        if run.is_some() {
+            crate::server::projection::turns::arm_first_turn(
+                &server.store.lock().unwrap().sqlite,
+                &record["admission"]["identity"],
+                &session,
+                if allocation.get("tuiWindow").is_some() {
+                    "tmux"
+                } else {
+                    "headless"
+                },
+                first_turn_timeout_ms,
+            );
+        }
+    }
+    server.ledger_committed();
+    let attach_pending = attach.is_some() && allocation.get("lease").is_some();
+    if let Some(gate) = attach
+        && let Some(lease) = allocation.get("lease").cloned()
+    {
+        let _ = gate.ready.send(string(&identity, "runtimeId")?.to_owned());
+        match tokio::time::timeout(ATTACHED_RESUME_TIMEOUT, gate.resume).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(reason))) => return Err(anyhow::anyhow!(reason).into()),
+            Ok(Err(_)) => {
+                return Err(
+                    anyhow::anyhow!("attached run cancelled: {}", gate.pending_start_id).into(),
+                );
+            }
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "timed out waiting for attached launch resume: {}",
+                    gate.pending_start_id
+                )
+                .into());
+            }
+        }
+        wait_attached_client(&lease).await?;
     }
     let execution = &record["admission"]["execution"];
     let mut params = json!({"startRequest":execution["dispatchRequest"]["startRequest"],"dispatchEnv":record["dispatch"]["dispatchEnv"],"lifecyclePolicy":record["dispatch"]["lifecyclePolicy"]});
@@ -128,7 +195,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         .as_str()
         .map(str::to_owned);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    while submission.is_none() {
+    while run.is_some() && submission.is_none() {
         submission = snapshot["turnManifests"]
             .as_array()
             .and_then(|manifests| manifests.first())
@@ -164,6 +231,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         &started,
         &snapshot,
         submission.as_deref(),
+        attach_pending,
     )?;
     let runtime_id = string(&identity, "runtimeId")?.to_owned();
     let invocation_id = string(&identity, "invocationId")?.to_owned();
@@ -195,7 +263,7 @@ fn dispatch_environment(
     session: &Value,
     intent: &Value,
     root: &Path,
-    run_id: &str,
+    run_id: Option<&str>,
 ) -> Result<Value> {
     let scope = string(session, "scopeRef")?;
     let lane = string(session, "laneRef")?;
@@ -244,8 +312,10 @@ fn dispatch_environment(
     for key in ["AGENT_HOST_SESSION_ID", "HRC_HOST_SESSION_ID"] {
         envs[key] = session["hostSessionId"].clone();
     }
-    for key in ["AGENT_RUN_ID", "HRC_RUN_ID"] {
-        envs[key] = run_id.into();
+    if let Some(run_id) = run_id {
+        for key in ["AGENT_RUN_ID", "HRC_RUN_ID"] {
+            envs[key] = run_id.into();
+        }
     }
     for key in ["AGENT_GENERATION", "HRC_GENERATION"] {
         envs[key] = session["generation"].to_string().into();

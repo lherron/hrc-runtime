@@ -420,29 +420,11 @@ async fn steps(
     };
     trace.push("passed");
     // rotation
-    if req.intent != "steer" && stale_enabled() && !req.allow_stale_generation {
-        let age = db::parse_ms(session["createdAt"].as_str().unwrap_or(""))
-            .map(|c| (chrono::Utc::now().timestamp_millis() - c).max(0) / 1000)
-            .unwrap_or(0);
-        let threshold = stale_threshold_sec();
-        if threshold > 0 && age >= threshold {
-            let live = {
-                let db = server.store.lock().unwrap();
-                db.runtimes()?
-                    .into_iter()
-                    .rfind(|r| r["hostSessionId"] == session["hostSessionId"])
-                    .is_some_and(|r| {
-                        !crate::server::lease::unavailable(r["status"].as_str().unwrap_or(""))
-                    })
-            };
-            if !live {
-                trace.push("refused");
-                return Err(unavailable(
-                    "stale-generation auto-rotation is not yet served natively",
-                    json!({"hostSessionId":session["hostSessionId"],"ageSec":age,"thresholdSec":threshold,"reason":"stale_generation_rotation_native_gap"}),
-                ));
-            }
-        }
+    if req.intent != "steer"
+        && let Some(refusal) = stale_refusal(server, &session, req.allow_stale_generation)?
+    {
+        trace.push("refused");
+        return Err(refusal);
     }
     if req.fresh_context == Some(true) {
         trace.push("refused");
@@ -587,5 +569,37 @@ async fn origin_owns_active_turn(
         p["submissionId"].as_str().is_some_and(|s| ids.contains(&s))
             && p["origin"]["principalRef"] == principal
             && p["origin"]["envelopeId"].is_string()
+    }))
+}
+
+/// maybeAutoRotateStaleSession's trigger: a stale generation with no live
+/// runtime would rotate, which is not yet served natively.
+pub fn stale_refusal(
+    server: &Shared,
+    session: &Value,
+    allow_stale: bool,
+) -> Result<Option<ApiError>, ApiError> {
+    if !stale_enabled() || allow_stale {
+        return Ok(None);
+    }
+    let age = db::parse_ms(session["createdAt"].as_str().unwrap_or(""))
+        .map(|c| (chrono::Utc::now().timestamp_millis() - c).max(0) / 1000)
+        .unwrap_or(0);
+    let threshold = stale_threshold_sec();
+    if threshold <= 0 || age < threshold {
+        return Ok(None);
+    }
+    let live = {
+        let db = server.store.lock().unwrap();
+        db.runtimes()?
+            .into_iter()
+            .rfind(|r| r["hostSessionId"] == session["hostSessionId"])
+            .is_some_and(|r| !crate::server::lease::unavailable(r["status"].as_str().unwrap_or("")))
+    };
+    Ok((!live).then(|| {
+        unavailable(
+            "stale-generation auto-rotation is not yet served natively",
+            json!({"hostSessionId":session["hostSessionId"],"ageSec":age,"thresholdSec":threshold,"reason":"stale_generation_rotation_native_gap"}),
+        )
     }))
 }

@@ -28,6 +28,8 @@ pub struct Options<'a> {
     pub idempotency_key: Option<&'a str>,
     pub repair: Option<&'a Value>,
     pub first_turn_timeout_ms: Option<i64>,
+    /// The attached door's gate, taken by the birth (attachBeforeInvocationStart).
+    pub attach: Option<&'a std::sync::Mutex<Option<broker::AttachGate>>>,
 }
 
 /// findReusableProducerSelectedRuntime: the latest live broker runtime, after a
@@ -62,7 +64,7 @@ async fn reusable(server: &Shared, host: &str) -> Result<Option<db::Rt>, ApiErro
 }
 
 /// publishPresentation: fold the record and announce runtime.presentation.
-fn publish_presentation(
+pub fn publish_presentation(
     server: &Shared,
     runtime_id: &str,
     attach_pending: bool,
@@ -499,7 +501,8 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
     let body = match reusable(server, &host).await? {
         Some(rt) => {
             if rt.transport == "tmux" {
-                publish_presentation(server, &rt.runtime_id, false)?;
+                // attachedRunSelected: the attached door marks the seat operator-attach-pending.
+                publish_presentation(server, &rt.runtime_id, o.attach.is_some())?;
             }
             input_turn(server, plan, &rt, o).await?
         }
@@ -519,6 +522,7 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
                     origin: o.origin,
                     response_format: o.response_format,
                     first_turn_timeout_ms: o.first_turn_timeout_ms,
+                    attach: o.attach.and_then(|g| g.lock().unwrap().take()),
                 },
             )
             .await?

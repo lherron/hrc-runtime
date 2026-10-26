@@ -187,6 +187,32 @@ fn response_format(v: Option<&Value>) -> Result<Option<Value>, ApiError> {
     }
 }
 
+/// resolveHarnessFromPlacement: an intent without an inline harness fails closed.
+pub fn require_harness(v: &Value) -> Result<(), ApiError> {
+    if v["harness"].is_object() {
+        return Ok(());
+    }
+    let placement = v.get("placement").cloned().unwrap_or(json!("workspace"));
+    let message = "runtimeIntent.harness is required unless placement.agentRoot can resolve it";
+    if !placement.is_object() {
+        return Err(ApiError::bad(
+            message,
+            Some(json!({"field":"runtimeIntent.harness"})),
+        ));
+    }
+    let field = Some(json!({"field":"runtimeIntent.placement.agentRoot"}));
+    if !placement["agentRoot"]
+        .as_str()
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        return Err(ApiError::bad(message, field));
+    }
+    Err(ApiError::bad(
+        "runtimeIntent.harness is required when agent-profile.toml is missing",
+        field,
+    ))
+}
+
 /// parseRuntimeIntent's shape and key order (harness rebuilt field by field).
 pub fn runtime_intent(v: &Value) -> Value {
     let mut out = json!({"placement":v.get("placement").cloned().unwrap_or(json!("workspace"))});
