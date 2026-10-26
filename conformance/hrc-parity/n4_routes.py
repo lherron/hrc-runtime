@@ -130,3 +130,36 @@ def compare_home(args, checks):
                        'reason': 'a Bun origin must see the same answers from a native home', 'failureCode': 1})
         cases.append({'id': name, 'pass': passed})
     return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}
+
+
+# Summon gate: the same ordered ensure-target cases on each owner's own node,
+# enforce then advisory, plus the registry/designation/ledger/session rows each
+# phase leaves. Session identities and clocks are minted per owner.
+GATE_DYNAMIC = {'hostSessionId', 'activeHostSessionId', 'createdAt', 'updatedAt'}
+GATE_CASES = 40
+
+
+def gate_canonical(value):
+    import re
+    if isinstance(value, dict):
+        return [(k, '<dynamic>' if k in GATE_DYNAMIC else gate_canonical(x)) for k, x in value.items()]
+    if isinstance(value, list):
+        return [gate_canonical(x) for x in value]
+    if isinstance(value, str):
+        return re.sub(r'hsid-[0-9a-f-]+', '<hsid>', value)
+    return value
+
+
+def compare_gate(args, checks):
+    a = json.loads((Path(args.baseline) / 'gate.json').read_text())
+    b = json.loads((Path(args.candidate) / 'gate.json').read_text())
+    checks.append({'id': 'case-matrix', 'pass': len(a) == GATE_CASES and set(a) == set(b),
+                   'reason': 'every gate branch in enforce and advisory on both owners', 'failureCode': 1})
+    cases = []
+    for name in a:
+        passed = name in b and gate_canonical(a[name]) == gate_canonical(b[name])
+        checks.append({'id': 'compare:' + name, 'pass': passed,
+                       'reason': 'decision, status, code, detail and the rows it writes must match Bun',
+                       'failureCode': 1})
+        cases.append({'id': name, 'pass': passed})
+    return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}

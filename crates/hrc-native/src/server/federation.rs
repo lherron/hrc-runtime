@@ -2,8 +2,10 @@
 //! registry-http-client.ts, registry-local-client.ts, registry-attempt.ts,
 //! registry-reply.ts) and the one home-authority resolution
 //! (home-authority.ts) that locate and scope-read routing share.
+mod gate;
 mod locate;
 pub mod peer_listener;
+mod policy;
 pub mod registry_listener;
 mod routing;
 pub mod summon;
@@ -809,4 +811,230 @@ pub async fn resolve_home(
             local: false,
         },
     }
+}
+
+/// What `establish` sends: BirthDesignationEstablishmentDecision.
+use registry_listener::Decision;
+
+impl Decision {
+    fn wire(&self) -> Value {
+        match self {
+            Decision::Enforce => json!({"action":"enforce-designated-home"}),
+            Decision::Supersede(by) => json!({"action":"supersede","supersededBy":by}),
+        }
+    }
+}
+
+impl Node {
+    async fn post(
+        &self,
+        path: &str,
+        body: &Value,
+    ) -> Result<reqwest::Response, (RegistryError, bool)> {
+        let Client::Http { endpoint, token } = &self.client else {
+            unreachable!("only the HTTP client sends requests")
+        };
+        let url = endpoint
+            .join(path)
+            .map_err(|_| (RegistryError::unreachable(), false))?;
+        self.http
+            .post(url)
+            .header("authorization", format!("Bearer {token}"))
+            .header("user-agent", user_agent())
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| (RegistryError::unreachable(), e.is_connect()))
+    }
+
+    /// RegistryAttempts.retrying without per-attempt logs: up to three bounded
+    /// attempts in a 5s budget; `connect_only` retries only a failure that
+    /// proves the request never reached the host.
+    async fn retrying<T, F, Fut>(
+        &self,
+        connect_only: bool,
+        mut attempt: F,
+    ) -> Result<T, RegistryError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<T, (RegistryError, bool)>>,
+    {
+        let deadline = Instant::now() + TOTAL;
+        let mut n = 1;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let result = if remaining.is_zero() {
+                Err((RegistryError::unreachable(), false))
+            } else {
+                tokio::time::timeout(remaining.min(PER_ATTEMPT), attempt())
+                    .await
+                    .unwrap_or_else(|_| Err((RegistryError::unreachable(), false)))
+            };
+            let (failure, connect) = match result {
+                Ok(value) => return Ok(value),
+                Err((refused @ RegistryError::Refused(_), _)) => return Err(refused),
+                Err((RegistryError::Transport(_), connect)) => {
+                    (RegistryError::unreachable(), connect)
+                }
+                Err(other) => other,
+            };
+            let left = deadline.saturating_duration_since(Instant::now());
+            if n >= MAX_ATTEMPTS || left.is_zero() || (connect_only && !connect) {
+                return Err(failure);
+            }
+            let jitter = (uuid::Uuid::new_v4().as_u128() % 1000) as f64 / 1000.0;
+            let ceiling = INITIAL_BACKOFF_MS * 2f64.powi(n as i32 - 1);
+            tokio::time::sleep(
+                Duration::from_secs_f64(ceiling * (0.5 + jitter * 0.5) / 1000.0).min(left),
+            )
+            .await;
+            n += 1;
+        }
+    }
+
+    /// `BindingRegistryClient.establish`: `{outcome, binding}` or, in-process
+    /// only, `{outcome:"designation-mismatch", designation}`.
+    pub async fn establish(
+        &self,
+        scope: &str,
+        home: &str,
+        decision: Option<Decision>,
+    ) -> Result<Value, RegistryError> {
+        match &self.client {
+            Client::Unavailable(reason) => Err(RegistryError::Unreachable(reason.clone())),
+            Client::Local(db) => {
+                if home != self.node_id() {
+                    return Err(RegistryError::Refused("invalid_request"));
+                }
+                registry_listener::establish(&mut db.lock().unwrap(), scope, home, decision)
+                    .map_err(|_| RegistryError::unreachable())
+            }
+            Client::Http { .. } => {
+                let mut body = json!({"scopeRef":scope,"homeNodeId":home});
+                if let Some(decision) = &decision {
+                    body["birthDesignation"] = decision.wire();
+                }
+                body["now"] = hrc_store::timestamp().into();
+                self.retrying(true, || async {
+                    let response = self.post("/v1/federation/registry/establish", &body).await?;
+                    check_status(response.status(), &[200]).map_err(|e| (e, false))?;
+                    let reply = Self::body(response).await.map_err(|e| (e, false))?;
+                    let outcome = reply["outcome"].as_str().filter(|o| ["created", "existing"].contains(o));
+                    let binding = (reply["ok"] == true).then(|| parse_binding(&reply["binding"], scope)).flatten();
+                    match (outcome, binding) {
+                        (Some(outcome), Some(_)) => Ok(json!({"outcome":outcome,"binding":reply["binding"]})),
+                        _ => Err((
+                            RegistryError::Unreachable(
+                                "federation binding registry returned an invalid establishment result".into(),
+                            ),
+                            false,
+                        )),
+                    }
+                })
+                .await
+            }
+        }
+    }
+
+    /// `designateBirth`; `None` when this client cannot designate.
+    pub async fn designate_birth(
+        &self,
+        server: &super::Shared,
+        scope: &str,
+    ) -> Option<Result<Value, RegistryError>> {
+        match &self.client {
+            Client::Unavailable(_) => None,
+            Client::Local(db) => Some(
+                registry_listener::designate_birth(server, db, scope)
+                    .await
+                    .map_err(|error| match error {
+                        registry_listener::BirthError::Envelope => RegistryError::Unreachable(format!(
+                            "cannot read the birth envelope for {scope}: wrkq ledger unavailable"
+                        )),
+                        registry_listener::BirthError::Store(_) => RegistryError::unreachable(),
+                    }),
+            ),
+            Client::Http { .. } => {
+                let body = json!({"scopeRef":scope});
+                let result = self
+                    .retrying(false, || async {
+                        let response = self.post("/v1/federation/registry/designate-birth", &body).await?;
+                        let status = response.status();
+                        check_status(status, &[200, 404, 503]).map_err(|e| (e, false))?;
+                        if status == StatusCode::NOT_FOUND {
+                            return Ok(json!({"kind":"none"}));
+                        }
+                        if status == StatusCode::SERVICE_UNAVAILABLE {
+                            return Err((
+                                RegistryError::Unreachable(
+                                    "federation binding registry could not read the birth envelope".into(),
+                                ),
+                                false,
+                            ));
+                        }
+                        let reply = Self::body(response).await.map_err(|e| (e, false))?;
+                        if reply["kind"] == "none" {
+                            return Ok(json!({"kind":"none"}));
+                        }
+                        match parse_designation(&reply["designation"], scope) {
+                            Some(d) if reply["kind"] == "designated" => Ok(json!({"kind":"designated","designation":d})),
+                            _ => Err((
+                                RegistryError::Unreachable(
+                                    "federation binding registry returned an invalid birth designation".into(),
+                                ),
+                                false,
+                            )),
+                        }
+                    })
+                    .await;
+                match &result {
+                    Ok(value) => log(
+                        "info",
+                        &format!("federation.registry.designate_birth.{}", value["kind"].as_str().unwrap_or("none")),
+                        json!({"scopeRef":scope}),
+                    ),
+                    Err(_) => log(
+                        "error",
+                        "federation.registry.designate_birth.unreachable",
+                        json!({"scopeRef":scope,"retryable":true}),
+                    ),
+                }
+                Some(result)
+            }
+        }
+    }
+
+    /// Node ids a `node=` directive may name: this node and its peers.
+    pub fn known_node_ids(&self) -> Vec<String> {
+        std::iter::once(self.node_id().to_owned())
+            .chain(self.config.peers.iter().map(|p| p.node_id.clone()))
+            .collect()
+    }
+}
+
+/// PlacementLedgerRepository.installActive: an existing row for the same home
+/// is kept; a retired or conflicting row refuses.
+pub fn install_active(db: &Connection, binding: &Value) -> Result<(), String> {
+    let scope = binding["scopeRef"].as_str().unwrap_or_default();
+    let home = binding["homeNodeId"].as_str().unwrap_or_default();
+    match ledger_row(db, scope) {
+        Some(row) if row.state == "retired" => {
+            return Err(format!("placement ledger scope {scope} is retired"));
+        }
+        Some(row) if row.binding.home != home => {
+            return Err(format!("placement ledger scope {scope} is bound elsewhere"));
+        }
+        Some(_) => return Ok(()),
+        None => {}
+    }
+    let updated = binding["updatedAt"].as_str().unwrap_or_default();
+    let created = binding["createdAt"].as_str().unwrap_or(updated);
+    db.execute(
+        "INSERT INTO placement_ledger (scope_ref, home_node_id, state, retired_at, retirement_reason, created_at, updated_at)
+         VALUES (?, ?, 'active', NULL, NULL, ?, ?)",
+        params![scope, home, created, updated],
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
 }

@@ -366,7 +366,7 @@ fn mismatch() -> Response {
     )
 }
 
-enum Decision {
+pub enum Decision {
     Enforce,
     Supersede(String),
 }
@@ -392,7 +392,7 @@ fn parse_decision(value: Option<&Value>) -> Result<Option<Decision>, Failure> {
 }
 
 /// BindingRegistry.establish.
-fn establish(
+pub(super) fn establish(
     db: &mut Connection,
     scope: &str,
     home: &str,
@@ -467,7 +467,7 @@ fn delete(
     Ok(json!({"outcome":"deleted"}))
 }
 
-enum BirthError {
+pub(super) enum BirthError {
     Envelope,
     Store(rusqlite::Error),
 }
@@ -484,7 +484,7 @@ fn sender_scope(raw: &str) -> Option<String> {
 
 /// designateBirthOnHost: the live designation, or one recorded from the
 /// sender of the scope's birth envelope; never a guess when wrkq is down.
-async fn designate_birth(
+pub(super) async fn designate_birth(
     server: &Shared,
     db: &std::sync::Mutex<Connection>,
     scope: &str,

@@ -560,6 +560,9 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n4-home':
         from n4_routes import compare_home
         return compare_home(args, checks)
+    if getattr(args, 'suite', None) == 'n4-gate':
+        from n4_routes import compare_gate
+        return compare_gate(args, checks)
     if getattr(args, 'suite', None) == 'n2-turns':
         from n2_turns import compare as compare_n2_turns
         return compare_n2_turns(args, checks)

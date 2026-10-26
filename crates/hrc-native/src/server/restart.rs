@@ -148,7 +148,7 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
     // Phase A: every refusal below mutates nothing. assertLocalPersonaAllowed
     // has no native gate yet (N4).
     let scope = session["scopeRef"].as_str().unwrap_or("").to_owned();
-    super::federation::summon::assert_scope_not_retired(server, &scope, "resolve-session")?;
+    super::federation::summon::assert_scope_not_retired(server, &scope, "resolve-session").await?;
     let lane = {
         let db = server.store.lock().unwrap();
         db.sqlite

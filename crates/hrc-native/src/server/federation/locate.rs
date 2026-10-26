@@ -1,10 +1,11 @@
 //! `GET /v1/federation/locate` (server-status-methods.ts handleFederationLocate,
 //! federation/locate.ts, locate-server.ts, peer-observer.ts locatePeerScope)
 //! and `GET /v1/federation/designations` (placement-federation-handlers.ts).
+use super::policy::{Policy, policy_for, scope_parts};
 use super::{
     Authority, Designation, Node, ledger_row, log, resolve_home, transport_text, user_agent,
 };
-use crate::server::{ApiError, Server, aspc, stderr_json};
+use crate::server::{ApiError, Server, stderr_json};
 use axum::{
     Json,
     response::{IntoResponse, Response},
@@ -20,21 +21,6 @@ const ROSTER_SLOT_TOKENS: [&str; 10] = [
     "nova", "comet", "pulsar", "quasar", "meteor", "aurora", "zenith", "eclipse", "orbit", "cosmos",
 ];
 
-struct Scope<'a> {
-    agent: &'a str,
-    project: Option<&'a str>,
-    task: Option<&'a str>,
-}
-/// agent-scope `parseScopeRef` on a validated ref.
-fn parts(scope: &str) -> Scope<'_> {
-    let p: Vec<&str> = scope.split(':').collect();
-    Scope {
-        agent: p[1],
-        project: p.get(3).copied(),
-        task: (p.get(4) == Some(&"task")).then(|| p[5]),
-    }
-}
-
 fn reserved(node: &str) -> bool {
     node.eq_ignore_ascii_case("local")
 }
@@ -42,59 +28,16 @@ fn reserved(node: &str) -> bool {
 /// placement-policy.ts `resolvePlacementPolicy` then locate.ts
 /// `describeDeclaredPolicy`.
 async fn declared(server: &Server, scope: &str) -> Value {
-    let s = parts(scope);
-    let mut request = json!({"agentId":s.agent});
-    if let Some(project) = s.project {
-        request["projectId"] = project.into();
-    }
-    if let Some(task) = s.task {
-        request["taskId"] = task.into();
-    }
-    request["cwd"] = std::env::current_dir()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned()
-        .into();
-    request["runMode"] = "task".into();
-    let agent = s.agent;
-    let observed = match aspc::resolve_placement(server, request).await {
-        Ok(observed) => observed,
-        Err(error) => {
-            if error.code == "declaration_invalid"
-                && error
-                    .detail
-                    .as_ref()
-                    .is_some_and(|d| d["producerCode"] == "agent_not_found")
-            {
-                return json!({"source":"none","detail":format!("No agent root found for \"{agent}\", so no [placement] stanza could be read.")});
-            }
-            return json!({"source":"unavailable","detail":format!("Could not observe a declaration for \"{agent}\": {}", error.message)});
+    let (_, project, task) = scope_parts(scope);
+    let (policy, profile) = match policy_for(server, scope).await {
+        Policy::Resolved { policy, profile } => (policy, profile),
+        Policy::NotAnAgentScope(detail) | Policy::NoProfile(detail) => {
+            return json!({"source":"none","detail":detail});
         }
+        Policy::Unreadable(detail) => return json!({"source":"unavailable","detail":detail}),
     };
-    let Some(root) = observed["agentRoot"].as_str() else {
-        return json!({"source":"none","detail":format!("No agent root found for \"{agent}\", so no [placement] stanza could be read.")});
-    };
-    let profile = format!("{}/agent-profile.toml", root.trim_end_matches('/'));
-    if observed["source"]["agentProfile"] == "absent" {
-        return json!({"source":"none","detail":format!("{profile} does not exist, so this agent declares no placement.")});
-    }
-    if observed["source"]["agentProfile"] == "invalid"
-        || observed["source"]["projectTargets"] == "invalid"
-    {
-        let diagnostics = observed["warnings"]
-            .as_array()
-            .map(|w| {
-                w.iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .filter(|d| !d.is_empty())
-            .unwrap_or_else(|| "invalid source".into());
-        return json!({"source":"unavailable","detail":format!("Could not interpret the declaration for \"{agent}\" at {profile}: {diagnostics}")});
-    }
-    let policy = &observed["policy"];
-    if let (Some(project), Some(task)) = (s.project, s.task) {
+    let policy = &policy;
+    if let (Some(project), Some(task)) = (project, task) {
         let key = format!("{project}:{task}");
         if let Some(pin) = policy["placement"]["pins"][&key].as_str() {
             return if reserved(pin) {
@@ -104,7 +47,7 @@ async fn declared(server: &Server, scope: &str) -> Value {
             };
         }
     }
-    if let Some(task) = s.task {
+    if let Some(task) = task {
         let homes = &policy["placement"]["homes"];
         let home = homes[task]
             .as_str()
@@ -123,7 +66,7 @@ async fn declared(server: &Server, scope: &str) -> Value {
             };
         }
     }
-    match policy["provisioningNode"].as_str() {
+    match policy["provisioning"]["node"].as_str() {
         None => {
             json!({"source":"none","detail":format!("{profile} declares no home for this scope."),"profilePath":profile})
         }
