@@ -116,7 +116,15 @@ pub async fn finish(
         "server.stop.step",
         json!({"step":"owner_writes"}),
     );
-    if !server.owner_writes.close_and_drain(STEP).await {
+    let fence_started = Instant::now();
+    if server.owner_writes.close_and_drain(STEP).await {
+        stderr_json(
+            "info",
+            "server",
+            "server.stop.owner_writes_drained",
+            json!({"elapsedMs":fence_started.elapsed().as_millis() as u64}),
+        );
+    } else {
         incomplete(&mut reasons, "owner_writes_timeout");
     }
     step(

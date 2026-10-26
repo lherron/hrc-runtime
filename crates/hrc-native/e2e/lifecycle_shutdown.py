@@ -138,6 +138,9 @@ def main():
                 assert not timed_out, 'request drain exceeded its shutdown budget'
                 kinds = [r[1] for r in delta]
                 assert kinds == (['server.shutting_down'] if partial else ['server.shutting_down', 'server.stopped']), kinds
+                logs = [json.loads(line) for line in (args.artifacts/(name+'.log')).read_text().splitlines() if line.startswith('{')]
+                drained = [line for line in logs if line['event']=='server.stop.owner_writes_drained']
+                assert len(drained)==1 and 0 <= drained[0]['data']['elapsedMs'] <= 5000, drained
                 if partial:
                     assert 2.5 <= elapsed < 10, elapsed
                     log = (args.artifacts/(name+'.log')).read_text()
