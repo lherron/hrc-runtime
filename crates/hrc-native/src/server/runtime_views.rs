@@ -15,7 +15,9 @@ fn strings(v: &Value, keys: &[&str]) -> Option<Value> {
     Some(out)
 }
 pub fn hosting(runtime: &Value) -> Option<Value> {
-    hrc_store::presentation::hosting(runtime)
+    let mut value = hrc_store::presentation::hosting(runtime)?;
+    value["broker"] = hrc_store::ordered(value["broker"].take(), &["protocolVersion", "endpoint"]);
+    Some(value)
 }
 
 fn control(state: &Value, highwater: Value) -> Option<Value> {
@@ -90,8 +92,7 @@ fn context(v: &Value) -> Option<Value> {
     if !safe_integer(&v["usedTokens"], 0.0) {
         return None;
     }
-    let mut out =
-        json!({"turnId":v["turnId"],"usedTokens":v["usedTokens"],"observedAt":v["observedAt"]});
+    let mut out = json!({"turnId":v["turnId"],"usedTokens":v["usedTokens"]});
     if let Some(window) = v.get("windowTokens") {
         if !safe_integer(window, 1.0) {
             return None;
@@ -101,6 +102,7 @@ fn context(v: &Value) -> Option<Value> {
     if let Some(raw) = v.get("model") {
         out["model"] = model(raw)?;
     }
+    out["observedAt"] = v["observedAt"].clone();
     Some(out)
 }
 fn stale_enabled() -> bool {
@@ -224,6 +226,45 @@ pub async fn inspect(server: &Shared, body: Value) -> Result<Response, ApiError>
     if !retained.is_empty() {
         out["retainedEvidence"] = json!(retained);
     }
+    // handleInspectRuntime's object literal puts identity before its derived
+    // facts. Preserve every optional/unknown field after the declared prefix.
+    let out = hrc_store::ordered(
+        out,
+        &[
+            "runtimeId",
+            "hostSessionId",
+            "scopeRef",
+            "laneRef",
+            "generation",
+            "transport",
+            "harness",
+            "provider",
+            "reportedModel",
+            "contextReading",
+            "status",
+            "createdAt",
+            "createdAgeSec",
+            "lastActivityAt",
+            "lastActivityAgeSec",
+            "activeRunId",
+            "controllerKind",
+            "activeOperationId",
+            "activeInvocationId",
+            "continuation",
+            "continuationKey",
+            "continuationStale",
+            "brokerDispatch",
+            "capture",
+            "evidenceAuthority",
+            "authority",
+            "control",
+            "tmux",
+            "broker",
+            "substrate",
+            "presentation",
+            "retainedEvidence",
+        ],
+    );
     Ok(Json(out).into_response())
 }
 /// retainedEvidenceInspectFacts: the latest outcome per invocation.

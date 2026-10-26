@@ -827,6 +827,21 @@ async fn run(
                 }
             }
         }
+        if !prune {
+            // sweep-handlers.ts emits status before droppedContinuation on
+            // success, skips and errors; optional reason/error facts follow.
+            result = hrc_store::ordered(
+                result,
+                &[
+                    "type",
+                    "runtimeId",
+                    "hostSessionId",
+                    "transport",
+                    "status",
+                    "droppedContinuation",
+                ],
+            );
+        }
         results.push(result);
     }
     let response = finish(results, prune);
