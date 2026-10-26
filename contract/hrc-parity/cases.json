@@ -372,6 +372,11 @@
   },
   "coverageRules": [
     {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:armParticipantReconnect:",
+      "target": "n2-participant",
+      "reason": "Real EPR workflow stops the HRC owner while its externally owned broker survives, then rearms the completed ACTIVE attempt on boot and replays the real host-owned clean exit through the same frozen identity."
+    },
+    {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:buildWhere:",
       "target": "n1-session-index",
       "reason": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions."
