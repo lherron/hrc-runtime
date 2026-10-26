@@ -141,7 +141,7 @@ pub fn record(server: &Shared, req: &Request<'_>, trace: &mut Trace, outcome: Ou
         ts: hrc_store::timestamp(),
         host_session_id: s["hostSessionId"].as_str().unwrap_or("").into(),
         scope_ref: s["scopeRef"].as_str().unwrap_or("").into(),
-        lane_ref: s["laneRef"].as_str().unwrap_or("").into(),
+        lane_ref: hrc_store::storage_lane(s["laneRef"].as_str().unwrap_or("")).into(),
         generation: s["generation"].as_i64().unwrap_or(0),
         run_id: trace.run_id.clone(),
         ..Default::default()
@@ -245,7 +245,7 @@ fn continuity_active(server: &Shared, session: &Value) -> Result<Value, ApiError
     let active = db
         .continuity_session(
             session["scopeRef"].as_str().unwrap_or(""),
-            session["laneRef"].as_str().unwrap_or(""),
+            hrc_store::storage_lane(session["laneRef"].as_str().unwrap_or("")),
         )?
         .ok_or_else(|| ApiError::missing_host(session["hostSessionId"].as_str().unwrap_or("")))?;
     Ok(active)

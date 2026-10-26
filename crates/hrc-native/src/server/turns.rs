@@ -534,7 +534,7 @@ async fn admitted(
             ts: hrc_store::timestamp(),
             host_session_id: s["hostSessionId"].as_str().unwrap_or("").into(),
             scope_ref: s["scopeRef"].as_str().unwrap_or("").into(),
-            lane_ref: s["laneRef"].as_str().unwrap_or("").into(),
+            lane_ref: hrc_store::storage_lane(s["laneRef"].as_str().unwrap_or("")).into(),
             generation: s["generation"].as_i64().unwrap_or(0),
             runtime_id: payload["runtimeId"].as_str().map(str::to_owned),
             run_id: plan.run_id.clone(),

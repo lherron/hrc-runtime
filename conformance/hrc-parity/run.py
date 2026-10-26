@@ -536,6 +536,9 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n2-routes':
         from n2_routes import compare as compare_n2_routes
         return compare_n2_routes(args, checks)
+    if getattr(args, 'suite', None) == 'n2-lanes':
+        from n2_lanes import compare as compare_n2_lanes
+        return compare_n2_lanes(args, checks)
     if getattr(args, 'suite', None) == 'n2-recovery':
         from n2_recovery import compare as compare_n2_recovery
         return compare_n2_recovery(args, checks)

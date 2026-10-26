@@ -372,7 +372,7 @@ pub fn selector_request(
 }
 /// formatSelectorRef
 pub fn selector_ref(session: &Value) -> String {
-    let lane = session["laneRef"].as_str().unwrap_or("");
+    let lane = hrc_store::storage_lane(session["laneRef"].as_str().unwrap_or(""));
     format!(
         "{}/lane:{}",
         session["scopeRef"].as_str().unwrap_or(""),

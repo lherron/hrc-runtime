@@ -213,7 +213,7 @@ async fn input_turn(
             None => {
                 db.sqlite.execute(
                     "INSERT INTO runs (run_id, host_session_id, runtime_id, scope_ref, lane_ref, generation, transport, status, accepted_at, updated_at, invocation_id, operation_id, dispatch_idempotency_key, origin_actor, origin_kind, origin_causation_ref, execution_format) VALUES (?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?, ?, ?, 'format1')",
-                    params![o.run_id, session["hostSessionId"].as_str(), rt.runtime_id, session["scopeRef"].as_str(), session["laneRef"].as_str(), session["generation"].as_i64(), transport, now, now, invocation, rt.active_operation_id, o.idempotency_key, o.origin.and_then(|x| x["actor"].as_str()), o.origin.and_then(|x| x["kind"].as_str()), o.origin.and_then(|x| x["causationRef"].as_str())],
+                    params![o.run_id, session["hostSessionId"].as_str(), rt.runtime_id, session["scopeRef"].as_str(), session["laneRef"].as_str().map(hrc_store::storage_lane), session["generation"].as_i64(), transport, now, now, invocation, rt.active_operation_id, o.idempotency_key, o.origin.and_then(|x| x["actor"].as_str()), o.origin.and_then(|x| x["kind"].as_str()), o.origin.and_then(|x| x["causationRef"].as_str())],
                 ).map_err(anyhow::Error::from)?;
             }
         }
@@ -240,7 +240,7 @@ async fn input_turn(
                 ts: hrc_store::timestamp(),
                 host_session_id: session["hostSessionId"].as_str().unwrap_or("").into(),
                 scope_ref: session["scopeRef"].as_str().unwrap_or("").into(),
-                lane_ref: session["laneRef"].as_str().unwrap_or("").into(),
+                lane_ref: hrc_store::storage_lane(session["laneRef"].as_str().unwrap_or("")).into(),
                 generation: session["generation"].as_i64().unwrap_or(0),
                 runtime_id: Some(rt.runtime_id.clone()),
                 run_id: Some(o.run_id.to_owned()),

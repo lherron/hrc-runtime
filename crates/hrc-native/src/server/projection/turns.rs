@@ -724,7 +724,7 @@ pub fn arm_first_turn(
             .unwrap_or_default();
         let armed = db.execute(
             "INSERT INTO runtime_first_turn_watch (runtime_id, generation, host_session_id, scope_ref, lane_ref, run_id, invocation_id, transport, priming_dispatched_at, first_turn_deadline_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(runtime_id, generation) DO UPDATE SET run_id = COALESCE(runtime_first_turn_watch.run_id, excluded.run_id), invocation_id = COALESCE(runtime_first_turn_watch.invocation_id, excluded.invocation_id), transport = COALESCE(runtime_first_turn_watch.transport, excluded.transport), priming_dispatched_at = excluded.priming_dispatched_at, first_turn_deadline_at = excluded.first_turn_deadline_at, updated_at = excluded.updated_at WHERE runtime_first_turn_watch.priming_dispatched_at IS NULL AND runtime_first_turn_watch.first_turn_at IS NULL AND runtime_first_turn_watch.first_turn_missing_tripped_at IS NULL AND runtime_first_turn_watch.disarmed_at IS NULL",
-            params![runtime, generation, session["hostSessionId"].as_str(), session["scopeRef"].as_str(), session["laneRef"].as_str(), identity["runId"].as_str(), identity["invocationId"].as_str(), transport, now, deadline, now, now],
+            params![runtime, generation, session["hostSessionId"].as_str(), session["scopeRef"].as_str(), session["laneRef"].as_str().map(hrc_store::storage_lane), identity["runId"].as_str(), identity["invocationId"].as_str(), transport, now, deadline, now, now],
         )?;
         if armed > 0 {
             crate::server::stderr_json(

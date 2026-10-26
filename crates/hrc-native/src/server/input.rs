@@ -59,7 +59,8 @@ impl Literal<'_> {
             ts: now.to_owned(),
             host_session_id: self.session["hostSessionId"].as_str().unwrap_or("").into(),
             scope_ref: self.session["scopeRef"].as_str().unwrap_or("").into(),
-            lane_ref: self.session["laneRef"].as_str().unwrap_or("").into(),
+            lane_ref: hrc_store::storage_lane(self.session["laneRef"].as_str().unwrap_or(""))
+                .into(),
             generation: self.session["generation"].as_i64().unwrap_or(0),
             runtime_id: Some(self.rt.runtime_id.clone()),
             ..Default::default()

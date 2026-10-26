@@ -74,7 +74,7 @@ pub fn normalize_placement(mut intent: Value, session: &Value, run_id: Option<&s
             }
         }
     }
-    let mut correlation = json!({"sessionRef":{"scopeRef":session["scopeRef"],"laneRef":session["laneRef"]},"hostSessionId":session["hostSessionId"]});
+    let mut correlation = json!({"sessionRef":{"scopeRef":session["scopeRef"],"laneRef":session["laneRef"].as_str().map(hrc_store::storage_lane)},"hostSessionId":session["hostSessionId"]});
     if let Some(run) = run_id {
         correlation["runId"] = run.into();
     }
