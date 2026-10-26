@@ -41,7 +41,7 @@ fn reserved(node: &str) -> bool {
 
 /// placement-policy.ts `resolvePlacementPolicy` then locate.ts
 /// `describeDeclaredPolicy`.
-async fn declared(scope: &str) -> Value {
+async fn declared(server: &Server, scope: &str) -> Value {
     let s = parts(scope);
     let mut request = json!({"agentId":s.agent});
     if let Some(project) = s.project {
@@ -57,7 +57,7 @@ async fn declared(scope: &str) -> Value {
         .into();
     request["runMode"] = "task".into();
     let agent = s.agent;
-    let observed = match aspc::resolve_placement(request).await {
+    let observed = match aspc::resolve_placement(server, request).await {
         Ok(observed) => observed,
         Err(error) => {
             if error.code == "declaration_invalid"
@@ -255,7 +255,7 @@ async fn locate_peer(node: &Node, peer: &FederationPeer, scope: &str) -> Value {
 /// locate.ts `locateScope` over locate-server.ts deps.
 async fn locate_scope(server: &Server, scope: &str) -> Value {
     let node = &server.federation;
-    let declared = declared(scope).await;
+    let declared = declared(server, scope).await;
     let local = ledger_row(&server.store.lock().unwrap().sqlite, scope);
     let resolution = resolve_home(node, local, scope, node.configured(), false, |_| {}).await;
     let ledger = match &resolution.local {

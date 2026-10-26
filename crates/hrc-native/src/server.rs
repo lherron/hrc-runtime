@@ -23,6 +23,7 @@ mod io;
 mod lease;
 mod maintenance;
 mod participants;
+mod placement;
 mod presentation;
 mod projection;
 mod proxy;
@@ -620,14 +621,14 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
         }
     } else if method == Method::POST && uri.path() == "/v1/declarations/resolve" {
         match parse_body(&body) {
-            Ok(value) => aspc::resolve_intent(value)
+            Ok(value) => aspc::resolve_intent(server, value)
                 .await
                 .map(|v| Json(v).into_response()),
             Err(e) => Err(e),
         }
     } else if method == Method::POST && uri.path() == "/v1/placements/resolve" {
         match parse_body(&body) {
-            Ok(value) => aspc::resolve_placement(value)
+            Ok(value) => aspc::resolve_placement(server, value)
                 .await
                 .map(|v| Json(v).into_response()),
             Err(e) => Err(e),

@@ -264,7 +264,7 @@ fn scope_identity(scope: &str) -> Result<Value, ApiError> {
     Ok(identity)
 }
 
-pub async fn resolve_intent(input: Value) -> Result<Value, ApiError> {
+pub async fn resolve_intent(server: &super::Server, input: Value) -> Result<Value, ApiError> {
     object(&input)?;
     let mode = run_mode(&input)?.to_owned();
     let preferred = input
@@ -321,7 +321,7 @@ pub async fn resolve_intent(input: Value) -> Result<Value, ApiError> {
                 ));
             }
         }
-        let placement = resolve_placement(json!({"scopeRef":scope,"runMode":mode})).await?;
+        let placement = resolve_placement(server, json!({"scopeRef":scope,"runMode":mode})).await?;
         body["agentId"] = placement["agentId"].clone();
         body["agentRoot"] = placement["agentRoot"].clone();
         if placement.get("projectId").is_some() {
@@ -384,10 +384,17 @@ pub async fn resolve_intent(input: Value) -> Result<Value, ApiError> {
         ));
     }
     let observed_placement = &observed["placement"];
-    let mut placement = json!({"agentRoot":observed_placement["agentRoot"],"cwd":observed_placement["cwd"],"runMode":observed_placement["runMode"],"bundle":observed_placement["bundle"],"dryRun":false});
+    // declaration-handlers.ts placement key order.
+    let mut placement = serde_json::Map::new();
+    placement.insert("agentRoot".into(), observed_placement["agentRoot"].clone());
     if let Some(root) = observed_placement.get("projectRoot") {
-        placement["projectRoot"] = root.clone();
+        placement.insert("projectRoot".into(), root.clone());
     }
+    for key in ["cwd", "runMode", "bundle"] {
+        placement.insert(key.into(), observed_placement[key].clone());
+    }
+    placement.insert("dryRun".into(), false.into());
+    let placement = Value::Object(placement);
     let mut intent = json!({"placement":placement,"harness":{"interactive":interactive},"execution":{"preferredMode":preferred}});
     if let Some(reuse) = body.get("allowInteractiveSurfaceReuse") {
         intent["execution"]["allowInteractiveSurfaceReuse"] = reuse.clone();
@@ -422,48 +429,28 @@ pub async fn resolve_intent(input: Value) -> Result<Value, ApiError> {
     )
 }
 
-fn expand_home(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        return PathBuf::from(env::var("HOME").unwrap_or_default()).join(rest);
-    }
-    PathBuf::from(path)
-}
-fn absolute(path: &str) -> PathBuf {
-    let path = expand_home(path);
-    if path.is_absolute() {
-        path
-    } else {
-        env::current_dir().unwrap_or_default().join(path)
-    }
-}
-
-pub async fn resolve_placement(body: Value) -> Result<Value, ApiError> {
+/// placements-resolve.ts `resolvePlacementInProcess` over `parsePlacementBody`.
+pub async fn resolve_placement(server: &super::Server, body: Value) -> Result<Value, ApiError> {
+    use super::placement;
     object(&body)?;
-    let mut agent = optional_string(&body, "agentId")?.map(str::to_owned);
-    let mut project = optional_string(&body, "projectId")?.map(str::to_owned);
-    let mut task = optional_string(&body, "taskId")?.map(str::to_owned);
+    let (mut agent, mut project, mut task) = (None, None, None);
     if let Some(scope) = optional_string(&body, "scopeRef")? {
         let identity = scope_identity(scope)?;
-        if agent.is_none() {
-            agent = identity["agentId"].as_str().map(str::to_owned);
-        }
-        if project.is_none() {
-            project = identity["projectId"].as_str().map(str::to_owned);
-        }
-        if task.is_none() {
-            task = identity["taskId"].as_str().map(str::to_owned);
+        agent = identity["agentId"].as_str().map(str::to_owned);
+        project = identity["projectId"].as_str().map(str::to_owned);
+        task = identity["taskId"].as_str().map(str::to_owned);
+    }
+    for (slot, field) in [
+        (&mut agent, "agentId"),
+        (&mut project, "projectId"),
+        (&mut task, "taskId"),
+    ] {
+        if let Some(direct) = optional_string(&body, field)? {
+            *slot = Some(direct.to_owned());
         }
     }
     let agent = agent.ok_or_else(|| bad("agentId", "agentId or scopeRef is required"))?;
     let mode = run_mode(&body)?;
-    let cwd = optional_string(&body, "cwd")?
-        .map(str::to_owned)
-        .unwrap_or_else(|| {
-            env::current_dir()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
-        });
     let association = body
         .get("taskWorktreeAssociation")
         .filter(|v| !v.is_null())
@@ -484,56 +471,111 @@ pub async fn resolve_placement(body: Value) -> Result<Value, ApiError> {
             "projectOrigin must be 'explicit' or 'inferred'",
         ));
     }
-    let explicit = project.is_some() && body["projectOrigin"] != "inferred";
-    let mut root = None;
-    let mut source = None;
-    if explicit {
-        let override_root = optional_string(&body, "projectRoot")?
-            .map(str::to_owned)
-            .or_else(|| env::var("ASP_PROJECT_ROOT_OVERRIDE").ok());
-        if let Some(path) = override_root {
-            let path = absolute(&path);
-            if !path.is_dir() {
-                return Err(ApiError::domain(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "declaration_invalid",
-                    format!(
-                        "explicit project root does not exist or is not a directory: {}",
-                        path.display()
-                    ),
-                    Some(json!({"source":"project-targets"})),
-                ));
-            }
-            root = Some(path);
-            source = Some("explicit-override");
-        } else if let Some(entries) = body["registryProjects"].as_array()
-            && let Some(entry) = entries.iter().find(|entry| {
-                entry["id"] == project.as_deref().unwrap_or("")
-                    || entry["path"] == project.as_deref().unwrap_or("")
-            })
-            && let Some(path) = entry["root"].as_str()
-        {
-            root = Some(absolute(path));
-            source = Some("wrkq-registry");
-        }
-        if root.is_none() {
-            return Err(ApiError::domain(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "declaration_invalid",
-                format!(
-                    "project root unknown for {}; register it with: wrkq set {} --root <path>",
-                    project.as_deref().unwrap_or(""),
-                    project.as_deref().unwrap_or("")
-                ),
-                Some(json!({"source":"project-targets"})),
+    if body.get("registryProjects").is_some_and(|v| !v.is_array()) {
+        return Err(bad("registryProjects", "registryProjects must be an array"));
+    }
+    let search_roots = match body.get("projectSearchRoots") {
+        None => None,
+        Some(Value::Array(roots)) if roots.iter().all(Value::is_string) => Some(
+            roots
+                .iter()
+                .filter_map(Value::as_str)
+                .map(PathBuf::from)
+                .collect::<Vec<_>>(),
+        ),
+        Some(_) => {
+            return Err(bad(
+                "projectSearchRoots",
+                "projectSearchRoots must be an array of strings",
             ));
+        }
+    };
+    let cwd = optional_string(&body, "cwd")?
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        });
+    let project_root_override = optional_string(&body, "projectRoot")?;
+    let agent_root_override = optional_string(&body, "agentRoot")?;
+    // Explicit input wins; otherwise the marker walk-up from cwd names it.
+    let explicit = project.is_some() && body["projectOrigin"] != "inferred";
+    let project = project.or_else(|| placement::infer_project_id(&cwd));
+    let (mut root, mut source, mut branch, mut worktree_warning) = (None, None, None, None);
+    if explicit && let Some(id) = &project {
+        let projects = match body["registryProjects"].as_array() {
+            Some(entries) => entries.clone(),
+            None => placement::load_registry(server).await,
+        };
+        let agents_root = placement::agents_root();
+        match placement::canonical_root(
+            id,
+            &cwd,
+            agent_root_override.or(agents_root.as_deref()),
+            project_root_override,
+            &projects,
+            search_roots.as_deref(),
+        ) {
+            Ok(found) => {
+                root = Some(found.root);
+                source = Some(found.source);
+            }
+            Err(message) => {
+                // A missing explicit override fails closed; otherwise a
+                // registered root that exists here is the last candidate.
+                let explicit_override = project_root_override.is_some()
+                    || env::var("ASP_PROJECT_ROOT_OVERRIDE").is_ok();
+                match (!explicit_override)
+                    .then(|| placement::registered_root(id, &projects))
+                    .flatten()
+                {
+                    Some(registered) => {
+                        root = Some(registered);
+                        source = Some("wrkq-registry");
+                    }
+                    None => {
+                        return Err(ApiError::domain(
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "declaration_invalid",
+                            message,
+                            Some(json!({"source":"project-targets"})),
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(canonical) = root.clone() {
+            match placement::refine_task_worktree(&canonical, task.as_deref()).await {
+                Ok(Some((path, found))) => {
+                    root = Some(PathBuf::from(path));
+                    branch = found;
+                }
+                Ok(None) => {}
+                Err(message) if association != "advisory" => {
+                    let mut detail = json!({"source":"task-worktree","projectRoot":canonical});
+                    if let Some(task) = &task {
+                        detail["taskId"] = task.clone().into();
+                    }
+                    return Err(ApiError::domain(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "declaration_invalid",
+                        message,
+                        Some(detail),
+                    ));
+                }
+                Err(message) => {
+                    worktree_warning = Some(format!(
+                        "{message}; proceeding without task-worktree refinement"
+                    ));
+                }
+            }
         }
     }
     let mut context =
         json!({"agentId":agent,"cwd":cwd,"runMode":mode,"project":{"mode":"infer-from-cwd"}});
-    // Match Bun: only an explicit wire override rides here. ASP_AGENTS_ROOT
-    // does not override the shared aspd's normal agent-root resolution.
-    if let Some(agent_root) = optional_string(&body, "agentRoot")? {
+    if let Some(agent_root) = agent_root_override {
         context["agentRoot"] = agent_root.into();
     }
     if let Some(root) = &root {
@@ -559,76 +601,234 @@ pub async fn resolve_placement(body: Value) -> Result<Value, ApiError> {
                 })
                 .filter(|v| !v.is_empty())
                 .unwrap_or_else(|| "no agent roots".into());
+            let mut detail = json!({"source":"agent-profile","producerCode":"agent_not_found","agentId":agent,"searchedAgentRoots":observed["searchedAgentRoots"]});
+            if let Some(root) = &root {
+                detail["projectRoot"] = json!(root);
+            }
+            detail["cwd"] = cwd.clone().into();
             return Err(ApiError::domain(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "declaration_invalid",
                 format!("agent \"{agent}\" was not found (searched: {searched})"),
-                Some(
-                    json!({"source":"agent-profile","producerCode":"agent_not_found","agentId":agent,"searchedAgentRoots":observed["searchedAgentRoots"],"cwd":cwd}),
-                ),
+                Some(detail),
             ));
         }
-        return Err(declaration_refusal(
-            &observed,
-            "",
-            "resolveRuntimeDeclaration",
+        let Some(resolution) = observed.get("resolution") else {
+            return Err(declaration_refusal(
+                &observed,
+                "",
+                "resolveRuntimeDeclaration",
+            ));
+        };
+        let mut detail = json!({
+            "source": resolution["diagnostics"][0]["source"].as_str().unwrap_or(match resolution["code"].as_str() {
+                Some("project_targets_invalid") => "project-targets",
+                Some("selected_target_invalid") => "selected-target",
+                Some("priming_invalid") => "priming",
+                _ => "agent-profile",
+            }),
+            "producerCode": resolution["code"],
+        });
+        if let Some(id) = &project {
+            detail["projectId"] = id.clone().into();
+        }
+        if let Some(root) = &root {
+            detail["projectRoot"] = json!(root);
+        }
+        return Err(ApiError::domain(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "declaration_invalid",
+            resolution["message"]
+                .as_str()
+                .unwrap_or("declaration refused"),
+            Some(detail),
         ));
     }
+    Ok(assemble_placement(
+        &observed,
+        &session,
+        &agent,
+        project.as_deref(),
+        explicit,
+        task.as_deref(),
+        root.as_deref(),
+        source,
+        branch.as_deref(),
+        worktree_warning,
+    ))
+}
+
+/// placements-resolve.ts `assemblePlacementResponse`, in its key order.
+#[allow(clippy::too_many_arguments)]
+fn assemble_placement(
+    observed: &Value,
+    session: &AspSession,
+    agent: &str,
+    project: Option<&str>,
+    explicit: bool,
+    task: Option<&str>,
+    root: Option<&Path>,
+    source: Option<&str>,
+    branch: Option<&str>,
+    worktree_warning: Option<String>,
+) -> Value {
     let placement = &observed["placement"];
-    let effective_cwd = placement
-        .get("projectRoot")
-        .or_else(|| placement.get("cwd"))
-        .unwrap_or(&placement["agentRoot"]);
-    let mut harness = json!({});
-    for (from, to) in [
-        ("provider", "provider"),
-        ("frontend", "frontend"),
-        ("effectiveHarness", "effectiveHarness"),
-        ("transport", "transport"),
-    ] {
-        if let Some(v) = observed["provisioning"].get(from) {
-            harness[to] = v.clone();
+    let provisioning = &observed["provisioning"];
+    let project_root = placement.get("projectRoot").filter(|v| !v.is_null());
+    let cwd = project_root
+        .or_else(|| placement.get("cwd").filter(|v| !v.is_null()))
+        .or_else(|| placement.get("agentRoot").filter(|v| !v.is_null()));
+    let mut out = serde_json::Map::new();
+    out.insert("agentId".into(), agent.into());
+    if let Some(project) = project {
+        out.insert("projectId".into(), project.into());
+    }
+    if let Some(task) = task {
+        out.insert("taskId".into(), task.into());
+    }
+    out.insert("agentRoot".into(), placement["agentRoot"].clone());
+    if let Some(v) = project_root {
+        out.insert("projectRoot".into(), v.clone());
+    }
+    if let Some(v) = cwd {
+        out.insert("cwd".into(), v.clone());
+    }
+    if let Some(v) = placement.get("bundle").filter(|v| !v.is_null()) {
+        out.insert("bundle".into(), v.clone());
+    }
+    if let Some(v) = observed["bundle"].get("identity").filter(|v| !v.is_null()) {
+        out.insert("bundleIdentity".into(), v.clone());
+    }
+    let mut harness = serde_json::Map::new();
+    for key in ["provider", "frontend", "effectiveHarness"] {
+        if let Some(v) = provisioning.get(key).filter(|v| !v.is_null()) {
+            harness.insert(key.into(), v.clone());
         }
     }
-    if let Some(transport) = observed["provisioning"].get("transport") {
+    let mut harness = Value::Object(harness);
+    if let Some(transport) = provisioning.get("transport").filter(|v| !v.is_null()) {
+        harness["transport"] = transport.clone();
         harness["interactive"] = (transport != "sdk").into();
     }
-    let mut result = json!({"agentId":agent,"agentRoot":placement["agentRoot"],"cwd":effective_cwd,"harness":harness,"provision":{"scalars":observed["provisioning"]["scalars"]},"policy":observed["policy"],"identity":observed["identity"],"agentSources":observed["agentSources"],"searchedAgentRoots":observed["searchedAgentRoots"],"source":source_states(&observed),"resolution":{"source":source.unwrap_or(if project.is_some() {"inferred"} else {"projectless"}),"cwd":effective_cwd},"warnings":[],"release":release(&session)});
-    if let Some(root) = &root {
-        result["resolution"]["canonicalRoot"] = json!(root);
+    out.insert("harness".into(), harness);
+    let mut provision = json!({"scalars":provisioning["scalars"]});
+    if let Some(v) = provisioning.get("declaredHarness").filter(|v| !v.is_null()) {
+        provision["declaredHarness"] = v.clone();
     }
-    result["resolution"]["reason"] = match (&root, source, &project) {
-        (Some(root), Some("wrkq-registry"), _) => {
-            format!("cwd from wrkq registry root {}", root.display())
-        }
-        (Some(root), _, _) => format!("cwd from explicit project root {}", root.display()),
-        (_, _, Some(project)) => format!("cwd from inferred project {project}"),
-        _ => "cwd from agent root (project-less scope)".to_owned(),
+    out.insert("provision".into(), provision);
+    let policy = &observed["policy"];
+    let mut shaped = json!({"claimsTask":policy["claimsTask"]});
+    if let Some(v) = policy.get("provisioningNode").filter(|v| !v.is_null()) {
+        shaped["provisioningNode"] = v.clone();
     }
-    .into();
-    for (key, value) in [("projectId", project), ("taskId", task)] {
-        if let Some(value) = value {
-            result[key] = value.clone().into();
-            if key == "projectId" {
-                result["resolution"][key] = value.into();
-            }
-        }
+    let mut placement_policy = serde_json::Map::new();
+    if let Some(v) = policy["placement"].get("launch").filter(|v| !v.is_null()) {
+        placement_policy.insert("launch".into(), v.clone());
     }
-    for key in ["projectRoot", "bundle"] {
-        if let Some(value) = placement.get(key) {
-            result[key] = value.clone();
-        }
+    placement_policy.insert("pins".into(), policy["placement"]["pins"].clone());
+    placement_policy.insert("homes".into(), policy["placement"]["homes"].clone());
+    shaped["placement"] = placement_policy.into();
+    out.insert("policy".into(), shaped);
+    let mut identity = serde_json::Map::new();
+    if let Some(v) = observed["identity"].get("role").filter(|v| !v.is_null()) {
+        identity.insert("role".into(), v.clone());
     }
-    if let Some(value) = observed["bundle"].get("identity") {
-        result["bundleIdentity"] = value.clone();
+    identity.insert("operator".into(), observed["identity"]["operator"].clone());
+    out.insert("identity".into(), identity.into());
+    out.insert("agentSources".into(), observed["agentSources"].clone());
+    out.insert(
+        "searchedAgentRoots".into(),
+        observed["searchedAgentRoots"].clone(),
+    );
+    if let Some(v) = observed.get("markerProjectId").filter(|v| !v.is_null()) {
+        out.insert("markerProjectId".into(), v.clone());
     }
-    if let Some(value) = observed.get("markerProjectId") {
-        result["markerProjectId"] = value.clone();
+    out.insert("source".into(), source_states(observed));
+    let root_text = root.map(|r| r.to_string_lossy().into_owned());
+    let resolution_source = if branch.is_some() {
+        "task-worktree"
+    } else {
+        source.unwrap_or(if explicit || project.is_some() {
+            "inferred"
+        } else {
+            "projectless"
+        })
+    };
+    let reason = match (&root_text, branch, source) {
+        (Some(r), Some(b), _) => format!("cwd from task worktree {r}, branch {b}"),
+        (Some(r), None, Some("wrkq-registry")) => format!("cwd from wrkq registry root {r}"),
+        (Some(r), None, Some("marker-scan")) => format!("cwd from marker scan {r}"),
+        (Some(r), None, Some("sibling-fallback")) => format!("cwd from sibling fallback {r}"),
+        (Some(r), None, _) => format!("cwd from explicit project root {r}"),
+        (None, _, _) => match project {
+            Some(p) => format!("cwd from inferred project {p}"),
+            None => "cwd from agent root (project-less scope)".into(),
+        },
+    };
+    let mut resolution = serde_json::Map::new();
+    resolution.insert("source".into(), resolution_source.into());
+    if let Some(project) = project {
+        resolution.insert("projectId".into(), project.into());
     }
-    if let Some(value) = observed["provisioning"].get("declaredHarness") {
-        result["provision"]["declaredHarness"] = value.clone();
+    if let Some(r) = &root_text {
+        resolution.insert("canonicalRoot".into(), r.clone().into());
     }
-    Ok(result)
+    if let Some(v) = cwd {
+        resolution.insert("cwd".into(), v.clone());
+    }
+    if let Some(b) = branch {
+        resolution.insert("branch".into(), b.into());
+    }
+    resolution.insert("reason".into(), reason.into());
+    out.insert("resolution".into(), resolution.into());
+    let mut warnings: Vec<Value> = worktree_warning.into_iter().map(Value::from).collect();
+    if observed["source"]["agentProfile"]["state"] == "invalid" {
+        warnings.push(invalid_profile_warning(agent, observed).into());
+    }
+    out.insert("warnings".into(), warnings.into());
+    out.insert("release".into(), release(session));
+    out.into()
+}
+
+/// runtime-intent-assembly.ts `formatProfileProvisioningStrippedWarning`.
+fn invalid_profile_warning(agent: &str, observed: &Value) -> String {
+    let survived: Vec<&String> = observed["provisioning"]["scalars"]
+        .as_object()
+        .map(|m| m.keys().collect())
+        .unwrap_or_default();
+    let consequence = if survived.is_empty() {
+        "is being born with NO provisioning at all: no model pin, no harness pin, no yolo, no node"
+            .to_owned()
+    } else {
+        format!(
+            "is being born WITHOUT its profile's provisioning (no model pin, no harness pin from the profile); only the project target's {} survives",
+            serde_json::to_string(&survived).unwrap_or_default()
+        )
+    };
+    let messages: Vec<&str> = observed["diagnostics"]
+        .as_array()
+        .map(|d| d.iter().filter_map(|x| x["message"].as_str()).collect())
+        .unwrap_or_default();
+    let rendered = messages
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let detail = if rendered.chars().count() > 300 {
+        format!("{}...", rendered.chars().take(297).collect::<String>())
+    } else {
+        rendered
+    };
+    let profile = format!(
+        "{}/agent-profile.toml",
+        observed["placement"]["agentRoot"]
+            .as_str()
+            .unwrap_or("")
+            .trim_end_matches('/')
+    );
+    format!(
+        "[hrc-core] WARN agent.provisioning.stripped — agent \"{agent}\" {consequence}. Its agent-profile.toml EXISTS but could not be read or parsed, so it contributed nothing. profile={profile} error={detail}"
+    )
 }
 
 pub fn placement_bindings(

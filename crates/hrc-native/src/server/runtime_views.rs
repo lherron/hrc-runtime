@@ -499,17 +499,29 @@ pub async fn target_session_view(
         Some("tmux" | "headless") => "headless",
         _ => "none",
     };
-    let mut out = json!({"sessionRef":format!("{scope}/lane:{lane}"),"scopeRef":scope,"laneRef":hrc_store::canonical_lane(&lane),"state":state,"activeHostSessionId":session["hostSessionId"],"generation":session["generation"],"capabilities":{"state":state,"modesSupported":if mode=="none"{json!([])}else{json!([mode])},"defaultMode":mode,"dmReady":mode!="none","sendReady":view.as_ref().is_some_and(|v|v["supportsLiteralSend"]==true),"peekReady":view.as_ref().is_some_and(|v|v["supportsCapture"]==true)}});
+    let capabilities = json!({"state":state,"modesSupported":if mode=="none"{json!([])}else{json!([mode])},"defaultMode":mode,"dmReady":mode!="none","sendReady":view.as_ref().is_some_and(|v|v["supportsLiteralSend"]==true),"peekReady":view.as_ref().is_some_and(|v|v["supportsCapture"]==true)});
+    // target-view.ts toTargetView key order; absent members are omitted.
+    let mut out = serde_json::Map::new();
+    out.insert("sessionRef".into(), format!("{scope}/lane:{lane}").into());
+    out.insert("scopeRef".into(), scope.into());
+    if let Some(identity) = session.get("identity") {
+        out.insert("identity".into(), identity.clone());
+    }
+    out.insert("laneRef".into(), hrc_store::canonical_lane(&lane).into());
+    out.insert("state".into(), state.into());
     for key in ["lastAppliedIntentJson", "continuation"] {
         if let Some(v) = session.get(key) {
-            out[key] = v.clone();
+            out.insert(key.into(), v.clone());
         }
     }
+    out.insert(
+        "activeHostSessionId".into(),
+        session["hostSessionId"].clone(),
+    );
+    out.insert("generation".into(), session["generation"].clone());
     if let Some(v) = view {
-        out["runtime"] = v;
+        out.insert("runtime".into(), v);
     }
-    if let Some(identity) = session.get("identity") {
-        out["identity"] = identity.clone();
-    }
-    Ok(out)
+    out.insert("capabilities".into(), capabilities);
+    Ok(out.into())
 }

@@ -35,3 +35,34 @@ def compare(args, checks):
                        'failureCode': 1})
         cases.append({'id': name, 'pass': passed})
     return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}
+
+
+# Placement: each owner runs on its own scratch root (births mutate state), so
+# paths arrive root-normalized. bundleIdentity hashes those absolute paths and
+# host session ids/clocks are minted per owner; positions still compare.
+PLACEMENT_DYNAMIC = {'bundleIdentity', 'hostSessionId', 'activeHostSessionId', 'createdAt', 'updatedAt',
+                     'lastActivityAt'}
+PLACEMENT_CASES = 37
+
+
+def placement_canonical(value):
+    if isinstance(value, dict):
+        return [(k, '<dynamic>' if k in PLACEMENT_DYNAMIC else placement_canonical(x)) for k, x in value.items()]
+    if isinstance(value, list):
+        return [placement_canonical(x) for x in value]
+    return value
+
+
+def compare_placement(args, checks):
+    a = json.loads((Path(args.baseline) / 'placement.json').read_text())
+    b = json.loads((Path(args.candidate) / 'placement.json').read_text())
+    checks.append({'id': 'case-matrix', 'pass': len(a) == PLACEMENT_CASES and set(a) == set(b),
+                   'reason': 'every placement door and cold birth on both owners', 'failureCode': 1})
+    cases = []
+    for name in a:
+        passed = name in b and placement_canonical(a[name]) == placement_canonical(b[name])
+        checks.append({'id': 'compare:' + name, 'pass': passed,
+                       'reason': 'status, fields, values, key order and the born pane cwd must match Bun',
+                       'failureCode': 1})
+        cases.append({'id': name, 'pass': passed})
+    return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}
