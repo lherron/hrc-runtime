@@ -151,7 +151,7 @@ fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, Ap
         None
     } else {
         let stamp = if let Some(v) = optional(query, "updatedSince") {
-            let millis = hrc_cli::parse_date(v);
+            let millis = hrc_common::js::parse_date(v);
             let parsed = millis
                 .is_finite()
                 .then(|| chrono::DateTime::from_timestamp_millis(millis as i64))

@@ -11,7 +11,7 @@ use axum::{
     Json,
     response::{IntoResponse, Response},
 };
-use hrc_cli::FederationPeer;
+use hrc_common::federation::FederationPeer;
 use hrc_store::timestamp;
 use serde_json::{Value, json};
 use std::{collections::HashMap, time::Instant};
@@ -254,7 +254,7 @@ async fn locate_scope(server: &Server, scope: &str) -> Value {
 /// The peer listener's POST /v1/federation/locate: this node's own report,
 /// never a further peer hop. `None` for a scope that will not canonicalize.
 pub async fn locate_for_peer(server: &Server, scope: &str) -> Option<Value> {
-    hrc_cli::validate_scope(scope).ok()?;
+    hrc_common::scope::validate_scope(scope).ok()?;
     Some(locate_scope(server, scope).await)
 }
 
@@ -272,7 +272,7 @@ pub async fn locate(
             Some(json!({"field":"scopeRef"})),
         ));
     };
-    if let Err(message) = hrc_cli::validate_scope(raw) {
+    if let Err(message) = hrc_common::scope::validate_scope(raw) {
         return Err(ApiError::bad(
             format!("could not locate \"{raw}\": {message}"),
             Some(json!({"field":"scopeRef"})),

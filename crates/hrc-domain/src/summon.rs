@@ -38,19 +38,8 @@ impl Summon {
             .session_ref
             .strip_suffix("/lane:main")
             .ok_or_else(|| invalid(UNQUALIFIED))?;
-        let parts: Vec<_> = scope.split(':').collect();
-        // The agent-scope token contract: 1..64 ASCII letters/digits/._-.
-        let token = |s: &str| {
-            !s.is_empty()
-                && s.len() <= 64
-                && s.bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
-        };
-        if parts.len() != 6
-            || parts[0] != "agent"
-            || parts[2] != "project"
-            || parts[4] != "task"
-            || ![parts[1], parts[3], parts[5]].into_iter().all(token)
+        if !hrc_common::scope::ScopeRef::parse(scope)
+            .is_ok_and(|s| s.project.is_some() && s.task.is_some() && s.role.is_none())
         {
             return Err(invalid(
                 "session_ref must be agent:<a>:project:<p>:task:<t>/lane:main",
@@ -123,5 +112,32 @@ impl Summon {
             "host_session_id":string(&response["hostSessionId"])?,"runtime_id":string(&response["runtimeId"])?,
             "status":string(&response["status"])?,"replayed":response["claim"]["replayed"].as_bool().ok_or_else(invalid)?}),
         )
+    }
+}
+
+#[cfg(test)]
+mod scope_compatibility {
+    #[test]
+    fn summon_requires_task_and_main_lane_without_role() {
+        for scope in ["agent:a:project:p:task:t", "agent:a:project:p:task:._-09"] {
+            assert!(super::Summon::parse(serde_json::json!({"session_ref":format!("{scope}/lane:main"),"request_id":"id"})).is_ok());
+        }
+        for scope in [
+            "agent:a",
+            "agent:a:project:p",
+            "agent:a:project:p:task:",
+            "agent:a:project:p:task:t:role:r",
+            "agent:a:project:p:task:é",
+        ] {
+            let error = super::Summon::parse(
+                serde_json::json!({"session_ref":format!("{scope}/lane:main"),"request_id":"id"}),
+            )
+            .err()
+            .expect("invalid scope");
+            assert_eq!(
+                error.message,
+                "session_ref must be agent:<a>:project:<p>:task:<t>/lane:main"
+            );
+        }
     }
 }

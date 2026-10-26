@@ -9,7 +9,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
-use hrc_cli::FederationPeer;
+use hrc_common::federation::FederationPeer;
 use serde_json::{Value, json};
 use std::{collections::HashMap, time::Duration};
 
@@ -116,7 +116,7 @@ fn unreachable(scope: &str, home: &str, detail: impl Into<String>) -> ApiError {
 async fn route(server: &Server, raw: &str) -> Result<Option<(String, FederationPeer)>, ApiError> {
     // Only agent scopes are ever placed; anything else reads locally.
     let scope = raw.trim();
-    if scope.is_empty() || hrc_cli::validate_scope(scope).is_err() {
+    if scope.is_empty() || hrc_common::scope::validate_scope(scope).is_err() {
         return Ok(None);
     }
     let node = &server.federation;

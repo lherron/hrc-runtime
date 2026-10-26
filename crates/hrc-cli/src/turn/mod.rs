@@ -18,13 +18,7 @@ pub(crate) struct Observation {
     follow_seat: bool,
 }
 fn project(scope: &Qualified) -> Option<&str> {
-    scope
-        .scope
-        .split(':')
-        .collect::<Vec<_>>()
-        .windows(2)
-        .find(|p| p[0] == "project")
-        .map(|p| p[1])
+    hrc_common::scope::legacy_adjacent_segment(&scope.scope, "project")
 }
 fn reference(scope: &Qualified) -> String {
     format!("{}/lane:{}", scope.scope, scope.lane)
@@ -439,4 +433,14 @@ fn attach(
         catch_up: last["hrcSeq"].as_i64(),
         follow_seat: false,
     })
+}
+
+#[cfg(test)]
+mod scope_compatibility {
+    #[test]
+    fn project_keeps_legacy_adjacent_label_scan() {
+        let scope = crate::scope::Qualified::parse("agent:project:project:p:task:t", false)
+            .expect("valid scope");
+        assert_eq!(super::project(&scope), Some("project"));
+    }
 }

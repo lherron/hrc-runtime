@@ -210,12 +210,8 @@ fn local_origin() -> Value {
     json!({"actor":actor,"kind":"human"})
 }
 fn follow(scope: &str) -> Value {
-    let parts = scope.split(':').collect::<Vec<_>>();
-    if let Some(task) = parts
-        .windows(2)
-        .find(|p| p[0] == "task")
-        .map(|p| p[1])
-        .filter(|t| *t != "primary")
+    if let Some(task) =
+        hrc_common::scope::legacy_adjacent_segment(scope, "task").filter(|t| *t != "primary")
     {
         json!([{"purpose":"live room feed (milestone cadence)","cmd":format!("hrc monitor watch {task} --follow")},{"purpose":"block until the task lands","cmd":format!("wrkq monitor wait {task} --until all-terminal")}])
     } else {
@@ -606,4 +602,15 @@ fn admission_error(command: &str, input: &str, message: &str, detail: &Value) ->
 
 fn text(v: &Value) -> &str {
     v.as_str().unwrap_or("undefined")
+}
+
+#[cfg(test)]
+mod scope_compatibility {
+    #[test]
+    fn follow_keeps_legacy_adjacent_label_scan() {
+        assert_eq!(
+            super::follow("agent:task:project:p:task:t")[1]["cmd"],
+            "wrkq monitor wait project --until all-terminal"
+        );
+    }
 }

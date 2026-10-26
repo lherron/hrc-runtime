@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["hrc-domain", "hrc-kernel", "hrc-store", "hrc-native", "hrc-cli"]
+members = ["hrc-common", "hrc-domain", "hrc-kernel", "hrc-store", "hrc-native", "hrc-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -26,6 +26,7 @@ uuid = { version = "1", features = ["v4"] }
 libc = "0.2"
 sha2 = "0.10"
 toml = "0.8"
+url = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "process", "io-util"] }
 regex = "1"
 axum = "0.8"

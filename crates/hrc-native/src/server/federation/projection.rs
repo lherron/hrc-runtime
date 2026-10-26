@@ -9,7 +9,7 @@ use axum::{
     Json,
     response::{IntoResponse, Response},
 };
-use hrc_cli::FederationPeer;
+use hrc_common::federation::FederationPeer;
 use hrc_store::timestamp;
 use serde_json::{Value, json};
 use std::{

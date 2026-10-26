@@ -526,10 +526,10 @@ async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
         }
         if let Some(next) = a["establishment_next_attempt_at"]
             .as_str()
-            .map(hrc_cli::parse_date)
+            .map(hrc_common::js::parse_date)
             .filter(|n| n.is_finite())
         {
-            let now = hrc_cli::parse_date(&hrc_store::timestamp());
+            let now = hrc_common::js::parse_date(&hrc_store::timestamp());
             if next > now {
                 tokio::time::sleep(Duration::from_millis((next - now) as u64)).await;
             }

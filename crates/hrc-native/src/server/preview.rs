@@ -56,17 +56,9 @@ fn scope_of(session_ref: &str) -> &str {
 fn inspection_context(intent: &Value, session_ref: &str) -> Value {
     let placement = &intent["placement"];
     let scope = scope_of(session_ref);
-    let parsed = hrc_cli::validate_scope(scope).is_ok();
-    let parts: Vec<&str> = scope.split(':').collect();
-    let (agent, project, task) = if parsed {
-        (
-            Some(parts[1]),
-            parts.get(3).copied(),
-            (parts.get(4) == Some(&"task")).then(|| parts[5]),
-        )
-    } else {
-        (None, None, None)
-    };
+    let parsed = hrc_common::scope::ScopeRef::parse(scope).ok();
+    let (agent, project, task) =
+        parsed.map_or((None, None, None), |p| (Some(p.agent), p.project, p.task));
     let agent_root = placement["agentRoot"]
         .as_str()
         .map(str::to_owned)

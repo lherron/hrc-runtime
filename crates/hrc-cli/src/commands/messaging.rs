@@ -77,7 +77,10 @@ pub(super) fn restart(args: &Parsed<'_>) -> Result<()> {
     if status["capabilities"]["sessionRestart"] != true {
         return Err(Error::failure(format!(
             "the running HRC daemon predates hrc restart; ask mable@{}:primary to restart it",
-            scope.scope.split(':').nth(3).unwrap_or("<project>")
+            hrc_common::scope::ScopeRef::parse(&scope.scope)
+                .ok()
+                .and_then(|s| s.project)
+                .unwrap_or("<project>")
         )));
     }
     let resolved = client.post(

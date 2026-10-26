@@ -37,7 +37,7 @@ fn text(body: &Value, field: &str) -> Result<Option<String>, ApiError> {
             let raw = v
                 .as_str()
                 .ok_or_else(|| malformed(format!("{field} must be a string"), field))?;
-            let raw = hrc_cli::trim_js(raw);
+            let raw = hrc_common::js::trim(raw);
             Ok((!raw.is_empty()).then(|| raw.to_owned()))
         }
     }
@@ -87,7 +87,7 @@ pub fn local(bytes: &[u8]) -> Result<Request, ApiError> {
     let target_node = text(&body, "targetNode")?;
     if target_node
         .as_deref()
-        .is_some_and(|s| !hrc_cli::is_valid_node_id(s))
+        .is_some_and(|s| !hrc_common::federation::is_valid_node_id(s))
     {
         return Err(malformed("targetNode is not a valid nodeId", "targetNode"));
     }

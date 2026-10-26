@@ -492,35 +492,24 @@ fn runtime_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
 }
 
 pub fn derive_identity(scope: &str) -> Value {
-    let parts = scope.split(':').collect::<Vec<_>>();
-    let mut identity = json!({"kind":"unparsed","agentId":scope});
-    if parts.first() != Some(&"agent") || parts.len() < 2 || parts[1].is_empty() {
-        return identity;
+    hrc_common::scope::legacy_derive_identity(scope)
+}
+
+#[cfg(test)]
+mod scope_compatibility {
+    #[test]
+    fn identity_retains_legacy_token_acceptance() {
+        assert_eq!(
+            super::derive_identity("agent:a:project:"),
+            serde_json::json!({"kind":"project","agentId":"a","projectId":""})
+        );
+        assert_eq!(
+            super::derive_identity("agent:a:project:p:task:bad token"),
+            serde_json::json!({"kind":"project-task","agentId":"a","projectId":"p","taskId":"bad token"})
+        );
+        assert_eq!(
+            super::derive_identity("agent:a:extra"),
+            serde_json::json!({"kind":"unparsed","agentId":"agent:a:extra"})
+        );
     }
-    identity = json!({"kind":"agent","agentId":parts[1]});
-    match parts.as_slice() {
-        ["agent", _, "project", project, "task", task, "role", role] => {
-            identity["kind"] = "project-task-role".into();
-            identity["projectId"] = (*project).into();
-            identity["taskId"] = (*task).into();
-            identity["roleName"] = (*role).into();
-        }
-        ["agent", _, "project", project, "role", role] => {
-            identity["kind"] = "project-role".into();
-            identity["projectId"] = (*project).into();
-            identity["roleName"] = (*role).into();
-        }
-        ["agent", _, "project", project, "task", task] => {
-            identity["kind"] = "project-task".into();
-            identity["projectId"] = (*project).into();
-            identity["taskId"] = (*task).into();
-        }
-        ["agent", _, "project", project] => {
-            identity["kind"] = "project".into();
-            identity["projectId"] = (*project).into();
-        }
-        ["agent", _] => {}
-        _ => return json!({"kind":"unparsed","agentId":scope}),
-    }
-    identity
 }

@@ -84,43 +84,16 @@ pub(crate) struct ScopeParts {
 }
 /// agent-scope `parseScopeRef` (errors carry the `Invalid ScopeRef` prefix).
 pub(crate) fn parse_scope_ref(scope: &str) -> std::result::Result<ScopeParts, String> {
-    validate_scope(scope).map_err(|e| format!("Invalid ScopeRef \"{scope}\": {e}"))?;
-    let p = scope.split(':').collect::<Vec<_>>();
-    let mut parts = ScopeParts {
-        agent: p[1].into(),
-        project: p.get(3).map(|s| (*s).into()),
-        task: None,
-        role: None,
-    };
-    match p.get(4).copied() {
-        Some("role") => parts.role = Some(p[5].into()),
-        Some("task") => {
-            parts.task = Some(p[5].into());
-            parts.role = p.get(7).map(|s| (*s).into());
-        }
-        _ => {}
-    }
-    Ok(parts)
+    let parts = hrc_common::scope::ScopeRef::parse(scope)
+        .map_err(|e| format!("Invalid ScopeRef \"{scope}\": {e}"))?;
+    Ok(ScopeParts {
+        agent: parts.agent.into(),
+        project: parts.project.map(str::to_owned),
+        task: parts.task.map(str::to_owned),
+        role: parts.role.map(str::to_owned),
+    })
 }
-pub(crate) fn build_scope_ref(
-    agent: &str,
-    project: Option<&str>,
-    task: Option<&str>,
-    role: Option<&str>,
-) -> String {
-    let mut s = format!("agent:{agent}");
-    if let Some(p) = project {
-        s += &format!(":project:{p}");
-    }
-    if let Some(t) = task {
-        s += &format!(":task:{t}");
-    }
-    if let Some(r) = role {
-        s += &format!(":role:{r}");
-    }
-    s
-}
-
+pub(crate) use hrc_common::scope::build_scope_ref;
 /// hrc-core `formatSessionIdentityHandle`.
 pub(crate) fn identity_handle(identity: &Value) -> String {
     let field = |k: &str| identity[k].as_str().filter(|s| !s.is_empty());
@@ -195,13 +168,7 @@ fn validate_scope_handle(handle: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 /// agent-scope `parseScopeHandle`: the canonical scope ref.
-pub(crate) fn parse_scope_handle(handle: &str) -> std::result::Result<String, String> {
-    validate_scope_handle(handle).map_err(|e| format!("Invalid ScopeHandle \"{handle}\": {e}"))?;
-    let s = split_handle(handle);
-    let scope = build_scope_ref(s.agent, s.project, s.task, s.role);
-    parse_scope_ref(&scope)?;
-    Ok(scope)
-}
+pub(crate) use hrc_common::scope::parse_scope_handle;
 /// agent-scope `parseSessionHandle` → (scopeRef, laneRef).
 fn parse_session_handle(handle: &str) -> std::result::Result<(String, String), String> {
     let (scope_part, lane) = handle

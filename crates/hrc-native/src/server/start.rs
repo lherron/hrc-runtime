@@ -208,7 +208,7 @@ impl Scope {
                     Some(json!({"sessionRef":session_ref})),
                 )
             })?;
-        if let Err(e) = hrc_cli::validate_scope(scope) {
+        if let Err(e) = hrc_common::scope::validate_scope(scope) {
             return Err(ApiError::bad(
                 format!("{field} carries an invalid scope ref: {e}"),
                 Some(json!({"field":field,field:session_ref})),
