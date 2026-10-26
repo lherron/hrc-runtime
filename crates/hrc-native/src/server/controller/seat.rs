@@ -270,9 +270,6 @@ fn warn_stalled(
 
 /// probeSeat: seat.probe on the active binding and its recorded consequences.
 pub async fn probe(server: &Shared, runtime_id: &str, cause: &str) -> Result<Value, Value> {
-    let Some(_write) = server.owner_writes.enter() else {
-        return Err(json!({"code":"server_stopping","message":"owner writes are closed"}));
-    };
     let result = super::submit::with_active(
         server,
         runtime_id,
@@ -287,6 +284,12 @@ pub async fn probe(server: &Shared, runtime_id: &str, cause: &str) -> Result<Val
             .map(|(_, v)| v)
             .map_err(|e| json!({"code":e.code,"message":e.message}));
     }
+    // Entered after the probe RPC: a closed fence answers unrecorded.
+    let Some(_write) = server.owner_writes.enter() else {
+        return result
+            .map(|(_, v)| v)
+            .map_err(|e| json!({"code":e.code,"message":e.message}));
+    };
     let observed = hrc_store::timestamp();
     let current = active(server, runtime_id).map(|(i, _)| i);
     let recorded: Result<()> = (|| {

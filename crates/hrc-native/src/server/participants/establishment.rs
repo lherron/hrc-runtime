@@ -525,10 +525,11 @@ async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
                 tokio::time::sleep(Duration::from_millis((next - now) as u64)).await;
             }
         }
-        // After the retry wait: a stopping owner leaves the attempt for the next one.
-        let Some(_write) = server.owner_writes.enter() else {
+        // After the retry wait: a stopping owner leaves the attempt for the next
+        // one. Not held across establish, which is broker RPC.
+        if server.owner_writes.enter().is_none() {
             return Ok(());
-        };
+        }
         match establish(server, &reg, &a).await {
             Ok(()) => return Ok(()),
             Err(error) => {

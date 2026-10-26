@@ -233,14 +233,15 @@ pub async fn project_live(server: &Shared, runtime: &str, envelope: &Value) -> R
     let mut attempt = 0u32;
     let invocation = envelope["invocationId"].as_str().unwrap_or("").to_owned();
     let seq = envelope["seq"].as_i64().unwrap_or(0);
-    // A closed fence drops the envelope unprojected and unACKed: it replays.
-    let Some(_write) = server.owner_writes.enter() else {
-        return Ok(());
-    };
     loop {
         if shutting(server) {
             return Ok(());
         }
+        // The fence covers the commit, never a broker RPC. A closed fence
+        // drops the envelope unprojected and unACKed: it replays.
+        let Some(write) = server.owner_writes.enter() else {
+            return Ok(());
+        };
         let result: Result<Option<Outcome>> = (|| {
             if projection::is_delta(envelope) {
                 apply_one(server, envelope)?;
@@ -278,6 +279,7 @@ pub async fn project_live(server: &Shared, runtime: &str, envelope: &Value) -> R
                 }
             }
         })();
+        drop(write);
         match result {
             Ok(None) => return Ok(()),
             Ok(Some(outcome)) => {
@@ -346,9 +348,6 @@ async fn backfill(server: &Shared, runtime: &str, invocation: &str, candidates: 
     if shutting(server) {
         return;
     }
-    let Some(_write) = server.owner_writes.enter() else {
-        return;
-    };
     let missing: Vec<i64> = {
         let db = server.store.lock().unwrap();
         candidates
@@ -394,7 +393,12 @@ async fn backfill(server: &Shared, runtime: &str, invocation: &str, candidates: 
             } {
                 continue;
             }
+            // Entered after eventsSince returned; refused = left unprojected.
+            let Some(write) = server.owner_writes.enter() else {
+                return Ok(());
+            };
             let outcome = apply_one(server, &envelope)?;
+            drop(write);
             if outcome.ignored_delta {
                 continue;
             }
@@ -404,7 +408,12 @@ async fn backfill(server: &Shared, runtime: &str, invocation: &str, candidates: 
                 repaired.push(seq);
             }
         }
-        flush(server, invocation)?;
+        {
+            let Some(_write) = server.owner_writes.enter() else {
+                return Ok(());
+            };
+            flush(server, invocation)?;
+        }
         ack(server, runtime, invocation).await?;
         if !repaired.is_empty() {
             log("warn", "broker.event_gap_backfilled", json!({"runtimeId":runtime,"invocationId":invocation,"repairedSeqs":repaired}));
@@ -443,6 +452,9 @@ async fn refresh_capture(server: &Shared, runtime: &str, invocation: &str) {
         .await
     {
         Ok(snapshot) => {
+            let Some(_write) = server.owner_writes.enter() else {
+                return;
+            };
             if let Err(error) = project_capture_state(server, runtime, &snapshot["capture"]) {
                 log(
                     "warn",
@@ -513,6 +525,9 @@ const PROBE_TYPES: [&str; 5] = [
 pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outcome: &Outcome) {
     let kind = envelope["type"].as_str().unwrap_or("").to_owned();
     let invocation = envelope["invocationId"].as_str().unwrap_or("").to_owned();
+    let Some(write) = server.owner_writes.enter() else {
+        return;
+    };
     if !outcome.idempotent {
         let result: Result<()> = (|| {
             let db = server.store.lock().unwrap();
@@ -567,6 +582,8 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
             let _ = db::update_runtime_state(&db.sqlite, runtime, &state, &hrc_store::timestamp());
         }
     }
+    // Gap flushes below run broker RPCs; each takes its own guard.
+    drop(write);
     let external = {
         let db = server.store.lock().unwrap();
         db::runtime(&db.sqlite, runtime)
@@ -585,6 +602,10 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
         );
     } else if !external && terminal {
         flush_gap(server, &invocation).await;
+        // Local writes and a tmux reap only: no broker RPC under the guard.
+        let Some(_write) = server.owner_writes.enter() else {
+            return;
+        };
         if let Err(error) =
             mark_invocation_terminal(server, runtime, envelope, outcome.idempotent).await
         {
@@ -636,13 +657,15 @@ pub fn consume(
         if shutting(&server) {
             return;
         }
-        let Some(_write) = server.owner_writes.enter() else {
-            return;
-        };
         if failure.is_none()
             && let Some(invocation) = &last
         {
-            let _ = flush(&server, invocation);
+            {
+                let Some(_write) = server.owner_writes.enter() else {
+                    return;
+                };
+                let _ = flush(&server, invocation);
+            }
             let _ = ack(&server, &runtime_id, invocation).await;
         }
         // A superseded client's close never speaks for the runtime.
@@ -678,6 +701,9 @@ pub fn consume(
                 json!({"runtimeId":runtime_id,"userExitReason":reason,"error":error}),
             );
             delete_active(&server, &runtime_id);
+            let Some(_write) = server.owner_writes.enter() else {
+                return;
+            };
             super::lease::reap(&server, &runtime_id, "broker_close").await;
             return;
         }
@@ -690,6 +716,9 @@ pub fn consume(
             delete_active(&server, &runtime_id);
             return;
         }
+        let Some(_write) = server.owner_writes.enter() else {
+            return;
+        };
         log(
             "error",
             "harness broker event consumer failed",

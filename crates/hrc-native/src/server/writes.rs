@@ -39,7 +39,10 @@ impl OwnerWrites {
         self.closed.store(true, Ordering::SeqCst);
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
+            // Registered before the check, so a release between them still wakes us.
             let idle = self.idle.notified();
+            tokio::pin!(idle);
+            idle.as_mut().enable();
             if self.active.load(Ordering::SeqCst) == 0 {
                 return true;
             }
