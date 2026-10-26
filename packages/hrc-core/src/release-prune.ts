@@ -236,7 +236,7 @@ export async function pruneReleaseDirs(options: ReleasePruneOptions): Promise<Re
     }
   }
 
-  // T-11830: any live process on this host may run from a candidate, whatever
+  // T-11830: every live process on this host may run from a candidate, whatever
   // runtime root it serves. Missing evidence never authorizes deletion.
   const heldBy: Record<string, number[]> = {}
   if (candidates.size > 0) {

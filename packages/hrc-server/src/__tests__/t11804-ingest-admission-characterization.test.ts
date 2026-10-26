@@ -8,9 +8,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 import type { HrcEventIngestAck, HrcEventIngestBatch, HrcLifecycleEvent } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { forwardAvailableEvents } from '../event-ingest/forward-sweep.js'
@@ -149,13 +148,10 @@ describe('T-11804 ingest admission and refusal acks', () => {
 
   test('a store failure that is not a conflict is a 500 ingest_error naming the item', async () => {
     const root = await tempRoot()
-    const db = {
-      hrcEvents: {
-        appendImported() {
-          throw new Error('store unavailable')
-        },
-      },
-    } as unknown as HrcDatabase
+    const db = openHrcDatabase(join(root, 'state.sqlite'))
+    spyOn(db.hrcEvents, 'appendImported').mockImplementation(() => {
+      throw new Error('store unavailable')
+    })
     const listener = await startEventIngestListener({ db, runtimeRoot: root })
     try {
       const response = await post(listener.socketPath, {
@@ -172,6 +168,7 @@ describe('T-11804 ingest admission and refusal acks', () => {
       expect(listener.counters).toMatchObject({ rejected: 1, accepted: 0, divergentDuplicates: 0 })
     } finally {
       await listener.stop()
+      db.close()
     }
   })
 
