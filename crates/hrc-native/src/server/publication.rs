@@ -582,7 +582,7 @@ pub fn start(server: &Shared) -> Result<()> {
     Ok(())
 }
 
-fn node_id(server: &Shared) -> String {
+pub(super) fn node_id(server: &Shared) -> String {
     let path = std::env::var_os("HRC_PEER_CONFIG_FILE")
         .filter(|p| !p.is_empty())
         .map(std::path::PathBuf::from)

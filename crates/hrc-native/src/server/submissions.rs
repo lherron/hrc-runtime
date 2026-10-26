@@ -56,3 +56,35 @@ pub async fn withdraw(server: &Shared, body: Value) -> Result<Response, ApiError
     }
     Ok(Json(response).into_response())
 }
+
+pub async fn preempt_admission(server: &Shared, body: Value) -> Result<Response, ApiError> {
+    let request = parse::submission(&body, "preempt")?;
+    let session =
+        super::turns::submission_target(server, &request.target, true)?.ok_or_else(|| {
+            super::turns::admission::unavailable(
+                "submission target is unavailable",
+                json!({"target":request.target,"door":"preempt"}),
+            )
+        })?;
+    let admission =
+        super::turns::admission::preempt_admission(server, &session, &request.origin).await?;
+    Ok(Json(json!({"admission":admission})).into_response())
+}
+
+/// All submission doors share Bun's API-error envelope; broker delivery remains
+/// entirely in turns/controller. In particular malformed JSON has detail: {}.
+pub async fn handle(server: &Shared, path: &str, body: &[u8]) -> Result<Response, ApiError> {
+    let with_detail = |mut error: ApiError| {
+        if error.detail.is_none() {
+            error.detail = Some(json!({}));
+        }
+        error
+    };
+    let value = super::parse_body(body).map_err(with_detail)?;
+    let result = match path {
+        "/v1/submissions/withdraw" => withdraw(server, value).await,
+        "/v1/submissions/preempt/admission" => preempt_admission(server, value).await,
+        _ => super::turns::submission(server, path.rsplit('/').next().unwrap(), value).await,
+    };
+    result.map_err(with_detail)
+}

@@ -15,6 +15,7 @@ mod index;
 mod maintenance;
 pub use maintenance::fail_unresolved_absorbed;
 mod mail;
+mod messages;
 mod metadata;
 mod monitor_read;
 mod participants;

@@ -627,7 +627,7 @@ pub async fn dispatch_turn(server: &Shared, body: Value) -> Result<Response, Api
 }
 
 /// resolveSubmissionTarget
-fn submission_target(
+pub(super) fn submission_target(
     server: &Shared,
     target: &str,
     allow_host: bool,

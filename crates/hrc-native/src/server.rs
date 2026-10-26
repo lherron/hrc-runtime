@@ -12,6 +12,7 @@ mod federation;
 mod front;
 mod ledger;
 mod mail;
+mod messages;
 mod streams;
 mod submissions;
 mod subscribers;
@@ -545,19 +546,13 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
                 | "/v1/submissions/steer"
                 | "/v1/submissions/enqueue"
                 | "/v1/submissions/preempt"
+                | "/v1/submissions/preempt/admission"
+                | "/v1/submissions/withdraw"
         )
     {
-        match parse_body(&body) {
-            Ok(value) => {
-                turns::submission(server, uri.path().rsplit('/').next().unwrap(), value).await
-            }
-            Err(e) => Err(e),
-        }
-    } else if method == Method::POST && uri.path() == "/v1/submissions/withdraw" {
-        match parse_body(&body) {
-            Ok(value) => submissions::withdraw(server, value).await,
-            Err(e) => Err(e),
-        }
+        submissions::handle(server, uri.path(), &body).await
+    } else if method == Method::POST && uri.path() == "/v1/messages/query" {
+        messages::query(server, &body).await
     } else if method == Method::POST && uri.path() == "/v1/runs/reconcile-active" {
         match parse_body(&body) {
             Ok(value) => reconcile::handle(server, value).await,
@@ -736,6 +731,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/submissions/enqueue",
                 "/v1/submissions/preempt",
                 "/v1/submissions/withdraw",
+                "/v1/messages/query",
+                "/v1/submissions/preempt/admission",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
                 "/v1/runtimes/prune",

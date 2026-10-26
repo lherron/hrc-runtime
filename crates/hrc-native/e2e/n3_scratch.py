@@ -3,7 +3,7 @@
 Broker hook addresses are daemon-process identity too. A headless broker must
 never inherit this task seat's live observer/callback socket from the shell.
 """
-import json,os,secrets,socket,subprocess,time
+import json,os,secrets,socket,subprocess,time,datetime
 from n2_scratch import Scratch as BaseScratch,UnixHTTP
 class Scratch(BaseScratch):
     def __init__(self,*args,**kwargs):
@@ -11,6 +11,19 @@ class Scratch(BaseScratch):
         for key in list(self.env):
             if key.startswith('HARNESS_') or key in ('TMUX','TMUX_PANE'):
                 del self.env[key]
+
+    def up(self,kind,tag):
+        self.current_owner=kind
+        return super().up(kind,tag)
+
+    def command(self,*args,**kwargs):
+        try:return super().command(*args,**kwargs)
+        except AssertionError as error:
+            if 'launch-carried submission identity timed out' in str(error):
+                load=subprocess.run(['sysctl','-n','vm.loadavg'],capture_output=True,text=True)
+                event={'time':datetime.datetime.now(datetime.timezone.utc).isoformat(),'owner':getattr(self,'current_owner','unknown'),'load':load.stdout.strip(),'bipcPath':str(self.root/'run/bipc'),'command':str(args[0]) if args else 'unknown'}
+                (self.artifacts/'birth-flake.json').write_text(json.dumps(event,indent=2)+'\n')
+            raise
 
     def init_substrate(self):
         super().init_substrate()
@@ -43,5 +56,5 @@ class Scratch(BaseScratch):
 
     def assert_no_duplicate_turn_messages(self):
         # Mable: aspd's Stop-fallback fix is live for births after 08:39Z.
-        duplicates=self.rows("SELECT e.runtime_id,e.run_id,e.payload_json,COUNT(*) AS count FROM hrc_events e JOIN runtimes r ON r.runtime_id=e.runtime_id WHERE e.event_kind='turn.message' AND e.source_ref IS NULL AND julianday(r.created_at)>=julianday('2026-10-26T08:39:00Z') GROUP BY e.runtime_id,e.run_id,e.payload_json HAVING COUNT(*)>1")
+        duplicates=self.rows("SELECT e.runtime_id,e.run_id,e.payload_json,COUNT(*) AS count FROM hrc_events e JOIN runtimes r ON r.runtime_id=e.runtime_id WHERE e.event_kind='turn.message' AND e.source_ref IS NULL AND julianday(r.created_at)>=julianday('2026-10-26T08:39:00Z') GROUP BY e.runtime_id,(SELECT MAX(t.hrc_seq) FROM hrc_events t WHERE t.runtime_id=e.runtime_id AND t.event_kind='turn.started' AND t.hrc_seq<=e.hrc_seq),e.payload_json HAVING COUNT(*)>1")
         assert not duplicates,('post-fix duplicate turn.message',duplicates)
