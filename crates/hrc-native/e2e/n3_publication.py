@@ -23,7 +23,7 @@ def wait_for(s,predicate,what,timeout=45):
         time.sleep(.1)
     raise AssertionError(what)
 def main():
-    p=argparse.ArgumentParser()
+    p=argparse.ArgumentParser();p.add_argument('--graceful-lost-ack',action='store_true')
     for k in ('binary','installed-release','aspd-socket','scratch-root','artifacts'):p.add_argument('--'+k,type=Path,required=True)
     a=p.parse_args();s=Scratch(a.scratch_root,a.installed_release,a.aspd_socket,a.binary,a.artifacts,project_id='n3-t11839')
     try:
@@ -93,19 +93,23 @@ finally:
         native=s.up('native','publication-subject')
         wait_for(s,marker.exists,'real post committed with ACK withheld')
         dropped=json.loads(marker.read_text());assert dropped['response']['result']['created'] is True,dropped
-        s.down(native,signal.SIGKILL)
+        s.down(native,signal.SIGTERM if a.graceful_lost_ack else signal.SIGKILL)
         # Cursor cannot move before the lost reply, even though wrkqd committed.
         server_seq=int(dropped['request']['params']['idempotencyKey'].rsplit(':',1)[1])
         assert s.rows("SELECT high_water FROM wrkq_ledger_cursors WHERE stream='server-project-events'")[0]['high_water']<server_seq
         # Native serve deliberately fails closed on stale owner files. This
         # gate replaces a crashed execution owner after proving its death;
         # server start/lock recovery is owned by N5, not publication.
-        lock=s.root/'run/server.lock';record=json.loads(lock.read_text())
-        assert record['pid']==native.pid and native.poll() is not None,record
-        try:os.kill(native.pid,0)
-        except ProcessLookupError:pass
-        else:raise AssertionError('crashed owner is still live')
-        for name in ('server.lock','server.pid','hrc.sock'):(s.root/'run'/name).unlink(missing_ok=True)
+        if a.graceful_lost_ack:
+            assert native.returncode==0,('graceful shutdown depended on the withheld ACK',native.returncode)
+            assert not (s.root/'run/server.lock').exists(),'graceful owner retained lock'
+        else:
+            lock=s.root/'run/server.lock';record=json.loads(lock.read_text())
+            assert record['pid']==native.pid and native.poll() is not None,record
+            try:os.kill(native.pid,0)
+            except ProcessLookupError:pass
+            else:raise AssertionError('crashed owner is still live')
+            for name in ('server.lock','server.pid','hrc.sock'):(s.root/'run'/name).unlink(missing_ok=True)
         native=s.up('native','publication-after-lost-ack')
         keys={r['idempotency_key'] for r in expected}
         wait_for(s,lambda:keys.issubset({r['idempotency_key'] for r in facts(s)}),'native published all original facts')
@@ -126,7 +130,7 @@ finally:
         assert len(keys)==len(expected),'Bun baseline duplicate key'
         s.down(native);s.up('native','publication-restart');time.sleep(6)
         assert len([r for r in facts(s) if r['idempotency_key'] in keys])==len(expected),'restart duplicated a publish'
-        (a.artifacts/'result.json').write_text(json.dumps({'pass':True,'facts':len(expected),'ledgerHead':head,'initialCursors':initial,'restartDuplicateCount':0,'lostAckRecovered':True},indent=2)+'\n')
+        (a.artifacts/'result.json').write_text(json.dumps({'pass':True,'facts':len(expected),'ledgerHead':head,'initialCursors':initial,'restartDuplicateCount':0,'lostAckRecovered':True,'gracefulWhileAckWithheld':a.graceful_lost_ack},indent=2)+'\n')
         print(json.dumps({'pass':True,'facts':len(expected),'artifacts':str(a.artifacts)}))
     finally:s.cleanup('agent:tabularasa:project:n3-t11839:task:')
 if __name__=='__main__':main()

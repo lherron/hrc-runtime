@@ -311,6 +311,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
     let role = if server.front { "front" } else { "native" };
     let bun_socket = server.bun_passthrough.clone();
     let owned = server.clone();
+    let closing = server.clone();
     let app = Router::new().fallback(dispatch).with_state(server);
     stderr_json(
         "info",
@@ -328,6 +329,9 @@ pub async fn serve(role: front::Role) -> Result<()> {
                 .store(true, std::sync::atomic::Ordering::SeqCst);
         })
         .await?;
+    if !closing.front {
+        publication::stop(&closing).await;
+    }
     let _ = stop_writer.send(());
     writer_task.await?;
     // No child kills or broker disposal: the owner can be replaced by Bun.

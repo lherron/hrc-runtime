@@ -8,6 +8,7 @@ pub struct State {
     server: tokio::sync::Mutex<()>,
     session: tokio::sync::Mutex<()>,
     rpc: super::ledger::Client,
+    tasks: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 const SERVER: &str = "server-project-events";
 const SESSION: &str = "session-project-events";
@@ -541,7 +542,8 @@ pub fn start(server: &Shared) -> Result<()> {
         let server = server.clone();
         let node = node.clone();
         let mut wake = server.ledger.subscribe();
-        tokio::spawn(async move {
+        let state = server.clone();
+        let task = tokio::spawn(async move {
             let mut timer = tokio::time::interval_at(
                 tokio::time::Instant::now() + Duration::from_secs(seconds),
                 Duration::from_secs(seconds),
@@ -578,8 +580,31 @@ pub fn start(server: &Shared) -> Result<()> {
                 }
             }
         });
+        state.publication.tasks.lock().unwrap().push(task);
     }
     Ok(())
+}
+
+/// Fence cursor writers before the owner's final stopped row. Cancelling an
+/// in-flight RPC leaves its durable cursor behind for idempotent next-boot
+/// recovery; shutdown never waits for the authority to acknowledge that RPC.
+pub async fn stop(server: &Shared) {
+    let tasks = std::mem::take(&mut *server.publication.tasks.lock().unwrap());
+    for task in &tasks {
+        task.abort();
+    }
+    for task in tasks {
+        if let Err(error) = task.await
+            && !error.is_cancelled()
+        {
+            stderr_json(
+                "warn",
+                "publication",
+                "publication.stop.task_failed",
+                json!({"error":error.to_string()}),
+            );
+        }
+    }
 }
 
 pub(super) fn node_id(server: &Shared) -> String {
