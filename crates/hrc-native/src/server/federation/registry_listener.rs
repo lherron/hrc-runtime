@@ -60,17 +60,8 @@ pub async fn start(server: Shared, bind: &str) -> Result<()> {
         "server.start.binding_registry_listener",
         json!({"endpoint":bind}),
     );
-    let app = Router::new().fallback(handle).with_state(server);
-    tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, app).await {
-            stderr_json(
-                "error",
-                "server",
-                "federation.registry.listener_failed",
-                json!({"error":error.to_string()}),
-            );
-        }
-    });
+    let app = Router::new().fallback(handle).with_state(server.clone());
+    super::serve_listener(&server, "registry", listener, app);
     Ok(())
 }
 

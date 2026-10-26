@@ -362,6 +362,16 @@ pub async fn serve(role: front::Role) -> Result<()> {
         );
     }
     if !closing.front {
+        // Peer and registry handlers can write the store: drain them (3s,
+        // Bun's request-drain budget) before anything below closes it.
+        if !federation::stop_listeners(&closing, std::time::Duration::from_millis(3_000)).await {
+            stderr_json(
+                "warn",
+                "server",
+                "server.stop.federation_listeners_not_quiescent",
+                json!({}),
+            );
+        }
         publication::stop(&closing).await;
     }
     let _ = stop_writer.send(());

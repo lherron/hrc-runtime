@@ -117,6 +117,82 @@ pub struct Node {
     http: reqwest::Client,
     /// home-authority.ts `foreignHomeMemo`: one consult per scope per process.
     memo: Mutex<HashMap<String, Binding>>,
+    /// The peer and registry listeners: (name, graceful-shutdown signal, task).
+    listeners: Mutex<Vec<Listener>>,
+}
+
+struct Listener {
+    name: &'static str,
+    stop: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+/// Serve a federation listener with a graceful-shutdown signal kept on the node.
+fn serve_listener(
+    server: &super::Shared,
+    name: &'static str,
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+) {
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
+            let _ = stopped.await;
+        });
+        if let Err(error) = serve.await {
+            log(
+                "error",
+                &format!("federation.{name}.listener_failed"),
+                json!({"error":error.to_string()}),
+            );
+        }
+    });
+    server
+        .federation
+        .listeners
+        .lock()
+        .unwrap()
+        .push(Listener { name, stop, task });
+}
+
+/// Stop the federation listeners for owner shutdown: stop accepting, then wait
+/// for every open connection (and its handler) to finish within `budget`.
+/// `false` when any listener failed or outlived the budget; that listener is
+/// aborted, but its in-flight handler was not proven quiescent.
+pub async fn stop_listeners(server: &super::Shared, budget: Duration) -> bool {
+    let listeners = std::mem::take(&mut *server.federation.listeners.lock().unwrap());
+    let deadline = Instant::now() + budget;
+    let mut tasks = Vec::new();
+    for listener in listeners {
+        // A listener that already ended dropped its receiver; that is fine.
+        let _ = listener.stop.send(());
+        tasks.push((listener.name, listener.task));
+    }
+    let mut quiescent = true;
+    for (name, mut task) in tasks {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(left, &mut task).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                quiescent = false;
+                log(
+                    "error",
+                    "federation.listener.stop_failed",
+                    json!({"listener":name,"error":error.to_string()}),
+                );
+            }
+            Err(_) => {
+                quiescent = false;
+                task.abort();
+                log(
+                    "warn",
+                    "federation.listener.stop_timeout",
+                    json!({"listener":name,"budgetMs":budget.as_millis() as u64}),
+                );
+            }
+        }
+    }
+    quiescent
 }
 
 /// registry-bind.ts `isTailnetHost`.
@@ -346,6 +422,7 @@ impl Node {
             registry_db,
             http,
             memo: Mutex::new(HashMap::new()),
+            listeners: Mutex::new(Vec::new()),
         })
     }
     fn http(peer: &FederationPeer) -> Result<Client, RegistryError> {
