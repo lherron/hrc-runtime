@@ -120,6 +120,9 @@ def main():
             _, started = s.http('POST', turns, {'hostSessionId': host, 'prompt': slow, 'waitFor': 'turn_started'}, timeout=600)
             time.sleep(4)
             case('interrupt:active-other-owner', 'POST', interrupt, {'runtimeId': runtime, 'ownerRunId': 'run-nope'})
+            case('reconcile:active-dry', 'POST', '/v1/runs/reconcile-active', {'olderThan': '0ms', 'dryRun': True})
+            case('reconcile:active-live', 'POST', '/v1/runs/reconcile-active', {'olderThan': '0ms'})
+            case('zombies:active-dry', 'POST', '/v1/runs/sweep-zombies', {'olderThan': '0ms', 'dryRun': True})
             case('contrib:queue-recommended', 'POST', contributions, {'inputApplicationId': 'app-3', 'inputAttemptId': 'att-1', 'prompt': 'x', 'selector': {'runtimeId': runtime}})
             case('contrib:run-mismatch', 'POST', contributions, {'inputApplicationId': 'app-4', 'inputAttemptId': 'att-1', 'prompt': 'x', 'selector': {'runtimeId': runtime}, 'expectedRunId': 'run-other'})
             case('interrupt:active', 'POST', interrupt, {'runtimeId': runtime, 'ownerRunId': started['runId']})
@@ -127,6 +130,14 @@ def main():
                    300, 'interrupted run settles')
             idle()
             observations[-1]['settledRun'] = s.rows('SELECT status, error_code FROM runs WHERE run_id=?', (started['runId'],))[0]
+        for door in ('/v1/runs/reconcile-active', '/v1/runs/sweep-zombies'):
+            tag = 'reconcile' if 'reconcile' in door else 'zombies'
+            case(tag + ':not-object', 'POST', door, 'x')
+            case(tag + ':bad-older', 'POST', door, {'olderThan': ''})
+            case(tag + ':bad-duration', 'POST', door, {'olderThan': '5 weeks'})
+            case(tag + ':bad-dry', 'POST', door, {'dryRun': 'yes'})
+            case(tag + ':idle', 'POST', door, {'olderThan': '0ms'})
+            case(tag + ':default', 'POST', door, {})
         case('interrupt:idle', 'POST', interrupt, {'runtimeId': runtime})
         idle()
         case('attach:missing', 'GET', '/v1/attach')

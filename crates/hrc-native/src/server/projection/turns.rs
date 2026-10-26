@@ -18,8 +18,8 @@ pub const ASK_TOOLS: [&str; 2] = ["AskUserQuestion", "request_user_input"];
 pub fn is_ask_tool(name: Option<&str>) -> bool {
     name.is_some_and(|n| ASK_TOOLS.contains(&n))
 }
-const ASK_CLOSE_NOT_EXISTS: &str = "NOT EXISTS (SELECT 1 FROM broker_invocation_events cl WHERE cl.invocation_id = st.invocation_id AND cl.seq > st.seq AND cl.type IN ('tool.call.completed', 'tool.call.failed') AND cl.run_id IS st.run_id AND cl.harness_generation IS st.harness_generation AND cl.turn_attempt IS st.turn_attempt AND json_extract(cl.broker_event_json, '$.toolCallId') IS json_extract(st.broker_event_json, '$.toolCallId'))";
-const ASK_TERMINAL_NOT_EXISTS: &str = "NOT EXISTS (SELECT 1 FROM broker_invocation_events tm WHERE tm.invocation_id = st.invocation_id AND tm.run_id IS st.run_id AND tm.seq > st.seq AND tm.type IN ('turn.completed', 'turn.failed', 'turn.interrupted'))";
+pub const ASK_CLOSE_NOT_EXISTS: &str = "NOT EXISTS (SELECT 1 FROM broker_invocation_events cl WHERE cl.invocation_id = st.invocation_id AND cl.seq > st.seq AND cl.type IN ('tool.call.completed', 'tool.call.failed') AND cl.run_id IS st.run_id AND cl.harness_generation IS st.harness_generation AND cl.turn_attempt IS st.turn_attempt AND json_extract(cl.broker_event_json, '$.toolCallId') IS json_extract(st.broker_event_json, '$.toolCallId'))";
+pub const ASK_TERMINAL_NOT_EXISTS: &str = "NOT EXISTS (SELECT 1 FROM broker_invocation_events tm WHERE tm.invocation_id = st.invocation_id AND tm.run_id IS st.run_id AND tm.seq > st.seq AND tm.type IN ('turn.completed', 'turn.failed', 'turn.interrupted'))";
 /// hasOpenAskBracket(invocation, run)
 pub fn open_ask(db: &Connection, invocation: &str, run_id: &str) -> Result<bool> {
     db::exists(

@@ -24,12 +24,14 @@ mod participants;
 mod presentation;
 mod projection;
 mod proxy;
+mod reconcile;
 mod rpc;
 mod runs;
 mod runtime_views;
 mod runtimes;
 mod sessions;
 mod surfaces;
+mod sweeps;
 mod targets;
 mod turns;
 
@@ -294,6 +296,9 @@ pub async fn serve(role: front::Role) -> Result<()> {
     if !server.front {
         broker::reattach(&server).await?;
         participants::resume(&server)?;
+        sweeps::start(&server);
+        reconcile::start(&server);
+        sweeps::start_retention(&server);
     }
     let role = if server.front { "front" } else { "native" };
     let bun_socket = server.bun_passthrough.clone();
@@ -531,6 +536,16 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
             Ok(value) => turns::submission(server, "invoke", value).await,
             Err(e) => Err(e),
         }
+    } else if method == Method::POST && uri.path() == "/v1/runs/reconcile-active" {
+        match parse_body(&body) {
+            Ok(value) => reconcile::handle(server, value).await,
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/runs/sweep-zombies" {
+        match parse_body(&body) {
+            Ok(value) => sweeps::handle_sweep_zombies(server, value),
+            Err(e) => Err(e),
+        }
     } else if method == Method::POST && uri.path() == "/v1/sessions/drop-continuation" {
         match parse_body(&body) {
             Ok(value) => context::drop_continuation(server, value),
@@ -693,6 +708,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/runs/resume-attached",
                 "/v1/clear-context",
                 "/v1/sessions/drop-continuation",
+                "/v1/runs/sweep-zombies",
+                "/v1/runs/reconcile-active",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
                 "/v1/runtimes/prune",

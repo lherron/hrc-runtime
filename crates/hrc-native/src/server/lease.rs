@@ -81,7 +81,7 @@ fn leased_pane(rt: &db::Rt) -> Option<String> {
                 .map(str::to_owned)
         })
 }
-fn leased_substrate(rt: &db::Rt) -> bool {
+pub fn leased_substrate(rt: &db::Rt) -> bool {
     hosting(rt).is_some_and(|h| h["substrate"]["kind"] == "leased-tmux")
 }
 
@@ -98,7 +98,7 @@ pub async fn tmux(socket: &str, args: &[&str]) -> Result<(bool, String, String)>
     ))
 }
 /// inspectPaneLiveness: None when the pane or server is gone.
-async fn pane_liveness(socket: &str, pane: &str) -> Option<(bool, bool, String)> {
+pub async fn pane_liveness(socket: &str, pane: &str) -> Option<(bool, bool, String)> {
     let (ok, stdout, _) = tmux(
         socket,
         &[

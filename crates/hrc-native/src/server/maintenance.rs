@@ -707,10 +707,45 @@ pub async fn handle(
         return dispose(server, &body).await;
     }
     let q = parse(&body, prune)?;
-    let all = server.store.lock().unwrap().runtimes()?;
     if q.ids.is_some() {
+        let all = server.store.lock().unwrap().runtimes()?;
         return manifest(server, &q, &all).await;
     }
+    Ok(Json(run(server, &q, prune, "runtime_sweep", true).await?).into_response())
+}
+
+/// runTmuxAgingOnce: the runtime sweep over tmux ready/busy seats past the
+/// stale-generation threshold, with no summary event.
+pub async fn tmux_aging(server: &Server) -> std::result::Result<Value, ApiError> {
+    let q = Request {
+        transport: Some("tmux".into()),
+        statuses: None,
+        age: None,
+        scope: None,
+        dry: false,
+        yes: false,
+        drop: None,
+        ids: None,
+    };
+    let response = run(server, &q, false, "runtime_tmux_aging", false).await?;
+    super::stderr_json(
+        "info",
+        "sweep",
+        "runtime.tmux_aging_complete",
+        response["summary"].clone(),
+    );
+    Ok(response)
+}
+
+/// runRuntimeAging (and the prune pass): the selected runtimes judged and moved.
+async fn run(
+    server: &Server,
+    q: &Request,
+    prune: bool,
+    reason: &str,
+    emit_summary: bool,
+) -> std::result::Result<Value, ApiError> {
+    let all = server.store.lock().unwrap().runtimes()?;
     let defaults = if prune {
         vec!["stale".into()]
     } else {
@@ -727,10 +762,7 @@ pub async fn handle(
     let cutoff = chrono::Utc::now().timestamp_millis() as f64 - age;
     let mut results = Vec::new();
     let mut first_host = None;
-    for r in all
-        .into_iter()
-        .filter(|r| selected(r, &q, cutoff, statuses))
-    {
+    for r in all.into_iter().filter(|r| selected(r, q, cutoff, statuses)) {
         let mut result = base(&r);
         if !prune {
             result["droppedContinuation"] = false.into();
@@ -781,6 +813,7 @@ pub async fn handle(
                     &r,
                     &facts.unwrap()["invocation"],
                     dropped,
+                    reason,
                 ) {
                     Ok(true) => {
                         result["status"] = "stale".into();
@@ -800,12 +833,12 @@ pub async fn handle(
         results.push(result);
     }
     let response = finish(results, prune);
-    if !prune && !q.dry {
+    if !prune && !q.dry && emit_summary {
         server
             .store
             .lock()
             .unwrap()
             .runtime_sweep_summary(&response["summary"], first_host.as_deref())?;
     }
-    Ok(Json(response).into_response())
+    Ok(response)
 }

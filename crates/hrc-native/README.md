@@ -74,6 +74,12 @@ optional relaunch. Admission now rotates a stale generation
 (`session.generation_auto_rotated`, skipped while a live tmux runtime holds it)
 and a `freshContext` submission. `POST /v1/sessions/drop-continuation` disables
 continuation reuse once (`session.continuation_dropped`).
+Sweeps (`server/sweeps.rs`, `server/reconcile.rs`): `POST /v1/runs/sweep-zombies`
+and `/v1/runs/reconcile-active` plus their 300 s jobs (at boot, then on cadence),
+the daily session retention archive and the 300 s tmux aging pass (the runtime
+sweep with reason `runtime_tmux_aging`), all inside `!front`. Not yet native:
+the accepted-never-started settlement in reconcile (T-11306), the retained
+evidence passes and cold-boot input recovery.
 A broker client's `close()` half-closes and drains the
 frames the broker already sent (`invocation.disposed` follows the dispose
 reply). While a terminate finalizes a runtime, its projected exit writes no

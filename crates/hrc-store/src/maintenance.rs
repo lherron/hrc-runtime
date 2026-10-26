@@ -186,6 +186,7 @@ impl Store {
         r: &Value,
         evidence: &Value,
         drop_continuation: bool,
+        reason: &str,
     ) -> Result<bool> {
         if r["runtimeStateJson"]["lifecycleOwner"] == "external" {
             return Ok(false);
@@ -214,7 +215,7 @@ impl Store {
                 tx.execute("UPDATE broker_invocations SET invocation_state='disposed',updated_at=? WHERE invocation_id=? AND invocation_state NOT IN ('exited','failed','disposed')",params![now,id])?;
             }
         }
-        let payload = json!({"runtimeId":r["runtimeId"],"reason":"runtime_sweep","priorStatus":r["status"],"transport":r["transport"],"droppedContinuation":drop_continuation});
+        let payload = json!({"runtimeId":r["runtimeId"],"reason":reason,"priorStatus":r["status"],"transport":r["transport"],"droppedContinuation":drop_continuation});
         let mut state = r
             .get("runtimeStateJson")
             .cloned()
@@ -222,7 +223,7 @@ impl Store {
             .unwrap_or_else(|| json!({}));
         state["status"] = "stale".into();
         state["updatedAt"] = now.clone().into();
-        state["staleReason"] = "runtime_sweep".into();
+        state["staleReason"] = reason.into();
         state["stalePayload"] = payload.clone();
         if let Some(id) = r.get("activeInvocationId") {
             state["terminalInvocation"] =
