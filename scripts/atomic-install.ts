@@ -386,10 +386,11 @@ async function pruneAfterCutover(options: AtomicInstallOptions, releasePath: str
       console.log(`[install] release prune skipped: ${result.reason}`)
       return
     }
+    const held = Object.entries(result.heldBy).map(([id, pids]) => `${id} (pid ${pids.join(', ')})`)
     console.log(
       `[install] release prune: kept ${result.kept.join(', ')}; removed ${result.removed.length}${
-        result.failed.length > 0 ? `; failed ${result.failed.join(', ')}` : ''
-      }`
+        held.length > 0 ? `; held by live processes ${held.join(', ')}` : ''
+      }${result.failed.length > 0 ? `; failed ${result.failed.join(', ')}` : ''}`
     )
   } catch (error) {
     console.log(

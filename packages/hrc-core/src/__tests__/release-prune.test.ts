@@ -40,21 +40,19 @@ const C = 'release-20261003000000000-3'
 const D = 'release-20261004000000000-4'
 
 describe('pruneReleaseDirs', () => {
-  it('keeps the executable release owning the kernel socket across cutover', async () => {
+  it('keeps a release whose bin/ executable a live process runs, whatever root it serves', async () => {
     const f = await fixture([A, B, C], C)
     const bin = join(f.path(B), 'bin')
     await mkdir(bin)
     const executable = join(bin, 'hrc-kernel')
     await copyFile(process.execPath, executable)
     await chmod(executable, 0o755)
-    const socket = join(f.root, 'kernel.sock')
     const child = Bun.spawn(
-      [
-        executable,
-        '-e',
-        `Bun.serve({unix: ${JSON.stringify(socket)}, fetch: () => new Response('ok')}); console.log('ready')`,
-      ],
-      { stdout: 'pipe', stderr: 'pipe' }
+      [executable, '-e', "console.log('ready'); setInterval(() => {}, 1e9)"],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      }
     )
     try {
       const reader = child.stdout.getReader()
@@ -65,21 +63,17 @@ describe('pruneReleaseDirs', () => {
         releaseRoot: f.releaseRoot,
         currentLink: f.currentLink,
         expectedCurrent: f.path(C),
-        kernelSocketPath: socket,
       })
-      expect(result).toMatchObject({ pruned: true, failed: [] })
+      expect(result).toMatchObject({ pruned: true, failed: [], heldBy: { [B]: [child.pid] } })
       expect(await f.list()).toEqual([B, C])
-      expect((await fetch('http://localhost', { unix: socket })).status).toBe(200)
     } finally {
       child.kill()
       await child.exited
     }
-    await rm(socket, { force: true })
     await pruneReleaseDirs({
       releaseRoot: f.releaseRoot,
       currentLink: f.currentLink,
       expectedCurrent: f.path(C),
-      kernelSocketPath: socket,
     })
     expect(await f.list()).toEqual([C])
   }, 15_000)

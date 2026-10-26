@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from 'node:fs'
+import { openSync, readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 import { type ReleasePruneResult, pruneReleaseDirs } from 'hrc-core'
@@ -168,6 +168,21 @@ function atomicReleaseRootForPackage(packagePath: string): string | undefined {
 }
 
 /**
+ * Manifests this process holds open for life, one descriptor per release. A
+ * Bun daemon runs `.ts` it read and closed, and is usually started through the
+ * current link, so without this nothing on the host shows which release it runs
+ * from; every release prune keeps a release whose manifest a live process holds
+ * open (T-11830).
+ */
+const heldReleaseManifests = new Map<string, number>()
+
+function holdReleaseManifest(manifestPath: string): void {
+  if (!heldReleaseManifests.has(manifestPath)) {
+    heldReleaseManifests.set(manifestPath, openSync(manifestPath, 'r'))
+  }
+}
+
+/**
  * Capture immutable process identity once. Atomic releases fail closed when
  * their colocated manifest is missing or malformed; source/worktree daemons
  * remain explicit unmanaged processes.
@@ -199,6 +214,7 @@ export function captureServerRelease(
     )
   }
   const manifest = parsePraesidiumReleaseManifest(parsed, releaseId)
+  holdReleaseManifest(manifestPath)
   return {
     mode: 'atomic',
     releaseId,
@@ -236,8 +252,7 @@ export function projectServerRelease(captured: CapturedServerRelease): HrcReleas
  * release right now.
  */
 export async function pruneReleasesFromCurrent(
-  captured: CapturedServerRelease,
-  runtimeRoot?: string
+  captured: CapturedServerRelease
 ): Promise<ReleasePruneResult | undefined> {
   if (captured.mode !== 'atomic') return undefined
   const releaseRoot = dirname(captured.releasePath)
@@ -246,9 +261,6 @@ export async function pruneReleasesFromCurrent(
     currentLink: captured.installedLinkPath,
     expectedCurrent: captured.releasePath,
     onlyOlderThanCurrent: true,
-    ...(runtimeRoot === undefined
-      ? {}
-      : { kernelSocketPath: join(runtimeRoot, 'hrc-kernel.sock') }),
     installLockDir: join(dirname(releaseRoot), 'hrc-runtime-install.lock'),
   })
 }

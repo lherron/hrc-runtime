@@ -885,7 +885,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     server.recordLifecycleStart()
     writeServerLog('INFO', 'server.start.ready', logCtx)
     // T-10024: off the startup path; a slow delete never delays readiness.
-    pruneReleasesFromCurrent(server.capturedRelease, resolvedOptions.runtimeRoot).then(
+    pruneReleasesFromCurrent(server.capturedRelease).then(
       (result) => {
         if (result !== undefined) writeServerLog('INFO', 'server.start.release_prune', result)
       },

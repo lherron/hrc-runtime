@@ -8,14 +8,15 @@
  *
  * Both callers prune through here: install after its cutover (keeping the
  * release the running daemon reports), and the daemon at startup once it runs
- * from current. Both also retain the live kernel socket owner's release.
+ * from current. Neither knows every process on the host, so both also keep any
+ * release a live process holds open or was started from (T-11830: a scratch
+ * daemon on another runtime root deleted the release production ran from).
  */
 import { existsSync } from 'node:fs'
-import { readdir, realpath, rm } from 'node:fs/promises'
+import { open, readdir, realpath, rm } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
 
 import { runBoundedSubprocess } from './bounded-subprocess.js'
-import { resolveRuntimeRoot } from './paths.js'
 
 const RELEASE_ID_PATTERN = /^release-[A-Za-z0-9._-]+$/
 /** The directory the retired `hrc admin release gc` renamed releases into. */
@@ -32,8 +33,6 @@ export type ReleasePruneOptions = {
   expectedCurrent: string
   /** Further release directories to keep, e.g. the one the running daemon reports. */
   keep?: string[]
-  /** Socket whose live owner may still execute from an older release. */
-  kernelSocketPath?: string
   /**
    * Delete only releases whose id sorts before current's. Release ids embed
    * their creation timestamp, so a release an install is still preparing sorts
@@ -47,7 +46,15 @@ export type ReleasePruneOptions = {
 
 export type ReleasePruneResult =
   | { pruned: false; reason: string }
-  | { pruned: true; current: string; removed: string[]; kept: string[]; failed: string[] }
+  | {
+      pruned: true
+      current: string
+      removed: string[]
+      kept: string[]
+      failed: string[]
+      /** Releases kept because a live process holds or was started from them, with its pids. */
+      heldBy: Record<string, number[]>
+    }
 
 function isReleaseId(name: string): boolean {
   return RELEASE_ID_PATTERN.test(name)
@@ -61,39 +68,129 @@ async function realpathOrUndefined(path: string): Promise<string | undefined> {
   }
 }
 
-/** Resolve the socket owner's mapped executables, never the mutable current link. */
-async function kernelExecutablePaths(socketPath: string): Promise<string[] | undefined> {
-  try {
-    if (!existsSync(socketPath)) return []
-    const owners = await runBoundedSubprocess(['lsof', '-nP', '-Fpn', socketPath], {
-      timeoutMs: 5_000,
-      maxStdoutBytes: 1_048_576,
-    })
-    if (owners.exitCode !== 0) return undefined
-    const pids = [
-      ...new Set(
-        owners.stdout
-          .split('\n')
-          .filter((line) => /^p[0-9]+$/.test(line))
-          .map((line) => line.slice(1))
-      ),
-    ]
-    if (pids.length === 0) return undefined
-    const paths: string[] = []
-    for (const pid of pids) {
-      const mapped = await runBoundedSubprocess(
-        ['lsof', '-nP', '-a', '-p', pid, '-d', 'txt', '-Fn'],
-        {
-          timeoutMs: 5_000,
-          maxStdoutBytes: 1_048_576,
-        }
-      )
-      if (mapped.exitCode !== 0) return undefined
-      const names = mapped.stdout.split('\n').filter((line) => line.startsWith('n/'))
-      if (names.length === 0) return undefined
-      paths.push(...names.map((line) => line.slice(1)))
+const RELEASE_MANIFEST_BASENAME = 'praesidium-release.json'
+const PROBE_TIMEOUT_MS = 5_000
+const PROBE_MAX_STDOUT_BYTES = 64 * 1024 * 1024
+
+type LiveHolders = Map<string, Set<number>>
+
+function addHolder(holders: LiveHolders, id: string, pid: number): void {
+  const pids = holders.get(id) ?? new Set<number>()
+  pids.add(pid)
+  holders.set(id, pids)
+}
+
+/** The candidate release a resolved path lies in, if any. */
+function candidateOf(releaseRoot: string, candidates: Set<string>, path: string) {
+  const id = relative(releaseRoot, path).split(sep)[0]
+  return id !== undefined && candidates.has(id) ? id : undefined
+}
+
+/**
+ * The candidate an argv path names. argv keeps the spelling the process was
+ * started with (`/tmp/...` for `/private/tmp/...`, a symlinked home), so the
+ * prefix up to the release root's own name is resolved before comparing.
+ */
+async function candidateOfArgvPath(
+  releaseRoot: string,
+  candidates: Set<string>,
+  path: string,
+  resolved: Map<string, string | undefined>
+) {
+  const marker = `${sep}${basename(releaseRoot)}${sep}`
+  const at = path.indexOf(marker)
+  if (!path.startsWith(sep) || at < 0) return undefined
+  const prefix = path.slice(0, at + marker.length - 1)
+  if (!resolved.has(prefix)) resolved.set(prefix, await realpathOrUndefined(prefix))
+  if (resolved.get(prefix) !== releaseRoot) return undefined
+  return candidateOf(releaseRoot, candidates, join(releaseRoot, path.slice(prefix.length)))
+}
+
+/**
+ * Processes holding a candidate open: its directory as cwd, its manifest (every
+ * atomic daemon keeps its own open for life, because nothing else it runs from
+ * stays open), or a `bin/` executable mapped as an image (the Rust kernel and
+ * rusthrc). One lsof over every named path. The prune's own handle on current's
+ * manifest is the control: lsof exits 1 whenever a name has no holder, so only
+ * our pid on that line distinguishes "nobody holds these" from a failed probe.
+ */
+async function openFileHolders(
+  releaseRoot: string,
+  candidates: Set<string>,
+  current: string
+): Promise<LiveHolders | undefined> {
+  const control = join(current, RELEASE_MANIFEST_BASENAME)
+  const names: string[] = []
+  for (const id of candidates) {
+    const release = join(releaseRoot, id)
+    names.push(release)
+    if (existsSync(join(release, RELEASE_MANIFEST_BASENAME))) {
+      names.push(join(release, RELEASE_MANIFEST_BASENAME))
     }
-    return paths
+    try {
+      for (const entry of await readdir(join(release, 'bin'), { withFileTypes: true })) {
+        if (entry.isFile()) names.push(join(release, 'bin', entry.name))
+      }
+    } catch {}
+  }
+  let handle: Awaited<ReturnType<typeof open>> | undefined
+  try {
+    handle = await open(control, 'r')
+    const result = await runBoundedSubprocess(['lsof', '-nP', '-Fpn', '--', control, ...names], {
+      timeoutMs: PROBE_TIMEOUT_MS,
+      maxStdoutBytes: PROBE_MAX_STDOUT_BYTES,
+    })
+    const holders: LiveHolders = new Map()
+    let controlSeen = false
+    let pid: number | undefined
+    for (const line of result.stdout.split('\n')) {
+      if (/^p[0-9]+$/.test(line)) pid = Number(line.slice(1))
+      if (!line.startsWith('n/') || pid === undefined) continue
+      const path = line.slice(1)
+      if (path === control && pid === process.pid) controlSeen = true
+      const id = candidateOf(releaseRoot, candidates, path)
+      if (id !== undefined) addHolder(holders, id, pid)
+    }
+    return controlSeen ? holders : undefined
+  } catch {
+    return undefined
+  } finally {
+    await handle?.close()
+  }
+}
+
+/**
+ * Processes started from a candidate: the executable or script path in argv
+ * lies inside it (helpers a daemon spawns by their release path). Only those
+ * two words count, so a path quoted elsewhere in an argv names nothing. Our
+ * own pid in the listing is the control.
+ */
+async function argvHolders(
+  releaseRoot: string,
+  candidates: Set<string>
+): Promise<LiveHolders | undefined> {
+  try {
+    const result = await runBoundedSubprocess(['ps', '-axww', '-o', 'pid=,args='], {
+      timeoutMs: PROBE_TIMEOUT_MS,
+      maxStdoutBytes: PROBE_MAX_STDOUT_BYTES,
+    })
+    if (result.exitCode !== 0) return undefined
+    const holders: LiveHolders = new Map()
+    const resolved = new Map<string, string | undefined>()
+    let controlSeen = false
+    for (const line of result.stdout.split('\n')) {
+      const match = /^\s*([0-9]+)\s+(.*)$/.exec(line)
+      if (match === null) continue
+      const pid = Number(match[1])
+      if (pid === process.pid) controlSeen = true
+      const words = (match[2] ?? '').split(/\s+/)
+      for (const word of [words[0], words.slice(1).find((w) => !w.startsWith('-'))]) {
+        if (word === undefined) continue
+        const id = await candidateOfArgvPath(releaseRoot, candidates, word, resolved)
+        if (id !== undefined) addHolder(holders, id, pid)
+      }
+    }
+    return controlSeen ? holders : undefined
   } catch {
     return undefined
   }
@@ -121,30 +218,46 @@ export async function pruneReleaseDirs(options: ReleasePruneOptions): Promise<Re
     if (dirname(resolved) === releaseRoot) keepIds.add(basename(resolved))
   }
 
-  const kernelPaths = await kernelExecutablePaths(
-    options.kernelSocketPath ?? join(resolveRuntimeRoot(), 'hrc-kernel.sock')
+  const entries = (await readdir(releaseRoot, { withFileTypes: true })).filter(
+    // A symlink here is not a release tree we created; leave it alone.
+    (entry) =>
+      entry.isDirectory() && (entry.name === LEGACY_GC_DEBRIS_DIRNAME || isReleaseId(entry.name))
   )
-  // Missing ownership evidence must never authorize deletion of a live image.
-  if (kernelPaths === undefined) return { pruned: false, reason: 'kernel-owner-unavailable' }
-  for (const path of kernelPaths) {
-    const parts = relative(releaseRoot, path).split(sep)
-    const id = parts[0]
-    if (id !== undefined && parts.length > 1 && isReleaseId(id)) keepIds.add(id)
+  const kept: string[] = []
+  const candidates = new Set<string>()
+  for (const { name } of entries) {
+    if (
+      name !== LEGACY_GC_DEBRIS_DIRNAME &&
+      (keepIds.has(name) || (options.onlyOlderThanCurrent === true && name >= currentId))
+    ) {
+      kept.push(name)
+    } else {
+      candidates.add(name)
+    }
+  }
+
+  // T-11830: any live process on this host may run from a candidate, whatever
+  // runtime root it serves. Missing evidence never authorizes deletion.
+  const heldBy: Record<string, number[]> = {}
+  if (candidates.size > 0) {
+    const [heldOpen, startedFrom] = await Promise.all([
+      openFileHolders(releaseRoot, candidates, current),
+      argvHolders(releaseRoot, candidates),
+    ])
+    if (heldOpen === undefined || startedFrom === undefined) {
+      return { pruned: false, reason: 'live-holders-unavailable' }
+    }
+    for (const holders of [heldOpen, startedFrom]) {
+      for (const [id, pids] of holders) {
+        heldBy[id] = [...new Set([...(heldBy[id] ?? []), ...pids])].sort((a, b) => a - b)
+      }
+    }
   }
 
   const removed: string[] = []
-  const kept: string[] = []
   const failed: string[] = []
-  for (const entry of await readdir(releaseRoot, { withFileTypes: true })) {
-    const name = entry.name
-    const isDebris = name === LEGACY_GC_DEBRIS_DIRNAME
-    if (!isDebris && !isReleaseId(name)) continue
-    // A symlink here is not a release tree we created; leave it alone.
-    if (!entry.isDirectory()) continue
-    if (
-      !isDebris &&
-      (keepIds.has(name) || (options.onlyOlderThanCurrent === true && name >= currentId))
-    ) {
+  for (const name of candidates) {
+    if (heldBy[name] !== undefined) {
       kept.push(name)
       continue
     }
@@ -155,5 +268,5 @@ export async function pruneReleaseDirs(options: ReleasePruneOptions): Promise<Re
       failed.push(name)
     }
   }
-  return { pruned: true, current: currentId, removed, kept, failed }
+  return { pruned: true, current: currentId, removed, kept, failed, heldBy }
 }
