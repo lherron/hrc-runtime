@@ -263,13 +263,41 @@ pub async fn broker_inspect(server: &Shared, body: Value) -> Result<Response, Ap
             ));
         }
     }
-    let runtime = super::runtimes::runtime(server, &id)?;
-    let final_summary = runtime["runtimeStateJson"].get("finalSummary").cloned();
+    let mut runtime = super::runtimes::runtime(server, &id)?;
+    let mut final_summary = runtime["runtimeStateJson"].get("finalSummary").cloned();
     let recovery = match input.get("recoverFinalSummary") {
         None => None,
         Some(_) if final_summary.is_some() => Some(json!({"state":"not_needed"})),
         Some(_) if runtime["controllerKind"] != "harness-broker" => {
             Some(json!({"state":"not_broker"}))
+        }
+        // No report path connects to a terminal runtime's broker: its retained
+        // evidence is read offline instead, bounded by timeoutMs (750).
+        Some(r) if runtime["status"] == "terminated" || runtime["status"] == "failed" => {
+            let timeout = r["timeoutMs"].as_f64().unwrap_or(750.0).max(0.0);
+            let attempt = tokio::spawn({
+                let (server, id) = (server.clone(), id.clone());
+                async move { super::retained::recover(&server, &id, "report").await }
+            });
+            let settled =
+                tokio::time::timeout(std::time::Duration::from_millis(timeout as u64), attempt)
+                    .await;
+            runtime = super::runtimes::runtime(server, &id)?;
+            final_summary = runtime["runtimeStateJson"].get("finalSummary").cloned();
+            Some(match (&final_summary, settled) {
+                (Some(_), _) => json!({"state":"recovered"}),
+                (None, Err(_)) => {
+                    json!({"state":"timeout","message":format!("summary recovery exceeded {timeout}ms")})
+                }
+                (None, Ok(done)) => {
+                    let outcome = done
+                        .ok()
+                        .and_then(Result::ok)
+                        .flatten()
+                        .and_then(|r| r["outcome"].as_str().map(str::to_owned));
+                    json!({"state":"unavailable","message":outcome.unwrap_or_else(|| "unknown_runtime".into())})
+                }
+            })
         }
         Some(_) => {
             return Err(unavailable(
