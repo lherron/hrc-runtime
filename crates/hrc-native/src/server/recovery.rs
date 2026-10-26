@@ -30,6 +30,9 @@ fn fail(
     message: Option<&str>,
     detail: Value,
 ) -> anyhow::Result<bool> {
+    let Some(_write) = server.owner_writes.enter() else {
+        return Ok(false);
+    };
     let db = server.store.lock().unwrap();
     let Some(run) = db::run(&db.sqlite, run_id)? else {
         return Ok(false);
@@ -189,6 +192,10 @@ async fn recover_one(server: Shared, run_id: String) {
         "broker.cold_boot_input.rearmed",
         json!({"runId":run_id,"runtimeId":rt.runtime_id,"invocationId":invocation,"hostSessionId":run.host_session_id,"scopeRef":run.scope_ref}),
     );
+    // Taken after the priming wait, so a long wait never holds the fence.
+    let Some(_write) = server.owner_writes.enter() else {
+        return;
+    };
     let result: Result<Value, ApiError> = async {
         // continueAdmittedTurn's provenance check, re-read inside the continuation.
         let (current, session) = {

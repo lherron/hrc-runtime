@@ -1,9 +1,9 @@
 //! Durable reattach (dispatch-attach.ts attachAndReplay, dispatch-probe.ts,
 //! lifecycle.ts failReplayStale).
 use super::{
-    PROBE_TIMEOUT, after_mapped, apply_one, bind, consume, delete_active, flush,
+    PROBE_TIMEOUT, after_mapped, apply_one, consume, delete_active, flush,
     is_external_lifecycle_owner, last_projected, log, mark_closing, project_capture_state,
-    server_instance_id,
+    server_instance_id, set_active,
 };
 use crate::server::{
     Server, Shared,
@@ -72,7 +72,8 @@ pub async fn attach_and_replay(
         let replay = client.request("invocation.eventsSince", json!({"invocationId":invocation,"afterSeq":last})).await?;
         let mut replayed = last;
         // Publish the client before replay so ACK and capture refresh reach it.
-        bind(server, &runtime_id, &invocation, client.clone());
+        // The seat monitor starts after reattach completes (below).
+        set_active(server, &runtime_id, &invocation, client.clone());
         for envelope in replay["events"].as_array().cloned().unwrap_or_default() {
             let outcome = apply_one(server, &envelope)?;
             replayed = replayed.max(envelope["seq"].as_i64().unwrap_or(0));
@@ -184,7 +185,11 @@ pub async fn attach_and_replay(
             json!({"runtimeId":runtime_id,"error":error.to_string()}),
         );
     }
-    consume(server, &runtime_id, events, client);
+    consume(server, &runtime_id, events, client.clone());
+    // The binding-established probe completes before the daemon serves, so a
+    // reattached seat's diagnostics always come from this owner.
+    let _ = super::seat::probe(server, &runtime_id, "binding-established").await;
+    super::seat::monitor(server, &runtime_id, client, false);
     log(
         "info",
         "broker.reattach.complete",

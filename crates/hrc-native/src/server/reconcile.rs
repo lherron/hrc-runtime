@@ -574,6 +574,9 @@ pub fn start(server: &Shared) {
             {
                 return;
             }
+            let Some(_write) = server.owner_writes.enter() else {
+                return;
+            };
             if let Err(e) = once(&server, TIMEOUT_SECS * 1000, false, TIMEOUT_SECS).await {
                 super::stderr_json(
                     "warn",
@@ -582,6 +585,8 @@ pub fn start(server: &Shared) {
                     json!({"error":e.message}),
                 );
             }
+            // The fence covers the pass, never the cadence wait.
+            drop(_write);
             tokio::time::sleep(INTERVAL).await;
         }
     });

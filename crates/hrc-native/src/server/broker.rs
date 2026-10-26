@@ -105,7 +105,15 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     // The persisted intent is the normalized, promptless one (record.intent).
     let intent = compile::normalize_placement(intent, &session, run);
     let dispatch_env = dispatch_environment(&session, &intent, &server.runtime, run)?;
-    let stored = intent.clone();
+    let mut stored = intent.clone();
+    if run.is_some()
+        && let Some(map) = stored.as_object_mut()
+    {
+        // persistedIntent: a launch-carried prompt never becomes the applied
+        // intent, or a relaunch would type it again.
+        map.remove("initialPrompt");
+        map.remove("omitPriming");
+    }
     let mut intent = intent;
     if run.is_some() {
         intent["initialPrompt"] = prompt.into();
@@ -185,45 +193,17 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         params["runtime"] = json!({"terminalSurface":lease});
     }
     let started = client.request("invocation.start", params).await?;
-    let mut snapshot = client
+    let snapshot = client
         .request(
             "invocation.snapshot",
             json!({"invocationId":identity["invocationId"]}),
         )
         .await?;
+    // An argv-carried prompt has no initialInput: the broker names that turn
+    // only when it observes it, after the binding (waitForLaunchCarriedSubmissionIdentity).
     let mut submission = execution["dispatchRequest"]["startRequest"]["initialInput"]["inputId"]
         .as_str()
         .map(str::to_owned);
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    while run.is_some() && submission.is_none() {
-        submission = snapshot["turnManifests"]
-            .as_array()
-            .and_then(|manifests| manifests.first())
-            .and_then(|m| m["submissionIds"].as_array())
-            .and_then(|ids| ids.first())
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        if submission.is_some() {
-            break;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(ApiError::domain(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "runtime_unavailable",
-                "launch-carried submission identity timed out",
-                Some(
-                    json!({"runtimeId":identity["runtimeId"],"runId":identity["runId"],"waitMs":60000}),
-                ),
-            ));
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-        snapshot = client
-            .request(
-                "invocation.snapshot",
-                json!({"invocationId":identity["invocationId"]}),
-            )
-            .await?;
-    }
     server.store.lock().unwrap().finish_broker_start(
         &record,
         &hello,
@@ -236,7 +216,20 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     let runtime_id = string(&identity, "runtimeId")?.to_owned();
     let invocation_id = string(&identity, "invocationId")?.to_owned();
     controller::bind(server, &runtime_id, &invocation_id, client.clone());
+    if let Err(error) = controller::project_capture_state(server, &runtime_id, &snapshot["capture"])
+    {
+        controller::log(
+            "warn",
+            "broker initial capture snapshot unavailable",
+            json!({"runtimeId":runtime_id,"invocationId":invocation_id,"error":error.to_string()}),
+        );
+    }
     controller::consume(server, &runtime_id, events, client);
+    if let Some(run_id) = run
+        && submission.is_none()
+    {
+        submission = Some(launch_carried_submission(server, run_id, &runtime_id).await?);
+    }
     let from_seq = server
         .store
         .lock()
@@ -255,6 +248,58 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         response["submissionId"] = id.into();
     }
     Ok(response)
+}
+
+/// waitForLaunchCarriedSubmissionIdentity: the projected runs.broker_submission_id
+/// of a run whose body rode the launch. 60 s covers the measured p99 of 6.5 s
+/// to the launch turn's start; both identity-less endings are errors.
+async fn launch_carried_submission(
+    server: &Shared,
+    run_id: &str,
+    runtime_id: &str,
+) -> Result<String, ApiError> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let row = {
+            let db = server.store.lock().unwrap();
+            crate::server::projection::db::run(&db.sqlite, run_id)?
+        };
+        if let Some(row) = row {
+            if let Some(id) = row.broker_submission_id {
+                return Ok(id);
+            }
+            if !matches!(row.status.as_str(), "accepted" | "started" | "running") {
+                let message: Option<String> = server
+                    .store
+                    .lock()
+                    .unwrap()
+                    .sqlite
+                    .query_row(
+                        "SELECT error_message FROM runs WHERE run_id=?",
+                        [run_id],
+                        |r| r.get(0),
+                    )
+                    .map_err(anyhow::Error::from)?;
+                return Err(ApiError::domain(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "runtime_unavailable",
+                    "launch-carried run ended without broker submission identity",
+                    Some(
+                        json!({"runtimeId":runtime_id,"runId":run_id,"status":row.status,"errorCode":row.error_code,"errorMessage":message}),
+                    ),
+                ));
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(ApiError::domain(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "runtime_unavailable",
+                "launch-carried submission identity timed out",
+                Some(json!({"runtimeId":runtime_id,"runId":run_id,"waitMs":60000})),
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }
 
 /// buildManagedBrokerDispatchEnv over buildHrcCorrelationEnv + the launch
@@ -585,7 +630,8 @@ async fn launch(
     let command = format!(
         "exec {} 2>{}",
         argv.iter().map(|s| quote(s)).collect::<Vec<_>>().join(" "),
-        quote(string(paths, "brokerStderrPath")?)
+        // Bun leaves the redirect target unquoted (substrate-allocator.ts).
+        string(paths, "brokerStderrPath")?
     );
     let socket = string(paths, "btmuxSocketPath")?;
     let session = string(paths, "sessionName")?;

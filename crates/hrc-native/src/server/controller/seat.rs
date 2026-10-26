@@ -270,6 +270,9 @@ fn warn_stalled(
 
 /// probeSeat: seat.probe on the active binding and its recorded consequences.
 pub async fn probe(server: &Shared, runtime_id: &str, cause: &str) -> Result<Value, Value> {
+    let Some(_write) = server.owner_writes.enter() else {
+        return Err(json!({"code":"server_stopping","message":"owner writes are closed"}));
+    };
     let result = super::submit::with_active(
         server,
         runtime_id,
@@ -350,8 +353,15 @@ pub fn probe_in_background(server: &Shared, runtime_id: &str, cause: &str) {
 }
 
 /// startSeatMonitor: a binding-established probe, then one every 5 s while bound.
-pub fn monitor(server: &Shared, runtime_id: &str, client: crate::server::rpc::JsonRpc) {
-    probe_in_background(server, runtime_id, "binding-established");
+pub fn monitor(
+    server: &Shared,
+    runtime_id: &str,
+    client: crate::server::rpc::JsonRpc,
+    initial_probe: bool,
+) {
+    if initial_probe {
+        probe_in_background(server, runtime_id, "binding-established");
+    }
     let server = server.clone();
     let runtime_id = runtime_id.to_owned();
     tokio::spawn(async move {

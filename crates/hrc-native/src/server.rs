@@ -30,6 +30,7 @@ mod proxy;
 mod publication;
 mod reconcile;
 mod recovery;
+mod restart;
 mod rpc;
 mod runs;
 mod runtime_views;
@@ -39,6 +40,7 @@ mod surfaces;
 mod sweeps;
 mod targets;
 mod turns;
+mod writes;
 
 use anyhow::{Context, Result, bail};
 use axum::{
@@ -84,6 +86,8 @@ struct Server {
     literal: Mutex<HashMap<String, String>>,
     /// pendingStartId -> prepared attached start (attachedRunOperations).
     attached: Mutex<HashMap<String, attached::Pending>>,
+    /// Background writers commit inside this fence; shutdown closes and drains it.
+    owner_writes: writes::OwnerWrites,
     runtime: PathBuf,
     bun_passthrough: Option<PathBuf>,
     /// federation.json identity, peers and registry client (resolved at boot).
@@ -292,6 +296,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         probing: Mutex::new(HashSet::new()),
         literal: Mutex::new(HashMap::new()),
         attached: Mutex::new(HashMap::new()),
+        owner_writes: writes::OwnerWrites::default(),
         runtime,
         bun_passthrough,
         federation,
@@ -342,6 +347,20 @@ pub async fn serve(role: front::Role) -> Result<()> {
                 .store(true, std::sync::atomic::Ordering::SeqCst);
         })
         .await?;
+    // Requests have drained; quiesce background writers (SERVER_STOP_STEP_TIMEOUT_MS),
+    // then stop publication over the settled ledger.
+    if !closing
+        .owner_writes
+        .close_and_drain(std::time::Duration::from_secs(5))
+        .await
+    {
+        stderr_json(
+            "warn",
+            "server",
+            "server.stop.owner_writes_timeout",
+            json!({"timeoutMs":5000}),
+        );
+    }
     if !closing.front {
         publication::stop(&closing).await;
     }
@@ -587,6 +606,11 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
             Ok(value) => sweeps::handle_sweep_zombies(server, value),
             Err(e) => Err(e),
         }
+    } else if method == Method::POST && uri.path() == "/v1/sessions/restart" {
+        match parse_body(&body) {
+            Ok(value) => restart::handle(server, value).await,
+            Err(e) => Err(e),
+        }
     } else if method == Method::POST && uri.path() == "/v1/sessions/drop-continuation" {
         match parse_body(&body) {
             Ok(value) => context::drop_continuation(server, value),
@@ -749,6 +773,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/runs/resume-attached",
                 "/v1/clear-context",
                 "/v1/sessions/drop-continuation",
+                "/v1/sessions/restart",
                 "/v1/runs/sweep-zombies",
                 "/v1/runs/reconcile-active",
                 "/v1/submissions/steer",

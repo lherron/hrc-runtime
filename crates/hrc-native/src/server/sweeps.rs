@@ -376,6 +376,9 @@ pub fn start(server: &Shared) {
             {
                 return;
             }
+            let Some(_write) = server.owner_writes.enter() else {
+                return;
+            };
             if let Err(e) = sweep_zombies(
                 &server,
                 ZOMBIE_TIMEOUT_SECS * 1000,
@@ -389,6 +392,8 @@ pub fn start(server: &Shared) {
                     json!({"error":e.message}),
                 );
             }
+            // The fence covers the pass, never the cadence wait.
+            drop(_write);
             tokio::time::sleep(ZOMBIE_INTERVAL).await;
         }
     });
@@ -479,6 +484,9 @@ pub fn start_retention(server: &Shared) {
                 .shutting_down
                 .load(std::sync::atomic::Ordering::SeqCst)
             {
+                let Some(_write) = server.owner_writes.enter() else {
+                    return;
+                };
                 let days = idle_archive_days();
                 match archive_idle_sessions(&server, days) {
                     Ok(mut r) => {
@@ -497,6 +505,8 @@ pub fn start_retention(server: &Shared) {
                         json!({"idleThresholdDays":days,"error":e.to_string()}),
                     ),
                 }
+                // The fence covers the pass, never the cadence wait.
+                drop(_write);
                 tokio::time::sleep(SESSION_RETENTION_INTERVAL).await;
             }
         });
@@ -511,6 +521,9 @@ pub fn start_retention(server: &Shared) {
                 .shutting_down
                 .load(std::sync::atomic::Ordering::SeqCst)
             {
+                let Some(_write) = server.owner_writes.enter() else {
+                    return;
+                };
                 if let Err(e) = super::maintenance::tmux_aging(&server).await {
                     super::stderr_json(
                         "warn",
@@ -519,6 +532,8 @@ pub fn start_retention(server: &Shared) {
                         json!({"error":e.message}),
                     );
                 }
+                // The fence covers the pass, never the cadence wait.
+                drop(_write);
                 tokio::time::sleep(TMUX_AGING_INTERVAL).await;
             }
         });

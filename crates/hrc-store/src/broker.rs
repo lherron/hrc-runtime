@@ -98,12 +98,30 @@ impl Store {
         } else {
             "ready"
         };
-        let mut release = record["executionRelease"].clone();
-        release["source"] = "aspd".into();
-        release["operationId"] = id["operationId"].clone();
-        release["helloRelease"] = hello["release"].clone();
+        // executionReleaseState: Bun's shape and key order, never the aspd
+        // response verbatim (it also carries worker.hostedDrivers).
+        let rel = &record["executionRelease"];
+        let mut release = json!({"source":"aspd","operationId":id["operationId"],"releaseId":rel["releaseId"],"sourceCommit":rel["sourceCommit"],"builtAt":rel["builtAt"],"releaseRoot":rel["releaseRoot"],"worker":{"protocol":rel["worker"]["protocol"],"executable":record["hosting"]["executable"],"argvPrefix":rel["worker"]["argvPrefix"]}});
+        if let Some(h) = hello.get("release").filter(|h| h.is_object()) {
+            release["helloRelease"] = json!({"releaseId":h["releaseId"],"sourceCommit":h["sourceCommit"],"builtAt":h["builtAt"]});
+        }
         let paths = &record["hosting"]["paths"];
-        let mut broker = json!({"protocolVersion":hello["protocolVersion"],"multiInvocation":hello["capabilities"]["multiInvocation"],"startedAt":now,"ownerServerInstanceId":format!("hrc-server:{}",std::process::id()),"inspection":hello["capabilities"]["inspection"],"endpoint":{"kind":"unix-jsonrpc-ndjson","socketPath":paths["brokerIpcSocketPath"],"attachTokenRef":{"kind":"file","path":paths["attachTokenPath"],"redacted":true}},"generation":id["generation"],"brokerCommand":allocation["brokerCommand"],"brokerPid":allocation["brokerPid"],"brokerWindow":allocation["brokerWindow"]});
+        let mut broker = json!({"protocolVersion":hello["protocolVersion"],"multiInvocation":hello["capabilities"]["multiInvocation"],"startedAt":now,"ownerServerInstanceId":format!("hrc-server:{}",std::process::id()),"inspection":hello["capabilities"]["inspection"]});
+        let driver_kind = &execution["driver"];
+        if let Some(authority) = hello["drivers"]
+            .as_array()
+            .and_then(|d| d.iter().find(|d| &d["kind"] == driver_kind))
+            .and_then(|d| d.get("evidenceAuthority"))
+        {
+            broker["evidenceAuthority"] = authority.clone();
+        }
+        for (k, v) in json!({"endpoint":{"kind":"unix-jsonrpc-ndjson","socketPath":paths["brokerIpcSocketPath"],"attachTokenRef":{"kind":"file","path":paths["attachTokenPath"],"redacted":true}},"generation":id["generation"],"brokerCommand":allocation["brokerCommand"],"brokerPid":allocation["brokerPid"],"brokerWindow":allocation["brokerWindow"]})
+        .as_object()
+        .into_iter()
+        .flatten()
+        {
+            broker[k] = v.clone();
+        }
         if let Some(tui) = allocation.get("tuiWindow") {
             broker["tuiWindow"] = tui.clone();
         }

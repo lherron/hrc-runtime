@@ -105,7 +105,7 @@ pub fn set_active(server: &Server, runtime: &str, invocation: &str, client: Json
 /// Publish an active binding and start its seat monitor (startSeatMonitor).
 pub fn bind(server: &Shared, runtime: &str, invocation: &str, client: JsonRpc) {
     set_active(server, runtime, invocation, client.clone());
-    seat::monitor(server, runtime, client);
+    seat::monitor(server, runtime, client, true);
 }
 pub fn delete_active(server: &Server, runtime: &str) {
     server.controller.active.lock().unwrap().remove(runtime);
@@ -233,6 +233,10 @@ pub async fn project_live(server: &Shared, runtime: &str, envelope: &Value) -> R
     let mut attempt = 0u32;
     let invocation = envelope["invocationId"].as_str().unwrap_or("").to_owned();
     let seq = envelope["seq"].as_i64().unwrap_or(0);
+    // A closed fence drops the envelope unprojected and unACKed: it replays.
+    let Some(_write) = server.owner_writes.enter() else {
+        return Ok(());
+    };
     loop {
         if shutting(server) {
             return Ok(());
@@ -342,6 +346,9 @@ async fn backfill(server: &Shared, runtime: &str, invocation: &str, candidates: 
     if shutting(server) {
         return;
     }
+    let Some(_write) = server.owner_writes.enter() else {
+        return;
+    };
     let missing: Vec<i64> = {
         let db = server.store.lock().unwrap();
         candidates
@@ -629,6 +636,9 @@ pub fn consume(
         if shutting(&server) {
             return;
         }
+        let Some(_write) = server.owner_writes.enter() else {
+            return;
+        };
         if failure.is_none()
             && let Some(invocation) = &last
         {
