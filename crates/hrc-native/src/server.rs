@@ -1,64 +1,135 @@
+//! front/ → daemon entry, HTTP and telemetry → hrc-server.
+//! broker/ → broker execution ownership → hrc-server broker/.
+//! projection/ → ledger reads and envelope projection → hrc-server event-mapper/.
+//! turns/ → turn admission and input → hrc-server turn-dispatch/.
+//! placement/ → placement and federation → hrc-core placement; hrc-server federation/.
+//! lifecycle/ → daemon lifecycle and handoff → hrc-server lifecycle/.
+
+#[path = "server/front/accounting.rs"]
 mod accounting;
-mod acp_bridge;
-mod aspc;
-mod attached;
-mod broker;
-mod compile;
-mod context;
-mod control;
-mod controller;
+#[path = "server/front/diagnostics.rs"]
 mod diagnostics;
-mod events;
-mod evidence;
-mod federation;
-mod first_turn;
-mod forensics;
+#[path = "server/front/front.rs"]
 mod front;
-mod handoff;
-mod ledger;
-mod lifecycle;
-mod mail;
-mod messages;
-mod owner;
-use owner::Owner;
-mod streams;
-mod submissions;
-mod subscribers;
-pub use front::Role;
+#[path = "server/front/hosting.rs"]
 mod hosting;
+#[path = "server/front/index.rs"]
 mod index;
-mod input;
-mod io;
-mod lease;
-mod maintenance;
-mod participants;
-mod placement;
-mod presentation;
-mod preview;
-mod projection;
+#[path = "server/front/proxy.rs"]
 mod proxy;
-mod publication;
-mod reconcile;
-mod recovery;
+#[path = "server/front/release.rs"]
 mod release;
-mod restart;
-mod resume;
-mod retained;
-mod rpc;
-mod runs;
-mod runtime_views;
-mod runtimes;
-mod self_restart;
-mod sessions;
-mod start;
-mod startup;
+#[path = "server/front/statement_telemetry.rs"]
 mod statement_telemetry;
+#[path = "server/front/status_runtime.rs"]
 mod status_runtime;
-mod surfaces;
+
+#[path = "server/broker/acp_bridge.rs"]
+mod acp_bridge;
+#[path = "server/broker/attached.rs"]
+mod attached;
+#[path = "server/broker/broker.rs"]
+mod broker;
+#[path = "server/broker/compile.rs"]
+mod compile;
+#[path = "server/broker/controller/mod.rs"]
+mod controller;
+#[path = "server/broker/first_turn.rs"]
+mod first_turn;
+#[path = "server/broker/lease.rs"]
+mod lease;
+#[path = "server/broker/maintenance.rs"]
+mod maintenance;
+#[path = "server/broker/participants/mod.rs"]
+mod participants;
+#[path = "server/broker/reconcile.rs"]
+mod reconcile;
+#[path = "server/broker/recovery.rs"]
+mod recovery;
+#[path = "server/broker/retained/mod.rs"]
+mod retained;
+#[path = "server/broker/rpc.rs"]
+mod rpc;
+#[path = "server/broker/start.rs"]
+mod start;
+#[path = "server/broker/startup/mod.rs"]
+mod startup;
+#[path = "server/broker/sweeps.rs"]
 mod sweeps;
-mod targets;
-mod turns;
+
+#[path = "server/projection/lifecycle_events.rs"]
+mod events;
+#[path = "server/projection/evidence.rs"]
+mod evidence;
+#[path = "server/projection/forensics.rs"]
+mod forensics;
+#[path = "server/projection/ledger.rs"]
+mod ledger;
+#[path = "server/projection/messages.rs"]
+mod messages;
+#[path = "server/projection/projection/mod.rs"]
+mod projection;
+#[path = "server/projection/runs.rs"]
+mod runs;
+#[path = "server/projection/sessions.rs"]
+mod sessions;
+#[path = "server/projection/streams.rs"]
+mod streams;
+#[path = "server/projection/subscribers.rs"]
+mod subscribers;
+#[path = "server/projection/surfaces.rs"]
+mod surfaces;
+#[path = "server/projection/writes.rs"]
 mod writes;
+
+#[path = "server/turns/context.rs"]
+mod context;
+#[path = "server/turns/control.rs"]
+mod control;
+#[path = "server/turns/input.rs"]
+mod input;
+#[path = "server/turns/io.rs"]
+mod io;
+#[path = "server/turns/presentation.rs"]
+mod presentation;
+#[path = "server/turns/preview.rs"]
+mod preview;
+#[path = "server/turns/restart.rs"]
+mod restart;
+#[path = "server/turns/resume.rs"]
+mod resume;
+#[path = "server/turns/submissions.rs"]
+mod submissions;
+#[path = "server/turns/turns/mod.rs"]
+mod turns;
+
+#[path = "server/placement/aspc.rs"]
+mod aspc;
+#[path = "server/placement/federation/mod.rs"]
+mod federation;
+#[path = "server/placement/owner.rs"]
+mod owner;
+#[path = "server/placement/placement.rs"]
+mod placement;
+#[path = "server/placement/runtime_views.rs"]
+mod runtime_views;
+#[path = "server/placement/runtimes.rs"]
+mod runtimes;
+#[path = "server/placement/targets.rs"]
+mod targets;
+
+#[path = "server/lifecycle/handoff/mod.rs"]
+mod handoff;
+#[path = "server/lifecycle/lifecycle/mod.rs"]
+mod lifecycle;
+#[path = "server/lifecycle/mail.rs"]
+mod mail;
+#[path = "server/lifecycle/publication.rs"]
+mod publication;
+#[path = "server/lifecycle/self_restart.rs"]
+mod self_restart;
+pub use front::Role;
+use owner::Owner;
 
 use anyhow::{Context, Result, bail};
 use axum::{
