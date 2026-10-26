@@ -14,7 +14,7 @@ fn log(event: &str, data: Value) {
     crate::server::stderr_json("warn", "broker", event, data);
 }
 
-const ASK_TOOLS: [&str; 2] = ["AskUserQuestion", "request_user_input"];
+pub const ASK_TOOLS: [&str; 2] = ["AskUserQuestion", "request_user_input"];
 pub fn is_ask_tool(name: Option<&str>) -> bool {
     name.is_some_and(|n| ASK_TOOLS.contains(&n))
 }

@@ -14,6 +14,7 @@ mod streams;
 mod subscribers;
 pub use front::Role;
 mod index;
+mod input;
 mod io;
 mod lease;
 mod maintenance;
@@ -69,6 +70,8 @@ struct Server {
     ledger: tokio::sync::watch::Sender<u64>,
     /// Runtimes with a seat probe in flight (probeSeatInBackground).
     probing: Mutex<HashSet<String>>,
+    /// runtime -> literal text buffered until an Enter (pendingBrokerLiteralInputs).
+    literal: Mutex<HashMap<String, String>>,
     runtime: PathBuf,
     bun_passthrough: Option<PathBuf>,
     /// federation.json identity, peers and registry client (resolved at boot).
@@ -273,6 +276,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         reaped: Mutex::new(HashSet::new()),
         ledger: tokio::sync::watch::Sender::new(0),
         probing: Mutex::new(HashSet::new()),
+        literal: Mutex::new(HashMap::new()),
         runtime,
         bun_passthrough,
         federation,
@@ -522,6 +526,16 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
             Ok(value) => turns::submission(server, "invoke", value).await,
             Err(e) => Err(e),
         }
+    } else if method == Method::POST && uri.path() == "/v1/active-run-contributions" {
+        match parse_body(&body) {
+            Ok(value) => input::contribution(server, value).await,
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/literal-input/by-selector" {
+        match parse_body(&body) {
+            Ok(value) => input::literal_by_selector(server, value).await,
+            Err(e) => Err(e),
+        }
     } else if method == Method::POST && uri.path() == "/v1/capture/by-selector" {
         match parse_body(&body) {
             Ok(value) => io::capture_by_selector(server, value).await,
@@ -648,6 +662,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/runtimes/capture/status",
                 "/v1/runtimes/broker/inspect",
                 "/v1/capture/by-selector",
+                "/v1/literal-input/by-selector",
+                "/v1/active-run-contributions",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
                 "/v1/runtimes/prune",

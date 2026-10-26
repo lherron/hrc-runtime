@@ -54,7 +54,12 @@ ordering; scope-home forwarding is N4), `POST /v1/interrupt` and
 stop → dispose → close within 15 s, lease teardown, `runtime.terminated`),
 `GET /v1/attach`, `GET /v1/capture`, `POST /v1/capture/by-selector`,
 `/v1/runtimes/capture/status` and `/v1/runtimes/broker/inspect`
-(`server/io.rs`). A broker client's `close()` half-closes and drains the
+(`server/io.rs`). `POST /v1/literal-input/by-selector` (`server/input.rs`)
+buffers broker literal text until Enter, sends an empty Enter to the pane, and
+flushes the prompt through admission as door `literal-flush`.
+`POST /v1/active-run-contributions` records `active_input_deliveries`, types an
+answer into a pending AskUserQuestion, and otherwise recommends the queue.
+A broker client's `close()` half-closes and drains the
 frames the broker already sent (`invocation.disposed` follows the dispose
 reply). While a terminate finalizes a runtime, its projected exit writes no
 second terminal record. Not yet native: final-summary recovery on inspect,

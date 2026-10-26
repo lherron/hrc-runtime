@@ -22,6 +22,27 @@ TIMED = {'broker.seat.transition', 'runtime.context.updated', 'server.started'}
 UNPOSITIONED = {'submission.admission'}
 
 
+# agent-spaces T-11837 (the claude-code-tmux Stop-hook fallback final beside the
+# transcript's message) is fixed in the aspd live from this instant; a seat born
+# after it must carry no fallback duplicate. Older seats keep the old broker.
+T11837_FIXED_AT = '2026-10-26T08:39:00Z'
+FALLBACK = re.compile(r'^turn_.+_final$')
+
+
+def born_after_fix(d):
+    return bool(d.get('runtimes')) and all(r['created_at'] > T11837_FIXED_AT for r in d['runtimes'])
+
+
+def fallback_duplicates(d):
+    """(run, messageId) of each broker fallback final in a run that also has a transcript message."""
+    by_run = collections.defaultdict(list)
+    for r in d['broker_invocation_events']:
+        if r['type'] == 'assistant.message.completed':
+            by_run[r['run_id']].append(json.loads(r['broker_event_json']).get('messageId') or '')
+    return [(run, m) for run, ids in by_run.items() if any(not FALLBACK.match(i) for i in ids)
+            for m in ids if FALLBACK.match(m)]
+
+
 def load(directory, name):
     return json.loads((Path(directory) / f'{name}.json').read_text())
 
@@ -104,13 +125,13 @@ def compare(args, checks):
 
     for side, d in (('bun', bun), ('native', native)):
         ledger_checks(side, d, check)
-        # One reply row per broker message on each side. The claude-code-tmux
-        # broker may add a Stop-hook fallback final beside the transcript's
-        # (hook-events.ts last_assistant_message): broker defect agent-spaces
-        # T-11837, not projection.
+        # One reply row per broker message on each side.
         messages = len([r for r in d['broker_invocation_events'] if r['type'] == 'assistant.message.completed'])
         replies = len([e for e in d['hrc_events'] if e['event_kind'] == 'turn.message'])
         check(side + ':reply-rows', messages == replies, f'{replies} turn.message rows for {messages} broker messages')
+        if born_after_fix(d):
+            dups = fallback_duplicates(d)
+            check(side + ':no-fallback-duplicates', not dups, f'T-11837 fallback finals on a post-fix seat: {dups}')
 
     # Raw bytes: for every (type, key set) both sides stored, Bun's key order.
     def orders(d):
@@ -177,14 +198,14 @@ def compare(args, checks):
     tb, tn = turns(bun), turns(native)
     case('turn-set', list(tb) == list(tn), f'turns {list(tb)} vs {list(tn)}')
     for turn in tb:
-        def shape(events, norm):
+        def shape(events, norm, fixed):
             out, replied, terminal = [], set(), False
             for e in events:
                 if e['event_kind'] == 'turn.completed':
                     terminal = True
-                if e['event_kind'] == 'turn.message':
-                    # A broker fallback duplicate, or its transcript twin landing
-                    # after the terminal (see reply-rows): broker timing.
+                if e['event_kind'] == 'turn.message' and not fixed:
+                    # Pre-fix seat: a T-11837 fallback duplicate, or its
+                    # transcript twin landing after the terminal.
                     if e['run_id'] in replied or terminal:
                         continue
                     replied.add(e['run_id'])
@@ -194,7 +215,7 @@ def compare(args, checks):
                 out.append((e['event_kind'], e['category'], e['transport'], e['run_id'] is not None, e['error_code'],
                             p if stable else sorted(p)))
             return out
-        a, b = shape(tb[turn], nb), shape(tn.get(turn, []), nn)
+        a, b = shape(tb[turn], nb, born_after_fix(bun)), shape(tn.get(turn, []), nn, born_after_fix(native))
         case(f'lifecycle-turn-{turn}', a == b, json.dumps({'bun': a, 'native': b}, default=str)[:3000])
     def admissions(d, norm):
         return [(e['run_id'] is not None, norm(json.loads(e['payload_json']))) for e in d['hrc_events']

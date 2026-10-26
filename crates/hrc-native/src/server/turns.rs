@@ -703,3 +703,89 @@ pub async fn submission(server: &Shared, door: &str, body: Value) -> Result<Resp
     )
     .await
 }
+
+/// The literal-flush door (handleBrokerLiteralInputBySelector): admission as
+/// door literal-flush with intent enqueue, delivered into the literal runtime.
+/// `after` builds the door's response from the dispatch body before the
+/// admission record, as Bun's route callback does.
+pub async fn literal_flush(
+    server: &Shared,
+    session: Value,
+    rt: &crate::server::projection::db::Rt,
+    prompt: &str,
+    run_id: &str,
+    after: impl FnOnce(&Value) -> Result<Value, ApiError>,
+) -> Result<Value, ApiError> {
+    let req = Request {
+        door: "literal-flush",
+        intent: "enqueue",
+        session,
+        fences: None,
+        idempotency_key: None,
+        established: None,
+        fresh_context: None,
+        runtime_intent: None,
+        allow_stale_generation: false,
+        run_id: Some(run_id.to_owned()),
+        origin: None,
+    };
+    let (result, mut trace) = admission::admit(server, &req).await;
+    let plan = match result {
+        Err(error) => {
+            admission::record(server, &req, &mut trace, Outcome::Refused(&error));
+            return Err(error);
+        }
+        Ok(Admitted::Rejected { code, body }) => {
+            admission::record(server, &req, &mut trace, Outcome::RefusedWith(code));
+            return Ok(body);
+        }
+        Ok(Admitted::Replayed(body)) => {
+            admission::record(server, &req, &mut trace, Outcome::Replayed);
+            return Ok(body);
+        }
+        Ok(Admitted::Plan(plan)) => plan,
+    };
+    let options = route::Options {
+        run_id,
+        prompt,
+        wait_for_completion: false,
+        origin: None,
+        submission_origin: None,
+        response_format: None,
+        fresh_context: None,
+        ttl_ms: None,
+        turn_policy: None,
+        idempotency_key: None,
+        repair: None,
+        first_turn_timeout_ms: None,
+    };
+    // enrichDispatchTurnResponse only: no public receipt projection here.
+    let body = match route::deliver(server, &plan, rt, &options)
+        .await
+        .and_then(|b| {
+            if b["runId"].is_string() {
+                Ok(b)
+            } else {
+                Err(admission::unavailable(
+                    "dispatch returned no runId",
+                    json!({}),
+                ))
+            }
+        }) {
+        Ok(body) => body,
+        Err(error) => {
+            admission::record(server, &req, &mut trace, Outcome::PossibleWrite(&error));
+            return Err(error);
+        }
+    };
+    let value = after(&body)?;
+    admission::record(
+        server,
+        &req,
+        &mut trace,
+        Outcome::Routed {
+            accepted: body["admission"] != "rejected",
+        },
+    );
+    Ok(value)
+}

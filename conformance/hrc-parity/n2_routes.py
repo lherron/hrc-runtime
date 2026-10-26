@@ -8,7 +8,7 @@ positions in each owner's own ledger, so each side is checked for validity
 import json
 from pathlib import Path
 
-from n2_turns import Norm, TIMED
+from n2_turns import Norm, TIMED, born_after_fix, fallback_duplicates
 
 CURSORS = ('fromSeq', 'afterSeq')
 # Bun answers a scope-filtered read through the federation home registry
@@ -26,14 +26,14 @@ def strip_cursors(value):
     return value
 
 
-def kinds(observation):
+def kinds(observation, fixed):
     out, replied = [], False
     for kind in observation['eventKinds']:
         if kind in TIMED:
             continue
-        # One reply per turn: a second turn.message is the broker's Stop-hook
+        # Pre-fix seat: a second turn.message is the broker's Stop-hook
         # fallback beside the transcript's (agent-spaces T-11837).
-        if kind == 'turn.message':
+        if kind == 'turn.message' and not fixed:
             if replied:
                 continue
             replied = True
@@ -45,7 +45,7 @@ def compare(args, checks):
     def check(name, passed, reason, code=1):
         checks.append({'id': name, 'pass': bool(passed), 'reason': reason, 'failureCode': code})
 
-    sides = {}
+    sides, fixed = {}, {}
     for owner, directory in (('bun', args.baseline), ('native', args.candidate)):
         d = json.loads((Path(directory) / f'{owner}.json').read_text())
         norm = Norm(d['scratchRoot'])
@@ -53,6 +53,10 @@ def compare(args, checks):
         sides[owner] = (d, {o['case']: o for o in d['observations']},
                         lambda v, n=norm, sc=scope: n(json.loads(json.dumps(v).replace(sc, '<scope>'))))
         rows = json.loads((Path(directory) / f'{owner}-rows.json').read_text())
+        fixed[owner] = born_after_fix(rows)
+        if fixed[owner]:
+            dups = fallback_duplicates(rows)
+            check(f'{owner}:no-fallback-duplicates', not dups, f'T-11837 fallback finals on a post-fix seat: {dups}')
         first = {}
         for e in rows['hrc_events']:
             first.setdefault(e['run_id'], e['hrc_seq'])
@@ -71,8 +75,8 @@ def compare(args, checks):
             check('compare:' + name, False, 'case missing on native')
             cases.append({'id': name, 'pass': False})
             continue
-        left = {'status': a['status'], 'body': strip_cursors(bun[2](a['body'])), 'events': kinds(a)}
-        right = {'status': b['status'], 'body': strip_cursors(native[2](b['body'])), 'events': kinds(b)}
+        left = {'status': a['status'], 'body': strip_cursors(bun[2](a['body'])), 'events': kinds(a, fixed['bun'])}
+        right = {'status': b['status'], 'body': strip_cursors(native[2](b['body'])), 'events': kinds(b, fixed['native'])}
         passed = left == right
         detail = json.dumps({'bun': left, 'native': right}, default=str)[:4000]
         if not passed and name in GAPS:

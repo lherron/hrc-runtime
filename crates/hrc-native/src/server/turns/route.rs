@@ -527,6 +527,17 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
     enrich(server, body, plan)
 }
 
+/// executeInteractiveBrokerInputTurn into a chosen runtime, enriched.
+pub async fn deliver(
+    server: &Shared,
+    plan: &Plan,
+    rt: &db::Rt,
+    o: &Options<'_>,
+) -> Result<Value, ApiError> {
+    let body = input_turn(server, plan, rt, o).await?;
+    enrich(server, body, plan)
+}
+
 /// enrichDispatchTurnResponse: start identity and observation selectors.
 fn enrich(server: &Shared, mut body: Value, plan: &Plan) -> Result<Value, ApiError> {
     let Some(run_id) = body["runId"].as_str().map(str::to_owned) else {

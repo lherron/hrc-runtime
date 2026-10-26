@@ -94,6 +94,21 @@ def main():
                             ('blank', '?runtimeId=&status='), ('unknown', '?runId=run-nope'), ('first-wins', '?limit=1&limit=5')]:
             case('runs:' + name, 'GET', runs + query)
         case('runs:wrong-method', 'POST', runs, {})
+        literal = '/v1/literal-input/by-selector'
+        sel = {'sessionRef': session_ref}
+        case('literal:no-selector', 'POST', literal, {'text': 'x'})
+        case('literal:no-text', 'POST', literal, {'selector': sel})
+        case('literal:unknown-session', 'POST', literal, {'selector': {'sessionRef': prefix + 'nobody/lane:main'}, 'text': 'x'})
+        case('literal:stale-fence', 'POST', literal, {'selector': sel, 'text': 'x', 'fences': {'expectedGeneration': 99}})
+        case('literal:buffer', 'POST', literal, {'selector': sel, 'text': 'Reply with exactly the word OK and nothing else.', 'enter': False})
+        case('literal:flush', 'POST', literal, {'selector': sel, 'text': ' No tools.'}, settle=True)
+        case('literal:empty-enter', 'POST', literal, {'selector': sel, 'text': ''})
+        idle()
+        contributions = '/v1/active-run-contributions'
+        case('contrib:malformed', 'POST', contributions, {'inputApplicationId': 'app-1'})
+        case('contrib:no-runtime', 'POST', contributions, {'inputApplicationId': 'app-1', 'inputAttemptId': 'att-1', 'prompt': 'x', 'selector': {'runtimeId': 'rt-nope'}})
+        case('contrib:replay', 'POST', contributions, {'inputApplicationId': 'app-1', 'inputAttemptId': 'att-2', 'prompt': 'y'})
+        case('contrib:no-active-run', 'POST', contributions, {'inputApplicationId': 'app-2', 'inputAttemptId': 'att-1', 'prompt': 'x', 'selector': {'hostSessionId': host}})
         interrupt, terminate = '/v1/interrupt', '/v1/terminate'
         case('interrupt:not-object', 'POST', interrupt, [])
         case('interrupt:missing-runtime', 'POST', interrupt, {})
@@ -105,6 +120,8 @@ def main():
             _, started = s.http('POST', turns, {'hostSessionId': host, 'prompt': slow, 'waitFor': 'turn_started'}, timeout=600)
             time.sleep(4)
             case('interrupt:active-other-owner', 'POST', interrupt, {'runtimeId': runtime, 'ownerRunId': 'run-nope'})
+            case('contrib:queue-recommended', 'POST', contributions, {'inputApplicationId': 'app-3', 'inputAttemptId': 'att-1', 'prompt': 'x', 'selector': {'runtimeId': runtime}})
+            case('contrib:run-mismatch', 'POST', contributions, {'inputApplicationId': 'app-4', 'inputAttemptId': 'att-1', 'prompt': 'x', 'selector': {'runtimeId': runtime}, 'expectedRunId': 'run-other'})
             case('interrupt:active', 'POST', interrupt, {'runtimeId': runtime, 'ownerRunId': started['runId']})
             s.wait(lambda: s.rows("SELECT 1 FROM runs WHERE run_id=? AND completed_at IS NOT NULL", (started['runId'],)),
                    300, 'interrupted run settles')

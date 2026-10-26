@@ -9,6 +9,7 @@ committed projection, and rows Bun cannot continue from.
 import argparse
 import collections
 import json
+import re
 import os
 from pathlib import Path
 import time
@@ -62,12 +63,16 @@ def main():
         })
         assert counts['turn.completed'] == 1 and counts['turn.started'] == 1 and counts['turn.accepted'] == 1, counts
         assert counts['turn.tool_call'] == 1 and counts['turn.tool_result'] == 1, counts
-        # Every reply row is one broker message; the broker itself may emit a
-        # hook fallback final beside the transcript's (harness race, not replay).
-        messages = s.rows("SELECT seq FROM broker_invocation_events WHERE invocation_id=? AND type='assistant.message.completed' AND run_id=?", (inv['invocation_id'], run1))
+        # Every reply row is one broker message. On a seat born after the
+        # agent-spaces T-11837 fix the broker adds no Stop-hook fallback final.
+        messages = s.rows("SELECT seq, json_extract(broker_event_json, '$.messageId') AS mid FROM broker_invocation_events WHERE invocation_id=? AND type='assistant.message.completed' AND run_id=?", (inv['invocation_id'], run1))
         checks['replyRows'] = counts['turn.message']
         checks['brokerMessages'] = len(messages)
         assert counts['turn.message'] == len(messages) >= 1, (counts, messages)
+        born = s.rows('SELECT created_at FROM runtimes WHERE runtime_id=?', (runtime,))[0]['created_at']
+        fallbacks = [m['mid'] for m in messages if re.match(r'^turn_.+_final$', m['mid'] or '')]
+        checks['fallbackDuplicates'] = len(fallbacks) if born > '2026-10-26T08:39:00Z' and len(messages) > len(fallbacks) else None
+        assert not checks['fallbackDuplicates'], ('T-11837 fallback final on a post-fix seat', messages)
         assert checks['runs'] == 1 and len(broker) == len({r['seq'] for r in broker}), checks
         assert before < inv['last_projected_seq'], (before, inv['last_projected_seq'])
         checks['gate2a'] = 'pass'
