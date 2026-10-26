@@ -1,4 +1,4 @@
-//! HRC API-fed observation domain and stage-1b owner-API facade.
+//! HRC native-ledger observation domain and owner-API facades.
 pub mod api;
 pub mod attach;
 pub mod declarations;

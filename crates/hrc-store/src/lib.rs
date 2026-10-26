@@ -20,7 +20,7 @@ mod messages;
 mod metadata;
 mod monitor_read;
 mod participants;
-mod presentation;
+pub mod presentation;
 mod publication;
 mod statement_telemetry;
 mod surfaces;

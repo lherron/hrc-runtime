@@ -7,14 +7,13 @@ use crate::{
 };
 use cardo_store::ledger::Wake;
 use hrc_store::Store;
+use hrc_store::presentation as mappers;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-#[path = "native_mappers.rs"]
-mod mappers;
 
 #[derive(Clone)]
 pub struct NativeRead {

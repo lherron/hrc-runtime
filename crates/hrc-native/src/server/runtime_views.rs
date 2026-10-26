@@ -14,95 +14,10 @@ fn strings(v: &Value, keys: &[&str]) -> Option<Value> {
     }
     Some(out)
 }
-fn identity(v: &Value) -> Option<Value> {
-    strings(v, &["sessionId", "windowId", "paneId"])
-}
 pub fn hosting(runtime: &Value) -> Option<Value> {
-    let b = &runtime["runtimeStateJson"]["broker"];
-    let endpoint = &b["endpoint"];
-    let kind = endpoint["kind"].as_str()?;
-    let mut broker = json!({"endpoint":{"kind":kind}});
-    match kind {
-        "unix-jsonrpc-ndjson" => {
-            endpoint["socketPath"].as_str()?;
-            endpoint["attachTokenRef"]["path"].as_str()?;
-            if endpoint["attachTokenRef"]["kind"] != "file" {
-                return None;
-            }
-            broker["endpoint"]["socketPath"] = endpoint["socketPath"].clone();
-            broker["protocolVersion"] = if endpoint["protocolVersion"] == "epr/1" {
-                json!("epr/1")
-            } else {
-                json!("harness-broker/0.2")
-            };
-        }
-        "stdio-jsonrpc-ndjson" => {}
-        _ => return None,
-    }
-    let normalized = b.get("substrate").is_some() || b.get("presentation").is_some();
-    let substrate = if normalized {
-        let s = &b["substrate"];
-        match s["kind"].as_str()? {
-            "daemon-child" | "external" => json!({"kind":s["kind"]}),
-            "leased-tmux" => {
-                let mut out = strings(s, &["kind", "tmuxSocketPath", "sessionName"])?;
-                out["brokerWindow"] = identity(&s["brokerWindow"])?;
-                s["generation"].as_f64()?;
-                out["generation"] = s["generation"].clone();
-                out
-            }
-            _ => return None,
-        }
-    } else if let Some(w) = b.get("brokerWindow") {
-        let socket = w["socketPath"].as_str()?;
-        let session = w["sessionName"].as_str()?;
-        json!({"kind":"leased-tmux","tmuxSocketPath":socket,"sessionName":session,"brokerWindow":identity(w)?,"generation":b.get("generation").filter(|v|v.is_number()).unwrap_or(&runtime["generation"])})
-    } else {
-        json!({"kind":"daemon-child"})
-    };
-    let presentation = if normalized {
-        let p = &b["presentation"];
-        match p["kind"].as_str()? {
-            "none" => json!({"kind":"none"}),
-            "tmux-tui" | "observer" => {
-                let key = if p["kind"] == "observer" {
-                    "observerWindow"
-                } else {
-                    "tuiWindow"
-                };
-                let mut out =
-                    json!({"kind":p["kind"],key:identity(&p[key])?,"operatorAttachTarget":true});
-                if p["attachCommand"].is_string() {
-                    out["attachCommand"] = p["attachCommand"].clone();
-                }
-                out
-            }
-            _ => return None,
-        }
-    } else {
-        let (kind, key, window) = if b.get("observerWindow").is_some() {
-            ("observer", "observerWindow", "observer")
-        } else if b.get("tuiWindow").is_some() {
-            ("tmux-tui", "tuiWindow", "tui")
-        } else {
-            ("none", "", "")
-        };
-        if kind == "none" {
-            json!({"kind":"none"})
-        } else {
-            let mut out = json!({"kind":kind,key:identity(&b[key])?,"operatorAttachTarget":true});
-            if let (Some(socket), Some(session)) = (
-                b["brokerWindow"]["socketPath"].as_str(),
-                b["brokerWindow"]["sessionName"].as_str(),
-            ) {
-                out["attachCommand"] =
-                    format!("tmux -S {socket} attach -t {session}:{window}").into();
-            }
-            out
-        }
-    };
-    Some(json!({"broker":broker,"substrate":substrate,"presentation":presentation}))
+    hrc_store::presentation::hosting(runtime)
 }
+
 fn control(state: &Value, highwater: Value) -> Option<Value> {
     let c = &state["control"];
     c["mode"].as_str()?;

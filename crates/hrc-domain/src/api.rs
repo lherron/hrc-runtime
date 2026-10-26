@@ -1,5 +1,5 @@
-//! The only transport into HRC. The route allowlist prevents accidental use of
-//! reconciling GETs; no SQLite connection exists in this crate.
+//! Owner-operation transport and the reference API projection reader. The read
+//! allowlist excludes reconciling GETs; hrc-kernel projects from native SQLite.
 use reqwest::blocking::{Client, Response};
 use serde::Deserialize;
 use serde_json::Value;
