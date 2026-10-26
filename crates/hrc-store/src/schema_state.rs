@@ -1,5 +1,6 @@
 //! Non-refusing readonly schema diagnostics; unlike Store admission, this must
-//! describe an older/newer/incomplete store without changing it.
+//! describe an older/newer/incomplete main store without application writes.
+//! SQLite may create/update WAL/SHM coordination files while reading live WAL.
 use crate::MIGRATIONS;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};

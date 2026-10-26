@@ -73,7 +73,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='n5-status-') as temp:
         scratch = Path(temp)
         migrations = sorted(set(re.findall(r"\bid:\s*['\"]([0-9]{4}_[^'\"]+)['\"]", '\n'.join(p.read_text() for p in (ROOT / 'packages/hrc-store-sqlite/src').rglob('*.ts') if '__tests__' not in p.parts))))
-        for scenario in ('api-health-failed', 'api-status-failed', 'api-html-failed', 'absent', 'stale-pid', 'partial-pid', 'runtime-file', 'state-file', 'no-ledger', 'empty-ledger', 'partial-schema', 'unknown-schema', 'tmux-missing', 'tmux-stalled', 'tmux-large', 'healthy'):
+        for scenario in ('api-health-failed', 'api-status-failed', 'api-html-failed', 'absent', 'stale-pid', 'partial-pid', 'runtime-file', 'state-file', 'no-ledger', 'empty-ledger', 'partial-schema', 'unknown-schema', 'checkpointed-wal', 'live-wal', 'tmux-missing', 'tmux-stalled', 'tmux-large', 'healthy'):
             if scenario == 'healthy' and not args.runtime_root:
                 continue
             base = scratch / scenario
@@ -102,6 +102,21 @@ def main():
                             assert migrations, 'migration enumeration must be nonempty'
                             ids = migrations[:1] if scenario == 'partial-schema' else migrations + ['9999_unknown']
                             db.executemany('INSERT INTO hrc_migrations VALUES (?)', [(i,) for i in ids])
+            wal_writer = None
+            if scenario in ('checkpointed-wal', 'live-wal'):
+                wal_writer = sqlite3.connect(db_path)
+                wal_writer.execute('PRAGMA journal_mode=WAL')
+                wal_writer.execute('CREATE TABLE hrc_migrations (id TEXT PRIMARY KEY)')
+                wal_writer.executemany('INSERT INTO hrc_migrations VALUES (?)', [(i,) for i in migrations])
+                wal_writer.commit()
+                if scenario == 'checkpointed-wal':
+                    wal_writer.close()
+                    wal_writer = None
+            def snapshot(path):
+                return dict(bytes=path.stat().st_size, mtimeNs=path.stat().st_mtime_ns, sha256=hashlib.sha256(path.read_bytes()).hexdigest()) if path.is_file() else None
+            wal_path = Path(str(db_path) + '-wal')
+            shm_path = Path(str(db_path) + '-shm')
+            controls = [runtime / name for name in ('server.pid', 'server.lock', 'hrc.sock')]
             if scenario.startswith('tmux-'):
                 bin_dir = base / 'bin'
                 bin_dir.mkdir()
@@ -120,8 +135,15 @@ def main():
                 server.scenario = scenario
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()
-            before = hashlib.sha256(db_path.read_bytes()).hexdigest() if db_path.is_file() else None
+            before = snapshot(db_path)
+            wal_before, shm_before = snapshot(wal_path), snapshot(shm_path)
+            control_before = {str(p): (p.stat().st_mtime_ns if p.exists() else None) for p in controls}
             for flags in ([], ['--json']):
+                if scenario == 'checkpointed-wal':
+                    # Each output mode sees the same stopped-node state. All
+                    # owners are gone; these are suite-owned empty sidecars.
+                    wal_path.unlink(missing_ok=True)
+                    shm_path.unlink(missing_ok=True)
                 observed = []
                 for command in ([bun, str(args.oracle.resolve())], [str(args.binary.resolve())]):
                     child = subprocess.run(command + ['server', 'status'] + flags, cwd=ROOT, env=env, text=True, capture_output=True, timeout=8)
@@ -131,13 +153,33 @@ def main():
                     assert len(complete['tmux']['sessions']) == 12000, 'Rust must drain the complete probe'
                     results.append(dict(case='tmux-large:json', status='UNSUPPORTED', reason='Bun truncates server status --json above 64 KiB; Rust emits complete JSON', oracle=observed[0], subject=observed[1]))
                     continue
+                if scenario in ('checkpointed-wal', 'live-wal') and flags:
+                    schema = json.loads(observed[1]['stdout'])['schema']
+                    assert schema['readable'] and schema['storeVersion'] == migrations[-1] and not schema['pending'], 'Rust must read live-WAL migration records'
+                if scenario == 'checkpointed-wal':
+                    if not flags:
+                        assert observed[1]['exit'] == 1 and f'store schema: {migrations[-1]} (matches this release)' in observed[1]['stdout'], 'Rust must read the complete checkpointed schema'
+                    results.append(dict(case='checkpointed-wal:' + ('json' if flags else 'human'), status='UNSUPPORTED', reason='Bun server status reports schema unreadable on a checkpointed WAL-header store with no -wal/-shm sidecars; Rust reads the schema and creates the SQLite coordination files.', oracle=observed[0], subject=observed[1]))
+                    continue
                 results.append(dict(case=scenario + (':json' if flags else ':human'), oracle=observed[0], subject=observed[1], **{'pass': normalized(observed[0]) == normalized(observed[1])}))
+            if scenario == 'healthy':
+                continue  # A live daemon may write; effects are proved on isolated stores above.
+            after = snapshot(db_path)
+            wal_after, shm_after = snapshot(wal_path), snapshot(shm_path)
+            control_after = {str(p): (p.stat().st_mtime_ns if p.exists() else None) for p in controls}
+            assert before == after, f'{scenario}: status mutated main store bytes/mtime'
+            assert control_before == control_after, f'{scenario}: status changed control files'
+            if wal_before is None:
+                assert wal_after is None or wal_after['bytes'] == 0, f'{scenario}: status wrote WAL frames'
+            else:
+                assert wal_after and all(wal_before[k] == wal_after[k] for k in ('bytes', 'sha256')), f'{scenario}: status changed existing WAL'
+            results.append(dict(case=scenario + ':store-effects', before=dict(main=before, wal=wal_before, shm=shm_before), after=dict(main=after, wal=wal_after, shm=shm_after), controlsBefore=control_before, controlsAfter=control_after, shmCoordinationEffectsAllowed=True, **{'pass': True}))
+            if wal_writer:
+                wal_writer.close()
             if server:
                 server.shutdown()
                 server.server_close()
                 thread.join()
-            after = hashlib.sha256(db_path.read_bytes()).hexdigest() if db_path.is_file() else None
-            assert before == after, f'{scenario}: status mutated store'
     report = dict(normalization=NORMALIZATION, cases=results, **{'pass': sum(r.get('pass', False) for r in results), 'fail': sum(r.get('pass') is False for r in results)})
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
