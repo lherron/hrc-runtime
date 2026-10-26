@@ -4,8 +4,12 @@
 A scratch native node serves a registry and a peer listener. Case `idle`:
 SIGTERM with no peer connection must exit promptly and report the listeners
 quiescent. Case `held`: a peer bounded-stream follow is open at SIGTERM; the
-owner's stream fence ends it, and shutdown must wait for that handler (not
-cut it) and then report quiescent within the 3s budget. The not-quiescent
+owner's stream fence ends it before the listener drain starts (N5's
+shutdown order), so its close must be logged before the owner_writes stop
+step and the listeners must report quiescent within the 3s budget. No real
+peer route keeps a handler alive past the stream fence, so neither the
+drain-waits-for-a-live-handler path nor the not-quiescent path can be
+provoked end to end. The not-quiescent
 path (a handler outliving the budget) has no real peer route to provoke it.
 Failure modes: a listener that keeps accepting after stop, a shutdown that
 returns while a handler still runs, or one that hangs past the budget.
@@ -13,6 +17,7 @@ returns while a handler still runs, or one that hangs past the budget.
 import argparse
 import json
 from pathlib import Path
+import re
 import secrets
 import signal
 import socket
@@ -76,7 +81,12 @@ def main():
                 except OSError:
                     refused.append({name: True})
             log = (args.artifacts / f'stop-native-{case}.log').read_text()
-            results[case] = {'exit': proc.returncode, 'stopSeconds': elapsed,
+            # Concurrent log writers can tear a line, so read the order from
+            # the raw text rather than parsing each line.
+            order = ['step:' + m if m else 'http.stream.close' for m in re.findall(
+                r'"event":"(?:server\.stop\.step","data":\{"step":"([a-z_]+)"|http\.stream\.close","data":'
+                r'\{"listener":"peer")', log)]
+            results[case] = {'exit': proc.returncode, 'stopSeconds': elapsed, 'stopOrder': order,
                              'notQuiescentLogged': 'server.stop.federation_listeners_not_quiescent' in log,
                              'stopTimeoutLogged': 'federation.listener.stop_timeout' in log,
                              'streamClosed': stream_closed, 'listenersClosed': refused}
@@ -85,7 +95,11 @@ def main():
         # shutdown; the listener must wait for that handler, not cut it.
         checks = {
             'idle-quiescent': not idle['notQuiescentLogged'] and idle['stopSeconds'] < 3,
-            'held-waited-for-handler': held['stopSeconds'] >= idle['stopSeconds'] + 1,
+            # Since N5's shutdown ordering the stream fence ends a held peer
+            # handler before the listener drain starts; it must still end
+            # cleanly before the owner_writes fence closes.
+            'held-ended-before-fence': 'http.stream.close' in held['stopOrder'] and 'step:owner_writes' in held['stopOrder']
+            and held['stopOrder'].index('http.stream.close') < held['stopOrder'].index('step:owner_writes'),
             'held-drained-in-budget': not held['notQuiescentLogged'] and held['stopSeconds'] < 3 + idle['stopSeconds'],
             'held-stream-closed': held['streamClosed'] is True,
             'listeners-closed': all(v for r in results.values() for e in r['listenersClosed'] for v in e.values()),
