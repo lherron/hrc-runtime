@@ -43,7 +43,7 @@
 	<string>Interactive</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/lherron/.bun/bin/hrc</string>
+		<string>/Users/lherron/.bun/install/hrc-runtime-current/packages/hrc-cli/src/cli.ts</string>
 		<string>server</string>
 		<string>serve</string>
 	</array>

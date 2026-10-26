@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  readlink,
   realpath,
   rename,
   rm,
@@ -93,6 +94,13 @@ async function writeCliSources(releasePath: string, generation: string): Promise
   }
 }
 
+async function writeNativeCli(releasePath: string, generation: string): Promise<void> {
+  await mkdir(join(releasePath, 'bin'), { recursive: true })
+  const binary = join(releasePath, 'bin', 'rusthrc')
+  await writeFile(binary, `#!/bin/sh\nprintf '%s\\n' '${generation}:dependency-ok'\n`)
+  await chmod(binary, 0o755)
+}
+
 async function writeReleaseDependency(releasePath: string): Promise<void> {
   const dependencyRoot = join(releasePath, 'node_modules', 'fixture-dependency')
   await mkdir(dependencyRoot, { recursive: true })
@@ -105,6 +113,7 @@ async function writeReleaseDependency(releasePath: string): Promise<void> {
 
 async function writeRelease(releasePath: string, generation: string): Promise<void> {
   await writeCliSources(releasePath, generation)
+  await writeNativeCli(releasePath, generation)
   await writeReleaseDependency(releasePath)
 }
 
@@ -170,6 +179,51 @@ function invokeInstalled(binPath: string): { exitCode: number; stderr: string; s
 }
 
 describe('T-06685 installed CLI continuity harness', () => {
+  test('published Bun package cannot reclaim hrc on global install', async () => {
+    const manifest = JSON.parse(
+      await readFile(join(import.meta.dir, '../packages/hrc-cli/package.json'), 'utf8')
+    )
+    expect(manifest.bin?.hrc).toBeUndefined()
+  })
+
+  test('reinstall repairs a legacy link and refuses a release missing rusthrc', async () => {
+    const fixture = await makeAtomicSurface()
+    for (const id of ['release-first', 'release-second']) {
+      await installAtomicRelease({
+        context: 'main',
+        linkMode: 'on',
+        paths: fixture.paths,
+        sourceRoot: fixture.sourceRoot,
+        releaseId: id,
+        readRunningRelease: () => ({ answered: true }),
+        prepareRelease: async (path) => {
+          await writeRelease(path, id)
+          return fixtureBuilds()
+        },
+      })
+      expect(await readlink(fixture.binPath)).toBe(
+        join(fixture.paths.currentLink, 'bin', 'rusthrc')
+      )
+      expect(invokeInstalled(fixture.binPath).stdout).toBe(`${id}:dependency-ok\n`)
+    }
+    await expect(
+      installAtomicRelease({
+        context: 'main',
+        linkMode: 'on',
+        paths: fixture.paths,
+        sourceRoot: fixture.sourceRoot,
+        releaseId: 'release-missing-native',
+        readRunningRelease: () => ({ answered: true }),
+        prepareRelease: async (path) => {
+          await writeCliSources(path, 'missing')
+          await writeReleaseDependency(path)
+          return fixtureBuilds()
+        },
+      })
+    ).rejects.toThrow('bin/rusthrc')
+    expect(invokeInstalled(fixture.binPath).stdout).toBe('release-second:dependency-ok\n')
+  })
+
   test('entrypoint smoke expects the HRC CLI exit', () => {
     expect(CLI_PACKAGES['hrc-cli'].helpExitCode).toBe(0)
   })
@@ -221,6 +275,7 @@ describe('T-06685 installed CLI continuity harness', () => {
         signalPreparationStarted()
         await preparationMayFinish
         await writeReleaseDependency(releasePath)
+        await writeNativeCli(releasePath, 'new')
         return fixtureBuilds()
       },
     })
@@ -248,6 +303,10 @@ describe('T-06685 installed CLI continuity harness', () => {
     expect(manifest.hrcBuild).toEqual(fixtureBuilds().hrcBuild)
     expect(manifest.aspContracts).toEqual(fixtureBuilds().aspContracts)
 
+    expect(await readlink(fixture.binPath)).toBe(join(fixture.paths.currentLink, 'bin', 'rusthrc'))
+    expect(await realpath(fixture.binPath)).toBe(
+      await realpath(join(fixture.paths.binDir, 'rusthrc'))
+    )
     const after = Array.from({ length: 10 }, () => invokeInstalled(fixture.binPath))
     expect(after.every((result) => result.exitCode === 0)).toBeTrue()
     expect(after.every((result) => result.stderr === '')).toBeTrue()

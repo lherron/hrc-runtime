@@ -69,10 +69,9 @@ error rather than a silently mis-assigned option.
 The active commands use one stable indirection:
 
 ```text
-~/.bun/bin/hrc, hrcchat, hrcmail
-  -> ~/.bun/install/global/node_modules/{hrc-cli,hrcchat-cli,hrcmail-cli}
-  -> ~/.bun/install/hrc-runtime-current/packages/{hrc-cli,hrcchat-cli,hrcmail-cli}
-  -> ~/.bun/install/hrc-runtime-releases/release-*/
+~/.bun/bin/{hrc,rusthrc}
+  -> ~/.bun/install/hrc-runtime-current/bin/rusthrc
+  -> ~/.bun/install/hrc-runtime-releases/release-*/bin/rusthrc
 ```
 
 Each release directory contains its own source snapshot, workspace packages,
@@ -81,8 +80,10 @@ records the release ID, the exact local HRC package build candidate, the exact
 ASP package build selected by the lock/install, and the installation
 time. Cutover is refused unless both coherent build tuples validate. The
 checkout's `node_modules` is not removed or rewritten by a main-checkout
-install. The final rename of `hrc-runtime-current` changes all three commands
-together.
+install. The final rename of `hrc-runtime-current` changes both CLI names
+together. The Bun `hrc-cli` package declares no `hrc` bin, so publishing or
+globally installing the current package cannot reclaim the command. `hrcchat`,
+`hrcmail`, `hrc-desktop-hook` and `hrc-viewer` remain ACP-owned.
 
 Main-checkout atomic installs are local release selection. They archive the
 committed `HEAD`, mint a seven-field `praesidiumBuild` tuple, and atomically

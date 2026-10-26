@@ -39,7 +39,7 @@ import {
 export { acquireInstallLock } from './lib/install-lock'
 
 export const CLI_PACKAGES = {
-  'hrc-cli': { bin: 'hrc', entrypoint: 'src/cli.ts', helpExitCode: 0 },
+  'hrc-cli': { entrypoint: 'src/cli.ts', helpExitCode: 0 },
 } as const
 
 type CliPackageName = keyof typeof CLI_PACKAGES
@@ -253,6 +253,12 @@ async function validateReleaseShape(releasePath: string, releaseId: string): Pro
     await chmod(entrypoint, 0o755)
   }
 
+  const nativeCli = join(releasePath, 'bin', 'rusthrc')
+  if ((await pathKind(nativeCli)) === 'missing') {
+    throw new Error('prepared release is missing bin/rusthrc')
+  }
+  await chmod(nativeCli, 0o755)
+
   const manifestPath = join(releasePath, 'praesidium-release.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown
   expectExactFields(
@@ -294,16 +300,14 @@ export async function bootstrapInstalledSurface(
     await realpath(paths.currentLink)
   }
 
-  await atomicSymlink(join(paths.currentLink, 'bin', 'rusthrc'), join(paths.binDir, 'rusthrc'))
+  for (const bin of ['hrc', 'rusthrc']) {
+    await atomicSymlink(join(paths.currentLink, 'bin', 'rusthrc'), join(paths.binDir, bin))
+  }
 
-  for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
+  for (const packageName of Object.keys(CLI_PACKAGES)) {
     await atomicSymlink(
       join(paths.currentLink, 'packages', packageName),
       join(paths.globalModules, packageName)
-    )
-    await atomicSymlink(
-      join(paths.globalModules, packageName, cli.entrypoint),
-      join(paths.binDir, cli.bin)
     )
   }
 }
@@ -401,7 +405,7 @@ async function pruneAfterCutover(options: AtomicInstallOptions, releasePath: str
 
 /** Ask the running daemon, through the just-installed CLI, which release it runs from. */
 export function readRunningReleaseFromDaemon(releasePath: string): RunningReleaseAnswer {
-  const cli = join(releasePath, 'packages', 'hrc-cli', CLI_PACKAGES['hrc-cli'].entrypoint)
+  const cli = join(releasePath, 'bin', 'rusthrc')
   const result = spawnSync(cli, ['server', 'status', '--json'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],

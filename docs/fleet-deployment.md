@@ -156,7 +156,13 @@ running argv matches the plist's `ProgramArguments`.
 
 ## HRC owner: Bun or rusthrc
 
-A node's HRC owner is Bun (`~/.bun/bin/hrc server serve`) or the native rusthrc
+The `hrc` and `rusthrc` commands both select the installed native CLI.
+`fleet-status` reports a separate `CLI` column: `rusthrc` requires PATH to
+resolve to the current installed binary; `bun`, `foreign`, or `missing` is drift.
+Deploy readback refuses drift before checking daemon health.
+
+A node's HRC owner is Bun (explicit
+`~/.bun/install/hrc-runtime-current/packages/hrc-cli/src/cli.ts server serve`) or the native rusthrc
 owner (T-11893). Both run under the one label `com.praesidium.hrc-server`;
 `scripts/hrc-owner.sh kind` reads which from the installed plist and the
 `OWNER` column of `just fleet-status` reads it from the running binary. A
@@ -230,3 +236,6 @@ linger. Two traps that cost real time:
   PostToolUse hook exit 127 on the guest. Shebangs in `var/agents/spaces/**/hooks`
   are fleet-wide — keep them at `python3`.
 
+Bun rollback plists saved before the CLI switch may still name `~/.bun/bin/hrc`.
+Before using one, replace that argument with the explicit Bun entrypoint above
+(and keep any existing `bun` interpreter). The PATH CLI no longer selects Bun.

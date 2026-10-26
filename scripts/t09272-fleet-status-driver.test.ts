@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -28,16 +36,19 @@ function writeExecutable(path: string, content: string): void {
 
 function runFleetStatus(
   driverNode: 'max3' | 'hrcdev',
-  overrides: ProbeOverrides = {}
+  overrides: ProbeOverrides = {},
+  nativeCli = true
 ): FleetStatusRun {
   const root = mkdtempSync(join(tmpdir(), 't09272-fleet-status-'))
   temporaryRoots.push(root)
   const bin = join(root, '.bun', 'bin')
   mkdirSync(bin, { recursive: true })
   const tracePath = join(root, 'ssh-targets.log')
+  mkdirSync(join(root, '.bun/install/hrc-runtime-current/bin'), { recursive: true })
+  symlinkSync(join(bin, 'rusthrc'), join(root, '.bun/install/hrc-runtime-current/bin/rusthrc'))
 
   writeExecutable(
-    join(bin, 'hrc'),
+    join(bin, 'rusthrc'),
     [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
@@ -52,6 +63,9 @@ function runFleetStatus(
       '',
     ].join('\n')
   )
+
+  symlinkSync(nativeCli ? 'rusthrc' : 'cli.ts', join(bin, 'hrc'))
+  if (!nativeCli) writeExecutable(join(bin, 'cli.ts'), readFileSync(join(bin, 'rusthrc'), 'utf8'))
 
   writeExecutable(
     join(bin, 'ssh'),
@@ -139,9 +153,16 @@ describe('T-09272 fleet-status driver selection', () => {
     const result = runFleetStatus('max3')
 
     expect(result.exitCode, result.stderr).toBe(0)
-    expect(result.stdout).toMatch(/^NODE\s+STATUS\s+HRC\s+ASPD\s+OWNER\s/m)
+    expect(result.stdout).toMatch(/^NODE\s+STATUS\s+HRC\s+ASPD\s+OWNER\s+CLI\s/m)
     expect(result.stdout).toMatch(/^max3\s+healthy\s+4136d813\s+d3e42545\s+rusthrc\s/m)
     expect(result.stdout).toMatch(/^hrcdev\s+healthy\s+6ee4ea67\s+da52b1ac\s+bun\s/m)
+  })
+
+  test('reports PATH CLI separately from daemon owner', () => {
+    const native = runFleetStatus('max3')
+    expect(native.stdout).toMatch(/^max3\s+healthy\s+4136d813\s+d3e42545\s+rusthrc\s+rusthrc\s/m)
+    const bun = runFleetStatus('max3', {}, false)
+    expect(bun.stdout).toMatch(/^max3\s+healthy\s+4136d813\s+d3e42545\s+rusthrc\s+bun\s/m)
   })
 
   test('fails closed when a targeted probe returns a different node identity', () => {

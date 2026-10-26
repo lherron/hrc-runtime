@@ -41,9 +41,6 @@
     "packages/hrc-cli": {
       "name": "hrc-cli",
       "version": "0.1.0",
-      "bin": {
-        "hrc": "./bin/hrc.js",
-      },
       "dependencies": {
         "agent-action-render": "*",
         "agent-scope": "latest",

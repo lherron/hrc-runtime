@@ -414,10 +414,11 @@ fleet-status:
     # aspd probe) plus the injector job as launchd sees it. An injector that is
     # running but not owned by its launchd job is exactly the state that dies
     # silently on the next reboot, so it prints as UNSUPERVISED, not as a version.
-    node_probe='export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+    node_probe="$(cat '{{ justfile_directory() }}/scripts/hrc-cli-path.sh')"$'\n''export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
       status="$(hrc server status --json 2>/dev/null | jq -c .)"
       [[ -n "$status" ]] || status="{}"
       printf "%s\n" "$status"
+      hrc_cli_kind
       socket="$(jq -r ".socketPath // empty" <<<"$status" 2>/dev/null)"
       job="$(launchctl print "gui/$(id -u)/com.praesidium.hrc-mail-injector" 2>/dev/null)"
       pid="$(awk '\''$1 == "pid" && $2 == "=" { print $3; exit }'\'' <<<"$job")"
@@ -454,7 +455,7 @@ fleet-status:
     }
 
     probe() {
-      local label="$1" target="$2" out status health hrc aspd owner injector coherent actual_node
+      local label="$1" target="$2" out status health hrc aspd owner cli injector coherent actual_node
       out="$(run_on_node "$label" "$target" "$node_probe" 2>/dev/null)"
       status="$(sed -n '1p' <<<"$out")"
       if [[ -z "$status" || "$status" == '{}' ]]; then
@@ -466,19 +467,20 @@ fleet-status:
         printf '%-8s %-12s %s\n' "$label" "wrong-driver:$actual_node" '-'
         return
       fi
-      injector="$(sed -n '2p' <<<"$out")"
+      cli="$(sed -n '2p' <<<"$out")"
+      injector="$(sed -n '3p' <<<"$out")"
       health="$(jq -r '.status // "down"' <<<"$status")"
       hrc="$(jq -r '.release.hrcBuild.sourceCommit // "unknown"' <<<"$status")"
       aspd="$(jq -r 'if .api.aspd.reachable == true then (.api.aspd.release.sourceCommit // "unidentified")[0:8] else "DOWN" end' <<<"$status")"
       # The running binary names the owner: Bun's hrc CLI or the native rusthrc (T-11893).
       owner="$(jq -r '.binaryPath // "" | if endswith("/rusthrc") then "rusthrc" elif . == "" then "unknown" else "bun" end' <<<"$status")"
       coherent="$(jq -r '.release.runningEqualsInstalled // false' <<<"$status")"
-      printf '%-8s %-12s %-10s %-10s %-8s %-26s %s\n' \
-        "$label" "$health" "${hrc:0:8}" "$aspd" "$owner" "${injector:-unknown}" \
+      printf '%-8s %-12s %-10s %-10s %-8s %-8s %-26s %s\n' \
+        "$label" "$health" "${hrc:0:8}" "$aspd" "$owner" "${cli:-unknown}" "${injector:-unknown}" \
         "$([[ "$coherent" == true ]] && echo 'running==installed' || echo 'STALE PROCESS')"
     }
 
-    printf '%-8s %-12s %-10s %-10s %-8s %-26s %s\n' NODE STATUS HRC ASPD OWNER INJECTOR COHERENCE
+    printf '%-8s %-12s %-10s %-10s %-8s %-8s %-26s %s\n' NODE STATUS HRC ASPD OWNER CLI INJECTOR COHERENCE
     probe max3 'max3'
     probe svc 'mini'
     probe hrcdev 'hrcdev'
@@ -1268,6 +1270,10 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
       exit 1
     }
     cd "$repo"
+    source scripts/hrc-cli-path.sh
+    cli_kind="$(hrc_cli_kind)"
+    [[ "$cli_kind" == rusthrc ]] || fail "PATH hrc is ${cli_kind}, expected the installed rusthrc ($(command -v hrc || true))"
+    echo "[cli] rusthrc: $(command -v hrc) -> $(readlink "$HOME/.bun/bin/hrc")"
 
     # The daemon can lag its supervisor respawn by a few seconds; a single
     # unretried status probe here failed three deploys in a row on max3.

@@ -4,9 +4,6 @@
   "private": true,
   "description": "HRC operator CLI: thin wrapper over hrc-sdk",
   "type": "module",
-  "bin": {
-    "hrc": "./bin/hrc.js"
-  },
   "files": [
     "dist",
     "bin"

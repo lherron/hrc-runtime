@@ -138,7 +138,8 @@ three transports, not just the interactive tmux broker:
    The JSON lines must include `payload`, `generation`, `scopeRef`, `runId`,
    `launchId`, and `streamSeq`.
 
-   In this repo `hrc` runs the CLI source directly through Bun. Do not run
+   The installed `hrc` runs the Rust CLI. Invoke
+   `bun packages/hrc-cli/bin/hrc.js` explicitly to exercise the Bun source. Do not run
    `just install` as part of this harness unless the current operator asks for
    a full reinstall; it can wipe shared `node_modules` during collaboration.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The HRC owner of a node: Bun (`~/.bun/bin/hrc server serve`) or the native
+# The HRC owner of a node: Bun (explicit hrc-cli entrypoint) or the native
 # rusthrc owner (T-11893). Both run under the one launchd label
 # com.praesidium.hrc-server; only ProgramArguments and the log paths differ.
 #
@@ -40,7 +40,7 @@ owner_kind() {
   while read -r arg; do
     case "${arg##*/}" in
       rusthrc) echo rusthrc; return ;;
-      hrc) echo bun; return ;;
+      hrc | cli.ts | hrc.js) echo bun; return ;;
     esac
   done < <(program_args "$plist")
   fail "$plist runs neither hrc nor rusthrc: $(program_args "$plist" | paste -sd ' ' -)"
@@ -63,7 +63,7 @@ render() {
   # bash 3.2 (macOS /bin/bash, what `ssh host bash -s` gets on svc): no mapfile.
   while IFS= read -r i; do args+=("$i"); done < <(program_args "$src")
   for i in "${!args[@]}"; do
-    [[ "${args[$i]##*/}" == hrc ]] && { hrc_at=$i; break; }
+    [[ "${args[$i]##*/}" == hrc || "${args[$i]}" == */hrc-cli/src/cli.ts || "${args[$i]}" == */hrc-cli/bin/hrc.js ]] && { hrc_at=$i; break; }
   done
   # A fronted Bun (T-11822) carries --listen-socket; the switch is for a direct one.
   [[ "${args[*]:hrc_at+1}" == 'server serve' ]] ||

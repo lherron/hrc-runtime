@@ -317,7 +317,8 @@ The contract inventories all schema/repositories and direct consumers/writers, i
 
 ## 7. Install, activation and fleet
 
-Atomic kernel packaging, incremental Cargo reuse, TS/Rust verification, selected/running provenance and Mable's restart authority already exist. Extend them; do not create another installation system. Native CLI name is `rusthrc`; default Bun `hrc` remains unchanged. Reuse the existing canonical Cargo target.
+Atomic kernel packaging, incremental Cargo reuse, TS/Rust verification, selected/running provenance and Mable's restart authority already exist. Extend them; do not create another installation system. Native CLI name is `rusthrc`; Lance’s 2026-10-26 CLI switch (T-11950) makes installed `hrc` an alias of
+`rusthrc`; the Bun CLI remains available through its explicit entrypoint. Reuse the existing canonical Cargo target.
 
 Build, commit/push, install, activation and promotion are distinct states. Worktree checks do not certify installed acceptance; landing and canonical installation/smoke remain coordinated. No private Bun daemon/plist or front activation is required by independent development. P8 must review supported activation/rollback and pilot tooling before services change. Read back actual sourceCommit, binaryPath/packagePath, selected/running tuple AND implementation owner; matching source does not prove native authority. Production operations remain separately authorized.
 
