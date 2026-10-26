@@ -8,6 +8,20 @@ from pathlib import Path
 import re
 
 
+# Named, ruled exclusions: (suite, object-path pattern) -> why the order is not
+# an owner difference. Excluded differences are reported, never dropped.
+EXCLUSIONS = {
+    ('n2-turns', r'^\$\.invocations\[\d+\]\.context(?=$|[.\[])'):
+        'broker.listInvocations context passes through verbatim; turnId presence follows Claude '
+        'statusline timing relative to turn.completed (mable EN-36677 / N2).',
+}
+
+
+def excluded(suite, path):
+    return next((reason for (name, pattern), reason in EXCLUSIONS.items()
+                 if name == suite and re.search(pattern, path)), None)
+
+
 def differences(bun, native, path='$'):
     out = []
     if isinstance(bun, dict) or isinstance(native, dict):
@@ -84,15 +98,21 @@ def compare_records(suite, bun, native):
     a, b = index(bun), index(native)
     if set(a) != set(b):
         raise ValueError(f'{suite}: missing ordered cases; bun-only={set(a)-set(b)}, native-only={set(b)-set(a)}')
-    mismatches, failed = [], 0
+    mismatches, exclusions, failed = [], [], 0
     for name, (route, value) in a.items():
-        delta = differences(value, b[name][1])
+        delta = []
+        for d in differences(value, b[name][1]):
+            reason = excluded(suite, d['path'])
+            if reason:
+                exclusions.append({'case': name, 'object path': d['path'], 'reason': reason})
+            else:
+                delta.append(d)
         failed += bool(delta)
         for d in delta:
             mismatches.append({'suite': suite, 'case': name, 'route': route,
                 'owner package': owner_package(suite, route, d['path']), 'object path': d['path'],
                 'Bun key order': d['bun'], 'native key order': d['native']})
-    return {'comparedCases': len(a), 'failedCases': failed, 'mismatches': mismatches}
+    return {'comparedCases': len(a), 'failedCases': failed, 'mismatches': mismatches, 'excluded': exclusions}
 
 
 def records(suite, directory, owner):

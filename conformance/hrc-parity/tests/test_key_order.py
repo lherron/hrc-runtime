@@ -40,6 +40,20 @@ class KeyOrderControls(unittest.TestCase):
             with self.assertRaises(ValueError):
                 compare_records('n1-routes', a, b)
 
+    def test_named_exclusion_is_reported_and_scoped(self):
+        bun = {'invocations': [{'runId': 'r', 'context': {'turnId': 't', 'usedTokens': 1}}]}
+        native = {'invocations': [{'runId': 'r', 'context': {'usedTokens': 1}}]}
+        report = compare_records('n2-turns', [('inspect', 'POST /v1/runtimes/broker/inspect', bun)],
+                                 [('inspect', 'POST /v1/runtimes/broker/inspect', native)])
+        self.assertEqual(report['failedCases'], 0)
+        self.assertEqual([e['object path'] for e in report['excluded']], ['$.invocations[0].context'])
+        # Same shape elsewhere in the suite, or the same path in another suite, still fails.
+        moved = {'invocations': [{'context': {'turnId': 't', 'usedTokens': 1}, 'runId': 'r'}]}
+        self.assertEqual(compare_records('n2-turns', [('inspect', '/', bun)], [('inspect', '/', moved)])['failedCases'], 1)
+        self.assertEqual(compare_records('n2-routes', [('inspect', '/', bun)], [('inspect', '/', native)])['failedCases'], 1)
+        nearby = ({'invocations': [{'contextReading': {'b': 1, 'a': 2}}]}, {'invocations': [{'contextReading': {'a': 2, 'b': 1}}]})
+        self.assertEqual(compare_records('n2-turns', [('x', '/', nearby[0])], [('x', '/', nearby[1])])['failedCases'], 1)
+
     def test_cli_json_order_and_text(self):
         self.assertFalse(cli_orders({'stdout': '{"z":1,"a":2}', 'stderr': ''},
                                     {'stdout': '{"a":2,"z":1}', 'stderr': ''})['pass'])
