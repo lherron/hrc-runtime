@@ -25,7 +25,21 @@ describe('T-08559 install and canonical publication boundary', () => {
     expect(recipeBody('deploy-max3')).toContain('"publish"')
     expect(recipeBody('deploy-svc')).toContain('"no-publish"')
     expect(recipeBody('deploy-hrcdev')).toContain('"no-publish"')
-    expect(recipeBody('_deploy-node')).toContain('just _publish-selected-release')
+    // T-11930: the deploy lane publishes from its shared readback, after the
+    // restart and the release identity assertion, and only from max3.
+    const deployNode = recipeBody('_deploy-node')
+    const readbackCall = deployNode.indexOf('just _node-readback')
+    expect(readbackCall).toBeGreaterThan(deployNode.indexOf('hrc server restart --node'))
+    expect(deployNode.slice(readbackCall)).toContain('"{{ publication }}"')
+    const readback = recipeBody('_node-readback')
+    const publishAt = readback.indexOf('just _publish-selected-release')
+    expect(publishAt).toBeGreaterThan(
+      readback.indexOf('daemon is running ${deployed_sha}, expected ${target_sha}')
+    )
+    expect(readback.slice(0, publishAt)).toContain(
+      '[[ "$expected_node" == max3 ]] || fail \'only max3 may perform canonical HRC publication\''
+    )
+    expect(recipeBody('switch-owner-rusthrc')).toContain('"" no-publish')
     const fleet = recipeBody('deploy-fleet')
     expect(fleet).toContain('"max3" "max3" "$hrc_sha"')
     expect(fleet.indexOf('"max3" "max3" "$hrc_sha"')).toBeLessThan(
