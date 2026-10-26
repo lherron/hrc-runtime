@@ -13,6 +13,7 @@ from pathlib import Path
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -27,6 +28,40 @@ class UnixHTTP(http.client.HTTPConnection):
         self.sock = socket.socket(socket.AF_UNIX)
         self.sock.settimeout(self.timeout)
         self.sock.connect(str(self.path))
+
+
+def owner_follow_ready(socket_path, host, headers=None):
+    """Read the owner's cursor and prove its complete first follow record.
+
+    These fixtures have separate stores. Keep the raw wire response and page
+    facts; only the paired projection replaces independently validated ledger
+    identity/head values. Missing/extra ready fields remain failures.
+    """
+    h = UnixHTTP(socket_path)
+    h.request('GET', '/v1/events/page?afterSeq=0&limit=1')
+    response = h.getresponse()
+    page = json.loads(response.read())
+    h.close()
+    assert response.status == 200, page
+    incarnation, head = page['ledgerIncarnationId'], page['head']
+    assert isinstance(incarnation, str) and incarnation and isinstance(head, int), page
+    path = f'/v1/events/bounded-stream?hostSessionId={host}&generation=1&afterSeq=0&ledgerIncarnationId={incarnation}&follow=true'
+    h = UnixHTTP(socket_path)
+    h.timeout = 5
+    h.request('GET', path, headers=headers or {})
+    response = h.getresponse()
+    raw = response.readline().decode()
+    result = dict(method='GET', path=path, status=response.status,
+                  headers={k.lower(): v for k, v in response.getheaders()}, body=raw)
+    h.close()
+    result['ownerPage'] = page
+    result['wirePath'], result['wireBody'] = path, raw
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'conformance/hrc-parity'))
+    from owner_relative import bounded_ready
+    result, rule = bounded_ready(result)
+    result['ownerRelative'] = rule
+    assert rule['pass'], (page, result)
+    return result
 
 
 def main():

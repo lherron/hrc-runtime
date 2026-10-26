@@ -7,6 +7,7 @@ vary: validate their request bounds and preserve their equality across reads.
 import datetime
 import json
 from pathlib import Path
+from owner_relative import bounded_ready, READY_RULE, READY_FIELDS
 
 SESSION_CASES = (
     'sessions-list', 'sessions-scope', 'sessions-invalid-status',
@@ -87,7 +88,15 @@ def compare_passthrough(args, checks):
                        'pass': required <= observed and positive and live,
                        'reason': 'every postponed N1 route, nonempty target read and live stream must be observed', 'failureCode': 1})
     cases = []
+    relative = dict(id=READY_RULE, fields=READY_FIELDS, owners={})
     for index, (direct, forwarded) in enumerate(zip(baseline, candidate, strict=True)):
+        if direct['path'].startswith('/v1/events/bounded-stream?'):
+            direct, bun_rule = bounded_ready(direct)
+            forwarded, native_rule = bounded_ready(forwarded)
+            relative['owners'] = dict(bun=bun_rule, native=native_rule)
+            for owner, rule in relative['owners'].items():
+                checks.append(dict(id=READY_RULE + ':' + owner, **{'pass': rule['pass']},
+                                   reason='ready must exactly report its own sampled page head/incarnation', failureCode=1))
         passed = all(direct[key] == forwarded[key] for key in ('method', 'path', 'status', 'body'))
         for key, value in direct['headers'].items():
             if key not in ('date', 'connection', 'keep-alive', 'transfer-encoding', 'content-length'):
@@ -96,7 +105,9 @@ def compare_passthrough(args, checks):
         checks.append({'id': 'proxy:' + name, 'pass': passed,
                        'reason': 'forwarded status, body and end-to-end headers must match Bun', 'failureCode': 1})
         cases.append({'id': name, 'pass': passed})
-    return {'suite': 'n1-passthrough', 'cases': cases,
+    checks.append(dict(id=READY_RULE + ':nonempty', **{'pass': set(relative['owners']) == {'bun', 'native'}},
+                       reason='both owner-relative ready observations are required', failureCode=1))
+    return {'suite': 'n1-passthrough', 'cases': cases, 'ownerRelative': [relative],
             'behaviorQualified': bool(checks) and all(c['pass'] for c in checks)}
 
 
@@ -109,9 +120,19 @@ def compare_accounting(args, checks):
                 'GET /v1/events/bounded-stream n1-accounting/stream': 1}
     cases = []
     populations = {}
+    relative = dict(id=READY_RULE, fields=READY_FIELDS, owners={}, metricBytes='actual HTTP bytes')
     for kind, directory in [('bun', args.baseline), ('native', args.candidate)]:
         report = json.loads((Path(directory) / 'accounting.json').read_text())
         records, logs, observations = report['metrics'], report['logs'], report['observations']
+        probes = [o for o in observations if o.get('streamProbe')]
+        valid = len(probes) == 1
+        if valid:
+            probe = probes[0]
+            _, rule = bounded_ready(probe['streamProbe'])
+            relative['owners'][kind] = rule
+            valid = rule['pass'] and probe['bytes'] == len(probe['streamProbe']['wireBody'].encode())
+        checks.append(dict(id=READY_RULE + ':' + kind, **{'pass': valid},
+                           reason='ready reports own page; metric bytes remain actual wire bytes', failureCode=1))
         counts = {}
         shape = bool(records)
         for r in records:
@@ -121,7 +142,7 @@ def compare_accounting(args, checks):
             key = r['method'] + ' ' + r['route'] + ' ' + r['client'].replace('/' + kind + '/', '/')
             counts[key] = counts.get(key, 0) + r.get('sampleWeight', 1)
             if kind == 'native':
-                expected_owner='bun' if r['route'] in ('/v1/targets','/v1/events/bounded-stream') else 'native'
+                expected_owner='bun' if r['route'] == '/v1/targets' else 'native'
                 shape = shape and r.get('servedBy') == expected_owner
             if 'sampleWeight' in r:
                 shape = shape and r['sampleWeight'] == 20 and r['status'] < 400 and r['ms'] < 25 and 'reqId' not in r
@@ -137,7 +158,7 @@ def compare_accounting(args, checks):
         log_ok = not polls and len(errors) == 13 and all(r['level'] == 'warn' and r['component'] == 'http' and r['data'].get('code') == 'unknown_host_session' and r['data'].get('message') for r in errors)
         log_ok = log_ok and all('?' not in r['data']['path'] for r in logs)
         if kind == 'native':
-            log_ok = log_ok and all(r.get('server') == 'rusthrc' and r['data'].get('servedBy') == ('bun' if r['data']['route'] in ('/v1/targets','/v1/events/bounded-stream') else 'native') for r in logs)
+            log_ok = log_ok and all(r.get('server') == 'rusthrc' and r['data'].get('servedBy') == ('bun' if r['data']['route'] == '/v1/targets' else 'native') for r in logs)
         log_ok = log_ok and any(r['event'] == 'http.stream.open' for r in logs) and any(r['event'] == 'http.stream.close' for r in logs)
         for name, passed in [('weighted-counts', counts == expected), ('schema-bytes-and-sampling', shape), ('L3', log_ok)]:
             case = {'id': kind + ':' + name, 'pass': bool(passed)}
@@ -146,5 +167,5 @@ def compare_accounting(args, checks):
         populations[kind] = counts
     checks.append({'id': 'accounting:weighted-count-parity', 'pass': populations['bun'] == populations['native'] == expected,
                    'reason': 'native and forwarded routes must have the same per-route weighted population as Bun', 'failureCode': 1})
-    return {'suite': 'n1-accounting', 'cases': cases,
+    return {'suite': 'n1-accounting', 'cases': cases, 'ownerRelative': [relative],
             'behaviorQualified': bool(checks) and all(c['pass'] for c in checks)}

@@ -50,8 +50,7 @@ def main(case_factory=None, observe=None, paginate=True, before_subject=None, be
     (root / 'run').mkdir()
     (root / 'state').mkdir()
     config = root / 'federation.json'
-    config.write_text(json.dumps({'nodeId': 'n1-t11818', 'peers': {}}))
-    config.chmod(0o600)
+    # An absent explicit config prevents fallback to production federation.
     env = dict(os.environ, PATH=str(bin_dir)+os.pathsep+os.environ.get('PATH',''))
     assert Path(shutil.which('hrc',path=env['PATH'])).resolve()==cli.resolve()
     for k in ('HRC_SESSION_REF', 'HRC_RUNTIME_ID', 'HRC_RUN_ID', 'HRC_HOST_SESSION_ID',
@@ -100,6 +99,21 @@ def main(case_factory=None, observe=None, paginate=True, before_subject=None, be
         for _ in range(200):
             assert proc.poll() is None, (kind, 'owner exited', proc.returncode)
             try:
+                if kind == 'bun':
+                    # HTTP can answer during startup before CLI shutdown handlers
+                    # exist. Require this child's listening event, then roundtrip.
+                    listening = False
+                    for line in Path(log.name).read_text().splitlines():
+                        try:
+                            record = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if record.get('event') == 'server.listening' and record.get('data', {}).get('pid') == proc.pid:
+                            listening = True
+                            break
+                    if not listening:
+                        time.sleep(.1)
+                        continue
                 status, raw, _ = http('GET', '/v1/status')
                 value = json.loads(raw)
                 if status == 200:

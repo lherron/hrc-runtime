@@ -13,7 +13,7 @@ import signal
 import sqlite3
 import subprocess
 import time
-from foundation import UnixHTTP
+from foundation import UnixHTTP, owner_follow_ready
 
 
 def main():
@@ -109,11 +109,10 @@ def main():
             for key,value in direct['headers'].items():
                 if key.lower() not in ('date','connection','keep-alive','transfer-encoding','content-length'):
                     assert forwarded['headers'].get(key)==value,(key,direct,forwarded)
-        page=json.loads(request(bun,'GET','/v1/events/page?afterSeq=0&limit=1')['body'])
-        path=f'/v1/events/bounded-stream?hostSessionId={host}&generation=1&afterSeq=0&ledgerIncarnationId={page["ledgerIncarnationId"]}&follow=true'
         started=time.monotonic()
-        direct=request(bun,'GET',path,stream=True)
-        forwarded=request(native,'GET',path,stream=True)
+        stream_headers={'Content-Type':'application/json','x-hrc-principal-ref':'agent:cody','x-n1-proxy-test':'retained'}
+        direct=owner_follow_ready(bun,host,stream_headers)
+        forwarded=owner_follow_ready(native,host,stream_headers)
         assert time.monotonic()-started<5,'live response buffered until completion'
         assert direct['status']==200 and (direct['status'],direct['body'])==(forwarded['status'],forwarded['body']), (direct,forwarded)
         assert json.loads(forwarded['body'])['type']=='ready'

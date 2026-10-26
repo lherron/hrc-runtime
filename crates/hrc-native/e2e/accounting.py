@@ -16,7 +16,7 @@ import sqlite3
 import datetime
 import subprocess
 import time
-from foundation import UnixHTTP
+from foundation import UnixHTTP, owner_follow_ready
 
 
 def main():
@@ -63,9 +63,6 @@ def main():
         http.request('POST','/v1/sessions/resolve',json.dumps({'sessionRef':'agent:tabularasa:project:n1-t11818:task:accounting-'+str(time.time_ns())+'/lane:main','create':True,'summonIntent':'explicit_local'}),{'Content-Type':'application/json'})
         response=http.getresponse();assert response.status==200
         host=json.loads(response.read())['hostSessionId'];http.close()
-        http=UnixHTTP(bun);http.request('GET','/v1/events/page?afterSeq=0&limit=1');response=http.getresponse()
-        incarnation=json.loads(response.read())['ledgerIncarnationId'];http.close()
-        stream_path=f'/v1/events/bounded-stream?hostSessionId={host}&generation=1&afterSeq=0&ledgerIncarnationId={incarnation}&follow=true'
         state=root/'native/state';state.mkdir(parents=True)
         subprocess.run(['bun','-e',f'import {{openHrcDatabase}} from {json.dumps(str(release/"packages/hrc-store-sqlite/src/database.ts"))};openHrcDatabase(process.argv[1]).close()',str(state/'state.sqlite')],check=True)
         native=up('native',bun)
@@ -78,7 +75,11 @@ def main():
                 for _ in range(50):rows.append(call(socket,'GET',path,client))
             for i in range(7):rows.append(call(socket,'GET','/v1/health','n1-accounting/'+kind+'/request-id',' id-'+str(i)+' '))
             for _ in range(13):rows.append(call(socket,'GET','/v1/sessions/by-host/hsid-no-such-host?private=query','n1-accounting/'+kind+'/error'))
-            rows.append(call(socket,'GET',stream_path,'n1-accounting/'+kind+'/stream',stream=True))
+            client='n1-accounting/'+kind+'/stream'
+            stream=owner_follow_ready(socket,host,{'User-Agent':client+' extra ignored'})
+            rows.append(dict(method='GET',path=stream['wirePath'],status=stream['status'],
+                             bytes=len(stream['wireBody'].encode()),client=client,requestId=None,
+                             streamProbe=stream))
             observations[kind]=rows
         time.sleep(1.5)
     finally:

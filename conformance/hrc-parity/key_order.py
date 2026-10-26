@@ -104,8 +104,17 @@ def compare_records(suite, bun, native):
     a, b = index(bun), index(native)
     if set(a) != set(b):
         raise ValueError(f'{suite}: missing ordered cases; bun-only={set(a)-set(b)}, native-only={set(b)-set(a)}')
-    mismatches, exclusions, failed = [], [], 0
+    mismatches, exclusions, failed, excluded_cases = [], [], 0, 0
     for name, (route, value) in a.items():
+        if suite == 'n1-accounting' and route == 'GET /v1/sessions?all=true':
+            # The proxy fixture intentionally seeds only Bun's store. Its
+            # metrics remain value-gated; these are not paired session reads.
+            exclusions.append({'case': name, 'object path': '$',
+                               'id': 'accounting-separate-store-session-list-shape',
+                               'reason': 'Bun-seeded session vs intentionally empty native store',
+                               'bunCount': len(value), 'nativeCount': len(b[name][1])})
+            excluded_cases += 1
+            continue
         delta = []
         for d in differences(value, b[name][1]):
             reason = excluded(suite, d['path'], name)
@@ -118,7 +127,7 @@ def compare_records(suite, bun, native):
             mismatches.append({'suite': suite, 'case': name, 'route': route,
                 'owner package': owner_package(suite, route, d['path']), 'object path': d['path'],
                 'Bun key order': d['bun'], 'native key order': d['native']})
-    return {'comparedCases': len(a), 'failedCases': failed, 'mismatches': mismatches, 'excluded': exclusions}
+    return {'comparedCases': len(a) - excluded_cases, 'excludedCases': excluded_cases, 'failedCases': failed, 'mismatches': mismatches, 'excluded': exclusions}
 
 
 def records(suite, directory, owner):
