@@ -35,7 +35,7 @@ import { writeServerLog } from './server-log.js'
 import { isRecord, parseJsonBody } from './server-parsers.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { toStatusSessionView } from './status-views.js'
-import { detectTmuxBackend } from './tmux-socket.js'
+import { detectTmuxBackend, getListenSocketPath } from './tmux-socket.js'
 
 const HRC_SERVER_PACKAGE_PATH = realpathSync(resolve(import.meta.dir, '..'))
 const HRC_SERVER_BINARY_PATH = realpathSync(resolve(process.argv[1] ?? process.execPath))
@@ -316,6 +316,7 @@ export const serverStatusMethods = {
       runtimeRoot: this.options.runtimeRoot,
       stateRoot: this.options.stateRoot,
       socketPath: this.options.socketPath,
+      listenSocketPath: getListenSocketPath(this.options),
       dbPath: this.options.dbPath,
       cwd: process.cwd(),
       binaryPath: HRC_SERVER_BINARY_PATH,

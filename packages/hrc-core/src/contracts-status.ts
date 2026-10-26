@@ -134,7 +134,10 @@ export type HrcCapabilityStatus = {
   startedAt: string
   runtimeRoot: string
   stateRoot: string
+  /** The node's public API socket. */
   socketPath: string
+  /** Where this daemon listens: socketPath, or a private socket behind a front door (T-11822). */
+  listenSocketPath?: string | undefined
   dbPath: string
   cwd: string
   binaryPath: string

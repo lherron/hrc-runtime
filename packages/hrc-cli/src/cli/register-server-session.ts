@@ -82,9 +82,13 @@ export function registerServerSessionCommands(program: Command): void {
       '--allow-persona <agentIds...>',
       'allow only these agent personas to execute locally (omitted means unrestricted)'
     )
+    .option(
+      '--listen-socket <path>',
+      'absolute socket to listen on behind a front door (default: <runtimeRoot>/hrc.sock)'
+    )
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['allow-persona'],
+        strings: ['allow-persona', 'listen-socket'],
         booleans: [],
       })
       await cmdServerServe(args)

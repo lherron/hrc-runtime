@@ -319,7 +319,17 @@ export type LatestRunEventRow = {
 export type HrcServerOptions = {
   runtimeRoot: string
   stateRoot: string
+  /**
+   * The node's public API socket: what clients and brokers call (it is the
+   * HRC_MAIL_STOP_SOCKET brokers receive). Bun listens here unless
+   * `listenSocketPath` names a private socket behind a front door (T-11822).
+   */
   socketPath: string
+  /**
+   * Where this daemon binds, guards and unlinks its listener. Defaults to
+   * `socketPath`. A deployment role chosen by the service config, never env.
+   */
+  listenSocketPath?: string | undefined
   lockPath: string
   /** @deprecated Compatibility only; ignored since T-11714. */
   spoolDir: string

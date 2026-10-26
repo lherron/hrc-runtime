@@ -202,7 +202,11 @@ import {
   type TargetMessageHandlersMethods,
   targetMessageHandlersMethods,
 } from './target-message-handlers.js'
-import { assertRuntimeRootSocketPathsFit, getTmuxSocketPath } from './tmux-socket.js'
+import {
+  assertRuntimeRootSocketPathsFit,
+  getListenSocketPath,
+  getTmuxSocketPath,
+} from './tmux-socket.js'
 import { type TmuxManager as ServerTmuxManager, createTmuxManager } from './tmux.js'
 import { createServerTranscriptIndexer } from './transcript-index-adapter.js'
 import { TurnAdmissionGate } from './turn-admission-gate.js'
@@ -470,7 +474,7 @@ export class HrcServerInstance implements HrcServer {
       executor: () => options.lifecycleExecutor,
     })
     this.server = Bun.serve({
-      unix: options.socketPath,
+      unix: getListenSocketPath(options),
       idleTimeout: 255,
       fetch: (request: Request, server: { timeout(request: Request, seconds: number): void }) => {
         server.timeout(request, 0)
@@ -756,6 +760,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     runtimeRoot: resolvedOptions.runtimeRoot,
     stateRoot: resolvedOptions.stateRoot,
     socketPath: resolvedOptions.socketPath,
+    listenSocketPath: getListenSocketPath(resolvedOptions),
     dbPath: resolvedOptions.dbPath,
     tmuxSocketPath: getTmuxSocketPath(resolvedOptions),
   }
@@ -794,7 +799,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       summarizeFederationConfig(federationConfig)
     )
 
-    await prepareSocketForStartup(resolvedOptions.socketPath)
+    await prepareSocketForStartup(getListenSocketPath(resolvedOptions))
     shouldCleanupSocket = true
     const tmux = createTmuxManager({
       socketPath: getTmuxSocketPath(resolvedOptions),

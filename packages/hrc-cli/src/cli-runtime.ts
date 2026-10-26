@@ -2,6 +2,7 @@ export type { ServerPaths } from './cli-runtime/server-paths.js'
 export {
   execProcess,
   isLiveProcess,
+  isUnixSocketResponsive,
   resolveServerPaths,
   writeServerProcessLog,
 } from './cli-runtime/server-paths.js'

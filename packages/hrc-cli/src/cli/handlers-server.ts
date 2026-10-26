@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { openSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
+import { isAbsolute, resolve } from 'node:path'
 
 import { HRC_LIFECYCLE_PRE_CONTRACT_MESSAGE, HRC_SERVER_LAUNCHD_LABEL } from 'hrc-core'
 import type {
@@ -23,6 +24,7 @@ import {
   formatStrandedLaunchAgentRefusal,
   formatTmuxStatus,
   isLiveProcess,
+  isUnixSocketResponsive,
   launchctlKickstart,
   resolveServerMode,
   resolveServerPaths,
@@ -165,11 +167,40 @@ export function shutdownAttribution(
  * `hrc server start` delegates to launchctl when a Launch Agent is loaded.
  */
 export async function cmdServerServe(_args: string[]): Promise<void> {
-  const status = await collectServerRuntimeStatus({ includeTmux: false })
-  if (status.running) {
-    fatal(`daemon already running on ${status.socketPath} (pid ${status.pid ?? 'unknown'})`)
+  const listenSocketPath = parseListenSocketPath(_args)
+  if (listenSocketPath === undefined) {
+    const status = await collectServerRuntimeStatus({ includeTmux: false })
+    if (status.running) {
+      fatal(`daemon already running on ${status.socketPath} (pid ${status.pid ?? 'unknown'})`)
+    }
+  } else if (await isUnixSocketResponsive(listenSocketPath)) {
+    // Behind a front door the public socket answers for the front, so only the
+    // private listener says whether another daemon already serves here.
+    fatal(`daemon already running on ${listenSocketPath}`)
   }
-  return serverForeground(parseLocalPersonaAllowlist(_args))
+  return serverForeground(parseLocalPersonaAllowlist(_args), listenSocketPath)
+}
+
+/**
+ * T-11822: `--listen-socket` puts Bun on a private socket behind the node's
+ * front door. Absent, or equal to the public socket, means today's listener.
+ */
+function parseListenSocketPath(args: string[]): string | undefined {
+  let value: string | undefined
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === '--listen-socket') {
+      value = args[index + 1]
+      if (value === undefined) fatal('--listen-socket requires a path')
+      index += 1
+    } else if (arg?.startsWith('--listen-socket=')) {
+      value = arg.slice('--listen-socket='.length)
+    }
+  }
+  if (value === undefined) return undefined
+  if (!isAbsolute(value)) fatal(`--listen-socket must be an absolute path: ${value}`)
+  const listen = resolve(value)
+  return listen === resolve(resolveServerPaths().socketPath) ? undefined : listen
 }
 
 function parseLocalPersonaAllowlist(args: string[]): readonly string[] | undefined {
@@ -541,7 +572,10 @@ function spawnUnsupervisedSuccessor(logPath: string): void {
   child.unref()
 }
 
-async function serverForeground(localPersonaAllowlist?: readonly string[]): Promise<void> {
+async function serverForeground(
+  localPersonaAllowlist?: readonly string[],
+  listenSocketPath?: string
+): Promise<void> {
   // Refuse to boot as a child of a coding-agent harness: the server would leak
   // the harness's recursion-guard env into every child harness it launches,
   // silently killing every dispatched run. The launchd-delegating start/restart
@@ -601,6 +635,7 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     runtimeRoot: paths.runtimeRoot,
     stateRoot: paths.stateRoot,
     socketPath: paths.socketPath,
+    ...(listenSocketPath === undefined ? {} : { listenSocketPath }),
     lockPath: paths.lockPath,
     spoolDir: paths.spoolDir,
     dbPath: paths.dbPath,

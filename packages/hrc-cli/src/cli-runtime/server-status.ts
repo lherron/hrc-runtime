@@ -73,6 +73,7 @@ export type ServerRuntimeStatus = {
         | 'runtimeRoot'
         | 'stateRoot'
         | 'socketPath'
+        | 'listenSocketPath'
         | 'dbPath'
         | 'cwd'
         | 'binaryPath'
@@ -372,6 +373,9 @@ export async function collectServerRuntimeStatus(
           runtimeRoot: status.runtimeRoot,
           stateRoot: status.stateRoot,
           socketPath: status.socketPath,
+          ...(status.listenSocketPath !== undefined
+            ? { listenSocketPath: status.listenSocketPath }
+            : {}),
           dbPath: status.dbPath,
           cwd: status.cwd,
           binaryPath: status.binaryPath,
@@ -524,6 +528,10 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
     `  state root:   ${status.stateRoot}`,
     `  socket:       ${status.socketPath}${status.socketResponsive ? ' (responsive)' : ' (down)'}`,
     `  api health:   ${status.apiHealth.ok ? 'ok' : `failed (${status.apiHealth.error})`}`,
+    ...(status.api?.listenSocketPath !== undefined &&
+    status.api.listenSocketPath !== status.socketPath
+      ? [`  listen:       ${status.api.listenSocketPath} (behind front door)`]
+      : []),
     `  lock:         ${status.lockPath}${status.lockExists ? ' (present)' : ' (missing)'}`,
     `  tmux:         ${
       status.tmux.available

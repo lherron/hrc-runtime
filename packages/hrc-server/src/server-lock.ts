@@ -5,6 +5,7 @@ import { dirname } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { HrcServerOptions } from './server-types.js'
 import { timestamp, unlinkIfExists } from './server-util.js'
+import { getListenSocketPath } from './tmux-socket.js'
 
 const STALE_LOCK_RETRY_DELAY_MS = 25
 const SOCKET_PROBE_TIMEOUT_MS = 200
@@ -30,7 +31,7 @@ export async function prepareFilesystem(
   await Promise.all([
     mkdir(options.runtimeRoot, { recursive: true }),
     mkdir(options.stateRoot, { recursive: true }),
-    mkdir(dirname(options.socketPath), { recursive: true }),
+    mkdir(dirname(getListenSocketPath(options)), { recursive: true }),
     mkdir(dirname(options.lockPath), { recursive: true }),
     mkdir(dirname(options.dbPath), { recursive: true }),
     mkdir(dirname(tmuxSocketPath), { recursive: true }),
@@ -58,7 +59,7 @@ export async function acquireServerLock(options: HrcServerOptions): Promise<Serv
       throw createServerAlreadyRunningError(options.lockPath, existingLock.owner)
     }
 
-    if (await isUnixSocketResponsive(options.socketPath)) {
+    if (await isUnixSocketResponsive(getListenSocketPath(options))) {
       throw createServerAlreadyRunningError(options.lockPath, existingLock.owner)
     }
 
@@ -106,7 +107,7 @@ export async function cleanupFailedStartup(
   shouldCleanupSocket: boolean
 ): Promise<void> {
   if (shouldCleanupSocket) {
-    await unlinkIfExists(options.socketPath).catch(() => undefined)
+    await unlinkIfExists(getListenSocketPath(options)).catch(() => undefined)
   }
 
   await releaseServerLock(options.lockPath, lockHandle).catch(() => undefined)
@@ -140,11 +141,11 @@ async function clearStaleServerState(
       throw createServerAlreadyRunningError(options.lockPath, currentLock.owner)
     }
 
-    if (await isUnixSocketResponsive(options.socketPath)) {
+    if (await isUnixSocketResponsive(getListenSocketPath(options))) {
       throw createServerAlreadyRunningError(options.lockPath, currentLock.owner)
     }
 
-    await unlinkIfExists(options.socketPath)
+    await unlinkIfExists(getListenSocketPath(options))
     await unlinkIfExists(options.lockPath)
   } finally {
     await releaseServerLock(getCleanupClaimPath(options.lockPath), cleanupHandle).catch(

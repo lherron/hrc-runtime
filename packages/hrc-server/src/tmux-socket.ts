@@ -14,6 +14,13 @@ const MIN_SUPPORTED_TMUX_VERSION = {
   minor: 2,
 }
 
+/** The socket this daemon listens on; the public socket unless fronted (T-11822). */
+export function getListenSocketPath(
+  options: Pick<HrcServerOptions, 'socketPath' | 'listenSocketPath'>
+): string {
+  return options.listenSocketPath ?? options.socketPath
+}
+
 export function getTmuxSocketPath(
   options: Pick<HrcServerOptions, 'runtimeRoot' | 'tmuxSocketPath'>
 ): string {
@@ -69,7 +76,10 @@ export class RuntimeRootSocketPathTooLongError extends Error {
  * for the first one that cannot fit.
  */
 export function assertRuntimeRootSocketPathsFit(
-  options: Pick<HrcServerOptions, 'runtimeRoot' | 'socketPath' | 'tmuxSocketPath'>
+  options: Pick<
+    HrcServerOptions,
+    'runtimeRoot' | 'socketPath' | 'listenSocketPath' | 'tmuxSocketPath'
+  >
 ): void {
   const worstBrokerTmux = getBrokerTmuxSocketPath(
     options,
@@ -81,6 +91,7 @@ export function assertRuntimeRootSocketPathsFit(
   )
   const candidates = [
     ['hrc.sock', options.socketPath],
+    ['hrc.sock', getListenSocketPath(options)],
     ['tmux.sock', getTmuxSocketPath(options)],
     ['btmux', worstBrokerTmux],
   ] as const

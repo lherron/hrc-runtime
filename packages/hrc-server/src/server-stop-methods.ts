@@ -11,7 +11,7 @@ import {
 import { releaseServerLock } from './server-lock.js'
 import { writeServerLog } from './server-log.js'
 import { unlinkIfExists } from './server-util.js'
-import { getTmuxSocketPath } from './tmux-socket.js'
+import { getListenSocketPath, getTmuxSocketPath } from './tmux-socket.js'
 
 /**
  * How long `stop()` lets an already-running request handler finish before it
@@ -284,6 +284,7 @@ export const serverStopMethods = {
     this.runtimeStartPresentationAbortController.abort()
     writeServerLog('INFO', 'server.stop.begin', {
       socketPath: this.options.socketPath,
+      listenSocketPath: getListenSocketPath(this.options),
       dbPath: this.options.dbPath,
       tmuxSocketPath: getTmuxSocketPath(this.options),
     })
@@ -497,7 +498,7 @@ export const serverStopMethods = {
     // every teardown step up to db.close().
     step('socket_unlink')
     try {
-      await awaitStopStep('socket_unlink', unlinkIfExists(this.options.socketPath))
+      await awaitStopStep('socket_unlink', unlinkIfExists(getListenSocketPath(this.options)))
     } catch (error) {
       cleanupError ??= error
       teardownIncomplete.push(
@@ -529,6 +530,7 @@ export const serverStopMethods = {
     if (cleanupError) {
       writeServerLog('ERROR', 'server.stop.cleanup_failed', {
         socketPath: this.options.socketPath,
+        listenSocketPath: getListenSocketPath(this.options),
         dbPath: this.options.dbPath,
         tmuxSocketPath: getTmuxSocketPath(this.options),
         error: cleanupError,
@@ -538,6 +540,7 @@ export const serverStopMethods = {
 
     writeServerLog('INFO', 'server.stop.complete', {
       socketPath: this.options.socketPath,
+      listenSocketPath: getListenSocketPath(this.options),
       dbPath: this.options.dbPath,
       tmuxSocketPath: getTmuxSocketPath(this.options),
     })
