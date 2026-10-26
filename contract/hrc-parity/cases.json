@@ -1336,6 +1336,351 @@
       "reason": "n2-retained: offline-evidence.ts appends and reads the recovery outcome (append/latest) and runtime-inspect-handlers.ts reads latestByRuntime; the case compares recorded outcomes, outcome detail keys and the inspect retainedEvidence view against Bun."
     },
     {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:markCompleted:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns run-rows compares status/completed per run: turn-projection.ts marks each run completed through markCompleted on the broker turn.completed envelope."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByBrokerSubmissionId:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns raw-run-attribution and per-turn lifecycle run_id: on the format1 tmux seat, run-resolution.ts resolves submission.* envelopes by broker submission id and turn.started by runForInputIdentity (dispatched input id, then submission id)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByDispatchedInputId:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns raw-run-attribution and per-turn lifecycle run_id: on the format1 tmux seat, run-resolution.ts resolves submission.* envelopes by broker submission id and turn.started by runForInputIdentity (dispatched input id, then submission id)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listByRun:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns per-turn lifecycle shapes and skill-rows: lifecycle-payload.ts reads turn.accepted (listByRun), prior turn.user_prompt (listByKind) and the last turn.completed (findLatestByKind) on every user.message, and every turn.tool_result append (the Skill turn) passes spillPersistedResult."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listByKind:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns per-turn lifecycle shapes and skill-rows: lifecycle-payload.ts reads turn.accepted (listByRun), prior turn.user_prompt (listByKind) and the last turn.completed (findLatestByKind) on every user.message, and every turn.tool_result append (the Skill turn) passes spillPersistedResult."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:findLatestByKind:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns per-turn lifecycle shapes and skill-rows: lifecycle-payload.ts reads turn.accepted (listByRun), prior turn.user_prompt (listByKind) and the last turn.completed (findLatestByKind) on every user.message, and every turn.tool_result append (the Skill turn) passes spillPersistedResult."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:spillPersistedResult:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns per-turn lifecycle shapes and skill-rows: lifecycle-payload.ts reads turn.accepted (listByRun), prior turn.user_prompt (listByKind) and the last turn.completed (findLatestByKind) on every user.message, and every turn.tool_result append (the Skill turn) passes spillPersistedResult."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:<module>:isRecord:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns per-turn lifecycle shapes and skill-rows: lifecycle-payload.ts reads turn.accepted (listByRun), prior turn.user_prompt (listByKind) and the last turn.completed (findLatestByKind) on every user.message, and every turn.tool_result append (the Skill turn) passes spillPersistedResult."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:updateContinuation:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns runtime-row compares the session continuation: message-projection.ts writes it through updateContinuation on the broker continuation.updated envelope of every n2 seat."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:buildSetClause:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns raw:applied/raw:last-event-seq: BrokerInvocationEventRepository.updateProjection builds its SET clause through collectPatchEntries/buildSetClause for every projected envelope."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:collectPatchEntries:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns raw:applied/raw:last-event-seq: BrokerInvocationEventRepository.updateProjection builds its SET clause through collectPatchEntries/buildSetClause for every projected envelope."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listRuns:",
+      "target": "n2-routes",
+      "reason": "n2-routes door-status-and-body: GET /v1/runs with every filter (runtime, host, scope, lane, generation, status lists, limit forms, unknown run) is compared status and body against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:buildRunWhere:",
+      "target": "n2-routes",
+      "reason": "n2-routes door-status-and-body: GET /v1/runs with every filter (runtime, host, scope, lane, generation, status lists, limit forms, unknown run) is compared status and body against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:mapRunRow:",
+      "target": "n2-routes",
+      "reason": "n2-routes door-status-and-body: GET /v1/runs with every filter (runtime, host, scope, lane, generation, status lists, limit forms, unknown run) is compared status and body against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByDispatchIdempotencyKey:",
+      "target": "n2-routes",
+      "reason": "n2-routes turns:idempotent-first/turns:idempotent-replay: turn-admission/steps.ts looks up the carried idempotency key; the replayed body is compared against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:ActiveInputDeliveryRepository:createPending:",
+      "target": "n2-routes",
+      "reason": "n2-routes contrib:* cases: sdk-turn-handlers.ts creates the pending delivery, answers contrib:replay from the stored response, and records each refusal (no-runtime, no-active-run, queue-recommended, run-mismatch) through markRejected/markResponse; bodies compared against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:ActiveInputDeliveryRepository:getByInputApplicationId:",
+      "target": "n2-routes",
+      "reason": "n2-routes contrib:* cases: sdk-turn-handlers.ts creates the pending delivery, answers contrib:replay from the stored response, and records each refusal (no-runtime, no-active-run, queue-recommended, run-mismatch) through markRejected/markResponse; bodies compared against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:ActiveInputDeliveryRepository:markRejected:",
+      "target": "n2-routes",
+      "reason": "n2-routes contrib:* cases: sdk-turn-handlers.ts creates the pending delivery, answers contrib:replay from the stored response, and records each refusal (no-runtime, no-active-run, queue-recommended, run-mismatch) through markRejected/markResponse; bodies compared against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:ActiveInputDeliveryRepository:markResponse:",
+      "target": "n2-routes",
+      "reason": "n2-routes contrib:* cases: sdk-turn-handlers.ts creates the pending delivery, answers contrib:replay from the stored response, and records each refusal (no-runtime, no-active-run, queue-recommended, run-mismatch) through markRejected/markResponse; bodies compared against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:mapActiveInputDeliveryRow:",
+      "target": "n2-routes",
+      "reason": "n2-routes contrib:* cases: sdk-turn-handlers.ts creates the pending delivery, answers contrib:replay from the stored response, and records each refusal (no-runtime, no-active-run, queue-recommended, run-mismatch) through markRejected/markResponse; bodies compared against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:listActive:",
+      "target": "n2-routes",
+      "reason": "n2-routes clear:rotate/clear:relaunch/restart:ok: rotateSessionContext archives the session (SessionRepository.updateStatus) and invalidateHostContext unbinds the seat's active surfaces; body, lifecycle kinds and the session/runtime rows are compared against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:unbind:",
+      "target": "n2-routes",
+      "reason": "n2-routes clear:rotate/clear:relaunch/restart:ok: rotateSessionContext archives the session (SessionRepository.updateStatus) and invalidateHostContext unbinds the seat's active surfaces; body, lifecycle kinds and the session/runtime rows are compared against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:updateStatus:",
+      "target": "n2-routes",
+      "reason": "n2-routes clear:rotate/clear:relaunch/restart:ok: rotateSessionContext archives the session (SessionRepository.updateStatus) and invalidateHostContext unbinds the seat's active surfaces; body, lifecycle kinds and the session/runtime rows are compared against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listFromHrcSeq:",
+      "target": "n3-events",
+      "reason": "n3-events compares 23 /v1/events, /v1/events/head, /v1/events/tail, /v1/events/page and /v1/events/latest-by-session requests body-for-body against Bun (event-handlers.ts: listFromHrcSeq via runQuery, tail, page, listLatestPerSession, ledgerIncarnationId; every returned row through mapRow)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:runQuery:",
+      "target": "n3-events",
+      "reason": "n3-events compares 23 /v1/events, /v1/events/head, /v1/events/tail, /v1/events/page and /v1/events/latest-by-session requests body-for-body against Bun (event-handlers.ts: listFromHrcSeq via runQuery, tail, page, listLatestPerSession, ledgerIncarnationId; every returned row through mapRow)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:tail:",
+      "target": "n3-events",
+      "reason": "n3-events compares 23 /v1/events, /v1/events/head, /v1/events/tail, /v1/events/page and /v1/events/latest-by-session requests body-for-body against Bun (event-handlers.ts: listFromHrcSeq via runQuery, tail, page, listLatestPerSession, ledgerIncarnationId; every returned row through mapRow)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:page:",
+      "target": "n3-events",
+      "reason": "n3-events compares 23 /v1/events, /v1/events/head, /v1/events/tail, /v1/events/page and /v1/events/latest-by-session requests body-for-body against Bun (event-handlers.ts: listFromHrcSeq via runQuery, tail, page, listLatestPerSession, ledgerIncarnationId; every returned row through mapRow)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listLatestPerSession:",
+      "target": "n3-events",
+      "reason": "n3-events compares 23 /v1/events, /v1/events/head, /v1/events/tail, /v1/events/page and /v1/events/latest-by-session requests body-for-body against Bun (event-handlers.ts: listFromHrcSeq via runQuery, tail, page, listLatestPerSession, ledgerIncarnationId; every returned row through mapRow)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:ledgerIncarnationId:",
+      "target": "n3-events",
+      "reason": "n3-events compares 23 /v1/events, /v1/events/head, /v1/events/tail, /v1/events/page and /v1/events/latest-by-session requests body-for-body against Bun (event-handlers.ts: listFromHrcSeq via runQuery, tail, page, listLatestPerSession, ledgerIncarnationId; every returned row through mapRow)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:mapRow:",
+      "target": "n3-events",
+      "reason": "n3-events compares 23 /v1/events, /v1/events/head, /v1/events/tail, /v1/events/page and /v1/events/latest-by-session requests body-for-body against Bun (event-handlers.ts: listFromHrcSeq via runQuery, tail, page, listLatestPerSession, ledgerIncarnationId; every returned row through mapRow)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-input-repositories.ts",
+      "target": "GAP:N2",
+      "reason": "Missing: a format2 input workflow. n2 seats run format1 (inputs table empty in n2-broker-turns dumps), so input landing/terminal/protection, format2 turn keys and admission-after-seq lookups are not compared."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/repositories/broker-input-repositories.ts",
+      "target": "GAP:N2",
+      "reason": "Missing: a format2 input workflow. n2 seats run format1 (inputs table empty in n2-broker-turns dumps), so input landing/terminal/protection, format2 turn keys and admission-after-seq lookups are not compared."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByTurnKey:",
+      "target": "GAP:N2",
+      "reason": "Missing: a format2 input workflow. n2 seats run format1 (inputs table empty in n2-broker-turns dumps), so input landing/terminal/protection, format2 turn keys and admission-after-seq lookups are not compared."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:findInputAdmissionAfterSeq:",
+      "target": "GAP:N2",
+      "reason": "Missing: a format2 input workflow. n2 seats run format1 (inputs table empty in n2-broker-turns dumps), so input landing/terminal/protection, format2 turn keys and admission-after-seq lookups are not compared."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:claimQueued:",
+      "target": "GAP:N2",
+      "reason": "Missing: a durable headless queued-turn workflow (broker-headless-queue.ts claim/coalesce/snapshot); n2 drivers use tmux seats."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:markQueuedCoalesced:",
+      "target": "GAP:N2",
+      "reason": "Missing: a durable headless queued-turn workflow (broker-headless-queue.ts claim/coalesce/snapshot); n2 drivers use tmux seats."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:snapshotQueuedByHostSessionId:",
+      "target": "GAP:N2",
+      "reason": "Missing: a durable headless queued-turn workflow (broker-headless-queue.ts claim/coalesce/snapshot); n2 drivers use tmux seats."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:fenceBrokerInput:",
+      "target": "GAP:N2",
+      "reason": "Missing: broker-input timeout fence and repair-correlation dispatch; only failure/repair paths call these and no n2 driver induces them."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:setCorrelationJson:",
+      "target": "GAP:N2",
+      "reason": "Missing: broker-input timeout fence and repair-correlation dispatch; only failure/repair paths call these and no n2 driver induces them."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getLatestForSession:",
+      "target": "GAP:N2",
+      "reason": "No hrc-server production caller found (store API/test fixture only); needs a caller ruling before a case or UNSUPPORTED."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listQueuedByHostSessionId:",
+      "target": "GAP:N2",
+      "reason": "No hrc-server production caller found (store API/test fixture only); needs a caller ruling before a case or UNSUPPORTED."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:RuntimeBufferRepository:",
+      "target": "GAP:N2",
+      "reason": "Missing: a runtime_buffers comparison. message-projection.ts appends buffer chunks on every n2 turn but no n2 comparator reads runtime_buffers, and capture-from-buffer runs only for headless/sdk seats (n2 seats are tmux)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:mapRuntimeBufferRow:",
+      "target": "GAP:N2",
+      "reason": "Missing: a runtime_buffers comparison. message-projection.ts appends buffer chunks on every n2 turn but no n2 comparator reads runtime_buffers, and capture-from-buffer runs only for headless/sdk seats (n2 seats are tmux)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:ActiveInputDeliveryRepository:markAccepted:",
+      "target": "GAP:N2",
+      "reason": "Missing: an accepted active-run contribution and a delivery exception; n2-routes drives only refusals and replay. markFailed has no production caller."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:ActiveInputDeliveryRepository:markAmbiguous:",
+      "target": "GAP:N2",
+      "reason": "Missing: an accepted active-run contribution and a delivery exception; n2-routes drives only refusals and replay. markFailed has no production caller."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:ActiveInputDeliveryRepository:markFailed:",
+      "target": "GAP:N2",
+      "reason": "Missing: an accepted active-run contribution and a delivery exception; n2-routes drives only refusals and replay. markFailed has no production caller."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-artifact-permission-repositories.ts",
+      "target": "GAP:N2",
+      "reason": "Missing: a runtime-artifact workflow; runtime_artifacts is empty in n2 dumps (successor/rotation/first-turn artifact writers not compared)."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/repositories/broker-artifact-permission-repositories.ts",
+      "target": "GAP:N2",
+      "reason": "Missing: a runtime-artifact workflow; runtime_artifacts is empty in n2 dumps (successor/rotation/first-turn artifact writers not compared)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker.ts:<module>:mapRuntimeArtifactRow:",
+      "target": "GAP:N2",
+      "reason": "Missing: a runtime-artifact workflow; runtime_artifacts is empty in n2 dumps (successor/rotation/first-turn artifact writers not compared)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/tool-result-blob-repository.ts",
+      "target": "GAP:N2",
+      "reason": "Missing: a spilled tool result; tool_result_blobs is empty in n2 dumps, so blob insert/complete/hydrate and the federation part ingest are not compared."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/repositories/tool-result-blob-repository.ts",
+      "target": "GAP:N2",
+      "reason": "Missing: a spilled tool result; tool_result_blobs is empty in n2 dumps, so blob insert/complete/hydrate and the federation part ingest are not compared."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:scanReplayNewestFirst:",
+      "target": "GAP:N2",
+      "reason": "Missing: a registered bounded-stream replay case; crates/hrc-native/e2e/n3_replay.py drives /v1/events/bounded-stream but cases.json has no n3-replay case."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:appendImported:",
+      "target": "GAP:N2",
+      "reason": "Missing: federation event ingest/forward-sweep comparison (event-ingest/listener.ts, forward-sweep.ts); no n2 driver replicates events between nodes."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listFromStreamSeq:",
+      "target": "GAP:N2",
+      "reason": "Missing: federation event ingest/forward-sweep comparison (event-ingest/listener.ts, forward-sweep.ts); no n2 driver replicates events between nodes."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:appendImported:",
+      "target": "GAP:N2",
+      "reason": "Missing: federation event ingest/forward-sweep comparison (event-ingest/listener.ts, forward-sweep.ts); no n2 driver replicates events between nodes."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:listLocalFromId:",
+      "target": "GAP:N2",
+      "reason": "Missing: federation event ingest/forward-sweep comparison (event-ingest/listener.ts, forward-sweep.ts); no n2 driver replicates events between nodes."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-run-id-ownership.ts",
+      "target": "GAP:N2",
+      "reason": "Missing: run-id ownership refusals. The pass path runs inside every run insert/update, but no case drives a conflicting run-id claim."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/repositories/runtime-run-id-ownership.ts",
+      "target": "GAP:N2",
+      "reason": "Missing: run-id ownership refusals. The pass path runs inside every run insert/update, but no case drives a conflicting run-id claim."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:<module>:emitSessionTiming:",
+      "target": "GAP:N2",
+      "reason": "Missing: session-timing/WAL observation telemetry comparison (diagnostic log fields only)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:<module>:readSynchronous:",
+      "target": "GAP:N2",
+      "reason": "Missing: session-timing/WAL observation telemetry comparison (diagnostic log fields only)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:<module>:readWalAutocheckpointPages:",
+      "target": "GAP:N2",
+      "reason": "Missing: session-timing/WAL observation telemetry comparison (diagnostic log fields only)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:<module>:readWalObservation:",
+      "target": "GAP:N2",
+      "reason": "Missing: session-timing/WAL observation telemetry comparison (diagnostic log fields only)."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:appliedMigrationIds:",
+      "target": "GAP:N2",
+      "reason": "Missing: a schema-position comparison. Native reimplements these reads in crates/hrc-store/src/schema_state.rs; no case compares Bun's pending/applied/store/release versions against it."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:migrationTableExists:",
+      "target": "GAP:N2",
+      "reason": "Missing: a schema-position comparison. Native reimplements these reads in crates/hrc-store/src/schema_state.rs; no case compares Bun's pending/applied/store/release versions against it."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:pendingMigrationIds:",
+      "target": "GAP:N2",
+      "reason": "Missing: a schema-position comparison. Native reimplements these reads in crates/hrc-store/src/schema_state.rs; no case compares Bun's pending/applied/store/release versions against it."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:releaseSchemaVersion:",
+      "target": "GAP:N2",
+      "reason": "Missing: a schema-position comparison. Native reimplements these reads in crates/hrc-store/src/schema_state.rs; no case compares Bun's pending/applied/store/release versions against it."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:storeSchemaVersion:",
+      "target": "GAP:N2",
+      "reason": "Missing: a schema-position comparison. Native reimplements these reads in crates/hrc-store/src/schema_state.rs; no case compares Bun's pending/applied/store/release versions against it."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/migrations.ts",
+      "target": "GAP:N2",
+      "reason": "Missing: a schema-position comparison. Native reimplements these reads in crates/hrc-store/src/schema_state.rs; no case compares Bun's pending/applied/store/release versions against it."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/database.ts:",
+      "target": "GAP:N2",
+      "reason": "Missing: a store-open comparison (busy timeout, ephemeral path, migrate-on-open); native opens its own connection and no case compares open options."
+    },
+    {
       "kind": "store-operation",
       "target": "GAP:N2",
       "reason": "N2 execution/recovery owns unexercised store mutations and schema consumers; Bun remains the schema migration writer."
