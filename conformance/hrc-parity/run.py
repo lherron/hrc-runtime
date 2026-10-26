@@ -557,7 +557,7 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n2-attached':
         from n2_attached import compare as compare_n2_attached
         return compare_n2_attached(args, checks)
-    if getattr(args, 'suite', None) in ('n3-events','n3-subscribers','n3-mail','n3-presentation','n3-replay', 'n3-publication','n3-edges','n3-submissions','n3-messages'):
+    if getattr(args, 'suite', None) in ('n3-events','n3-subscribers','n3-mail','n3-presentation','n3-replay', 'n3-publication','n3-edges','n3-submissions','n3-messages','n3-handoff'):
         from n3_routes import compare as compare_n3
         return compare_n3(args, checks)
     if getattr(args, 'suite', None) == 'n4-federation':
@@ -1345,6 +1345,15 @@ def inventory(args, checks):
             'coverage': {'gaps': [i['id'] for i in report['items'] if (i['target'] or '').startswith('GAP:')]}}
 
 
+# UNSUPPORTED maps an item only with one of these exact reasons, each citing
+# its ruling (mable EN-36516). Add a package's reasons here, not prose.
+UNSUPPORTED_REASONS = {
+    'NOT-PORTED per mable EN-36185: legacy HRC delivery state retained for ACP import compatibility; no production daemon caller (only evaluateSeatHint, ported N3); active delivery/recovery owned and gated by the unchanged ACP injector. Evidence: wrkq-artifacts/T-11839/legacy-delivery-disposition.json.',
+    'NOT-PORTED (N3 T-11839): no production daemon caller of full-row getBySeq; native monitor_message_by_seq retains the monitor projection and full message query is ported. Evidence: crates/hrc-store/src/monitor_read.rs, wrkq-artifacts/T-11839/messages-land2.',
+    'Plan "Explicitly unsupported": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced.',
+}
+
+
 def coverage_report(observed, definitions):
     """First matching rule wins; exact overrides take precedence. Never assert PASS."""
     cases = definitions['cases']
@@ -1361,11 +1370,12 @@ def coverage_report(observed, definitions):
     items = []
     for item in observed['items']:
         target, rule_reason = target_for(item)
-        # Current main contains no supported UNSUPPORTED mapping. Adding one
-        # requires an explicit plan reason allowlist here, not arbitrary prose.
-        if target not in cases and target not in {'GAP:N' + str(i) for i in range(1, 7)}:
-            target = None
         reason = definitions.get('coverageReasons', {}).get(item['id'], rule_reason)
+        if target == 'UNSUPPORTED':
+            if reason not in UNSUPPORTED_REASONS:
+                target = None
+        elif target not in cases and target not in {'GAP:N' + str(i) for i in range(1, 7)}:
+            target = None
         items.append({**item, 'target': target, **({'reason': reason} if reason is not None else {})})
     counts = Counter({'GAP:N' + str(i): 0 for i in range(1, 7)})
     counts['UNSUPPORTED'] = 0

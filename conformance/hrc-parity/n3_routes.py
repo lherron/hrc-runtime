@@ -15,9 +15,9 @@ def canonical(value, dynamic=False):
     return value
 
 def compare(args,checks):
-    filename={'n3-events':'events.json','n3-subscribers':'subscribers.json','n3-mail':'mail.json','n3-presentation':'presentation.json','n3-replay':'replay.json','n3-publication':'publication.json','n3-edges':'edges.json','n3-submissions':'submissions.json','n3-messages':'messages.json'}[args.suite]
+    filename={'n3-events':'events.json','n3-subscribers':'subscribers.json','n3-mail':'mail.json','n3-presentation':'presentation.json','n3-replay':'replay.json','n3-publication':'publication.json','n3-edges':'edges.json','n3-submissions':'submissions.json','n3-messages':'messages.json','n3-handoff':'handoff.json'}[args.suite]
     a=json.loads((Path(args.baseline)/filename).read_text());b=json.loads((Path(args.candidate)/filename).read_text())
-    expected={'n3-events':23,'n3-subscribers':35,'n3-mail':10,'n3-presentation':12,'n3-replay':13,'n3-publication':9,'n3-edges':10,'n3-submissions':56,'n3-messages':32}[args.suite]
+    expected={'n3-events':23,'n3-subscribers':35,'n3-mail':10,'n3-presentation':12,'n3-replay':13,'n3-publication':9,'n3-edges':10,'n3-submissions':56,'n3-messages':32,'n3-handoff':37}[args.suite]
     checks.append({'id':'case-matrix','pass':len(a)==expected and set(a)==set(b),'reason':'exact required case set on both actual socket subjects','failureCode':1})
     cases=[]
     mask=DYNAMIC|{'runId','submissionId','turnId'} if args.suite=='n3-submissions' else args.suite in ('n3-subscribers','n3-replay','n3-edges')

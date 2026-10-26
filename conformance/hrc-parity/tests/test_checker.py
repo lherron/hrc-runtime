@@ -296,5 +296,30 @@ class CheckerBehavior(unittest.TestCase):
         self.assertIn('isolation', p.stdout.lower() + p.stderr.lower())
 
 
+    def coverage(self, overrides, reasons, rules=()):
+        spec = importlib.util.spec_from_file_location('checker', RUNNER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        observed = {'sourceCommit': 'x', 'items': [{'id': 'store-op:a', 'kind': 'store-op', 'path': 'a.ts'}]}
+        definitions = {'cases': {}, 'coverageOverrides': overrides, 'coverageReasons': reasons,
+                       'coverageRules': list(rules)}
+        return module, module.coverage_report(observed, definitions)
+
+    def test_unsupported_requires_an_allowlisted_reason(self):
+        module, report = self.coverage({'store-op:a': 'UNSUPPORTED'}, {})
+        self.assertIsNone(report['items'][0]['target'])
+        self.assertEqual(report['counts']['UNSUPPORTED'], 0)
+        _, report = self.coverage({'store-op:a': 'UNSUPPORTED'}, {'store-op:a': 'not needed'})
+        self.assertIsNone(report['items'][0]['target'])
+        reason = sorted(module.UNSUPPORTED_REASONS)[0]
+        _, report = self.coverage({'store-op:a': 'UNSUPPORTED'}, {'store-op:a': reason})
+        self.assertEqual(report['items'][0]['target'], 'UNSUPPORTED')
+        self.assertEqual(report['counts']['UNSUPPORTED'], 1)
+        _, report = self.coverage({}, {}, [{'idPrefix': 'store-op:', 'target': 'UNSUPPORTED', 'reason': reason}])
+        self.assertEqual(report['items'][0]['target'], 'UNSUPPORTED')
+        _, report = self.coverage({}, {}, [{'idPrefix': 'store-op:', 'target': 'UNSUPPORTED', 'reason': reason + ' '}])
+        self.assertIsNone(report['items'][0]['target'])
+
+
 if __name__ == '__main__':
     unittest.main()
