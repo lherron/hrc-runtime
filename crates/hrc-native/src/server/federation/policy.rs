@@ -29,16 +29,12 @@ impl Policy {
 
 /// The scope's (agent, project, task) on a validated ScopeRef.
 pub fn scope_parts(scope: &str) -> (&str, Option<&str>, Option<&str>) {
-    let p: Vec<&str> = scope.split(':').collect();
-    (
-        p[1],
-        p.get(3).copied(),
-        (p.get(4) == Some(&"task")).then(|| p[5]),
-    )
+    let parsed = hrc_common::scope::ScopeRef::parse(scope).expect("validated ScopeRef");
+    (parsed.agent, parsed.project, parsed.task)
 }
 
 pub async fn policy_for(server: &Server, scope: &str) -> Policy {
-    if hrc_cli::validate_scope(scope).is_err() {
+    if hrc_common::scope::validate_scope(scope).is_err() {
         return Policy::NotAnAgentScope(format!(
             "\"{scope}\" is not a parseable scope ref, so no agent profile can declare placement for it."
         ));

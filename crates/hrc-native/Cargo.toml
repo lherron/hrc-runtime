@@ -9,6 +9,7 @@ name = "rusthrc"
 path = "src/main.rs"
 
 [dependencies]
+hrc-common = { path = "../hrc-common" }
 hrc-cli = { path = "../hrc-cli" }
 hrc-store = { path = "../hrc-store" }
 rusqlite = { version = "0.39", features = ["bundled"] }

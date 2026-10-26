@@ -1,0 +1,32 @@
+id: hrc-runtime.rust-crate-edges
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: Rust workspace crate graph and native library boundary
+predicate: >
+  hrc-common owns leaf scope, federation-config and JavaScript utilities and
+  has no HRC, database, HTTP-client or async-runtime dependency. Allowed HRC
+  edges are hrc-store to hrc-common; hrc-domain and hrc-cli to hrc-common and
+  hrc-store; hrc-kernel to hrc-domain; hrc-native library to hrc-common and
+  hrc-store; and the rusthrc binary to hrc-native library and hrc-cli. Only
+  main.rs may use hrc-cli in hrc-native. The check derives package edges from
+  cargo metadata --no-deps --offline and checks the binary-only CLI usage
+  separately because Cargo dependencies are declared at package granularity.
+authority: wrkq:T-11941
+source:
+  - crates/Cargo.toml
+  - crates/hrc-common/Cargo.toml
+  - crates/hrc-native/src/lib.rs
+  - crates/hrc-native/src/main.rs
+  - scripts/check-rust-crate-edges.py
+  - justfile
+required_tests:
+  - python3 scripts/check-rust-crate-edges.py
+  - just cargo-check
+  - just verify
+last_verified:
+  date: 2026-10-26
+  evidence: T-11941 gate log and forbidden-edge negative control
+reopen_when: A Rust workspace crate or allowed dependency edge changes.
+supersedes: []
+superseded_by: []

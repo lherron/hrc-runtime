@@ -158,18 +158,11 @@ impl Qualified {
         let mut task = None;
         let mut role = None;
         if !has_lane && validate_scope(base).is_ok() {
-            let parts = base.split(':').collect::<Vec<_>>();
-            agent = parts[1].to_owned();
-            if parts.len() >= 4 {
-                project = Some(parts[3].to_owned());
-            }
-            for pair in parts[4.min(parts.len())..].as_chunks::<2>().0 {
-                match pair[0] {
-                    "task" => task = Some(pair[1].to_owned()),
-                    "role" => role = Some(pair[1].to_owned()),
-                    _ => {}
-                }
-            }
+            let parts = hrc_common::scope::ScopeRef::parse(base).map_err(Error::failure)?;
+            agent = parts.agent.to_owned();
+            project = parts.project.map(str::to_owned);
+            task = parts.task.map(str::to_owned);
+            role = parts.role.map(str::to_owned);
         } else {
             let (a, p) = base
                 .split_once('@')
@@ -234,8 +227,7 @@ impl Qualified {
                     if validate_scope(scope).is_err() {
                         return None;
                     }
-                    let p = scope.split(':').collect::<Vec<_>>();
-                    p.windows(2).find(|p| p[0] == "task").map(|p| p[1].into())
+                    hrc_common::scope::legacy_adjacent_segment(scope, "task").map(str::to_owned)
                 })
             } else {
                 None
@@ -342,14 +334,8 @@ impl Qualified {
         if let Some(project) = &qualified.project {
             request["projectId"] = project.clone().into();
         }
-        if let Some(task) = qualified
-            .scope
-            .split(':')
-            .collect::<Vec<_>>()
-            .windows(2)
-            .find(|p| p[0] == "task")
-        {
-            request["taskId"] = task[1].into();
+        if let Some(task) = hrc_common::scope::legacy_adjacent_segment(&qualified.scope, "task") {
+            request["taskId"] = task.into();
         }
         let client = placement_client()?;
         let mut observed = match client.post("/v1/placements/resolve", request) {
@@ -407,14 +393,8 @@ impl Qualified {
         if let Some(project) = &self.project {
             request["projectId"] = project.clone().into();
         }
-        if let Some(task) = self
-            .scope
-            .split(':')
-            .collect::<Vec<_>>()
-            .windows(2)
-            .find(|p| p[0] == "task")
-        {
-            request["taskId"] = task[1].into();
+        if let Some(task) = hrc_common::scope::legacy_adjacent_segment(&self.scope, "task") {
+            request["taskId"] = task.into();
         }
         match client.post("/v1/placements/resolve", request) {
             Ok(observation) => {
@@ -501,4 +481,17 @@ fn validate_directives(block: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod scope_compatibility {
+    #[test]
+    fn placement_keeps_legacy_adjacent_task_scan() {
+        let scope =
+            super::Qualified::parse("agent:task:project:p:task:t", false).expect("valid scope");
+        assert_eq!(
+            hrc_common::scope::legacy_adjacent_segment(&scope.scope, "task"),
+            Some("project")
+        );
+    }
 }

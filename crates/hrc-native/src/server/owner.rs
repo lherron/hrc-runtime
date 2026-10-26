@@ -251,7 +251,7 @@ fn parse(raw: &str) -> Option<LockOwner> {
 
 /// isLockOwnerAlive: a createdAt before this boot is dead regardless of PID.
 fn owner_alive(owner: &LockOwner) -> Result<bool> {
-    let created = hrc_cli::parse_date(&owner.created_at);
+    let created = hrc_common::js::parse_date(&owner.created_at);
     if let Some(boot) = boot_ms()
         && created.is_finite()
         && created < boot - BOOT_MARGIN_MS

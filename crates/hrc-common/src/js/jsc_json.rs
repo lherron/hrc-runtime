@@ -295,7 +295,7 @@ impl Parser {
 }
 
 /// Returns the parsed value, or the message after "JSON Parse error: ".
-pub(crate) fn parse(text: &str) -> Result<Value, String> {
+pub fn parse(text: &str) -> Result<Value, String> {
     let mut parser = Parser {
         lexer: Lexer {
             chars: text.chars().collect(),

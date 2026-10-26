@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["hrc-domain", "hrc-kernel", "hrc-store", "hrc-native", "hrc-cli"]
+members = ["hrc-common", "hrc-domain", "hrc-kernel", "hrc-store", "hrc-native", "hrc-cli"]
 
 [workspace.package]
 version = "0.1.0"

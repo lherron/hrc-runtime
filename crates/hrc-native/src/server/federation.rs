@@ -18,7 +18,7 @@ pub use projection::runtimes;
 pub use routing::{route_request, scope_of};
 
 use super::stderr_json;
-use hrc_cli::{FederationConfig, FederationPeer};
+use hrc_common::federation::{FederationConfig, FederationPeer};
 use reqwest::{Method, StatusCode, Url};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};

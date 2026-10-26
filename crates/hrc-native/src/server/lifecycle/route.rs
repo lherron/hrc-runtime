@@ -163,7 +163,7 @@ pub async fn peer(
     let text = |field: &str| {
         body.get(field)
             .and_then(Value::as_str)
-            .map(hrc_cli::trim_js)
+            .map(hrc_common::js::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
     };

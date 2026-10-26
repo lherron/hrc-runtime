@@ -204,18 +204,18 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers
         .get(name)
         .and_then(|h| h.to_str().ok())
-        .map(hrc_cli::trim_js)
+        .map(hrc_common::js::trim)
         .filter(|s| !s.is_empty())
 }
 fn attributed(headers: &HeaderMap) -> Option<String> {
     let raw = header(headers, "x-hrc-lifecycle-session-ref")?;
     let mut parts = raw.split('/');
-    let scope = hrc_cli::trim_js(parts.next()?);
+    let scope = hrc_common::js::trim(parts.next()?);
     let lane = parts.next()?;
     if parts.next().is_some()
         || !lane.starts_with("lane:")
-        || hrc_cli::trim_js(lane).len() <= 5
-        || hrc_cli::validate_scope(scope).is_err()
+        || hrc_common::js::trim(lane).len() <= 5
+        || hrc_common::scope::validate_scope(scope).is_err()
     {
         return None;
     }

@@ -186,7 +186,7 @@ fn selected(r: &Value, q: &Request, cutoff: f64, statuses: &[String]) -> bool {
             .unwrap_or(&r["createdAt"])
             .as_str()
             .is_some_and(|s| {
-                let n = hrc_cli::parse_date(s);
+                let n = hrc_common::js::parse_date(s);
                 n.is_finite() && n <= cutoff
             })
 }
@@ -260,7 +260,7 @@ fn held(r: &Value, facts: &Value) -> bool {
         .unwrap_or(604_800_000.);
     let changed = r["statusChangedAt"]
         .as_str()
-        .map(hrc_cli::parse_date)
+        .map(hrc_common::js::parse_date)
         .unwrap_or(f64::NAN);
     if ["crashed", "dead", "stale", "detached"]
         .iter()

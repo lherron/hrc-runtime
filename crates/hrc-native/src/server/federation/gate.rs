@@ -412,7 +412,7 @@ impl Evaluation {
 /// The decision, before mode and logging (summon-gate.ts `decide`).
 async fn decide(server: &Shared, request: &Request<'_>) -> Evaluation {
     let scope = request.scope_ref.trim();
-    if scope.is_empty() || hrc_cli::validate_scope(scope).is_err() {
+    if scope.is_empty() || hrc_common::scope::validate_scope(scope).is_err() {
         return allow("non-agent-scope");
     }
     let node = &server.federation;

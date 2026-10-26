@@ -303,7 +303,7 @@ pub fn parse_target_ref(raw: &str) -> Result<(&str, &str), ApiError> {
             json!({"sessionRef":raw}),
         ));
     }
-    hrc_cli::validate_scope(scope).map_err(|error| {
+    hrc_common::scope::validate_scope(scope).map_err(|error| {
         invalid(
             &format!("sessionRef must include a canonical agent ScopeRef: {error}"),
             json!({"sessionRef":raw,"scopeRef":scope}),

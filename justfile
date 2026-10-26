@@ -137,6 +137,7 @@ verify:
     set -euo pipefail
     eval "$(bun scripts/validation-scope.ts)"
     just architecture-records
+    python3 scripts/check-rust-crate-edges.py
     if [ "$HRC_VERIFY_CARGO" = 1 ]; then just cargo-check; fi
 
 # The Bun leg (`verify-bun`). It depends on `env-up` by ruling (T-06900 +
@@ -172,6 +173,7 @@ verify-bun:
 
 # Rust's path-scoped landing leg. No TS build/import is involved.
 cargo-check:
+    python3 scripts/check-rust-crate-edges.py
     cargo fmt --manifest-path crates/Cargo.toml --all -- --check
     cargo clippy --manifest-path crates/Cargo.toml --workspace --all-targets --locked -- -D warnings
     cargo test --manifest-path crates/Cargo.toml --workspace --locked

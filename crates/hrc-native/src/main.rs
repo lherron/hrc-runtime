@@ -1,4 +1,4 @@
-mod server;
+use hrc_native::server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

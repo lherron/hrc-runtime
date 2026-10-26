@@ -81,7 +81,7 @@ fn parse_registration(body: Value) -> Result<Value, ApiError> {
         "registration",
     )?;
     let scope = required(&body, "requestedSessionRef")?;
-    hrc_cli::validate_scope(&scope).map_err(|e| {
+    hrc_common::scope::validate_scope(&scope).map_err(|e| {
         malformed(
             format!("requestedSessionRef must be a valid ScopeRef: {e}"),
             Some("requestedSessionRef"),

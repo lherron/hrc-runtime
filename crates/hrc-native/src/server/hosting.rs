@@ -50,7 +50,8 @@ pub async fn serve(role: front::Role) -> Result<()> {
     // Node identity resolves before ownership: a malformed federation config
     // refuses loudly rather than letting the daemon come up as the wrong node.
     let federation = federation::Node::new(
-        hrc_cli::load_federation_config(&state.to_string_lossy()).map_err(anyhow::Error::msg)?,
+        hrc_common::federation::load_config(&state.to_string_lossy())
+            .map_err(anyhow::Error::msg)?,
         &state,
         front,
     )?;

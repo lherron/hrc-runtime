@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use hrc_cli::FederationPeer;
+use hrc_common::federation::FederationPeer;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 

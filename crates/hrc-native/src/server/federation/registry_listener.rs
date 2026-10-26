@@ -177,7 +177,7 @@ fn record(body: &[u8]) -> Result<Value, Failure> {
 /// HrcBadRequestError, which the handler answers as an internal error.
 fn canonical(scope: &str) -> Result<String, Failure> {
     let scope = scope.trim();
-    if scope.is_empty() || hrc_cli::validate_scope(scope).is_err() {
+    if scope.is_empty() || hrc_common::scope::validate_scope(scope).is_err() {
         return Err(Failure::Internal);
     }
     Ok(scope.to_owned())
@@ -469,8 +469,12 @@ fn sender_scope(raw: &str) -> Option<String> {
     if value.is_empty() {
         return None;
     }
-    let scope = hrc_cli::canonical_scope_ref(value)?;
-    (scope.split(':').nth(2) == Some("project")).then_some(scope)
+    let scope = hrc_common::scope::canonical_scope_ref(value)?;
+    hrc_common::scope::ScopeRef::parse(&scope)
+        .ok()?
+        .project
+        .is_some()
+        .then_some(scope)
 }
 
 /// designateBirthOnHost: the live designation, or one recorded from the

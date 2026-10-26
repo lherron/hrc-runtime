@@ -27,62 +27,8 @@ fn invalid(raw: &str, message: impl std::fmt::Display) -> Error {
         format!("invalid selector \"{raw}\": {message}"),
     )
 }
-pub(crate) fn token(value: &str, label: &str) -> std::result::Result<(), String> {
-    let n = value.encode_utf16().count();
-    if !(1..=64).contains(&n) {
-        return Err(format!("{label} must be 1..64 characters, got {n}"));
-    }
-    if !value
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-    {
-        return Err(format!(
-            "{label} contains invalid characters: must match [A-Za-z0-9._-]+"
-        ));
-    }
-    Ok(())
-}
-pub fn validate_scope(scope: &str) -> std::result::Result<(), String> {
-    let p = scope.split(':').collect::<Vec<_>>();
-    if p.len() < 2 || p[0] != "agent" {
-        return Err("ScopeRef must start with \"agent:<agentId>\"".into());
-    }
-    token(p[1], "agentId")?;
-    if p.len() == 2 {
-        return Ok(());
-    }
-    if p.len() < 4 || p[2] != "project" {
-        return Err("After \"agent:<agentId>\", expected \"project:<projectId>\"".into());
-    }
-    token(p[3], "projectId")?;
-    if p.len() == 4 {
-        return Ok(());
-    }
-    match p[4] {
-        "role" => {
-            if p.len() != 6 {
-                return Err("Expected exactly \"role:<roleName>\" after project segment".into());
-            }
-            token(p[5], "roleName")
-        }
-        "task" => {
-            if p.len() < 6 {
-                return Err("Expected \"task:<taskId>\" after project segment".into());
-            }
-            token(p[5], "taskId")?;
-            if p.len() == 6 {
-                return Ok(());
-            }
-            if p.len() != 8 || p[6] != "role" {
-                return Err("After \"task:<taskId>\", expected \"role:<roleName>\"".into());
-            }
-            token(p[7], "roleName")
-        }
-        other => Err(format!(
-            "Unexpected segment \"{other}\" after project; expected \"role\" or \"task\""
-        )),
-    }
-}
+pub(crate) use hrc_common::scope::token;
+pub use hrc_common::scope::validate_scope;
 fn session(value: &str) -> std::result::Result<(String, String), String> {
     let p = value.split('/').collect::<Vec<_>>();
     if p.len() != 2 || !p[1].starts_with("lane:") {

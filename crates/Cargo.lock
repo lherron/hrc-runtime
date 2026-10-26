@@ -420,6 +420,7 @@ name = "hrc-cli"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "hrc-common",
  "hrc-store",
  "libc",
  "regex",
@@ -432,6 +433,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hrc-common"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "libc",
+ "serde",
+ "serde_json",
+ "toml",
+ "url",
+]
+
+[[package]]
 name = "hrc-domain"
 version = "0.1.0"
 dependencies = [
@@ -440,6 +453,7 @@ dependencies = [
  "cardo-runtime",
  "cardo-store",
  "chrono",
+ "hrc-common",
  "hrc-store",
  "reqwest",
  "serde",
@@ -469,6 +483,7 @@ dependencies = [
  "form_urlencoded",
  "futures-util",
  "hrc-cli",
+ "hrc-common",
  "hrc-store",
  "http-body",
  "hyper",
@@ -489,6 +504,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "hrc-common",
  "regex",
  "rusqlite",
  "serde_json",

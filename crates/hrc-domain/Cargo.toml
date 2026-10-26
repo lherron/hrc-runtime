@@ -5,6 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+hrc-common = { path = "../hrc-common" }
 hrc-store = { path = "../hrc-store" }
 anyhow = "1"
 cardo-core.workspace = true

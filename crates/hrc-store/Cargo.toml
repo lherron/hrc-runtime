@@ -5,6 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+hrc-common = { path = "../hrc-common" }
 rusqlite = { version = "0.39", features = ["bundled"] }
 # Record JSON is fingerprinted in its own key order (collective_history.rs).
 serde_json = { workspace = true, features = ["preserve_order"] }
