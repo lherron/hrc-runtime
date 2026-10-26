@@ -1,6 +1,7 @@
 //! Role-aware owner boot and teardown. The front stays writer-free.
 use super::*;
 use std::future::IntoFuture;
+use tokio::signal::unix::{Signal, SignalKind, signal};
 
 pub async fn serve(role: front::Role) -> Result<()> {
     std::panic::set_hook(Box::new(|info| {
@@ -58,6 +59,10 @@ pub async fn serve(role: front::Role) -> Result<()> {
     } else {
         Owner::acquire(&runtime).await?
     };
+    // Claim the signals before the socket exists: a SIGTERM that races boot
+    // is held until serving starts, then shuts down gracefully.
+    let mut term = signal(SignalKind::terminate())?;
+    let mut int = signal(SignalKind::interrupt())?;
     let listener = UnixListener::bind(&owner.socket)?;
     if let Some(target) = &bun_passthrough
         && target.canonicalize().ok() == owner.socket.canonicalize().ok()
@@ -171,7 +176,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         .with_graceful_shutdown(async move {
             let mut requested = owned.lifecycle.requested.subscribe();
             let (reason, grant) = tokio::select! {
-                reason = shutdown() => (reason, owned.lifecycle.pending_grant.lock().unwrap().clone()),
+                reason = shutdown(&mut term, &mut int) => (reason, owned.lifecycle.pending_grant.lock().unwrap().clone()),
                 grant = async {
                     loop {
                         if let Some(grant) = requested.borrow_and_update().clone() { break grant; }
@@ -257,8 +262,6 @@ pub async fn serve(role: front::Role) -> Result<()> {
     }
     Ok(())
 }
-async fn shutdown() -> String {
-    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("install SIGTERM handler");
-    tokio::select! { _ = tokio::signal::ctrl_c()=>"SIGINT".into(), _ = term.recv()=>"SIGTERM".into() }
+async fn shutdown(term: &mut Signal, int: &mut Signal) -> String {
+    tokio::select! { _ = int.recv()=>"SIGINT".into(), _ = term.recv()=>"SIGTERM".into() }
 }
