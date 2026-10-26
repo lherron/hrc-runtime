@@ -1261,6 +1261,81 @@
       "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
     },
     {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:appendEvent:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns ledger_checks: every envelope projected by project-envelope.ts (appendEvent, prior getProjectionDisposition, recordProjectionDisposition, advanceContiguousProjectionCursor, updateProjection) is checked per owner against its real broker ledger (raw:ledger-equal payload/envelope bytes, raw:applied, raw:dispositions one per seq, raw:cursor at ledger head) and compared across owners on raw-key-order."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:persistedBrokerEventJson:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns ledger_checks: every envelope projected by project-envelope.ts (appendEvent, prior getProjectionDisposition, recordProjectionDisposition, advanceContiguousProjectionCursor, updateProjection) is checked per owner against its real broker ledger (raw:ledger-equal payload/envelope bytes, raw:applied, raw:dispositions one per seq, raw:cursor at ledger head) and compared across owners on raw-key-order."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:enrichEnvelopeJsonWithRepairCorrelation:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns ledger_checks: every envelope projected by project-envelope.ts (appendEvent, prior getProjectionDisposition, recordProjectionDisposition, advanceContiguousProjectionCursor, updateProjection) is checked per owner against its real broker ledger (raw:ledger-equal payload/envelope bytes, raw:applied, raw:dispositions one per seq, raw:cursor at ledger head) and compared across owners on raw-key-order."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:getProjectionDisposition:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns ledger_checks: every envelope projected by project-envelope.ts (appendEvent, prior getProjectionDisposition, recordProjectionDisposition, advanceContiguousProjectionCursor, updateProjection) is checked per owner against its real broker ledger (raw:ledger-equal payload/envelope bytes, raw:applied, raw:dispositions one per seq, raw:cursor at ledger head) and compared across owners on raw-key-order."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:recordProjectionDisposition:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns ledger_checks: every envelope projected by project-envelope.ts (appendEvent, prior getProjectionDisposition, recordProjectionDisposition, advanceContiguousProjectionCursor, updateProjection) is checked per owner against its real broker ledger (raw:ledger-equal payload/envelope bytes, raw:applied, raw:dispositions one per seq, raw:cursor at ledger head) and compared across owners on raw-key-order."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:advanceContiguousProjectionCursor:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns ledger_checks: every envelope projected by project-envelope.ts (appendEvent, prior getProjectionDisposition, recordProjectionDisposition, advanceContiguousProjectionCursor, updateProjection) is checked per owner against its real broker ledger (raw:ledger-equal payload/envelope bytes, raw:applied, raw:dispositions one per seq, raw:cursor at ledger head) and compared across owners on raw-key-order."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:updateProjection:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns ledger_checks: every envelope projected by project-envelope.ts (appendEvent, prior getProjectionDisposition, recordProjectionDisposition, advanceContiguousProjectionCursor, updateProjection) is checked per owner against its real broker ledger (raw:ledger-equal payload/envelope bytes, raw:applied, raw:dispositions one per seq, raw:cursor at ledger head) and compared across owners on raw-key-order."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns ledger_checks: every envelope projected by project-envelope.ts (appendEvent, prior getProjectionDisposition, recordProjectionDisposition, advanceContiguousProjectionCursor, updateProjection) is checked per owner against its real broker ledger (raw:ledger-equal payload/envelope bytes, raw:applied, raw:dispositions one per seq, raw:cursor at ledger head) and compared across owners on raw-key-order. Other operations retain individual assignment."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:update:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns run-rows compares status/started/correlation_json per run: turn-projection.ts sets running/startedAt through RunRepository.update on each broker turn start, and project-envelope.ts reads the run correlation through getCorrelationJson."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getCorrelationJson:",
+      "target": "n2-broker-turns",
+      "reason": "n2-broker-turns run-rows compares status/started/correlation_json per run: turn-projection.ts sets running/startedAt through RunRepository.update on each broker turn start, and project-envelope.ts reads the run correlation through getCorrelationJson."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/retained-evidence-outcome-repository.ts:RetainedEvidenceOutcomeRepository:append:",
+      "target": "n2-retained",
+      "reason": "n2-retained: offline-evidence.ts appends and reads the recovery outcome (append/latest) and runtime-inspect-handlers.ts reads latestByRuntime; the case compares recorded outcomes, outcome detail keys and the inspect retainedEvidence view against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/retained-evidence-outcome-repository.ts:RetainedEvidenceOutcomeRepository:latest:",
+      "target": "n2-retained",
+      "reason": "n2-retained: offline-evidence.ts appends and reads the recovery outcome (append/latest) and runtime-inspect-handlers.ts reads latestByRuntime; the case compares recorded outcomes, outcome detail keys and the inspect retainedEvidence view against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/retained-evidence-outcome-repository.ts:RetainedEvidenceOutcomeRepository:latestByRuntime:",
+      "target": "n2-retained",
+      "reason": "n2-retained: offline-evidence.ts appends and reads the recovery outcome (append/latest) and runtime-inspect-handlers.ts reads latestByRuntime; the case compares recorded outcomes, outcome detail keys and the inspect retainedEvidence view against Bun."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/retained-evidence-outcome-repository.ts:<module>:mapRow:",
+      "target": "n2-retained",
+      "reason": "n2-retained: offline-evidence.ts appends and reads the recovery outcome (append/latest) and runtime-inspect-handlers.ts reads latestByRuntime; the case compares recorded outcomes, outcome detail keys and the inspect retainedEvidence view against Bun."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/repositories/retained-evidence-outcome-repository.ts",
+      "target": "n2-retained",
+      "reason": "n2-retained: offline-evidence.ts appends and reads the recovery outcome (append/latest) and runtime-inspect-handlers.ts reads latestByRuntime; the case compares recorded outcomes, outcome detail keys and the inspect retainedEvidence view against Bun."
+    },
+    {
       "kind": "store-operation",
       "target": "GAP:N2",
       "reason": "N2 execution/recovery owns unexercised store mutations and schema consumers; Bun remains the schema migration writer."
