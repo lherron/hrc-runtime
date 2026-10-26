@@ -14,6 +14,7 @@ mod federation;
 mod first_turn;
 mod forensics;
 mod front;
+mod handoff;
 mod ledger;
 mod lifecycle;
 mod mail;
@@ -86,6 +87,7 @@ struct Server {
     subscribers: Mutex<subscribers::Registry>,
     wrkq: ledger::Client,
     publication: publication::State,
+    handoff: handoff::State,
     controller: controller::State,
     /// Runtimes whose user-exit lease reap already fired.
     reaped: Mutex<HashSet<String>>,
@@ -365,6 +367,8 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         submissions::handle(server, uri.path(), &body).await
     } else if method == Method::POST && uri.path() == "/v1/messages/query" {
         messages::query(server, &body).await
+    } else if method == Method::POST && uri.path() == "/v1/messages/turn-handoff" {
+        handoff::handle(server, &body).await
     } else if method == Method::POST && uri.path() == "/v1/runs/reconcile-active" {
         match parse_body(&body) {
             Ok(value) => reconcile::handle(server, value).await,
@@ -567,6 +571,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/submissions/preempt",
                 "/v1/submissions/withdraw",
                 "/v1/messages/query",
+                "/v1/messages/turn-handoff",
                 "/v1/submissions/preempt/admission",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",

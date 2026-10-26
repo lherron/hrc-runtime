@@ -3,11 +3,11 @@
 //! with Bun's public receipt and wait-stage projection.
 pub mod admission;
 pub mod parse;
-mod route;
+pub(super) mod route;
 pub use route::publish_presentation;
 
 use crate::server::{ApiError, Shared, projection::db};
-use admission::{Admitted, Outcome, Request};
+use admission::{Admitted, Outcome, Request, Target};
 use axum::{
     Json,
     http::StatusCode,
@@ -609,7 +609,7 @@ pub async fn dispatch_turn(server: &Shared, body: Value) -> Result<Response, Api
     let admission = Request {
         door: "turns",
         intent: "invoke",
-        session,
+        target: Target::Session(session),
         fences: req.fences.as_ref(),
         idempotency_key: req.idempotency_key.as_deref(),
         established: req.established.as_deref(),
@@ -685,7 +685,7 @@ pub async fn submission(server: &Shared, door: &str, body: Value) -> Result<Resp
     let admission = Request {
         door: "submission",
         intent: door,
-        session,
+        target: Target::Session(session),
         fences: None,
         idempotency_key: req.idempotency_key.as_deref(),
         established: req.established.as_deref(),
@@ -724,7 +724,7 @@ pub async fn literal_flush(
     let req = Request {
         door: "literal-flush",
         intent: "enqueue",
-        session,
+        target: Target::Session(session),
         fences: None,
         idempotency_key: None,
         established: None,
@@ -812,7 +812,7 @@ pub async fn attached_turn(
     let req = Request {
         door: "prepare-attached",
         intent: "invoke",
-        session,
+        target: Target::Session(session),
         fences: None,
         idempotency_key: None,
         established: None,

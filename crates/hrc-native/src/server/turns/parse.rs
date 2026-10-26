@@ -162,7 +162,7 @@ fn origin(v: Option<&Value>) -> Result<Option<Value>, ApiError> {
     }
     Ok(Some(out))
 }
-fn response_format(v: Option<&Value>) -> Result<Option<Value>, ApiError> {
+pub(in crate::server) fn response_format(v: Option<&Value>) -> Result<Option<Value>, ApiError> {
     let Some(v) = v else { return Ok(None) };
     if !v.is_object() {
         return Err(bad("responseFormat must be an object", "responseFormat"));

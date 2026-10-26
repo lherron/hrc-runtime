@@ -129,6 +129,17 @@ pub async fn finish(
     }
     step(
         &mut reasons,
+        "handoff",
+        "handoff_wait_timeout",
+        "handoff_wait_failed",
+        async {
+            crate::server::handoff::stop(server).await;
+            Ok::<_, anyhow::Error>(())
+        },
+    )
+    .await;
+    step(
+        &mut reasons,
         "publication",
         "publication_wait_timeout",
         "publication_wait_failed",

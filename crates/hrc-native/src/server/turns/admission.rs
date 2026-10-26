@@ -9,6 +9,29 @@ use axum::http::StatusCode;
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::{future::Future, pin::Pin};
+
+pub type Materialized = Pin<Box<dyn Future<Output = Result<Value, ApiError>> + Send>>;
+pub enum Target {
+    Session(Value),
+    Lazy {
+        scope_ref: String,
+        lane_ref: String,
+        materialize: Box<dyn Fn() -> Materialized + Send + Sync>,
+    },
+}
+impl Target {
+    fn view(&self) -> Value {
+        match self {
+            Self::Session(session) => session.clone(),
+            Self::Lazy {
+                scope_ref,
+                lane_ref,
+                ..
+            } => json!({"scopeRef":scope_ref,"laneRef":lane_ref}),
+        }
+    }
+}
 
 pub const STEPS: [&str; 9] = [
     "drain-lease",
@@ -27,7 +50,7 @@ pub struct Request<'a> {
     pub door: &'a str,
     /// The requested submission intent: invoke | steer | enqueue | preempt.
     pub intent: &'a str,
-    pub session: Value,
+    pub target: Target,
     pub fences: Option<&'a Value>,
     pub idempotency_key: Option<&'a str>,
     pub established: Option<&'a str>,
@@ -273,7 +296,7 @@ fn stale_enabled() -> bool {
 pub async fn admit(server: &Shared, req: &Request<'_>) -> (Result<Admitted, ApiError>, Trace) {
     let mut trace = Trace {
         steps: Vec::new(),
-        session: req.session.clone(),
+        session: req.target.view(),
         run_id: req.run_id.clone(),
         effective_door: req.intent.to_owned(),
         lease: None,
@@ -293,9 +316,10 @@ async fn steps(
     trace.push("passed"); // drain-lease
     trace.push("passed"); // retired-persona (no local persona allowlist; retired-scope gate is N4)
     // fence
-    let mut session = req.session.clone();
+    let mut session = req.target.view();
+    let lazy = matches!(&req.target, Target::Lazy { .. });
     let mut fence_outcome = "skipped:not-carried";
-    if req.fences.is_some() || req.door == "turns" {
+    if !lazy && (req.fences.is_some() || req.door == "turns") {
         let active = continuity_active(server, &session).inspect_err(|_| trace.push("refused"))?;
         let fence = req.fences.cloned().unwrap_or(json!({}));
         if fence["followLatest"] != true {
@@ -324,7 +348,7 @@ async fn steps(
             fence_outcome = "passed";
         }
     }
-    if let Some(key) = req.idempotency_key {
+    if let Some(key) = req.idempotency_key.filter(|_| !lazy) {
         let existing: Option<String> = {
             let db = server.store.lock().unwrap();
             db.sqlite
@@ -365,7 +389,7 @@ async fn steps(
     }
     trace.push("skipped:not-applicable");
     // ownership-proof
-    match req.established {
+    match req.established.filter(|_| !lazy) {
         None => trace.push("skipped:not-carried"),
         Some(carried) => {
             let rt = {
@@ -426,6 +450,9 @@ async fn steps(
     };
     trace.push("passed");
     // rotation
+    if let Target::Lazy { materialize, .. } = &req.target {
+        session = materialize().await.inspect_err(|_| trace.push("refused"))?;
+    }
     if req.intent != "steer" {
         let trigger = if req.door == "submission" {
             format!("submission-{}", req.intent)
