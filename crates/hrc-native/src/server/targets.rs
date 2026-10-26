@@ -54,18 +54,14 @@ pub async fn ensure(server: &Shared, body: Value) -> Result<Response, ApiError> 
     )
     .await?;
     let Some(session) = session else {
-        return Ok((
-            StatusCode::NOT_FOUND,
-            "Not Found: archived continuation succession belongs to N2",
-        )
-            .into_response());
+        return Ok((StatusCode::NOT_FOUND, "Not Found").into_response());
     };
     Ok(Json(runtime_views::target_session_view(server, &session, false).await?).into_response())
 }
 
 /// Shared materializer for lazy admission. Authority stays inside the helper:
 /// a caller cannot mint a session before reserved-address/retirement/summon
-/// checks. None retains the existing archived-successor ownership boundary.
+/// checks, including when an archived continuation needs a successor.
 pub async fn ensure_target_session(
     server: &Shared,
     raw: &str,
@@ -82,7 +78,46 @@ pub async fn ensure_target_session(
                 .as_str()
                 .is_some_and(|s| !s.is_empty())
         {
-            return Ok(None);
+            let summon = SummonRequest {
+                scope_ref: scope,
+                lane_ref: Some(lane),
+                path: "archived-successor",
+                intent: "implicit",
+                known_session: Some(true),
+                origin: Some("local"),
+                capability_hint: Some(json!({"placement":intent["placement"]})),
+                provision: intent.get("provision").cloned(),
+            };
+            let successor = with_summon_authority(server, summon, || async {
+                // Authority resolution can yield: a concurrent ensure may have
+                // already published the successor while we were awaiting it.
+                if let Some(raced) = runtime_views::find_target_session(server, raw)?
+                    && raced["hostSessionId"] != session["hostSessionId"]
+                {
+                    return Ok(raced);
+                }
+                let db = server.store.lock().unwrap();
+                let host = super::resume::mint(
+                    &db.sqlite,
+                    &session,
+                    session["generation"].as_i64().unwrap_or(0) + 1,
+                    if persist { Some(intent) } else { None },
+                    Some(&session["continuation"]),
+                    json!({"created":true,"summon":true,"priorHostSessionId":session["hostSessionId"],"reason":"successor-from-continuation"}),
+                )?;
+                let mut successor = db
+                    .session(&host)?
+                    .ok_or_else(|| ApiError::missing_host(&host))?;
+                // Unlike a fresh address, this continuity already existed
+                // when Bun inserted the successor and supplies its identity.
+                if let Some(identity) = db.optional_identity(scope, lane)? {
+                    successor["identity"] = identity;
+                }
+                Ok(successor)
+            })
+            .await?;
+            server.ledger_committed();
+            return Ok(Some(successor));
         }
         // T-09762: an existing session is not authority over a retired scope.
         super::federation::summon::assert_scope_not_retired(server, scope, "ensure-target").await?;

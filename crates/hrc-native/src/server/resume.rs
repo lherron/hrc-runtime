@@ -242,7 +242,7 @@ async fn localize(
 }
 
 /// createSessionSuccessorFromContinuation, plus its session.created row.
-fn mint(
+pub(super) fn mint(
     db: &Connection,
     prior: &Value,
     generation: i64,

@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 from foundation import UnixHTTP
 
 
-def main():
+def main(prepare=None, case_factory=None, observe=None, suite="n1-routes"):
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--bun-release', type=Path, required=True)
@@ -88,6 +88,7 @@ def main():
             assert created['status']==200 and created['body']['created'] is True,created
             if lane=='main':host=created['body']['hostSessionId']
         down()
+        if prepare: prepare(release, dbpath, scope, host, env)
         with sqlite3.connect(dbpath) as source, sqlite3.connect(root/'snapshot.sqlite') as target:source.backup(target)
         cases = [
             ('sessions-list','GET','/v1/sessions?all=true',None),
@@ -115,6 +116,7 @@ def main():
             ('runtimes-live-refs-empty','GET','/v1/runtimes/live-refs',None),
             ('wrong-method','DELETE','/v1/sessions/metadata',None),
         ]
+        if case_factory: cases = case_factory(scope, host)
         for kind in ('bun','native'):
             with sqlite3.connect(root/'snapshot.sqlite') as source,sqlite3.connect(dbpath) as target:source.backup(target)
             up(kind,kind)
@@ -124,6 +126,7 @@ def main():
                 before_events=metadata_events()
                 value=call(method,path,body)
                 observed.append({'case':name,'method':method,'path':path,'request':body,'response':value,'before':before,'after':time.time(),'metadataEvents':metadata_events()-before_events})
+                if observe: observed[-1].update(observe(dbpath))
             down()
             results[kind]=observed
         (args.artifacts/'observations.json').write_text(json.dumps(results,indent=2)+'\n')
@@ -132,7 +135,7 @@ def main():
             directory.mkdir(exist_ok=True)
             (directory/'observations.json').write_text(json.dumps(observations,indent=2)+'\n')
         compared=subprocess.run(['python3',str(Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py'),
-            'compare','--suite','n1-routes','--baseline',str(args.artifacts/'bun'),
+            'compare','--suite',suite,'--baseline',str(args.artifacts/'bun'),
             '--candidate',str(args.artifacts/'native'),'--out',str(args.artifacts/'compare')],capture_output=True,text=True)
         (args.artifacts/'compare.stdout').write_text(compared.stdout)
         (args.artifacts/'compare.stderr').write_text(compared.stderr)
