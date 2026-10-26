@@ -16,6 +16,7 @@ import tempfile
 import time
 
 from metrics_isolation import isolated_suite
+from copied_release import copied_bun_cli, preflight_unmanaged
 from runtime import normalize
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -39,7 +40,8 @@ def main():
         root = Path(temp)
         env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ'))}
         env.update(HRC_PEER_CONFIG_FILE=str(root / 'absent-federation.json'), HRC_ACP_WEBHOOK_URL='', WRKQ_DB=authority['locator'], HRC_WRKQ_DB=authority['locator'], HRC_WRKQD_TOKEN_FILE=authority['tokenFile'], WRKQD_TOKEN_FILE=authority['tokenFile'])
-        scope = 'agent:tabularasa:project:hrc-runtime:task:n5-continuity'
+        scope = 'agent:tabularasa:project:n5-t11819:task:n5-continuity'
+        daemon_oracle = copied_bun_cli(args.oracle, root / 'release')
         proc = None
         def call(method, path, body=None):
             http = UnixHTTP(root / 'run/hrc.sock')
@@ -53,13 +55,16 @@ def main():
             nonlocal proc
             child_env = dict(env, HRC_STATE_DIR=str(root / 'state'), HRC_RUNTIME_DIR=str(root / 'run'))
             log = (args.artifacts / (owner + '.log')).open('w')
-            command = [bun, str(args.oracle.resolve()), 'server', 'serve'] if owner == 'bun' else [str(args.binary.resolve()), 'server', 'serve']
+            if owner == 'bun':preflight_unmanaged(daemon_oracle, child_env, args.artifacts / 'bun-release-preflight.json')
+            command = [bun, str(daemon_oracle), 'server', 'serve'] if owner == 'bun' else [str(args.binary.resolve()), 'server', 'serve']
             proc = subprocess.Popen(command, env=child_env, cwd=root, stdout=log, stderr=log)
             log.close()
             for _ in range(200):
                 assert proc.poll() is None, (owner, 'daemon exited; see log')
                 try:
-                    if call('GET', '/v1/health') == {'ok': True}: return child_env
+                    if call('GET', '/v1/health') == {'ok': True}:
+                        if owner == 'bun':assert call('GET','/v1/status')['release']['mode'] != 'atomic'
+                        return child_env
                 except (OSError, http.client.HTTPException): pass
                 time.sleep(.05)
             raise AssertionError('daemon not ready')

@@ -8,6 +8,8 @@ foreground start double-records metrics; cleanup leaves an owned daemon.
 import argparse, fcntl, json, os, plistlib, shutil, signal, socket, sqlite3, subprocess, sys, tempfile, time
 from pathlib import Path
 from metrics_isolation import MetricsIsolation
+from copied_release import copied_bun_cli, preflight_unmanaged
+import atexit
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'hrc-native/e2e'))
 from foundation import UnixHTTP
 
@@ -28,6 +30,10 @@ def main():
     a.artifacts.mkdir(parents=True, exist_ok=True)
     binary = a.binary.resolve()
     bun = shutil.which('bun')
+    copied = tempfile.TemporaryDirectory(prefix='n5-start-release-11819-', dir='/tmp')
+    atexit.register(copied.cleanup)
+    a.oracle = copied_bun_cli(a.oracle, Path(copied.name) / 'release')
+    a.front_oracle = a.oracle if a.front_oracle is None else copied_bun_cli(a.front_oracle, Path(copied.name) / 'front-release')
     seed = sqlite3.connect(f'file:{a.seed_state / "state.sqlite"}?mode=ro', uri=True)
     assert seed.execute('SELECT COUNT(*) FROM runtimes').fetchone()[0] == 0
     assert seed.execute('SELECT COUNT(*) FROM sessions').fetchone()[0] == 0
@@ -48,6 +54,7 @@ def main():
         env = {k:v for k,v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ', 'HARNESS_BROKER_')) and k not in ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX')}
         env.update(HOME=str(home), HRC_RUNTIME_DIR=str(runtime), HRC_STATE_DIR=str(state), HRC_PEER_CONFIG_FILE=str(root / 'no-federation.json'), HRC_ACP_WEBHOOK_URL='', PATH=f'{tools}:/usr/bin:/bin', NO_COLOR='1', FORCE_COLOR='0')
         env.update(WRKQ_DB=a.wrkq_db, HRC_WRKQ_DB=a.wrkq_db, WRKQD_TOKEN_FILE=str(a.token_file), HRC_WRKQD_TOKEN_FILE=str(a.token_file))
+        preflight_unmanaged(a.front_oracle if mode == 'front' else a.oracle, env, a.artifacts / (name + '-release-preflight.json'))
         plist_dir = home / 'Library/LaunchAgents'; plist_dir.mkdir(parents=True)
         for label in declared:
             args = [str(binary), 'server', '--front', '--bun-socket', str(runtime / 'hrc-bun.sock')] if label == FRONT_JOB else [bun, str((a.front_oracle if mode == 'front' else a.oracle).resolve()), 'server', 'serve'] + (['--listen-socket', str(runtime / 'hrc-bun.sock')] if mode == 'front' else [])
@@ -58,6 +65,8 @@ def main():
         launcher = tools / 'launchctl'
         launcher.write_text('#!' + sys.executable + '\n' + '''import json,os,socket,subprocess,sys
 from pathlib import Path
+sys.path.insert(0,__E2E_DIR__)
+from copied_release import preflight_unmanaged
 root=Path(__file__).resolve().parent.parent
 c=json.loads((root/'config.json').read_text());args=sys.argv[1:];label=args[-1].split('/')[-1]
 with (root/'launchctl.ndjson').open('a') as f:f.write(json.dumps(args)+'\\n')
@@ -72,15 +81,16 @@ try:s.connect(str(path));sys.exit(0)
 except OSError:pass
 finally:s.close()
 cmd=[c['binary'],'server','--front','--bun-socket',str(r/'hrc-bun.sock')] if front else [c['bun'],c['oracle'],'server','serve']+(['--listen-socket',str(path)] if private else [])
+if not front:preflight_unmanaged(c['oracle'],c['environment'],root/'release-preflight.json',bun=c['bun'])
 with (root/(label+'.log')).open('a') as log:
  p=subprocess.Popen(cmd,env=c['environment'],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
 with (root/'children.ndjson').open('a') as f:f.write(json.dumps(dict(pid=p.pid,label=label,argv=cmd))+'\\n')
-''')
+'''.replace('__E2E_DIR__',repr(str(Path(__file__).resolve().parent))))
         launcher.chmod(0o700)
         (oracle_tools / 'launchctl').symlink_to(launcher)
         (tools / 'plutil').symlink_to('/usr/bin/plutil')
         (oracle_tools / 'plutil').symlink_to('/usr/bin/plutil')
-        return dict(name=name, root=root, runtime=runtime, state=state, env=env, oracle_tools=oracle_tools)
+        return dict(name=name, root=root, runtime=runtime, state=state, env=env, oracle_tools=oracle_tools, mode=mode)
 
     def call(f, path):
         h = UnixHTTP(f['runtime'] / 'hrc.sock'); h.request('GET', path); r = h.getresponse(); data = json.loads(r.read()); h.close(); assert r.status == 200, data; return data
@@ -91,7 +101,10 @@ with (root/'children.ndjson').open('a') as f:f.write(json.dumps(dict(pid=p.pid,l
 
     def wait_ready(f):
         for _ in range(150):
-            if ready(f):return
+            if ready(f):
+                status=call(f,'/v1/status')
+                if f['mode'] in ('legacy','front','ealready'):assert status['release']['mode'] != 'atomic',status['release']
+                return
             time.sleep(.1)
         raise AssertionError(f['root'])
 

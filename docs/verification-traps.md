@@ -52,3 +52,13 @@ one.
   `hrc start --wait completed --json` returned `runtime.terminal: null` and no
   `finalMessage` for a turn that completed. Grade a turn from `hrc_events`: the
   final `turn.message` content and a `turn.completed` row for that `run_id`.
+- **Separate state does not isolate atomic-release pruning.** On 2026-10-26,
+  Cody's N5 grant fixture launched Bun directly from the installed release.
+  Its startup prune deleted the release still used by production HRC because
+  pruning protected only the fixture's runtime root. Mable repaired production
+  by restarting it onto the current release; T-11830 owns the product fix.
+  Scratch Bun daemons must run from a `cp -R` of the release outside every
+  directory named `hrc-runtime-releases`. Before spawning, use the daemon's
+  release-provenance function to require `mode: unmanaged`; assert the same
+  mode through `/v1/status` after startup and after lifecycle restarts. Keep an
+  installed-path refusal control. Installed CLI binaries can run directly.
