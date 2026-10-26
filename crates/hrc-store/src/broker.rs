@@ -80,14 +80,8 @@ impl Store {
         } else {
             "headless"
         };
-        let mut tmux = allocation["tuiWindow"].clone();
-        if tmux.is_object() {
-            tmux["kind"] = "broker-tmux-allocation".into();
-            tmux["brokerDriver"] = execution["driver"].clone();
-            tmux["generation"] = id["generation"].clone();
-            tmux["allocatedAt"] = allocation["allocatedAt"].clone();
-        }
-        let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":id["runtimeId"],"hostSessionId":id["hostSessionId"],"generation":id["generation"],"status":"starting","selection":plan["selection"],"hrcPolicy":{},"tmux":tmux});
+        let tmux = broker_tmux(execution, allocation, &id["generation"], true);
+        let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":id["runtimeId"],"hostSessionId":id["hostSessionId"],"generation":id["generation"],"status":"starting","selection":plan["selection"],"hrcPolicy":{},"tmux":broker_tmux(execution, allocation, &id["generation"], false)});
         let tx = self.sqlite.transaction()?;
         let changed = tx.execute("UPDATE runtime_operations SET status='starting',started_at=?,updated_at=?,capability_resolution_json=? WHERE operation_id=? AND status='prepared'",params![now,now,json!({"brokerHello":hello["capabilities"],"drivers":hello["drivers"],"result":{"status":"admitted"}}).to_string(),s(id,"operationId")?])?;
         ensure!(changed == 1, "aspd_preparation_not_prepared");
@@ -165,12 +159,7 @@ impl Store {
         if let Some(observer) = allocation.get("observerWindow") {
             broker["observerWindow"] = observer.clone();
         }
-        let mut tmux = allocation["tuiWindow"].clone();
-        if tmux.is_object() {
-            tmux["brokerDriver"] = execution["driver"].clone();
-            tmux["generation"] = id["generation"].clone();
-            tmux["allocatedAt"] = allocation["allocatedAt"].clone();
-        }
+        let tmux = broker_tmux(execution, allocation, &id["generation"], false);
         let capabilities = started
             .get("capabilities")
             .or_else(|| snapshot.get("capabilities"))
@@ -227,4 +216,40 @@ fn event(
     )?;
     db.execute("INSERT INTO hrc_events(stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,runtime_id,run_id,category,event_kind,transport,payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",params![seq,timestamp(),s(session,"hostSessionId")?,s(session,"scopeRef")?,crate::storage_lane(s(session,"laneRef")?),session["generation"].as_i64(),id["runtimeId"].as_str(),id["runId"].as_str(),category,kind,transport,payload.to_string()])?;
     Ok(())
+}
+
+/// toBrokerTmuxJson (with kind, the tmux_json column) / toRuntimeStateTmux:
+/// Bun's key order, so the aspd allocation's own order never leaks through.
+fn broker_tmux(execution: &Value, allocation: &Value, generation: &Value, kind: bool) -> Value {
+    let Some(window) = allocation["tuiWindow"].as_object() else {
+        return allocation["tuiWindow"].clone();
+    };
+    let mut tmux = serde_json::Map::new();
+    if kind {
+        tmux.insert("kind".into(), "broker-tmux-allocation".into());
+    }
+    tmux.insert("brokerDriver".into(), execution["driver"].clone());
+    tmux.insert(
+        "socketPath".into(),
+        window.get("socketPath").cloned().unwrap_or(Value::Null),
+    );
+    tmux.insert("allocatedAt".into(), allocation["allocatedAt"].clone());
+    for key in [
+        "sessionId",
+        "windowId",
+        "paneId",
+        "sessionName",
+        "windowName",
+    ] {
+        if let Some(v) = window.get(key) {
+            tmux.insert(key.into(), v.clone());
+        }
+    }
+    tmux.insert("generation".into(), generation.clone());
+    for (key, v) in window {
+        if !tmux.contains_key(key) {
+            tmux.insert(key.clone(), v.clone());
+        }
+    }
+    Value::Object(tmux)
 }
