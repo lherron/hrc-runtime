@@ -3,12 +3,10 @@
 //! Bun audit are absent here.
 use super::{database_path, store_error};
 use crate::js;
+use crate::process::{Run, run};
 use crate::{Error, Result, parse::Parsed};
 use serde_json::{Map, Value, json};
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 
 const DEAD_RUNTIME_STATUSES: [&str; 8] = [
     "dead",
@@ -20,77 +18,6 @@ const DEAD_RUNTIME_STATUSES: [&str; 8] = [
     "crashed",
     "exited",
 ];
-
-struct Run {
-    status: Option<i32>,
-    stdout: String,
-    stderr: String,
-    error: Option<String>,
-}
-
-/// worktree-prune.ts `defaultRun`: git never sees GIT_* from the caller and a
-/// wedged wrkq is killed after 15s instead of hanging the audit.
-fn run(command: &str, args: &[&str]) -> Run {
-    let mut child = Command::new(command);
-    child
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if command == "git" {
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("GIT_") {
-                child.env_remove(key);
-            }
-        }
-    }
-    let mut child = match child.spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            let code = if e.kind() == std::io::ErrorKind::NotFound {
-                "ENOENT".into()
-            } else {
-                e.to_string()
-            };
-            return Run {
-                status: None,
-                stdout: String::new(),
-                stderr: String::new(),
-                error: Some(format!("spawnSync {command} {code}")),
-            };
-        }
-    };
-    let drain = |mut pipe: Box<dyn Read + Send>| {
-        std::thread::spawn(move || {
-            let mut bytes = vec![];
-            let _ = pipe.read_to_end(&mut bytes);
-            String::from_utf8_lossy(&bytes).into_owned()
-        })
-    };
-    let stdout = drain(Box::new(child.stdout.take().unwrap()));
-    let stderr = drain(Box::new(child.stderr.take().unwrap()));
-    let deadline = (command == "wrkq").then(|| Instant::now() + Duration::from_secs(15));
-    let mut timed_out = false;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status.code(),
-            Ok(None) if deadline.is_some_and(|d| Instant::now() >= d) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                timed_out = true;
-                break None;
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
-            Err(_) => break None,
-        }
-    };
-    Run {
-        status,
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
-        error: timed_out.then(|| format!("spawnSync {command} ETIMEDOUT")),
-    }
-}
 
 fn diagnostic(result: &Run) -> String {
     [

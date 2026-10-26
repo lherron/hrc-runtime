@@ -42,7 +42,7 @@ impl Daemon {
         body: Value,
         timeout: std::time::Duration,
     ) -> Result<Value> {
-        self.request_with_timeout("POST", path, &[], Some(body), Some(timeout))
+        self.request_with_timeout("POST", path, &[], Some(body), Some(timeout), &[])
             .map(|r| r.0)
     }
     pub fn request(
@@ -52,7 +52,16 @@ impl Daemon {
         query: &[(String, String)],
         body: Option<Value>,
     ) -> Result<(Value, Option<String>)> {
-        self.request_with_timeout(method, path, query, body, None)
+        self.request_with_timeout(method, path, query, body, None, &[])
+    }
+    pub fn post_headers(
+        &self,
+        path: &str,
+        body: Value,
+        headers: &[(String, String)],
+    ) -> Result<Value> {
+        self.request_with_timeout("POST", path, &[], Some(body), None, headers)
+            .map(|r| r.0)
     }
     fn request_with_timeout(
         &self,
@@ -61,6 +70,7 @@ impl Daemon {
         query: &[(String, String)],
         body: Option<Value>,
         timeout: Option<std::time::Duration>,
+        headers: &[(String, String)],
     ) -> Result<(Value, Option<String>)> {
         let declaration = match path {
             "/v1/placements/resolve" => Some(("placements.resolve", "placement resolution")),
@@ -73,6 +83,9 @@ impl Daemon {
             .client
             .request(method.parse().unwrap(), format!("http://localhost{path}"))
             .query(query);
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
         if let Some(timeout) = timeout {
             request = request.timeout(timeout);
         }

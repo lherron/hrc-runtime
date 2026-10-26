@@ -23,6 +23,8 @@ mod monitor;
 mod parse;
 mod passthrough;
 mod preview;
+mod process;
+mod restartme;
 mod scope;
 mod selectors;
 mod server_status;
