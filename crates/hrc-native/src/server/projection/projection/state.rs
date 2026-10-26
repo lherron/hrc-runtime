@@ -193,6 +193,8 @@ fn retained_run_terminal(
 
 /// projectState dispatch; `stale`/`fenced` gate as in Bun.
 #[allow(clippy::too_many_arguments)]
+// Keep the envelope-kind dispatch table together for auditing projection coverage.
+#[allow(clippy::too_many_lines)]
 pub fn project(
     db: &Connection,
     mem: &mut Memory,

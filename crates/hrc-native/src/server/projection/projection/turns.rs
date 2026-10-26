@@ -431,6 +431,8 @@ pub fn lifecycle_position(
 }
 
 /// projectTurn (format1).
+// Keep the envelope-kind dispatch table together for auditing projection coverage.
+#[allow(clippy::too_many_lines)]
 pub fn project(
     db: &Connection,
     mem: &mut Memory,
