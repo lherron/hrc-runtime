@@ -220,6 +220,9 @@ async fn recover_one(server: Shared, run_id: String) {
                 json!({"runId":run_id,"source":"accepted-cold-boot"}),
             ));
         };
+        // continueAdmittedTurn: the accepted-run exemption admits through a
+        // closed gate, and a drain waits for it, only after the durable proof above.
+        let _lease = super::lifecycle::admission_lease_for(&server, true)?;
         turns::continue_cold(&server, session, &rt, &run_id, &cold).await
     }
     .await;
