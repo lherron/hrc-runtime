@@ -130,9 +130,12 @@ pub async fn serve(role: front::Role) -> Result<()> {
         publication::start(&server)?;
         lifecycle::rows::boot(&server)?;
         lifecycle::credentials::start(&server)?;
-        handoff::start(&server);
         self_restart::start(&server);
         startup::reconcile(&server).await?;
+        // Bun reconciles before its server (and finalizers) exist. Started
+        // earlier, the pump wakes on every startup commit and rescans
+        // messages under the store mutex the next row is waiting for.
+        handoff::start(&server);
         retained::start(&server);
         recovery::start(&server);
         participants::resume(&server)?;
