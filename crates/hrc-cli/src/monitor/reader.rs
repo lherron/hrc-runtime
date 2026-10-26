@@ -653,3 +653,24 @@ pub(crate) fn watch(state: &State, req: &WatchRequest<'_>) -> Vec<Value> {
     }
     out
 }
+
+#[cfg(test)]
+mod lane_contract_tests {
+    #[test]
+    fn monitor_and_store_lane_contracts_differ() {
+        for (input, monitor, canonical, storage) in [
+            ("main", "main", "main", "main"),
+            ("lane:main", "main", "main", "main"),
+            ("default", "main", "lane:default", "default"),
+            ("lane:default", "main", "lane:default", "default"),
+            ("foo", "foo", "lane:foo", "foo"),
+            ("lane:foo", "foo", "lane:foo", "foo"),
+            ("", "", "lane:", ""),
+            ("lane:lane:foo", "lane:foo", "lane:lane:foo", "lane:foo"),
+        ] {
+            assert_eq!(super::normalize_lane_id(input), monitor, "{input}");
+            assert_eq!(hrc_store::canonical_lane(input), canonical, "{input}");
+            assert_eq!(hrc_store::storage_lane(input), storage, "{input}");
+        }
+    }
+}

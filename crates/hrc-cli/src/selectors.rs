@@ -276,7 +276,7 @@ impl Snapshot {
                     .runtimes
                     .iter()
                     .filter(|r| {
-                        !["terminated", "dead", "stale", "detached"]
+                        !hrc_store::status::SELECTOR_UNAVAILABLE
                             .iter()
                             .any(|s| r["status"] == *s)
                     })

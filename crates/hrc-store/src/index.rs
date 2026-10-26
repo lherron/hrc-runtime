@@ -6,7 +6,15 @@ use rusqlite::{params_from_iter, types::Value as SqlValue};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-pub(crate) const SESSION_RECENCY: &str = "(MAX(COALESCE((SELECT si.last_activity_at FROM session_index si WHERE si.host_session_id=s.host_session_id),''),COALESCE((SELECT MAX(COALESCE(r.last_activity_at,r.created_at)) FROM runtimes r WHERE r.host_session_id=s.host_session_id),''),s.created_at) >= ? OR EXISTS (SELECT 1 FROM runtimes r2 WHERE r2.host_session_id=s.host_session_id AND (r2.active_run_id IS NOT NULL OR r2.status NOT IN ('terminated','dead','stale','crashed','detached'))))";
+pub(crate) fn session_recency() -> &'static str {
+    static SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        format!(
+            "(MAX(COALESCE((SELECT si.last_activity_at FROM session_index si WHERE si.host_session_id=s.host_session_id),''),COALESCE((SELECT MAX(COALESCE(r.last_activity_at,r.created_at)) FROM runtimes r WHERE r.host_session_id=s.host_session_id),''),s.created_at) >= ? OR EXISTS (SELECT 1 FROM runtimes r2 WHERE r2.host_session_id=s.host_session_id AND (r2.active_run_id IS NOT NULL OR r2.status NOT IN ({}))))",
+            crate::status::unavailable_sql()
+        )
+    });
+    SQL.as_str()
+}
 
 fn filters(input: &HashMap<String, String>, excluded: &str) -> (String, Vec<SqlValue>) {
     let mut predicates = vec!["scope_ref NOT LIKE 'app:%'".to_owned()];
@@ -60,7 +68,7 @@ impl Store {
         {
             // Activity clocks exclude sessions.updated_at: housekeeping writes
             // must not bring cold sessions back into the projection.
-            predicates.push(SESSION_RECENCY);
+            predicates.push(session_recency());
             values.push(since.to_owned().into());
         }
         let clause = if predicates.is_empty() {

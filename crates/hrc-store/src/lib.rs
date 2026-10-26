@@ -23,6 +23,7 @@ mod participants;
 pub mod presentation;
 mod publication;
 mod statement_telemetry;
+pub mod status;
 mod surfaces;
 pub use statement_telemetry::{SlowStatement, Sqlite};
 mod targets;

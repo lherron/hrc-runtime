@@ -48,7 +48,7 @@ pub async fn mark_invocation_terminal(
             return Ok(());
         };
         if rt.active_invocation_id.as_deref() != Some(&invocation)
-            || ["terminated", "dead", "crashed"].contains(&rt.status.as_str())
+            || hrc_store::status::BROKER_TERMINAL.contains(&rt.status.as_str())
         {
             return Ok(());
         }

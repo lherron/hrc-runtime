@@ -424,7 +424,7 @@ async fn prune_guard(server: &Server, r: &Value, facts: &Value) -> Result<Option
     if held(r, facts) {
         return Ok(Some("offline_evidence_held".into()));
     }
-    if !["terminated", "dead", "stale", "crashed", "detached"]
+    if !hrc_store::status::UNAVAILABLE
         .iter()
         .any(|s| r["status"] == *s)
     {

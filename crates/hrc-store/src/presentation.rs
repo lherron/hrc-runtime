@@ -1,5 +1,6 @@
 //! Bounded keyed reads used by the kernel's presentation projector.
-use super::{Store, canonical_lane, index::SESSION_RECENCY, runtime_row, storage_lane};
+use super::{Store, canonical_lane, index::session_recency, runtime_row, storage_lane};
+use crate::status::{UNAVAILABLE, unavailable_sql};
 use anyhow::Result;
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
@@ -10,6 +11,10 @@ impl Store {
         scope: Option<&str>,
         lane: Option<&str>,
     ) -> Result<Vec<Value>> {
+        let bootstrap_sql = format!(
+            "SELECT * FROM runtimes WHERE status IS NULL OR status NOT IN ({}) ORDER BY created_at ASC,runtime_id ASC",
+            unavailable_sql()
+        );
         let (sql, values) = match (scope, lane) {
             (Some(s), Some(l)) => (
                 "SELECT * FROM runtimes WHERE scope_ref=? AND lane_ref=? ORDER BY created_at ASC,runtime_id ASC",
@@ -17,10 +22,7 @@ impl Store {
             ),
             // Unkeyed is only the bootstrap list, which drops what `available`
             // drops; filtering here spares decoding every terminal row (T-11927).
-            _ => (
-                "SELECT * FROM runtimes WHERE status IS NULL OR status NOT IN ('terminated','dead','stale','crashed','detached') ORDER BY created_at ASC,runtime_id ASC",
-                vec![],
-            ),
+            _ => (bootstrap_sql.as_str(), vec![]),
         };
         let mut stmt = self.sqlite.prepare(sql)?;
         Ok(stmt
@@ -38,7 +40,14 @@ impl Store {
             .optional()?)
     }
     pub fn presentation_session_recent(&self, host: &str, since: &str) -> Result<bool> {
-        Ok(self.sqlite.query_row(&format!("SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.host_session_id=? AND {SESSION_RECENCY})"),params![host,since],|r|r.get(0))?)
+        let recency = session_recency();
+        Ok(self.sqlite.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.host_session_id=? AND {recency})"
+            ),
+            params![host, since],
+            |r| r.get(0),
+        )?)
     }
     pub fn operator_surfaces(&self, runtime: &str) -> Result<Vec<Value>> {
         let mut stmt=self.sqlite.prepare("SELECT surface_id,client_tty FROM surface_bindings WHERE runtime_id=? AND unbound_at IS NULL AND surface_kind='ghostty' AND client_tty IS NOT NULL ORDER BY bound_at ASC,surface_kind ASC,surface_id ASC")?;
@@ -147,7 +156,6 @@ pub fn hosting(runtime: &Value) -> Option<Value> {
     };
     Some(json!({"broker":broker,"substrate":substrate,"presentation":presentation}))
 }
-const UNAVAILABLE: [&str; 5] = ["terminated", "dead", "stale", "crashed", "detached"];
 fn available(runtime: &Value) -> bool {
     !runtime["status"]
         .as_str()
