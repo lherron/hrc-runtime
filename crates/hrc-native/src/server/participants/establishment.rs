@@ -1,5 +1,5 @@
-//! Frozen participant hosting, bootstrap installation, and unACKed attachment.
-use super::super::{Shared, compile, rpc::JsonRpc};
+//! Frozen participant hosting, bootstrap installation, staged attachment and replay.
+use super::super::{Shared, compile, controller, rpc::JsonRpc};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{
@@ -260,7 +260,18 @@ async fn connect(intent: &Value) -> Result<JsonRpc> {
     .map_err(|_| anyhow::anyhow!("Failed to connect to broker unix socket"))
 }
 async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> {
-    let mut a = realize(server, attempt).await?;
+    // Reconnect the frozen participant through its own durable work cycle;
+    // generic startup reconciliation intentionally skips external lifecycles.
+    let mut initial = attempt.clone();
+    if initial["state"] == "ACTIVE" {
+        server.store.lock().unwrap().participant_transition(
+            string(&initial, "attempt_id")?,
+            &["ACTIVE"],
+            "DETACHED",
+        )?;
+        initial = current(server, string(&initial, "attempt_id")?)?;
+    }
+    let mut a = realize(server, &initial).await?;
     let id = string(&a, "attempt_id")?.to_owned();
     let d = parsed(&a, "prepared_profile_json")?;
     let intent = parsed(&a, "hosting_intent_json")?;
@@ -368,8 +379,13 @@ async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> 
             .unwrap()
             .participant_broker_graph(reg, &a, &hello)?;
     }
-    let client = connect(&intent).await?;
-    let controller = format!("hrc-server:{}", std::process::id());
+    let (client, events) = JsonRpc::connect_broker(
+        Path::new(string(&intent["endpoint"], "socketPath")?),
+        Duration::from_secs(120),
+        controller::permission_handler(std::sync::Arc::downgrade(server)),
+    )
+    .await?;
+    let controller = controller::server_instance_id();
     let seq = server.store.lock().unwrap().sqlite.query_row(
         "SELECT COALESCE(last_projected_seq,0) FROM broker_invocations WHERE invocation_id=?",
         [a["invocation_id"].as_str()],
@@ -430,38 +446,33 @@ async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> 
         &["INVOCATION_READY", "ACTIVE", "DETACHED"],
         "ATTACH_CONFIRMED",
     )?;
-    // N1 commits activation but holds every broker event without projection or ACK.
+    // No event projection or ACK precedes durable participant activation.
     server.store.lock().unwrap().activate_participant(reg, &a)?;
-    {
-        let db = server.store.lock().unwrap();
-        let tx = db.sqlite.unchecked_transaction()?;
-        let raw: String = tx.query_row(
-            "SELECT runtime_state_json FROM runtimes WHERE runtime_id=?",
-            [a["runtime_id"].as_str()],
-            |r| r.get(0),
-        )?;
-        let mut state: Value = serde_json::from_str(&raw)?;
-        let now = hrc_store::timestamp();
-        state["updatedAt"] = now.clone().into();
-        state["control"] = json!({"mode":"broker-ipc","brokerAttached":true});
-        state["brokerReplay"] = json!({"brokerInstanceId":attached["brokerInstanceId"],"activeControllerInstanceId":attached["activeControllerInstanceId"],"lastProjectedSeq":seq,"replayedThroughSeq":seq,"ackedThroughSeq":state["brokerReplay"]["ackedThroughSeq"].as_i64().unwrap_or(0).min(seq),"currentSeq":attached["currentSeq"].as_i64().unwrap_or(0).max(snapshot["currentSeq"].as_i64().unwrap_or(0)),"retentionFloorSeq":attached["retentionFloorSeq"].as_i64().unwrap_or(0).max(snapshot["retentionFloorSeq"].as_i64().unwrap_or(0))});
-        tx.execute(
-            "UPDATE runtimes SET runtime_state_json=?,updated_at=? WHERE runtime_id=?",
-            [
-                state.to_string(),
-                now.clone(),
-                string(&a, "runtime_id")?.to_owned(),
-            ],
-        )?;
-        tx.execute("UPDATE broker_invocations SET owner_server_instance_id=?,updated_at=? WHERE invocation_id=?",[controller,now,string(&a,"invocation_id")?.to_owned()])?;
-        tx.commit()?;
-    }
-
-    server
-        .brokers
+    // Reuse the ordinary controller's replay, delta flush, commit-before-ACK
+    // and live event consumer. The candidate's notifications have been held on
+    // `events` while the attempt/epoch and activation transaction were checked.
+    let runtime = server
+        .store
         .lock()
         .unwrap()
-        .insert(string(&a, "runtime_id")?.to_owned(), client);
+        .runtimes()?
+        .into_iter()
+        .find(|r| r["runtimeId"] == a["runtime_id"])
+        .context("participant runtime disappeared before replay release")?;
+    controller::attach_and_replay(
+        server,
+        &runtime,
+        client,
+        events,
+        Path::new(string(&intent["endpoint"]["attachTokenRef"], "path")?),
+    )
+    .await?;
+    // Activation is durable before replay, but work is complete only when
+    // replay/ACK succeeds. A failed replay must retain the bounded retry job.
+    server.store.lock().unwrap().sqlite.execute(
+        "UPDATE participant_registration_attempts SET establishment_work_state='completed',establishment_next_attempt_at=NULL,updated_at=? WHERE attempt_id=? AND attach_epoch=? AND establishment_work_state IN ('pending','retry_wait')",
+        rusqlite::params![hrc_store::timestamp(), a["attempt_id"].as_str(), a["attach_epoch"].as_i64()],
+    )?;
     Ok(())
 }
 pub fn schedule(server: &Shared, registration_id: &str, attempt_id: &str) {
@@ -551,6 +562,13 @@ async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
     }
 }
 pub fn resume(server: &Shared) -> Result<()> {
+    // reconnectActivatedParticipants / armParticipantReconnect: a new owner
+    // has no active clients. Arm completed ACTIVE attempts before any broker
+    // effect so an outage or crash preserves the existing bounded retry job.
+    server.store.lock().unwrap().sqlite.execute(
+        "UPDATE participant_registration_attempts SET establishment_work_state='pending',establishment_attempt_count=0,establishment_next_attempt_at=NULL,establishment_last_error=NULL,updated_at=? WHERE state='ACTIVE' AND establishment_work_state='completed' AND prepared_profile_json IS NOT NULL",
+        [hrc_store::timestamp()],
+    )?;
     let work = server.store.lock().unwrap().pending_participant_work()?;
     for (registration, attempt) in work {
         schedule(server, &registration, &attempt);

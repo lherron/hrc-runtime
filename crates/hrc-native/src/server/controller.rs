@@ -19,6 +19,7 @@ use std::{
 use tokio::sync::mpsc;
 
 mod attach;
+mod participant;
 pub mod seat;
 pub mod submit;
 mod terminal;
@@ -630,11 +631,18 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
         || (kind == "invocation.failed" && envelope["payload"]["retryable"] != true);
     if external && kind == "invocation.exited" {
         flush_gap(server, &invocation).await;
-        log(
-            "info",
-            "broker.external_participant_terminal",
-            json!({"runtimeId":runtime,"invocationId":invocation}),
-        );
+        let Some(_write) = server.owner_writes.enter() else {
+            return;
+        };
+        if let Err(error) =
+            participant::mark_terminal(server, runtime, envelope, outcome.idempotent)
+        {
+            log(
+                "warn",
+                "broker.external_participant_terminal.failed",
+                json!({"runtimeId":runtime,"invocationId":invocation,"error":error.to_string()}),
+            );
+        }
     } else if !external && terminal {
         flush_gap(server, &invocation).await;
         // Local writes and a tmux reap only: no broker RPC under the guard.

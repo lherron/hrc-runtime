@@ -517,7 +517,6 @@ impl Store {
                 "participant activation requires current attach confirmation"
             );
         }
-        tx.execute("UPDATE participant_registration_attempts SET establishment_work_state='completed',establishment_next_attempt_at=NULL,updated_at=? WHERE attempt_id=? AND attach_epoch=? AND establishment_work_state IN ('pending','retry_wait')",params![now,attempt["attempt_id"].as_str(),attempt["attach_epoch"].as_i64()])?;
         tx.commit()?;
         Ok(())
     }

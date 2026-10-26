@@ -190,7 +190,7 @@
       "assertionIds": [
         "real-ASP-participant-owned-claude-broker",
         "install-ensure-attach-activation-graph",
-        "retained-unACKed-events-and-broker-survival"
+        "activation-replay-and-broker-survival"
       ],
       "requiredInP0": false
     },
@@ -357,6 +357,15 @@
         "refusal-order-without-target-or-message-write",
         "warm-restart-cold-real-turns",
         "one-durable-correlated-response"
+      ],
+      "requiredInP0": false
+    },
+    "n2-participant": {
+      "assertionIds": [
+        "activation-before-projection-and-ACK",
+        "real-EPR-live-turns-and-raw-ledger-parity",
+        "external-clean-exit-replay-without-crash",
+        "owner-shutdown-preserves-participant-broker"
       ],
       "requiredInP0": false
     }
@@ -734,8 +743,8 @@
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:update:",
-      "target": "n1-participant-live",
-      "reason": "Passing real participant broker activation compares the full canonical runtime/operation/invocation graph and retained owner shutdown."
+      "target": "n2-participant",
+      "reason": "Real EPR activation, live turns and clean-exit replay compare committed invocation cursors, runtime lifecycle reason and one external termination against each real broker ledger. Delivery/succession store operations remain GAP:N2."
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:updateRunId:",
@@ -794,8 +803,8 @@
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts:BrokerInvocationRepository:update:",
-      "target": "n1-participant-live",
-      "reason": "Passing real N1 participant activation compares canonical invocation identity, capabilities, timestamps and broker control ownership."
+      "target": "n2-participant",
+      "reason": "Real EPR activation, live turns and clean-exit replay compare committed invocation cursors, runtime lifecycle reason and one external termination against each real broker ledger. Delivery/succession store operations remain GAP:N2."
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts:RuntimeOperationRepository:getByOperationId:",
