@@ -615,15 +615,26 @@ fn category(o: &Outcome) -> &'static str {
 
 // ── startup (reconcileStartupState + warmDurableBrokerBindings) ───────────────
 
-fn runtime_ids(server: &Server) -> Result<Vec<String>> {
+/// Startup candidates, read under one store lock. Each pass narrows the
+/// table in SQL and takes the mutex once: the credential reconcile and the
+/// handoff pump hold it for cold scans during boot, and a per-row loop over
+/// every runtime queues behind them on each row.
+fn candidates(server: &Server, filter: &str) -> Result<Vec<String>> {
     let db = server.store.lock().unwrap();
-    let mut stmt = db
-        .sqlite
-        .prepare("SELECT runtime_id FROM runtimes ORDER BY created_at ASC, runtime_id ASC")?;
-    let ids = stmt
-        .query_map([], |r| r.get(0))?
-        .collect::<rusqlite::Result<Vec<String>>>()?;
-    Ok(ids)
+    Ok(db::runtimes_where(&db.sqlite, filter)?
+        .into_iter()
+        .map(|rt| rt.runtime_id)
+        .collect())
+}
+/// Broker rows `skipped` would not pass over (external owners aside).
+fn broker_candidates(server: &Server) -> Result<Vec<String>> {
+    candidates(
+        server,
+        &format!(
+            "controller_kind = 'harness-broker' AND {}",
+            lease::AVAILABLE_SQL
+        ),
+    )
 }
 fn row(server: &Server, id: &str) -> Result<Option<db::Rt>> {
     let db = server.store.lock().unwrap();
@@ -680,7 +691,7 @@ pub async fn reconcile(server: &Shared) -> Result<()> {
     if let Err(e) = terminal_active_runs(server) {
         startup_issue("terminal runtime run repair failed", json!({}), &e);
     }
-    for id in runtime_ids(server)? {
+    for id in broker_candidates(server)? {
         let Some(rt) = row(server, &id)? else {
             continue;
         };
@@ -753,7 +764,7 @@ async fn warmup(server: &Shared) -> Result<()> {
     ] {
         by.insert(c.into(), 0.into());
     }
-    for id in runtime_ids(server)? {
+    for id in broker_candidates(server)? {
         let Some(rt) = row(server, &id)? else {
             continue;
         };
@@ -805,29 +816,53 @@ async fn warmup(server: &Shared) -> Result<()> {
 
 /// decideLegacyRuntimeStartupDisposition: a reusable non-broker runtime can
 /// never serve a harness turn.
+/// One transaction for the whole sweep; a savepoint per row keeps a failed
+/// row from taking the others with it.
 fn legacy_sweep(server: &Server) -> Result<()> {
-    for id in runtime_ids(server)? {
-        let result = with_row(server, &id, |tx, rt| {
-            if controller::is_external_lifecycle_owner(rt)
-                || lease::unavailable(&rt.status)
-                || rt.controller_kind.as_deref() == Some("harness-broker")
-            {
-                return Ok(());
+    let db = server.store.lock().unwrap();
+    let tx = db.sqlite.unchecked_transaction()?;
+    let rows = db::runtimes_where(
+        &tx,
+        &format!(
+            "controller_kind IS NOT 'harness-broker' AND {}",
+            lease::AVAILABLE_SQL
+        ),
+    )?;
+    let mut marked = 0;
+    for rt in rows
+        .iter()
+        .filter(|rt| !controller::is_external_lifecycle_owner(rt))
+    {
+        let reason = if rt.controller_kind.is_none() {
+            "legacy_no_controller_kind"
+        } else {
+            "legacy_non_broker_controller_kind"
+        };
+        tx.execute_batch("SAVEPOINT legacy_row")?;
+        let result = lease::mark_stale(
+            &tx,
+            rt,
+            &json!({"runtimeId":rt.runtime_id,"reason":reason,"priorStatus":rt.status,"sweep":"legacy_startup_reconciliation"}),
+        );
+        match result {
+            Ok(()) => {
+                tx.execute_batch("RELEASE legacy_row")?;
+                marked += 1;
             }
-            let reason = if rt.controller_kind.is_none() {
-                "legacy_no_controller_kind"
-            } else {
-                "legacy_non_broker_controller_kind"
-            };
-            lease::mark_stale(
-                tx,
-                rt,
-                &json!({"runtimeId":rt.runtime_id,"reason":reason,"priorStatus":rt.status,"sweep":"legacy_startup_reconciliation"}),
-            )
-        });
-        if let Err(e) = result {
-            startup_issue("legacy runtime sweep failed", json!({"runtimeId":id}), &e);
+            Err(e) => {
+                tx.execute_batch("ROLLBACK TO legacy_row; RELEASE legacy_row")?;
+                startup_issue(
+                    "legacy runtime sweep failed",
+                    json!({"runtimeId":rt.runtime_id}),
+                    &e,
+                );
+            }
         }
+    }
+    tx.commit()?;
+    drop(db);
+    if marked > 0 {
+        server.ledger_committed();
     }
     Ok(())
 }

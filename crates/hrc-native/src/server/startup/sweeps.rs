@@ -253,13 +253,12 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
     entries.retain(|e| e.ends_with(".sock") && !e.starts_with(RENDERER_CONTROL_SOCKET_PREFIX));
     entries.sort();
     let mut claims: HashMap<String, Vec<String>> = HashMap::new();
-    for id in runtime_ids(server)? {
-        let Some(rt) = row(server, &id)? else {
-            continue;
-        };
-        if rt.controller_kind.as_deref() != Some("harness-broker") {
-            continue;
-        }
+    let brokers = {
+        let db = server.store.lock().unwrap();
+        db::runtimes_where(&db.sqlite, "controller_kind = 'harness-broker'")?
+    };
+    for rt in brokers {
+        let id = rt.runtime_id.clone();
         let socket = rt_hosting(&rt)
             .and_then(|h| h.substrate["tmuxSocketPath"].as_str().map(str::to_owned))
             .or_else(|| compat_tmux_socket(&rt));

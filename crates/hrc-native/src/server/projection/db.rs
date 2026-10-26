@@ -116,6 +116,16 @@ pub fn runtime(db: &Connection, id: &str) -> Result<Option<Rt>> {
         .query_row("SELECT * FROM runtimes WHERE runtime_id=?", [id], rt_row)
         .optional()?)
 }
+/// Runtimes matching a fixed SQL predicate, oldest first.
+pub fn runtimes_where(db: &Connection, filter: &str) -> Result<Vec<Rt>> {
+    let mut stmt = db.prepare(&format!(
+        "SELECT * FROM runtimes WHERE {filter} ORDER BY created_at ASC, runtime_id ASC"
+    ))?;
+    let rows = stmt
+        .query_map([], rt_row)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
 impl Rt {
     /// runtimeStateJson as an object (Bun spreads `runtime.runtimeStateJson ?? {}`).
     pub fn state_object(&self) -> Value {

@@ -17,6 +17,9 @@ pub fn unavailable(status: &str) -> bool {
         "terminated" | "dead" | "stale" | "crashed" | "detached"
     )
 }
+/// `unavailable` as a SQL predicate on runtimes.status.
+pub const AVAILABLE_SQL: &str =
+    "status NOT IN ('terminated', 'dead', 'stale', 'crashed', 'detached')";
 fn terminal_invocation_state(state: &str) -> bool {
     matches!(state, "exited" | "failed" | "disposed")
 }
