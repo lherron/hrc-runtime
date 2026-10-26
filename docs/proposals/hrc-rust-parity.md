@@ -95,6 +95,8 @@ Scope moves since r2:
 - The wrkq project-registry step in native `placements/resolve` and `targets/ensure` is assigned to N4 as its next landing. Bun resolves an explicit project's root as override → wrkq registry → marker scan → sibling fallback (placements-resolve.ts:370-400); native skipped the registry step. N1's gates set `ASP_PROJECT_ROOT_OVERRIDE` and never exercised it.
 - The claude-code-tmux Stop-fallback duplicate `turn.message` (agent-spaces T-11837) was an N6 blocker. A fast Stop-hook mail decision raced the transcript reader; the measured rate was 38% on Stop paths under ~100 ms. It was fixed and deployed to max3 aspd a34f6e14 on 2026-10-26 08:39Z, with svc and hrcdev following. Seats keep the old broker until rebirth.
 
+Verify-slot rule (2026-10-26 12:35Z): a landing whose `scripts/validation-scope.ts` reports `HRC_VERIFY_TS=0` verifies in parallel in its own worktree, because the cargo leg is isolated per worktree. A landing with `HRC_VERIFY_TS=1` takes the exclusive slot, because dev-env is shared. Pushes fast-forward one at a time, and the pre-push cargo leg on the rebased tree is the interaction check. Helpers (T-11878 N2b, T-11879 N4b, T-11880 N5c) are cody seats driven by their package's clod, and their work lands through the driver.
+
 Rule added after an incident: a scratch Bun daemon started from the installed tree deleted production's running release (2026-10-26 04:50Z). Scratch Bun daemons run only from a `cp -R` of the release with an atomic-mode refusal. T-11830 (02661aeb) makes every release prune keep any release a live process holds.
 
 ## Explicitly unsupported
