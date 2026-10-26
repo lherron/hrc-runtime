@@ -12,11 +12,14 @@ from pathlib import Path
 from n2_turns import Norm, TIMED, UNPOSITIONED, born_after_fix, fallback_duplicates
 
 CURSORS = ('fromSeq', 'afterSeq')
-GAPS = {'broker-inspect:terminated': 'GAP:N2 retained-evidence terminal outcome (N2 recovery landing)'}
+GAPS = {}
 
 
 def strip_cursors(value):
     if isinstance(value, dict):
+        # A provider continuation key is the harness's own session id on each owner.
+        if isinstance(value.get('continuation'), dict) and isinstance(value['continuation'].get('key'), str):
+            value = dict(value, continuation=dict(value['continuation'], key='<continuation-key>'))
         return {k: ('<seq>' if k in CURSORS and isinstance(v, int)
                     else '<continuation-key>' if k == 'previousContinuationKey' and isinstance(v, str)
                     else strip_cursors(v)) for k, v in value.items()}
@@ -114,7 +117,7 @@ def compare(args, checks):
             continue
         left = {'status': a['status'], 'body': strip_cursors(bun[2](a['body'])), 'events': kinds(a, fixed['bun'])}
         right = {'status': b['status'], 'body': strip_cursors(native[2](b['body'])), 'events': kinds(b, fixed['native'])}
-        if name.startswith('runtimes:'):
+        if name.startswith(('runtimes:', 'resume:')):
             left['body'], right['body'] = mask_owner(left['body']), mask_owner(right['body'])
         for key in ('sessions', 'runtimes'):
             if key in a or key in b:

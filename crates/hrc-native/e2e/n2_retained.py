@@ -68,14 +68,6 @@ def main():
         invocation = s.rows('SELECT active_invocation_id FROM runtimes WHERE runtime_id=?', (runtime,))[0]['active_invocation_id']
         projected_before = s.rows('SELECT last_projected_seq FROM broker_invocations WHERE invocation_id=?', (invocation,))[0]['last_projected_seq']
         out['ownerKilled'] = s.down(owner, signal.SIGKILL)
-        # rusthrc does not yet reclaim a dead owner's server lock (Bun does; N5's
-        # server lifecycle). The harness clears it only after proving the pid gone.
-        run_dir = s.root / 'run'
-        if args.owner == 'native' and (run_dir / 'server.lock').exists():
-            subprocess.run(['kill', '-0', str(owner.pid)], capture_output=True, check=False).returncode != 0 or (_ for _ in ()).throw(AssertionError('owner still alive'))
-            for name in ('server.lock', 'server.pid', 'hrc.sock'):
-                (run_dir / name).unlink(missing_ok=True)
-            out['nativeStaleLockCleared'] = True
         ledger = Path(state['broker']['brokerCommand'].split("'--event-ledger' '")[1].split("'")[0]) if "'--event-ledger' '" in state['broker']['brokerCommand'] \
             else Path(state['broker']['brokerCommand'].split('--event-ledger ')[1].split()[0])
         size = ledger.stat().st_size

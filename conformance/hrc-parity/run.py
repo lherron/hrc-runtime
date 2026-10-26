@@ -539,9 +539,21 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n2-lanes':
         from n2_lanes import compare as compare_n2_lanes
         return compare_n2_lanes(args, checks)
+    if getattr(args, 'suite', None) == 'n2-retained':
+        from n2_retained import compare as compare_n2_retained
+        return compare_n2_retained(args, checks)
+    if getattr(args, 'suite', None) == 'n2-quit':
+        from n2_quit import compare as compare_n2_quit
+        return compare_n2_quit(args, checks)
+    if getattr(args, 'suite', None) == 'n2-startup':
+        from n2_startup import compare as compare_n2_startup
+        return compare_n2_startup(args, checks)
     if getattr(args, 'suite', None) == 'n2-recovery':
         from n2_recovery import compare as compare_n2_recovery
         return compare_n2_recovery(args, checks)
+    if getattr(args, 'suite', None) == 'n2-inspect-crash':
+        from n2_inspect_crash import compare as compare_n2_inspect_crash
+        return compare_n2_inspect_crash(args, checks)
     if getattr(args, 'suite', None) == 'n2-attached':
         from n2_attached import compare as compare_n2_attached
         return compare_n2_attached(args, checks)
