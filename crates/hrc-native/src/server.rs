@@ -128,11 +128,26 @@ pub fn front_invocation(args: &[String]) -> Result<Option<front::Role>> {
 /// One L2 JSON line on stderr, in accounting::emit's shape. The daemon's stderr
 /// (rusthrc-server.err.log) holds only these lines (T-11822, log-format@2).
 pub fn stderr_json(level: &str, component: &str, event: &str, data: Value) {
-    let _ = writeln!(
-        std::io::stderr().lock(),
-        "{}",
-        json!({"ts":timestamp(),"server":"rusthrc","level":level,"component":component,"event":event,"data":data})
+    log_line(
+        false,
+        &json!({"ts":timestamp(),"server":"rusthrc","level":level,"component":component,"event":event,"data":data}),
     );
+}
+
+/// Every log record is formatted first and written whole under one lock, so a
+/// stdout record and a stderr record never interleave inside a line when both
+/// streams share a file.
+fn log_line(stdout: bool, record: &Value) {
+    static LINES: Mutex<()> = Mutex::new(());
+    let line = format!("{record}\n");
+    let _held = LINES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _ = if stdout {
+        std::io::stdout().lock().write_all(line.as_bytes())
+    } else {
+        std::io::stderr().lock().write_all(line.as_bytes())
+    };
 }
 
 pub use hosting::serve;

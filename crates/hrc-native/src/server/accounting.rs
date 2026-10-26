@@ -414,10 +414,9 @@ fn level(status: u16) -> &'static str {
     }
 }
 fn emit(level: &str, event: &str, component: &str, data: Value) {
-    let _ = writeln!(
-        std::io::stdout().lock(),
-        "{}",
-        json!({"ts":Utc::now().to_rfc3339_opts(SecondsFormat::Millis,true),"server":"rusthrc","level":level,"component":component,"event":event,"data":data})
+    super::log_line(
+        true,
+        &json!({"ts":Utc::now().to_rfc3339_opts(SecondsFormat::Millis,true),"server":"rusthrc","level":level,"component":component,"event":event,"data":data}),
     );
 }
 struct ObservedBody {
