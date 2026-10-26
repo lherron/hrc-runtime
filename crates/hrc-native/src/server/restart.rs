@@ -204,29 +204,7 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
             Some(json!({"hostSessionId":req.host})),
         ));
     };
-    let participant = {
-        let db = server.store.lock().unwrap();
-        let external = db
-            .runtimes()?
-            .into_iter()
-            .filter(|r| r["hostSessionId"] == req.host.as_str())
-            .any(|r| r["runtimeStateJson"]["lifecycleOwner"] == "external");
-        external
-            || db
-                .sqlite
-                .query_row(
-                    "SELECT 1 FROM participant_registrations WHERE scope_ref=? LIMIT 1",
-                    [&scope],
-                    |_| Ok(()),
-                )
-                .is_ok()
-    };
-    if participant {
-        return Err(unavailable(
-            "session restart is not supported for an externally owned participant address",
-            json!({"scopeRef":scope,"laneRef":lane,"reason":"participant_rotation_unsupported","code":"runtime_unavailable"}),
-        ));
-    }
+    refuse_participant(server, &session, "session restart")?;
     if !req.force {
         assert_idle(server, &req.host).await?;
     }
@@ -270,4 +248,40 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         }
     };
     Ok(Json(json!({"priorHostSessionId":req.host,"hostSessionId":successor["hostSessionId"],"generation":successor["generation"],"launch":launch})).into_response())
+}
+
+/// participantRotationUnsupported: rotating an externally owned participant
+/// address would move it off a process HRC does not own.
+pub fn refuse_participant(
+    server: &Shared,
+    session: &Value,
+    operation: &str,
+) -> Result<(), ApiError> {
+    let host = session["hostSessionId"].as_str().unwrap_or("");
+    let scope = session["scopeRef"].as_str().unwrap_or("");
+    let lane = session["laneRef"].as_str().unwrap_or("");
+    let participant = {
+        let db = server.store.lock().unwrap();
+        let external = db
+            .runtimes()?
+            .into_iter()
+            .filter(|r| r["hostSessionId"] == host)
+            .any(|r| r["runtimeStateJson"]["lifecycleOwner"] == "external");
+        external
+            || db
+                .sqlite
+                .query_row(
+                    "SELECT 1 FROM participant_registrations WHERE scope_ref=? LIMIT 1",
+                    [scope],
+                    |_| Ok(()),
+                )
+                .is_ok()
+    };
+    if participant {
+        return Err(unavailable(
+            format!("{operation} is not supported for an externally owned participant address"),
+            json!({"scopeRef":scope,"laneRef":lane,"reason":"participant_rotation_unsupported","code":"runtime_unavailable"}),
+        ));
+    }
+    Ok(())
 }

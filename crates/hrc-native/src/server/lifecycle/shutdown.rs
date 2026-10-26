@@ -134,6 +134,7 @@ pub async fn finish(
         "handoff_wait_failed",
         async {
             crate::server::handoff::stop(server).await;
+            crate::server::self_restart::stop(server).await;
             Ok::<_, anyhow::Error>(())
         },
     )

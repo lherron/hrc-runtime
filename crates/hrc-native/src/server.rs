@@ -47,6 +47,7 @@ mod rpc;
 mod runs;
 mod runtime_views;
 mod runtimes;
+mod self_restart;
 mod sessions;
 mod startup;
 mod surfaces;
@@ -88,6 +89,7 @@ struct Server {
     wrkq: ledger::Client,
     publication: publication::State,
     handoff: handoff::State,
+    self_restart: self_restart::State,
     controller: controller::State,
     /// Runtimes whose user-exit lease reap already fired.
     reaped: Mutex<HashSet<String>>,
@@ -384,6 +386,8 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         messages::query(server, &body).await
     } else if method == Method::POST && uri.path() == "/v1/messages/turn-handoff" {
         handoff::handle(server, &body).await
+    } else if method == Method::POST && uri.path() == "/v1/runtimes/restart-self" {
+        self_restart::handle(server, &body, &headers).await
     } else if method == Method::POST && uri.path() == "/v1/runs/reconcile-active" {
         match parse_body(&body) {
             Ok(value) => reconcile::handle(server, value).await,
@@ -589,6 +593,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/submissions/withdraw",
                 "/v1/messages/query",
                 "/v1/messages/turn-handoff",
+                "/v1/runtimes/restart-self",
                 "/v1/submissions/preempt/admission",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
@@ -735,7 +740,7 @@ fn status(
     }
     let db = server.store.lock().unwrap();
     let binary = env::current_exe().map_err(anyhow::Error::from)?;
-    let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":{"mode":"unmanaged","packagePath":binary.parent(),"processStartedAt":server.started_at,"runningEqualsInstalled":false},"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"lastRestart":lifecycle::rows::last_restart(&db.sqlite)?,"mailKicker":"absent","node":server.federation.config.summary(),"capabilities":{"semanticCore":{"sessions":true,"ensureRuntime":false,"dispatchTurn":false,"inFlightInput":false,"capture":false,"attach":false,"clearContext":false},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":false,"literalInput":false,"surfaceBindings":false,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":{"available":false}},"serverLifecycle":false,"selfRestart":false,"sessionRestart":false,"federatedSessionRead":false}});
+    let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":{"mode":"unmanaged","packagePath":binary.parent(),"processStartedAt":server.started_at,"runningEqualsInstalled":false},"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"lastRestart":lifecycle::rows::last_restart(&db.sqlite)?,"mailKicker":"absent","node":server.federation.config.summary(),"capabilities":{"semanticCore":{"sessions":true,"ensureRuntime":false,"dispatchTurn":false,"inFlightInput":false,"capture":false,"attach":false,"clearContext":false},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":false,"literalInput":false,"surfaceBindings":false,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":{"available":false}},"serverLifecycle":false,"selfRestart":true,"sessionRestart":false,"federatedSessionRead":false}});
     if query.get("includeSessions").is_some_and(|v| v == "true") {
         value["sessions"] = json!(
             db.sessions()?

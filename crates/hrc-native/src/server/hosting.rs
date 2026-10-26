@@ -84,6 +84,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         wrkq: ledger::Client::default(),
         publication: publication::State::default(),
         handoff: handoff::State::default(),
+        self_restart: self_restart::State::default(),
         controller: controller::State::default(),
         owner_writes: writes::OwnerWrites::default(),
         reaped: Mutex::new(HashSet::new()),
@@ -117,6 +118,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         lifecycle::rows::boot(&server)?;
         lifecycle::credentials::start(&server)?;
         handoff::start(&server);
+        self_restart::start(&server);
         startup::reconcile(&server).await?;
         retained::start(&server);
         recovery::start(&server);

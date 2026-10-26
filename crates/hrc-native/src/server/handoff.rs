@@ -194,7 +194,9 @@ async fn deliver(
     }
     delivered
 }
-async fn run(server: &Shared, body: &Value) -> Result<Response, ApiError> {
+/// persistAndDeliverSemanticTurnHandoff: the started (or admission-rejected)
+/// body, shared by the route and self-restart's successor prompt.
+pub async fn submit(server: &Shared, body: &Value) -> Result<Value, ApiError> {
     let request = parse::request(body)?;
     if request.to["kind"] != "session" {
         return Err(turns::parse::bad(
@@ -272,7 +274,7 @@ async fn run(server: &Shared, body: &Value) -> Result<Response, ApiError> {
         }
         Ok(Admitted::Rejected { code, body }) => {
             admission::record(server, &req, &mut trace, Outcome::RefusedWith(code));
-            return Ok(Json(body).into_response());
+            return Ok(body);
         }
         Ok(Admitted::Replayed(_)) => {
             admission::record(server, &req, &mut trace, Outcome::Replayed);
@@ -285,7 +287,7 @@ async fn run(server: &Shared, body: &Value) -> Result<Response, ApiError> {
     match deliver(server, &request, parent.as_ref(), &plan).await {
         Ok((response, accepted)) => {
             admission::record(server, &req, &mut trace, Outcome::Routed { accepted });
-            Ok(Json(response).into_response())
+            Ok(response)
         }
         Err(error) => {
             admission::record(server, &req, &mut trace, Outcome::PossibleWrite(&error));
@@ -301,5 +303,8 @@ pub async fn handle(server: &Shared, body: &[u8]) -> Result<Response, ApiError> 
         error
     };
     let body = super::parse_body(body).map_err(detail)?;
-    run(server, &body).await.map_err(detail)
+    submit(server, &body)
+        .await
+        .map(|v| Json(v).into_response())
+        .map_err(detail)
 }
