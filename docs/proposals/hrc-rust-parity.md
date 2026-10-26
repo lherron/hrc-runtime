@@ -72,6 +72,29 @@ The critical path is N0 → N1 → N2 → N3 → N4 → N6. N5 can start after N
 | **F Front door** | Bun configurable listen socket; rusthrc front mode with the front-safe read set and verbatim forwarding; separate-file access logging; launchd service for rusthrc; deploy hrcdev → svc → max3 with Bun still execution owner. | (1) On scratch, a rusthrc front with Bun behind on the same state root serves the front-safe reads natively and forwards everything else, and the unchanged CLI, kernel, injector and a real turn all work through it. (2) The two logs reconcile. At a test rate below the per-route-minute unsampled head, every request appears exactly once in `rusthrc-server-*`, forwarded ones exactly once more in Bun's `server-*`. CLI requests (client-supplied IDs) join exactly, SDK requests without IDs match by route and minute count. No file is written by both. On hrcdev's 24h fronted run, per-route hourly weighted counts are reported side by side, measured, not gated. (3) Rollback (stop rusthrc, Bun back on `hrc.sock`) restores service with brokers reattached. (4) hrcdev runs fronted for 24h with no request errors attributable to the front, then svc, then max3. |
 | **N6 Node handoff** | A reviewed per-node switch procedure: close admission, settle or record pending work, stop the old owner without killing brokers, start the new one, verify. Rollback is the same procedure in reverse. | (1) On scratch, Bun → Rust → Bun keeps the same seats, history and pending input, with one owner at a time and a real turn after each switch. (2) Then hrcdev, then svc, then max3, each authorized separately by Lance. |
 
+## Progress
+
+As of 2026-10-26 07:40Z. The wrkq tasks are authoritative. This section records package state and the scope moves made since r2.
+
+| Package | Task | State |
+|---|---|---|
+| N0 | T-11817 | Closed. |
+| N1 | T-11818 | Closed at ff24579a: gates 1–4 pass, 0 GAP:N1. |
+| N2 | T-11823 (clod) | Active. Landing 1 (61c733d5) owns the broker event path: projection, ACK after commit, replay. |
+| N3 | T-11839 (cody) | Active. |
+| N4 | — | Not started. |
+| N5 | T-11819 (cody), N5b T-11821 | All 55 implement commands native and installed (8d7c3502). Remaining: Rust-only server help, the launch/commands split, aggregate gates. |
+| F | T-11822 (clod) | Landed through a002f77a. hrcdev enable is pending a Claude login on the hrcdev seat; then 24h, svc, max3. |
+| N6 | — | Not started. |
+
+Scope moves since r2:
+- `GET /v1/presentation/runtimes` and `POST /v1/presentation/seats/read` move N4 → N3. The unchanged kernel needs both to bootstrap, and N3's gate 2 is the unchanged kernel.
+- The 11 slow-statement telemetry items (`hrc-store-sqlite/src/statement-telemetry.ts`) move N5 → N4. Only the daemon instruments statements.
+- Continuation on `aspc.compileHarnessInvocation` is assigned to N2, including births on a scope with a stored continuation. N1's fresh-scope gates missed it; agent-spaces T-11833 found it.
+- The claude-code-tmux Stop-fallback duplicate `turn.message` (agent-spaces T-11837) must land before N6. A Rust owner answers the Stop-hook mail decision about 100× faster than Bun and exposes the race on nearly every turn.
+
+Rule added after an incident: a scratch Bun daemon started from the installed tree deleted production's running release (2026-10-26 04:50Z). Scratch Bun daemons run only from a `cp -R` of the release with an atomic-mode refusal. T-11830 (02661aeb) makes every release prune keep any release a live process holds.
+
 ## Explicitly unsupported
 
 These are never gates, and Rust does not have to reproduce them:
