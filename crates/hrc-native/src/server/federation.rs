@@ -752,6 +752,26 @@ fn registry_path(state: &Path) -> PathBuf {
         .join("binding-registry.sqlite")
 }
 
+/// ensurePlacementLedgerSchema: Bun creates the table on first repository
+/// use, not in a migration, so a store no Bun owner federated lacks it.
+fn ensure_ledger_table(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS placement_ledger (
+           scope_ref TEXT PRIMARY KEY,
+           home_node_id TEXT NOT NULL,
+           state TEXT NOT NULL CHECK (state IN ('active', 'retired')),
+           retired_at TEXT,
+           retirement_reason TEXT,
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL,
+           CHECK (
+             (state = 'active' AND retired_at IS NULL AND retirement_reason IS NULL) OR
+             (state = 'retired' AND retired_at IS NOT NULL AND retirement_reason IS NOT NULL)
+           )
+         );",
+    )
+}
+
 /// PlacementLedgerRepository.get; a pre-federation store has no table.
 pub fn ledger_row(db: &Connection, scope: &str) -> Option<LedgerRow> {
     db.query_row(
@@ -1122,6 +1142,7 @@ pub fn install_active(db: &Connection, binding: &Value) -> Result<(), String> {
     }
     let updated = binding["updatedAt"].as_str().unwrap_or_default();
     let created = binding["createdAt"].as_str().unwrap_or(updated);
+    ensure_ledger_table(db).map_err(|e| e.to_string())?;
     db.execute(
         "INSERT INTO placement_ledger (scope_ref, home_node_id, state, retired_at, retirement_reason, created_at, updated_at)
          VALUES (?, ?, 'active', NULL, NULL, ?, ?)",
