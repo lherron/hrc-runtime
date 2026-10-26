@@ -1,5 +1,5 @@
 //! CLI selector grammar and snapshot resolution, matching the Bun operator CLI.
-use crate::{Error, Result, client::Daemon};
+use crate::{Error, Result, SourceCode, client::Daemon};
 use serde_json::{Value, json};
 
 pub(crate) enum Target {
@@ -22,7 +22,10 @@ pub(crate) struct Snapshot {
 const RUNTIME_FORMS: &str = "runtime selectors: raw runtimeId, runtime:<runtimeId>, scope:<scopeRef>, session:<sessionRef>, or bare target handle";
 const HOST_FORMS: &str = "host-session selectors: raw hostSessionId, host:<hostSessionId>, session:<sessionRef>, scope:<scopeRef>, or bare target handle";
 fn invalid(raw: &str, message: impl std::fmt::Display) -> Error {
-    Error::usage(format!("invalid selector \"{raw}\": {message}"))
+    Error::selector(
+        SourceCode::ParseError,
+        format!("invalid selector \"{raw}\": {message}"),
+    )
 }
 pub(crate) fn token(value: &str, label: &str) -> std::result::Result<(), String> {
     let n = value.encode_utf16().count();
@@ -282,10 +285,13 @@ impl Snapshot {
                     .collect::<Vec<_>>();
                 if matches.is_empty() {
                     let n = self.runtimes.len();
-                    return Err(Error::usage(format!(
-                        "selector \"{raw}\" did not match any runtime among {n} known candidate{}. Accepted {RUNTIME_FORMS}. List candidates with: hrc runtime list --json",
-                        if n == 1 { "" } else { "s" }
-                    )));
+                    return Err(Error::selector(
+                        SourceCode::NotFound,
+                        format!(
+                            "selector \"{raw}\" did not match any runtime among {n} known candidate{}. Accepted {RUNTIME_FORMS}. List candidates with: hrc runtime list --json",
+                            if n == 1 { "" } else { "s" }
+                        ),
+                    ));
                 }
                 if matches.len() > 1 && !latest {
                     let mut ids = matches
@@ -303,10 +309,13 @@ impl Snapshot {
                     if matches.len() > 10 {
                         ids.push_str(&format!(", … ({} more)", matches.len() - 10));
                     }
-                    return Err(Error::usage(format!(
-                        "selector \"{raw}\" is ambiguous: matched {} runtime targets: {ids}. Retry with an explicit ID from: hrc runtime list --json",
-                        matches.len()
-                    )));
+                    return Err(Error::selector(
+                        SourceCode::Ambiguous,
+                        format!(
+                            "selector \"{raw}\" is ambiguous: matched {} runtime targets: {ids}. Retry with an explicit ID from: hrc runtime list --json",
+                            matches.len()
+                        ),
+                    ));
                 }
                 if latest {
                     matches.sort_by(|a, b| {
@@ -365,9 +374,12 @@ pub(crate) fn host(raw: &str, client: &Daemon) -> Result<String> {
         return Ok(raw.into());
     }
     let mismatch = |kind: &str| {
-        Error::usage(format!(
-            "selector \"{raw}\" resolved as {kind}; expected host-session. Accepted {HOST_FORMS}"
-        ))
+        Error::selector(
+            SourceCode::TypeMismatch,
+            format!(
+                "selector \"{raw}\" resolved as {kind}; expected host-session. Accepted {HOST_FORMS}"
+            ),
+        )
     };
     if snapshot.runtimes.iter().any(|r| r["runtimeId"] == raw) {
         return Err(mismatch("runtimeId"));
@@ -386,10 +398,13 @@ pub(crate) fn host(raw: &str, client: &Daemon) -> Result<String> {
         .collect::<Vec<_>>();
     if matches.is_empty() {
         let count = snapshot.sessions.len();
-        return Err(Error::usage(format!(
-            "selector \"{raw}\" did not match any host-session among {count} known candidate{}. Accepted {HOST_FORMS}. List candidates with: hrc session list --json",
-            if count == 1 { "" } else { "s" }
-        )));
+        return Err(Error::selector(
+            SourceCode::NotFound,
+            format!(
+                "selector \"{raw}\" did not match any host-session among {count} known candidate{}. Accepted {HOST_FORMS}. List candidates with: hrc session list --json",
+                if count == 1 { "" } else { "s" }
+            ),
+        ));
     }
     if matches.len() > 1 {
         let mut ids = matches
@@ -407,10 +422,13 @@ pub(crate) fn host(raw: &str, client: &Daemon) -> Result<String> {
         if matches.len() > 10 {
             ids.push_str(&format!(", … ({} more)", matches.len() - 10));
         }
-        return Err(Error::usage(format!(
-            "selector \"{raw}\" is ambiguous: matched {} host-session targets: {ids}. Retry with an explicit ID from: hrc session list --json",
-            matches.len()
-        )));
+        return Err(Error::selector(
+            SourceCode::Ambiguous,
+            format!(
+                "selector \"{raw}\" is ambiguous: matched {} host-session targets: {ids}. Retry with an explicit ID from: hrc session list --json",
+                matches.len()
+            ),
+        ));
     }
     Ok(matches[0]["hostSessionId"]
         .as_str()
@@ -448,7 +466,7 @@ pub(crate) fn continuity(raw: &str, client: &Daemon) -> Result<(String, String)>
             Some(_) if !source.contains('@') => ("selector", 0),
             _ => ("target", 0),
         };
-        Error { reported: false, message: reason.into(), code: 2, domain: Some(json!({"code":"invalid_selector","message":reason,"detail":{"kind":kind,"position":position,"reason":reason},"usage":true})) }
+        Error { source_code: None, json_message: None, reported: false, message: reason.into(), code: 2, domain: Some(json!({"code":"invalid_selector","message":reason,"detail":{"kind":kind,"position":position,"reason":reason},"usage":true})) }
     })?;
     match selector {
         Selector::Scope(scope, lane) => Ok((scope, lane.unwrap_or_else(|| "main".into()))),
@@ -457,9 +475,12 @@ pub(crate) fn continuity(raw: &str, client: &Daemon) -> Result<(String, String)>
     }
 }
 fn mismatch(raw: &str, received: &str) -> Error {
-    Error::usage(format!(
-        "selector \"{raw}\" resolved as {received}; expected runtime. Accepted {RUNTIME_FORMS}"
-    ))
+    Error::selector(
+        SourceCode::TypeMismatch,
+        format!(
+            "selector \"{raw}\" resolved as {received}; expected runtime. Accepted {RUNTIME_FORMS}"
+        ),
+    )
 }
 pub(crate) fn scope_filter(raw: &str) -> Result<String> {
     match parse(raw, None)? {

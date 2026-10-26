@@ -55,7 +55,7 @@ def main():
             cases.append((f"help:{' '.join(node['path'])}:{view}", [f'--{view}', *node['path'], '--help']))
         if any(a['required'] for a in node['arguments']):
             cases.append((f"missing:{' '.join(node['path'])}", node['path']))
-    for argv in ([], ['runtime'], ['wat'], ['runtime', 'nonsense'], ['runtime', 'list', 'extra'], ['runtime', 'list', '--output', 'xml'], ['--output', 'json', 'wat']):
+    for argv in ([], ['runtime'], ['wat'], ['runtime', 'nonsense'], ['runtime', 'list', 'extra'], ['runtime', 'status', 'a', 'b'], ['server', 'status', 'extra', '--json'], ['runtime', 'list', '--output', 'xml'], ['--output', 'json', 'wat']):
         cases.append(('grammar:' + ' '.join(argv), argv))
     supported = {'runtime list', 'session list', 'session resolve'}
     if args.runtime_root:
@@ -105,7 +105,8 @@ def main():
         metric_args += ['--runtime-root', str(args.runtime_root.resolve())]
     metrics = subprocess.run(metric_args, cwd=ROOT)
     daemon = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/daemon_entrypoints.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'daemon-entrypoints')], cwd=ROOT)
-    return int(bool(report['fail']) or any(p.returncode != 0 for p in (status, passthrough, metrics, daemon)))
+    transport = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/client_errors.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'client-errors')], cwd=ROOT)
+    return int(bool(report['fail']) or any(p.returncode != 0 for p in (status, passthrough, metrics, daemon, transport)))
 
 
 if __name__ == '__main__':

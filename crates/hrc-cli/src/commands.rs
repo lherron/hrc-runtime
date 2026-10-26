@@ -5,6 +5,26 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
     let path = args.path();
     match path.as_str() {
         "start" | "run" | "attach" => crate::launch::command(args),
+        "runtime capture" | "runtime interrupt" | "runtime terminate" | "capture status"
+        | "admin surface bind" => runtime_control(args),
+        "session drop-continuation" | "session rotate" => {
+            let client = Daemon::connect()?;
+            let host = crate::selectors::host(&args.positionals[0], &client)?;
+            let mut body = json!({"hostSessionId": host});
+            let route = if path == "session rotate" {
+                if args.flag("relaunch") {
+                    body["relaunch"] = true.into();
+                }
+                "/v1/clear-context"
+            } else {
+                if let Some(reason) = args.value("reason").filter(|s| !s.is_empty()) {
+                    body["reason"] = reason.into();
+                }
+                "/v1/sessions/drop-continuation"
+            };
+            print_json(&client.post(route, body)?);
+            Ok(())
+        }
         "server status" => crate::server_status::command(args),
         "target locate" => {
             let raw = &args.positionals[0];
@@ -584,4 +604,92 @@ fn show(args: &Parsed<'_>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn runtime_control_inner(args: &Parsed<'_>) -> Result<()> {
+    let path = args.path();
+    if path == "runtime terminate"
+        && args.flag("drop-continuation")
+        && args.flag("no-drop-continuation")
+    {
+        return Err(Error::usage(
+            "--drop-continuation and --no-drop-continuation are mutually exclusive",
+        ));
+    }
+    if path == "admin surface bind" {
+        for flag in ["kind", "id"] {
+            if args.value(flag).is_none_or(str::is_empty) {
+                return Err(Error::usage(format!(
+                    "--{flag} is required for surface bind"
+                )));
+            }
+        }
+    }
+    let client = Daemon::connect()?;
+    let id = crate::selectors::runtime(&args.positionals[0], &client, false)?;
+    match path.as_str() {
+        "runtime capture" => {
+            let result = client.get("/v1/capture", &[("runtimeId".into(), id)])?;
+            let output = text(&result["text"]);
+            crate::cli_print!("{output}");
+            if !output.ends_with('\n') {
+                crate::cli_println!("");
+            }
+        }
+        "capture status" => {
+            let result = client.post("/v1/runtimes/capture/status", json!({"runtimeId":id}))?;
+            if args.flag("json") {
+                print_json(&result);
+            } else {
+                crate::cli_println!("capture: {}", capture(result.get("capture")));
+            }
+        }
+        "admin surface bind" => {
+            let descriptor = client.get("/v1/attach", &[("runtimeId".into(), id)])?;
+            let mut body = descriptor["bindingFence"].clone();
+            body["surfaceKind"] = args.value("kind").unwrap().into();
+            body["surfaceId"] = args.value("id").unwrap().into();
+            print_json(&client.post("/v1/surfaces/bind", body)?);
+        }
+        _ => {
+            let mut body = json!({"runtimeId":id});
+            if path == "runtime terminate" {
+                if args.flag("drop-continuation") || args.flag("no-drop-continuation") {
+                    body["dropContinuation"] = args.flag("drop-continuation").into();
+                }
+                for flag in ["reason", "source"] {
+                    if let Some(value) = args.value(flag).filter(|s| !s.is_empty()) {
+                        body[flag] = value.into();
+                    }
+                }
+            }
+            print_json(&client.post(
+                if path == "runtime terminate" {
+                    "/v1/terminate"
+                } else {
+                    "/v1/interrupt"
+                },
+                body,
+            )?);
+        }
+    }
+    Ok(())
+}
+
+fn runtime_control(args: &Parsed<'_>) -> Result<()> {
+    runtime_control_inner(args).map_err(|mut error| {
+        // Bun's capture/interrupt handlers promote coded errors from both
+        // selector resolution and transport to HrcDomainError.
+        if matches!(
+            args.path().as_str(),
+            "runtime capture" | "runtime interrupt"
+        ) && let Some(code) = error.source_code
+        {
+            error.code = 1;
+            error.domain = Some(
+                json!({"code":code.as_str(),"message":error.message,"detail":{},"usage":false}),
+            );
+        }
+        error
+    })
 }

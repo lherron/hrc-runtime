@@ -23,12 +23,34 @@ mod server_status;
 
 use serde_json::Value;
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SourceCode {
+    ParseError,
+    TypeMismatch,
+    Ambiguous,
+    NotFound,
+    FailedToOpenSocket,
+}
+impl SourceCode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ParseError => "parse-error",
+            Self::TypeMismatch => "type-mismatch",
+            Self::Ambiguous => "ambiguous",
+            Self::NotFound => "not-found",
+            Self::FailedToOpenSocket => "FailedToOpenSocket",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Error {
     message: String,
     code: i32,
     domain: Option<Value>,
     reported: bool,
+    source_code: Option<SourceCode>,
+    json_message: Option<Box<serde_json::value::RawValue>>,
 }
 impl Error {
     pub(crate) fn usage(message: impl Into<String>) -> Self {
@@ -37,6 +59,8 @@ impl Error {
             code: 2,
             domain: None,
             reported: false,
+            source_code: None,
+            json_message: None,
         }
     }
     pub(crate) fn failure(message: impl Into<String>) -> Self {
@@ -45,7 +69,67 @@ impl Error {
             code: 1,
             domain: None,
             reported: false,
+            source_code: None,
+            json_message: None,
         }
+    }
+    pub(crate) fn selector(code: SourceCode, message: impl Into<String>) -> Self {
+        let mut error = Self::usage(message);
+        error.source_code = Some(code);
+        error
+    }
+    pub(crate) fn json(&self, value: &Value, pretty: bool) -> String {
+        let output = ErrorJson {
+            value,
+            message: self.json_message.as_deref(),
+            in_error: false,
+        };
+        if pretty {
+            serde_json::to_string_pretty(&output)
+        } else {
+            serde_json::to_string(&output)
+        }
+        .expect("error envelope")
+    }
+}
+
+// JavaScript's HTTP excerpt may end in a lone UTF-16 surrogate. Keep that
+// message as a JSON string literal while ordinary terminal text uses U+FFFD.
+struct ErrorJson<'a> {
+    value: &'a Value,
+    message: Option<&'a serde_json::value::RawValue>,
+    in_error: bool,
+}
+impl serde::Serialize for ErrorJson<'_> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let Some(object) = self.value.as_object() else {
+            return self.value.serialize(serializer);
+        };
+        let mut map = serializer.serialize_map(Some(object.len()))?;
+        for (key, value) in object {
+            if self.in_error
+                && key == "message"
+                && let Some(message) = self.message
+            {
+                map.serialize_entry(key, message)?;
+            } else if !self.in_error && key == "error" {
+                map.serialize_entry(
+                    key,
+                    &ErrorJson {
+                        value,
+                        message: self.message,
+                        in_error: true,
+                    },
+                )?;
+            } else {
+                map.serialize_entry(key, value)?;
+            }
+        }
+        map.end()
     }
 }
 pub(crate) type Result<T> = std::result::Result<T, Error>;
@@ -155,9 +239,12 @@ pub fn run(args: Vec<String>) -> i32 {
         Err(error) => {
             if error.reported {
                 // Scope commands already emitted their structured stdout envelope.
-            } else if let Some(domain) = error.domain {
+            } else if let Some(domain) = &error.domain {
                 if json_errors {
-                    eprintln!("{}", serde_json::json!({"error": domain}));
+                    eprintln!(
+                        "{}",
+                        error.json(&serde_json::json!({"error": domain}), false)
+                    );
                 } else {
                     eprintln!(
                         "hrc: [{}] {}",
@@ -171,7 +258,7 @@ pub fn run(args: Vec<String>) -> i32 {
             } else if json_errors {
                 eprintln!(
                     "{}",
-                    serde_json::json!({"error": {"message": error.message, "usage": error.code == 2}})
+                    error.json(&serde_json::json!({"error": {"message": error.message, "usage": error.code == 2}}), false)
                 );
             } else {
                 eprintln!("hrc: {}", error.message);

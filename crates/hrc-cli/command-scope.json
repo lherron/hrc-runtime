@@ -100,7 +100,7 @@
     {
       "command": "admin surface bind",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "admin surface list",
@@ -150,7 +150,7 @@
     {
       "command": "capture status",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "doctor",
@@ -280,7 +280,7 @@
     {
       "command": "runtime capture",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "runtime diagnostics",
@@ -295,7 +295,7 @@
     {
       "command": "runtime interrupt",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "runtime list",
@@ -325,7 +325,7 @@
     {
       "command": "runtime terminate",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "send",
@@ -390,7 +390,7 @@
     {
       "command": "session drop-continuation",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "session get",
@@ -435,7 +435,7 @@
     {
       "command": "session rotate",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "show",

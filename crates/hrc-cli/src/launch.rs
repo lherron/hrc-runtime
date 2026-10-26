@@ -210,6 +210,11 @@ pub(crate) fn command(args: &Parsed<'_>) -> Result<()> {
 }
 
 fn prompt(args: &Parsed<'_>, command: &str) -> Result<Option<String>> {
+    if args.positionals.len() > 2 {
+        return Err(Error::usage(format!(
+            "{command} accepts at most one positional prompt"
+        )));
+    }
     let mut sources = vec![];
     if let Some(p) = args.positionals.get(1) {
         sources.push(("positional", p.clone()));
@@ -217,8 +222,11 @@ fn prompt(args: &Parsed<'_>, command: &str) -> Result<Option<String>> {
     if let Some(file) = args.value("prompt-file") {
         sources.push((
             "--prompt-file",
-            std::fs::read_to_string(file)
-                .map_err(|e| Error::usage(format!("--prompt-file: cannot read {file}: {e}")))?,
+            String::from_utf8_lossy(
+                &std::fs::read(file)
+                    .map_err(|e| Error::usage(format!("--prompt-file: cannot read {file}: {e}")))?,
+            )
+            .into_owned(),
         ));
     }
     if let Some(p) = args.value("p") {
@@ -443,6 +451,8 @@ fn attach(args: &Parsed<'_>, input: &str, reference: &str, client: &Daemon) -> R
                 )));
             }
             return Err(Error {
+                source_code: None,
+                json_message: None,
                 message: "no attachable runtime available".into(),
                 code: 1,
                 reported: false,
@@ -835,6 +845,11 @@ fn scope_error(
     json_output: bool,
     mut error: Error,
 ) -> Error {
+    if error.domain.is_none()
+        && let Some(code) = error.source_code
+    {
+        error.domain = Some(json!({"code":code.as_str(),"message":error.message,"detail":{}}));
+    }
     let code = error
         .domain
         .as_ref()
@@ -885,9 +900,9 @@ fn scope_error(
         if let Some(execution) = detail.get("executionRelease") {
             releases["execution"] = execution.clone();
         }
-        print_json(
-            &json!({"error":base,"diagnostics":{"releases":releases,"ids":detail.get("ids").filter(|v|v.is_object()).cloned().unwrap_or_else(||json!({})),"phases":detail.get("phases").filter(|v|v.is_array()).cloned().unwrap_or_else(||json!([]))}}),
-        );
+        crate::cli_println!("{}", error.json(
+            &json!({"error":base,"diagnostics":{"releases":releases,"ids":detail.get("ids").filter(|v|v.is_object()).cloned().unwrap_or_else(||json!({})),"phases":detail.get("phases").filter(|v|v.is_array()).cloned().unwrap_or_else(||json!([]))}}), true
+        ));
         error.reported = true;
         error.code = if [
             "invalid_input",

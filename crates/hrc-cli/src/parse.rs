@@ -169,15 +169,17 @@ pub(crate) fn parse<'a>(surface: &'a Value, args: &[String]) -> Result<Parsed<'a
     if !parsed.help {
         let arguments = parsed.node["arguments"].as_array().unwrap();
         if parsed.path() != "ls"
+            && parsed.node["allowExcessArguments"] != true
             && parsed.positionals.len() > arguments.len()
             && !arguments.iter().any(|a| a["variadic"] == true)
         {
             return Err(command_error(
                 &parsed,
                 format!(
-                    "error: too many arguments for '{}'. Expected {} arguments but got {}.",
+                    "error: too many arguments for '{}'. Expected {} argument{} but got {}.",
                     parsed.node["name"].as_str().unwrap(),
                     arguments.len(),
+                    if arguments.len() == 1 { "" } else { "s" },
                     parsed.positionals.len()
                 ),
             ));

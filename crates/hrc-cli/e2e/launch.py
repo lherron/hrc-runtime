@@ -80,6 +80,7 @@ def main():
     for flag in ('binary', 'oracle', 'runtime-root', 'state-root', 'scope', 'artifacts'):
         p.add_argument('--' + flag, type=Path if flag != 'scope' else str, required=True)
     p.add_argument("--only-verbose", action="store_true")
+    p.add_argument("--only-edges", action="store_true")
     args = p.parse_args()
     assert not str(args.runtime_root.resolve()).startswith(str(Path.home() / 'praesidium/var'))
     args.artifacts.mkdir(parents=True, exist_ok=True)
@@ -106,6 +107,13 @@ def main():
             cases.append([command, args.scope, '--dry-run', '--json'] + flags)
     cases.extend([['start', args.scope, '--dry-run', '--wait', 'bad'], ['start', args.scope, '--dry-run', '--wait', 'true'], ['start', args.scope, '--dry-run', '--wait']])
     cases.extend([['run', args.scope, '--dry-run', '--verbose'], ['run', args.scope, '--dry-run', '--verbose', '--json']])
+    invalid_utf8 = args.artifacts / 'lossy-prompt.txt'
+    invalid_utf8.write_bytes(b'Reply with OK. No tools.\xff')
+    for command in ('start', 'run'):
+        cases.append([command, args.scope, 'one', 'two', '--dry-run', '--json'])
+        cases.append([command, args.scope, '--prompt-file', str(invalid_utf8), '--dry-run', '--json'])
+    if args.only_edges:
+        cases = cases[-4:]
     if args.only_verbose:
         cases = [case for case in cases if '--verbose' in case]
     bun = shutil.which('bun')

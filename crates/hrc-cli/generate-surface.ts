@@ -38,6 +38,8 @@ function surface(command: Command, path: string[]): unknown {
     name: command.name(),
     aliases: command.aliases(),
     usage: command.usage(),
+    allowExcessArguments: (command as Command & { _allowExcessArguments: boolean })
+      ._allowExcessArguments,
     ...(usage ? { actionUsage: usage } : {}),
     help: path.length ? completeHelp(command) : renderRootHelp(root, 'agent'),
     humanHelp: path.length ? completeHelp(command) : renderRootHelp(root, 'human'),

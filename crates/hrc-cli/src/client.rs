@@ -62,6 +62,12 @@ impl Daemon {
         body: Option<Value>,
         timeout: Option<std::time::Duration>,
     ) -> Result<(Value, Option<String>)> {
+        let declaration = match path {
+            "/v1/placements/resolve" => Some(("placements.resolve", "placement resolution")),
+            "/v1/declarations/resolve" => Some(("declarations.resolve", "declaration resolution")),
+            "/v1/previews/run" => Some(("previews.run", "run previews")),
+            _ => None,
+        };
         let span = crate::metrics::Span::begin(path, method);
         let mut request = self
             .client
@@ -80,7 +86,21 @@ impl Daemon {
             if let Some(span) = span.as_ref() {
                 span.finish(0, 0);
             }
-            Error::failure(e.to_string())
+            let mut error = Error::failure(if e.is_connect() {
+                "Was there a typo in the url or port?".into()
+            } else {
+                e.to_string()
+            });
+            if e.is_connect() {
+                error.source_code = Some(crate::SourceCode::FailedToOpenSocket);
+            }
+            if declaration.is_some() && !e.is_timeout() {
+                let socket = runtime_root().join("hrc.sock");
+                let cause = error.message;
+                error = Error::failure(format!("HRC daemon unreachable at {}", socket.display()));
+                error.domain = Some(serde_json::json!({"code":"runtime_unavailable","message":error.message,"detail":{"code":"hrc_daemon_unreachable","socketPath":socket,"cause":cause},"usage":false}));
+            }
+            error
         })?;
         let status = response.status();
         if let Some(span) = span.as_ref() {
@@ -98,11 +118,59 @@ impl Daemon {
         if let Some(span) = span.as_ref() {
             span.finish(status.as_u16(), text.len());
         }
+        if status.as_u16() == 404
+            && let Some((capability, label)) = declaration
+        {
+            let mut error = Error::failure(format!("HRC daemon does not serve {label}"));
+            error.domain = Some(
+                serde_json::json!({"code":"unsupported_capability","message":error.message,"detail":{"capability":capability,"route":path},"usage":false}),
+            );
+            return Err(error);
+        }
         let value: Value = serde_json::from_str(&text).map_err(|_| {
-            Error::failure(format!(
-                "HRC request failed with status {}: {text}",
+            // Bun slices response excerpts in UTF-16 code units. A boundary
+            // through a surrogate pair is replaced when printed as UTF-8.
+            let units = text.encode_utf16().collect::<Vec<_>>();
+            let excerpt = if units.len() > 200 {
+                format!("{}…", String::from_utf16_lossy(&units[..200]))
+            } else {
+                text.clone()
+            };
+            let suffix = if excerpt.is_empty() {
+                String::new()
+            } else {
+                format!(": {excerpt}")
+            };
+            let mut error = Error::failure(format!(
+                "HRC request failed with status {}{suffix}",
                 status.as_u16()
-            ))
+            ));
+            if units.len() > 200 && String::from_utf16(&units[..200]).is_err() {
+                use std::fmt::Write;
+                let message = format!("HRC request failed with status {}: ", status.as_u16());
+                let message = message
+                    .encode_utf16()
+                    .chain(units[..200].iter().copied())
+                    .chain("…".encode_utf16());
+                let mut raw = String::from("\"");
+                for unit in char::decode_utf16(message) {
+                    match unit {
+                        Ok(ch) => {
+                            let quoted = serde_json::to_string(&ch.to_string()).unwrap();
+                            raw.push_str(&quoted[1..quoted.len() - 1]);
+                        }
+                        Err(unpaired) => {
+                            write!(&mut raw, "\\u{:04x}", unpaired.unpaired_surrogate()).unwrap()
+                        }
+                    }
+                }
+                raw.push('"');
+                error.json_message = Some(
+                    serde_json::value::RawValue::from_string(raw)
+                        .expect("UTF-16 JSON error string"),
+                );
+            }
+            error
         })?;
         if !status.is_success() {
             if value["error"].is_object() {
@@ -142,6 +210,8 @@ impl Daemon {
                 }
                 domain["usage"] = usage.into();
                 return Err(Error {
+                    source_code: None,
+                    json_message: None,
                     reported: false,
                     message: domain["message"].as_str().unwrap_or_default().to_owned(),
                     code: if usage { 2 } else { 1 },
