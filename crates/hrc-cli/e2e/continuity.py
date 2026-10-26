@@ -29,6 +29,7 @@ def main():
     p = argparse.ArgumentParser()
     for flag in ('binary', 'oracle', 'authority', 'artifacts'):
         p.add_argument('--' + flag, type=Path, required=True)
+    p.add_argument('--extended', action='store_true', help='also compare native-supported index, placement and maintenance CLI paths')
     args = p.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
     authority = json.loads(args.authority.read_text())
@@ -89,6 +90,22 @@ def main():
                 selectors = [host, 'host:' + host, scope, 'scope:' + scope, 'session:' + scope + '/lane:main', scope + '/lane:main', 'session:' + scope + '/lane:alternate', 'session:' + scope + '/lane:missing', 'hsid-missing', 'runtime:rt-missing', 'msg:missing', 'wat:foo', 'scope:', 'session:bad', 'seq:no']
                 cases = [command + [selector] for command in (['session', 'get'], ['session', 'meta', 'get']) for selector in selectors]
                 cases += [['session', 'get', selector, '--live'] for selector in (host, 'scope:' + scope, 'session:' + scope + '/lane:alternate')]
+                if args.extended:
+                    commands = [
+                        ['runtime', 'list'], ['runtime', 'list', '--all'],
+                        ['runtime', 'list', '--status', 'ready'],
+                        ['ls', 'runtimes'], ['list', 'runtimes'], ['ls', 'sessions'],
+                        ['session', 'list', '--all'], ['session', 'list', '--porcelain'],
+                        ['session', 'list', '--scope', scope],
+                        ['session', 'resolve', '--scope', scope],
+                        ['session', 'resolve', '--scope', scope, '--lane', 'alternate'],
+                        ['target', 'bindings'], ['target', 'locate', 'tabularasa@n5-t11819:n5-continuity'],
+                        ['runtime', 'sweep', '--dry-run'], ['runtime', 'prune', '--dry-run'],
+                    ]
+                    cases += [command + flags for command in commands for flags in ([], ['--json'])]
+                    # A nonempty two-lane continuity discriminates an inert fixture.
+                    sessions = call('GET', '/v1/sessions?all=true')
+                    assert len([row for row in sessions if row['scopeRef'] == scope]) == 2, sessions
                 for argv in cases:
                     observed = []
                     for label, command in (('oracle', [bun, str(args.oracle.resolve())]), ('subject', [str(args.binary.resolve())])):
@@ -99,7 +116,7 @@ def main():
                     results.append(dict(owner=owner, argv=argv, oracle=observed[0], subject=observed[1], **{'pass': normalize(observed[0]) == normalize(observed[1])}))
                 down()
         finally: down()
-    report = dict(cases=results, **{'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results)})
+    report = dict(extended=args.extended, cases=results, **{'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results)})
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
     for r in results:

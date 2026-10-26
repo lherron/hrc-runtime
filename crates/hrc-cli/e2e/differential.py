@@ -57,7 +57,6 @@ def main():
             cases.append((f"missing:{' '.join(node['path'])}", node['path']))
     for argv in ([], ['runtime'], ['wat'], ['runtime', 'nonsense'], ['runtime', 'list', 'extra'], ['runtime', 'status', 'a', 'b'], ['server', 'status', 'extra', '--json'], ['runtime', 'list', '--output', 'xml'], ['--output', 'json', 'wat']):
         cases.append(('grammar:' + ' '.join(argv), argv))
-    supported = {'runtime list', 'session list', 'session resolve'}
     if args.runtime_root:
         for command in (['runtime', 'list'], ['runtime', 'list', '--all'], ['runtime', 'list', '--status', 'busy'], ['runtime', 'list', '--session', 'missing'], ['session', 'list'], ['ls', 'runtimes'], ['ls', 'sessions'], ['list', 'runtimes']):
             for json_flag in ([], ['--json']):
@@ -85,16 +84,61 @@ def main():
         subprocess.run(['python3', str(ROOT / 'conformance/hrc-parity/run.py'), 'inventory', '--source-ref', 'HEAD', '--out', str(inventory_dir)], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
         coverage = json.loads((inventory_dir / 'coverage-report.json').read_text())
     scope = json.loads((ROOT / 'crates/hrc-cli/command-scope.json').read_text())
-    unsupported = []
+    # This bounded run proves grammar; execution belongs to the named suites.
+    # Report the approved 55/39 split instead of obsolete implementation gaps.
+    families = {
+        'runtime.py': 'runtime list|runtime inspect|runtime status|show|ls|session list|session get|session meta get|session resolve|admin status',
+        'targets.py': 'target locate|target bindings|peek',
+        'launch.py': 'start|run|attach',
+        'restart.py': 'restart', 'restartme.py': 'restartme',
+        'resume.py': 'resume', 'send.py': 'send', 'summon.py': 'summon',
+        'controls.py': 'runtime capture|runtime interrupt|runtime terminate|capture status|session drop-continuation|session rotate|admin surface bind',
+        'server_lifecycle.py': 'server stop|server restart',
+        'server_start.py': 'server start', 'daemon_entrypoints.py': 'server serve',
+        'status.py': 'server status', 'turn_protocol.py': 'turn',
+        'n5b_monitor_reads.py': 'monitor events|monitor transcript|monitor stats|monitor show|monitor session-report',
+        'n5b_monitor_wait.py': 'monitor wait', 'n5b_monitor_watch.py': 'monitor watch',
+        'n5b_local.py': 'info|doctor|runtime diagnostics|runtime prune|runtime sweep|server subscribers|server tmux status',
+        'n5b_admin.py': 'admin broker-verify candidates|admin events drain|admin metrics report|admin metrics routes|admin runs reconcile-active|admin runs sweep-zombies|admin worktrees audit',
+    }
+    suites = {command: suite for suite, commands in families.items() for command in commands.split('|')}
+    decisions = {item['command']: item for item in scope['commands']}
+    assert set(suites) == {key for key, value in decisions.items() if value['disposition'] == 'IMPLEMENT'}
+    qualification, unsupported = [], []
     for item in coverage['items']:
-        if item['target'] != 'GAP:N5':
+        if item['target'] != 'GAP:N5' and item['kind'] != 'cli-command':
             continue
-        command = item['id'].removeprefix('cli:hrc').strip()
-        unsupported.append({'line': item['id'], 'reason':
-            'partial execution cases; full flags/PTY/failure qualification pending N5' if command in supported
-            else 'help/error cases only; execution implementation pending N5' if item['kind'] == 'cli-command'
-            else 'implementation/qualification pending N5'})
-    report = {'commandScope': scope, 'normalization': NORMALIZATION, 'rustHelpAddition': {'paths': ['server', 'server serve'], 'text': rust_server_help}, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'unsupported': unsupported}
+        row = {'line': item['id']}
+        if item['kind'] == 'cli-command':
+            command = item['id'].removeprefix('cli:hrc').strip()
+            decision = decisions[command]
+            if command == 'server':
+                row.update(suite='daemon_entrypoints.py', reason='Bare server is the native daemon entrypoint; its help is native too.')
+            elif decision['disposition'] == 'IMPLEMENT':
+                row.update(suite=suites[command], reason='Native execution qualification is in this separate suite; help alone does not qualify it.')
+            else:
+                row.update(suite='passthrough.py', reason='POSTPONED by T-11820 observed-use audit; exact argv/streams/PID/exit exec the same-release Bun CLI.')
+        elif item['kind'] == 'cli-alias':
+            row.update(suite='runtime.py', reason='list aliases ls; human/JSON alias grammar also runs in this bounded suite.')
+        elif item['kind'] == 'package-bin':
+            row.update(suite='passthrough.py', reason='Release resolution and exec identity; installed PATH provenance is a separate Gate 4 drive.')
+        else:
+            path, symbol = item['source']['path'], item['source']['symbol']
+            if path.endswith('/schema-guard.ts'):
+                row.update(suite='status.py', reason='Readonly non-refusing schema diagnostics, including WAL admission and coordination-file effects.')
+            elif item['kind'] == 'store-operation' and path.endswith(('/event-repositories.ts', '/shared.ts')):
+                row.update(suite='n5b_monitor_wait.py', reason='Native filtered lifecycle reads, high-water cursors, task predicates and row projection.')
+            elif '/monitor/' in path or path.endswith('/monitor-show.ts'):
+                row.update(suite='n5b_monitor_wait.py' if '/wait-' in path else 'n5b_monitor_watch.py' if '/watch-' in path else 'n5b_monitor_reads.py', reason='Native direct-store monitor projection through hrc-store.')
+            elif path.endswith('/worktree-prune.ts'):
+                row.update(suite='n5b_admin.py', reason='Native worktrees audit reads occupancy; apply/prune stays postponed.')
+            elif '/hrc-capture-verifier/' in path and (item['kind'] == 'direct-store-open' or symbol == 'listCandidates.rows'):
+                row.update(suite='n5b_admin.py', reason='Native broker-verify candidates uses the readonly store; full verification stays postponed.')
+            else:
+                row.update(reason='Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820.')
+                unsupported.append(row)
+        qualification.append(row)
+    report = {'commandScope': scope, 'normalization': NORMALIZATION, 'rustHelpAddition': {'paths': ['server', 'server serve'], 'text': rust_server_help}, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'qualification': qualification, 'qualificationNote': 'Suite names are coverage obligations, not behavioral PASS results. Aggregate qualification supplies their actual results.', 'unsupported': unsupported}
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
     for r in results:

@@ -1218,7 +1218,18 @@
     "store-source:packages/hrc-store-sqlite/src/database.ts": "n1-schema-refusal",
     "store-source:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts": "n1-participant-live",
     "store-source:packages/hrc-store-sqlite/src/repositories/event-repositories.ts": "cold-second-turn",
-    "store-source:packages/hrc-store-sqlite/src/repositories/shared.ts": "n1-session-routes"
+    "store-source:packages/hrc-store-sqlite/src/repositories/shared.ts": "n1-session-routes",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:<module>:callerTagFromStack:389": "GAP:N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:<module>:instrumentIterator:1337": "GAP:N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:<module>:instrumentSqliteStatements:4139": "GAP:N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:<module>:instrumentStatement:2599": "GAP:N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:<module>:observeExecution:792": "GAP:N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:instrumentIterator:next:1978": "GAP:N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:instrumentIterator:return:2216": "GAP:N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:instrumentIterator:throw:2372": "GAP:N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:instrumentSqliteStatements:get:4297": "GAP:N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:instrumentStatement.proxy:get:2952": "GAP:N4",
+    "store-source:packages/hrc-store-sqlite/src/statement-telemetry.ts": "GAP:N4"
   },
   "coverageReasons": {
     "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
@@ -1252,6 +1263,17 @@
     "store-source:packages/hrc-store-sqlite/src/database.ts": "N1 schema cases exercise opening the existing canonical database and admission; Bun retains schema creation/upgrade. Other operations retain individual workflow owners.",
     "store-source:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts": "Passing real N1 participant activation exercises the canonical operation/invocation repository; recovery operations remain N2. Other operations retain individual workflow owners.",
     "store-source:packages/hrc-store-sqlite/src/repositories/event-repositories.ts": "N1 lifecycle appends are exercised by birth and maintenance; stream/query operations remain individually assigned. Other operations retain individual workflow owners.",
-    "store-source:packages/hrc-store-sqlite/src/repositories/shared.ts": "N1 session/metadata/runtime workflows exercise common row/JSON helpers; other helper operations retain their own owners. Other operations retain individual workflow owners."
+    "store-source:packages/hrc-store-sqlite/src/repositories/shared.ts": "N1 session/metadata/runtime workflows exercise common row/JSON helpers; other helper operations retain their own owners. Other operations retain individual workflow owners.",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:<module>:callerTagFromStack:389": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:<module>:instrumentIterator:1337": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:<module>:instrumentSqliteStatements:4139": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:<module>:instrumentStatement:2599": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:<module>:observeExecution:792": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:instrumentIterator:next:1978": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:instrumentIterator:return:2216": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:instrumentIterator:throw:2372": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:instrumentSqliteStatements:get:4297": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4",
+    "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts:instrumentStatement.proxy:get:2952": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4",
+    "store-source:packages/hrc-store-sqlite/src/statement-telemetry.ts": "daemon-only slow-statement telemetry (index.ts:816); CLI opens never instrument; native diagnostics → N4"
   }
 }
