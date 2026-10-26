@@ -124,7 +124,8 @@ pub struct Node {
 struct Listener {
     name: &'static str,
     stop: tokio::sync::oneshot::Sender<()>,
-    task: tokio::task::JoinHandle<()>,
+    /// `false` when the listener ended with a serve error.
+    task: tokio::task::JoinHandle<bool>,
 }
 
 /// Serve a federation listener with a graceful-shutdown signal kept on the node.
@@ -139,12 +140,16 @@ fn serve_listener(
         let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
             let _ = stopped.await;
         });
-        if let Err(error) = serve.await {
-            log(
-                "error",
-                &format!("federation.{name}.listener_failed"),
-                json!({"error":error.to_string()}),
-            );
+        match serve.await {
+            Ok(()) => true,
+            Err(error) => {
+                log(
+                    "error",
+                    &format!("federation.{name}.listener_failed"),
+                    json!({"error":error.to_string()}),
+                );
+                false
+            }
         }
     });
     server
@@ -172,7 +177,15 @@ pub async fn stop_listeners(server: &super::Shared, budget: Duration) -> bool {
     for (name, mut task) in tasks {
         let left = deadline.saturating_duration_since(Instant::now());
         match tokio::time::timeout(left, &mut task).await {
-            Ok(Ok(())) => {}
+            Ok(Ok(true)) => {}
+            Ok(Ok(false)) => {
+                quiescent = false;
+                log(
+                    "error",
+                    "federation.listener.stop_failed",
+                    json!({"listener":name,"error":"listener ended with a serve error"}),
+                );
+            }
             Ok(Err(error)) => {
                 quiescent = false;
                 log(
