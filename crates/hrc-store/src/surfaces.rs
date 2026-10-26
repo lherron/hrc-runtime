@@ -4,6 +4,20 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
+/// hrc-store-sqlite mapSurfaceBindingRow key order.
+const ROW_ORDER: &[&str] = &[
+    "surfaceKind",
+    "surfaceId",
+    "clientTty",
+    "hostSessionId",
+    "runtimeId",
+    "generation",
+    "windowId",
+    "paneId",
+    "boundAt",
+    "unboundAt",
+    "reason",
+];
 fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     fields(
         r,
@@ -23,6 +37,7 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
         ],
         &[],
     )
+    .map(|v| crate::ordered(v, ROW_ORDER))
 }
 fn find(db: &Connection, kind: &str, id: &str) -> Result<Option<Value>> {
     Ok(db

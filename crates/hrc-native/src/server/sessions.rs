@@ -193,13 +193,20 @@ fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, Ap
     if let Some(limit) = limit {
         sessions.truncate(limit);
     }
+    let scoped = scope.is_some();
     for s in &mut sessions {
         let scope = s["scopeRef"].as_str().unwrap();
         let lane = hrc_store::storage_lane(s["laneRef"].as_str().unwrap());
         let identity = db.optional_identity(scope, lane)?;
         let metadata = db.metadata(scope, lane)?;
+        // Bun's scoped list maps through the store repository (identity last);
+        // the unscoped projection maps through mapSessionRow(row, db).
         if let Some(identity) = identity {
-            s["identity"] = identity;
+            if scoped {
+                s["identity"] = identity;
+            } else {
+                *s = hrc_store::with_session_identity(s.take(), identity);
+            }
         }
         if let Some(title) = metadata["metadata"].get("title").filter(|v| v.is_string()) {
             s["title"] = title.clone();

@@ -42,6 +42,35 @@ pub fn canonical_lane(lane: &str) -> String {
 pub fn storage_lane(lane: &str) -> &str {
     lane.strip_prefix("lane:").unwrap_or(lane)
 }
+/// Bun's key order first; keys it does not name keep their relative order after.
+pub fn ordered(value: Value, order: &[&str]) -> Value {
+    let Value::Object(mut fields) = value else {
+        return value;
+    };
+    let mut out = Map::new();
+    for key in order {
+        if let Some(v) = fields.shift_remove(*key) {
+            out.insert((*key).into(), v);
+        }
+    }
+    out.extend(fields);
+    out.into()
+}
+/// hrc-server mapSessionRow(row, db) key order: identity follows scopeRef.
+pub fn with_session_identity(session: Value, identity: Value) -> Value {
+    let Value::Object(fields) = session else {
+        return session;
+    };
+    let mut ordered = Map::new();
+    for (key, value) in fields {
+        let scope = key == "scopeRef";
+        ordered.insert(key, value);
+        if scope {
+            ordered.insert("identity".into(), identity.clone());
+        }
+    }
+    ordered.into()
+}
 
 include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
 

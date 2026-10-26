@@ -180,18 +180,28 @@ pub fn handle(
             .map_err(anyhow::Error::from)?;
         let component = &components[&local];
         let cursor = component["t"].as_str().zip(component["h"].as_str());
-        let (mut items, more) = db.session_index_page(&filters, cursor, limit)?;
-        for item in &mut items {
-            item["nodeId"] = local.clone().into();
-            components[&local] = json!({"t":item["lastActivityAt"],"h":item["hostSessionId"]});
+        let (rows, more) = db.session_index_page(&filters, cursor, limit)?;
+        let mut items = Vec::with_capacity(rows.len());
+        for mut row in rows {
+            row["nodeId"] = local.clone().into();
+            components[&local] = json!({"t":row["lastActivityAt"],"h":row["hostSessionId"]});
+            items.push(hrc_store::ordered(row, ITEM_ORDER));
         }
-        let mut output = json!({"items":items,"eventHighWater":{local:highwater},"complete":true,"peerStatus":peer_status});
+        // handleSessionPageLocal: nextCursor sits between items and eventHighWater.
+        let mut output = serde_json::Map::new();
+        output.insert("items".into(), items.into());
         if more {
-            output["nextCursor"] = URL_SAFE_NO_PAD
-                .encode(json!({"v":5,"f":fingerprint,"n":components}).to_string())
-                .into();
+            output.insert(
+                "nextCursor".into(),
+                URL_SAFE_NO_PAD
+                    .encode(json!({"v":5,"f":fingerprint,"n":components}).to_string())
+                    .into(),
+            );
         }
-        Ok(Json(output).into_response())
+        output.insert("eventHighWater".into(), json!({local:highwater}));
+        output.insert("complete".into(), true.into());
+        output.insert("peerStatus".into(), peer_status);
+        Ok(Json(Value::Object(output)).into_response())
     } else {
         let mut output = db.session_index_facets(&filters)?;
         let node_count = output
@@ -202,6 +212,34 @@ pub fn handle(
         output["byNodeId"] = json!({local:node_count});
         output["complete"] = true.into();
         output["peerStatus"] = peer_status;
-        Ok(Json(output).into_response())
+        Ok(Json(hrc_store::ordered(output, FACETS_ORDER)).into_response())
     }
 }
+
+/// session-index-repository mapRow, prefixed by localPage's nodeId.
+const ITEM_ORDER: &[&str] = &[
+    "nodeId",
+    "hostSessionId",
+    "title",
+    "scopeRef",
+    "laneRef",
+    "generation",
+    "identity",
+    "taskId",
+    "agentId",
+    "projectId",
+    "createdAt",
+    "effectiveStatus",
+    "executionMode",
+    "lastActivityAt",
+];
+/// handleSessionFacets' response literal.
+const FACETS_ORDER: &[&str] = &[
+    "total",
+    "byEffectiveStatus",
+    "byExecutionMode",
+    "byAgentId",
+    "byNodeId",
+    "complete",
+    "peerStatus",
+];
