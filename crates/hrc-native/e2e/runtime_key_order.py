@@ -18,7 +18,7 @@ from key_order import differences
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--finding', choices=['inspect', 'sweep', 'tmux'], required=True)
+    p.add_argument('--finding', choices=['inspect', 'sweep', 'tmux', 'stream'], required=True)
     p.add_argument('--baseline', type=Path, required=True)
     p.add_argument('--candidate', type=Path, required=True)
     p.add_argument('--out', type=Path, required=True)
@@ -27,6 +27,22 @@ def main():
         d = json.loads(path.read_text())
         return d['observations'] if isinstance(d, dict) else d
     bun, native = load(a.baseline), load(a.candidate)
+    if a.finding == 'stream':
+        cases = []
+        for owner, rows in [('bun', bun), ('native', native)]:
+            found = [r for r in rows if 'bounded-stream' in str(r.get('route', r.get('path', r.get('case', ''))))]
+            if not found:
+                cases.append(dict(owner=owner, **{'pass': False}, reason='missing follow case'))
+            for r in found:
+                raw = r.get('raw', r.get('body'))
+                value = json.loads(raw.splitlines()[0]) if isinstance(raw, str) else raw
+                cases.append(dict(owner=owner, status=r.get('status'), body=value,
+                                  **{'pass': r.get('status') == 200 and isinstance(value, dict) and value.get('type') == 'ready'}))
+        report = dict(finding='stream', compared=len(cases), failed=sum(not c['pass'] for c in cases), cases=cases)
+        a.out.parent.mkdir(parents=True, exist_ok=True)
+        a.out.write_text(json.dumps(report, indent=2) + '\n')
+        print(json.dumps({k: v for k, v in report.items() if k != 'cases'}))
+        return int(bool(report['failed']))
     left, right = ({r['case']: r for r in rows} for rows in (bun, native))
     results = []
     for name, b in left.items():
