@@ -36,6 +36,11 @@ BIPC = re.compile(r'bipc/[0-9a-f]{12}')
 
 def mask_owner(value):
     if isinstance(value, dict):
+        # The broker's capture snapshot is stored verbatim; how many unknown
+        # native records a harness emitted varies run to run on either owner.
+        if isinstance(value.get('blockedUnknown'), list):
+            value = dict(value, blockedUnknown=[dict(b, count='<harness>') if isinstance(b, dict) else b
+                                                for b in value['blockedUnknown']])
         return {k: ('<owner>' if k in OWNER_DERIVED else mask_owner(v)) for k, v in value.items()}
     if isinstance(value, list):
         return [mask_owner(v) for v in value]
