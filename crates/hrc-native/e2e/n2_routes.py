@@ -256,6 +256,22 @@ def main():
         [o for o in observations if o['case'] == 'restart:ok'][-1]['sessions'] = s.rows('SELECT generation, status, continuation_reuse_disabled FROM sessions WHERE scope_ref=? ORDER BY generation', (scope,))
         [o for o in observations if o['case'] == 'restart:ok'][-1]['runtimes'] = s.rows('SELECT generation, status FROM runtimes WHERE scope_ref=? ORDER BY created_at', (scope,))
         case('restart:old-host', 'POST', restart, {'hostSessionId': active, 'expectedGeneration': gen})
+        resume = '/v1/sessions/resume-continuation'
+        case('resume:not-object', 'POST', resume, [])
+        case('resume:no-ref', 'POST', resume, {})
+        case('resume:bad-prior', 'POST', resume, {'sessionRef': session_ref, 'priorHostSessionId': 3})
+        case('resume:unknown-target', 'POST', resume, {'sessionRef': prefix + 'n2-no-such-task/lane:main'})
+        # The restarted seat is live: resuming onto it would fork a runtime.
+        case('resume:live-successor', 'POST', resume, {'sessionRef': session_ref})
+        live = s.rows("SELECT runtime_id FROM runtimes WHERE host_session_id=? AND status NOT IN ('terminated','dead','stale','crashed','detached')", (nxt,))
+        if live:
+            case('resume:terminate-successor', 'POST', terminate, {'runtimeId': live[0]['runtime_id'], 'reason': 'n2 resume case', 'source': 'e2e', 'actor': 'agent:clod'})
+            s.wait(lambda: not s.rows("SELECT 1 FROM runtimes WHERE host_session_id=? AND status NOT IN ('terminated','dead','stale','crashed','detached')", (nxt,)), 120, 'successor terminated')
+        case('resume:ok', 'POST', resume, {'sessionRef': session_ref})
+        [o for o in observations if o['case'] == 'resume:ok'][-1]['sessions'] = s.rows('SELECT generation, status, prior_host_session_id IS NOT NULL AS has_prior, continuation_json IS NOT NULL AS has_continuation, continuation_reuse_disabled FROM sessions WHERE scope_ref=? ORDER BY generation', (scope,))
+        case('resume:again', 'POST', resume, {'sessionRef': session_ref})
+        case('resume:pinned-first', 'POST', resume, {'sessionRef': session_ref, 'priorHostSessionId': host})
+        [o for o in observations if o['case'] == 'resume:pinned-first'][-1]['sessions'] = s.rows('SELECT generation, status, prior_host_session_id IS NOT NULL AS has_prior, continuation_json IS NOT NULL AS has_continuation, continuation_reuse_disabled FROM sessions WHERE scope_ref=? ORDER BY generation', (scope,))
         if not args.only or 'terminate:final' in args.only.split(','):
             [o for o in observations if o['case'] == 'terminate:final'][0]['finalRows'] = {
                 'runtime': s.rows('SELECT status, active_run_id, active_invocation_id FROM runtimes WHERE runtime_id=?', (runtime,)),

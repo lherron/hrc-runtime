@@ -102,10 +102,14 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     let run = (!prompt.is_empty()).then_some(run_id);
     let identity = compile::allocate(&session, run);
     let scope = string(&session, "scopeRef")?;
-    // The persisted intent is the normalized, promptless one (record.intent).
+    // The persisted intent is the promptless one (record.intent). Bun stamps
+    // placement correlation at turn admission (normalizeDispatchIntent), so a
+    // promptless start (a relaunch, the attached door) keeps the intent it was
+    // given; the compile request is normalized either way.
+    let given = intent.clone();
     let intent = compile::normalize_placement(intent, &session, run);
     let dispatch_env = dispatch_environment(&session, &intent, &server.runtime, run)?;
-    let mut stored = intent.clone();
+    let mut stored = if run.is_some() { intent.clone() } else { given };
     if run.is_some()
         && let Some(map) = stored.as_object_mut()
     {

@@ -35,6 +35,7 @@ mod publication;
 mod reconcile;
 mod recovery;
 mod restart;
+mod resume;
 mod rpc;
 mod runs;
 mod runtime_views;
@@ -360,6 +361,11 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
             Ok(value) => sweeps::handle_sweep_zombies(server, value),
             Err(e) => Err(e),
         }
+    } else if method == Method::POST && uri.path() == "/v1/sessions/resume-continuation" {
+        match parse_body(&body) {
+            Ok(value) => resume::handle(server, value).await,
+            Err(e) => Err(e),
+        }
     } else if method == Method::POST && uri.path() == "/v1/sessions/restart" {
         match parse_body(&body) {
             Ok(value) => restart::handle(server, value).await,
@@ -529,6 +535,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/clear-context",
                 "/v1/sessions/drop-continuation",
                 "/v1/sessions/restart",
+                "/v1/sessions/resume-continuation",
                 "/v1/runs/sweep-zombies",
                 "/v1/runs/reconcile-active",
                 "/v1/submissions/steer",

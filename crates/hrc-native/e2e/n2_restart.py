@@ -92,6 +92,14 @@ def main():
         s.wait_completed(run2)
         checks['bunRun'] = run2
         checks['gate2b'] = 'pass'
+        # The fence logs every native shutdown: drained (with its elapsed ms)
+        # or timed out. A shutdown with neither line was not logged at all.
+        checks['nativeStops'] = {}
+        for log in sorted(args.artifacts.glob('native-*.log')):
+            lines = [json.loads(l) for l in log.read_text().splitlines() if l.startswith('{')]
+            checks['nativeStops'][log.name] = [{'event': e['event'], 'elapsedMs': e['data'].get('elapsedMs')}
+                                               for e in lines if e.get('event', '').startswith('server.stop.owner_writes_')]
+        assert all(len(v) == 1 and v[0]['event'] == 'server.stop.owner_writes_drained' for v in checks['nativeStops'].values()), checks['nativeStops']
         s.dump('restart', {'checks': checks, 'scope': scope, 'runtimeId': runtime, 'steps': s.steps})
         print(json.dumps({'pass': ['2'], 'checks': checks}, default=str))
     finally:
