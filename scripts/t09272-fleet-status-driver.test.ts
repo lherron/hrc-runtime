@@ -43,12 +43,12 @@ function runFleetStatus(
       'set -euo pipefail',
       'node="${FAKE_NODE:?FAKE_NODE is required}"',
       'case "$node" in',
-      '  max3) hrc_commit=4136d813; aspd_commit=d3e42545 ;;',
-      '  mini) hrc_commit=8538f02a; aspd_commit=7390034a ;;',
-      '  hrcdev) hrc_commit=6ee4ea67; aspd_commit=da52b1ac ;;',
+      '  max3) hrc_commit=4136d813; aspd_commit=d3e42545; binary=/owner/hrc-runtime-current/bin/rusthrc ;;',
+      '  mini) hrc_commit=8538f02a; aspd_commit=7390034a; binary=/release/packages/hrc-cli/src/cli.ts ;;',
+      '  hrcdev) hrc_commit=6ee4ea67; aspd_commit=da52b1ac; binary=/release/packages/hrc-cli/src/cli.ts ;;',
       '  *) exit 64 ;;',
       'esac',
-      'printf \'{"node":{"nodeId":"%s"},"status":"healthy","release":{"hrcBuild":{"sourceCommit":"%s"},"runningEqualsInstalled":true},"api":{"aspd":{"reachable":true,"release":{"sourceCommit":"%s"}}},"socketPath":"/tmp/t09272.sock"}\\n\' "$node" "$hrc_commit" "$aspd_commit"',
+      'printf \'{"node":{"nodeId":"%s"},"status":"healthy","binaryPath":"%s","release":{"hrcBuild":{"sourceCommit":"%s"},"runningEqualsInstalled":true},"api":{"aspd":{"reachable":true,"release":{"sourceCommit":"%s"}}},"socketPath":"/tmp/t09272.sock"}\\n\' "$node" "$binary" "$hrc_commit" "$aspd_commit"',
       '',
     ].join('\n')
   )
@@ -133,6 +133,15 @@ describe('T-09272 fleet-status driver selection', () => {
     expect(result.exitCode, result.stderr).toBe(0)
     expect(result.stdout).toMatch(/^max3\s+healthy\s+4136d813\s+d3e42545/m)
     expect(result.sshTargets).not.toContain('max3')
+  })
+
+  test('names each node owner from the running binary (T-11930)', () => {
+    const result = runFleetStatus('max3')
+
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(result.stdout).toMatch(/^NODE\s+STATUS\s+HRC\s+ASPD\s+OWNER\s/m)
+    expect(result.stdout).toMatch(/^max3\s+healthy\s+4136d813\s+d3e42545\s+rusthrc\s/m)
+    expect(result.stdout).toMatch(/^hrcdev\s+healthy\s+6ee4ea67\s+da52b1ac\s+bun\s/m)
   })
 
   test('fails closed when a targeted probe returns a different node identity', () => {

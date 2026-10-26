@@ -154,6 +154,39 @@ PID 1 identically. Check `launchctl print gui/<uid>/<label>` and whether the
 running argv matches the plist's `ProgramArguments`.
 
 
+## HRC owner: Bun or rusthrc
+
+A node's HRC owner is Bun (`~/.bun/bin/hrc server serve`) or the native rusthrc
+owner (T-11893). Both run under the one label `com.praesidium.hrc-server`;
+`scripts/hrc-owner.sh kind` reads which from the installed plist and the
+`OWNER` column of `just fleet-status` reads it from the running binary. A
+rusthrc owner execs `~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc`,
+a staged copy of an installed release that no prune touches.
+
+- **Deploy.** The `deploy-*` recipes work on either owner. On a rusthrc owner,
+  `just install` alone changes nothing that runs, so the lane stages the new
+  release (`hrc-owner.sh stage`) before the restart. Staging refuses a release
+  whose migrations the store lacks: only Bun migrates.
+- **Switch.** `just switch-owner-rusthrc <node>` is read-only: it prints the
+  preflight report and the rendered plist diff against the node's Bun plist. Add
+  `apply` to switch. First deploy the node to the target under Bun. Apply then
+  does these steps in order:
+  1. If the store is behind, restart Bun so it migrates.
+  2. Stage the release.
+  3. `hrc server stop --node` (a restart would respawn launchd's loaded Bun
+     definition).
+  4. Swap the plist in, keeping the Bun plist as `.bun-owner`.
+  5. Bootstrap the job and run the deploy readback.
+
+  The stop is authorized daemon-side, so only a Mable primary can apply.
+- **Readback** (`_node-readback`, shared by deploy and switch) also requires
+  this boot's `broker.warmup.complete` with `attached == total` in the log the
+  plist names.
+- `launchd-install`, `front-door-enable` and `front-door-disable` refuse on a
+  rusthrc owner: each would render the plist back to Bun.
+- To roll back, boot the job out, `install -m 0644 <plist>.bun-owner <plist>`,
+  then bootstrap it.
+
 ## hrcdev — the Tart VM (max3)
 
 **"hrcdev" in this repo always means the Tart macOS guest VM hosted on max3.** It

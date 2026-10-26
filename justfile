@@ -310,6 +310,77 @@ deploy-fleet restart="wait":
     just _deploy-node "hrcdev" "hrcdev" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}" "no-publish"
     just fleet-status
 
+# A node's HRC owner is Bun or the native rusthrc owner (T-11893), both under the
+# launchd label com.praesidium.hrc-server; scripts/hrc-owner.sh reads which from
+# the installed plist. The deploy lane works on either. This recipe is the
+# one-time Bun -> rusthrc switch of a node, run from the invoking seat:
+#   render  read-only: preflight + the rendered plist diff against the node's Bun plist
+#   apply   migrate on Bun if the store is behind, stage the release, then
+#           `hrc server stop --node` (authorized daemon-side), swap the plist in,
+#           bootstrap the owner, and run the deploy readback
+# Deploy the node to the target under Bun first (just deploy-<node>); the switch
+# stages the node's installed release and refuses any other.
+
+# Switch a node's HRC owner from Bun to rusthrc (mode=render is read-only)
+switch-owner-rusthrc node mode="render" ref="@max3" restart="wait":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    node='{{ node }}'
+    case "$node" in
+      max3) ssh_target=max3 ;;
+      svc) ssh_target=mini ;;
+      hrcdev) ssh_target=hrcdev ;;
+      *) echo "switch-owner-rusthrc: unknown node ${node} (max3, svc, hrcdev)" >&2; exit 2 ;;
+    esac
+    case '{{ mode }}' in render | apply) ;; *) echo 'switch-owner-rusthrc: mode must be render or apply' >&2; exit 2 ;; esac
+    case '{{ restart }}' in
+      wait) flags=(--wait --wait-timeout-ms 300000) ;;
+      force) flags=(--force) ;;
+      *) echo 'switch-owner-rusthrc: restart must be wait or force' >&2; exit 2 ;;
+    esac
+    sha='{{ ref }}'
+    [[ "$sha" == '@max3' ]] && sha="$(just _max3-source-commit)"
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || sha="$(git rev-parse --verify "${sha}^{commit}")"
+    owner_script='{{ justfile_directory() }}/scripts/hrc-owner.sh'
+    on_node() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_target" bash -s -- "$@" < "$owner_script"; }
+    value() { sed -n "s/^$1=//p" <<<"$report" | tail -1; }
+    echo "[switch-${node}] target ${sha}"
+
+    report="$(on_node preflight "$node" "$sha")"
+    printf '%s\n' "$report"
+    if [[ "$(value SWITCH_OWNER)" == rusthrc ]]; then
+      [[ '{{ mode }}' == render ]] && exit 0
+      echo "[switch-${node}] already a rusthrc owner; reading back"
+    else
+      if grep -q '^SWITCH_BLOCKER=' <<<"$report"; then
+        echo "[switch-${node}] blocked; nothing was changed" >&2
+        exit 1
+      fi
+      if [[ '{{ mode }}' == render ]]; then
+        echo "[switch-${node}] render only; nothing was changed. Apply: just switch-owner-rusthrc ${node} apply ${sha}"
+        exit 0
+      fi
+      # Only Bun migrates, so a store behind this release is brought up by
+      # restarting Bun onto it before native is allowed near it.
+      if [[ "$(value SWITCH_SCHEMA)" == pending* ]]; then
+        echo "[switch-${node}] store is behind ${sha}; restarting Bun so it migrates"
+        hrc server restart --node "$node" "${flags[@]}" --reason "switch ${node} owner: migrate on Bun ${sha} first"
+        report="$(on_node preflight "$node" "$sha")"
+        [[ "$(value SWITCH_SCHEMA)" == current* ]] || {
+          printf '%s\n' "$report" >&2
+          echo "[switch-${node}] store schema is still not current after the Bun restart" >&2
+          exit 1
+        }
+      fi
+      on_node prepare "$node" "$sha"
+      # A swapped plist takes effect only through bootout + bootstrap; a restart
+      # respawns launchd's loaded (Bun) definition. The daemon authorizes the stop
+      # and boots its own job out (T-09861).
+      hrc server stop --node "$node" "${flags[@]}" --reason "switch ${node} owner Bun -> rusthrc ${sha}"
+      on_node activate
+    fi
+    just _node-readback "$ssh_target" "$node" "$sha" "$(value SWITCH_ASPD_SHA)" "$(value SWITCH_ASPD_RELEASE)" "" no-publish
+
 # Run this before and after a deploy; an unreachable node prints as unreachable
 # instead of aborting the table.
 
@@ -362,7 +433,7 @@ fleet-status:
     }
 
     probe() {
-      local label="$1" target="$2" out status health hrc aspd injector coherent actual_node
+      local label="$1" target="$2" out status health hrc aspd owner injector coherent actual_node
       out="$(run_on_node "$label" "$target" "$node_probe" 2>/dev/null)"
       status="$(sed -n '1p' <<<"$out")"
       if [[ -z "$status" || "$status" == '{}' ]]; then
@@ -378,13 +449,15 @@ fleet-status:
       health="$(jq -r '.status // "down"' <<<"$status")"
       hrc="$(jq -r '.release.hrcBuild.sourceCommit // "unknown"' <<<"$status")"
       aspd="$(jq -r 'if .api.aspd.reachable == true then (.api.aspd.release.sourceCommit // "unidentified")[0:8] else "DOWN" end' <<<"$status")"
+      # The running binary names the owner: Bun's hrc CLI or the native rusthrc (T-11893).
+      owner="$(jq -r '.binaryPath // "" | if endswith("/rusthrc") then "rusthrc" elif . == "" then "unknown" else "bun" end' <<<"$status")"
       coherent="$(jq -r '.release.runningEqualsInstalled // false' <<<"$status")"
-      printf '%-8s %-12s %-10s %-10s %-26s %s\n' \
-        "$label" "$health" "${hrc:0:8}" "$aspd" "${injector:-unknown}" \
+      printf '%-8s %-12s %-10s %-10s %-8s %-26s %s\n' \
+        "$label" "$health" "${hrc:0:8}" "$aspd" "$owner" "${injector:-unknown}" \
         "$([[ "$coherent" == true ]] && echo 'running==installed' || echo 'STALE PROCESS')"
     }
 
-    printf '%-8s %-12s %-10s %-10s %-26s %s\n' NODE STATUS HRC ASPD INJECTOR COHERENCE
+    printf '%-8s %-12s %-10s %-10s %-8s %-26s %s\n' NODE STATUS HRC ASPD OWNER INJECTOR COHERENCE
     probe max3 'max3'
     probe svc 'mini'
     probe hrcdev 'hrcdev'
@@ -524,6 +597,13 @@ launchd-install injector-version:
     mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs/hrc-runtime"
     esc() { printf '%s' "$1" | sed 's/[\/&|]/\\&/g'; }
     env_keys() { plutil -extract EnvironmentVariables json -o - "$1" 2>/dev/null | jq -r 'keys[]' | sort || true; }
+    # It renders com.praesidium.hrc-server.plist as a Bun job, which would undo a
+    # rusthrc owner switch at the next start (T-11893).
+    server_plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
+    if [[ -f "$server_plist" && "$(bash "$repo/scripts/hrc-owner.sh" kind "$server_plist")" == rusthrc ]]; then
+      echo "[launchd] REFUSED: ${server_plist} runs a rusthrc owner; launchd-install would render it back to Bun. Nothing was changed" >&2
+      exit 1
+    fi
     # Installed plists can carry node-local env the repo template lacks (max3's
     # hrc-server holds its aspd socket, node id, ingest port and kicker flag
     # there). A render would silently drop them and break the node, so refuse
@@ -606,6 +686,8 @@ front-door-enable reason *stop-flags:
     front_plist="$agents/com.praesidium.rusthrc-server.plist"
     fail() { echo "[front-door] $*" >&2; exit 1; }
     [[ -f "$server_plist" ]] || fail "no installed $server_plist"
+    [[ "$(bash "$repo/scripts/hrc-owner.sh" kind "$server_plist")" == bun ]] ||
+      fail "$server_plist runs a rusthrc owner (T-11893); the front door fronts a Bun owner only"
     [[ ! -f "$front_plist" ]] || fail "already fronted ($front_plist exists); see just front-door-status"
     rusthrc="$(plutil -extract EnvironmentVariables.HOME raw -o - "$server_plist")/.bun/bin/rusthrc"
     # The probe exits non-zero by design, so match its output, not a pipeline.
@@ -640,6 +722,8 @@ front-door-disable reason *stop-flags:
     front_plist="$agents/com.praesidium.rusthrc-server.plist"
     fail() { echo "[front-door] $*" >&2; exit 1; }
     [[ -f "$front_plist" ]] || fail "not fronted ($front_plist missing)"
+    [[ "$(bash "$repo/scripts/hrc-owner.sh" kind "$server_plist")" == bun ]] ||
+      fail "$server_plist runs a rusthrc owner (T-11893); front-door-disable would rewrite it as Bun"
     bun_socket="$(bun "$repo/scripts/front-door.ts" bun-socket "$server_plist")"
     public="$(dirname "$bun_socket")/hrc.sock"
     if curl -sf --unix-socket "$bun_socket" http://localhost/v1/health >/dev/null; then
@@ -1113,6 +1197,15 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     aspd_release="$(sed -n 's/^DEPLOY_ASPD_RELEASE=//p' "$phase1_log" | tail -1)"
     [[ -n "$target_sha" && -n "$aspd_sha" ]] || { echo "deploy-{{ expected-node }}: phase 1 reported no targets" >&2; exit 1; }
     if grep -qx 'DEPLOY_RESTART_NEEDED=1' "$phase1_log"; then
+      # A rusthrc owner (T-11893) execs a staged copy of the release, not the
+      # install, so `just install` alone changes nothing it runs. Stage the
+      # release the install just made; the restart then relaunches from it.
+      owner_script='{{ justfile_directory() }}/scripts/hrc-owner.sh'
+      owner="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" bash -s -- kind < "$owner_script")"
+      if [[ "$owner" == rusthrc ]]; then
+        ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
+          bash -s -- stage --expect-commit "$target_sha" < "$owner_script"
+      fi
       case '{{ restart }}' in
         wait) restart_flags=(--wait --wait-timeout-ms 300000) ;;
         force) restart_flags=(--force) ;;
@@ -1122,15 +1215,30 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
         --reason "deploy {{ expected-node }} to ${target_sha}"
     fi
 
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-      bash -s -- "{{ expected-node }}" "$target_sha" "$aspd_sha" "$aspd_release" "$injector" "{{ publication }}" <<'REMOTE'
+    just _node-readback "{{ ssh-target }}" "{{ expected-node }}" "$target_sha" "$aspd_sha" "$aspd_release" "$injector" "{{ publication }}"
+
+# Read a node back after a deploy or an owner switch: healthy with a live pid,
+# the expected node, release identity (sourceCommit, running == installed) for
+# its owner kind, aspd, launchd ownership with the plist environment, and
+# brokers reattached; then optional publication and the injector (an empty
+# injector skips it).
+[private]
+_node-readback ssh-target expected-node target-sha aspd-sha aspd-release injector="" publication="no-publish":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # ssh joins its argv into one remote command line, so an empty argument would
+    # vanish and shift the rest; `-` stands for empty.
+    aspd_release='{{ aspd-release }}'
+    injector='{{ injector }}'
+    ssh -o BatchMode=yes -o ConnectTimeout=10 '{{ ssh-target }}' \
+      bash -s -- '{{ expected-node }}' '{{ target-sha }}' '{{ aspd-sha }}' "${aspd_release:--}" "${injector:--}" '{{ publication }}' <<'REMOTE'
     set -euo pipefail
 
     expected_node="$1"
     target_sha="$2"
     aspd_sha="$3"
-    aspd_release="$4"
-    injector_version="$5"
+    aspd_release="${4#-}"
+    injector_version="${5#-}"
     publication="$6"
     repo="$HOME/praesidium/hrc-runtime"
     export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
@@ -1169,15 +1277,35 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       fail 'post-restart status did not report a logical node ID'
     [[ "$actual_node" == "$expected_node" ]] ||
       fail "post-restart logical node changed to $actual_node"
-    release_path="$(jq -er '.packagePath' <<<"$status_after")" ||
-      fail 'post-restart status did not report packagePath'
+    supervisor_plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
+    [[ -f "$supervisor_plist" ]] || fail "no hrc-server LaunchAgent declared at ${supervisor_plist}"
     binary_path="$(jq -er '.binaryPath' <<<"$status_after")" ||
       fail 'post-restart status did not report binaryPath'
-    release_root="${release_path%/packages/hrc-server}"
-    [[ "$release_root" == "$HOME/.bun/install/hrc-runtime-releases/release-"* ]] ||
-      fail "packagePath is not an atomic HRC release: $release_path"
-    [[ "$binary_path" == "$release_root/"* ]] ||
-      fail "binaryPath and packagePath name different releases: $binary_path vs $release_path"
+    # The owner kind comes from the installed plist; the running binary must agree
+    # with it, or launchd still holds a definition the plist no longer declares.
+    if plutil -extract ProgramArguments json -o - "$supervisor_plist" | jq -e 'any(.[]; endswith("/rusthrc"))' >/dev/null; then
+      owner=rusthrc
+      # T-11893: the owner execs ~/praesidium/var/hrc-owner/hrc-runtime-current,
+      # a staged copy of an atomic release that no prune touches.
+      owner_root="$HOME/praesidium/var/hrc-owner"
+      [[ "$binary_path" == "$owner_root/hrc-runtime-current/bin/rusthrc" ]] ||
+        fail "the plist declares a rusthrc owner but the daemon runs $binary_path"
+      release_root="$(jq -er '.release.releasePath' <<<"$status_after")" ||
+        fail 'post-restart status did not report release.releasePath'
+      [[ "$release_root" == "$owner_root/hrc-runtime-releases/release-"* ]] ||
+        fail "release.releasePath is not a staged owner release: $release_root"
+      [[ "$(jq -r '.release.releaseId // ""' <<<"$status_after")" == "${release_root##*/}" ]] ||
+        fail "release.releaseId does not name ${release_root##*/}"
+    else
+      owner=bun
+      release_path="$(jq -er '.packagePath' <<<"$status_after")" ||
+        fail 'post-restart status did not report packagePath'
+      release_root="${release_path%/packages/hrc-server}"
+      [[ "$release_root" == "$HOME/.bun/install/hrc-runtime-releases/release-"* ]] ||
+        fail "packagePath is not an atomic HRC release: $release_path"
+      [[ "$binary_path" == "$release_root/"* ]] ||
+        fail "binaryPath and packagePath name different releases: $binary_path vs $release_path"
+    fi
 
     # Release IDENTITY, not just release shape. Everything above proves a healthy
     # daemon is running some atomic release; a restart onto a stale one looks
@@ -1209,8 +1337,6 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     # never seated and nothing local says why (T-07957). Assert the process, not
     # the mechanism.
     supervisor_target="gui/$(id -u)/com.praesidium.hrc-server"
-    supervisor_plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
-    [[ -f "$supervisor_plist" ]] || fail "no hrc-server LaunchAgent declared at ${supervisor_plist}"
     server_pid="$(jq -er '.pid' <<<"$status_after")" ||
       fail 'post-restart status did not report a daemon pid'
     job_pid="$(launchctl print "$supervisor_target" 2>/dev/null |
@@ -1231,7 +1357,25 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
         fail "daemon pid ${server_pid} is missing ${key}, which ${supervisor_plist} declares; it is not running with its supervisor's environment"
     done < <(plutil -extract EnvironmentVariables json -o - "$supervisor_plist" 2>/dev/null |
       jq -r 'keys[] | select(startswith("HRC_"))')
-    echo "[hrc] ${supervisor_target} owns pid ${server_pid} running ${deployed_sha} with the plist environment"
+    echo "[hrc] ${supervisor_target} owns pid ${server_pid} (${owner}) running ${deployed_sha} with the plist environment"
+
+    # Brokers reattached: this boot's broker.warmup.complete, read from the log the
+    # plist names (rusthrc-owner.log for a rusthrc owner), with attached == total.
+    # Warmup finishes after health, so wait for it.
+    owner_log="$(plutil -extract StandardOutPath raw -o - "$supervisor_plist")"
+    started="$(jq -er '.release.processStartedAt' <<<"$status_after")" ||
+      fail 'post-restart status did not report release.processStartedAt'
+    warmup=""
+    for _ in $(seq 1 40); do
+      warmup="$(grep -F '"broker.warmup.complete"' "$owner_log" 2>/dev/null |
+        jq -c --arg t "$started" 'select(.ts >= $t) | .data' 2>/dev/null | tail -1)"
+      [[ -n "$warmup" ]] && break
+      sleep 3
+    done
+    [[ -n "$warmup" ]] || fail "no broker.warmup.complete in ${owner_log} since ${started}"
+    [[ "$(jq -r '.attached == .total' <<<"$warmup")" == true ]] ||
+      fail "brokers did not all reattach: ${warmup}"
+    echo "[hrc] brokers reattached: $(jq -c '{total, attached}' <<<"$warmup") (${owner_log})"
     # A launchd bootout SIGKILLs the job ExitTimeOut seconds after SIGTERM, and the
     # default is ~5s (measured 4.6s, T-09760) — shorter than the daemon's own 30s
     # stop deadline, so a slow graceful stop dies mid-teardown with no record and
@@ -1246,10 +1390,12 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     # After HRC: the injector subscribes to the daemon's streams and must come up
     # against the restarted one. The recipe comes from the checkout just moved to
     # the target, so the node runs the injector lane its own release ships.
-    just install-mail-injector-launchd "$injector_version"
+    if [[ -n "$injector_version" ]]; then
+      just install-mail-injector-launchd "$injector_version"
+    fi
 
-    printf 'deployed %s: hrc %s (%s), aspd %s (%s), injector %s\n' \
-      "$expected_node" "$target_sha" "$release_root" "$aspd_sha" "$aspd_release" "$injector_version"
+    printf 'deployed %s: %s hrc %s (%s), aspd %s (%s), injector %s\n' \
+      "$expected_node" "$owner" "$target_sha" "$release_root" "$aspd_sha" "$aspd_release" "${injector_version:-unchanged}"
     REMOTE
 
 # Pull ASP and wrkq from Verdaccio into bun.lock and commit the lock
