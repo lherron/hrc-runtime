@@ -70,6 +70,8 @@ pub struct Trace {
     pub session: Value,
     pub run_id: Option<String>,
     pub effective_door: String,
+    // Retained through delivery, response projection and admission record.
+    lease: Option<crate::server::lifecycle::AdmissionLease>,
 }
 impl Trace {
     fn push(&mut self, outcome: &'static str) {
@@ -274,6 +276,7 @@ pub async fn admit(server: &Shared, req: &Request<'_>) -> (Result<Admitted, ApiE
         session: req.session.clone(),
         run_id: req.run_id.clone(),
         effective_door: req.intent.to_owned(),
+        lease: None,
     };
     let result = steps(server, req, &mut trace).await;
     (result, trace)
@@ -284,6 +287,9 @@ async fn steps(
     req: &Request<'_>,
     trace: &mut Trace,
 ) -> Result<Admitted, ApiError> {
+    let lease = crate::server::lifecycle::admission_lease(server)
+        .inspect_err(|_| trace.push("refused"))?;
+    trace.lease = Some(lease);
     trace.push("passed"); // drain-lease
     trace.push("passed"); // retired-persona (no local persona allowlist; retired-scope gate is N4)
     // fence

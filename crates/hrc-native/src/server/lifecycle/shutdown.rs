@@ -139,7 +139,7 @@ pub async fn finish(
         "metrics_flush",
         "metrics_flush_timeout",
         "metrics_flush_failed",
-        async { writer.await },
+        writer,
     )
     .await;
     if deadline.expired() {
