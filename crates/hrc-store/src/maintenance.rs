@@ -72,9 +72,31 @@ fn unresolved(run: &Value) -> bool {
             .is_some_and(|s| s.contains("absorbed_submission_owner_unresolved"))
 }
 fn settle_absorbed(db: &Connection, runtime: &str, only_terminal: bool, now: &str) -> Result<()> {
+    settle_absorbed_where(db, runtime, now, |entry| {
+        !only_terminal || entry["terminal"] == true
+    })
+}
+/// failUnresolvedAbsorbedAuxiliaries: an ended invocation can never name the
+/// owner of its absorbed steers, so they settle with the unresolved marker.
+pub fn fail_unresolved_absorbed(
+    db: &Connection,
+    runtime: &str,
+    invocation: Option<&str>,
+    now: &str,
+) -> Result<()> {
+    settle_absorbed_where(db, runtime, now, |entry| {
+        invocation.is_none_or(|id| entry["invocation_id"] == id)
+    })
+}
+fn settle_absorbed_where(
+    db: &Connection,
+    runtime: &str,
+    now: &str,
+    keep: impl Fn(&Value) -> bool,
+) -> Result<()> {
     for entry in absorbed(db, runtime)? {
         let run = &entry["run"];
-        if !unresolved(run) || (only_terminal && entry["terminal"] != true) {
+        if !unresolved(run) || !keep(&entry) {
             continue;
         }
         let detail = format!(

@@ -64,7 +64,8 @@ impl Store {
                 &tx,
                 session,
                 id,
-                transport,
+                // broker-headless-start.ts stamps this durable acceptance headless.
+                Some("headless"),
                 "turn",
                 "turn.accepted",
                 &json!({"promptLength":record["intent"]["initialPrompt"].as_str().unwrap_or("").encode_utf16().count(),"authority":"durable-start-graph"}),
@@ -131,11 +132,14 @@ impl Store {
             params![record["intent"].to_string(), now, s(id, "hostSessionId")?],
         )?;
         if allocation.get("tuiWindow").is_some() {
+            // Bun appends the presentation decision with no run or transport.
+            let mut runtime_only = id.clone();
+            runtime_only["runId"] = Value::Null;
             event(
                 &tx,
                 &session,
-                id,
-                "tmux",
+                &runtime_only,
+                None,
                 "runtime",
                 "runtime.presentation",
                 &json!({"invocation":{"operatorAttachPending":false},"presentation":presentation,"tmux":{"socketPath":paths["btmuxSocketPath"],"attachTarget":format!("{}:tui",s(paths,"sessionName")?)}}),
@@ -149,7 +153,7 @@ fn event(
     db: &Connection,
     session: &Value,
     id: &Value,
-    transport: &str,
+    transport: Option<&str>,
     category: &str,
     kind: &str,
     payload: &Value,

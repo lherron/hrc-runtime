@@ -13,10 +13,29 @@ ASP-backed declaration and placement observation now share a native NDJSON
 JSON-RPC client. Status probes the actual configured aspd. Observation creates
 no broker or runtime rows. The cold format-1 `/v1/turns` path now compiles via
 ASP, commits the frozen preparation before hosting, starts the external worker
-in its own tmux server, and persists the canonical start graph. The worker's
-notifications remain unACKed for Bun recovery. Startup reattaches these durable
-brokers after checking their release and endpoint roots. Existing-seat turns
-name N2 in the unknown-route refusal.
+in its own tmux server, and persists the canonical start graph. Startup
+reattaches these durable brokers after checking their release and endpoint
+roots. Existing-seat turns name N2 in the unknown-route refusal.
+
+## Broker event path (N2)
+
+`server/controller.rs` owns the external brokers' event streams. Each
+`invocation.event` envelope commits its raw `broker_invocation_events` row, its
+hash disposition, the HRC state it implies and its canonical `hrc_events` rows
+in one transaction (`server/projection/`, a port of Bun's BrokerEventMapper);
+the broker is ACKed only through the durable contiguous cursor
+(`broker_invocations.last_projected_seq`). Raw `*.delta` fragments stay in the
+broker ledger and only their contiguous high-water is recorded. A reattach
+replays `invocation.eventsSince` from that cursor and re-ACKs even when the
+replay is empty; arrival gaps are backfilled from the ledger after a short
+debounce. Format-2 invocations are refused (none exist in production).
+
+`e2e/n2_turns.py` runs one workflow on a named Bun copy or rusthrc; compare
+two dumps with `run.py compare --suite n2-turns`. Each side's raw rows are
+checked against its own broker ledger, then the sides are compared on raw key
+order, run/runtime rows, per-turn lifecycle shapes, Skill rows and the
+human-typed turn. `e2e/n2_restart.py` restarts rusthrc mid-turn and then hands
+the seat to the Bun copy for another turn.
 
 Session continuity and layered metadata reads/writes now preserve Bun lane
 formatting, validation, source precedence, lifecycle events and idempotent writes.
@@ -51,8 +70,8 @@ no `server.start.release_prune`, and leave the shared release list unchanged.
 The real birth/replacement workflow runs in a clean ghostmux terminal with an
 explicit named copied Bun release and the shared aspd socket. It requires a fresh
 scratch root, creates its own project and ledger, and cleans only its own broker
-leases. It verifies native birth, native restart ownership, held-event replay
-through Bun, and a second completed prompt on the same seat:
+leases. It verifies native birth and projection, native restart ownership, and
+a second completed prompt on the same seat under Bun:
 
 ```
 python3 crates/hrc-native/e2e/cold_birth.py --binary crates/target/debug/rusthrc \

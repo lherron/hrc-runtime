@@ -530,6 +530,9 @@ def validate_case_observations(id, observations, checks, status=None, installed_
 
 
 def compare(args, checks):
+    if getattr(args, 'suite', None) == 'n2-turns':
+        from n2_turns import compare as compare_n2_turns
+        return compare_n2_turns(args, checks)
     if getattr(args, 'suite', None) == 'n1-maintenance':
         from n1_maintenance import compare as compare_maintenance
         return compare_maintenance(args, checks)

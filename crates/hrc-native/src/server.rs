@@ -2,11 +2,14 @@ mod accounting;
 mod aspc;
 mod broker;
 mod compile;
+mod controller;
 mod front;
 pub use front::Role;
 mod index;
+mod lease;
 mod maintenance;
 mod participants;
+mod projection;
 mod proxy;
 mod rpc;
 mod runtime_views;
@@ -43,6 +46,11 @@ struct Server {
     accounting: Arc<accounting::Accounting>,
     brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
     participant_work: Mutex<HashSet<String>>,
+    /// Broker projection memory; lock after `store`.
+    projection: Mutex<projection::Memory>,
+    controller: controller::State,
+    /// Runtimes whose user-exit lease reap already fired.
+    reaped: Mutex<HashSet<String>>,
     runtime: PathBuf,
     bun_passthrough: Option<PathBuf>,
     /// Front-door role: only front::is_front_safe routes are served natively.
@@ -232,6 +240,9 @@ pub async fn serve(role: front::Role) -> Result<()> {
         store: Mutex::new(store),
         brokers: Mutex::new(HashMap::new()),
         participant_work: Mutex::new(HashSet::new()),
+        projection: Mutex::new(projection::Memory::default()),
+        controller: controller::State::default(),
+        reaped: Mutex::new(HashSet::new()),
         runtime,
         bun_passthrough,
         front,
@@ -246,6 +257,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
     }
     let role = if server.front { "front" } else { "native" };
     let bun_socket = server.bun_passthrough.clone();
+    let owned = server.clone();
     let app = Router::new().fallback(dispatch).with_state(server);
     stderr_json(
         "info",
@@ -254,7 +266,14 @@ pub async fn serve(role: front::Role) -> Result<()> {
         json!({"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc","role":role,"bunSocket":bun_socket}),
     );
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown())
+        .with_graceful_shutdown(async move {
+            shutdown().await;
+            // Stop projecting before the store closes; brokers keep their ledgers.
+            owned
+                .controller
+                .shutting_down
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        })
         .await?;
     let _ = stop_writer.send(());
     writer_task.await?;

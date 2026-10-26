@@ -147,9 +147,10 @@ def main():
         assert status['ok'] is True and any(r['runtimeId'] == runtime for r in listed)
         refs_status, refs_raw = http('GET', '/v1/runtimes/live-refs')
         assert refs_status == 200 and any(r['runtimeId'] == runtime for r in json.loads(refs_raw)['refs'])
+        # N2: the native owner projects and ACKs its own birth turn.
+        wait_completed(first_run)
         invocation = rows('SELECT * FROM broker_invocations WHERE runtime_id=?', (runtime,))[0]
-        assert (invocation.get('last_projected_seq') or 0) == 0
-        assert not rows("SELECT * FROM hrc_events WHERE run_id=? AND event_kind='turn.completed'", (first_run,))
+        assert invocation['last_projected_seq'] > 0
         gates['1'] = {'pass': True, 'runtimeId': runtime, 'hostSessionId': record['host_session_id'], 'runId': first_run}
         before_seq = rows('SELECT COALESCE(MAX(hrc_seq),0) AS seq FROM hrc_events')[0]['seq']
         broker_pid = state['broker']['brokerPid']
@@ -159,7 +160,7 @@ def main():
         reattached = rows('SELECT owner_server_instance_id FROM broker_invocations WHERE runtime_id=?', (runtime,))[0]
         assert reattached['owner_server_instance_id'] == f'hrc-server:{native.pid}', reattached
         assert rows('SELECT runtime_id FROM runtimes WHERE runtime_id=?', (runtime,))[0]['runtime_id'] == runtime
-        assert (rows('SELECT last_projected_seq FROM broker_invocations WHERE runtime_id=?', (runtime,))[0]['last_projected_seq'] or 0) == 0
+        assert rows('SELECT last_projected_seq FROM broker_invocations WHERE runtime_id=?', (runtime,))[0]['last_projected_seq'] >= invocation['last_projected_seq']
         down(native)
         os.kill(broker_pid, 0)
         gates['4'] = {'pass': True, 'brokerPid': broker_pid, 'runtimeId': runtime}

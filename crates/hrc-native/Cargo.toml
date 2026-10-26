@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 hrc-cli = { path = "../hrc-cli" }
 hrc-store = { path = "../hrc-store" }
+rusqlite = { version = "0.39", features = ["bundled"] }
 serde_json.workspace = true
 chrono.workspace = true
 anyhow = "1"

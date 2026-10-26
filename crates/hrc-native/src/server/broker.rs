@@ -1,6 +1,6 @@
-//! Durable external broker ownership. Event projection belongs to N2; every
-//! broker event remains unACKed in the worker ledger across daemon replacement.
-use super::{ApiError, Shared, compile, rpc::JsonRpc};
+//! Durable external broker ownership: birth, then controller::consume projects
+//! and ACKs the broker ledger; startup reattach replays from the durable cursor.
+use super::{ApiError, Shared, compile, controller, rpc::JsonRpc};
 use anyhow::{Context, Result, ensure};
 use axum::{
     Json,
@@ -12,6 +12,7 @@ use std::{
     env, fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 use tokio::process::Command;
@@ -84,7 +85,7 @@ pub async fn turn(server: &Shared, body: Value) -> Result<Response, ApiError> {
         .lock()
         .unwrap()
         .broker_preparation(string(&identity, "operationId")?)?;
-    let (client, hello, allocation) = launch(&record).await?;
+    let (client, events, hello, allocation) = launch(server, &record).await?;
     {
         server.store.lock().unwrap().start_broker_graph(
             &record,
@@ -147,13 +148,21 @@ pub async fn turn(server: &Shared, body: Value) -> Result<Response, ApiError> {
         &snapshot,
         submission.as_deref(),
     )?;
-    // Retain the live controller connection without ever ACKing. Shutting down
-    // drops the connection and leaves the independent tmux worker alive.
-    server
-        .brokers
+    let runtime_id = string(&identity, "runtimeId")?.to_owned();
+    let invocation_id = string(&identity, "invocationId")?.to_owned();
+    controller::set_active(server, &runtime_id, &invocation_id, client.clone());
+    controller::consume(server, &runtime_id, events, client);
+    // Bun records the established binding's first seat observation at birth.
+    let born = server
+        .store
         .lock()
         .unwrap()
-        .insert(string(&identity, "runtimeId")?.to_owned(), client);
+        .runtimes()?
+        .into_iter()
+        .find(|r| r["runtimeId"] == runtime_id.as_str());
+    if let Some(runtime) = born {
+        let _ = super::runtimes::probe(server, &runtime, "binding-established").await;
+    }
     let from_seq = server
         .store
         .lock()
@@ -376,7 +385,15 @@ async fn hello(client: &JsonRpc, release: &Value) -> Result<Value> {
     }
     Ok(hello)
 }
-async fn launch(record: &Value) -> Result<(JsonRpc, Value, Value)> {
+async fn launch(
+    server: &Shared,
+    record: &Value,
+) -> Result<(
+    JsonRpc,
+    tokio::sync::mpsc::UnboundedReceiver<Value>,
+    Value,
+    Value,
+)> {
     let release = &record["executionRelease"];
     let executable =
         compile::validate_release(release, &record["admission"]["execution"]["driver"])?;
@@ -442,46 +459,46 @@ async fn launch(record: &Value) -> Result<(JsonRpc, Value, Value)> {
     let ipc_socket = Path::new(string(paths, "brokerIpcSocketPath")?);
     let mut connection = None;
     for _ in 0..200 {
-        if let Ok(client) = JsonRpc::connect(ipc_socket, Duration::from_secs(120)).await {
+        if let Ok(client) = JsonRpc::connect_broker(
+            ipc_socket,
+            Duration::from_secs(120),
+            controller::permission_handler(Arc::downgrade(server)),
+        )
+        .await
+        {
             connection = Some(client);
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let client = connection.context("broker did not listen")?;
+    let (client, events) = connection.context("broker did not listen")?;
     let hello = hello(&client, release).await?;
-    Ok((client, hello, allocation))
+    Ok((client, events, hello, allocation))
 }
 
 pub async fn reattach(server: &Shared) -> Result<()> {
     let runtimes = server.store.lock().unwrap().runtimes()?;
     for runtime in runtimes {
         if runtime["controllerKind"] != "harness-broker"
-            || ["terminated", "failed"]
+            || super::lease::unavailable(runtime["status"].as_str().unwrap_or(""))
+            || ["failed", "stopped", "disposed"]
                 .iter()
                 .any(|s| runtime["status"] == *s)
         {
             continue;
         }
-        match attach_one(server, &runtime).await {
-            Ok(client) => {
-                server
-                    .brokers
-                    .lock()
-                    .unwrap()
-                    .insert(string(&runtime, "runtimeId")?.to_owned(), client);
-            }
-            Err(error) => super::stderr_json(
+        if let Err(error) = attach_one(server, &runtime).await {
+            super::stderr_json(
                 "warn",
                 "broker",
                 "broker.reattach.failed",
-                json!({"runtimeId":runtime["runtimeId"],"message":error.to_string()}),
-            ),
+                json!({"runtimeId":runtime["runtimeId"],"message":format!("{error:#}")}),
+            );
         }
     }
     Ok(())
 }
-async fn attach_one(server: &Shared, runtime: &Value) -> Result<JsonRpc> {
+async fn attach_one(server: &Shared, runtime: &Value) -> Result<()> {
     let state = &runtime["runtimeStateJson"];
     let endpoint = &state["broker"]["endpoint"];
     let socket = Path::new(string(endpoint, "socketPath")?);
@@ -493,50 +510,24 @@ async fn attach_one(server: &Shared, runtime: &Value) -> Result<JsonRpc> {
         socket.canonicalize()?.starts_with(&root) && token_path.canonicalize()?.starts_with(&root),
         "broker endpoint outside runtime root"
     );
-    let client = JsonRpc::connect(socket, Duration::from_secs(30)).await?;
+    let (client, events) = JsonRpc::connect_broker(
+        socket,
+        Duration::from_secs(30),
+        controller::permission_handler(Arc::downgrade(server)),
+    )
+    .await?;
     hello(&client, &state["executionRelease"]).await?;
-    let (start_hash,profile_hash,seq) = server.store.lock().unwrap().sqlite.query_row(
-        "SELECT start_request_hash,selected_profile_hash,COALESCE(last_projected_seq,0) FROM broker_invocations WHERE invocation_id=?",
-        [string(runtime,"activeInvocationId")?],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?)))?;
-    let attach = client.request("broker.attach",json!({"runtimeId":runtime["runtimeId"],"hostSessionId":runtime["hostSessionId"],"generation":runtime["generation"],"invocationId":runtime["activeInvocationId"],"startRequestHash":start_hash,"selectedProfileHash":profile_hash,"controllerInstanceId":format!("hrc-server:{}",std::process::id()),"attachToken":fs::read_to_string(token_path)?,"lastProjectedSeq":seq})).await?;
-    ensure!(attach["attached"] == true, "broker attach refused");
-    ensure!(
-        attach["retentionFloorSeq"].as_i64().unwrap_or(0) <= seq + 1,
-        "broker_replay_retention_gap"
-    );
-    let snapshot = client
-        .request(
-            "invocation.snapshot",
-            json!({"invocationId":runtime["activeInvocationId"]}),
-        )
-        .await?;
-    let now = hrc_store::timestamp();
-    let mut refreshed = runtime["runtimeStateJson"].clone();
-    refreshed["updatedAt"] = now.clone().into();
-    refreshed["control"] = json!({"mode":"broker-ipc","brokerAttached":true});
-    // N1 does not project or ACK. Preserve the last ACK actually recorded by
-    // an earlier owner, never claim that attaching acknowledged new events.
-    let acked = refreshed["brokerReplay"]["ackedThroughSeq"]
-        .as_i64()
-        .unwrap_or(0)
-        .min(seq);
-    refreshed["brokerReplay"] = json!({"brokerInstanceId":attach["brokerInstanceId"],"activeControllerInstanceId":attach["activeControllerInstanceId"],"lastProjectedSeq":seq,"replayedThroughSeq":seq,"ackedThroughSeq":acked,"currentSeq":attach["currentSeq"].as_i64().unwrap_or(0).max(snapshot["currentSeq"].as_i64().unwrap_or(0)),"retentionFloorSeq":attach["retentionFloorSeq"].as_i64().unwrap_or(0).max(snapshot["retentionFloorSeq"].as_i64().unwrap_or(0))});
-    {
-        let db = server.store.lock().unwrap();
-        let tx = db.sqlite.unchecked_transaction()?;
-        tx.execute("UPDATE broker_invocations SET owner_server_instance_id=?,updated_at=? WHERE invocation_id=?",[format!("hrc-server:{}",std::process::id()),now.clone(),string(runtime,"activeInvocationId")?.to_owned()])?;
-        tx.execute(
-            "UPDATE runtimes SET runtime_state_json=?,updated_at=? WHERE runtime_id=?",
-            [
-                refreshed.to_string(),
-                now,
-                string(runtime, "runtimeId")?.to_owned(),
-            ],
-        )?;
-        tx.commit()?;
-    }
+    controller::attach_and_replay(server, runtime, client.clone(), events, token_path).await?;
     let mut observed = runtime.clone();
-    observed["runtimeStateJson"] = refreshed;
+    observed["runtimeStateJson"] = server
+        .store
+        .lock()
+        .unwrap()
+        .runtimes()?
+        .into_iter()
+        .find(|r| r["runtimeId"] == runtime["runtimeId"])
+        .map(|r| r["runtimeStateJson"].clone())
+        .unwrap_or(Value::Null);
     if let Ok(probe) = client
         .request(
             "seat.probe",
@@ -546,11 +537,5 @@ async fn attach_one(server: &Shared, runtime: &Value) -> Result<JsonRpc> {
     {
         super::runtimes::record_probe(server, &observed, &probe, "binding-established")?;
     }
-    super::stderr_json(
-        "info",
-        "broker",
-        "broker.reattach.complete",
-        json!({"runtimeId":runtime["runtimeId"],"invocationId":runtime["activeInvocationId"],"currentSeq":attach["currentSeq"],"lastProjectedSeq":seq,"eventsHeld":true}),
-    );
-    Ok(client)
+    Ok(())
 }

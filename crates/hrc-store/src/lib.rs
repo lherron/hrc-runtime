@@ -11,6 +11,7 @@ use uuid::Uuid;
 mod broker;
 mod index;
 mod maintenance;
+pub use maintenance::fail_unresolved_absorbed;
 mod metadata;
 mod monitor_read;
 mod participants;

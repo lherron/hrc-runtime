@@ -471,6 +471,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libc",
+ "rusqlite",
  "serde_json",
  "sha2",
  "tokio",
