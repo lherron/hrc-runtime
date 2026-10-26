@@ -86,29 +86,10 @@ fn opt(row: &Row<'_>, col: &str) -> rusqlite::Result<Option<String>> {
     row.get::<_, Option<String>>(col)
 }
 
-fn identity(store: &Store, scope: &str, lane: &str) -> Result<Option<Value>> {
-    Ok(store
-        .sqlite
-        .query_row(
-            "SELECT scope_kind, agent_id, project_id, task_id, role_name FROM continuities WHERE scope_ref=? AND lane_ref=?",
-            [scope, lane],
-            |row| {
-                let mut v = json!({"kind": row.get::<_, String>(0)?, "agentId": row.get::<_, String>(1)?});
-                for (i, key) in [(2, "projectId"), (3, "taskId"), (4, "roleName")] {
-                    if let Some(s) = row.get::<_, Option<String>>(i)? {
-                        v[key] = s.into();
-                    }
-                }
-                Ok(v)
-            },
-        )
-        .optional()?)
-}
-
 fn decorate(store: &Store, mut record: Value) -> Result<Value> {
     let scope = record["scopeRef"].as_str().unwrap_or_default().to_owned();
     let lane = record["laneRef"].as_str().unwrap_or_default().to_owned();
-    if let Some(identity) = identity(store, &scope, &lane)? {
+    if let Some(identity) = store.stored_identity(&scope, &lane)? {
         record["identity"] = identity;
     }
     Ok(record)
@@ -190,21 +171,16 @@ impl Store {
         let record = self
             .sqlite
             .query_row(
-                "SELECT host_session_id, scope_ref, lane_ref, generation, status, prior_host_session_id, created_at, updated_at FROM sessions WHERE host_session_id = ?",
+                "SELECT * FROM sessions WHERE host_session_id=?",
                 [host],
                 |r| {
-                    let mut v = json!({
-                        "hostSessionId": r.get::<_, String>(0)?,
-                        "scopeRef": r.get::<_, String>(1)?,
-                        "laneRef": r.get::<_, String>(2)?,
-                        "generation": r.get::<_, i64>(3)?,
-                        "status": r.get::<_, String>(4)?,
-                    });
-                    if let Some(prior) = r.get::<_, Option<String>>(5)? {
-                        v["priorHostSessionId"] = prior.into();
+                    let mut v = super::session_row(r)?;
+                    if let Some(fields) = v.as_object_mut() {
+                        fields.retain(|key, _| {
+                            !matches!(key.as_str(), "lastAppliedIntentJson" | "continuation")
+                        });
                     }
-                    v["createdAt"] = r.get::<_, String>(6)?.into();
-                    v["updatedAt"] = r.get::<_, String>(7)?.into();
+                    v["laneRef"] = r.get::<_, String>("lane_ref")?.into();
                     Ok(v)
                 },
             )
@@ -214,29 +190,9 @@ impl Store {
 
     /// `runtimes.getLatestByHostSessionId`.
     pub fn monitor_latest_runtime(&self, host: &str) -> Result<Option<Value>> {
-        let record = self
-            .sqlite
-            .query_row(
-                "SELECT runtime_id, host_session_id, scope_ref, lane_ref, generation, transport, status, status_changed_at, active_run_id FROM runtimes WHERE host_session_id = ? ORDER BY created_at DESC, runtime_id DESC LIMIT 1",
-                [host],
-                |r| {
-                    let mut v = json!({
-                        "runtimeId": r.get::<_, String>(0)?,
-                        "hostSessionId": r.get::<_, String>(1)?,
-                        "scopeRef": r.get::<_, String>(2)?,
-                        "laneRef": r.get::<_, String>(3)?,
-                        "generation": r.get::<_, i64>(4)?,
-                        "transport": r.get::<_, String>(5)?,
-                        "status": r.get::<_, String>(6)?,
-                        "statusChangedAt": r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "unknown".into()),
-                    });
-                    if let Some(run) = r.get::<_, Option<String>>(8)? {
-                        v["activeRunId"] = run.into();
-                    }
-                    Ok(v)
-                },
-            )
-            .optional()?;
+        let record = self.sqlite.query_row("SELECT * FROM runtimes WHERE host_session_id=? ORDER BY created_at DESC,runtime_id DESC LIMIT 1", [host], |r| {
+            Ok(super::select_keys(&super::runtime_row(r)?, &["runtimeId","hostSessionId","scopeRef","laneRef","generation","transport","status","statusChangedAt","activeRunId"]))
+        }).optional()?;
         record.map(|r| decorate(self, r)).transpose()
     }
 
@@ -430,6 +386,31 @@ impl Store {
         self.lifecycle_rows(&sql, &values, true)
     }
 
+    /// Dead-container forwarding: stored payloads, strict JSON, no hydration.
+    pub fn drain_lifecycle_events(&self, from: i64, limit: i64) -> Result<Vec<Value>> {
+        let mut stmt = self.sqlite.prepare("SELECT * FROM hrc_events WHERE stream_seq >= ? AND source_ref IS NULL ORDER BY stream_seq ASC LIMIT ?")?;
+        let rows = stmt.query_map([from, limit], |r| {
+            Ok((event_row(r)?, r.get::<_, String>("payload_json")?))
+        })?;
+        rows.map(|row| {
+            let (mut event, raw) = row?;
+            event["payload"] = serde_json::from_str(&raw)?;
+            let lane = event["laneRef"].as_str().unwrap_or_default().to_owned();
+            let mut event = decorate(self, event)?;
+            event["laneRef"] = lifecycle_lane(&lane).into();
+            Ok(event)
+        })
+        .collect()
+    }
+    /// Read the durable bytes, including payloads Value cannot represent.
+    pub fn event_payload_raw(&self, seq: i64) -> Result<Option<String>> {
+        Ok(self.sqlite.query_row(
+            "SELECT payload_json FROM hrc_events WHERE hrc_seq=?",
+            [seq],
+            |r| r.get(0),
+        )?)
+    }
+
     /// Shared lifecycle wire mapping. HTTP history uses stored payloads for
     /// covering pages while retaining canonical lanes and session identity.
     pub fn lifecycle_rows(&self, sql: &str, values: &[Sql], hydrate: bool) -> Result<Vec<Value>> {
@@ -449,56 +430,7 @@ impl Store {
         visit: &mut dyn FnMut(Value) -> bool,
     ) -> Result<bool> {
         let mut stmt = self.sqlite.prepare(sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(values.iter()), |r| {
-            let mut v = Map::new();
-            v.insert("hrcSeq".into(), r.get::<_, i64>("hrc_seq")?.into());
-            v.insert("streamSeq".into(), r.get::<_, i64>("stream_seq")?.into());
-            if let Some(s) = opt(r, "source_ref")? {
-                v.insert("sourceRef".into(), s.into());
-            }
-            if let Some(s) = r.get::<_, Option<i64>>("origin_seq")? {
-                v.insert("originSeq".into(), s.into());
-            }
-            v.insert("ts".into(), r.get::<_, String>("ts")?.into());
-            v.insert(
-                "hostSessionId".into(),
-                r.get::<_, String>("host_session_id")?.into(),
-            );
-            v.insert("scopeRef".into(), r.get::<_, String>("scope_ref")?.into());
-            v.insert("laneRef".into(), r.get::<_, String>("lane_ref")?.into());
-            v.insert("generation".into(), r.get::<_, i64>("generation")?.into());
-            for (col, key) in [
-                ("runtime_id", "runtimeId"),
-                ("run_id", "runId"),
-                ("launch_id", "launchId"),
-                ("app_id", "appId"),
-                ("app_session_key", "appSessionKey"),
-            ] {
-                if let Some(s) = opt(r, col)? {
-                    v.insert(key.into(), s.into());
-                }
-            }
-            v.insert("category".into(), r.get::<_, String>("category")?.into());
-            v.insert("eventKind".into(), r.get::<_, String>("event_kind")?.into());
-            for (col, key) in [("transport", "transport"), ("error_code", "errorCode")] {
-                if let Some(s) = opt(r, col)? {
-                    v.insert(key.into(), s.into());
-                }
-            }
-            v.insert(
-                "replayed".into(),
-                (r.get::<_, i64>("replayed")? != 0).into(),
-            );
-            if opt(r, "evidence_origin")?.as_deref() == Some("retained") {
-                v.insert("evidenceOrigin".into(), "retained".into());
-            }
-            // Corrupt JSON reads as an absent payload, like parseJson.
-            let payload = parse_json(opt(r, "payload_json")?);
-            if !payload.is_null() || opt(r, "payload_json")?.as_deref() == Some("null") {
-                v.insert("payload".into(), payload);
-            }
-            Ok(Value::Object(v))
-        })?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(values.iter()), event_row)?;
         for event in rows {
             let mut event = event?;
             if hydrate && let Some(payload) = event.get_mut("payload") {
@@ -506,14 +438,8 @@ impl Store {
             }
             let scope = event["scopeRef"].as_str().unwrap_or_default().to_owned();
             let lane = event["laneRef"].as_str().unwrap_or_default().to_owned();
-            let identity = identity(self, &scope, &lane)?;
-            // session-identity canonicalLaneRef: "main" and "lane:*" verbatim.
-            event["laneRef"] = if lane == "main" || lane.starts_with("lane:") {
-                lane.clone()
-            } else {
-                format!("lane:{lane}")
-            }
-            .into();
+            let identity = self.stored_identity(&scope, &lane)?;
+            event["laneRef"] = lifecycle_lane(&lane).into();
             if let Some(identity) = identity {
                 event["identity"] = identity;
             }
@@ -522,5 +448,51 @@ impl Store {
             }
         }
         Ok(true)
+    }
+}
+
+/// Lifecycle row wire order shared by monitor, HTTP and drain.
+pub fn event_row(r: &Row<'_>) -> rusqlite::Result<Value> {
+    let mut v = super::record_row(
+        r,
+        &[
+            ("hrc_seq", "hrcSeq"),
+            ("stream_seq", "streamSeq"),
+            ("source_ref", "sourceRef"),
+            ("origin_seq", "originSeq"),
+            ("ts", "ts"),
+            ("host_session_id", "hostSessionId"),
+            ("scope_ref", "scopeRef"),
+            ("lane_ref", "laneRef"),
+            ("generation", "generation"),
+            ("runtime_id", "runtimeId"),
+            ("run_id", "runId"),
+            ("launch_id", "launchId"),
+            ("app_id", "appId"),
+            ("app_session_key", "appSessionKey"),
+            ("category", "category"),
+            ("event_kind", "eventKind"),
+            ("transport", "transport"),
+            ("error_code", "errorCode"),
+            ("replayed", "replayed"),
+        ],
+    )?;
+    if opt(r, "evidence_origin")?.as_deref() == Some("retained") {
+        v["evidenceOrigin"] = "retained".into();
+    }
+    // Corrupt JSON reads as an absent payload, like parseJson.
+    let payload = parse_json(opt(r, "payload_json")?);
+    if !payload.is_null() || opt(r, "payload_json")?.as_deref() == Some("null") {
+        v["payload"] = payload;
+    }
+    Ok(v)
+}
+
+// Preserve the lifecycle wire's historical spelling, including lane:main.
+fn lifecycle_lane(lane: &str) -> String {
+    if lane == "main" || lane.starts_with("lane:") {
+        lane.into()
+    } else {
+        format!("lane:{lane}")
     }
 }

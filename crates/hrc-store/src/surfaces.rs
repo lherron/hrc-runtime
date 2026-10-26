@@ -56,12 +56,21 @@ fn event(
     now: &str,
     payload: &Value,
 ) -> Result<()> {
-    let seq: i64 = db.query_row(
-        "UPDATE event_stream_cursor SET next_seq=next_seq+1 WHERE id=1 RETURNING next_seq-1",
-        [],
-        |r| r.get(0),
+    crate::append_event(
+        db,
+        &crate::EventWrite {
+            ts: now,
+            host_session_id: session["hostSessionId"].as_str(),
+            scope_ref: session["scopeRef"].as_str(),
+            lane_ref: session["laneRef"].as_str().map(crate::storage_lane),
+            generation: session["generation"].as_i64(),
+            runtime_id: Some(runtime),
+            category: "surface",
+            event_kind: kind,
+            payload_json: &payload.to_string(),
+            ..Default::default()
+        },
     )?;
-    db.execute("INSERT INTO hrc_events(stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,runtime_id,category,event_kind,payload_json) VALUES (?,?,?,?,?,?,?,'surface',?,?)",params![seq,now,session["hostSessionId"].as_str(),session["scopeRef"].as_str(),session["laneRef"].as_str().map(crate::storage_lane),session["generation"].as_i64(),runtime,kind,payload.to_string()])?;
     Ok(())
 }
 impl Store {

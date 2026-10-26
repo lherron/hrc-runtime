@@ -148,58 +148,30 @@ struct Occupancy {
     cwd: Option<String>,
 }
 
-fn sql(e: impl std::fmt::Display) -> Error {
-    Error::failure(e.to_string())
-}
-
-/// worktree-prune.ts `defaultLiveRuntimeOccupancies` over a non-migrating open.
+/// Store-owned runtime/identity rows; invocation projections supply cwd.
 fn live_occupancies() -> Result<Vec<Occupancy>> {
     super::assert_schema_current(&database_path())?;
     let store = hrc_store::Store::open_readonly(&database_path()).map_err(store_error!())?;
-    let mut runtimes = store
-        .sqlite
-        .prepare(
-            "SELECT r.runtime_id, r.status, r.active_invocation_id, c.project_id, c.task_id
-               FROM runtimes r
-               LEFT JOIN continuities c ON c.scope_ref = r.scope_ref AND c.lane_ref = r.lane_ref
-              ORDER BY r.created_at ASC, r.runtime_id ASC",
-        )
-        .map_err(sql)?;
-    let rows = runtimes
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-            ))
-        })
-        .map_err(sql)?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(sql)?;
-    let mut invocations = store
-        .sqlite
-        .prepare(
-            "SELECT invocation_id, spec_projection_json FROM broker_invocations
-              WHERE runtime_id = ? ORDER BY created_at ASC, invocation_id ASC",
-        )
-        .map_err(sql)?;
     let mut occupancies = vec![];
-    for (runtime_id, status, active, project_id, task_id) in rows {
+    for runtime in store.runtimes().map_err(store_error!())? {
+        let runtime_id = runtime["runtimeId"].as_str().unwrap_or_default().to_owned();
+        let status = runtime["status"].as_str().unwrap_or_default().to_owned();
         if DEAD_RUNTIME_STATUSES.contains(&status.as_str()) {
             continue;
         }
-        let list = invocations
-            .query_map([&runtime_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-            })
-            .map_err(sql)?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(sql)?;
+        let identity = store
+            .stored_identity(
+                runtime["scopeRef"].as_str().unwrap_or_default(),
+                runtime["laneRef"].as_str().unwrap_or_default(),
+            )
+            .map_err(store_error!())?
+            .unwrap_or(Value::Null);
+        let list = store
+            .invocation_projections(&runtime_id)
+            .map_err(store_error!())?;
         let chosen = list
             .iter()
-            .find(|(id, _)| active.as_ref() == Some(id))
+            .find(|(id, _)| runtime["activeInvocationId"].as_str() == Some(id.as_str()))
             .or(list.last());
         let cwd = chosen
             .and_then(|(_, projection)| projection.as_deref())
@@ -210,8 +182,8 @@ fn live_occupancies() -> Result<Vec<Occupancy>> {
         occupancies.push(Occupancy {
             runtime_id,
             status,
-            project_id,
-            task_id,
+            project_id: identity["projectId"].as_str().map(str::to_owned),
+            task_id: identity["taskId"].as_str().map(str::to_owned),
             cwd,
         });
     }

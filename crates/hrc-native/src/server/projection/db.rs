@@ -15,10 +15,6 @@ pub fn int(v: i64) -> Sql {
     Sql::Integer(v)
 }
 
-fn parse_json(raw: Option<String>) -> Option<Value> {
-    raw.and_then(|s| serde_json::from_str(&s).ok())
-}
-
 #[derive(Clone, Debug)]
 pub struct Inv {
     pub invocation_id: String,
@@ -93,39 +89,37 @@ pub struct Rt {
     pub state: Option<Value>,
     pub tmux: Option<Value>,
 }
-fn rt_row(r: &Row<'_>) -> rusqlite::Result<Rt> {
-    Ok(Rt {
-        runtime_id: r.get("runtime_id")?,
-        host_session_id: r.get("host_session_id")?,
-        scope_ref: r.get("scope_ref")?,
-        lane_ref: r.get("lane_ref")?,
-        generation: r.get("generation")?,
-        transport: r.get("transport")?,
-        status: r.get("status")?,
-        active_run_id: r.get("active_run_id")?,
-        last_activity_at: r.get("last_activity_at")?,
-        controller_kind: r.get("controller_kind")?,
-        active_operation_id: r.get("active_operation_id")?,
-        active_invocation_id: r.get("active_invocation_id")?,
-        state: parse_json(r.get("runtime_state_json")?),
-        tmux: parse_json(r.get("tmux_json")?),
-    })
+fn rt_record(v: Value) -> Rt {
+    Rt {
+        runtime_id: v["runtimeId"].as_str().unwrap_or_default().to_owned(),
+        host_session_id: v["hostSessionId"].as_str().unwrap_or_default().to_owned(),
+        scope_ref: v["scopeRef"].as_str().unwrap_or_default().to_owned(),
+        lane_ref: v["laneRef"].as_str().unwrap_or_default().to_owned(),
+        generation: v["generation"].as_i64().unwrap_or_default(),
+        transport: v["transport"].as_str().unwrap_or_default().to_owned(),
+        status: v["status"].as_str().unwrap_or_default().to_owned(),
+        active_run_id: v["activeRunId"].as_str().map(str::to_owned),
+        last_activity_at: v["lastActivityAt"].as_str().map(str::to_owned),
+        controller_kind: v["controllerKind"].as_str().map(str::to_owned),
+        active_operation_id: v["activeOperationId"].as_str().map(str::to_owned),
+        active_invocation_id: v["activeInvocationId"].as_str().map(str::to_owned),
+        state: v.get("runtimeStateJson").cloned(),
+        tmux: v.get("tmuxJson").cloned(),
+    }
 }
 pub fn runtime(db: &Connection, id: &str) -> Result<Option<Rt>> {
-    Ok(db
-        .query_row("SELECT * FROM runtimes WHERE runtime_id=?", [id], rt_row)
-        .optional()?)
+    Ok(hrc_store::runtime_records_where(db, "runtime_id=?", [id])?
+        .pop()
+        .map(rt_record))
 }
 /// Runtimes matching a fixed SQL predicate, oldest first.
 pub fn runtimes_where(db: &Connection, filter: &str) -> Result<Vec<Rt>> {
-    let mut stmt = db.prepare(&format!(
-        "SELECT * FROM runtimes WHERE {filter} ORDER BY created_at ASC, runtime_id ASC"
-    ))?;
-    let rows = stmt
-        .query_map([], rt_row)?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(rows)
+    Ok(hrc_store::runtime_records_where(db, filter, [])?
+        .into_iter()
+        .map(rt_record)
+        .collect())
 }
+
 impl Rt {
     /// runtimeStateJson as an object (Bun spreads `runtime.runtimeStateJson ?? {}`).
     pub fn state_object(&self) -> Value {

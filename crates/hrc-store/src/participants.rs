@@ -499,13 +499,18 @@ impl Store {
                 "UPDATE runtimes SET runtime_state_json=?,updated_at=? WHERE runtime_id=?",
                 params![state.to_string(), now, attempt["runtime_id"].as_str()],
             )?;
-            let seq:i64=tx.query_row("UPDATE event_stream_cursor SET next_seq=next_seq+1 WHERE id=1 RETURNING next_seq-1",[],|r|r.get(0))?;
             let transport = if state["broker"]["presentation"]["kind"] == "tmux-tui" {
                 "tmux"
             } else {
                 "headless"
             };
-            tx.execute("INSERT INTO hrc_events(stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,runtime_id,category,event_kind,transport,payload_json) VALUES (?,?,?,?,?,?,?,'runtime','runtime.ensured',?,?)",params![seq,now,reg["host_session_id"].as_str(),reg["scope_ref"].as_str(),reg["lane_ref"].as_str(),reg["generation"].as_i64(),attempt["runtime_id"].as_str(),transport,json!({"source":"participant-activation","attemptId":attempt["attempt_id"],"attachEpoch":attempt["attach_epoch"],"classification":classification}).to_string()])?;
+            crate::append_event(&tx, &crate::EventWrite {
+                ts: &now, host_session_id: reg["host_session_id"].as_str(), scope_ref: reg["scope_ref"].as_str(),
+                lane_ref: reg["lane_ref"].as_str(), generation: reg["generation"].as_i64(),
+                runtime_id: attempt["runtime_id"].as_str(), category: "runtime", event_kind: "runtime.ensured", transport: Some(transport),
+                payload_json: &json!({"source":"participant-activation","attemptId":attempt["attempt_id"],"attachEpoch":attempt["attach_epoch"],"classification":classification}).to_string(),
+                ..Default::default()
+            })?;
         } else if current["state"] == "ATTACH_CONFIRMED"
             && !current["initial_activation_confirmed_at"].is_null()
         {
