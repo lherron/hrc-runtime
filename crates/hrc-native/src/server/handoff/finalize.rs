@@ -7,6 +7,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 fn pump(server: &Shared) -> Result<()> {
+    let Some(_write) = server.owner_writes.enter() else {
+        return Ok(());
+    };
     let active = server.handoff.active.lock().unwrap().clone();
     let db = server.store.lock().unwrap();
     let mut requests = HashMap::new();

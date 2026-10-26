@@ -163,6 +163,11 @@ async fn pump_server(server: &Shared, node: &str) -> Result<()> {
                     return Ok(());
                 }
             }
+            // The post has finished. Fence only the cursor commit; if closed,
+            // the next owner retries the accepted idempotency key.
+            let Some(_write) = server.owner_writes.enter() else {
+                return Ok(());
+            };
             server
                 .store
                 .lock()
@@ -518,6 +523,9 @@ async fn pump_session(server: &Shared, node: &str) -> Result<()> {
             }
         }
         if let Some(last) = rows.last() {
+            let Some(_write) = server.owner_writes.enter() else {
+                return Ok(());
+            };
             server
                 .store
                 .lock()
@@ -533,6 +541,9 @@ async fn pump_session(server: &Shared, node: &str) -> Result<()> {
 pub fn start(server: &Shared) -> Result<()> {
     assert!(!server.front, "front cannot start publication");
     {
+        let Some(_write) = server.owner_writes.enter() else {
+            return Ok(());
+        };
         let db = server.store.lock().unwrap();
         db.publication_initialize(SERVER)?;
         db.publication_initialize(SESSION)?;
