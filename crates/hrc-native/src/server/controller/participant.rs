@@ -28,30 +28,7 @@ pub(super) fn mark_terminal(
     let message = format!(
         "external_participant_exit: invocation {invocation} exited cleanly; HRC no longer observes this turn, its native outcome is unknown"
     );
-    let open = {
-        let mut q = tx.prepare(
-            "SELECT run_id FROM runs WHERE runtime_id=? AND completed_at IS NULL AND status IN ('accepted','started','running','queued')",
-        )?;
-        q.query_map([runtime_id], |r| r.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?
-    };
-    for run in open {
-        db::mark_run_completed(
-            &tx,
-            &run,
-            db::Completion {
-                status: "failed",
-                completed_at: &now,
-                updated_at: &now,
-                error_code: Some("runtime_unavailable"),
-                error_message: Some(&message),
-            },
-        )?;
-    }
-    tx.execute(
-        "UPDATE runtimes SET active_run_id=NULL WHERE runtime_id=?",
-        [runtime_id],
-    )?;
+    db::settle_terminal_runtime_runs(&tx, runtime_id, &now, &message)?;
     let mut state = rt.state_object();
     state["status"] = "terminated".into();
     state["updatedAt"] = now.as_str().into();
