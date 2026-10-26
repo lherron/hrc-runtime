@@ -14,9 +14,13 @@
  *       Render the rusthrc plist with the server plist's HOME and HRC dirs, so
  *       the two jobs cannot disagree on runtime or state root.
  *   front-door.ts bun-socket <server-plist>          print the private socket path
+ *   front-door.ts l1-logs <server-plist>
+ *       Align Bun's StandardOutPath/StandardErrorPath with the repo template
+ *       (<HOME>/praesidium/var/logs/hrc-runtime/hrc-server.{log,err.log}).
+ *       Takes effect at the job's next bootstrap.
  */
 import { spawnSync } from 'node:child_process'
-import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const FLAG = '<string>--listen-socket</string>'
@@ -84,6 +88,13 @@ function bunSocket(serverPlist: string): string {
   return join(plistValue(serverPlist, 'EnvironmentVariables.HRC_RUNTIME_DIR'), 'hrc-bun.sock')
 }
 
+/** Replace the <string> value that follows `<key>${key}</key>`. */
+function withKeyString(text: string, key: string, value: string): string {
+  const pattern = new RegExp(`(<key>${key}</key>\\s*<string>)[^<]*(</string>)`)
+  if (!pattern.test(text)) fail(`no ${key} string`)
+  return text.replace(pattern, `$1${escapeXml(value)}$2`)
+}
+
 const [command, ...rest] = process.argv.slice(2)
 if (command === 'listen-args' && rest[0] === 'add' && rest.length === 3) {
   const [, plist, socket] = rest as [string, string, string]
@@ -108,8 +119,20 @@ if (command === 'listen-args' && rest[0] === 'add' && rest.length === 3) {
   lintAndWrite(dst, text)
 } else if (command === 'bun-socket' && rest.length === 1) {
   console.log(bunSocket(rest[0] as string))
+} else if (command === 'l1-logs' && rest.length === 1) {
+  const plist = rest[0] as string
+  const logs = join(
+    plistValue(plist, 'EnvironmentVariables.HOME'),
+    'praesidium/var/logs/hrc-runtime'
+  )
+  // launchd will not start a job whose log directory is missing.
+  mkdirSync(logs, { recursive: true })
+  let text = readFileSync(plist, 'utf8')
+  text = withKeyString(text, 'StandardOutPath', join(logs, 'hrc-server.log'))
+  text = withKeyString(text, 'StandardErrorPath', join(logs, 'hrc-server.err.log'))
+  lintAndWrite(plist, text)
 } else {
   fail(
-    'usage: front-door.ts listen-args add <plist> <socket> | listen-args remove <plist> | render <template> <dst> <server-plist> | bun-socket <server-plist>'
+    'usage: front-door.ts listen-args add <plist> <socket> | listen-args remove <plist> | render <template> <dst> <server-plist> | bun-socket <server-plist> | l1-logs <server-plist>'
   )
 }

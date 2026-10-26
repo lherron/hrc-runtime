@@ -94,7 +94,10 @@ On a node, `just front-door-enable '<reason>'` and `just front-door-disable
 restart authority on the node only), and `just front-door-status` reports the
 mode. The rusthrc job is `launchd/com.praesidium.rusthrc-server.plist`, which
 `launchd-install` skips (front-door-enable is its only renderer); on a fronted
-node `launchd-install` keeps Bun's `--listen-socket`. Its L1 logs are
+node `launchd-install` keeps Bun's `--listen-socket`. Nodes whose installed Bun plist predates the
+`var/logs/hrc-runtime/` L1 paths (svc and hrcdev on 2026-10-26) align them with
+`bun scripts/front-door.ts l1-logs ~/Library/LaunchAgents/com.praesidium.hrc-server.plist`,
+which takes effect at the job's next bootstrap (front-door-enable is one). Its L1 logs are
 `var/logs/hrc-runtime/rusthrc-server.log` (stdout, which carries the L3 request
 lines, as Bun's `hrc-server.log` does) and `rusthrc-server.err.log` (stderr);
 access metrics stay in
