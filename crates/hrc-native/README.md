@@ -74,20 +74,31 @@ routes and a live bounded-event stream.
 
 Every main-listener request, including pass-through traffic and refusals, uses
 Bun's normalized route labels, client strata and weighted metric schema in
-`<stateRoot>/metrics/server-<day>.ndjson`. The writer flushes asynchronously and
+`<stateRoot>/metrics/rusthrc-server-<day>.ndjson`, with `servedBy` identifying
+`native` or `bun`. Rust prunes only its own filename prefix. The writer flushes asynchronously and
 on clean shutdown, bounds the queue, caps each day at 128 MiB, and retains 14
 days by file mtime. L3 logs use Bun's successful-poll suppression policy and
 stream open/close events. `HRC_METRICS=0` disables metrics as it does in Bun.
 The exact-route inventory and suppression table are generated from Bun source
 at build time. `e2e/accounting.py` compares a real Bun/native request mix through
 `compare --suite n1-accounting`, then checks failed-writer recovery, retention,
-and the daily cap in independent scratch roots.
+and the daily cap in independent scratch roots. `e2e/front_accounting.py` checks
+separate Rust/Bun metric files and L3 streams, exact low-rate counts, verbatim
+User-Agent and optional client request IDs, and upstream-error versus local
+transport-failure attribution through `compare --suite n1-front-accounting`.
+Forwarding never generates a request ID; both writers retain Bun's sampling
+contract. Rust L3 records identify `server: rusthrc` and `servedBy`.
 
 `e2e/schema_refusal.py` records the full gate-3 filesystem effect for unknown
 and incomplete migrations, including a live WAL: main DB bytes/mtime stay
 unchanged, WAL gains no frames, and ownership files remain absent. SQLite may
 create or change its SHM index; one failed daemon CLI usage record is expected
 (EN-35424). No immutable connection or copied read path is used.
+
+`e2e/session_projection.py` compares historical session lists through
+`compare --suite n1-session-projection`: activity windows, live-runtime
+exceptions, generation selection, ordering, scoped history, query errors and
+configured projection days. Its fixtures are new scratch rows.
 
 Local session pages and facets query the trigger-maintained session index with
 Bun's filters, excluded facet dimensions and v5 keyset cursors. The index

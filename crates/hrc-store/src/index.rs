@@ -35,6 +35,45 @@ fn filters(input: &HashMap<String, String>, excluded: &str) -> (String, Vec<SqlV
     (format!("WHERE {}", predicates.join(" AND ")), values)
 }
 impl Store {
+    /// Bun's bounded session projection. Scope reads retain all history;
+    /// callers pass no cutoff for those and for explicit all=true reads.
+    pub fn sessions_for_projection(
+        &self,
+        scope: Option<&str>,
+        lane: Option<&str>,
+        since: Option<&str>,
+    ) -> Result<Vec<Value>> {
+        let mut predicates = Vec::new();
+        let mut values = Vec::<SqlValue>::new();
+        if let Some(scope) = scope {
+            predicates.push("s.scope_ref = ?");
+            values.push(scope.to_owned().into());
+        }
+        if let Some(lane) = lane {
+            predicates.push("s.lane_ref = ?");
+            values.push(lane.to_owned().into());
+        }
+        if scope.is_none()
+            && let Some(since) = since
+        {
+            // Activity clocks exclude sessions.updated_at: housekeeping writes
+            // must not bring cold sessions back into the projection.
+            predicates.push("(MAX(COALESCE((SELECT si.last_activity_at FROM session_index si WHERE si.host_session_id=s.host_session_id),''),COALESCE((SELECT MAX(COALESCE(r.last_activity_at,r.created_at)) FROM runtimes r WHERE r.host_session_id=s.host_session_id),''),s.created_at) >= ? OR EXISTS (SELECT 1 FROM runtimes r2 WHERE r2.host_session_id=s.host_session_id AND (r2.active_run_id IS NOT NULL OR r2.status NOT IN ('terminated','dead','stale','crashed','detached'))))");
+            values.push(since.to_owned().into());
+        }
+        let clause = if predicates.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", predicates.join(" AND "))
+        };
+        let mut stmt = self.sqlite.prepare(&format!(
+            "SELECT s.* FROM sessions s {clause} ORDER BY s.scope_ref,s.lane_ref,s.generation ASC"
+        ))?;
+        Ok(stmt
+            .query_map(params_from_iter(values), super::session_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn session_index_page(
         &self,
         input: &HashMap<String, String>,

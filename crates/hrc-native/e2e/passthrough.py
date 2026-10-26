@@ -84,11 +84,11 @@ def main():
             ('POST','/v1/runtimes/ensure',' '*(3*1024*1024)+'{}'),
             ('DELETE','/v1/not-a-native-route?forwarded=yes','payload'),
             ('POST','/v1/surfaces/unbind','{'),
-            ('POST','/v1/runtimes/sweep','{'),
-            ('POST','/v1/runtimes/prune','{'),
-            ('POST','/v1/runtimes/attach','{'),
+            ('POST','/v1/capture/recover','{'),
+            ('POST','/v1/in-flight-input','{'),
+            ('POST','/v1/transcript-search','{'),
             ('GET','/v1/surfaces',None),
-            ('GET','/v1/placement/bindings?home=self&state=active',None),
+            ('GET','/v1/transcript-index/status',None),
         ]:
             direct=request(bun,method,path,body)
             forwarded=request(native,method,path,body)

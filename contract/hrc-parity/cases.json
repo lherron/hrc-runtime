@@ -158,6 +158,24 @@
         "role-identities-and-selector-errors"
       ],
       "requiredInP0": false
+    },
+    "n1-front-accounting": {
+      "assertionIds": [
+        "separate-file-ownership",
+        "low-rate-exact-counts-and-joins",
+        "verbatim-headers-no-minted-id",
+        "L3-and-error-attribution"
+      ],
+      "requiredInP0": false
+    },
+    "n1-session-projection": {
+      "assertionIds": [
+        "activity-window-and-live-runtime-exception",
+        "scope-lane-order-and-selected-generation",
+        "query-errors-and-window-config",
+        "read-only-row-preservation"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [
@@ -342,7 +360,7 @@
     "file:broker-leases-raw-provider-artifacts": "GAP:N2",
     "file:session-publication-cursor": "GAP:N3",
     "file:server-publication-cursor": "GAP:N3",
-    "public:GET:/v1/sessions": "n1-session-routes",
+    "public:GET:/v1/sessions": "n1-session-projection",
     "public:GET:/v1/sessions/by-host/:hostSessionId": "n1-session-routes",
     "public:GET:/v1/sessions/get": "n1-session-routes",
     "public:GET:/v1/sessions/metadata": "n1-session-routes",

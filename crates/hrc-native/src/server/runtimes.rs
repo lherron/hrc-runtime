@@ -23,7 +23,7 @@ fn boolean(q: &HashMap<String, String>, key: &str) -> Result<Option<bool>, ApiEr
         Some(v) => Err(bad(format!("{key} must be a boolean"), key, json!(v))),
     }
 }
-fn number(s: &str) -> Option<f64> {
+pub(super) fn number(s: &str) -> Option<f64> {
     for (prefix, radix) in [
         ("0x", 16),
         ("0X", 16),

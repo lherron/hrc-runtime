@@ -285,3 +285,6 @@ pub(crate) fn print_json(value: &Value) {
         serde_json::to_string_pretty(value).expect("JSON value")
     );
 }
+
+/// Parse the ISO date/time forms accepted by HRC query boundaries; invalid input is NaN.
+pub use js::parse_date;

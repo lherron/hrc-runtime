@@ -10,6 +10,11 @@ use hyper_util::rt::TokioIo;
 use std::path::Path;
 use tokio::net::UnixStream;
 
+/// Marks an actual upstream response, including Bun-side HTTP errors. Local
+/// transport failures have no marker and remain native accounting.
+#[derive(Clone, Copy)]
+pub(super) struct BunResponse;
+
 pub async fn forward(
     socket: Option<&Path>,
     method: Method,
@@ -49,5 +54,7 @@ pub async fn forward(
         .send_request(request)
         .await
         .map_err(|e| failure(e.to_string()))?;
-    Ok(response.map(Body::new))
+    let mut response = response.map(Body::new);
+    response.extensions_mut().insert(BunResponse);
+    Ok(response)
 }

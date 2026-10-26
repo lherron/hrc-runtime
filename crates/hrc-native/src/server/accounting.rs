@@ -19,6 +19,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 include!(concat!(env!("OUT_DIR"), "/accounting_routes.rs"));
+const FILE_PREFIX: &str = "rusthrc-server-";
 const MAX_FILE: u64 = 128 * 1024 * 1024;
 #[derive(Default)]
 struct Sample {
@@ -130,18 +131,21 @@ impl Writer {
             if let Ok(files) = fs::read_dir(&self.root) {
                 for file in files.flatten() {
                     let name = file.file_name().to_string_lossy().into_owned();
-                    let valid = name.len() == 24
-                        && name.starts_with("server-")
-                        && name.ends_with(".ndjson")
-                        && name.as_bytes()[7..17].iter().enumerate().all(|(i, byte)| {
-                            if i == 4 || i == 7 {
-                                *byte == b'-'
-                            } else {
-                                byte.is_ascii_digit()
-                            }
+                    let valid = name
+                        .strip_prefix(FILE_PREFIX)
+                        .and_then(|suffix| suffix.strip_suffix(".ndjson"))
+                        .is_some_and(|day| {
+                            day.len() == 10
+                                && day.as_bytes().iter().enumerate().all(|(i, byte)| {
+                                    if i == 4 || i == 7 {
+                                        *byte == b'-'
+                                    } else {
+                                        byte.is_ascii_digit()
+                                    }
+                                })
                         });
                     if valid
-                        && name != format!("server-{today}.ndjson")
+                        && name != format!("{FILE_PREFIX}{today}.ndjson")
                         && file
                             .metadata()
                             .and_then(|m| m.modified())
@@ -159,7 +163,7 @@ impl Writer {
             by_day.entry(day).or_default().push(line);
         }
         for (day, lines) in by_day {
-            let file = self.root.join(format!("server-{day}.ndjson"));
+            let file = self.root.join(format!("{FILE_PREFIX}{day}.ndjson"));
             let size = *self
                 .sizes
                 .entry(day.clone())
@@ -238,6 +242,7 @@ fn route(method: &str, path: &str) -> String {
 }
 pub(super) struct Entry {
     method: String,
+    served_by: &'static str,
     route: String,
     path: String,
     client: String,
@@ -270,6 +275,7 @@ impl Entry {
             .collect();
         Self {
             method: request.method().to_string(),
+            served_by: "native",
             route: route(request.method().as_str(), request.uri().path()),
             path: request.uri().path().into(),
             client: if label.is_empty() {
@@ -287,13 +293,20 @@ impl Entry {
         }
     }
     fn base(&self, status: u16) -> Value {
-        let mut v = json!({"listener":"main","method":self.method,"route":self.route,"path":self.path,"status":status,"durationMs":(self.started.elapsed().as_secs_f64()*10000.0).round()/10.0,"client":self.client});
+        let mut v = json!({"listener":"main","servedBy":self.served_by,"method":self.method,"route":self.route,"path":self.path,"status":status,"durationMs":(self.started.elapsed().as_secs_f64()*10000.0).round()/10.0,"client":self.client});
         if !self.request_id.trim().is_empty() {
             v["requestId"] = utf16_prefix(self.request_id.trim(), 128).into();
         }
         v
     }
-    pub fn observe(self, accounting: Arc<Accounting>, response: Response) -> Response {
+    pub fn observe(mut self, accounting: Arc<Accounting>, response: Response) -> Response {
+        if response
+            .extensions()
+            .get::<super::proxy::BunResponse>()
+            .is_some()
+        {
+            self.served_by = "bun";
+        }
         let ms = self.started.elapsed().as_secs_f64() * 1000.0;
         let now = Utc::now();
         let status = response.status().as_u16();
@@ -313,7 +326,7 @@ impl Entry {
             .and_then(|v| v.parse::<u64>().ok())
             .filter(|n| *n <= 9_007_199_254_740_991);
         let weight = accounting.weight(&self, status, ms, now.timestamp_millis());
-        let mut metric = json!({"v":1,"kind":"server","ts":now.to_rfc3339_opts(SecondsFormat::Millis,true),"route":self.route,"method":self.method,"client":self.client,"ms":ms,"status":status});
+        let mut metric = json!({"v":1,"kind":"server","servedBy":self.served_by,"ts":now.to_rfc3339_opts(SecondsFormat::Millis,true),"route":self.route,"method":self.method,"client":self.client,"ms":ms,"status":status});
         if !self.request_id.trim().is_empty() {
             metric["reqId"] = self.request_id.clone().into();
         }
@@ -376,7 +389,7 @@ fn emit(level: &str, event: &str, component: &str, data: Value) {
     let _ = writeln!(
         std::io::stdout().lock(),
         "{}",
-        json!({"ts":Utc::now().to_rfc3339_opts(SecondsFormat::Millis,true),"level":level,"component":component,"event":event,"data":data})
+        json!({"ts":Utc::now().to_rfc3339_opts(SecondsFormat::Millis,true),"server":"rusthrc","level":level,"component":component,"event":event,"data":data})
     );
 }
 struct ObservedBody {

@@ -71,10 +71,10 @@ def compare_passthrough(args, checks):
     candidate = json.loads((Path(args.candidate) / 'observations.json').read_text())
     checks.append({'id': 'proxy:nonempty-identical-cases', 'pass': len(baseline) >= 11 and len(baseline) == len(candidate),
                    'reason': 'every forwarding request must have both observations', 'failureCode': 1})
-    required = {('POST', '/v1/surfaces/unbind'), ('POST', '/v1/runtimes/sweep'),
-                ('POST', '/v1/runtimes/prune'), ('POST', '/v1/runtimes/ensure'),
-                ('POST', '/v1/runtimes/attach'), ('GET', '/v1/targets'),
-                ('GET', '/v1/surfaces'), ('GET', '/v1/placement/bindings'),
+    required = {('POST', '/v1/surfaces/unbind'), ('POST', '/v1/capture/recover'),
+                ('POST', '/v1/in-flight-input'), ('POST', '/v1/runtimes/ensure'),
+                ('POST', '/v1/transcript-search'), ('GET', '/v1/targets'),
+                ('GET', '/v1/surfaces'), ('GET', '/v1/transcript-index/status'),
                 ('GET', '/v1/events/bounded-stream')}
     for kind, rows in [('bun', baseline), ('native', candidate)]:
         observed = {(r['method'], r['path'].split('?')[0]) for r in rows}
@@ -117,6 +117,9 @@ def compare_accounting(args, checks):
             shape = shape and isinstance(r.get('status'), int) and (('bytes' in r) != ('stream' in r))
             key = r['method'] + ' ' + r['route'] + ' ' + r['client'].replace('/' + kind + '/', '/')
             counts[key] = counts.get(key, 0) + r.get('sampleWeight', 1)
+            if kind == 'native':
+                expected_owner='bun' if r['route'] in ('/v1/targets','/v1/events/bounded-stream') else 'native'
+                shape = shape and r.get('servedBy') == expected_owner
             if 'sampleWeight' in r:
                 shape = shape and r['sampleWeight'] == 20 and r['status'] < 400 and r['ms'] < 25 and 'reqId' not in r
             if 'bytes' in r:
@@ -130,6 +133,8 @@ def compare_accounting(args, checks):
         errors = [r for r in logs if r['event'] == 'http.request' and r['data']['client'].endswith('/error')]
         log_ok = not polls and len(errors) == 13 and all(r['level'] == 'warn' and r['component'] == 'http' and r['data'].get('code') == 'unknown_host_session' and r['data'].get('message') for r in errors)
         log_ok = log_ok and all('?' not in r['data']['path'] for r in logs)
+        if kind == 'native':
+            log_ok = log_ok and all(r.get('server') == 'rusthrc' and r['data'].get('servedBy') == ('bun' if r['data']['route'] in ('/v1/targets','/v1/events/bounded-stream') else 'native') for r in logs)
         log_ok = log_ok and any(r['event'] == 'http.stream.open' for r in logs) and any(r['event'] == 'http.stream.close' for r in logs)
         for name, passed in [('weighted-counts', counts == expected), ('schema-bytes-and-sampling', shape), ('L3', log_ok)]:
             case = {'id': kind + ':' + name, 'pass': bool(passed)}

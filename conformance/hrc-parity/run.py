@@ -530,6 +530,12 @@ def validate_case_observations(id, observations, checks, status=None, installed_
 
 
 def compare(args, checks):
+    if getattr(args, 'suite', None) == 'n1-session-projection':
+        from n1_session_projection import compare as compare_projection
+        return compare_projection(args, checks)
+    if getattr(args, 'suite', None) == 'n1-front-accounting':
+        from n1_front_accounting import compare as compare_front_accounting
+        return compare_front_accounting(args, checks)
     if getattr(args, 'suite', None) == 'n1-target-placement':
         from n1_target_placement import compare as compare_target_placement
         return compare_target_placement(args, checks)

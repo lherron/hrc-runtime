@@ -88,7 +88,8 @@ def main():
     metrics={};counts={};request_logs={}
     for kind in ('bun','native'):
         records=[]
-        for file in (root/kind/'state/metrics').glob('server-*.ndjson'):
+        prefix='rusthrc-server-' if kind=='native' else 'server-'
+        for file in (root/kind/'state/metrics').glob(prefix+'*.ndjson'):
             records.extend(json.loads(line) for line in file.read_text().splitlines())
         # Bun also records upstream forwarded traffic with the native client's
         # label. Select each owner's own request population by its client prefix.
@@ -141,20 +142,23 @@ def main():
         directory.unlink()
         assert call(socket,'GET','/v1/health','n1-drop-recovery')['status']==200
         time.sleep(1.2)
-        records=[json.loads(line) for file in directory.glob('server-*.ndjson') for line in file.read_text().splitlines()]
+        records=[json.loads(line) for file in directory.glob('rusthrc-server-*.ndjson') for line in file.read_text().splitlines()]
         assert any(r.get('name')=='metrics.dropped' and r['value']>=1 for r in records),records
         directory=init_control('native-cap');directory.mkdir()
         today=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
-        cap=directory/('server-'+today+'.ndjson')
+        cap=directory/('rusthrc-server-'+today+'.ndjson')
         with cap.open('wb') as file:file.truncate(128*1024*1024)
-        expired=directory/'server-2000-01-01.ndjson';expired.write_text('old')
-        recent=directory/'server-2000-01-02.ndjson';recent.write_text('recent mtime')
-        calendar_invalid=directory/'server-2000-99-99.ndjson';calendar_invalid.write_text('pattern still matches')
+        expired=directory/'rusthrc-server-2000-01-01.ndjson';expired.write_text('old')
+        recent=directory/'rusthrc-server-2000-01-02.ndjson';recent.write_text('recent mtime')
+        calendar_invalid=directory/'rusthrc-server-2000-99-99.ndjson';calendar_invalid.write_text('pattern still matches')
         unrelated=directory/'other-2000-01-01.ndjson';unrelated.write_text('keep')
-        for file in (expired,calendar_invalid,unrelated):os.utime(file,(time.time()-15*86400,)*2)
+        bun_owned=directory/'server-2000-01-01.ndjson';bun_owned.write_bytes(b'Bun-owned canary')
+        for file in (expired,calendar_invalid,unrelated,bun_owned):os.utime(file,(time.time()-15*86400,)*2)
+        bun_before=(bun_owned.read_bytes(),bun_owned.stat().st_mtime_ns)
         socket=up('native-cap')
         assert call(socket,'GET','/v1/health','n1-cap')['status']==200
         time.sleep(1.2)
+        assert (bun_owned.read_bytes(),bun_owned.stat().st_mtime_ns)==bun_before
         assert cap.stat().st_size==128*1024*1024
         assert not expired.exists() and not calendar_invalid.exists() and recent.exists() and unrelated.exists()
     finally:

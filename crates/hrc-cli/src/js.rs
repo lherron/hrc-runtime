@@ -320,7 +320,7 @@ pub(crate) fn iso_string(ms: f64) -> Option<String> {
 
 /// `Date.parse` for the ISO 8601 date-time forms every HRC writer emits
 /// (`toISOString` output and its shorter/offset variants); NaN otherwise.
-pub(crate) fn parse_date(s: &str) -> f64 {
+pub fn parse_date(s: &str) -> f64 {
     fn num(s: &str) -> Option<i64> {
         (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
             .then(|| s.parse().ok())
