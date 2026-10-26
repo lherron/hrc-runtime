@@ -342,17 +342,16 @@ fn bounded_append(
     Ok(Some(head))
 }
 
-pub fn open(
+type Selection = (Source, i64, &'static str, Value);
+
+/// Resolve the broker fence or lifecycle selector before opening the replay.
+fn resolve_stream_selector(
     server: &Shared,
-    path: &str,
     query: &HashMap<String, String>,
-) -> Result<Response, ApiError> {
-    // Subscribe before the read snapshot: commits at the replay/live seam
-    // either appear in replay or leave a pending watch generation.
-    let mut wakes = server.ledger.subscribe();
-    let bounded = path == "/v1/events/bounded-stream";
-    let broker = path == "/v1/broker-events";
-    let (source, after, receipt, selector) = if broker {
+    bounded: bool,
+    broker: bool,
+) -> Result<Selection, ApiError> {
+    Ok(if broker {
         let mut q = events::filters(query)?;
         for field in ["generation", "afterSeq"] {
             if events::normalized(&q, field).is_none() {
@@ -453,23 +452,18 @@ pub fn open(
             }
         }
         (Source::Lifecycle(q), from - 1, receipt, selector)
-    };
-    let follow = query.get("follow").map(String::as_str) == Some("true");
-    if broker && !follow {
-        if receipt != "none" {
-            return Err(ApiError::bad(
-                "consumer receipt requires follow=true",
-                Some(json!({"field":"follow"})),
-            ));
-        }
-        let (_, rows) = read(server, &source, after)?;
-        let raw = rows.iter().map(|v| format!("{v}\n")).collect::<String>();
-        return Ok((
-            [("content-type", "application/x-ndjson; charset=utf-8")],
-            raw,
-        )
-            .into_response());
-    }
+    })
+}
+
+/// Replay from one snapshot and publish its ready marker before live following.
+fn replay_snapshot(
+    server: &Shared,
+    source: &Source,
+    query: &HashMap<String, String>,
+    after: i64,
+    bounded: bool,
+) -> Result<(Queue, i64), ApiError> {
+    let broker = matches!(source, Source::Broker { .. });
     let mut q = Queue {
         records: VecDeque::new(),
         bytes: 0,
@@ -490,7 +484,7 @@ pub fn open(
             .map_err(anyhow::Error::from)?;
         q.incarnation = events::fence(&db, query)?;
         let head = db.max_hrc_seq()?;
-        let Source::Lifecycle(filters) = &source else {
+        let Source::Lifecycle(filters) = source else {
             unreachable!()
         };
         let mut records = Vec::new();
@@ -515,7 +509,7 @@ pub fn open(
         tx.commit().map_err(anyhow::Error::from)?;
         head.max(after)
     } else {
-        let (head, rows) = read(server, &source, after)?;
+        let (head, rows) = read(server, source, after)?;
         for row in rows {
             let seq = if broker {
                 row["seq"].as_i64().unwrap()
@@ -534,6 +528,38 @@ pub fn open(
             dropped: Some(0),
         });
     }
+    Ok((q, cursor))
+}
+
+pub fn open(
+    server: &Shared,
+    path: &str,
+    query: &HashMap<String, String>,
+) -> Result<Response, ApiError> {
+    // Subscribe before the read snapshot: commits at the replay/live seam
+    // either appear in replay or leave a pending watch generation.
+    let mut wakes = server.ledger.subscribe();
+    let bounded = path == "/v1/events/bounded-stream";
+    let broker = path == "/v1/broker-events";
+    let (source, after, receipt, selector) =
+        resolve_stream_selector(server, query, bounded, broker)?;
+    let follow = query.get("follow").map(String::as_str) == Some("true");
+    if broker && !follow {
+        if receipt != "none" {
+            return Err(ApiError::bad(
+                "consumer receipt requires follow=true",
+                Some(json!({"field":"follow"})),
+            ));
+        }
+        let (_, rows) = read(server, &source, after)?;
+        let raw = rows.iter().map(|v| format!("{v}\n")).collect::<String>();
+        return Ok((
+            [("content-type", "application/x-ndjson; charset=utf-8")],
+            raw,
+        )
+            .into_response());
+    }
+    let (q, cursor) = replay_snapshot(server, &source, query, after, bounded)?;
     let admission = if bounded {
         None
     } else {

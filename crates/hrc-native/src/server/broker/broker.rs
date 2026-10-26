@@ -69,19 +69,15 @@ async fn wait_attached_client(lease: &Value) -> Result<()> {
     }
     bail!("tmux target has no attached client: {session}")
 }
-pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError> {
-    let Birth {
-        session,
-        intent,
-        prompt,
-        run_id,
-        idempotency,
-        origin,
-        response_format,
-        first_turn_timeout_ms,
-        attach,
-    } = birth;
-    let host = string(&session, "hostSessionId")?.to_owned();
+/// normalizeDispatchIntent / compile: freeze and read back the committed preparation.
+async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, Value), ApiError> {
+    let session = &birth.session;
+    let intent = birth.intent.clone();
+    let prompt = birth.prompt;
+    let run_id = birth.run_id;
+    let idempotency = birth.idempotency;
+    let response_format = birth.response_format;
+    let host = string(session, "hostSessionId")?.to_owned();
     // normalizeDispatchIntent: a session that never applied an intent (minted
     // with persistIntent:false, its first birth failed) has nothing to replay,
     // and a directive-only intent has no placement to birth into.
@@ -113,18 +109,18 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         )
         .map_err(anyhow::Error::from)?
         != 0;
-    let continuation = compile::continuation_ref(&session, reuse_disabled);
+    let continuation = compile::continuation_ref(session, reuse_disabled);
     // A promptless start (the attached door without a prompt) has no run.
     let run = (!prompt.is_empty()).then_some(run_id);
-    let identity = compile::allocate(&session, run);
-    let scope = string(&session, "scopeRef")?;
+    let identity = compile::allocate(session, run);
+    let scope = string(session, "scopeRef")?;
     // The persisted intent is the promptless one (record.intent). Bun stamps
     // placement correlation at turn admission (normalizeDispatchIntent), so a
     // promptless start (a relaunch, the attached door) keeps the intent it was
     // given; the compile request is normalized either way.
     let given = intent.clone();
-    let intent = compile::normalize_placement(intent, &session, run);
-    let dispatch_env = dispatch_environment(&session, &intent, &server.runtime, run)?;
+    let intent = compile::normalize_placement(intent, session, run);
+    let dispatch_env = dispatch_environment(session, &intent, &server.runtime, run)?;
     let mut stored = if run.is_some() { intent.clone() } else { given };
     if run.is_some()
         && let Some(map) = stored.as_object_mut()
@@ -159,6 +155,22 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         .lock()
         .unwrap()
         .broker_preparation(string(&identity, "operationId")?)?;
+    Ok((identity, record))
+}
+
+pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError> {
+    let (identity, record) = prepare_dispatch(server, &birth).await?;
+    let Birth {
+        session,
+        prompt,
+        run_id,
+        origin,
+        first_turn_timeout_ms,
+        attach,
+        ..
+    } = birth;
+    let host = string(&session, "hostSessionId")?.to_owned();
+    let run = (!prompt.is_empty()).then_some(run_id);
     let mut attempt = StartAttempt::default();
     let launched = async {
         let (client, events, hello, allocation) = launch(server, &record).await?;

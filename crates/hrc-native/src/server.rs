@@ -1,3 +1,5 @@
+#![warn(clippy::too_many_lines)]
+
 //! front/ → daemon entry, HTTP and telemetry → hrc-server.
 //! broker/ → broker execution ownership → hrc-server broker/.
 //! projection/ → ledger reads and envelope projection → hrc-server event-mapper/.
@@ -316,6 +318,8 @@ async fn dispatch_local(server: &Shared, request: Request) -> Response {
     server.ledger_committed();
     response
 }
+// Keep the HTTP route table together so route order and fallthrough remain auditable.
+#[allow(clippy::too_many_lines)]
 async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();

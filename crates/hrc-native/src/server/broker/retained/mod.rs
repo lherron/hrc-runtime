@@ -465,6 +465,8 @@ fn cursor(db: &Connection, invocation: &str) -> i64 {
     )
     .unwrap_or(0)
 }
+// Keep the page loop together: snapshot, cursor and slice-budget invariants span each page.
+#[allow(clippy::too_many_lines)]
 async fn read_and_project(
     server: &Shared,
     row: &Row,
