@@ -241,7 +241,9 @@ async fn run(server: &Shared, body: &Value) -> Result<Response, ApiError> {
                 let reference = reference.clone();
                 let intent = intent.clone();
                 Box::pin(async move {
-                    targets::ensure_target_session(&server, &reference, &intent, true, None).await
+                    targets::ensure_target_session(&server, &reference, &intent, true, None)
+                        .await?
+                        .ok_or_else(|| unknown(&reference))
                 })
             }),
         }

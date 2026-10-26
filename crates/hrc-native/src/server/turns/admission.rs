@@ -314,7 +314,15 @@ async fn steps(
         crate::server::lifecycle::admission_lease(server).inspect_err(|_| trace.push("refused"))?;
     trace.lease = Some(lease);
     trace.push("passed"); // drain-lease
-    trace.push("passed"); // retired-persona (no local persona allowlist; retired-scope gate is N4)
+    if let Err(error) = crate::server::federation::summon::assert_scope_not_retired(
+        server,
+        trace.session["scopeRef"].as_str().unwrap_or(""),
+        "resolve-session",
+    ) {
+        trace.push("refused");
+        return Err(error);
+    }
+    trace.push("passed"); // retired-persona
     // fence
     let mut session = req.target.view();
     let lazy = matches!(&req.target, Target::Lazy { .. });

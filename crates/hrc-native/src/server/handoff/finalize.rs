@@ -20,9 +20,15 @@ fn pump(server: &Shared) -> Result<()> {
             requests.insert(run, request);
         }
     }
+    let mut ready = Vec::new();
     for (run_id, request) in requests {
         let terminal = db.lifecycle_rows("SELECT * FROM hrc_events WHERE run_id=? AND event_kind IN ('turn.completed','turn.zombied','turn.reaped') ORDER BY hrc_seq ASC LIMIT 1",&[Sql::Text(run_id.clone())],true)?.pop();
-        let Some(event) = terminal else { continue };
+        if let Some(event) = terminal {
+            ready.push((run_id, request, event));
+        }
+    }
+    ready.sort_by_key(|(_, _, event)| event["hrcSeq"].as_i64());
+    for (run_id, request, event) in ready {
         let run = db::run(&db.sqlite, &run_id)?;
         let error: Option<String> = db
             .sqlite

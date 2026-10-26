@@ -45,21 +45,44 @@ pub async fn ensure(server: &Shared, body: Value) -> Result<Response, ApiError> 
             Some(json!({"field":"birthCause"})),
         ));
     }
+    let session = ensure_target_session(
+        server,
+        raw,
+        intent,
+        body["persistIntent"] != false,
+        body["birthCause"].as_str(),
+    )
+    .await?;
+    let Some(session) = session else {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            "Not Found: archived continuation succession belongs to N2",
+        )
+            .into_response());
+    };
+    Ok(Json(runtime_views::target_session_view(server, &session, false).await?).into_response())
+}
+
+/// Shared materializer for lazy admission. Authority stays inside the helper:
+/// a caller cannot mint a session before reserved-address/retirement/summon
+/// checks. None retains the existing archived-successor ownership boundary.
+pub async fn ensure_target_session(
+    server: &Shared,
+    raw: &str,
+    intent: &Value,
+    persist: bool,
+    birth_cause: Option<&str>,
+) -> Result<Option<Value>, ApiError> {
     let (scope, lane) = runtime_views::parse_target_ref(raw)?;
     super::federation::summon::assert_reserved_address_allows_birth(server, scope, lane)?;
     let existing = runtime_views::find_target_session(server, raw)?;
-    let persist = body["persistIntent"] != false;
     let session = if let Some(mut session) = existing {
         if session["status"] == "archived"
             && session["continuation"]["key"]
                 .as_str()
                 .is_some_and(|s| !s.is_empty())
         {
-            return Ok((
-                StatusCode::NOT_FOUND,
-                "Not Found: archived continuation succession belongs to N2",
-            )
-                .into_response());
+            return Ok(None);
         }
         // T-09762: an existing session is not authority over a retired scope.
         super::federation::summon::assert_scope_not_retired(server, scope, "ensure-target").await?;
@@ -91,7 +114,7 @@ pub async fn ensure(server: &Shared, body: Value) -> Result<Response, ApiError> 
                 scope,
                 lane,
                 if persist { Some(intent) } else { None },
-                body["birthCause"].as_str(),
+                birth_cause,
             )?)
         })
         .await?;
@@ -102,5 +125,5 @@ pub async fn ensure(server: &Shared, body: Value) -> Result<Response, ApiError> 
         }
         session
     };
-    Ok(Json(runtime_views::target_session_view(server, &session, false).await?).into_response())
+    Ok(Some(session))
 }
