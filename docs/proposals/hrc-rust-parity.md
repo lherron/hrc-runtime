@@ -89,6 +89,7 @@ As of 2026-10-26 07:40Z. The wrkq tasks are authoritative. This section records 
 
 Scope moves since r2:
 - `GET /v1/presentation/runtimes` and `POST /v1/presentation/seats/read` move N4 → N3. The unchanged kernel needs both to bootstrap, and N3's gate 2 is the unchanged kernel.
+- Native server lifecycle moves to N5 as one owner: `POST /v1/server/lifecycle` (from N4) and the `server.started` / `shutting_down` / `stopped` ledger rows with grant attribution. N5 writes them through N2's append path, only on a non-front daemon; the front role stays writer-free.
 - The 11 slow-statement telemetry items (`hrc-store-sqlite/src/statement-telemetry.ts`) move N5 → N4. Only the daemon instruments statements.
 - Continuation on `aspc.compileHarnessInvocation` is assigned to N2, including births on a scope with a stored continuation. N1's fresh-scope gates missed it; agent-spaces T-11833 found it.
 - The claude-code-tmux Stop-fallback duplicate `turn.message` (agent-spaces T-11837) must land before N6. A Rust owner answers the Stop-hook mail decision about 100× faster than Bun and exposes the race on nearly every turn.
