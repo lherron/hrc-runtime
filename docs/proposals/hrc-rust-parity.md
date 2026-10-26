@@ -74,7 +74,7 @@ The critical path is N0 → N1 → N2 → N3 → N4 → N6. N5 can start after N
 
 ## Progress
 
-As of 2026-10-26 13:50Z. The wrkq tasks are authoritative. This section records package state and the scope moves made since r2.
+As of 2026-10-26 16:55Z. The wrkq tasks are authoritative. This section records package state and the scope moves made since r2.
 
 | Package | Task | State |
 |---|---|---|
@@ -85,7 +85,7 @@ As of 2026-10-26 13:50Z. The wrkq tasks are authoritative. This section records 
 | N4 | T-11872 (clod) | Active. Landing 4 (1a2cd24b) and the flip fixes (77355f22: resolve through the summon seam, lazy placement_ledger, WRKQD_TOKEN_FILE for broker runtimes) are on main. The collective-history TS landing holds the verify slot now (flip gate 2). GAP:N4 attribution (T-11898) is parked. |
 | N5 | T-11819 (clod) | Parked until the max3 flip: a 6-commit local stack (GAP:N5=0, store key order) and helper T-11880's runtime-read key order. Resume from C-31859. |
 | F | T-11822 | Parked. Landed through 9d7d7c2d; rollout pending hrcdev login. Resume from H-00680. The max3 step may be overtaken by the flip. |
-| N6 | T-11893 / T-11894 / T-11895 (clod) | max3 flip ruled for 2026-10-26 (Lance, 13:35Z: "i want real live traffic on the overnight rust work. no more hedging"). It does not wait for agent-spaces' aspd soak. Gates: N4 fixes (done), EPR (done), N4 collective history, native restart-self, and flip prep: runbook, rollback and owner plist (T-11893), day-1 route.not_served audit and preflight (T-11894), and a Bun→rusthrc→Bun rehearsal on a store copy (T-11895). Every non-prereq seat is parked until the flip lands (Lance, 13:50Z). |
+| N6 | T-11893 / T-11894 / T-11895 (closed) | **max3 is on rusthrc since 2026-10-26 15:37Z** (Lance's direct order; ruling ~15:55Z: forward-fix only, no rollback unless Lance orders it). Live release 72363 (7435074e) plus CLI c03779f0. Forward-fixes the flip found, all live: a472aafa hot routes stop hydrating every runtime (mail p50 10.7 s → 0.19 s); 9a4e8ce2 codex pane lease (codex births and rotation); 0aea6708 startup and maintenance by-id reads (restart 52–58 s → 9 s); 3da89fe2 failed start releases its lease; 6478b612 presentation filter; 81df897a 422 parity; 7435074e kernel latest-by-session (Loggia kernel bootstrap never finished → 2 s, 16–22 GB → ~190 MB); c03779f0 CLI revives never-applied-intent sessions. D2 designation 503s were svc down (mini reboot 14:56–15:15Z) plus max3 mutex starvation, cured by a472aafa. svc and hrcdev flips not started; each needs Lance's go. |
 
 Scope moves since r2:
 - `GET /v1/presentation/runtimes` and `POST /v1/presentation/seats/read` move N4 → N3. The unchanged kernel needs both to bootstrap, and N3's gate 2 is the unchanged kernel.
