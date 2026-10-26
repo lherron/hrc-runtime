@@ -34,7 +34,7 @@ socket and ownership files; it never kills a broker.
 
 The workflow test creates its schema with Bun's real migrator, then drives the
 native binary as a subprocess. It tests unknown/incomplete schema refusal
-without file changes, durable session creation and repeat resolution, one
+without main-database changes, durable session creation and repeat resolution, one
 lifecycle row, a refused competing owner and graceful shutdown:
 
 ```
@@ -82,3 +82,16 @@ The exact-route inventory and suppression table are generated from Bun source
 at build time. `e2e/accounting.py` compares a real Bun/native request mix through
 `compare --suite n1-accounting`, then checks failed-writer recovery, retention,
 and the daily cap in independent scratch roots.
+
+`e2e/schema_refusal.py` records the full gate-3 filesystem effect for unknown
+and incomplete migrations, including a live WAL: main DB bytes/mtime stay
+unchanged, WAL gains no frames, and ownership files remain absent. SQLite may
+create or change its SHM index; one failed daemon CLI usage record is expected
+(EN-35424). No immutable connection or copied read path is used.
+
+Local session pages and facets query the trigger-maintained session index with
+Bun's filters, excluded facet dimensions and v5 keyset cursors. The index
+workflow checks titles, nonempty pages, cursor termination, malformed input,
+and each owner's actual ledger high-water. Peer aggregation remains N4's
+federation workflow. Native query parsing preserves URLSearchParams semantics,
+including the first duplicate value and lossy UTF-8 decoding.

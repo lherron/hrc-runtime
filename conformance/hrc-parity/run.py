@@ -530,6 +530,9 @@ def validate_case_observations(id, observations, checks, status=None, installed_
 
 
 def compare(args, checks):
+    if getattr(args, 'suite', None) == 'n1-index':
+        from n1_index import compare as compare_index
+        return compare_index(args, checks)
     if getattr(args, 'suite', None) == 'n1-accounting':
         from n1_routes import compare_accounting
         return compare_accounting(args, checks)

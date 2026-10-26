@@ -110,6 +110,24 @@
         "drop-recovery-retention-day-cap"
       ],
       "requiredInP0": false
+    },
+    "n1-session-index": {
+      "assertionIds": [
+        "nonempty-titles-and-keyset-pages",
+        "filters-and-excluded-facet-dimensions",
+        "cursor-grammar-and-errors",
+        "actual-ledger-highwater"
+      ],
+      "requiredInP0": false
+    },
+    "n1-schema-refusal": {
+      "assertionIds": [
+        "unknown-incomplete-checkpointed-live-wal",
+        "main-db-unchanged-wal-no-frames",
+        "owner-controls-preserved",
+        "expected-failed-cli-usage"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [
@@ -289,7 +307,7 @@
     "cli:hrc monitor wait": "direct-cli-sdk",
     "cli:hrc run annotate": "direct-cli-sdk",
     "cli:hrc run export": "direct-cli-sdk",
-    "file:state-wal-shm": "GAP:N1",
+    "file:state-wal-shm": "n1-schema-refusal",
     "file:lifecycle-credentials": "GAP:N1",
     "file:broker-leases-raw-provider-artifacts": "GAP:N2",
     "file:session-publication-cursor": "GAP:N3",
@@ -307,7 +325,16 @@
     "public:POST:/v1/runtimes/attach": "GAP:N1",
     "public:GET:/v1/targets": "n1-bun-passthrough",
     "public:GET:/v1/surfaces": "n1-bun-passthrough",
-    "public:GET:/v1/placement/bindings": "GAP:N1"
+    "public:GET:/v1/placement/bindings": "GAP:N1",
+    "public:GET:/v1/sessions/page": "n1-session-index",
+    "public:GET:/v1/sessions/facets": "n1-session-index",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:buildWhere:1866": "n1-session-index",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:countMap:3896": "n1-session-index",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:escapeLike:1732": "n1-session-index",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:mapRow:3205": "n1-session-index",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:facets:5765": "n1-session-index",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:listPage:4590": "n1-session-index",
+    "store-source:packages/hrc-store-sqlite/src/session-index-repository.ts": "n1-session-index"
   },
   "coverageReasons": {
     "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
@@ -317,6 +344,16 @@
     "public:POST:/v1/runtimes/attach": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending.",
     "public:GET:/v1/targets": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:GET:/v1/surfaces": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:GET:/v1/placement/bindings": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending."
+    "public:GET:/v1/placement/bindings": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending.",
+    "public:GET:/v1/sessions/page": "Local session-index HTTP and SQL projection compared against Bun, including filters, pagination, facets and actual-ledger high-water; peer aggregation remains the N4 federation workflow.",
+    "public:GET:/v1/sessions/facets": "Local session-index HTTP and SQL projection compared against Bun, including filters, pagination, facets and actual-ledger high-water; peer aggregation remains the N4 federation workflow.",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:buildWhere:1866": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:countMap:3896": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:escapeLike:1732": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:mapRow:3205": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:facets:5765": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
+    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:listPage:4590": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
+    "store-source:packages/hrc-store-sqlite/src/session-index-repository.ts": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
+    "file:state-wal-shm": "EN-35424 gate3: six real refusal cases preserve main DB and WAL frames, permit SQLite SHM coordination, preserve control files and list the failed CLI usage record."
   }
 }

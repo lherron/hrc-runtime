@@ -90,8 +90,8 @@ def main():
         records=[]
         for file in (root/kind/'state/metrics').glob('server-*.ndjson'):
             records.extend(json.loads(line) for line in file.read_text().splitlines())
-        # Forwarding also records upstream traffic on Bun. Its client labels
-        # match, so compare Bun's direct population by timestamped prefix below.
+        # Bun also records upstream forwarded traffic with the native client's
+        # label. Select each owner's own request population by its client prefix.
         records=[r for r in records if r.get('kind')=='server' and r.get('client','').startswith('n1-accounting/'+kind+'/')]
         metrics[kind]=records
         count=Counter()

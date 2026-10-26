@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Workflow checks against a Bun-created scratch store, never production state.
 
-Failure modes: missing/extra migration must not write; an existing owner must
+Failure modes: missing/extra migration must not change the main DB; an existing owner must
 not lose its socket; native session creation must survive a Bun store read;
 unknown routes must retain Bun's 404; shutdown must leave durable rows intact.
 """
@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import uuid
 
 
 class UnixHTTP(http.client.HTTPConnection):
@@ -67,7 +68,7 @@ def main():
                 assert proc.returncode != 0, (variant, proc.stdout, proc.stderr)
                 assert 'schema' in proc.stderr.decode().lower(), proc.stderr
                 assert before == (db.stat().st_mtime_ns, db.read_bytes()), variant
-                results.append({'case': variant, 'exit': proc.returncode, 'stderr': proc.stderr.decode(), 'noWrites': True})
+                results.append({'case': variant, 'exit': proc.returncode, 'stderr': proc.stderr.decode(), 'noMainDatabaseWrites': True})
                 continue
             log = (args.artifacts / 'serve.log').open('w')
             proc = subprocess.Popen([binary, 'server'], env=env, stdout=log, stderr=log)
@@ -93,12 +94,13 @@ def main():
                 assert request('GET', '/v1/nonexistent') == (404, 'Not Found')
                 status, raw = request('POST', '/v1/sessions/resolve', {})
                 assert status == 400 and json.loads(raw) == {'error': {'code': 'malformed_request', 'message': 'sessionRef is required', 'detail': {'field': 'sessionRef'}}}
-                ref = 'agent:tabularasa:project:hrc-runtime:task:native-foundation/lane:main'
+                task = 'native-foundation-' + uuid.uuid4().hex
+                ref = 'agent:tabularasa:project:n1-t11818:task:' + task + '/lane:main'
                 status, raw = request('POST', '/v1/sessions/resolve', {'sessionRef': ref, 'create': True, 'summonIntent': 'explicit_local'})
                 created = json.loads(raw)
                 assert status == 200 and created['created'] is True, (status, created)
                 host = created['hostSessionId']
-                assert created['identity'] == {'kind': 'project-task', 'agentId': 'tabularasa', 'projectId': 'hrc-runtime', 'taskId': 'native-foundation'}
+                assert created['identity'] == {'kind': 'project-task', 'agentId': 'tabularasa', 'projectId': 'n1-t11818', 'taskId': task}
                 status, raw = request('POST', '/v1/sessions/resolve', {'sessionRef': ref, 'create': True, 'summonIntent': 'explicit_local'})
                 assert status == 200 and json.loads(raw)['created'] is False and json.loads(raw)['hostSessionId'] == host
                 status, raw = request('GET', '/v1/sessions?scopeRef=' + ref.split('/')[0])

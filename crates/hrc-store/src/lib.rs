@@ -9,6 +9,7 @@ use std::{collections::BTreeSet, path::Path, time::Duration};
 use uuid::Uuid;
 
 mod broker;
+mod index;
 mod metadata;
 pub use metadata::{MetadataWrite, validate_metadata};
 

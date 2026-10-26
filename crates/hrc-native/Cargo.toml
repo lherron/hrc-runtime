@@ -21,6 +21,8 @@ libc = "0.2"
 sha2 = "0.10"
 hyper = { version = "1", features = ["client", "http1"] }
 http-body = "1"
+base64 = "0.22"
+form_urlencoded = "1.2"
 hyper-util = { version = "0.1", features = ["tokio"] }
 
 [build-dependencies]

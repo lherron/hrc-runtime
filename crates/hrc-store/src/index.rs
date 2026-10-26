@@ -1,0 +1,118 @@
+//! The current-generation session index is maintained by Bun's SQL triggers.
+//! Native readers query it with the same filtering and keyset traversal.
+use super::{Store, canonical_lane, fields};
+use anyhow::Result;
+use rusqlite::{params_from_iter, types::Value as SqlValue};
+use serde_json::{Value, json};
+use std::collections::HashMap;
+
+fn filters(input: &HashMap<String, String>, excluded: &str) -> (String, Vec<SqlValue>) {
+    let mut predicates = vec!["scope_ref NOT LIKE 'app:%'".to_owned()];
+    let mut values = Vec::new();
+    if let Some(q) = input.get("q") {
+        predicates.push("scope_ref LIKE ? ESCAPE '\\'".into());
+        values.push(SqlValue::Text(format!(
+            "%{}%",
+            q.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        )));
+    }
+    for (field, column) in [
+        ("agentId", "agent_id"),
+        ("projectId", "project_id"),
+        ("laneRef", "lane_ref"),
+        ("effectiveStatus", "effective_status"),
+        ("executionMode", "execution_mode"),
+    ] {
+        if field != excluded
+            && let Some(value) = input.get(field)
+        {
+            predicates.push(format!("{column} = ?"));
+            values.push(SqlValue::Text(value.clone()));
+        }
+    }
+    (format!("WHERE {}", predicates.join(" AND ")), values)
+}
+impl Store {
+    pub fn session_index_page(
+        &self,
+        input: &HashMap<String, String>,
+        cursor: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<(Vec<Value>, bool)> {
+        let (mut clause, mut values) = filters(input, "");
+        if let Some((t, h)) = cursor {
+            clause += " AND (last_activity_at, host_session_id) < (?, ?)";
+            values.extend([SqlValue::Text(t.into()), SqlValue::Text(h.into())]);
+        }
+        values.push(SqlValue::Integer(limit as i64 + 1));
+        let sql = format!(
+            "SELECT * FROM session_index {clause} ORDER BY last_activity_at DESC, host_session_id DESC LIMIT ?"
+        );
+        let mut stmt = self.sqlite.prepare(&sql)?;
+        let mut rows = stmt
+            .query_map(params_from_iter(values), |r| {
+                fields(
+                    r,
+                    &[
+                        ("host_session_id", "hostSessionId"),
+                        ("scope_ref", "scopeRef"),
+                        ("lane_ref", "laneRef"),
+                        ("agent_id", "agentId"),
+                        ("created_at", "createdAt"),
+                        ("effective_status", "effectiveStatus"),
+                        ("execution_mode", "executionMode"),
+                        ("last_activity_at", "lastActivityAt"),
+                    ],
+                    &[("title", "title"), ("project_id", "projectId")],
+                    &[],
+                )
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let more = rows.len() > limit;
+        rows.truncate(limit);
+        for row in &mut rows {
+            let identity = self.identity(
+                row["scopeRef"].as_str().unwrap(),
+                row["laneRef"].as_str().unwrap(),
+            )?;
+            if let Some(task) = identity.get("taskId") {
+                row["taskId"] = task.clone();
+            }
+            row["identity"] = identity;
+            row["laneRef"] = canonical_lane(row["laneRef"].as_str().unwrap()).into();
+        }
+        Ok((rows, more))
+    }
+    pub fn session_index_facets(&self, input: &HashMap<String, String>) -> Result<Value> {
+        let (clause, values) = filters(input, "");
+        let total: i64 = self.sqlite.query_row(
+            &format!("SELECT COUNT(*) FROM session_index {clause}"),
+            params_from_iter(values),
+            |r| r.get(0),
+        )?;
+        let mut output = json!({"total":total,"nodeFacetCount":total});
+        for (field, column, output_field) in [
+            ("agentId", "agent_id", "byAgentId"),
+            ("effectiveStatus", "effective_status", "byEffectiveStatus"),
+            ("executionMode", "execution_mode", "byExecutionMode"),
+        ] {
+            let (clause, values) = filters(input, field);
+            let mut stmt = self.sqlite.prepare(&format!(
+                "SELECT {column},COUNT(*) FROM session_index {clause} GROUP BY {column}"
+            ))?;
+            let pairs = stmt
+                .query_map(params_from_iter(values), |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let map = pairs
+                .into_iter()
+                .map(|(key, count)| (key, json!(count)))
+                .collect::<serde_json::Map<_, _>>();
+            output[output_field] = map.into();
+        }
+        Ok(output)
+    }
+}

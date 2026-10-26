@@ -2,6 +2,7 @@ mod accounting;
 mod aspc;
 mod broker;
 mod compile;
+mod index;
 mod proxy;
 mod rpc;
 mod sessions;
@@ -10,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use axum::{
     Json, Router,
     body::to_bytes,
-    extract::{Query, Request, State},
+    extract::{Request, State},
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -238,10 +239,14 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
         .unwrap_or_else(IntoResponse::into_response);
         return response;
     }
-    let query = match Query::<HashMap<String, String>>::try_from_uri(&uri) {
-        Ok(Query(query)) => query,
-        Err(error) => return error.into_response(),
-    };
+    // URLSearchParams.get returns the first occurrence and decodes malformed
+    // UTF-8 lossily; Axum's HashMap extractor uses different semantics.
+    let mut query = HashMap::new();
+    for (key, value) in form_urlencoded::parse(uri.query().unwrap_or("").as_bytes()) {
+        query
+            .entry(key.into_owned())
+            .or_insert_with(|| value.into_owned());
+    }
     let body = match to_bytes(request.into_body(), usize::MAX).await {
         Ok(body) => body,
         Err(_) => return ApiError::bad("request body must be valid JSON", None).into_response(),
@@ -286,6 +291,8 @@ fn implemented(method: &Method, path: &str) -> bool {
             "/v1/health",
             "/v1/sessions",
             "/v1/sessions/get",
+            "/v1/sessions/page",
+            "/v1/sessions/facets",
             "/v1/sessions/metadata",
             "/v1/runtimes",
             "/v1/runtimes/live-refs",
@@ -330,6 +337,9 @@ fn handle(
     body: &[u8],
     headers: &HeaderMap,
 ) -> std::result::Result<Response, ApiError> {
+    if *method == Method::GET && ["/v1/sessions/page", "/v1/sessions/facets"].contains(&path) {
+        return index::handle(server, path, query);
+    }
     if let Some(response) = sessions::handle(server, method, path, query, body, headers)? {
         return Ok(response);
     }
