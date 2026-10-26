@@ -1,76 +1,52 @@
-# HRC stage-1 kernel
+# HRC Rust workspace
 
-`hrc-domain` reads the pinned HRC HTTP API. `hrc-kernel` embeds cardo at
-1796e1c and serves the `hrc` rebuildable, ingest-only document. Neither crate
-opens HRC's store or imports `packages/`. Stage 1b adds `seat.summon` over the existing declaration and start routes.
+`hrc-common` is the shared leaf crate being introduced by the campaign's
+`crate-graph-hrc-common` task. It owns shared federation configuration,
+scope-reference parsing, and JavaScript compatibility helpers. It may depend on
+external libraries, but no HRC crate.
 
-Build and validate from the repository root:
+`hrc-store` owns SQLite access, persisted row shapes, event append, and the small
+store grammars (including terminal statuses and process identity). The sibling
+`store-owns-*` tasks consolidate those definitions here. It may depend on
+`hrc-common` and external libraries, never the CLI, daemon, domain, or kernel.
+Its build script derives schema admission from the Bun migration graph; it does
+not execute those migrations.
 
-```sh
-just cargo-check
-just verify
-```
+`hrc-domain` implements the HRC document and operations consumed by cardo. It
+reads the owner API and opens the store for native reads. It may depend on
+`hrc-store`, `hrc-common`, cardo, and external libraries; it must not depend on
+the CLI, native daemon, or kernel.
 
-The cargo leg includes a black-box Unix-socket E2E. Its fixture tests API
-outages, sparse/spilled replay, incarnation replacement, stable seat identity,
-attach descriptors and the pinned read set. It is separate from the real
-installed gates in the migration proposal §4.8. Set
-`HRC_KERNEL_E2E_ARTIFACTS=/path/out` to retain its report at a chosen path.
+`hrc-kernel` hosts the rebuildable HRC projection over cardo and exposes its
+Unix socket for Loggia. It may depend on `hrc-domain`, shared leaf utilities,
+cardo, and external libraries, never the CLI or native daemon.
 
-Atomic HRC installs ship `bin/hrc-kernel` beside the TS packages. The stable
-max3 executable is `~/.bun/install/hrc-runtime-current/bin/hrc-kernel`.
-Unchanged Rust/shared inputs reuse the previous release binary; changed inputs
-build with `cargo build --release --locked` from the selected release snapshot.
+`hrc-cli` implements the command surface. It may depend on `hrc-store`,
+`hrc-common`, and external libraries, never the native daemon, domain, or kernel.
 
-Loggia supervises the kernel. It runs with no arguments by default:
+`hrc-native` owns the native daemon library and the `rusthrc` executable. The
+library may depend on `hrc-store`, `hrc-common`, and external libraries. The
+`rusthrc` binary composes the native library and `hrc-cli`; the library must not
+import the CLI. The sibling `crate-graph-hrc-common` task establishes this split.
 
-```sh
-~/.bun/install/hrc-runtime-current/bin/hrc-kernel
-```
+Allowed workspace edges:
 
-`HRC_RUNTIME_DIR` selects the runtime root; otherwise it is
-`$HOME/praesidium/var/run/hrc`. The fixed socket is `<runtimeRoot>/hrc-kernel.sock`
-and the owner API is `<runtimeRoot>/hrc.sock`. Development overrides are
-`--runtime-root PATH` and `--hrc-socket PATH`. A file lock prevents another
-kernel from taking over a live socket. The first stdout line is cardo-ui's
-`status: serving` ready object, after wire bind and before bootstrap finishes.
-Logs go to stderr; stdin EOF is ignored.
+- `hrc-common ← hrc-store ← {hrc-domain, hrc-cli, hrc-native lib}`
+- `hrc-domain ← hrc-kernel`
+- `rusthrc bin ← {hrc-native lib, hrc-cli}`
 
-Seats use ACP's `scopeRef/lane:laneRef` sessionRef as their natural key. Runtime
-replacement changes the attach fence, not the seat row. Seats carry
-`status`, `summaryStatus`, `latestEvent: {kind, time, preview?}`, and validated
-`contextReading`; clients derive their phase text. Presentation fields are
-preserved on runtime nodes, including optional raw `contextReading`.
-Turn previews follow HRCMac: command previews use tool input, and results match
-their tool-use ID against an exact-session/generation ten-event tail. Missing
-context falls back to the result payload. Whitespace collapses and text is
-limited to 180 grapheme clusters. Bookkeeping advances raw activity and sequence
-while the displayed latest event remains the newest `turn.*` in the same generation. Recovery walks exact-seat
-category-turn tail pages (ten rows each, incarnation-fenced and strictly backward)
-until it finds a real turn or exhausts history; category-turn bookkeeping cannot
-hide the last line. A generation without turns carries no latest event.
-Attach descriptors use the presentation's socket and target. A bounded,
-read-only tmux window check refuses `resource_unavailable` / `ended` when
-that target is gone, without reconciling HRC or changing the projected row.
-Legacy bare-session targets remain supported.
+Here `A ← B` means B may depend on A. Shared leaf dependencies may also be
+used directly where needed. External libraries are centrally declared in
+`Cargo.toml`; member manifests inherit dependencies and the workspace lints.
 
-`seat.summon` is kernel-scoped (`fences_on: none`), accepts
-`{session_ref, fresh, request_id}`, and returns
-`{session_ref, host_session_id, runtime_id, status, replayed}`. The caller reuses
-its request ID on retry; HRC owns durable replay and request-hash conflicts.
-The op calls POST `/v1/declarations/resolve` by scope and then POST
-`/v1/runtimes/start`, with reject or suffix policy according to `fresh`.
-It resolves no paths, retries nothing, and writes no projected rows. Refusals
-retain HRC code/message in error details. Ingest supplies the attachable seat.
+Run `just cargo-check` from the repository root. It checks formatting, runs
+Clippy with `-D warnings`, runs workspace tests, builds the kernel and native
+binary, and drives the CLI differential, native foundation, and kernel socket
+E2E scripts against those binaries. Scripts create isolated scratch roots;
+these checks do not install or restart shared services. Set
+`HRC_CLI_E2E_ARTIFACTS`, `HRC_NATIVE_E2E_ARTIFACTS`, and
+`HRC_KERNEL_E2E_ARTIFACTS` to retain their reports at chosen paths.
 
-The only upstream reads are `/v1/events/page`, `/v1/events/bounded-stream`,
-`/v1/events/latest-by-session`, `/v1/events/tail` (bounded tool-result context),
-`/v1/presentation/runtimes`, POST `/v1/presentation/seats/read`, and `/v1/sessions`.
-The bounded stream supplies wake hints only. Cardo owns replay/cursors,
-bootstrapping, expiry and the ten-minute resync. Owner outage retries in place;
-owner ledger replacement resets the document; kernel restart opens it empty.
-
-Keep Rust and TS validation separate with `.hookignore` and
-`.hookignore-cargo`. Neutral contract/conformance inputs and store migrations
-select both legs. New TS paths fail closed into the TS leg. Missing scope files
-or ambiguous git scope select validation rather than skipping it.
+The sibling `tests-and-e2e-triage` task owns the promoted E2E set and its
+[script map](hrc-native/e2e/README.md). Consult that map for which additional
+scripts run in the routine gate and which require a separate operational run.
