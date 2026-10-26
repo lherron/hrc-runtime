@@ -22,12 +22,11 @@ import uuid
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'crates/hrc-cli/e2e'))
 from copied_release import copied_bun_cli,preflight_unmanaged
-from metrics_isolation import isolated_suite
+from metrics_isolation import MetricsIsolation
 from foundation import UnixHTTP
 
 
-@isolated_suite
-def main():
+def main(isolation):
     p=argparse.ArgumentParser()
     for name in ('binary','oracle','environment','seat','artifacts'):
         p.add_argument('--'+name,type=Path,required=True)
@@ -72,6 +71,7 @@ def main():
                 current=pid()
                 if previous is None or current!=previous:
                     assert value['runtimeRoot']==str(root/'run') and value['stateRoot']==str(root/'state') and value['release']['mode']!='atomic'
+                    isolation.pids.add(current)
                     return current,value
             except (OSError,ValueError):pass
             time.sleep(.05)
@@ -209,4 +209,6 @@ def main():
     return int(not report['pass'])
 
 
-if __name__=='__main__':raise SystemExit(main())
+if __name__=='__main__':
+    with MetricsIsolation() as isolation:
+        raise SystemExit(main(isolation))

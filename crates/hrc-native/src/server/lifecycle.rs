@@ -8,6 +8,7 @@ mod parse;
 mod peer;
 pub mod route;
 pub mod rows;
+pub mod shutdown;
 pub type AdmissionLease = admission::AdmissionLease;
 pub fn admission_lease(server: &super::Server) -> Result<AdmissionLease, super::ApiError> {
     admission_lease_for(server, false)

@@ -1,5 +1,6 @@
 //! Role-aware owner boot and teardown. The front stays writer-free.
 use super::*;
+use std::future::IntoFuture;
 
 pub async fn serve(role: front::Role) -> Result<()> {
     std::panic::set_hook(Box::new(|info| {
@@ -83,13 +84,13 @@ pub async fn serve(role: front::Role) -> Result<()> {
         wrkq: ledger::Client::default(),
         publication: publication::State::default(),
         controller: controller::State::default(),
+        owner_writes: writes::OwnerWrites::default(),
         reaped: Mutex::new(HashSet::new()),
         ledger: tokio::sync::watch::Sender::new(0),
         lifecycle: lifecycle::State::new(&runtime, !front),
         probing: Mutex::new(HashSet::new()),
         literal: Mutex::new(HashMap::new()),
         attached: Mutex::new(HashMap::new()),
-        owner_writes: writes::OwnerWrites::default(),
         runtime,
         bun_passthrough,
         federation,
@@ -147,7 +148,8 @@ pub async fn serve(role: front::Role) -> Result<()> {
         "server.listening",
         json!({"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc","role":role,"bunSocket":bun_socket}),
     );
-    axum::serve(listener, app)
+    let (shutdown_started, mut shutdown_began) = tokio::sync::oneshot::channel();
+    let serving = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             let mut requested = owned.lifecycle.requested.subscribe();
             let (reason, grant) = tokio::select! {
@@ -159,6 +161,8 @@ pub async fn serve(role: front::Role) -> Result<()> {
                     }
                 } => (format!("lifecycle:{}",grant["action"].as_str().unwrap()),Some(grant)),
             };
+            let deadline = (!owned.front).then(lifecycle::shutdown::Deadline::start);
+            let _ = shutdown_started.send(deadline);
             let mut attribution = json!({"reason":reason,"grant":grant});
             if attribution["grant"].is_null() { attribution["ungranted"] = true.into(); }
             *owned.lifecycle.shutdown_attribution.lock().unwrap() = Some(attribution.clone());
@@ -171,36 +175,44 @@ pub async fn serve(role: front::Role) -> Result<()> {
                 .shutting_down
                 .store(true, std::sync::atomic::Ordering::SeqCst);
         })
+        .into_future();
+    tokio::pin!(serving);
+    // Graceful Axum serving includes in-flight handlers and response bodies.
+    // Native stop gives them Bun's 3s budget, then withholds clean attestation.
+    let (deadline, already_drained) = tokio::select! {
+        biased;
+        deadline = &mut shutdown_began => (deadline.context("listener exited before shutdown began")?, false),
+        result = &mut serving => {
+            result?;
+            (shutdown_began.await.context("listener stopped without lifecycle shutdown")?, true)
+        },
+    };
+    if let Some(deadline) = deadline {
+        let drained = already_drained
+            || match tokio::time::timeout(lifecycle::shutdown::REQUEST_DRAIN, &mut serving).await {
+                Ok(result) => {
+                    result?;
+                    true
+                }
+                Err(_) => false,
+            };
+        lifecycle::shutdown::finish(
+            &closing,
+            &owner,
+            &deadline,
+            drained,
+            stop_writer,
+            writer_task,
+        )
         .await?;
-    // Requests have drained; quiesce background writers (SERVER_STOP_STEP_TIMEOUT_MS),
-    // then stop publication over the settled ledger.
-    if !closing
-        .owner_writes
-        .close_and_drain(std::time::Duration::from_secs(5))
-        .await
-    {
-        stderr_json(
-            "warn",
-            "server",
-            "server.stop.owner_writes_timeout",
-            json!({"timeoutMs":5000}),
-        );
-    }
-    if !closing.front {
-        // Peer and registry handlers can write the store: drain them (3s,
-        // Bun's request-drain budget) before anything below closes it.
-        if !federation::stop_listeners(&closing, std::time::Duration::from_millis(3_000)).await {
-            stderr_json(
-                "warn",
-                "server",
-                "server.stop.federation_listeners_not_quiescent",
-                json!({}),
-            );
+    } else {
+        // The front's shutdown stays writer-free and retains its existing shape.
+        if !already_drained {
+            serving.await?;
         }
-        publication::stop(&closing).await;
+        let _ = stop_writer.send(());
+        writer_task.await?;
     }
-    let _ = stop_writer.send(());
-    writer_task.await?;
     // No child kills or broker disposal: the owner can be replaced by Bun.
     drop(owner);
     let restart = !final_owner.front
