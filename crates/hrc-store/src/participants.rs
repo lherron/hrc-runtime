@@ -373,7 +373,7 @@ impl Store {
 
 impl Store {
     pub fn pending_participant_work(&self) -> Result<Vec<(String, String)>> {
-        Ok(self.sqlite.prepare("SELECT registration_id,attempt_id FROM participant_registration_attempts WHERE establishment_work_state IN ('pending','retry_wait') AND prepared_profile_json IS NOT NULL AND hosting_intent_json IS NOT NULL")?.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?)
+        Ok(self.sqlite.prepare("SELECT registration_id,attempt_id FROM participant_registration_attempts WHERE establishment_work_state IN ('pending','retry_wait') AND ((prepared_profile_json IS NOT NULL AND hosting_intent_json IS NOT NULL) OR replacement_intent_json IS NOT NULL)")?.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?)
     }
     pub fn participant_work_failed(
         &self,

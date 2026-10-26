@@ -163,27 +163,7 @@ fn parse_registration(body: Value) -> Result<Value, ApiError> {
 }
 pub async fn register(server: &super::Shared, body: Value) -> Result<Response, ApiError> {
     let body = parse_registration(body)?;
-    let home = participant_home(server);
-    let joined = server
-        .store
-        .lock()
-        .unwrap()
-        .register_direct_participant(&body, &home)?;
-    let joined = match joined {
-        hrc_store::ParticipantJoin::Succession {
-            registration,
-            attempt,
-        } => {
-            let outcome = establishment::observe_transport(&attempt).await;
-            server.store.lock().unwrap().finish_participant_succession(
-                &body,
-                &registration,
-                &attempt,
-                outcome,
-            )?
-        }
-        other => other,
-    };
+    let joined = join(server, &body).await?;
     let mut db = server.store.lock().unwrap();
     match joined {
         hrc_store::ParticipantJoin::Succession { .. } => Ok(attachment_reply(
@@ -216,6 +196,31 @@ pub async fn register(server: &super::Shared, body: Value) -> Result<Response, A
             Ok(Json(v).into_response())
         }
     }
+}
+
+async fn join(server: &super::Shared, body: &Value) -> anyhow::Result<hrc_store::ParticipantJoin> {
+    let home = participant_home(server);
+    let joined = server
+        .store
+        .lock()
+        .unwrap()
+        .register_direct_participant(body, &home)?;
+    Ok(match joined {
+        hrc_store::ParticipantJoin::Succession {
+            registration,
+            attempt,
+        } => {
+            let (outcome, detail) = establishment::observe_transport_evidence(&attempt).await;
+            server.store.lock().unwrap().finish_participant_succession(
+                body,
+                &registration,
+                &attempt,
+                outcome,
+                &detail,
+            )?
+        }
+        other => other,
+    })
 }
 
 fn participant_home(server: &Server) -> String {

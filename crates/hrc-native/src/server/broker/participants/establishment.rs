@@ -525,7 +525,6 @@ async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
         };
         if a["establishment_work_state"] == "completed"
             || a["establishment_work_state"] == "exhausted"
-            || !a["prepared_profile_json"].is_string()
         {
             return Ok(());
         }
@@ -553,7 +552,26 @@ async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
         if server.owner_writes.enter().is_none() {
             return Ok(());
         }
-        match establish(server, &reg, &a).await {
+        // A replacement owns this predecessor's effects. Re-read after the
+        // retry wait so a newly admitted intent never follows the old attach job.
+        let a = current(server, id)?;
+        if a["establishment_work_state"] == "completed"
+            || a["establishment_work_state"] == "exhausted"
+        {
+            return Ok(());
+        }
+        let result = if a["replacement_intent_json"].is_string() {
+            recover_replacement(server, &reg, &a).await
+        } else if !a["prepared_profile_json"].is_string()
+            || ["SUPERSEDED", "ABANDONED", "TERMINAL"]
+                .iter()
+                .any(|v| a["state"] == *v)
+        {
+            return Ok(());
+        } else {
+            establish(server, &reg, &a).await
+        };
+        match result {
             Ok(()) => return Ok(()),
             Err(error) => {
                 let delays = [100, 250, 500, 1000];
@@ -573,6 +591,29 @@ async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
         }
     }
 }
+async fn recover_replacement(server: &Shared, reg: &Value, a: &Value) -> Result<()> {
+    let intent = parsed(a, "replacement_intent_json")?;
+    let mut body = intent["candidate"].clone();
+    body["requestedSessionRef"] = reg["scope_ref"].clone();
+    body["laneRef"] = reg["lane_ref"].clone();
+    let prior = &intent["predecessor"];
+    body["expectedPredecessor"] = json!({"hostIncarnationId":prior["hostIncarnationId"],"runtimeId":prior["runtimeId"],"generation":prior["generation"]});
+    match super::join(server, &body).await? {
+        hrc_store::ParticipantJoin::Registered(_) => Ok(()),
+        hrc_store::ParticipantJoin::Refused(v) => anyhow::bail!(
+            "{}: {}",
+            v["reason"]
+                .as_str()
+                .unwrap_or("participant_successor_gate_changed"),
+            v["detail"]
+                .as_str()
+                .unwrap_or("replacement remained pending")
+        ),
+        hrc_store::ParticipantJoin::Succession { .. } => anyhow::bail!(
+            "participant_successor_gate_changed: replacement requires another observation"
+        ),
+    }
+}
 pub fn resume(server: &Shared) -> Result<()> {
     // reconnectActivatedParticipants / armParticipantReconnect: a new owner
     // has no active clients. Arm completed ACTIVE attempts before any broker
@@ -590,31 +631,62 @@ pub fn resume(server: &Shared) -> Result<()> {
 
 /// Fresh hello evidence, with Bun's two-second deadline and dead-transport codes.
 pub async fn observe_transport(attempt: &Value) -> &'static str {
-    let Some(path) = attempt["attach_socket_path"].as_str() else {
-        return "transport_indeterminate";
-    };
-    match tokio::net::UnixStream::connect(path).await {
-        Err(error)
-            if matches!(
-                error.raw_os_error(),
+    observe_transport_evidence(attempt).await.0
+}
+fn dead_transport(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
+            matches!(
+                io.raw_os_error(),
                 Some(libc::ENOENT | libc::ECONNREFUSED | libc::ECONNRESET | libc::EPIPE)
-            ) =>
-        {
-            return "transport_dead";
-        }
-        Err(_) => return "transport_indeterminate",
-        Ok(stream) => drop(stream),
-    }
-    let probe = async {
-        let client = JsonRpc::connect(Path::new(path), Duration::from_secs(2)).await?;
-        client.request("broker.hello",json!({"clientInfo":{"name":"hrc-server"},"protocolVersions":["harness-broker/0.2"],"capabilities":{"permissionRequests":true}})).await
+            )
+        })
+    }) || error.to_string().contains("connection closed")
+}
+pub async fn observe_transport_evidence(attempt: &Value) -> (&'static str, String) {
+    let Some(path) = attempt["attach_socket_path"].as_str() else {
+        return (
+            "transport_indeterminate",
+            "predecessor has no durable attach socket path".into(),
+        );
     };
-    if matches!(
-        tokio::time::timeout(Duration::from_secs(2), probe).await,
-        Ok(Ok(_))
-    ) {
-        "transport_live"
-    } else {
-        "transport_indeterminate"
+    let started = tokio::time::Instant::now();
+    let budget = Duration::from_secs(2);
+    let client = match tokio::time::timeout(budget, JsonRpc::connect(Path::new(path), budget)).await
+    {
+        Ok(Ok(client)) => client,
+        Ok(Err(error)) => {
+            return (
+                if dead_transport(&error) {
+                    "transport_dead"
+                } else {
+                    "transport_indeterminate"
+                },
+                "Failed to connect to broker unix socket".into(),
+            );
+        }
+        Err(_) => {
+            return (
+                "transport_indeterminate",
+                "participant_transport_probe_timeout".into(),
+            );
+        }
+    };
+    let remaining = budget.saturating_sub(started.elapsed());
+    let result=tokio::time::timeout(remaining,client.request("broker.hello",json!({"clientInfo":{"name":"hrc-server"},"protocolVersions":["harness-broker/0.2"],"capabilities":{"permissionRequests":true}}))).await;
+    client.close();
+    match result {
+        Ok(Ok(_)) => (
+            "transport_live",
+            "fresh connection completed broker hello".into(),
+        ),
+        Ok(Err(error)) if dead_transport(&error) => {
+            ("transport_dead", "broker socket closed unexpectedly".into())
+        }
+        Ok(Err(error)) => ("transport_indeterminate", error.to_string()),
+        Err(_) => (
+            "transport_indeterminate",
+            "participant_transport_probe_timeout".into(),
+        ),
     }
 }

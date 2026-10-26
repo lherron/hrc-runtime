@@ -15,16 +15,6 @@ def compare(args, checks):
         aliases = {}
         def check(name, passed, reason):
             checks.append({'id':kind+':'+name, 'pass':bool(passed), 'reason':reason, 'failureCode':1})
-        # Anchor generated identities to their canonical row/column, not their
-        # textual occurrence (receipt copies must retain the same identity).
-        for row in rows:
-            for table, values in row['durable'].items():
-                if table == 'events': continue
-                for index, value in enumerate(values):
-                    for key in ('reservation_id','registration_id','binding_id','host_session_id','attempt_id','request_id','operation_id','invocation_id','runtime_id'):
-                        v = value.get(key)
-                        if isinstance(v,str) and UUID.fullmatch(v) and v not in aliases:
-                            aliases[v] = f'{table}:{key}:{index}:{len(aliases)}'
         def normalize(value):
             if isinstance(value, dict): return {k:normalize(v) for k,v in value.items()}
             if isinstance(value, list): return [normalize(v) for v in value]
@@ -32,7 +22,7 @@ def compare(args, checks):
                 if value.startswith(('{','[')):
                     try: return normalize(json.loads(value))
                     except json.JSONDecodeError: pass
-                value = UUID.sub(lambda m:aliases.setdefault(m[0],f'intent:{len(aliases)}'),value)
+                value = UUID.sub(lambda m:aliases.get(m[0],'<replacement-intent>' if m[0].startswith('participant-replacement-') else m[0]),value)
                 value = CLOCK.sub('<clock>',value)
             return value
         seen_clocks=set()
@@ -40,8 +30,8 @@ def compare(args, checks):
             if isinstance(value,dict): return set().union(*(clocks(v) for v in value.values())) if value else set()
             if isinstance(value,list): return set().union(*(clocks(v) for v in value)) if value else set()
             return set(CLOCK.findall(value)) if isinstance(value,str) else set()
-        expected_names=['foundry-continue','foundry-fresh','wrong-predecessor','missing-predecessor']
-        check('required-cases',all(n in [r['case'] for r in rows] for n in expected_names),'core outage cases cannot be absent')
+        expected_names=['foundry-continue','foundry-fresh','wrong-predecessor','missing-predecessor','bridge','pre-attach-implicit','pre-attach-explicit','pre-attach-own','legacy-arris','no-durable-endpoint','retired-only','reuse-disabled','continuation-invalidated','declaration-mismatch','active-runs','recover-intent']
+        check('required-cases',[r['case'] for r in rows]==[label for n in expected_names for label in (n,n+'-retry')],'every branch and retry must be present exactly once')
         for row in rows:
             name=row['case'].removesuffix('-retry')
             refused=name in ('wrong-predecessor','missing-predecessor') or row['case']=='declaration-mismatch-retry'
@@ -62,13 +52,28 @@ def compare(args, checks):
                 reason=body.get('continuation',{}).get('reason') if isinstance(body,dict) else None
                 expected_reason={'foundry-continue':'carried','foundry-fresh':'participant_fresh','legacy-arris':'continuation_invalidated','reuse-disabled':'reuse_disabled','continuation-invalidated':'continuation_invalidated'}.get(name)
                 if expected_reason:check(row['case']+':selection',reason==expected_reason,'continuation selection follows the declaration and durable barriers')
+            if name=='active-runs':
+                check(row['case']+':settled',all(r['status']=='failed' and r['error_code']=='runtime_unavailable' for r in d['runs']) and bool(d['runs']),'replaced runtime owns no open run')
+            if name=='recover-intent':
+                check(row['case']+':startup-recovery',row.get('startupRecovered') is True,'startup resumes durable intent before any retry request')
             new_clocks=clocks(d)|clocks(body)
             seed_clocks=clocks(row['seed'])
             for clock in new_clocks-seen_clocks-seed_clocks:
                 at=datetime.datetime.fromisoformat(clock.replace('Z','+00:00')).timestamp()
                 check(row['case']+':clock:'+clock,row['before']-.01<=at<=row['after']+.01,'new durable clocks must be written within the request')
             seen_clocks.update(new_clocks)
-        subjects[kind]=[{k:normalize(v) for k,v in r.items() if k not in ('before','after','seed')} for r in rows]
+        subjects[kind]=[]
+        for row in rows:
+            # Each plan restores the same seed. Anchor identities inside that
+            # graph so a later crash fixture cannot renumber an earlier case.
+            aliases={}
+            for table, values in row['durable'].items():
+                if table=='events':continue
+                for index,value in enumerate(values):
+                    for key in ('reservation_id','registration_id','binding_id','host_session_id','attempt_id','request_id','operation_id','invocation_id','runtime_id'):
+                        v=value.get(key)
+                        if isinstance(v,str) and UUID.fullmatch(v):aliases.setdefault(v,f'{table}:{key}:{index}')
+            subjects[kind].append({k:normalize(v) for k,v in row.items() if k not in ('before','after','seed')})
     def order(value):
         if isinstance(value,dict):return [(k,order(v)) for k,v in value.items()]
         if isinstance(value,list):return [order(v) for v in value]
@@ -80,4 +85,4 @@ def compare(args, checks):
         checks.append({'id':'compare:'+a['case'],'pass':passed,'reason':'full response/key order and durable rows must match','failureCode':1})
         if not passed:
             (Path(args.out)/(a['case']+'-diff.json')).write_text(json.dumps({'bun':a,'native':b},indent=2)+'\n')
-    return {'suite':'participant-succession','cases':cases,'behaviorQualified':len(cases)>=8 and all(c['pass'] for c in checks)}
+    return {'suite':'participant-succession','cases':cases,'behaviorQualified':len(cases)==32 and all(c['pass'] for c in checks)}
