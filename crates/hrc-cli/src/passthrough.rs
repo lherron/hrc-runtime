@@ -15,6 +15,9 @@ pub(crate) fn native_command(path: &str) -> bool {
 /// Identify the native command even when its argument parser refuses input, so
 /// implemented commands' grammar errors do not acquire a Bun dependency.
 pub(crate) fn native_intent(surface: &serde_json::Value, args: &[String]) -> bool {
+    native_command(&intent_path(surface, args))
+}
+pub(crate) fn intent_path(surface: &serde_json::Value, args: &[String]) -> String {
     let mut node = surface;
     let mut index = 0;
     while let Some(arg) = args.get(index) {
@@ -47,7 +50,8 @@ pub(crate) fn native_intent(surface: &serde_json::Value, args: &[String]) -> boo
         node = child;
         index += 1;
     }
-    let path = node["path"]
+
+    node["path"]
         .as_array()
         .map(|p| {
             p.iter()
@@ -55,8 +59,7 @@ pub(crate) fn native_intent(surface: &serde_json::Value, args: &[String]) -> boo
                 .collect::<Vec<_>>()
                 .join(" ")
         })
-        .unwrap_or_default();
-    native_command(&path)
+        .unwrap_or_default()
 }
 
 fn script() -> Result<PathBuf> {

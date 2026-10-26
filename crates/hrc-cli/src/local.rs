@@ -6,7 +6,7 @@ mod diagnostics;
 mod doctor;
 mod federation;
 mod info;
-mod jsc_json;
+pub(crate) mod jsc_json;
 mod server;
 mod sweep;
 

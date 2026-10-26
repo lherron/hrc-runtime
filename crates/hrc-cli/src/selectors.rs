@@ -257,21 +257,7 @@ pub(crate) fn placement_role(
 }
 impl Snapshot {
     pub(crate) fn fetch(client: &Daemon) -> Result<Self> {
-        let mut query = vec![("limit".into(), "500".into())];
-        let mut runtimes = vec![];
-        loop {
-            let (page, cursor) = client.request("GET", "/v1/runtimes", &query, None)?;
-            runtimes.extend(
-                page.as_array()
-                    .cloned()
-                    .ok_or_else(|| Error::failure("invalid runtime list response"))?,
-            );
-            let Some(cursor) = cursor.filter(|s| !s.is_empty()) else {
-                break;
-            };
-            query.retain(|(k, _)| k != "cursor");
-            query.push(("cursor".into(), cursor));
-        }
+        let runtimes = client.runtimes(vec![])?;
         let sessions = client
             .get("/v1/sessions", &[("all".into(), "true".into())])?
             .as_array()

@@ -470,7 +470,7 @@
     {
       "command": "turn",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     }
   ]
 }

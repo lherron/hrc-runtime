@@ -9,6 +9,7 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
         return result;
     }
     match path.as_str() {
+        "turn" => crate::turn::run(args),
         "start" | "run" | "attach" => crate::launch::command(args),
         "resume" => crate::launch::resume(args),
         "restart" => restart(args),

@@ -36,6 +36,27 @@ impl Daemon {
     pub fn post(&self, path: &str, body: Value) -> Result<Value> {
         self.request("POST", path, &[], Some(body)).map(|r| r.0)
     }
+    pub fn runtimes(&self, mut query: Vec<(String, String)>) -> Result<Vec<Value>> {
+        query.push(("limit".into(), "500".into()));
+        let mut runtimes = Vec::new();
+        loop {
+            let (page, cursor) = self.request("GET", "/v1/runtimes", &query, None)?;
+            runtimes.extend(
+                page.as_array()
+                    .cloned()
+                    .ok_or_else(|| Error::failure("invalid runtime list response"))?,
+            );
+            let Some(cursor) = cursor
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
+            else {
+                break;
+            };
+            query.retain(|(key, _)| key != "cursor");
+            query.push(("cursor".into(), cursor));
+        }
+        Ok(runtimes)
+    }
     pub fn post_bounded(
         &self,
         path: &str,
@@ -140,104 +161,89 @@ impl Daemon {
             );
             return Err(error);
         }
-        let value: Value = serde_json::from_str(&text).map_err(|_| {
-            // Bun slices response excerpts in UTF-16 code units. A boundary
-            // through a surrogate pair is replaced when printed as UTF-8.
-            let units = text.encode_utf16().collect::<Vec<_>>();
-            let excerpt = if units.len() > 200 {
-                format!("{}…", String::from_utf16_lossy(&units[..200]))
-            } else {
-                text.clone()
-            };
-            let suffix = if excerpt.is_empty() {
-                String::new()
-            } else {
-                format!(": {excerpt}")
-            };
-            let mut error = Error::failure(format!(
-                "HRC request failed with status {}{suffix}",
-                status.as_u16()
-            ));
-            if units.len() > 200 && String::from_utf16(&units[..200]).is_err() {
-                use std::fmt::Write;
-                let message = format!("HRC request failed with status {}: ", status.as_u16());
-                let message = message
-                    .encode_utf16()
-                    .chain(units[..200].iter().copied())
-                    .chain("…".encode_utf16());
-                let mut raw = String::from("\"");
-                for unit in char::decode_utf16(message) {
-                    match unit {
-                        Ok(ch) => {
-                            let quoted = serde_json::to_string(&ch.to_string()).unwrap();
-                            raw.push_str(&quoted[1..quoted.len() - 1]);
-                        }
-                        Err(unpaired) => {
-                            write!(&mut raw, "\\u{:04x}", unpaired.unpaired_surrogate()).unwrap()
-                        }
-                    }
-                }
-                raw.push('"');
-                error.json_message = Some(
-                    serde_json::value::RawValue::from_string(raw)
-                        .expect("UTF-16 JSON error string"),
-                );
-            }
-            error
-        })?;
-        if !status.is_success() {
-            if value["error"].is_object() {
-                let mut domain = value["error"].clone();
-                let usage = matches!(
-                    domain["code"].as_str(),
-                    Some("malformed_request" | "invalid_selector" | "invalid_fence")
-                );
-                if domain["detail"].is_null() {
-                    domain["detail"] = serde_json::json!({});
-                }
-                if domain["code"] == "internal_error" {
-                    let bounded = |key: &str| {
-                        domain["detail"][key]
-                            .as_str()
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                            .map(|v| {
-                                let mut text = v.chars().take(200).collect::<String>();
-                                if v.chars().count() > 200 {
-                                    text.push('…');
-                                }
-                                text
-                            })
-                    };
-                    let cause = bounded("cause")
-                        .map(|v| format!(": {v}"))
-                        .unwrap_or_default();
-                    let request = bounded("requestId")
-                        .map(|v| format!(" (requestId={v})"))
-                        .unwrap_or_default();
-                    domain["message"] = format!(
-                        "{} [internal_error]{cause}{request}",
-                        domain["message"].as_str().unwrap_or_default()
-                    )
-                    .into();
-                }
-                domain["usage"] = usage.into();
-                return Err(Error {
-                    source_code: None,
-                    json_message: None,
-                    reported: false,
-                    message: domain["message"].as_str().unwrap_or_default().to_owned(),
-                    code: if usage { 2 } else { 1 },
-                    domain: Some(domain),
-                });
-            }
-            return Err(Error::failure(format!(
-                "HRC request failed with status {}",
-                status.as_u16()
-            )));
-        }
+        let value = decode_json(status.as_u16(), &text)?;
         Ok((value, cursor))
     }
+}
+pub(crate) fn decode_json(status: u16, text: &str) -> Result<Value> {
+    let value: Value = serde_json::from_str(text).map_err(|_| {
+        // Bun slices response excerpts in UTF-16 code units. A boundary
+        // through a surrogate pair is replaced when printed as UTF-8.
+        let units = text.encode_utf16().collect::<Vec<_>>();
+        let excerpt = if units.len() > 200 {
+            format!("{}…", String::from_utf16_lossy(&units[..200]))
+        } else {
+            text.to_owned()
+        };
+        let suffix = if excerpt.is_empty() {
+            String::new()
+        } else {
+            format!(": {excerpt}")
+        };
+        let mut error =
+            Error::failure(format!("HRC request failed with status {}{suffix}", status));
+        if units.len() > 200 && String::from_utf16(&units[..200]).is_err() {
+            let message = format!("HRC request failed with status {}: ", status);
+            let message = message
+                .encode_utf16()
+                .chain(units[..200].iter().copied())
+                .chain("…".encode_utf16());
+            error.json_message = Some(crate::js::json_utf16(message));
+        }
+        error
+    })?;
+    if !(200..300).contains(&status) {
+        if value["error"].is_object() {
+            let mut domain = value["error"].clone();
+            let usage = matches!(
+                domain["code"].as_str(),
+                Some("malformed_request" | "invalid_selector" | "invalid_fence")
+            );
+            if domain["detail"].is_null() {
+                domain["detail"] = serde_json::json!({});
+            }
+            if domain["code"] == "internal_error" {
+                let bounded = |key: &str| {
+                    domain["detail"][key]
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .map(|v| {
+                            let mut text = v.chars().take(200).collect::<String>();
+                            if v.chars().count() > 200 {
+                                text.push('…');
+                            }
+                            text
+                        })
+                };
+                let cause = bounded("cause")
+                    .map(|v| format!(": {v}"))
+                    .unwrap_or_default();
+                let request = bounded("requestId")
+                    .map(|v| format!(" (requestId={v})"))
+                    .unwrap_or_default();
+                domain["message"] = format!(
+                    "{} [internal_error]{cause}{request}",
+                    domain["message"].as_str().unwrap_or_default()
+                )
+                .into();
+            }
+            domain["usage"] = usage.into();
+            return Err(Error {
+                source_code: None,
+                json_message: None,
+                reported: false,
+                message: domain["message"].as_str().unwrap_or_default().to_owned(),
+                code: if usage { 2 } else { 1 },
+                domain: Some(domain),
+            });
+        }
+        return Err(Error::failure(format!(
+            "HRC request failed with status {}",
+            status
+        )));
+    }
+    Ok(value)
 }
 fn env(key: &str) -> Option<String> {
     std::env::var(key)

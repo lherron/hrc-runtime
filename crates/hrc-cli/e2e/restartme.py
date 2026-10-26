@@ -99,6 +99,7 @@ def main():
             paired[1].append(cancelled)
         for label, values in zip(('arm-active', 'cancel-active'), paired):
             results.append(dict(case=label, oracle=values[0], subject=values[1], **{'pass': values[0] == values[1]}))
+        (a.artifacts / 'command-cases.json').write_text(json.dumps(results, indent=2))
         for _ in range(180):
             events = call('/v1/events/tail?limit=200&runId=' + started['runId'])
             if any(e['eventKind'] == 'turn.completed' for e in events['events']):
@@ -107,8 +108,14 @@ def main():
         assert any(e['eventKind'] == 'turn.completed' and e['payload']['success'] is True for e in events['events']), events
         ledger = call('/v1/events/tail?limit=200&hostSessionId=' + seat['hostSessionId'])
         (a.artifacts / 'events.json').write_text(json.dumps(ledger, indent=2))
+        # This seat is reused for installed acceptance. Earlier arm/cancel
+        # records remain in its ledger; qualify only this newly admitted turn.
+        from_seq = started['observation']['lifecycle']['fromSeq']
+        assert isinstance(from_seq, int) and from_seq > 0, started
+        turn_id = next(e['payload']['turnId'] for e in events['events'] if e['eventKind'] == 'turn.completed')
         for kind in ('session.restart_armed', 'session.restart_cancelled'):
-            assert sum(e['eventKind'] == kind for e in ledger['events']) == 2, ledger
+            current = [e for e in ledger['events'] if e['hrcSeq'] >= from_seq and e['eventKind'] == kind]
+            assert len(current) == 2 and all(e['payload']['turnId'] == turn_id for e in current), current
         after = call('/v1/sessions/resolve', {'sessionRef': seat['sessionRef']})
         assert after['hostSessionId'] == before['hostSessionId'] and after['generation'] == before['generation']
         assert call('/v1/runtimes/inspect', {'runtimeId': seat['runtimeId']})['status'] != 'terminated'

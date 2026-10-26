@@ -115,6 +115,25 @@ pub(crate) fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
+/// JSON.stringify retains lone UTF-16 surrogates as escapes rather than U+FFFD.
+pub(crate) fn json_utf16(units: impl IntoIterator<Item = u16>) -> Box<serde_json::value::RawValue> {
+    use std::fmt::Write;
+    let mut raw = String::from("\"");
+    for unit in char::decode_utf16(units) {
+        match unit {
+            Ok(ch) => {
+                let quoted = serde_json::to_string(&ch.to_string()).unwrap();
+                raw.push_str(&quoted[1..quoted.len() - 1]);
+            }
+            Err(unpaired) => {
+                write!(&mut raw, "\\u{:04x}", unpaired.unpaired_surrogate()).unwrap();
+            }
+        }
+    }
+    raw.push('"');
+    serde_json::value::RawValue::from_string(raw).expect("UTF-16 JSON string")
+}
+
 /// `s.slice(0, n)` in UTF-16 units; a split surrogate pair encodes as U+FFFD.
 pub(crate) fn utf16_prefix(s: &str, n: usize) -> String {
     let mut out = String::new();

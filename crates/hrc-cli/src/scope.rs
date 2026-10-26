@@ -395,7 +395,10 @@ impl Qualified {
         Ok(())
     }
     pub fn target(input: &str) -> Result<(Self, Value)> {
-        let mut scope = Self::parse(input, true)?;
+        Self::launch_target(input, true)
+    }
+    pub fn launch_target(input: &str, caller_task: bool) -> Result<(Self, Value)> {
+        let mut scope = Self::parse(input, caller_task)?;
         let observation = scope.observe_placement(&placement_client()?, "strict")?;
         Ok((scope, observation))
     }

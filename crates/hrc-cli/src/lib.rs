@@ -30,6 +30,7 @@ mod selectors;
 mod server_lifecycle;
 mod server_start;
 mod server_status;
+mod turn;
 
 /// Validate a canonical agent ScopeRef using the operator CLI's shared grammar.
 pub use selectors::validate_scope;
@@ -199,9 +200,14 @@ pub fn run(args: Vec<String>) -> i32 {
 
     let surface: Value =
         serde_json::from_str(include_str!("../surface.json")).expect("CLI declaration");
-    let json_errors = args.windows(2).any(|a| a == ["--output", "json"])
-        || args.iter().any(|a| a == "--output=json");
+    let raw_json_errors = args.windows(2).any(|a| a == ["--output", "json"])
+        || args.iter().any(|a| a == "--output=json")
+        || (passthrough::intent_path(&surface, &args) == "turn"
+            && args.iter().any(|a| a == "--json" || a == "--json=true"));
     let parsed = parse::parse(&surface, &args);
+    let json_errors = parsed.as_ref().map_or(raw_json_errors, |p| {
+        p.value("output") == Some("json") || (p.path() == "turn" && p.flag("json"))
+    });
     // Parse only to select an already implemented native command. Postponed
     // commands (including their help/grammar failures) receive the original argv.
     let native = passthrough::native_intent(&surface, &args)

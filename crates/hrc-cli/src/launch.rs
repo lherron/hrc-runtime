@@ -420,13 +420,13 @@ pub(crate) fn intent(
             format!("searched: {}", roots.join(", "))
         };
         let message = format!("agent \"{}\" not found; {suffix}", scope.agent);
-        return Err(if command == "summon" {
+        return Err(if matches!(command, "summon" | "turn") {
             Error::usage(message)
         } else {
             Error::failure(message)
         });
     }
-    let mut body = json!({"agentId":scope.agent,"agentRoot":placement["agentRoot"],"cwd":placement.get("cwd").unwrap_or(&placement["agentRoot"]),"runMode":"task","interactive":command!="summon","preferredMode":match command { "start"=>"headless", "summon"=>"nonInteractive", _=>"interactive" }});
+    let mut body = json!({"agentId":scope.agent,"agentRoot":placement["agentRoot"],"cwd":placement.get("cwd").unwrap_or(&placement["agentRoot"]),"runMode":"task","interactive":!matches!(command, "summon" | "turn"),"preferredMode":match command { "start"=>"headless", "summon"|"turn"=>"nonInteractive", _=>"interactive" }});
     if let Some(root) = placement.get("projectRoot") {
         body["projectRoot"] = root.clone();
     }
@@ -456,7 +456,7 @@ pub(crate) fn intent(
         eprintln!("{warning}");
     }
     let mut intent = response["intent"].clone();
-    if command == "summon" {
+    if matches!(command, "summon" | "turn") {
         return Ok(intent);
     }
     intent["placement"]["correlation"] = json!({"sessionRef":{"scopeRef":scope.scope,"laneRef":if scope.lane=="main" {"main".into()} else {format!("lane:{}",scope.lane)}}});

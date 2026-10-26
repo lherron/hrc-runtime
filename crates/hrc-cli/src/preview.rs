@@ -59,7 +59,7 @@ fn secret(key: &str) -> bool {
             .contains(&s)
         })
 }
-fn mask_string(value: &str) -> String {
+pub(crate) fn mask_string(value: &str) -> String {
     static CREDENTIAL: OnceLock<regex::Regex> = OnceLock::new();
     static ASSIGNMENT: OnceLock<regex::Regex> = OnceLock::new();
     let credential=CREDENTIAL.get_or_init(||regex::Regex::new(r"\b(sk-ant-[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]+|gh[po]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[abpr]-[A-Za-z0-9-]+|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b").unwrap());
