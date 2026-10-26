@@ -530,6 +530,9 @@ def validate_case_observations(id, observations, checks, status=None, installed_
 
 
 def compare(args, checks):
+    if getattr(args, 'suite', None) == 'n1-surfaces':
+        from n1_surfaces import compare as compare_surfaces
+        return compare_surfaces(args, checks)
     if getattr(args, 'suite', None) == 'n1-runtime-reads':
         from n1_runtime_reads import compare as compare_runtime
         return compare_runtime(args, checks)

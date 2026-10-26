@@ -112,3 +112,11 @@ startup classification before the shared snapshot; the N2 startup job is not
 claimed by this N1 read case. `compare --suite n1-runtime-reads` verifies full
 responses and persisted probes, bounding dynamic timestamps and ages before
 normalization.
+
+Runtime attachment returns the realized tmux descriptor and binding fence.
+Surface binding validates the host/generation fence and commits the binding,
+TTY displacement and lifecycle facts in one transaction. An identical retry
+returns the prior row without another event. `e2e/runtime_surfaces.py` reuses the
+real-seat workflow and `compare --suite n1-surfaces` compares descriptors,
+errors, complete binding rows and event payloads. Timestamp normalization first
+checks request bounds and the committed row/event correspondence.

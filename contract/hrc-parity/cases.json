@@ -139,6 +139,16 @@
         "validated-owner-and-request-time-facts"
       ],
       "requiredInP0": false
+    },
+    "n1-runtime-surfaces": {
+      "assertionIds": [
+        "real-tmux-descriptor-and-fence",
+        "bind-retry-idempotency",
+        "tty-displacement-and-rebound",
+        "stale-fence-and-validation-errors",
+        "canonical-surface-rows-and-events"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [
@@ -333,7 +343,7 @@
     "public:POST:/v1/runtimes/sweep": "GAP:N1",
     "public:POST:/v1/runtimes/prune": "GAP:N1",
     "public:POST:/v1/runtimes/ensure": "n1-bun-passthrough",
-    "public:POST:/v1/runtimes/attach": "GAP:N1",
+    "public:POST:/v1/runtimes/attach": "n1-runtime-surfaces",
     "public:GET:/v1/targets": "n1-bun-passthrough",
     "public:GET:/v1/surfaces": "n1-bun-passthrough",
     "public:GET:/v1/placement/bindings": "n1-session-index",
@@ -355,14 +365,19 @@
     "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getByRuntimeId:5766": "n1-runtime-reads",
     "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAll:10826": "n1-runtime-reads",
     "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByHostSessionId:6433": "n1-runtime-reads",
-    "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "n1-runtime-reads"
+    "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "n1-runtime-reads",
+    "public:POST:/v1/surfaces/bind": "n1-runtime-surfaces",
+    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:bind:678": "n1-runtime-surfaces",
+    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:findBySurface:3629": "n1-runtime-surfaces",
+    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:unbindOtherGhosttyClientTty:2599": "n1-runtime-surfaces",
+    "store-source:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts": "n1-runtime-surfaces"
   },
   "coverageReasons": {
     "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:POST:/v1/runtimes/sweep": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending.",
     "public:POST:/v1/runtimes/prune": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending.",
     "public:POST:/v1/runtimes/ensure": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:POST:/v1/runtimes/attach": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending.",
+    "public:POST:/v1/runtimes/attach": "Real ready-seat Bun/native attach and surface workflow compares full descriptors, binding fences, retries, tty displacement and committed surface events.",
     "public:GET:/v1/targets": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:GET:/v1/surfaces": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:GET:/v1/placement/bindings": "Compared active local bindings, excluding remote and retired rows, plus required-query errors against Bun in the N1 index workflow.",
@@ -385,6 +400,11 @@
     "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getByRuntimeId:5766": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
     "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAll:10826": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
     "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByHostSessionId:6433": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
-    "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps."
+    "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
+    "public:POST:/v1/surfaces/bind": "Real ready-seat Bun/native attach and surface workflow compares full descriptors, binding fences, retries, tty displacement and committed surface events.",
+    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:bind:678": "Exercised by the N1 surface bind workflow, including exact row readback, retry and displacement within one transaction.",
+    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:findBySurface:3629": "Exercised by the N1 surface bind workflow, including exact row readback, retry and displacement within one transaction.",
+    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:unbindOtherGhosttyClientTty:2599": "Exercised by the N1 surface bind workflow, including exact row readback, retry and displacement within one transaction.",
+    "store-source:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts": "Surface binding queries and writes exercised by the N1 bind workflow; other bridge operations remain separate operation gaps."
   }
 }

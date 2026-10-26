@@ -11,6 +11,7 @@ use uuid::Uuid;
 mod broker;
 mod index;
 mod metadata;
+mod surfaces;
 pub use metadata::{MetadataWrite, validate_metadata};
 
 pub fn canonical_lane(lane: &str) -> String {

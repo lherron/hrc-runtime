@@ -8,6 +8,7 @@ mod rpc;
 mod runtime_views;
 mod runtimes;
 mod sessions;
+mod surfaces;
 
 use anyhow::{Context, Result, bail};
 use axum::{
@@ -384,6 +385,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/sessions/resolve",
                 "/v1/turns",
                 "/v1/runtimes/inspect",
+                "/v1/runtimes/attach",
+                "/v1/surfaces/bind",
                 "/v1/placements/resolve",
                 "/v1/declarations/resolve",
             ]
@@ -418,6 +421,17 @@ fn handle(
     body: &[u8],
     headers: &HeaderMap,
 ) -> std::result::Result<Response, ApiError> {
+    if *method == Method::POST && ["/v1/runtimes/attach", "/v1/surfaces/bind"].contains(&path) {
+        let value = parse_body(body).map_err(|mut e| {
+            e.detail = Some(json!({}));
+            e
+        })?;
+        return if path == "/v1/runtimes/attach" {
+            surfaces::attach(server, value)
+        } else {
+            surfaces::bind(server, value)
+        };
+    }
     if *method == Method::GET && path == "/v1/placement/bindings" {
         return aspc::placement_bindings(server, query);
     }

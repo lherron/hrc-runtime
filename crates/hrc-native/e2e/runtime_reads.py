@@ -23,7 +23,7 @@ from urllib.parse import urlencode
 from foundation import UnixHTTP
 
 
-def main():
+def main(case_factory=None, observe=None, paginate=True):
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--bun-release', type=Path, required=True)
@@ -209,6 +209,7 @@ db.close();'''.replace('PATH',json.dumps(str(release/'packages/hrc-store-sqlite/
                ('target-invalid','GET','/v1/targets/by-session-ref?sessionRef=bad',None),
                ('target-missing','GET','/v1/targets/by-session-ref',None),
                ('target-unknown','GET','/v1/targets/by-session-ref?'+urlencode({'sessionRef':scope+'-absent/lane:main'}),None)]
+        if case_factory is not None:cases=case_factory(runtime,host,scope,root)
         observations={}
         for kind in ('bun','native'):
             with sqlite3.connect(root/'snapshot.sqlite') as source,sqlite3.connect(db_path) as target:source.backup(target)
@@ -224,13 +225,16 @@ db.close();'''.replace('PATH',json.dumps(str(release/'packages/hrc-store-sqlite/
                 if name.startswith('seat') and status==200:
                     persisted_state=rows('SELECT runtime_state_json FROM runtimes WHERE runtime_id=?',(response['runtimeId'],))[0]['runtime_state_json']
                     persisted_probe=json.loads(persisted_state or '{}').get('brokerDispatchDiagnostics',{}).get('liveSeatProbe')
-                values.append({'persistedProbe':persisted_probe,'case':name,'method':method,'path':path,'request':body,'status':status,'body':response,'headers':headers,'before':before,'after':time.time(),'ownerPid':owner.pid,'ownerBefore':owner_before})
-            page=next(r for r in values if r['case']=='runtimes-page')
-            cursor=page['headers'].get('x-hrc-next-cursor','missing')
-            before=time.time()
-            path=q(all='true',limit='1',cursor=cursor)
-            status,raw,headers=http('GET',path)
-            values.append({'persistedProbe':None,'case':'runtimes-next','method':'GET','path':path,'request':None,'status':status,'body':json.loads(raw),'headers':headers,'before':before,'after':time.time(),'ownerPid':owner.pid,'ownerBefore':owner_before})
+                record={'persistedProbe':persisted_probe,'case':name,'method':method,'path':path,'request':body,'status':status,'body':response,'headers':headers,'before':before,'after':time.time(),'ownerPid':owner.pid,'ownerBefore':owner_before}
+                if observe is not None:record.update(observe(kind,record,db_path))
+                values.append(record)
+            if paginate:
+                page=next(r for r in values if r['case']=='runtimes-page')
+                cursor=page['headers'].get('x-hrc-next-cursor','missing')
+                before=time.time()
+                path=q(all='true',limit='1',cursor=cursor)
+                status,raw,headers=http('GET',path)
+                values.append({'persistedProbe':None,'case':'runtimes-next','method':'GET','path':path,'request':None,'status':status,'body':json.loads(raw),'headers':headers,'before':before,'after':time.time(),'ownerPid':owner.pid,'ownerBefore':owner_before})
             observations[kind]=values
             down(owner)
         for kind,values in observations.items():
@@ -259,6 +263,8 @@ db.close();'''.replace('PATH',json.dumps(str(release/'packages/hrc-store-sqlite/
         (args.artifacts / 'results.json').write_text(json.dumps({'gates': gates, 'steps': steps, 'scratchRoot': str(root)}, indent=2) + '\n')
     assert gates.get('workflow',{}).get('pass')
     print(json.dumps({'pass':['runtime-read-baseline'],'artifacts':str(args.artifacts)}))
+
+
 
 
 if __name__ == '__main__':
