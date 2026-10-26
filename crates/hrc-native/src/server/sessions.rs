@@ -192,9 +192,11 @@ fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, Ap
     for s in &mut sessions {
         let scope = s["scopeRef"].as_str().unwrap();
         let lane = hrc_store::storage_lane(s["laneRef"].as_str().unwrap());
-        let identity = db.identity(scope, lane)?;
+        let identity = db.optional_identity(scope, lane)?;
         let metadata = db.metadata(scope, lane)?;
-        s["identity"] = identity;
+        if let Some(identity) = identity {
+            s["identity"] = identity;
+        }
         if let Some(title) = metadata["metadata"].get("title").filter(|v| v.is_string()) {
             s["title"] = title.clone();
         }

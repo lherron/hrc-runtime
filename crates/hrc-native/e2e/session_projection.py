@@ -49,6 +49,8 @@ def seed():
    db.execute('INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',('hsid-n1-'+host,scope+'-'+suffix,lane,generation,status,created,now))
   for host,suffix,lane,generation,created,status in fixtures:
    db.execute('INSERT INTO continuities(scope_ref,lane_ref,active_host_session_id,updated_at,scope_kind,agent_id,project_id,task_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(scope_ref,lane_ref) DO UPDATE SET active_host_session_id=excluded.active_host_session_id',(scope+'-'+suffix,lane,'hsid-n1-'+host,now,'project-task','tabularasa','n1-t11818',scope.split(':task:')[1]+'-'+suffix))
+  # Bun's sweep summary is a valid durable session without a continuity.
+  db.execute('INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',('hsid-n1-summary','system:hrc/sweep','default',1,'active',old,old))
   # Explicit fixture clocks distinguish real activity from cosmetic updated_at.
   db.execute('UPDATE session_index SET last_activity_at=? WHERE host_session_id=?',(now,'hsid-n1-index'))
   for host,status,activity,run in [('runtime','terminated',now,None),('live','awaiting_input',old,None),('active-run','terminated',old,'run-n1-placeholder')]:
@@ -61,7 +63,7 @@ def durable():
  with sqlite3.connect('file:'+str(state)+'?mode=ro',uri=True) as db:
   return {t:db.execute('SELECT * FROM '+t+' ORDER BY 1').fetchall() for t in ['sessions','runtimes','session_index']}
 q=lambda **kw:'/v1/sessions?'+urlencode(kw)
-cases=[('default','/v1/sessions'),('kernel',q(updatedSince=since,latestGeneration='true')),('all',q(all='true')),('yes',q(all=' YES ')),('all-invalid-since',q(all='1',updatedSince='bad')),('scoped-history',q(scopeRef=scope+'-f',updatedSince=since)),('scoped-invalid-since',q(scopeRef=' '+scope+'-f ',updatedSince='bad')),('lane',q(scopeRef=scope+'-f',laneRef=' alternate ')),('latest-scoped',q(scopeRef=scope+'-f',latestGeneration='YES')),('latest-status',q(scopeRef=scope+'-f',latestGeneration='true',status='archived')),('status-trimmed',q(all='true',status=' archived ')),('hex-limit',q(all='true',limit='0x2')),('invalid-since',q(updatedSince=' bad ')),('invalid-status-first',q(status=' nope ',updatedSince='bad')),('invalid-limit-first',q(limit='0',updatedSince='bad')),('date-only',q(updatedSince=now[:10])),('offset',q(updatedSince=since.replace('Z','+00:00')))]
+cases=[('system-summary',q(scopeRef='system:hrc/sweep')),('default','/v1/sessions'),('kernel',q(updatedSince=since,latestGeneration='true')),('all',q(all='true')),('yes',q(all=' YES ')),('all-invalid-since',q(all='1',updatedSince='bad')),('scoped-history',q(scopeRef=scope+'-f',updatedSince=since)),('scoped-invalid-since',q(scopeRef=' '+scope+'-f ',updatedSince='bad')),('lane',q(scopeRef=scope+'-f',laneRef=' alternate ')),('latest-scoped',q(scopeRef=scope+'-f',latestGeneration='YES')),('latest-status',q(scopeRef=scope+'-f',latestGeneration='true',status='archived')),('status-trimmed',q(all='true',status=' archived ')),('hex-limit',q(all='true',limit='0x2')),('invalid-since',q(updatedSince=' bad ')),('invalid-status-first',q(status=' nope ',updatedSince='bad')),('invalid-limit-first',q(limit='0',updatedSince='bad')),('date-only',q(updatedSince=now[:10])),('offset',q(updatedSince=since.replace('Z','+00:00')))]
 try:
  subprocess.run(['wrkqadm','migrate'],env=env,check=True,capture_output=True)
  up('bun');down()

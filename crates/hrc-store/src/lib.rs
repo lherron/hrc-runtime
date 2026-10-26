@@ -123,6 +123,11 @@ impl Store {
     }
 
     pub fn identity(&self, scope: &str, lane: &str) -> Result<Value> {
+        self.optional_identity(scope, lane)?
+            .context("Query returned no rows")
+    }
+    /// System summary sessions may have no continuity or identity.
+    pub fn optional_identity(&self, scope: &str, lane: &str) -> Result<Option<Value>> {
         let lane = storage_lane(lane);
         Ok(self.sqlite.query_row("SELECT scope_kind,agent_id,project_id,task_id,role_name FROM continuities WHERE scope_ref=? AND lane_ref=?", params![scope,lane], |row| {
             let mut result = json!({"kind":row.get::<_,String>(0)?,"agentId":row.get::<_,String>(1)?});
@@ -130,7 +135,7 @@ impl Store {
                 if let Some(v) = row.get::<_,Option<String>>(i)? { result[key] = v.into(); }
             }
             Ok(result)
-        })?)
+        }).optional()?)
     }
 
     pub fn create_session(&mut self, scope: &str, lane: &str) -> Result<(Value, bool)> {

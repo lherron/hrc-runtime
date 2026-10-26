@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-REQUIRED={'default','kernel','all','yes','all-invalid-since','scoped-history',
+REQUIRED={'system-summary','default','kernel','all','yes','all-invalid-since','scoped-history',
           'scoped-invalid-since','lane','latest-scoped','latest-status',
           'status-trimmed','hex-limit','invalid-since','invalid-status-first',
           'invalid-limit-first','date-only','offset','config-zero','config-prefix','config-invalid'}
@@ -19,8 +19,8 @@ def compare(args, checks):
         check(kind+':no-writes',report['unchanged'],'session projection must preserve session/runtime/index rows')
         expected={'default':['recent','index','runtime','live','active-run','prior'],
                   'kernel':['recent','index','runtime','live','active-run','prior'],
-                  'all':['recent','index','runtime','live','active-run','alternate','prior','head','cold'],
-                  'lane':['alternate'],'latest-scoped':['alternate','head'],'latest-status':[],
+                  'all':['recent','index','runtime','live','active-run','alternate','prior','head','cold','summary'],
+                  'system-summary':['summary'],'lane':['alternate'],'latest-scoped':['alternate','head'],'latest-status':[],
                   'status-trimmed':['prior'],'hex-limit':['recent','index']}
         expected.update({'config-zero':['live','active-run'],'config-prefix':expected['all'],'config-invalid':expected['default']})
         for case,hosts in expected.items():
