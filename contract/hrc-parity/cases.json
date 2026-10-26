@@ -1201,6 +1201,66 @@
       "reason": "N5 owns direct-store status diagnostics and metadata inspection."
     },
     {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations/types.ts:<module>:execute:",
+      "target": "GAP:N2",
+      "reason": "Shared SQL execute helper, also called by participant registration/host-binding repositories outside the migrator; it follows those repositories' attribution, not the migration ruling."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/migrations/types.ts",
+      "target": "GAP:N2",
+      "reason": "Shared SQL execute helper, also called by participant registration/host-binding repositories outside the migrator; it follows those repositories' attribution, not the migration ruling."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations/",
+      "target": "UNSUPPORTED",
+      "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/migrations/",
+      "target": "UNSUPPORTED",
+      "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/migrations/",
+      "target": "UNSUPPORTED",
+      "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/migrations.ts:",
+      "target": "UNSUPPORTED",
+      "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:ensureMigrationTable:",
+      "target": "UNSUPPORTED",
+      "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:listAppliedMigrations:",
+      "target": "UNSUPPORTED",
+      "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:recordMigrationApplication:",
+      "target": "UNSUPPORTED",
+      "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:resolveMigrationActor:",
+      "target": "UNSUPPORTED",
+      "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:resolveReleaseId:",
+      "target": "UNSUPPORTED",
+      "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:runMigrations:",
+      "target": "UNSUPPORTED",
+      "reason": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced."
+    },
+    {
       "kind": "store-operation",
       "target": "GAP:N2",
       "reason": "N2 execution/recovery owns unexercised store mutations and schema consumers; Bun remains the schema migration writer."
