@@ -6,7 +6,9 @@ publish.workspace = true
 
 [dependencies]
 rusqlite = { version = "0.39", features = ["bundled"] }
-serde_json.workspace = true
+# Record JSON is fingerprinted in its own key order (collective_history.rs).
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2 = "0.10"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 chrono.workspace = true

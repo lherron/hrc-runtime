@@ -14,6 +14,7 @@ mod events;
 mod index;
 mod maintenance;
 pub use maintenance::fail_unresolved_absorbed;
+pub mod collective_history;
 mod mail;
 mod messages;
 mod metadata;

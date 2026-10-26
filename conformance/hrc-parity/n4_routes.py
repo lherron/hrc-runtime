@@ -208,3 +208,32 @@ def compare_watchdog(args, checks):
                        'failureCode': 1})
         cases.append({'id': name, 'pass': passed})
     return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}
+
+
+# Collective history: A's owners (bun, native) read through one S, or one A
+# read through an S of each owner. observedAt is the authority's clock.
+HISTORY_CASES = {'a': 15, 'authority': 20}
+
+
+def compare_history(args, checks):
+    a = json.loads((Path(args.baseline) / 'history.json').read_text())
+    b = json.loads((Path(args.candidate) / 'history.json').read_text())
+    side = 'authority' if Path(args.baseline).name == 'authority' else 'a'
+    checks.append({'id': 'case-matrix', 'pass': len(a) == HISTORY_CASES[side] and set(a) == set(b),
+                   'reason': 'collective queries, the unreachable fallback and peer history verbs on both owners',
+                   'failureCode': 1})
+    cases = []
+    for name in a:
+        passed = name in b and canon_history(a[name]) == canon_history(b[name])
+        checks.append({'id': 'compare:' + name, 'pass': passed,
+                       'reason': 'status, fields, values and key order must match Bun', 'failureCode': 1})
+        cases.append({'id': name, 'pass': passed})
+    return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}
+
+
+def canon_history(value):
+    if isinstance(value, dict):
+        return [(k, '<dynamic>' if k in DYNAMIC or k == 'observedAt' else canon_history(x)) for k, x in value.items()]
+    if isinstance(value, list):
+        return [canon_history(x) for x in value]
+    return value

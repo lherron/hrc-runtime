@@ -584,6 +584,9 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n4-watchdog':
         from n4_routes import compare_watchdog
         return compare_watchdog(args, checks)
+    if getattr(args, 'suite', None) == 'n4-history':
+        from n4_routes import compare_history
+        return compare_history(args, checks)
     if getattr(args, 'suite', None) == 'n2-turns':
         from n2_turns import compare as compare_n2_turns
         return compare_n2_turns(args, checks)

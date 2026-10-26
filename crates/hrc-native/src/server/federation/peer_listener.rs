@@ -3,7 +3,7 @@
 //! Bearer-authenticated against each peer's accepted tokens. The home answers
 //! forwarded reads localOnly, so a forwarded read never takes a second hop.
 //! Verbs native does not serve yet answer Bun's own "not here" refusals.
-use super::locate::locate_for_peer;
+use super::{history, locate::locate_for_peer};
 use crate::server::{Shared, accounting, dispatch_local, stderr_json};
 use anyhow::{Context, Result};
 use axum::{
@@ -106,7 +106,7 @@ async fn handle(State(server): State<Shared>, request: Request) -> Response {
     let entry = accounting::Entry::listener(&request, "peer", route, peer.clone());
     let response = match peer {
         None => refusal(StatusCode::UNAUTHORIZED, "unauthorized", json!({})),
-        Some(_) => match route_request(&server, request).await {
+        Some(ref peer) => match route_request(&server, peer, request).await {
             Ok(response) => response,
             Err(Invalid) => refusal(StatusCode::BAD_REQUEST, "invalid_request", json!({})),
         },
@@ -165,7 +165,7 @@ fn local_nodes(uri: &Uri) -> Uri {
         .unwrap_or_else(|_| uri.clone())
 }
 
-async fn route_request(server: &Shared, request: Request) -> Result<Response, Invalid> {
+async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<Response, Invalid> {
     let method = request.method().clone();
     let uri = request.uri().clone();
     let headers = request.headers().clone();
@@ -202,6 +202,11 @@ async fn route_request(server: &Shared, request: Request) -> Result<Response, In
                 // Only what this daemon serves; the rest is absent, not false.
                 "capabilities": {"locate":true,"health":true,"runtimeProjection":true,"federatedSessionRead":true},
             });
+            if history::serves(server) {
+                // Bun's capability order: runtimeProjection, collectiveHistory, ...
+                let caps = health["capabilities"].as_object_mut().unwrap();
+                caps.shift_insert(3, "collectiveHistory".into(), true.into());
+            }
             let query: std::collections::HashMap<String, String> =
                 form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
                     .into_owned()
@@ -339,12 +344,30 @@ async fn route_request(server: &Shared, request: Request) -> Result<Response, In
             if body.keys().any(|k| k != field) || !body.get(field).is_some_and(Value::is_object) {
                 return Err(Invalid);
             }
-            // This node is not the collective-history authority.
-            Ok(refusal(
-                StatusCode::NOT_FOUND,
-                "collective_history_not_authoritative",
-                json!({"retryable":true}),
-            ))
+            if !history::serves(server) {
+                return Ok(refusal(
+                    StatusCode::NOT_FOUND,
+                    "collective_history_not_authoritative",
+                    json!({"retryable":true}),
+                ));
+            }
+            let body = Value::Object(body);
+            let answered = match field {
+                "record" => history::accept_replication(server, peer, &body)
+                    .map(|ack| json!({"ok":true,"ack":ack})),
+                "checkpoint" => history::accept_checkpoint(server, peer, &body)
+                    .map(|ack| json!({"ok":true,"ack":ack})),
+                _ => history::query_authority(server, &body["filter"]).map_err(|e| e.message),
+            };
+            // Bun answers any thrown error with the generic retryable 500.
+            Ok(match answered {
+                Ok(value) => reply(value, StatusCode::OK),
+                Err(_) => refusal(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    json!({"retryable":true}),
+                ),
+            })
         }
         _ => Ok(refusal(StatusCode::NOT_FOUND, "not_found", json!({}))),
     }

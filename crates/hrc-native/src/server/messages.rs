@@ -154,6 +154,9 @@ pub async fn query(server: &Shared, body: &[u8]) -> Result<Response, ApiError> {
         e
     })?;
     let filter = filter(&body)?;
+    if let Some(answer) = super::federation::history::query(server, &filter).await? {
+        return Ok(Json(answer).into_response());
+    }
     Ok(Json(local_query(
         server,
         &filter,

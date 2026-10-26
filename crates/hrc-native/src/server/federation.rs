@@ -4,6 +4,7 @@
 //! (home-authority.ts) that locate and scope-read routing share.
 pub mod claim_start;
 pub(super) mod gate;
+pub mod history;
 mod locate;
 pub mod peer_listener;
 mod policy;
@@ -122,6 +123,10 @@ pub struct Node {
     memo: Mutex<HashMap<String, Binding>>,
     /// The peer and registry listeners: (name, graceful-shutdown signal, task).
     listeners: Mutex<Vec<Listener>>,
+    /// The collective-history coordinator. Bun always resolves a federation
+    /// config at boot (single-node when federation.json is absent), so every
+    /// owner has one.
+    pub history: history::Coordinator,
 }
 
 struct Listener {
@@ -439,6 +444,7 @@ impl Node {
             http,
             memo: Mutex::new(HashMap::new()),
             listeners: Mutex::new(Vec::new()),
+            history: history::Coordinator::default(),
         })
     }
     fn http(peer: &FederationPeer) -> Result<Client, RegistryError> {
