@@ -35,3 +35,9 @@ architecture/
 /crates/
 # TypeScript generators under crates/ are code.
 !/crates/**/*.ts
+
+# The parity harness (Python, JSON, Node .mjs, harness-only .ts) is exercised
+# by the cargo-leg drivers. No Bun check, lint, typecheck or test covers it, so a
+# harness-only change runs no Bun verify (Lance, 2026-10-26).
+/conformance/
+/contract/
