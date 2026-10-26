@@ -272,3 +272,113 @@ pub fn fail_replay_stale(
     server.ledger_committed();
     Ok(())
 }
+
+/// Report-only summary recovery for a live-status broker runtime
+/// (runtime-inspect-handlers.ts + bc-attach.ts recoverFinalSummary), raced
+/// against `timeout_ms`.
+pub async fn recover_final_summary(server: &Shared, runtime: &Value, timeout_ms: f64) -> Value {
+    let endpoint = crate::server::startup::hosting(
+        &runtime["runtimeStateJson"],
+        runtime["generation"].as_i64().unwrap_or(0),
+    )
+    .map(|h| h.endpoint)
+    .filter(|e| e["kind"] == "unix-jsonrpc-ndjson");
+    let token = endpoint.as_ref().and_then(|e| {
+        std::fs::read_to_string(e["attachTokenRef"]["path"].as_str()?)
+            .ok()
+            .map(|t| t.trim().to_owned())
+    });
+    let (Some(endpoint), Some(token)) = (endpoint, token) else {
+        return json!({"state":"not_durable"});
+    };
+    let socket = endpoint["socketPath"].as_str().unwrap_or("").to_owned();
+    let once = recover_final_summary_once(server, runtime, &socket, &token);
+    match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms as u64), once).await {
+        Ok(result) => result,
+        Err(_) => {
+            json!({"state":"timeout","message":format!("summary recovery exceeded {timeout_ms}ms")})
+        }
+    }
+}
+
+fn has_final_summary(server: &Server, runtime_id: &str) -> bool {
+    let db = server.store.lock().unwrap();
+    db::runtime(&db.sqlite, runtime_id)
+        .ok()
+        .flatten()
+        .is_some_and(|rt| rt.state.is_some_and(|s| s.get("finalSummary").is_some()))
+}
+
+async fn recover_final_summary_once(
+    server: &Shared,
+    runtime: &Value,
+    socket: &str,
+    token: &str,
+) -> Value {
+    let runtime_id = runtime["runtimeId"].as_str().unwrap_or("").to_owned();
+    // resolveAttachInvocation: the active invocation, else the newest one.
+    let invocation = {
+        let db = server.store.lock().unwrap();
+        let active = runtime["activeInvocationId"]
+            .as_str()
+            .and_then(|id| db::invocation(&db.sqlite, id).ok().flatten());
+        active.or_else(|| {
+            db::invocations_for_runtime(&db.sqlite, &runtime_id)
+                .ok()
+                .and_then(|all| all.into_iter().last())
+        })
+    };
+    let Some(inv) = invocation else {
+        return json!({"state":"unavailable","message":"runtime or broker invocation not found"});
+    };
+    if has_final_summary(server, &runtime_id) {
+        return json!({"state":"not_needed"});
+    }
+    let status = runtime["status"].as_str().unwrap_or("");
+    if !matches!(status, "terminated" | "dead" | "stale") {
+        return json!({"state":"terminal_fenced","message":format!("runtime is {status}; report-only summary recovery skipped")});
+    }
+    let invocation = inv.invocation_id.clone();
+    let mut client: Option<JsonRpc> = None;
+    let result: Result<Value> = async {
+        let last = last_projected(server, &invocation)?;
+        let (c, _events) = JsonRpc::connect_broker(
+            Path::new(socket),
+            std::time::Duration::from_secs(30),
+            super::permission_handler(std::sync::Arc::downgrade(server)),
+        )
+        .await?;
+        let c = client.insert(c);
+        crate::server::broker::hello(c, &runtime["runtimeStateJson"]["executionRelease"]).await?;
+        let attach = c.request("broker.attach", json!({"runtimeId":runtime_id,"hostSessionId":runtime["hostSessionId"],"generation":runtime["generation"],"invocationId":invocation,"startRequestHash":inv.start_request_hash,"selectedProfileHash":inv.selected_profile_hash,"controllerInstanceId":server_instance_id(),"attachToken":token,"lastProjectedSeq":last})).await?;
+        let snapshot = c.request("invocation.snapshot", json!({"invocationId":invocation})).await?;
+        let floor = [&attach["retentionFloorSeq"], &attach["snapshot"]["retentionFloorSeq"], &snapshot["retentionFloorSeq"]].iter().filter_map(|v| v.as_i64()).max().unwrap_or(0);
+        if floor > last + 1 {
+            return Ok(json!({"state":"retention_gap","message":"broker event retention floor is past HRC projected high-water"}));
+        }
+        let replay = c.request("invocation.eventsSince", json!({"invocationId":invocation,"afterSeq":last})).await?;
+        for envelope in replay["events"].as_array().cloned().unwrap_or_default() {
+            let outcome = apply_one(server, &envelope)?;
+            if outcome.ignored_delta {
+                continue;
+            }
+            after_mapped(server, &runtime_id, &envelope, &outcome).await;
+        }
+        flush(server, &invocation)?;
+        let committed = last_projected(server, &invocation)?;
+        if committed > 0 {
+            let ack = c.request("invocation.ackEvents", json!({"invocationId":invocation,"throughSeq":committed,"controllerInstanceId":server_instance_id()})).await?;
+            ensure!(ack["ackedThroughSeq"].as_i64().unwrap_or(0) >= committed, "broker acknowledgement did not reach HRC committed projection cursor");
+        }
+        Ok(if has_final_summary(server, &runtime_id) {
+            json!({"state":"recovered"})
+        } else {
+            json!({"state":"unavailable","message":"broker replay did not include final summary"})
+        })
+    }
+    .await;
+    if let Some(c) = client {
+        c.close();
+    }
+    result.unwrap_or_else(|e| json!({"state":"failed","message":format!("{e:#}")}))
+}

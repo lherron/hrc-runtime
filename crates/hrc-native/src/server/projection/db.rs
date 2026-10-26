@@ -369,3 +369,36 @@ pub fn activity_cols(
 pub fn exists(db: &Connection, sql: &str, args: impl rusqlite::Params) -> Result<bool> {
     Ok(db.query_row(sql, args, |_| Ok(())).optional()?.is_some())
 }
+
+/// settleTerminalRuntimeRuns: fail every open run of the runtime and clear its
+/// active run. Returns the failed run ids.
+pub fn settle_terminal_runtime_runs(
+    db: &Connection,
+    runtime: &str,
+    now: &str,
+    message: &str,
+) -> Result<Vec<String>> {
+    let open: Vec<String> = {
+        let mut stmt = db.prepare("SELECT run_id FROM runs WHERE runtime_id = ? AND completed_at IS NULL AND status IN ('accepted', 'started', 'running', 'queued') ORDER BY accepted_at ASC, run_id ASC")?;
+        stmt.query_map([runtime], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    for run in &open {
+        mark_run_completed(
+            db,
+            run,
+            Completion {
+                status: "failed",
+                completed_at: now,
+                updated_at: now,
+                error_code: Some("runtime_unavailable"),
+                error_message: Some(message),
+            },
+        )?;
+    }
+    db.execute(
+        "UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ? AND active_run_id IS NOT NULL",
+        rusqlite::params![now, runtime],
+    )?;
+    Ok(open)
+}

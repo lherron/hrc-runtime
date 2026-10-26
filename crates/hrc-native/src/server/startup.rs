@@ -658,28 +658,7 @@ fn terminal_active_runs(server: &Server) -> Result<()> {
         let now = hrc_store::timestamp();
         let message =
             format!("runtime {runtime_id} is {status}; open run settled by startup reconcile");
-        let open: Vec<String> = {
-            let mut stmt = tx.prepare("SELECT run_id FROM runs WHERE runtime_id = ? AND completed_at IS NULL AND status IN ('accepted', 'started', 'running', 'queued') ORDER BY accepted_at ASC, run_id ASC")?;
-            stmt.query_map([&runtime_id], |r| r.get(0))?
-                .collect::<rusqlite::Result<_>>()?
-        };
-        for run in &open {
-            db::mark_run_completed(
-                &tx,
-                run,
-                db::Completion {
-                    status: "failed",
-                    completed_at: &now,
-                    updated_at: &now,
-                    error_code: Some("runtime_unavailable"),
-                    error_message: Some(&message),
-                },
-            )?;
-        }
-        tx.execute(
-            "UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?",
-            params![now, runtime_id],
-        )?;
+        let open = db::settle_terminal_runtime_runs(&tx, &runtime_id, &now, &message)?;
         let after = run_status(&tx);
         tx.commit()?;
         drop(db);

@@ -299,11 +299,12 @@ pub async fn broker_inspect(server: &Shared, body: Value) -> Result<Response, Ap
                 }
             })
         }
-        Some(_) => {
-            return Err(unavailable(
-                "final summary recovery is not yet served natively",
-                json!({"runtimeId":id,"reason":"final_summary_recovery_native_gap"}),
-            ));
+        Some(r) => {
+            let timeout = r["timeoutMs"].as_f64().unwrap_or(750.0).max(0.0);
+            let result = super::controller::recover_final_summary(server, &runtime, timeout).await;
+            runtime = super::runtimes::runtime(server, &id)?;
+            final_summary = runtime["runtimeStateJson"].get("finalSummary").cloned();
+            Some(result)
         }
     };
     let mut out = json!({"runtimeId":id,"transport":runtime["transport"]});

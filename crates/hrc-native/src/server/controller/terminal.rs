@@ -250,6 +250,7 @@ pub fn mark_crash_terminal(
         )?;
         tx.execute("UPDATE runtime_operations SET status='failed', completed_at=?, updated_at=?, error_code=?, error_message=? WHERE operation_id=?", params![now, now, code, message, inv.operation_id])?;
     }
+    db::settle_terminal_runtime_runs(&tx, runtime_id, &now, message)?;
     let mut state = rt.state_object();
     state["status"] = "crashed".into();
     state["updatedAt"] = now.as_str().into();

@@ -22,7 +22,7 @@ mod attach;
 pub mod seat;
 pub mod submit;
 mod terminal;
-pub use attach::attach_and_replay;
+pub use attach::{attach_and_replay, recover_final_summary};
 use terminal::{broker_pane_alive, user_exit_reason};
 pub use terminal::{mark_crash_terminal, mark_invocation_terminal};
 
