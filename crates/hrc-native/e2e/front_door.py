@@ -256,6 +256,7 @@ def main():
                 {'sessionRef': f'agent:tabularasa:project:{project_id}:task:seed-{i}/lane:main',
                  'create': True, 'summonIntent': 'explicit_local'}))
             seeded.append(json.loads(r['body'])['hostSessionId'])
+        seeded_ref = f'agent:tabularasa:project:{project_id}:task:seed-1/lane:main'
         with sqlite3.connect(db_path) as w:
             w.execute("UPDATE sessions SET created_at='2026-01-01T00:00:00.000Z', updated_at='2026-01-01T00:00:00.000Z'"
                       ' WHERE host_session_id=?', (seeded[0],))
@@ -269,6 +270,22 @@ def main():
                 d['headers'].get(h) == f['headers'].get(h) for h in d['headers'] if h.startswith('x-hrc-'))
             check('front-safe ' + path, same, direct=d, front=f)
         page = json.loads(request(private, 'GET', '/v1/events/page?afterSeq=0&limit=1')['body'])
+        inc = page['ledgerIncarnationId']
+        host0 = record['host_session_id']
+        for method, path, body in [
+                ('GET', '/v1/events/page?afterSeq=0&limit=50', None),
+                ('GET', f'/v1/events/page?afterSeq=3&limit=7&ledgerIncarnationId={inc}', None),
+                ('GET', '/v1/events/page?afterSeq=0&limit=5&ledgerIncarnationId=inc-not-current', None),
+                ('GET', '/v1/events/page?afterSeq=0&limit=5000', None),
+                ('GET', '/v1/events/latest-by-session', None),
+                ('GET', f'/v1/events/latest-by-session?hostSessionId={host0}', None),
+                ('GET', '/v1/presentation/runtimes', None),
+                ('POST', '/v1/presentation/seats/read',
+                 json.dumps({'sessionRefs': [scope + '/lane:main', seeded_ref], 'runtimeIds': [first['runtimeId'], 'rt-none']})),
+                ('POST', '/v1/presentation/seats/read', json.dumps({'sessionRefs': [''], 'runtimeIds': []}))]:
+            d, f = request(private, method, path, body), request(public, method, path, body)
+            same = d['status'] == f['status'] and json.loads(d['body']) == json.loads(f['body'])
+            check(f'front-safe {method} {path[:60]}', same, direct=d, front=f)
         forwarded = [('GET', '/v1/runtimes', None), ('GET', '/v1/events/page?afterSeq=0&limit=5', None),
                      ('GET', '/v1/presentation/runtimes', None), ('POST', '/v1/sessions/resolve', '{'),
                      ('POST', '/v1/runtimes/ensure', '{"hostSessionId":"hsid-front-forwarded"}'),
@@ -362,10 +379,19 @@ def main():
             request(public, 'GET', f'/v1/sessions?scopeRef={scope}', headers={'x-hrc-request-id': rid})
             marks['native'].append(rid)
             rid = f'front-{uuid.uuid4()}'
-            request(public, 'GET', '/v1/presentation/runtimes', headers={'x-hrc-request-id': rid})
+            request(public, 'GET', '/v1/runtimes', headers={'x-hrc-request-id': rid})
             marks['bun'].append(rid)
             request(public, 'GET', '/v1/sessions?all=true')
-            request(public, 'GET', '/v1/events/page?afterSeq=0&limit=1')
+            request(public, 'GET', '/v1/status')
+        # One unmarked call per newer front-safe route: each must be native in
+        # Rust's file and absent from Bun's.
+        native_routes = [('GET', '/v1/events/page', '/v1/events/page?afterSeq=0&limit=1', None),
+                         ('GET', '/v1/events/latest-by-session', '/v1/events/latest-by-session', None),
+                         ('GET', '/v1/presentation/runtimes', '/v1/presentation/runtimes', None),
+                         ('POST', '/v1/presentation/seats/read', '/v1/presentation/seats/read',
+                          json.dumps({'sessionRefs': [scope + '/lane:main'], 'runtimeIds': []}))]
+        for method, _route, path, body in native_routes:
+            request(public, method, path, body)
         time.sleep(4)
         rust = [r for r in metrics('rusthrc-server') if r['ts'] >= window]
         bunm = [r for r in metrics('server') if r['ts'] >= window]
@@ -381,9 +407,14 @@ def main():
         def count(rs, route, served=None):
             return sum(r.get('sampleWeight', 1) for r in rs if r.get('route') == route and not r.get('reqId')
                        and (served is None or r.get('servedBy') == served))
-        check('log-no-id-forwarded-counts', count(rust, '/v1/events/page', 'bun') >= 4
-              and count(rust, '/v1/events/page', 'bun') == count(bunm, '/v1/events/page'),
-              rust=count(rust, '/v1/events/page', 'bun'), bun=count(bunm, '/v1/events/page'))
+        check('log-no-id-forwarded-counts', count(rust, '/v1/status', 'bun') >= 4
+              and count(rust, '/v1/status', 'bun') == count(bunm, '/v1/status'),
+              rust=count(rust, '/v1/status', 'bun'), bun=count(bunm, '/v1/status'))
+        for method, route, _path, _body in native_routes:
+            check(f'log-native {method} {route}',
+                  any(r.get('route') == route and r.get('method') == method and r.get('servedBy') == 'native'
+                      for r in rust)
+                  and not any(r.get('route') == route and r.get('client', '').startswith('python') for r in bunm))
         check('log-no-id-native-absent-from-bun', count(rust, '/v1/sessions', 'native') >= 4
               and not any(r.get('route') == '/v1/sessions' and r.get('client', '').startswith('python')
                           for r in bunm))

@@ -15,8 +15,17 @@ use std::path::{Path, PathBuf};
 /// with routes rusthrc implements and passes compare on. A route enters only
 /// with that compare evidence. Status, subscribers, transcript-index status,
 /// GET /v1/runtimes (liveness reconciliation) and every stream or follow stay
-/// with Bun.
-const FRONT_SAFE: &[(Method, &str)] = &[(Method::GET, "/v1/sessions")];
+/// with Bun. GET /v1/events/tail also stays: Bun answers a scope-filtered tail
+/// from the scope's home node over federation (T-10418), which needs its peer
+/// map. Each entry is store-only in Bun's source and the native handler, and is
+/// compared through the front in e2e/front_door.py.
+const FRONT_SAFE: &[(Method, &str)] = &[
+    (Method::GET, "/v1/sessions"),
+    (Method::GET, "/v1/events/page"),
+    (Method::GET, "/v1/events/latest-by-session"),
+    (Method::GET, "/v1/presentation/runtimes"),
+    (Method::POST, "/v1/presentation/seats/read"),
+];
 
 pub fn is_front_safe(method: &Method, path: &str) -> bool {
     FRONT_SAFE.iter().any(|(m, p)| m == method && *p == path)
@@ -156,7 +165,11 @@ mod tests {
     #[test]
     fn front_safe_excludes_owner_reads() {
         assert!(is_front_safe(&Method::GET, "/v1/sessions"));
+        assert!(is_front_safe(&Method::POST, "/v1/presentation/seats/read"));
         for (m, p) in [
+            (Method::GET, "/v1/events/tail"),
+            (Method::GET, "/v1/events/bounded-stream"),
+            (Method::GET, "/v1/events"),
             (Method::GET, "/v1/status"),
             (Method::GET, "/v1/runtimes"),
             (Method::POST, "/v1/server/subscribers"),
