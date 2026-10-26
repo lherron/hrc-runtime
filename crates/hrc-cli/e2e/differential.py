@@ -123,10 +123,22 @@ def main():
             row.update(suite='continuity.py', requiredArguments=['--extended'], reason='list aliases ls; both spellings execute against Bun and native owners.')
         elif item['kind'] == 'package-bin':
             row.update(suite='passthrough.py', reason='Release resolution and exec identity; installed PATH provenance is a separate Gate 4 drive.')
+        elif item['id'] == 'public:POST:/v1/server/lifecycle':
+            row.update(suite='lifecycle_actions.py', suiteRoot='crates/hrc-native/e2e', reason='N5 native owner grant/refusal, stop/restart effects, canonical rows and successor attribution; remote origins are separately driven by lifecycle_peer.py.')
+        elif item['id'] == 'file:lifecycle-credentials':
+            row.update(suite='lifecycle_credentials.py', suiteRoot='crates/hrc-native/e2e', requiredArguments=['--authority-checks', '--native-lane', 'side'], reason='Owner-only credential delivery/rotation, non-main bindings, commit reconciliation, revocation/orphan cleanup and fail-closed authority.')
         else:
             path, symbol = item['source']['path'], item['source']['symbol']
             if path.endswith('/schema-guard.ts'):
                 row.update(suite='status.py', reason='Readonly non-refusing schema diagnostics, including WAL admission and coordination-file effects.')
+            elif item['kind'] == 'job-timer' and path.endswith('/server-stop-methods.ts'):
+                row.update(suite='lifecycle_shutdown.py', suiteRoot='crates/hrc-native/e2e', reason='Bounded request/background teardown; clean-stop attestation is withheld for incomplete native teardown. Unix, peer and registry held-body controls accompany clean stops.')
+            elif item['kind'] == 'job-timer' and path.endswith('/server-lifecycle-controller.ts'):
+                row.update(suite='lifecycle_peer.py' if symbol == 'provePeerRestart' else 'lifecycle_actions.py', suiteRoot='crates/hrc-native/e2e', reason='Real delayed grant actuation and remote restart proof; exact grants and before/after owner identities are asserted.')
+            elif item['kind'] == 'job-timer' and path.endswith('/server-lock.ts'):
+                row.update(suite='server_start.py', reason='Owned native daemon entry/start and live/stale owner refusal controls; this is a server ownership obligation, not a postponed maintenance script.')
+            elif item['kind'] == 'job-timer' and path.endswith('/index.ts'):
+                row.update(suite='lifecycle_credentials.py', suiteRoot='crates/hrc-native/e2e', reason='Native lifecycle credentials reconcile on committed runtime changes, with the owner-only periodic backstop.')
             elif item['kind'] == 'store-operation' and path.endswith(('/event-repositories.ts', '/shared.ts')):
                 row.update(suite='n5b_monitor_wait.py', reason='Native filtered lifecycle reads, high-water cursors, task predicates and row projection.')
             elif '/monitor/' in path or path.endswith('/monitor-show.ts'):
