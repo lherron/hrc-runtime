@@ -290,7 +290,7 @@ fn fs_error_message(error: &std::io::Error, syscall: &str, path: &str) -> String
 }
 
 /// `readFile(path, 'utf8')`: Node opens then reads, decoding lossily.
-pub fn read_text(path: &str) -> std::result::Result<String, (Option<i32>, String)> {
+pub fn read_text(path: &str) -> Result<String, (Option<i32>, String)> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)
         .map_err(|e| (e.raw_os_error(), fs_error_message(&e, "open", path)))?;

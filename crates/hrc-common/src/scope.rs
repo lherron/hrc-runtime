@@ -43,7 +43,7 @@ impl std::fmt::Display for ScopeRef<'_> {
 pub fn validate_scope(scope: &str) -> Result<(), String> {
     ScopeRef::validate(scope)
 }
-pub fn token(value: &str, label: &str) -> std::result::Result<(), String> {
+pub fn token(value: &str, label: &str) -> Result<(), String> {
     let n = value.encode_utf16().count();
     if !(1..=64).contains(&n) {
         return Err(format!("{label} must be 1..64 characters, got {n}"));
@@ -58,7 +58,7 @@ pub fn token(value: &str, label: &str) -> std::result::Result<(), String> {
     }
     Ok(())
 }
-fn validate_parts(p: &[&str]) -> std::result::Result<(), String> {
+fn validate_parts(p: &[&str]) -> Result<(), String> {
     if p.len() < 2 || p[0] != "agent" {
         return Err("ScopeRef must start with \"agent:<agentId>\"".into());
     }
@@ -154,7 +154,7 @@ fn split_handle(handle: &str) -> HandleSplit<'_> {
         role,
     }
 }
-fn validate_scope_handle(handle: &str) -> std::result::Result<(), String> {
+fn validate_scope_handle(handle: &str) -> Result<(), String> {
     if handle.is_empty() {
         return Err("ScopeHandle must not be empty".into());
     }
@@ -175,7 +175,7 @@ fn validate_scope_handle(handle: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 /// agent-scope `parseScopeHandle`: the canonical scope ref.
-pub fn parse_scope_handle(handle: &str) -> std::result::Result<String, String> {
+pub fn parse_scope_handle(handle: &str) -> Result<String, String> {
     validate_scope_handle(handle).map_err(|e| format!("Invalid ScopeHandle \"{handle}\": {e}"))?;
     let s = split_handle(handle);
     let scope = build_scope_ref(s.agent, s.project, s.task, s.role);
