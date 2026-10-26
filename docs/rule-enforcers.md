@@ -5,11 +5,12 @@ One row per repo rule an agent can break, naming what fails when it does
 `judgment` rule is broken again, move it up to a check, type or test rather than
 adding prose. Where each gate runs: `pre-commit` (lefthook, blocks the commit),
 `pre-push` (lefthook, blocks the push), `check` (`just check`, inside
-`just verify`'s TS leg), `verify` (`just verify`, which also runs after the
-push on mini, where it catches but does not block). `just verify` is
-path-scoped by `scripts/validation-scope.ts`: its TS leg and its cargo leg each
-run only when their inputs changed (`.hookignore`, `.hookignore-cargo`), and
-both run when the scope cannot be read.
+`just verify-bun`), `verify` (`just verify`, which also runs after the
+push on mini, where it catches but does not block). `just verify` runs no Bun
+suites (Lance ruling 2026-10-26): it grades architecture records and runs the
+cargo leg only when Rust inputs changed (`scripts/validation-scope.ts`,
+`.hookignore-cargo`). The Bun/TS suites run only by hand, through
+`just verify-bun`.
 
 ## Enforced
 

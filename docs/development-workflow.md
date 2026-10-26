@@ -39,7 +39,8 @@ logs but loses the verdict.
 | --- | --- |
 | `bun run test:fast` | Script, unit, and contract tiers; excludes hrc-server |
 | `bun run test:integration` | All hrc-server tests, including admission conformance |
-| `just verify` | Ephemeral environment, structural checks, lint, typecheck, all test tiers, and the federation loopback corpus |
+| `just verify` | Architecture records, plus the cargo leg when Rust inputs changed; no Bun suites |
+| `just verify-bun` | By hand, only for Bun/TS changes: ephemeral environment, structural checks, lint, typecheck, all test tiers, and the federation loopback corpus |
 
 Bare `bun test` in the package bypasses the root's loopback switch and the
 wrapper that cleans the environment **before** Bun starts. Without loopback,

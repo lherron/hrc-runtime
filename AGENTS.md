@@ -44,8 +44,11 @@ Dependency flow, pins, and repo-split rules:
 
 ## Validation
 
-- `just verify` is the landing gate (provisions its own ephemeral daemon via
-  `env-up`). `just check` runs the structural guards.
+- `just verify` is the landing gate: architecture records plus the cargo leg
+  when Rust inputs changed. It runs no Bun suites. `just verify-bun` runs the
+  Bun/TS suites (it provisions its own ephemeral daemon via `env-up`). Run it
+  only when your change touches Bun/TS code. `just check` runs the structural
+  guards.
 - `bun run build` before `bun run typecheck` (TypeScript project references).
 - Prefer live-code discovery over static prose:
   `bun scripts/find-entry-points.ts <topic>`,

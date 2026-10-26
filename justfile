@@ -19,7 +19,8 @@ info:
     @echo "  just build     - Build all packages"
     @echo "  just test      - Run tests"
     @echo "  just lint      - Run biome linter"
-    @echo "  just verify    - Declared landing gate: env-up + check + lint + typecheck + test"
+    @echo "  just verify    - Landing gate: architecture records + cargo leg (no Bun suites)"
+    @echo "  just verify-bun - Bun/TS suites, by hand only: env-up + check + lint + typecheck + test"
     @echo "  just install-dev - Development install: build and publish only the isolated worktree tag"
     @echo "  just install   - Select a local committed release; run just publish after push for Verdaccio"
     @echo "  just env-up    - Provision the ephemeral daemon + fixture agent homes"
@@ -124,15 +125,29 @@ doctor *args:
 architecture-records *args:
     bun scripts/check-architecture-records.ts {{args}}
 
-# The declared landing gate. It depends on `env-up` by ruling (T-06900 +
+# `verify` runs no Bun suites (Lance ruling 2026-10-26): HRC is Rust-owned now,
+# so the landing gate is architecture records plus the path-scoped cargo leg.
+# The Bun leg moved to `verify-bun`, which nothing calls on its own: not this
+# recipe, not a hook, not the post-push runner. Run it by hand when a TS change
+# needs it.
+
+# Landing gate: architecture records + the cargo leg when Rust inputs changed
+verify:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(bun scripts/validation-scope.ts)"
+    just architecture-records
+    if [ "$HRC_VERIFY_CARGO" = 1 ]; then just cargo-check; fi
+
+# The Bun leg (`verify-bun`). It depends on `env-up` by ruling (T-06900 +
 # T-06902, joint): the gate provisions the environment it needs instead of
-# inheriting it. Before that ruling a green `just verify` was partly a statement
+# inheriting it. Before that ruling a green Bun verify was partly a statement
 # about the operator's live production daemon rather than about the tree under
 # test — strictly worse than merely non-hermetic. `env-up` also owns the build,
 # which `typecheck` has always required (it reads sibling dist/*.d.ts) and the
 # gate never declared.
 
-# Written as a script rather than a dependency list (`verify: env-up check …`)
+# Written as a script rather than a dependency list (`verify-bun: env-up check …`)
 # because just runs each dependency in its OWN shell: env-up would provision the
 # environment and then none of the stages would see it. That shape looked right
 # and failed the proof — the corpus ran against no daemon and no agents root.
@@ -142,22 +157,18 @@ architecture-records *args:
 # once this run ends, however it ends, unless an operator `env-up` also holds
 # it (T-10329).
 
-# Run all verification (env-up + check + lint + typecheck + test)
-verify:
+# Bun/TS verification, run by hand only (env-up + check + lint + typecheck + test + loopback)
+verify-bun:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(bun scripts/validation-scope.ts)"
-    just architecture-records
-    if [ "$HRC_VERIFY_CARGO" = 1 ]; then just cargo-check; fi
-    if [ "$HRC_VERIFY_TS" = 1 ]; then
-      bash scripts/dev-env.sh up --owner $$
-      eval "$(bash scripts/dev-env.sh env)"
-      just check
-      just lint
-      just typecheck
-      just test
-      just test-federation-loopback
-    fi
+    echo 'WARNING: verify-bun runs the full Bun/TS suites. Do not run it unless your change touches Bun/TS code (packages/, scripts/*.ts). Rust changes are covered by `just verify`.' >&2
+    bash scripts/dev-env.sh up --owner $$
+    eval "$(bash scripts/dev-env.sh env)"
+    just check
+    just lint
+    just typecheck
+    just test
+    just test-federation-loopback
 
 # Rust's path-scoped landing leg. No TS build/import is involved.
 cargo-check:
