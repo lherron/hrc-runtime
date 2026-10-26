@@ -65,6 +65,7 @@ def main():
         cases.append(('conflicting-session', ['runtime', 'list', '--session', 'a', '--host-session-id', 'b']))
         cases.append(('resolve-missing-scope', ['session', 'resolve']))
     results = []
+    rust_server_help = (ROOT / 'crates/hrc-cli/server-help.txt').read_text()
     for name, argv in cases:
         observed = []
         for command in (['bun', str(args.oracle)], [str(args.binary.resolve())]):
@@ -73,7 +74,10 @@ def main():
             observed.append(item)
         def normalize(item):
             return {k: re.sub(NORMALIZATION['timestamps'], '<timestamp>', v) if isinstance(v, str) else v for k, v in item.items()}
-        results.append({'case': name, 'argv': argv, 'pass': normalize(observed[0]) == normalize(observed[1]), 'oracle': observed[0], 'subject': observed[1]})
+        expected = dict(observed[0])
+        if name in {f'help:{path}:{view}' for path in ('server', 'server serve') for view in ('agent', 'human')}:
+            expected['stdout'] += rust_server_help
+        results.append({'case': name, 'argv': argv, 'pass': normalize(expected) == normalize(observed[1]), 'oracle': observed[0], 'subject': observed[1]})
     if args.inventory:
         coverage = json.loads(args.inventory.read_text())
     else:
@@ -90,7 +94,7 @@ def main():
             'partial execution cases; full flags/PTY/failure qualification pending N5' if command in supported
             else 'help/error cases only; execution implementation pending N5' if item['kind'] == 'cli-command'
             else 'implementation/qualification pending N5'})
-    report = {'commandScope': scope, 'normalization': NORMALIZATION, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'unsupported': unsupported}
+    report = {'commandScope': scope, 'normalization': NORMALIZATION, 'rustHelpAddition': {'paths': ['server', 'server serve'], 'text': rust_server_help}, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'unsupported': unsupported}
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
     for r in results:

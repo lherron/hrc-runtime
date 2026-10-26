@@ -1,0 +1,8 @@
+
+Rust daemon options (rusthrc server [serve]):
+  --front                Keep Bun as execution owner behind the Rust front door.
+                         Requires --bun-socket.
+  --bun-socket <path>     Absolute private Bun socket, distinct from hrc.sock.
+                         Native role forwards postponed routes to this socket.
+  --listen-socket <path>  Must equal the public runtime hrc.sock; a private
+                         listener is supported only by Bun.

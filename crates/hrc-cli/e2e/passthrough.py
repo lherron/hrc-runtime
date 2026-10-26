@@ -55,6 +55,15 @@ def main():
             oracle = dict(exit=expected.returncode, stdout=expected.stdout, stderr=expected.stderr)
             observed = dict(exit=subject.returncode, stdout=subject.stdout, stderr=subject.stderr)
             results.append(dict(case='native grammar without Bun', argv=argv, oracle=oracle, subject=observed, **{'pass': oracle == observed}))
+        for path in (['server'], ['server', 'serve']):
+            for view in ('agent', 'human'):
+                argv = ['--' + view] + path + ['--help']
+                expected = subprocess.run([bun, str(args.oracle.resolve())] + argv, env=env, cwd=ROOT, text=True, capture_output=True)
+                subject = subprocess.run([str(args.binary.resolve())] + argv, env=no_bun, cwd=ROOT, text=True, capture_output=True)
+                appendix = (ROOT / 'crates/hrc-cli/server-help.txt').read_text()
+                good = expected.returncode == subject.returncode == 0 and not subject.stderr and subject.stdout == expected.stdout + appendix
+                good = good and all(flag in appendix for flag in ('--front', '--bun-socket', '--listen-socket'))
+                results.append(dict(case='Rust daemon help without Bun', argv=argv, **{'pass': good}, stdout=subject.stdout, stderr=subject.stderr, exit=subject.returncode))
         # The executable named bun is a process seam, not an oracle for CLI behavior.
         # Its PID must be the rusthrc PID: spawn-and-wait does not satisfy exec.
         shim = root / 'tools'

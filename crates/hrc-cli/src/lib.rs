@@ -211,9 +211,9 @@ pub fn run(args: Vec<String>) -> i32 {
     // Parse only to select an already implemented native command. Postponed
     // commands (including their help/grammar failures) receive the original argv.
     let native = passthrough::native_intent(&surface, &args)
-        || parsed
-            .as_ref()
-            .is_ok_and(|p| passthrough::native_command(&p.path()));
+        || parsed.as_ref().is_ok_and(|p| {
+            passthrough::native_command(&p.path()) || p.path() == "server" && p.help
+        });
     if native {
         metrics::begin(&args, &surface);
     }
@@ -244,6 +244,9 @@ pub fn run(args: Vec<String>) -> i32 {
                 }
                 if parsed.help {
                     crate::cli_print!("{help}");
+                    if matches!(parsed.path().as_str(), "server" | "server serve") {
+                        crate::cli_print!("{}", include_str!("../server-help.txt"));
+                    }
                 } else {
                     eprint!("{help}");
                 }
