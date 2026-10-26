@@ -3,7 +3,7 @@
 
 This adds evidence around drivers that project away full response bodies. It
 never edits route behavior. Invoke from a clean terminal, passing the existing
-driver and its normal arguments after --. Captures are supplemental evidence;
+driver and its normal arguments. Captures are supplemental evidence;
 value comparison still runs through each suite's original comparator.
 """
 import argparse
@@ -42,6 +42,10 @@ def main():
         native_owner = 'server' in argv and argv and Path(argv[0]).name == 'rusthrc'
         release = None
         if bun_owner or native_owner:
+            env = dict(env)
+            for key in ('XPC_SERVICE_NAME', 'HRC_LAUNCHD_LABEL'):
+                env.pop(key, None)
+            kw['env'] = env
             for key in ('HRC_RUNTIME_DIR', 'HRC_STATE_DIR'):
                 assert Path(env[key]).resolve().is_relative_to(Path('/tmp').resolve()), (key, env[key])
             assert not env.get('XPC_SERVICE_NAME') and not env.get('HRC_LAUNCHD_LABEL')
@@ -92,8 +96,10 @@ def main():
         direct = frame and not any(f.function in ('up', 'wait') for f in inspect.stack()
                                    if Path(f.filename).name == 'n2_scratch.py')
         supplemental = args.suite in ('n2-lanes', 'n2-continuation') and direct and route not in ('/v1/health', '/v1/status')
-        passthrough = (args.suite == 'n1-passthrough' and frame and frame.function == 'call'
-                       and route not in ('/v1/health', '/v1/sessions/resolve')
+        passthrough = (args.suite == 'n1-passthrough' and frame and frame.function == 'request'
+                       # Bare targets are the two native-only legacy-env
+                       # controls; the paired target read has a query string.
+                       and route not in ('/v1/health', '/v1/sessions/resolve', '/v1/targets')
                        and not route.startswith('/v1/events/page'))
         if front:
             # The historical front report puts the SAME frontend requests in

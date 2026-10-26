@@ -534,7 +534,12 @@ def compare(args, checks):
         from n2_participant import compare as compare_participant
         return compare_participant(args, checks)
     order = None
-    if getattr(args, 'suite', '').startswith(('n1-', 'n2-')):
+    suite = getattr(args, 'suite', '')
+    # This sweep's 15-module inventory predates the independently landing N2
+    # recovery suites. Preserve their dispatch/value gates unchanged until
+    # their own complete wire sources are included in an order sweep.
+    if suite.startswith('n1-') or suite in (
+            'n2-turns', 'n2-routes', 'n2-lanes', 'n2-recovery', 'n2-continuation', 'n2-attached'):
         from key_order import compare_suite
         order = compare_suite(args, checks)
         # Keep the wire findings even if a pre-existing value gate raises on

@@ -5,6 +5,7 @@ summaries. Arrays stay positional, and missing keys/shapes are failures.
 """
 import json
 from pathlib import Path
+import re
 
 
 def differences(bun, native, path='$'):
@@ -62,11 +63,15 @@ def load_source(path):
     return value
 
 
-def owner_package(suite, route):
+def owner_package(suite, route, object_path='$'):
     if suite.startswith('n5'):
         return 'hrc-cli'
-    if any(token in route for token in ('/sessions', '/runtimes', '/runs', '/events')) and suite.startswith('n1'):
-        return 'hrc-store / hrc-native'
+    if '/runtimes/inspect' in route or '.runtimeStateJson' in object_path or '.tmuxJson' in object_path:
+        return 'hrc-native'
+    if '/surfaces/bind' in route:
+        return 'hrc-store'
+    if '/sessions' in route or '/v1/runtimes?' in route or route.endswith('/v1/runtimes'):
+        return 'hrc-store'
     return 'hrc-native'
 
 
@@ -85,7 +90,7 @@ def compare_records(suite, bun, native):
         failed += bool(delta)
         for d in delta:
             mismatches.append({'suite': suite, 'case': name, 'route': route,
-                'owner package': owner_package(suite, route), 'object path': d['path'],
+                'owner package': owner_package(suite, route, d['path']), 'object path': d['path'],
                 'Bun key order': d['bun'], 'native key order': d['native']})
     return {'comparedCases': len(a), 'failedCases': failed, 'mismatches': mismatches}
 
@@ -93,12 +98,12 @@ def compare_records(suite, bun, native):
 def records(suite, directory, owner):
     root = Path(directory)
     wire = root / 'wire-observations.json'
-    if wire.exists() and suite in ('n1-accounting', 'n1-front-accounting', 'n2-lanes'):
+    if wire.exists() and suite in ('n1-accounting', 'n1-front-accounting', 'n1-passthrough', 'n2-lanes'):
         return [(r['case'], r['route'], response_body(r)) for r in load_source(wire)]
     if suite == 'n1-session-projection':
         data = load_source(root / 'projection.json')['observations']
     elif suite == 'n1-front-accounting':
-        data = load_source(root / 'front-accounting.json')['requests']
+        raise ValueError('n1-front-accounting requires independent wire observations; its two reports share frontend requests')
     elif suite == 'n1-accounting':
         raise ValueError('n1-accounting requires wire-observations.json (driver retains only byte counts)')
     elif suite == 'n1-participant-live':
@@ -111,7 +116,10 @@ def records(suite, directory, owner):
         d = load_source(root / f'{owner}.json')
         if suite == 'n2-turns':
             result = [(k, 'CLI start', v) for k, v in d['cases'].items() if k != 'reads']
-            result += [(k, k, v[1]) for k, v in d['cases']['reads'].items()]
+            # Case labels contain each subject's fresh route selectors. Only
+            # those minted IDs are canonicalized; response keys stay literal.
+            result += [(re.sub(r'(rt|hsid|run)-[0-9a-f-]{36}', r'<\1>', k), k, v[1])
+                       for k, v in d['cases']['reads'].items()]
             return result
         if suite == 'n2-continuation':
             out = [(f'compile-{i}', 'aspc.compileHarnessInvocation', v) for i, v in enumerate(d['compiles'])]
@@ -133,7 +141,8 @@ def records(suite, directory, owner):
         if 'body' not in response and 'raw' not in response:
             continue
         name = row.get('case', f'{i}:{row.get("pair", "")}:{row.get("role", "")}')
-        out.append((name, row.get('path', name), response_body(response)))
+        route = (row.get('method', '') + ' ' + row.get('path', name)).strip()
+        out.append((name, route, response_body(response)))
     return out
 
 
