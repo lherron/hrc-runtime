@@ -77,6 +77,38 @@ fn assert_authority(server: &Server, request: &SummonRequest<'_>) -> Result<(), 
     ))
 }
 
+/// summon-gate-server-repair.ts `assertScopeNotRetired`: an existing session
+/// is not authority. With a configured gate, a scope this node retired re-enters
+/// the full gate before any door seats it; otherwise nothing is checked.
+pub fn assert_scope_not_retired(
+    server: &Server,
+    scope: &str,
+    path: &'static str,
+) -> Result<(), ApiError> {
+    let config = &server.federation.config;
+    if !config.source_exists || config.gate_mode == "off" {
+        return Ok(());
+    }
+    let retired = super::ledger_row(&server.store.lock().unwrap().sqlite, scope)
+        .is_some_and(|row| row.state == "retired");
+    if !retired {
+        return Ok(());
+    }
+    assert_authority(
+        server,
+        &SummonRequest {
+            scope_ref: scope,
+            lane_ref: None,
+            path,
+            intent: "implicit",
+            known_session: None,
+            origin: None,
+            capability_hint: None,
+            provision: None,
+        },
+    )
+}
+
 /// A reserved participant address births only through its participant.
 pub fn assert_reserved_address_allows_birth(
     server: &Server,

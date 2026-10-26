@@ -61,6 +61,8 @@ pub async fn ensure(server: &Shared, body: Value) -> Result<Response, ApiError> 
             )
                 .into_response());
         }
+        // T-09762: an existing session is not authority over a retired scope.
+        super::federation::summon::assert_scope_not_retired(server, scope, "ensure-target")?;
         if persist {
             let identity = session.get("identity").cloned();
             session = server
