@@ -77,6 +77,25 @@ must not assert the other repo's behavior; shared render semantics live in
 agent-control-plane as `hrc-mail-injector`
 ([docs/operations-runbook.md](docs/operations-runbook.md#mail-kicker-now-in-agent-control-plane)).
 
+## Inspecting live HRC through the kernel
+
+For read-only inspection of live seats and runtimes, mount Loggia's hrc-kernel
+the way Loggia does, rather than polling the daemon:
+`python3 -I crates/hrc-kernel/e2e/kq.py status|seats [re]|runtimes [re]|busy|raw <op> '<json>'`
+(socket `~/praesidium/var/run/hrc/hrc-kernel.sock`, override with
+`HRC_KERNEL_SOCKET`). The kernel answers from its own projection, so it costs
+the daemon nothing. `hrc runtime list`, `/v1/status`, `/v1/runtimes` and
+`runtimes/inspect` are whole-table scans, which under the native owner run
+under the single store mutex and delay mail and turns for everyone.
+
+- The projection trails the ledger by the kernel's ingest lag (seconds; check
+  `kq.py status`). Grade a turn from `hrc_events`, not from the kernel.
+- Seat rows report `active`/`inactive`; busy/ready lives on `hrc.runtime` rows.
+- `seat.summon`, `seat.restart` and `seat.send` are write ops on the same wire;
+  `kq.py raw` reaches them. Use them only when you mean to act.
+- Restarting the kernel costs a cold bootstrap (minutes, several GB on max3's
+  ledger) and blanks Loggia while it runs. Read from it; don't bounce it.
+
 ## Runtime gotchas
 
 - The zombie sweeper marks a run zombie after 30 min of `hrc_events` silence,
