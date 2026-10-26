@@ -25,6 +25,7 @@ mod presentation;
 mod projection;
 mod proxy;
 mod reconcile;
+mod recovery;
 mod rpc;
 mod runs;
 mod runtime_views;
@@ -295,6 +296,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
     // The front controls no brokers; Bun behind it owns execution.
     if !server.front {
         broker::reattach(&server).await?;
+        recovery::start(&server);
         participants::resume(&server)?;
         sweeps::start(&server);
         reconcile::start(&server);

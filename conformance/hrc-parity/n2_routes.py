@@ -63,6 +63,13 @@ def compare(args, checks):
         scope = d['scope']
         sides[owner] = (d, {o['case']: o for o in d['observations']},
                         lambda v, n=norm, sc=scope: n(json.loads(json.dumps(v).replace(sc, '<scope>'))))
+        # Terminate must leave nothing running: broker, harness and the lease server.
+        for o in d['observations']:
+            if o['case'] == 'terminate:final' and 'processes' in o:
+                p = o['processes']
+                check(f'{owner}:terminate:processes-gone',
+                      p['owned'] > 0 and not p['survivors'] and not p['leaseServerAlive'],
+                      f'{p["owned"]} owned pids; survivors {p["survivors"]}; lease server alive {p["leaseServerAlive"]}')
         rows = json.loads((Path(directory) / f'{owner}-rows.json').read_text())
         fixed[owner] = born_after_fix(rows)
         if fixed[owner]:

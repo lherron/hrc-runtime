@@ -78,8 +78,11 @@ Sweeps (`server/sweeps.rs`, `server/reconcile.rs`): `POST /v1/runs/sweep-zombies
 and `/v1/runs/reconcile-active` plus their 300 s jobs (at boot, then on cadence),
 the daily session retention archive and the 300 s tmux aging pass (the runtime
 sweep with reason `runtime_tmux_aging`), all inside `!front`. Not yet native:
-the accepted-never-started settlement in reconcile (T-11306), the retained
-evidence passes and cold-boot input recovery.
+the accepted-never-started settlement in reconcile (T-11306) and the retained
+evidence passes. Startup cold-boot input recovery (`server/recovery.rs`)
+re-delivers an accepted headless run's durable owed prompt once the seat probes
+live and its priming turn has ended, or fails it `cold_input_continuation_lost`
+(`e2e/n2_recovery.py`, `--suite n2-recovery`).
 A broker client's `close()` half-closes and drains the
 frames the broker already sent (`invocation.disposed` follows the dispose
 reply). While a terminate finalizes a runtime, its projected exit writes no

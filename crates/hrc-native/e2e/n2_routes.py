@@ -9,6 +9,8 @@ a malformed body that reaches the broker.
 """
 import argparse
 import json
+import subprocess
+import os
 from pathlib import Path
 import time
 
@@ -176,9 +178,30 @@ def main():
         case('terminate:bad-drop', 'POST', terminate, {'runtimeId': runtime, 'dropContinuation': 'yes'})
         case('terminate:bad-reason', 'POST', terminate, {'runtimeId': runtime, 'reason': 7})
         case('terminate:unknown', 'POST', terminate, {'runtimeId': 'rt-nope'})
+        # The processes this seat owns before terminate: broker, harness child,
+        # and the tui pane's process on the lease's own tmux server.
+        lease = json.loads(s.rows('SELECT tmux_json FROM runtimes WHERE runtime_id=?', (runtime,))[0]['tmux_json'] or '{}')
+        owned = s.rows('SELECT broker_pid, child_pid FROM broker_invocations WHERE runtime_id=? ORDER BY created_at DESC LIMIT 1', (runtime,))
+        pids = [p for p in (owned[0].values() if owned else []) if p]
+        panes = subprocess.run(['tmux', '-S', lease.get('socketPath', ''), 'list-panes', '-a', '-F', '#{pane_pid}'],
+                               capture_output=True, text=True).stdout.split()
+        pids += [int(p) for p in panes if p.isdigit()]
         case('terminate:final', 'POST', terminate, {'runtimeId': runtime, 'reason': 'n2 route case', 'source': 'e2e',
                                                      'actor': 'agent:clod'})
         time.sleep(2)
+        def alive(pid):
+            try:
+                os.kill(pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                return True
+        lease_server = subprocess.run(['tmux', '-S', lease.get('socketPath', ''), 'list-sessions'], capture_output=True).returncode == 0
+        for o in observations:
+            if o['case'] == 'terminate:final':
+                o['processes'] = {'owned': len(pids), 'survivors': [p for p in pids if alive(p)],
+                                  'leaseServerAlive': lease_server}
         case('terminate:again', 'POST', terminate, {'runtimeId': runtime})
         case('interrupt:terminated', 'POST', interrupt, {'runtimeId': runtime})
         case('attach:terminated', 'GET', f'/v1/attach?runtimeId={runtime}')

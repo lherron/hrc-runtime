@@ -604,6 +604,7 @@ pub async fn dispatch_turn(server: &Shared, body: Value) -> Result<Response, Api
         repair: req.repair.as_ref(),
         first_turn_timeout_ms: req.first_turn_timeout_ms,
         attach: None,
+        headless: false,
     };
     let admission = Request {
         door: "turns",
@@ -679,6 +680,7 @@ pub async fn submission(server: &Shared, door: &str, body: Value) -> Result<Resp
         repair: None,
         first_turn_timeout_ms: None,
         attach: None,
+        headless: false,
     };
     let admission = Request {
         door: "submission",
@@ -762,6 +764,7 @@ pub async fn literal_flush(
         repair: None,
         first_turn_timeout_ms: None,
         attach: None,
+        headless: false,
     };
     // enrichDispatchTurnResponse only: no public receipt projection here.
     let body = match route::deliver(server, &plan, rt, &options)
@@ -849,6 +852,7 @@ pub async fn attached_turn(
         repair: None,
         first_turn_timeout_ms: None,
         attach: Some(gate),
+        headless: false,
     };
     let body = match route::execute(server, &plan, &options).await {
         Ok(body) => body,
@@ -866,4 +870,61 @@ pub async fn attached_turn(
         },
     );
     Ok(body)
+}
+
+/// continueAdmittedTurn for an accepted cold-boot run: the existing durable
+/// receipt supplies provenance, so no admission runs; the owed prompt goes
+/// into the run's own runtime (executeHeadlessBrokerInputTurn).
+pub async fn continue_cold(
+    server: &Shared,
+    session: Value,
+    rt: &crate::server::projection::db::Rt,
+    run_id: &str,
+    cold: &Value,
+) -> Result<Value, ApiError> {
+    let dispatch = &cold["dispatch"];
+    let door = dispatch["submissionDoor"]
+        .as_str()
+        .unwrap_or("invoke")
+        .to_owned();
+    let lifecycle_from_seq = {
+        let db = server.store.lock().unwrap();
+        db.sqlite
+            .query_row(
+                "SELECT COALESCE(MAX(hrc_seq),0)+1 FROM hrc_events",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(anyhow::Error::from)?
+    };
+    let plan = admission::Plan {
+        session,
+        effective_door: door.clone(),
+        door_report: json!({"effectiveDoor":door}),
+        report_runtime: None,
+        run_id: Some(run_id.to_owned()),
+        intent: Value::Null,
+        observation: admission::Observation {
+            lifecycle_from_seq,
+            broker_after: Default::default(),
+        },
+    };
+    let prompt = cold["prompt"].as_str().unwrap_or("");
+    let options = route::Options {
+        run_id,
+        prompt,
+        wait_for_completion: false,
+        origin: None,
+        submission_origin: dispatch.get("submissionOrigin").filter(|v| v.is_object()),
+        response_format: cold.get("responseFormat").filter(|v| v.is_object()),
+        fresh_context: dispatch["freshContext"].as_bool(),
+        ttl_ms: dispatch["ttlMs"].as_i64(),
+        turn_policy: dispatch["turnPolicy"].as_str(),
+        idempotency_key: dispatch["dispatchIdempotencyKey"].as_str(),
+        repair: None,
+        first_turn_timeout_ms: None,
+        attach: None,
+        headless: true,
+    };
+    route::deliver(server, &plan, rt, &options).await
 }

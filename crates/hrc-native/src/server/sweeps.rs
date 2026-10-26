@@ -98,7 +98,7 @@ fn priming_submission(db: &Connection, rt: &db::Rt) -> Option<String> {
 
 /// isCompilerPrimingActive: the priming submission has neither failed nor
 /// reached a terminal turn.
-fn priming_active(db: &Connection, rt: &db::Rt) -> rusqlite::Result<bool> {
+pub fn priming_active(db: &Connection, rt: &db::Rt) -> rusqlite::Result<bool> {
     let (Some(invocation), Some(submission)) = (
         rt.active_invocation_id.as_deref(),
         priming_submission(db, rt),
@@ -482,7 +482,11 @@ pub fn start_retention(server: &Shared) {
                 let days = idle_archive_days();
                 match archive_idle_sessions(&server, days) {
                     Ok(mut r) => {
-                        r["idleThresholdDays"] = if days.fract() == 0.0 { json!(days as i64) } else { json!(days) };
+                        r["idleThresholdDays"] = if days.fract() == 0.0 {
+                            json!(days as i64)
+                        } else {
+                            json!(days)
+                        };
                         server.ledger_committed();
                         super::stderr_json("info", "sweep", "session.retention_sweep_complete", r);
                     }

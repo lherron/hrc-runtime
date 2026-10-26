@@ -30,6 +30,9 @@ pub struct Options<'a> {
     pub first_turn_timeout_ms: Option<i64>,
     /// The attached door's gate, taken by the birth (attachBeforeInvocationStart).
     pub attach: Option<&'a std::sync::Mutex<Option<broker::AttachGate>>>,
+    /// executeHeadlessBrokerInputTurn whatever the runtime transport (a
+    /// verified continuation of an accepted headless run).
+    pub headless: bool,
 }
 
 /// findReusableProducerSelectedRuntime: the latest live broker runtime, after a
@@ -168,7 +171,7 @@ async fn input_turn(
     rt: &db::Rt,
     o: &Options<'_>,
 ) -> Result<Value, ApiError> {
-    let interactive = rt.transport == "tmux";
+    let interactive = rt.transport == "tmux" && !o.headless;
     let (label, route, transport) = if interactive {
         ("interactive", "interactive-broker", "tmux")
     } else {
@@ -231,6 +234,25 @@ async fn input_turn(
                 transport,
                 o.first_turn_timeout_ms,
             );
+        }
+        if !interactive {
+            let ev = events::Ev {
+                ts: hrc_store::timestamp(),
+                host_session_id: session["hostSessionId"].as_str().unwrap_or("").into(),
+                scope_ref: session["scopeRef"].as_str().unwrap_or("").into(),
+                lane_ref: session["laneRef"].as_str().unwrap_or("").into(),
+                generation: session["generation"].as_i64().unwrap_or(0),
+                runtime_id: Some(rt.runtime_id.clone()),
+                run_id: Some(o.run_id.to_owned()),
+                transport: Some("headless".into()),
+                ..Default::default()
+            };
+            events::append(
+                &db.sqlite,
+                "turn.user_prompt",
+                &ev,
+                &events::user_prompt_payload(o.prompt),
+            )?;
         }
     }
     server.ledger_committed();
