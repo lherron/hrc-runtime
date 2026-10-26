@@ -190,17 +190,25 @@ class Scratch:
         return out
 
     def cleanup(self, scope_prefix):
-        if self.db_path.exists():
-            for record in self.rows('SELECT scope_ref FROM runtimes'):
-                assert record['scope_ref'].startswith(scope_prefix), record['scope_ref']
-            for path in self.tmux_sockets():
-                subprocess.run(['tmux', '-S', path, 'kill-server'], capture_output=True, timeout=5)
-        for owner in self.owners:
-            if owner.poll() is None:
-                owner.terminate()
-                owner.wait(timeout=30)
-        for log in self.logs:
-            log.close()
+        # Owners stop whatever the store checks find: a leaked native server
+        # outlived a failed run for hours and ignored SIGTERM.
+        try:
+            if self.db_path.exists():
+                for record in self.rows('SELECT scope_ref FROM runtimes'):
+                    assert record['scope_ref'].startswith(scope_prefix), record['scope_ref']
+                for path in self.tmux_sockets():
+                    subprocess.run(['tmux', '-S', path, 'kill-server'], capture_output=True, timeout=5)
+        finally:
+            for owner in self.owners:
+                if owner.poll() is None:
+                    owner.terminate()
+                    try:
+                        owner.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        owner.kill()
+                        owner.wait(timeout=10)
+            for log in self.logs:
+                log.close()
 
     def dump(self, name, extra=None):
         """Every durable row the workflow wrote, for per-case compares."""

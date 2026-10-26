@@ -8,7 +8,27 @@ fn main() {
         "cargo:rustc-env=HRC_API_VERSION={}",
         package["version"].as_str().unwrap()
     );
+    source_commit();
     accounting_tables();
+}
+
+// aspc request frames name the build (client: "hrc-native/<sourceCommit>").
+fn source_commit() {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    };
+    for path in ["HEAD", "logs/HEAD"] {
+        if let Some(p) = git(&["rev-parse", "--git-path", path]) {
+            println!("cargo:rerun-if-changed={p}");
+        }
+    }
+    let commit = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
+    println!("cargo:rustc-env=HRC_SOURCE_COMMIT={commit}");
 }
 
 // Keep the accounting inventory tied to the Bun dispatch and L3 policy.

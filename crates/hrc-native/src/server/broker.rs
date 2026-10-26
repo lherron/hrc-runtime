@@ -246,11 +246,15 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     let selector = json!({"runId":identity["runId"],"runtimeId":identity["runtimeId"],"generation":identity["generation"]});
     let mut broker_selector = selector.clone();
     broker_selector["invocationId"] = identity["invocationId"].clone();
-    let response = json!({"runId":identity["runId"],"hostSessionId":host,"generation":identity["generation"],"runtimeId":identity["runtimeId"],"transport":"headless","status":"accepted","supportsInFlightInput":false,"admission":"admitted","startIdentity":{"kind":"broker","invocationId":identity["invocationId"]},"observation":{"lifecycle":{"selector":selector,"fromSeq":from_seq},"broker":{"selector":broker_selector,"afterSeq":0}},"stage":"accepted","replayed":false,"executionFormat":"format1"});
-    let mut response = response;
+    let mut response = json!({"runId":identity["runId"],"hostSessionId":host,"generation":identity["generation"],"runtimeId":identity["runtimeId"],"transport":"headless","status":"accepted","supportsInFlightInput":false});
     if let Some(id) = submission {
         response["submissionId"] = id.into();
     }
+    let rest = json!({"admission":"admitted","startIdentity":{"kind":"broker","invocationId":identity["invocationId"]},"observation":{"lifecycle":{"selector":selector,"fromSeq":from_seq},"broker":{"selector":broker_selector,"afterSeq":0}},"stage":"accepted","replayed":false,"executionFormat":"format1"});
+    response
+        .as_object_mut()
+        .unwrap()
+        .extend(rest.as_object().unwrap().clone());
     Ok(response)
 }
 

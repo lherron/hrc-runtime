@@ -31,6 +31,8 @@ pub struct JsonRpc {
 struct Peer {
     events: Option<mpsc::UnboundedSender<Value>>,
     inbound: Option<Inbound>,
+    /// Top-level `client` stamped on every request frame (aspc request log).
+    client: Option<String>,
 }
 
 impl JsonRpc {
@@ -41,6 +43,20 @@ impl JsonRpc {
             Peer {
                 events: None,
                 inbound: None,
+                client: None,
+            },
+        )
+        .await
+    }
+    /// A plain connection that names itself on every request frame.
+    pub async fn connect_as(path: &Path, timeout: Duration, client: String) -> Result<Self> {
+        Self::open(
+            path,
+            timeout,
+            Peer {
+                events: None,
+                inbound: None,
+                client: Some(client),
             },
         )
         .await
@@ -59,6 +75,7 @@ impl JsonRpc {
             Peer {
                 events: Some(events),
                 inbound: Some(inbound),
+                client: None,
             },
         )
         .await?;
@@ -160,7 +177,11 @@ async fn drive(
                 let Some(call) = call else { return Ok(()); };
                 let id = next_id;
                 next_id += 1;
-                let mut raw = serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"method":call.method,"params":call.params}))?;
+                let mut frame = json!({"jsonrpc":"2.0","id":id,"method":call.method,"params":call.params});
+                if let Some(client) = &peer.client {
+                    frame["client"] = json!(client);
+                }
+                let mut raw = serde_json::to_vec(&frame)?;
                 raw.push(b'\n');
                 // Install the waiter before writing so a fast reply has an owner.
                 pending.insert(id, call.reply);

@@ -84,15 +84,19 @@ impl AspSession {
         } else {
             60
         };
-        let client = JsonRpc::connect(Path::new(&endpoint), Duration::from_secs(timeout))
-            .await
-            .map_err(|_| {
-                unavailable(
-                    "aspd_unavailable",
-                    format!("aspd unavailable at {endpoint}"),
-                    json!({"endpoint":endpoint}),
-                )
-            })?;
+        let client = JsonRpc::connect_as(
+            Path::new(&endpoint),
+            Duration::from_secs(timeout),
+            format!("hrc-native/{}", env!("HRC_SOURCE_COMMIT")),
+        )
+        .await
+        .map_err(|_| {
+            unavailable(
+                "aspd_unavailable",
+                format!("aspd unavailable at {endpoint}"),
+                json!({"endpoint":endpoint}),
+            )
+        })?;
         let hello = client
             .request(
                 "aspc.hello",

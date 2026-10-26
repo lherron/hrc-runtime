@@ -92,10 +92,12 @@ pub fn descriptor_value(server: &Server, id: &str, strict: bool) -> Result<Value
     if is_unavailable(&runtime)
         || (runtime["controllerKind"] == "harness-broker" && runtime["status"] == "failed")
     {
-        let mut detail = json!({"runtimeId":id,"hostSessionId":runtime["hostSessionId"],"transport":runtime["transport"],"replacementRequired":true});
+        let mut detail = json!({"runtimeId":id,"hostSessionId":runtime["hostSessionId"]});
         if let Some(kind) = runtime.get("controllerKind") {
             detail["controllerKind"] = kind.clone();
         }
+        detail["transport"] = runtime["transport"].clone();
+        detail["replacementRequired"] = true.into();
         if strict {
             detail["strictRuntimeId"] = true.into();
         }
