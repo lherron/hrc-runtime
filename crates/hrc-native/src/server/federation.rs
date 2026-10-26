@@ -6,11 +6,13 @@ mod gate;
 mod locate;
 pub mod peer_listener;
 mod policy;
+mod projection;
 pub mod registry_listener;
 mod routing;
 pub mod summon;
 
 pub use locate::{bindings, designations, locate};
+pub use projection::runtimes;
 pub use routing::{route_request, scope_of};
 
 use super::stderr_json;

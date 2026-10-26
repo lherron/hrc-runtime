@@ -441,12 +441,16 @@ pub async fn target_session_view(
         .copied();
     let view=r.filter(|r|!unavailable(r) && ["sdk","tmux","headless"].iter().any(|s|r["transport"]==*s)).map(|r|{
         let h=hosting(r);let operator=h.as_ref().is_some_and(|h|h["presentation"]["kind"]!="none");
-        let mut v=json!({"runtimeId":r["runtimeId"],"transport":r["transport"],"status":r["status"],"supportsLiteralSend":r["transport"]=="tmux" || operator,"supportsCapture":r["transport"]!="headless" || operator,"operatorAttachable":operator});
+        // target-view.ts toTargetRuntimeView key order.
+        let mut v=json!({"runtimeId":r["runtimeId"],"transport":r["transport"],"status":r["status"],"supportsLiteralSend":r["transport"]=="tmux" || operator,"supportsCapture":r["transport"]!="headless" || operator});
         for key in ["activeRunId","lastActivityAt"]{if let Some(value)=r.get(key){v[key]=value.clone();}}
         if let Some(h)=h{
-            v["brokerSubstrate"]=h["substrate"]["kind"].clone();v["brokerEndpoint"]=h["broker"]["endpoint"]["kind"].clone();v["presentation"]=h["presentation"]["kind"].clone();
+            v["brokerSubstrate"]=h["substrate"]["kind"].clone();
             if r["transport"]=="headless"{v["headlessRoute"]=if h["substrate"]["kind"]=="leased-tmux" && h["broker"]["endpoint"]["kind"]=="unix-jsonrpc-ndjson"{json!("durable-leased")}else{json!("legacy-stdio")};}
-        }v
+            v["brokerEndpoint"]=h["broker"]["endpoint"]["kind"].clone();v["presentation"]=h["presentation"]["kind"].clone();
+        }
+        v["operatorAttachable"]=operator.into();
+        v
     });
     let mut artifact = "unknown".to_owned();
     if probe_artifact

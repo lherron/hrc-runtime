@@ -350,7 +350,41 @@ fn runtime_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
         .get::<_, Option<String>>("status_changed_at")?
         .unwrap_or_else(|| "unknown".into())
         .into();
-    Ok(result)
+    // hrc-store-sqlite mapRuntimeRow key order.
+    let mut fields = result.as_object().cloned().unwrap_or_default();
+    let mut ordered = Map::new();
+    for key in [
+        "runtimeId",
+        "hostSessionId",
+        "scopeRef",
+        "laneRef",
+        "generation",
+        "transport",
+        "harness",
+        "provider",
+        "status",
+        "statusChangedAt",
+        "tmuxJson",
+        "supportsInflightInput",
+        "activeRunId",
+        "lastActivityAt",
+        "controllerKind",
+        "activeOperationId",
+        "activeInvocationId",
+        "planHash",
+        "selectedProfileHash",
+        "runtimeStateJson",
+        "lifecycleTerminalReason",
+        "presentation",
+        "createdAt",
+        "updatedAt",
+    ] {
+        if let Some(v) = fields.remove(key) {
+            ordered.insert(key.into(), v);
+        }
+    }
+    ordered.extend(fields);
+    Ok(ordered.into())
 }
 
 pub fn derive_identity(scope: &str) -> Value {

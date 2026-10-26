@@ -3,9 +3,9 @@ import json
 from pathlib import Path
 
 # Peer-probe clocks move with every request; their key positions still compare.
-DYNAMIC = {'checkedAt', 'answeredAt', 'latencyMs'}
+DYNAMIC = {'checkedAt', 'answeredAt', 'latencyMs', 'generatedAt'}
 CONFIGS = ('none', 'peerless', 'peered', 'peer-refused', 'peer-down')
-PER_CONFIG = 62
+PER_CONFIG = 65
 
 
 def canonical(value, local_tail=False):
@@ -167,7 +167,7 @@ def compare_gate(args, checks):
 
 # Operations reads: Bun and native answer the same cases on one frozen store,
 # so nothing is minted per owner and every field compares exactly.
-OPS_CASES = 19
+OPS_CASES = 21
 
 
 def compare_ops(args, checks):

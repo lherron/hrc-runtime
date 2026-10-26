@@ -194,16 +194,34 @@ async fn route_request(server: &Shared, request: Request) -> Result<Response, In
     };
     match (method.as_str(), path.as_str()) {
         ("GET", "/v1/federation/health") => {
-            // No runtimeProjection capability, so no `runtimes` either: an empty
-            // list would claim this node runs nothing.
-            let health = json!({
+            let mut health = json!({
                 "ok": true,
                 "nodeId": server.federation.node_id(),
                 "startedAt": server.started_at,
                 "observedAt": timestamp(),
                 // Only what this daemon serves; the rest is absent, not false.
-                "capabilities": {"locate":true,"health":true,"federatedSessionRead":true},
+                "capabilities": {"locate":true,"health":true,"runtimeProjection":true,"federatedSessionRead":true},
             });
+            let query: std::collections::HashMap<String, String> =
+                form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
+                    .into_owned()
+                    .fold(Default::default(), |mut m, (k, v)| {
+                        m.entry(k).or_insert(v);
+                        m
+                    });
+            if query.get("includeRuntimes").map(String::as_str) == Some("true") {
+                match crate::server::runtimes::query(server, &query, false, true) {
+                    Ok((runtimes, _)) => health["runtimes"] = runtimes.into(),
+                    // Bun's health handler throws; the peer protocol answers a generic 500.
+                    Err(_) => {
+                        return Ok(refusal(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "internal_error",
+                            json!({"retryable":true}),
+                        ));
+                    }
+                }
+            }
             Ok(reply(health, StatusCode::OK))
         }
         ("GET" | "PATCH", "/v1/sessions/metadata") | ("GET", "/v1/sessions/get") => {

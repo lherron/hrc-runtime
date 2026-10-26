@@ -89,7 +89,15 @@ pub fn runtime(server: &Server, id: &str) -> Result<Value, ApiError> {
             )
         })
 }
-pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, ApiError> {
+/// runtime-list-handlers.ts `queryRuntimesForProjection`: the filtered,
+/// ordered snapshots with health. `paginate` applies cursor and limit; the
+/// federation projection lists everything, terminal runtimes included.
+pub fn query(
+    server: &Server,
+    q: &HashMap<String, String>,
+    paginate: bool,
+    terminal_by_default: bool,
+) -> Result<(Vec<Value>, Option<String>), ApiError> {
     let transport = optional(q, "transport");
     if let Some(v) = transport
         && !["tmux", "headless", "sdk"].contains(&v)
@@ -108,7 +116,7 @@ pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, Ap
         .collect();
     let stale = boolean(q, "stale")?.unwrap_or(false);
     boolean(q, "json")?;
-    let all = boolean(q, "all")?.unwrap_or(false);
+    let all = boolean(q, "all")?.unwrap_or(terminal_by_default);
     let limit = match optional(q, "limit") {
         Some(raw) => number(raw)
             .filter(|n| n.is_finite() && n.fract() == 0.0 && *n >= 0.0)
@@ -192,7 +200,7 @@ pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, Ap
         )
     };
     rows.sort_by_key(&key);
-    if let Some(cursor) = optional(q, "cursor") {
+    if paginate && let Some(cursor) = optional(q, "cursor") {
         let err = || {
             ApiError::bad(
                 "cursor must be a runtime-list cursor returned by the server",
@@ -220,15 +228,17 @@ pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, Ap
         let id = c["runtimeId"].as_str().ok_or_else(err)?;
         rows.retain(|r| key(r) > (rank as u64, created.to_owned(), id.to_owned()));
     }
-    if !(1.0..=500.0).contains(&limit) {
+    if paginate && !(1.0..=500.0).contains(&limit) {
         return Err(bad(
             "limit must be between 1 and 500",
             "limit",
             json!(limit as u64),
         ));
     }
-    let more = rows.len() > limit as usize;
-    rows.truncate(limit as usize);
+    let more = paginate && rows.len() > limit as usize;
+    if paginate {
+        rows.truncate(limit as usize);
+    }
     let next = if more {
         rows.last().map(|r| {
             // Explicit field order matches JSON.stringify, including the cursor.
@@ -258,12 +268,20 @@ pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, Ap
         .collect::<Result<Vec<_>, _>>()
         .map_err(anyhow::Error::from)?;
     for r in &mut rows {
-        r["laneRef"] = hrc_store::canonical_lane(r["laneRef"].as_str().unwrap_or("main")).into();
         if let Some((_, at, Some(seq), generation, bundle)) =
             trips.iter().rev().find(|(id, ..)| r["runtimeId"] == *id)
         {
             r["health"] = json!({"firstTurnMissing":{"trippedAt":at,"tripEventSeq":seq,"generation":generation,"bundleAvailable":bundle.is_some(),"retrieval":format!("hrc runtime diagnostics {seq}")}});
         }
+    }
+    Ok((rows, next))
+}
+
+/// `GET /v1/runtimes` (handleListRuntimes): one page, lane refs canonical.
+pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, ApiError> {
+    let (mut rows, next) = query(server, q, true, false)?;
+    for r in &mut rows {
+        r["laneRef"] = hrc_store::canonical_lane(r["laneRef"].as_str().unwrap_or("main")).into();
     }
     let mut response = Json(json!(rows)).into_response();
     if let Some(cursor) = next {

@@ -262,6 +262,8 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         federation::designations(server, &query).await
     } else if method == Method::GET && uri.path() == "/v1/federation/bindings" {
         federation::bindings(server).await
+    } else if method == Method::GET && uri.path() == "/v1/federation/runtimes" {
+        federation::runtimes(server, &query, uri.query()).await
     } else if method == Method::GET && uri.path() == "/v1/runtime-diagnostics" {
         diagnostics::handle(server, &query)
     } else if method == Method::GET && uri.path() == "/v1/broker-forensics" {
@@ -524,6 +526,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/federation/locate",
                 "/v1/federation/designations",
                 "/v1/federation/bindings",
+                "/v1/federation/runtimes",
                 "/v1/runtime-diagnostics",
                 "/v1/broker-forensics",
             ]

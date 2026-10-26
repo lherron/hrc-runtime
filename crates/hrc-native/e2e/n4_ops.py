@@ -7,7 +7,8 @@ GET /v1/federation/bindings over ledger fixtures (a placement-home skew, a
 default-home note, a retired row that must be skipped), GET
 /v1/runtime-diagnostics over first_turn_missing trip rows (bundle present,
 bundle missing, untripped), and GET /v1/broker-forensics by source ref,
-invocation, runtime and refusals.
+invocation, runtime and refusals, and GET /v1/federation/runtimes with that
+terminated seat.
 
 Failure modes: a skew judged differently, a retired binding scanned, a trip
 or bundle projected with other keys, parseInt edge cases, forensics events
@@ -95,6 +96,10 @@ def main():
             ('forensics:runtime', f'/v1/broker-forensics?targetId={runtime}'),
             ('forensics:trimmed', f'/v1/broker-forensics?targetId=%20{runtime}%20'),
             ('forensics:unknown', '/v1/broker-forensics?targetId=rt-nope'),
+            # The frozen seat is terminated: the projection includes terminal
+            # runtimes by default and honors an explicit all=false.
+            ('fedruntimes:local', '/v1/federation/runtimes'),
+            ('fedruntimes:not-all', '/v1/federation/runtimes?all=false'),
         ]
         for owner in ('bun', 'native'):
             proc = s.up(owner, 'reads')

@@ -305,6 +305,9 @@ def main():
                 case('designations:missing', 'GET', '/v1/federation/designations')
                 case('designations:false', 'GET', '/v1/federation/designations?unborn=false')
                 case('designations:true', 'GET', '/v1/federation/designations?unborn=true')
+                case('fedruntimes:all', 'GET', '/v1/federation/runtimes')
+                case('fedruntimes:status', 'GET', '/v1/federation/runtimes?status=ready,stale')
+                case('fedruntimes:bad-filter', 'GET', '/v1/federation/runtimes?limit=abc')
                 for task in ('unbound', 'local', 'retired', 'ledger-foreign', 'registry-foreign'):
                     s = quote(scope(task))
                     case('runs:' + task, 'GET', f'/v1/runs?scopeRef={s}')
