@@ -119,15 +119,11 @@ impl NativeRead {
             }
             "/v1/presentation/runtimes" => mappers::runtimes(db),
             "/v1/events/latest-by-session" => {
-                let mut rows = db.event_history(q, 0, None, None, true, true)?;
+                // The owner's covering-index query; hydrating and deduping the
+                // whole ledger held ~15 GB per bootstrap on max3 (T-11919).
+                let mut rows = db.latest_per_session(q)?;
                 Self::display_payloads(db, &mut rows)?;
-                let mut seen = HashSet::new();
-                Ok(json!(
-                    rows.into_iter()
-                        .filter(|r| seen
-                            .insert((r["hostSessionId"].to_string(), r["generation"].to_string())))
-                        .collect::<Vec<_>>()
-                ))
+                Ok(json!(rows))
             }
             "/v1/events/tail" => {
                 Self::fence(db, q.get("ledgerIncarnationId").map(String::as_str))?;
