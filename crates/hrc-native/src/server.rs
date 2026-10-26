@@ -52,6 +52,7 @@ mod self_restart;
 mod sessions;
 mod start;
 mod startup;
+mod statement_telemetry;
 mod status_runtime;
 mod surfaces;
 mod sweeps;

@@ -22,7 +22,9 @@ mod monitor_read;
 mod participants;
 mod presentation;
 mod publication;
+mod statement_telemetry;
 mod surfaces;
+pub use statement_telemetry::{SlowStatement, Sqlite};
 mod targets;
 pub use metadata::{MetadataWrite, validate_metadata};
 pub use monitor_read::{MonitorFilters, escape_like, parse_task_id};
@@ -44,7 +46,9 @@ pub fn storage_lane(lane: &str) -> &str {
 include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
 
 pub struct Store {
-    pub sqlite: Connection,
+    // Must drop before sqlite: unregistration needs the live connection.
+    telemetry: Option<statement_telemetry::Instrumentation>,
+    pub sqlite: Sqlite,
 }
 
 pub fn timestamp() -> String {
@@ -71,13 +75,38 @@ fn assert_schema(db: &Connection) -> Result<()> {
 }
 
 impl Store {
+    /// Registration is explicit and connection-local; never driven by env in
+    /// Store::open/open_readonly. Daemon boot is the sole production caller.
+    #[track_caller]
+    pub fn instrument_statements(
+        &mut self,
+        threshold_ms: f64,
+        observe: impl Fn(SlowStatement) + Send + Sync + 'static,
+    ) -> Result<()> {
+        self.telemetry.take();
+        let threshold_ms = if threshold_ms.is_finite() && threshold_ms >= 0.0 {
+            threshold_ms
+        } else {
+            250.0
+        };
+        self.telemetry = Some(statement_telemetry::Instrumentation::install(
+            &mut self.sqlite,
+            threshold_ms,
+            observe,
+        )?);
+        Ok(())
+    }
+
     /// Direct-store clients must never take schema or journal ownership.
     pub fn open_readonly(path: &Path) -> Result<Self> {
         let sqlite = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .context("schema: cannot open existing Bun store")?;
         assert_schema(&sqlite)?;
         sqlite.busy_timeout(Duration::from_secs(5))?;
-        Ok(Self { sqlite })
+        Ok(Self {
+            sqlite: Sqlite::new(sqlite),
+            telemetry: None,
+        })
     }
 
     pub fn open(path: &Path) -> Result<Self> {
@@ -90,7 +119,10 @@ impl Store {
         assert_schema(&sqlite)?;
         sqlite.busy_timeout(Duration::from_secs(5))?;
         sqlite.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")?;
-        Ok(Self { sqlite })
+        Ok(Self {
+            sqlite: Sqlite::new(sqlite),
+            telemetry: None,
+        })
     }
 
     pub fn count(&self, table: &str) -> Result<i64> {

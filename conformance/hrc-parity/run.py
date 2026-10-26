@@ -575,6 +575,9 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n4-home':
         from n4_routes import compare_home
         return compare_home(args, checks)
+    if getattr(args, 'suite', None) == 'n4-sqlite-telemetry':
+        from n4_telemetry import compare as compare_telemetry
+        return compare_telemetry(args, checks)
     if getattr(args, 'suite', None) == 'n4-kernel':
         from n4_kernel import compare as compare_kernel
         return compare_kernel(args, checks)

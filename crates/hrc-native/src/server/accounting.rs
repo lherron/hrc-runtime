@@ -46,7 +46,7 @@ impl Accounting {
             enabled: std::env::var("HRC_METRICS").as_deref() != Ok("0"),
         })
     }
-    fn enqueue(&self, record: Value) {
+    pub(super) fn enqueue(&self, record: Value) {
         if !self.enabled {
             return;
         }

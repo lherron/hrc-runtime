@@ -30,7 +30,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
     // Schema refusal precedes all filesystem effects, including ownership files.
     // The front never writes: a read-only handle makes that structural.
     let front = role.is_front();
-    let store = if front {
+    let mut store = if front {
         Store::open_readonly(&state.join("state.sqlite"))?
     } else {
         Store::open(&state.join("state.sqlite"))?
@@ -66,6 +66,9 @@ pub async fn serve(role: front::Role) -> Result<()> {
     }
     fs::set_permissions(&owner.socket, fs::Permissions::from_mode(0o600))?;
     let accounting = accounting::Accounting::new();
+    if !front {
+        statement_telemetry::install(&mut store, accounting.clone())?;
+    }
     let mut writer = accounting.writer(state.clone());
     let (stop_writer, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
     let writer_task = tokio::task::spawn_blocking(move || {
