@@ -530,6 +530,9 @@ def validate_case_observations(id, observations, checks, status=None, installed_
 
 
 def compare(args, checks):
+    if getattr(args, 'suite', None) == 'participant-succession':
+        from participant_succession import compare as compare_succession
+        return compare_succession(args, checks)
     if getattr(args, 'suite', None) == 'n2-participant':
         from n2_participant import compare as compare_participant
         return compare_participant(args, checks)

@@ -161,16 +161,36 @@ fn parse_registration(body: Value) -> Result<Value, ApiError> {
     }
     Ok(parsed)
 }
-pub fn register(server: &Server, body: Value) -> Result<Response, ApiError> {
+pub async fn register(server: &super::Shared, body: Value) -> Result<Response, ApiError> {
     let body = parse_registration(body)?;
     let home = participant_home(server);
+    let joined = server
+        .store
+        .lock()
+        .unwrap()
+        .register_direct_participant(&body, &home)?;
+    let joined = match joined {
+        hrc_store::ParticipantJoin::Succession {
+            registration,
+            attempt,
+        } => {
+            let outcome = establishment::observe_transport(&attempt).await;
+            server.store.lock().unwrap().finish_participant_succession(
+                &body,
+                &registration,
+                &attempt,
+                outcome,
+            )?
+        }
+        other => other,
+    };
     let mut db = server.store.lock().unwrap();
-    match db.register_direct_participant(&body, &home)? {
-        hrc_store::ParticipantJoin::Succession => Ok((
-            StatusCode::NOT_FOUND,
-            "Not Found: participant succession belongs to N2",
-        )
-            .into_response()),
+    match joined {
+        hrc_store::ParticipantJoin::Succession { .. } => Ok(attachment_reply(
+            "pending",
+            "participant_successor_gate_changed",
+            "replacement requires another retirement observation",
+        )),
         hrc_store::ParticipantJoin::Refused(v) => Ok((
             if v["status"] == "rejected" {
                 StatusCode::CONFLICT

@@ -432,7 +432,7 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         }
     } else if method == Method::POST && uri.path() == "/v1/participants/register" {
         match parse_body(&body) {
-            Ok(value) => participants::register(server, value),
+            Ok(value) => participants::register(server, value).await,
             Err(mut error) => {
                 error.detail = Some(json!({}));
                 Err(error)

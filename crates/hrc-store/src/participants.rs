@@ -1,4 +1,5 @@
 //! Direct participant identity allocation. Profile/hosting effects happen later.
+mod succession;
 use crate::{Store, derive_identity, timestamp};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -8,8 +9,11 @@ use uuid::Uuid;
 pub enum ParticipantJoin {
     Registered(Value),
     Refused(Value),
-    /// Replacement and continuation are the N2 lifecycle workflow.
-    Succession,
+    /// Admitted durable replacement, awaiting fresh transport evidence.
+    Succession {
+        registration: Value,
+        attempt: Value,
+    },
 }
 fn uuid(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4())
@@ -118,7 +122,9 @@ impl Store {
                         && selected["provider"] == "arris"
                         && selected["kind"] == "host-incarnation"
                     {
-                        return Ok(ParticipantJoin::Succession);
+                        let result = succession::admit(&tx, &reg, &attempt, body)?;
+                        tx.commit()?;
+                        return Ok(result);
                     }
                     let contradicts = if body["continuation"] == "fresh" {
                         attempt["continuation_carried"] == 1
@@ -141,7 +147,9 @@ impl Store {
                         &reg, &attempt, false,
                     )?));
                 }
-                return Ok(ParticipantJoin::Succession);
+                let result = succession::admit(&tx, &reg, &attempt, body)?;
+                tx.commit()?;
+                return Ok(result);
             }
             return Ok(ParticipantJoin::Registered(registered(
                 &reg, &attempt, false,
@@ -200,7 +208,7 @@ impl Store {
         };
         let occupant:Option<String>=tx.query_row("SELECT registration_id FROM participant_host_bindings WHERE reservation_id=? AND state IN ('BINDING','BOUND','DETACHED','RETIRING')",[&reservation_id],|r|r.get(0)).optional()?;
         if let Some(id) = occupant {
-            let (Some(_registration), Some(predecessor)) =
+            let (Some(registration), Some(predecessor)) =
                 (registration(&tx, &id)?, latest(&tx, &id)?)
             else {
                 return Ok(refusal(
@@ -230,7 +238,9 @@ impl Store {
                     ),
                 ));
             }
-            return Ok(ParticipantJoin::Succession);
+            let result = succession::admit(&tx, &registration, &predecessor, body)?;
+            tx.commit()?;
+            return Ok(result);
         }
         let retired: i64 = tx.query_row(
             "SELECT count(*) FROM participant_host_bindings WHERE reservation_id=?",
