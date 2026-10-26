@@ -340,7 +340,7 @@
     {
       "command": "server restart",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "server serve",
@@ -360,7 +360,7 @@
     {
       "command": "server stop",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "server subscribers",

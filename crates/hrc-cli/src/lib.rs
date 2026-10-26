@@ -27,6 +27,8 @@ mod process;
 mod restartme;
 mod scope;
 mod selectors;
+mod server_lifecycle;
+mod server_start;
 mod server_status;
 
 /// Validate a canonical agent ScopeRef using the operator CLI's shared grammar.
@@ -247,38 +249,43 @@ pub fn run(args: Vec<String>) -> i32 {
     };
     let code = match result {
         Ok(code) => code,
-        Err(error) => {
-            if error.reported {
-                // Scope commands already emitted their structured stdout envelope.
-            } else if let Some(domain) = &error.domain {
-                if json_errors {
-                    eprintln!(
-                        "{}",
-                        error.json(&serde_json::json!({"error": domain}), false)
-                    );
-                } else {
-                    eprintln!(
-                        "hrc: [{}] {}",
-                        domain["code"].as_str().unwrap_or("unknown"),
-                        domain["message"].as_str().unwrap_or_default()
-                    );
-                    if domain["detail"].as_object().is_some_and(|v| !v.is_empty()) {
-                        eprintln!("detail: {}", domain["detail"]);
-                    }
-                }
-            } else if json_errors {
-                eprintln!(
-                    "{}",
-                    error.json(&serde_json::json!({"error": {"message": error.message, "usage": error.code == 2}}), false)
-                );
-            } else {
-                eprintln!("hrc: {}", error.message);
-            }
-            error.code
-        }
+        Err(error) => report_error(error, json_errors),
     };
     metrics::finish(code);
     code
+}
+
+fn report_error(error: Error, json_errors: bool) -> i32 {
+    if error.reported {
+        // Scope commands already emitted their structured stdout envelope.
+    } else if let Some(domain) = &error.domain {
+        if json_errors {
+            eprintln!(
+                "{}",
+                error.json(&serde_json::json!({"error": domain}), false)
+            );
+        } else {
+            eprintln!(
+                "hrc: [{}] {}",
+                domain["code"].as_str().unwrap_or("unknown"),
+                domain["message"].as_str().unwrap_or_default()
+            );
+            if domain["detail"].as_object().is_some_and(|v| !v.is_empty()) {
+                eprintln!("detail: {}", domain["detail"]);
+            }
+        }
+    } else if json_errors {
+        eprintln!(
+            "{}",
+            error.json(
+                &serde_json::json!({"error": {"message": error.message, "usage": error.code == 2}}),
+                false
+            )
+        );
+    } else {
+        eprintln!("hrc: {}", error.message);
+    }
+    error.code
 }
 
 pub(crate) fn print_json(value: &Value) {
@@ -290,3 +297,30 @@ pub(crate) fn print_json(value: &Value) {
 
 /// Parse the ISO date/time forms accepted by HRC query boundaries; invalid input is NaN.
 pub use js::parse_date;
+/// The native entry point serves foreground starts in this same process, so
+/// startup checks and the daemon lifetime share one invocation record.
+pub enum ServerStart {
+    Unhandled,
+    Foreground,
+    Finished(i32),
+}
+
+pub fn prepare_server_start(args: &[String]) -> ServerStart {
+    let surface: Value =
+        serde_json::from_str(include_str!("../surface.json")).expect("CLI declaration");
+    let Ok(parsed) = parse::parse(&surface, args) else {
+        return ServerStart::Unhandled;
+    };
+    if parsed.path() != "server start" || parsed.help {
+        return ServerStart::Unhandled;
+    }
+    metrics::begin(args, &surface);
+    let result = server_start::prepare(&parsed);
+    let code = match result {
+        Ok(true) => return ServerStart::Foreground,
+        Ok(false) => 0,
+        Err(error) => report_error(error, false),
+    };
+    metrics::finish(code);
+    ServerStart::Finished(code)
+}

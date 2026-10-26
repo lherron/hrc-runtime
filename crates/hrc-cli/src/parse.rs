@@ -77,7 +77,10 @@ pub(crate) fn parse<'a>(surface: &'a Value, args: &[String]) -> Result<Parsed<'a
                     o["long"].as_str() == Some(name) || o["short"].as_str() == Some(name)
                 });
             let Some(opt) = opt else {
-                return Err(Error::usage(format!("unknown option: {name}")));
+                let hint = suggest_option(surface, parsed.node, name)
+                    .map(|flag| format!(" — did you mean '{flag}'?"))
+                    .unwrap_or_default();
+                return Err(Error::usage(format!("unknown option: {name}{hint}")));
             };
             let key = opt["long"]
                 .as_str()
@@ -261,4 +264,80 @@ fn command_error(parsed: &Parsed<'_>, message: String) -> Error {
         },
         parsed.node["usage"].as_str().unwrap_or_default()
     ))
+}
+
+// cli/command-errors.ts: nearest visible option, including parent options.
+fn suggest_option(root: &Value, node: &Value, unknown: &str) -> Option<String> {
+    let mut ancestors = vec![root];
+    let mut current = root;
+    for part in node["path"].as_array().into_iter().flatten() {
+        current = current["children"]
+            .as_array()?
+            .iter()
+            .find(|child| child["name"] == *part)?;
+        ancestors.push(current);
+    }
+    let mut flags = vec![];
+    for current in ancestors.into_iter().rev() {
+        for option in current["options"].as_array().into_iter().flatten() {
+            if option["hidden"] == true {
+                continue;
+            }
+            for key in ["short", "long"] {
+                if let Some(flag) = option[key].as_str()
+                    && !flags.contains(&flag)
+                {
+                    flags.push(flag);
+                }
+            }
+        }
+        for flag in ["-h", "--help"] {
+            if !flags.contains(&flag) {
+                flags.push(flag);
+            }
+        }
+    }
+    let unknown = unknown
+        .trim_start_matches('-')
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    let mut best_distance = 4;
+    let mut best = vec![];
+    for flag in &flags {
+        let name = flag.trim_start_matches('-');
+        let candidate = name.encode_utf16().collect::<Vec<_>>();
+        if candidate.len() <= 1 || unknown.len().abs_diff(candidate.len()) > 3 {
+            continue;
+        }
+        let mut previous = (0..=candidate.len()).collect::<Vec<_>>();
+        for (i, a) in unknown.iter().enumerate() {
+            let mut row = vec![i + 1];
+            for (j, b) in candidate.iter().enumerate() {
+                row.push(
+                    (previous[j + 1] + 1)
+                        .min(row[j] + 1)
+                        .min(previous[j] + usize::from(a != b)),
+                );
+            }
+            previous = row;
+        }
+        let distance = previous[candidate.len()];
+        let length = unknown.len().max(candidate.len());
+        if distance > 3 || (length - distance) as f64 / length as f64 <= 0.4 {
+            continue;
+        }
+        if distance < best_distance {
+            best_distance = distance;
+            best.clear();
+        }
+        if distance == best_distance && !best.contains(&name) {
+            best.push(name);
+        }
+    }
+    best.sort_by(|a, b| crate::js::locale_cmp(a, b));
+    let name = best.first()?;
+    flags
+        .into_iter()
+        .find(|flag| flag.trim_start_matches('-') == *name)
+        .map(str::to_owned)
 }

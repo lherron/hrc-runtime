@@ -58,6 +58,7 @@ function surface(command: Command, path: string[]): unknown {
       optional: o.optional,
       mandatory: o.mandatory,
       negate: o.negate,
+      ...(o.hidden ? { hidden: true } : {}),
       defaultValue: o.defaultValue,
       choices: o.argChoices,
     })),

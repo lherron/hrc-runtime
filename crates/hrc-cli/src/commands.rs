@@ -35,6 +35,7 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
             print_json(&client.post(route, body)?);
             Ok(())
         }
+        "server stop" | "server restart" => crate::server_lifecycle::command(args),
         "server status" => crate::server_status::command(args),
         "monitor events" => crate::forensics::events(args),
         "monitor transcript" => crate::forensics::transcript(args),

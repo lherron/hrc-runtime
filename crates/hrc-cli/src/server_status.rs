@@ -227,6 +227,10 @@ fn failed(runtime: &Path, state: &Path, message: String) -> Value {
 }
 
 pub(crate) fn collect() -> Value {
+    collect_with_tmux(true)
+}
+
+pub(crate) fn collect_with_tmux(include_tmux: bool) -> Value {
     let runtime = runtime_root();
     let state = match state_root() {
         Ok(state) => state,
@@ -362,7 +366,9 @@ pub(crate) fn collect() -> Value {
             }
         }
     }
-    result["tmux"] = tmux(&runtime);
+    if include_tmux {
+        result["tmux"] = tmux(&runtime);
+    }
     if let Some(status) = status {
         result["serverStatus"] =
             json!({"startedAt":status["startedAt"],"apiVersion":status["apiVersion"]});
