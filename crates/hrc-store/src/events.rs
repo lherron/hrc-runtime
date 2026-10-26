@@ -45,6 +45,24 @@ impl Store {
         let (sql, values) = event_query(query, from, before, limit, descending)?;
         self.lifecycle_rows(&sql, &values, hydrate)
     }
+    /// Each (host session, generation)'s newest row, newest first: Bun's
+    /// listLatestPerSession. The grouping reads only the covering
+    /// (host_session_id, generation, hrc_seq) index; hydrating and deduping
+    /// the whole ledger held the store mutex ~95 s on max3 (T-11915).
+    pub fn latest_per_session(&self, query: &HashMap<String, String>) -> Result<Vec<Value>> {
+        let mut predicates = Vec::new();
+        let mut values = Vec::new();
+        field_predicates(query, &mut predicates, &mut values)?;
+        let filter = if predicates.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", predicates.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT e.* FROM hrc_events e INNER JOIN (SELECT MAX(hrc_seq) AS max_hrc_seq FROM hrc_events {filter} GROUP BY host_session_id, generation) latest ON latest.max_hrc_seq = e.hrc_seq ORDER BY e.hrc_seq DESC"
+        );
+        self.lifecycle_rows(&sql, &values, true)
+    }
     pub fn event_scan(
         &self,
         query: &HashMap<String, String>,
@@ -87,6 +105,28 @@ fn event_query(
 ) -> Result<(String, Vec<Sql>)> {
     let mut predicates = vec!["hrc_seq >= ?".to_owned()];
     let mut values = vec![Sql::Integer(from)];
+    field_predicates(query, &mut predicates, &mut values)?;
+    if let Some(before) = before {
+        predicates.push("hrc_seq < ?".into());
+        values.push(Sql::Integer(before));
+    }
+    let order = if descending { "DESC" } else { "ASC" };
+    let mut sql = format!(
+        "SELECT * FROM hrc_events WHERE {} ORDER BY hrc_seq {order}",
+        predicates.join(" AND ")
+    );
+    if let Some(limit) = limit {
+        sql.push_str(" LIMIT ?");
+        values.push(Sql::Integer(limit));
+    }
+    Ok((sql, values))
+}
+
+fn field_predicates(
+    query: &HashMap<String, String>,
+    predicates: &mut Vec<String>,
+    values: &mut Vec<Sql>,
+) -> Result<()> {
     for (key, col) in [
         ("sourceRef", "source_ref"),
         ("hostSessionId", "host_session_id"),
@@ -106,18 +146,5 @@ fn event_query(
         predicates.push("generation = ?".into());
         values.push(Sql::Integer(value.trim().parse()?));
     }
-    if let Some(before) = before {
-        predicates.push("hrc_seq < ?".into());
-        values.push(Sql::Integer(before));
-    }
-    let order = if descending { "DESC" } else { "ASC" };
-    let mut sql = format!(
-        "SELECT * FROM hrc_events WHERE {} ORDER BY hrc_seq {order}",
-        predicates.join(" AND ")
-    );
-    if let Some(limit) = limit {
-        sql.push_str(" LIMIT ?");
-        values.push(Sql::Integer(limit));
-    }
-    Ok((sql, values))
+    Ok(())
 }

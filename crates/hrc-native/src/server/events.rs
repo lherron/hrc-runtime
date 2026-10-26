@@ -6,8 +6,8 @@ use axum::{
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
 };
-use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use serde_json::json;
+use std::collections::HashMap;
 
 pub fn implements(method: &Method, path: &str) -> bool {
     *method == Method::GET
@@ -163,18 +163,7 @@ pub fn handle(
     }
     if path == "/v1/events/latest-by-session" {
         let q = filters(q)?;
-        let db = server.store.lock().unwrap();
-        let rows = db.event_history(&q, 0, None, None, true, true)?;
-        let mut seen = HashSet::new();
-        let rows: Vec<Value> = rows
-            .into_iter()
-            .filter(|r| {
-                seen.insert((
-                    r["hostSessionId"].clone().to_string(),
-                    r["generation"].clone().to_string(),
-                ))
-            })
-            .collect();
+        let rows = server.store.lock().unwrap().latest_per_session(&q)?;
         return Ok(Json(rows).into_response());
     }
     let from = from_seq(q)?;
