@@ -351,7 +351,11 @@ def main():
             check('injector-delivers-through-front', delivered, envelope=said.get('envelopes', [{}])[0].get('id'))
 
         # Gate 2: low-rate log reconciliation (<=10/route/minute, so every record is weight 1).
+        # Only this workflow's requests may land in the window: stop the kernel's
+        # polling, then start on a fresh minute.
+        stop('kernel')
         time.sleep(61 - time.time() % 60)
+        window = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
         marks = {'native': [], 'bun': []}
         for i in range(4):
             rid = f'front-{uuid.uuid4()}'
@@ -363,7 +367,8 @@ def main():
             request(public, 'GET', '/v1/sessions?all=true')
             request(public, 'GET', '/v1/events/page?afterSeq=0&limit=1')
         time.sleep(4)
-        rust, bunm = metrics('rusthrc-server'), metrics('server')
+        rust = [r for r in metrics('rusthrc-server') if r['ts'] >= window]
+        bunm = [r for r in metrics('server') if r['ts'] >= window]
         rust_ids = {r.get('reqId'): r for r in rust if r.get('reqId')}
         bun_ids = {r.get('reqId'): r for r in bunm if r.get('reqId')}
         check('log-native-ids-once', all(sum(1 for r in rust if r.get('reqId') == i) == 1
@@ -392,7 +397,6 @@ def main():
         check('front-restart-after-kill', responsive(public))
 
         # Gate 3: rollback -- stop the front, Bun back on hrc.sock, brokers reattach.
-        stop('kernel')
         check('front-clean-stop', stop('front-2') == 0 and not public.exists()
               and not (run_dir / 'rusthrc-front.pid').exists())
         check('bun-clean-stop', stop('bun-1') == 0)
