@@ -1,6 +1,6 @@
 //! Durable external broker ownership: birth, then controller::consume projects
 //! and ACKs the broker ledger; startup reattach replays from the durable cursor.
-use super::{ApiError, Shared, compile, controller, rpc::JsonRpc};
+use super::{ApiError, Shared, compile, controller, rpc, rpc::JsonRpc};
 use anyhow::{Context, Result, bail, ensure};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -143,68 +143,90 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         .lock()
         .unwrap()
         .broker_preparation(string(&identity, "operationId")?)?;
-    let (client, events, hello, allocation) = launch(server, &record).await?;
-    {
-        server.store.lock().unwrap().start_broker_graph(
-            &record,
-            &session,
-            &hello,
-            &allocation,
-            origin,
-            prompt.encode_utf16().count(),
-        )?;
-        if run.is_some() {
-            crate::server::projection::turns::arm_first_turn(
-                &server.store.lock().unwrap().sqlite,
-                &record["admission"]["identity"],
+    let mut attempt = StartAttempt::default();
+    let launched = async {
+        let (client, events, hello, allocation) = launch(server, &record).await?;
+        attempt.client = Some(client.clone());
+        {
+            server.store.lock().unwrap().start_broker_graph(
+                &record,
                 &session,
-                if allocation.get("tuiWindow").is_some() {
-                    "tmux"
-                } else {
-                    "headless"
-                },
-                first_turn_timeout_ms,
-            );
-        }
-    }
-    server.ledger_committed();
-    let attach_pending = attach.is_some() && allocation.get("lease").is_some();
-    if let Some(gate) = attach
-        && let Some(lease) = allocation.get("lease").cloned()
-    {
-        let _ = gate.ready.send(string(&identity, "runtimeId")?.to_owned());
-        match tokio::time::timeout(ATTACHED_RESUME_TIMEOUT, gate.resume).await {
-            Ok(Ok(Ok(()))) => {}
-            Ok(Ok(Err(reason))) => return Err(anyhow::anyhow!(reason).into()),
-            Ok(Err(_)) => {
-                return Err(
-                    anyhow::anyhow!("attached run cancelled: {}", gate.pending_start_id).into(),
+                &hello,
+                &allocation,
+                origin,
+                prompt.encode_utf16().count(),
+            )?;
+            attempt.graph_committed = true;
+            if run.is_some() {
+                crate::server::projection::turns::arm_first_turn(
+                    &server.store.lock().unwrap().sqlite,
+                    &record["admission"]["identity"],
+                    &session,
+                    if allocation.get("tuiWindow").is_some() {
+                        "tmux"
+                    } else {
+                        "headless"
+                    },
+                    first_turn_timeout_ms,
                 );
             }
-            Err(_) => {
-                return Err(anyhow::anyhow!(
-                    "timed out waiting for attached launch resume: {}",
-                    gate.pending_start_id
-                )
-                .into());
-            }
         }
-        wait_attached_client(&lease).await?;
+        server.ledger_committed();
+        let attach_pending = attach.is_some() && allocation.get("lease").is_some();
+        if let Some(gate) = attach
+            && let Some(lease) = allocation.get("lease").cloned()
+        {
+            let _ = gate.ready.send(string(&identity, "runtimeId")?.to_owned());
+            match tokio::time::timeout(ATTACHED_RESUME_TIMEOUT, gate.resume).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(reason))) => return Err(anyhow::anyhow!(reason).into()),
+                Ok(Err(_)) => {
+                    return Err(
+                        anyhow::anyhow!("attached run cancelled: {}", gate.pending_start_id).into(),
+                    );
+                }
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "timed out waiting for attached launch resume: {}",
+                        gate.pending_start_id
+                    )
+                    .into());
+                }
+            }
+            wait_attached_client(&lease).await?;
+        }
+        let execution = &record["admission"]["execution"];
+        let mut params = json!({"startRequest":execution["dispatchRequest"]["startRequest"],"dispatchEnv":record["dispatch"]["dispatchEnv"],"lifecyclePolicy":record["dispatch"]["lifecyclePolicy"]});
+        if let Some(lease) = allocation.get("lease") {
+            params["runtime"] = json!({"terminalSurface":lease});
+        }
+        // resolveViewerPaneDispatch: a viewer pane hard-requires its lease, and the
+        // renderer reads the SAME observer socket the broker launch carries.
+        if record["hosting"]["presentation"] == "attachable"
+            && let Some(observer) = allocation.get("observerSocketPath")
+        {
+            params["runtime"]["terminalSurfaceRequired"] = true.into();
+            params["dispatchEnv"]["HARNESS_BROKER_OBSERVER_SOCKET"] = observer.clone();
+        }
+        attempt.start_sent = true;
+        let started = client
+            .request("invocation.start", params)
+            .await
+            .inspect_err(|error| {
+                attempt.rejected = error.downcast_ref::<rpc::ErrorReply>().is_some();
+                attempt.error = error.to_string();
+            })?;
+        Ok::<_, ApiError>((client, events, hello, allocation, started, attach_pending))
     }
+    .await;
+    let (client, events, hello, allocation, started, attach_pending) = match launched {
+        Ok(launched) => launched,
+        Err(error) => {
+            release_failed_start(server, &record, &attempt).await;
+            return Err(error);
+        }
+    };
     let execution = &record["admission"]["execution"];
-    let mut params = json!({"startRequest":execution["dispatchRequest"]["startRequest"],"dispatchEnv":record["dispatch"]["dispatchEnv"],"lifecyclePolicy":record["dispatch"]["lifecyclePolicy"]});
-    if let Some(lease) = allocation.get("lease") {
-        params["runtime"] = json!({"terminalSurface":lease});
-    }
-    // resolveViewerPaneDispatch: a viewer pane hard-requires its lease, and the
-    // renderer reads the SAME observer socket the broker launch carries.
-    if record["hosting"]["presentation"] == "attachable"
-        && let Some(observer) = allocation.get("observerSocketPath")
-    {
-        params["runtime"]["terminalSurfaceRequired"] = true.into();
-        params["dispatchEnv"]["HARNESS_BROKER_OBSERVER_SOCKET"] = observer.clone();
-    }
-    let started = client.request("invocation.start", params).await?;
     let snapshot = client
         .request(
             "invocation.snapshot",
@@ -269,6 +291,75 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
 /// waitForLaunchCarriedSubmissionIdentity: the projected runs.broker_submission_id
 /// of a run whose body rode the launch. 60 s covers the measured p99 of 6.5 s
 /// to the launch turn's start; both identity-less endings are errors.
+/// What one start attempt reached before it failed (dispatch.ts StartAttempt).
+#[derive(Default)]
+struct StartAttempt {
+    client: Option<JsonRpc>,
+    graph_committed: bool,
+    start_sent: bool,
+    rejected: bool,
+    error: String,
+}
+
+/// releaseNeverStartedLease: a lease that never carried invocation.start
+/// holds no native invocation and is HRC's to reclaim, released only while the
+/// operation is still prepared or this attempt committed its start graph.
+/// Once invocation.start was sent the outcome is recorded (markAspdStartOutcome);
+/// an uncertain start keeps its lease, while a broker error reply is a known
+/// rejection with no invocation behind it, so that lease is reclaimed too.
+async fn release_failed_start(server: &Shared, record: &Value, attempt: &StartAttempt) {
+    let operation = record["operationId"].as_str().unwrap_or_default();
+    if let Some(client) = &attempt.client {
+        client.close();
+    }
+    if attempt.start_sent {
+        let outcome = if attempt.rejected {
+            "rejected"
+        } else {
+            "uncertain"
+        };
+        let marked =
+            server
+                .store
+                .lock()
+                .unwrap()
+                .mark_start_outcome(operation, outcome, &attempt.error);
+        if let Err(error) = marked {
+            controller::log(
+                "warn",
+                "broker start outcome not recorded",
+                json!({"operationId":operation,"error":error.to_string()}),
+            );
+        }
+        if !attempt.rejected {
+            return;
+        }
+    } else if !attempt.graph_committed {
+        let status = server.store.lock().unwrap().operation_status(operation);
+        if !matches!(status, Ok(Some(ref s)) if s == "prepared") {
+            return;
+        }
+    }
+    let paths = &record["hosting"]["paths"];
+    if let Some(socket) = paths["btmuxSocketPath"].as_str()
+        && let Err(error) = tmux(socket, &["kill-server"]).await
+    {
+        controller::log(
+            "warn",
+            "never-started broker lease release failed",
+            json!({"runtimeId":record["runtimeId"],"error":error.to_string()}),
+        );
+    }
+    if let Some(ipc) = paths["brokerIpcSocketPath"].as_str() {
+        let _ = fs::remove_file(ipc);
+    }
+    controller::log(
+        "info",
+        "broker.lease.released_never_started",
+        json!({"runtimeId":record["runtimeId"],"operationId":operation,"startSent":attempt.start_sent}),
+    );
+}
+
 async fn launch_carried_submission(
     server: &Shared,
     run_id: &str,

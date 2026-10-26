@@ -21,6 +21,17 @@ struct Call {
 /// Answers a broker-to-client request (method, params) -> result.
 pub type Inbound = Arc<dyn Fn(&str, &Value) -> Result<Value> + Send + Sync>;
 
+/// The peer answered with a JSON-RPC error: a known outcome, unlike a
+/// timeout or a closed connection. Displays as the error object.
+#[derive(Debug)]
+pub struct ErrorReply(pub Value);
+impl std::fmt::Display for ErrorReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for ErrorReply {}
+
 #[derive(Clone)]
 pub struct JsonRpc {
     calls: mpsc::Sender<Call>,
@@ -139,7 +150,10 @@ impl JsonRpc {
             receive
                 .await
                 .context("RPC connection closed before reply")?
-                .map_err(|message| anyhow!(message))
+                .map_err(|message| match serde_json::from_str::<Value>(&message) {
+                    Ok(error) if error.is_object() => anyhow::Error::new(ErrorReply(error)),
+                    _ => anyhow!(message),
+                })
         };
         tokio::time::timeout(timeout, pending)
             .await

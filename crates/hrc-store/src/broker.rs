@@ -1,7 +1,7 @@
 //! The canonical prepared/start graph for external broker provisioning.
 use crate::{Store, timestamp};
 use anyhow::{Context, Result, ensure};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 fn s<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
     v[k].as_str().with_context(|| format!("missing {k}"))
@@ -26,6 +26,40 @@ impl Store {
             "aspd_preparation_invalid"
         );
         Ok(record)
+    }
+    pub fn operation_status(&self, operation: &str) -> Result<Option<String>> {
+        Ok(self
+            .sqlite
+            .query_row(
+                "SELECT status FROM runtime_operations WHERE operation_id=?",
+                [operation],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+    /// markAspdStartOutcome: a failed start after invocation.start was sent is
+    /// recorded on the preparation, never replayed.
+    pub fn mark_start_outcome(&self, operation: &str, outcome: &str, error: &str) -> Result<()> {
+        let raw: Option<String> = self
+            .sqlite
+            .query_row(
+                "SELECT preparation_json FROM runtime_operations WHERE operation_id=?",
+                [operation],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(mut preparation) = raw.and_then(|r| serde_json::from_str::<Value>(&r).ok()) else {
+            return Ok(());
+        };
+        let now = timestamp();
+        preparation["startOutcome"] = outcome.into();
+        preparation["startOutcomeAt"] = now.clone().into();
+        preparation["startOutcomeError"] = json!({"code":"broker_start_failed","message":error});
+        self.sqlite.execute(
+            "UPDATE runtime_operations SET preparation_json=?,updated_at=? WHERE operation_id=?",
+            params![preparation.to_string(), now, operation],
+        )?;
+        Ok(())
     }
     pub fn start_broker_graph(
         &mut self,
