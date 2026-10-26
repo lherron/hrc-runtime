@@ -54,7 +54,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
     let owner = if front {
         Owner::acquire_front(&runtime)?
     } else {
-        Owner::acquire(&runtime)?
+        Owner::acquire(&runtime).await?
     };
     let listener = UnixListener::bind(&owner.socket)?;
     if let Some(target) = &bun_passthrough

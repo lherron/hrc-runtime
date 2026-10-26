@@ -14,6 +14,8 @@ mod ledger;
 mod lifecycle;
 mod mail;
 mod messages;
+mod owner;
+use owner::Owner;
 mod streams;
 mod submissions;
 mod subscribers;
@@ -56,8 +58,7 @@ use hrc_store::{Store, timestamp};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
-    env,
-    fs::{self, OpenOptions},
+    env, fs,
     io::Write,
     os::unix::fs::PermissionsExt,
     path::PathBuf,
@@ -100,94 +101,6 @@ struct Server {
     state: PathBuf,
     started_at: String,
     started: Instant,
-}
-
-struct Owner {
-    lock: PathBuf,
-    socket: PathBuf,
-    pid: PathBuf,
-    raw: String,
-    /// The front's flock; the kernel releases it however the process dies.
-    _held: Option<fs::File>,
-}
-impl Owner {
-    /// Bun keeps server.lock and server.pid in this runtime dir, so the front
-    /// has its own. A held flock means a live front; a stale file is reclaimed,
-    /// so launchd can respawn the front after a crash.
-    fn acquire_front(runtime: &std::path::Path) -> Result<Self> {
-        use std::os::fd::AsRawFd;
-        fs::create_dir_all(runtime)?;
-        let socket = runtime.join("hrc.sock");
-        let lock = runtime.join("rusthrc-front.lock");
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock)?;
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            bail!("rusthrc front already running ({} is held)", lock.display());
-        }
-        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
-            bail!("hrc server already running at {}", socket.display());
-        }
-        let raw = format!(
-            "{}\n",
-            json!({"pid":std::process::id(),"createdAt":timestamp(),"role":"front"})
-        );
-        file.set_len(0)?;
-        (&file).write_all(raw.as_bytes())?;
-        if socket.exists() {
-            fs::remove_file(&socket)?;
-        }
-        let pid = runtime.join("rusthrc-front.pid");
-        fs::write(&pid, format!("{}\n", std::process::id()))?;
-        Ok(Self {
-            lock,
-            socket,
-            pid,
-            raw,
-            _held: Some(file),
-        })
-    }
-    fn acquire(runtime: &std::path::Path) -> Result<Self> {
-        fs::create_dir_all(runtime)?;
-        let socket = runtime.join("hrc.sock");
-        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
-            bail!("hrc server already running at {}", socket.display());
-        }
-        let lock = runtime.join("server.lock");
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock)
-            .context("hrc server lock exists; verify its owner before clearing a stale lock")?;
-        let raw = format!(
-            "{}\n",
-            json!({"pid":std::process::id(),"createdAt":timestamp()})
-        );
-        file.write_all(raw.as_bytes())?;
-        let owner = Self {
-            lock,
-            socket,
-            pid: runtime.join("server.pid"),
-            raw,
-            _held: None,
-        };
-        if owner.socket.exists() {
-            fs::remove_file(&owner.socket)?;
-        }
-        fs::write(&owner.pid, format!("{}\n", std::process::id()))?;
-        Ok(owner)
-    }
-}
-impl Drop for Owner {
-    fn drop(&mut self) {
-        if fs::read_to_string(&self.lock).ok().as_deref() == Some(&self.raw) {
-            for path in [&self.socket, &self.pid, &self.lock] {
-                let _ = fs::remove_file(path);
-            }
-        }
-    }
 }
 
 pub fn runtime_root() -> Result<PathBuf> {
