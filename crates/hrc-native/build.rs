@@ -8,27 +8,30 @@ fn main() {
         "cargo:rustc-env=HRC_API_VERSION={}",
         package["version"].as_str().unwrap()
     );
-    source_commit();
-    accounting_tables();
-}
-
-// aspc request frames name the build (client: "hrc-native/<sourceCommit>").
-fn source_commit() {
-    let git = |args: &[&str]| {
-        std::process::Command::new("git")
-            .args(args)
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("git source identity");
+    assert!(
+        commit.status.success(),
+        "native builds require a source commit"
+    );
+    println!(
+        "cargo:rustc-env=HRC_SOURCE_COMMIT={}",
+        String::from_utf8(commit.stdout).unwrap().trim()
+    );
+    // Resolve git's actual worktree HEAD and branch ref (a worktree .git is a file).
+    for name in ["HEAD", "logs/HEAD", "refs/heads"] {
+        let path = std::process::Command::new("git")
+            .args(["rev-parse", "--git-path", name])
             .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-    };
-    for path in ["HEAD", "logs/HEAD"] {
-        if let Some(p) = git(&["rev-parse", "--git-path", path]) {
-            println!("cargo:rerun-if-changed={p}");
-        }
+            .unwrap();
+        println!(
+            "cargo:rerun-if-changed={}",
+            String::from_utf8(path.stdout).unwrap().trim()
+        );
     }
-    let commit = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
-    println!("cargo:rustc-env=HRC_SOURCE_COMMIT={commit}");
+    accounting_tables();
 }
 
 // Keep the accounting inventory tied to the Bun dispatch and L3 policy.

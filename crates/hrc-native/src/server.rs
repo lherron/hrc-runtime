@@ -40,6 +40,7 @@ mod proxy;
 mod publication;
 mod reconcile;
 mod recovery;
+mod release;
 mod restart;
 mod resume;
 mod retained;
@@ -51,6 +52,7 @@ mod self_restart;
 mod sessions;
 mod start;
 mod startup;
+mod status_runtime;
 mod surfaces;
 mod sweeps;
 mod targets;
@@ -112,6 +114,8 @@ struct Server {
     /// Front-door role: only front::is_front_safe routes are served natively.
     front: bool,
     state: PathBuf,
+    release: release::Release,
+    event_loop: Mutex<status_runtime::Lag>,
     started_at: String,
     started: Instant,
 }
@@ -303,14 +307,9 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
     } else if method == Method::POST && uri.path() == "/v1/internal/mail/hint-decision" {
         Ok(mail::hint(server, &body))
     } else if method == Method::GET && uri.path() == "/v1/status" {
-        match status(server, &query) {
-            Ok(mut value) => {
-                value["aspd"] = aspc::service_status().await;
-                value["aspToolchain"] = json!({"toolchainRootActive":false,"binaries":[]});
-                Ok(Json(value).into_response())
-            }
-            Err(error) => Err(error),
-        }
+        status(server, &query)
+            .await
+            .map(|value| Json(value).into_response())
     } else if method == Method::GET && uri.path() == "/v1/targets/by-session-ref" {
         runtime_views::target(server, &query).await
     } else if method == Method::GET && uri.path() == "/v1/attach" {
@@ -694,9 +693,6 @@ fn handle(
     if method == Method::GET && path == "/v1/health" {
         return Ok(Json(json!({"ok":true})).into_response());
     }
-    if method == Method::GET && path == "/v1/status" {
-        return status(server, query).map(|value| Json(value).into_response());
-    }
     if method == Method::GET && path.starts_with("/v1/sessions/by-host/") {
         let host = path.trim_start_matches("/v1/sessions/by-host/");
         let db = server.store.lock().unwrap();
@@ -732,7 +728,7 @@ fn handle(
     }
     Ok(proxy::not_found())
 }
-fn status(
+async fn status(
     server: &Server,
     query: &HashMap<String, String>,
 ) -> std::result::Result<Value, ApiError> {
@@ -745,9 +741,12 @@ fn status(
             Some(json!({"includeSessions":v})),
         ));
     }
+    let aspd = aspc::service_status().await;
+    let tmux = status_runtime::tmux().await;
     let db = server.store.lock().unwrap();
     let binary = env::current_exe().map_err(anyhow::Error::from)?;
-    let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":{"mode":"unmanaged","packagePath":binary.parent(),"processStartedAt":server.started_at,"runningEqualsInstalled":false},"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"lastRestart":lifecycle::rows::last_restart(&db.sqlite)?,"mailKicker":"absent","node":server.federation.config.summary(),"capabilities":{"semanticCore":{"sessions":true,"ensureRuntime":false,"dispatchTurn":false,"inFlightInput":false,"capture":false,"attach":false,"clearContext":false},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":false,"literalInput":false,"surfaceBindings":false,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":{"available":false}},"serverLifecycle":false,"selfRestart":true,"sessionRestart":false,"federatedSessionRead":false}});
+    let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"listenSocketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":server.release.status(),"aspToolchain":{"toolchainRootActive":false,"binaries":[]},"aspd":aspd,"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"eventLoop":server.event_loop.lock().unwrap().snapshot(),"lastRestart":lifecycle::rows::last_restart(&db.sqlite)?,"node":server.federation.config.summary(),"mailKicker":"absent"});
+    value["capabilities"] = json!({"semanticCore":{"sessions":true,"ensureRuntime":true,"dispatchTurn":true,"inFlightInput":true,"capture":true,"attach":true,"clearContext":true},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":true,"literalInput":true,"surfaceBindings":true,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":tmux},"serverLifecycle":!server.front,"selfRestart":true,"sessionRestart":true,"federatedSessionRead":true});
     if query.get("includeSessions").is_some_and(|v| v == "true") {
         value["sessions"] = json!(
             db.sessions()?

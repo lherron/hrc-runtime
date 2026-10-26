@@ -20,6 +20,8 @@ pub async fn serve(role: front::Role) -> Result<()> {
             json!({"message":message,"location":location}),
         );
     }));
+    let started_at = timestamp();
+    let release = release::Release::capture(&started_at)?;
     let home = env::var("HOME").context("HOME is required")?;
     let runtime = runtime_root()?;
     let state = PathBuf::from(
@@ -98,9 +100,12 @@ pub async fn serve(role: front::Role) -> Result<()> {
         federation,
         front,
         state,
-        started_at: timestamp(),
+        release,
+        event_loop: Default::default(),
+        started_at,
         started: Instant::now(),
     });
+    status_runtime::start(&server);
     // F0's registry listener: bound before serving, so a bad bind refuses boot.
     if !server.front
         && let Some(bind) = server.federation.config.registry_bind.clone()

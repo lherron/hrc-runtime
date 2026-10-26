@@ -575,6 +575,9 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n4-home':
         from n4_routes import compare_home
         return compare_home(args, checks)
+    if getattr(args, 'suite', None) == 'n4-status':
+        from n4_status import compare as compare_status
+        return compare_status(args, checks)
     if getattr(args, 'suite', None) == 'n4-gate':
         from n4_routes import compare_gate
         return compare_gate(args, checks)

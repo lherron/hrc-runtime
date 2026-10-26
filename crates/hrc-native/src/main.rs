@@ -3,6 +3,13 @@ mod server;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args == ["--build-info"] {
+        println!(
+            "{}",
+            serde_json::json!({"owner":"rusthrc","sourceCommit":env!("HRC_SOURCE_COMMIT")})
+        );
+        return Ok(());
+    }
     // The explicit role flags (--front, --bun-socket) are Rust-only, so they are
     // recognized before the CLI declaration (server/front.rs).
     let role = if args.first().is_some_and(|a| a == "server") {
