@@ -81,7 +81,7 @@ pub async fn send(
         .send()
         .await
         .map_err(|e| unavailable(home, label, super::transport_text(&e)))?;
-    if health.status() == reqwest::StatusCode::NOT_FOUND {
+    if health.status() == StatusCode::NOT_FOUND {
         return Err(upgrade_required(home, label));
     }
     let ok = health.status().is_success();
@@ -111,7 +111,7 @@ pub async fn send(
         .send()
         .await
         .map_err(|e| unavailable(home, label, super::transport_text(&e)))?;
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
+    if response.status() == StatusCode::NOT_FOUND {
         return Err(upgrade_required(home, label));
     }
     let status =

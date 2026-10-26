@@ -188,7 +188,7 @@ fn designated_home(
     scope: &str,
     policy: Option<&Value>,
     local: &str,
-    request: &Request,
+    request: &Request<'_>,
     known: &[String],
 ) -> Result<Designated, Evaluation> {
     let placement = policy.map(|p| &p["placement"]);

@@ -11,23 +11,26 @@ path = "src/main.rs"
 [dependencies]
 hrc-cli = { path = "../hrc-cli" }
 hrc-store = { path = "../hrc-store" }
-rusqlite = { version = "0.39", features = ["bundled"] }
-serde_json = { workspace = true, features = ["preserve_order"] }
+rusqlite.workspace = true
+serde_json.workspace = true
 chrono.workspace = true
-anyhow = "1"
-axum = "0.8"
-tokio = { version = "1", features = ["full"] }
-uuid = { version = "1", features = ["v4"] }
-libc = "0.2"
-sha2 = "0.10"
-hyper = { version = "1", features = ["client", "http1"] }
-http-body = "1"
-base64 = "0.22"
+anyhow.workspace = true
+axum.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+libc.workspace = true
+sha2.workspace = true
+hyper.workspace = true
+http-body.workspace = true
+base64.workspace = true
 form_urlencoded = "1.2"
-hyper-util = { version = "0.1", features = ["tokio"] }
+hyper-util.workspace = true
 reqwest.workspace = true
-toml = "0.8"
-futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+toml.workspace = true
+futures-util.workspace = true
 
 [build-dependencies]
 serde_json.workspace = true
+
+[lints]
+workspace = true

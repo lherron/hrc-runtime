@@ -10,3 +10,6 @@ cardo-core.workspace = true
 cardo-runtime.workspace = true
 serde_json.workspace = true
 crossbeam-channel.workspace = true
+
+[lints]
+workspace = true

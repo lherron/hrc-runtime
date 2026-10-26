@@ -716,7 +716,7 @@ pub async fn submission(server: &Shared, door: &str, body: Value) -> Result<Resp
 pub async fn literal_flush(
     server: &Shared,
     session: Value,
-    rt: &crate::server::projection::db::Rt,
+    rt: &db::Rt,
     prompt: &str,
     run_id: &str,
     after: impl FnOnce(&Value) -> Result<Value, ApiError>,
@@ -878,7 +878,7 @@ pub async fn attached_turn(
 pub async fn continue_cold(
     server: &Shared,
     session: Value,
-    rt: &crate::server::projection::db::Rt,
+    rt: &db::Rt,
     run_id: &str,
     cold: &Value,
 ) -> Result<Value, ApiError> {

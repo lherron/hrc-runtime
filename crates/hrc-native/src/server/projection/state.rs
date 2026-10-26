@@ -93,7 +93,7 @@ pub fn project_retained(
     let at = envelope["time"].as_str().unwrap_or(now);
     // recordRetainedSubmissionDisposition: never over live evidence.
     let dispose = |disposition: &str| -> Result<()> {
-        if let Some(sub) = super::owners::payload_submission_id(p) {
+        if let Some(sub) = owners::payload_submission_id(p) {
             db.execute(
                 "INSERT INTO submission_admissions (submission_id, disposition, disposed_at) VALUES (?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET disposition = excluded.disposition, disposed_at = excluded.disposed_at WHERE submission_admissions.disposition IS NULL",
                 rusqlite::params![sub, disposition, at],
@@ -106,14 +106,14 @@ pub fn project_retained(
             if kind == "submission.executed" {
                 dispose("executed")?;
             }
-            if let Some(owner) = super::owners::exact_turn_owner(db, envelope)? {
-                super::owners::settle_prior_absorbed(db, envelope, &owner, now)?;
+            if let Some(owner) = owners::exact_turn_owner(db, envelope)? {
+                owners::settle_prior_absorbed(db, envelope, &owner, now)?;
             }
         }
         "submission.absorbed" => {
             dispose("absorbed")?;
-            if let Some(owner) = super::owners::exact_turn_owner(db, envelope)? {
-                super::owners::settle_absorbed(db, envelope, &owner, now)?;
+            if let Some(owner) = owners::exact_turn_owner(db, envelope)? {
+                owners::settle_absorbed(db, envelope, &owner, now)?;
             }
         }
         "submission.rejected"

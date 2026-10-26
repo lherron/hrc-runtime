@@ -230,12 +230,12 @@ fn project(db: &Store, r: &Value) -> Result<Value, anyhow::Error> {
     row["operatorSurfaces"] = json!(db.operator_surfaces(r["runtimeId"].as_str().unwrap())?);
     Ok(row)
 }
-pub fn runtimes(db: &Store) -> anyhow::Result<Value> {
+pub fn runtimes(db: &Store) -> Result<Value> {
     Ok(
-        json!({"ok":true,"runtimes":db.runtimes_where("status NOT IN (SELECT value FROM json_each(?))",[json!(UNAVAILABLE).to_string()])?.iter().filter(|r|available(r)).map(|r|project(db,r)).collect::<anyhow::Result<Vec<_>>>()?}),
+        json!({"ok":true,"runtimes":db.runtimes_where("status NOT IN (SELECT value FROM json_each(?))",[json!(UNAVAILABLE).to_string()])?.iter().filter(|r|available(r)).map(|r|project(db,r)).collect::<Result<Vec<_>>>()?}),
     )
 }
-pub fn seats(db: &Store, keys: Vec<(String, String)>) -> anyhow::Result<Value> {
+pub fn seats(db: &Store, keys: Vec<(String, String)>) -> Result<Value> {
     let since = (chrono::Utc::now() - chrono::Duration::hours(24))
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let mut sessions = Vec::new();

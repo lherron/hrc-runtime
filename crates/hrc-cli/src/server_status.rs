@@ -179,7 +179,7 @@ fn socket_responsive(path: &Path) -> bool {
             if libc::connect(
                 fd,
                 &addr as *const _ as *const libc::sockaddr,
-                std::mem::size_of_val(&addr) as _,
+                size_of_val(&addr) as _,
             ) == 0
             {
                 return true;
@@ -196,7 +196,7 @@ fn socket_responsive(path: &Path) -> bool {
                 return false;
             }
             let mut error = 0i32;
-            let mut len = std::mem::size_of_val(&error) as libc::socklen_t;
+            let mut len = size_of_val(&error) as libc::socklen_t;
             libc::getsockopt(
                 fd,
                 libc::SOL_SOCKET,

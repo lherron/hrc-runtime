@@ -115,7 +115,7 @@ pub async fn call(
         let (overflow, ()) = tokio::join!(read_out, read_err);
         (overflow, out, err)
     };
-    let (overflow, out, err) = match tokio::time::timeout(timeout, run).await {
+    let (overflow, out, err) = match tokio::time::timeout(timeout, Box::pin(run)).await {
         Ok(r) => r,
         Err(_) => {
             kill_group(pid);

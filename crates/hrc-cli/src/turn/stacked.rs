@@ -501,10 +501,7 @@ struct StackedLine<'a> {
     final_body: Option<&'a serde_json::value::RawValue>,
 }
 impl serde::Serialize for StackedLine<'_> {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
         let object = self.value.as_object().expect("stacked object");
         let mut map = serializer.serialize_map(Some(object.len()))?;
