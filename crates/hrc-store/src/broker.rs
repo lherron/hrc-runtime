@@ -122,8 +122,14 @@ impl Store {
         {
             broker[k] = v.clone();
         }
+        if let Some(observer) = paths.get("observerSocketPath") {
+            broker["endpoint"]["observerSocketPath"] = observer.clone();
+        }
         if let Some(tui) = allocation.get("tuiWindow") {
             broker["tuiWindow"] = tui.clone();
+        }
+        if let Some(observer) = allocation.get("observerWindow") {
+            broker["observerWindow"] = observer.clone();
         }
         let mut tmux = allocation["tuiWindow"].clone();
         if tmux.is_object() {

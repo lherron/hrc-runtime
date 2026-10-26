@@ -196,6 +196,14 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     if let Some(lease) = allocation.get("lease") {
         params["runtime"] = json!({"terminalSurface":lease});
     }
+    // resolveViewerPaneDispatch: a viewer pane hard-requires its lease, and the
+    // renderer reads the SAME observer socket the broker launch carries.
+    if record["hosting"]["presentation"] == "attachable"
+        && let Some(observer) = allocation.get("observerSocketPath")
+    {
+        params["runtime"]["terminalSurfaceRequired"] = true.into();
+        params["dispatchEnv"]["HARNESS_BROKER_OBSERVER_SOCKET"] = observer.clone();
+    }
     let started = client.request("invocation.start", params).await?;
     let snapshot = client
         .request(
@@ -490,7 +498,11 @@ fn preparation(
     } else {
         "none"
     };
-    let paths = json!({"brokerIpcSocketPath":socket,"ipcDir":ipc,"btmuxSocketPath":tmux,"sessionName":format!("hrc-{driver}-{runtime}"),"attachTokenPath":ipc.join("attach.token"),"eventLedgerPath":ipc.join("events.ndjson"),"brokerStderrPath":ipc.join("broker.err")});
+    let mut paths = json!({"brokerIpcSocketPath":socket,"ipcDir":ipc,"btmuxSocketPath":tmux,"sessionName":format!("hrc-{driver}-{runtime}"),"attachTokenPath":ipc.join("attach.token"),"eventLedgerPath":ipc.join("events.ndjson"),"brokerStderrPath":ipc.join("broker.err")});
+    // describeAspdHostingPaths: a viewer serves ONE observer socket beside b.sock.
+    if presentation == "attachable" {
+        paths["observerSocketPath"] = json!(ipc.join("observer.sock"));
+    }
     let mut argv = compiled.response["executionRelease"]["worker"]["argvPrefix"]
         .as_array()
         .context("worker argv")?
@@ -502,9 +514,15 @@ fn preparation(
         ("--host-session-id", identity["hostSessionId"].clone()),
         ("--generation", json!(identity["generation"].to_string())),
         ("--attach-token-file", paths["attachTokenPath"].clone()),
+        (
+            "--experimental-observer-socket",
+            paths["observerSocketPath"].clone(),
+        ),
     ] {
-        argv.push(flag.into());
-        argv.push(value);
+        if !value.is_null() {
+            argv.push(flag.into());
+            argv.push(value);
+        }
     }
     let policy_driver = format!("policy-route-headless-broker:{driver}");
     let mut policy = json!({"schemaVersion":"harness-broker.lifecycle-policy/v1","policyId":policy_driver,"retention":{"mode":"keep-alive"},"harnessRecovery":{"mode":"none"},"turnRetry":{"mode":"none"}});
@@ -654,14 +672,38 @@ async fn launch(
     let broker_window = window(socket, session, "broker", Some(&command)).await?;
     tmux(socket, &["set-option", "-g", "remain-on-exit", "on"]).await?;
     let mut allocation = json!({"brokerWindow":broker_window,"allocatedAt":hrc_store::timestamp(),"brokerCommand":command});
-    if record["hosting"]["presentation"] == "terminal" {
-        let tui = window(socket, session, "tui", None).await?;
-        let mut lease = tui.clone();
+    // allocateBrokerSubstrate: terminal and the tmux-tui viewer (attachable +
+    // terminalRequired) lease a tui pane; the observer viewer (attachable,
+    // headless) leases an observer pane. Never the broker pane.
+    let presentation = &record["hosting"]["presentation"];
+    let terminal_required = record["admission"]["execution"]["hosting"]["terminalRequired"] == true;
+    let viewer =
+        if presentation == "terminal" || (presentation == "attachable" && terminal_required) {
+            Some("tui")
+        } else if presentation == "attachable" {
+            Some("observer")
+        } else {
+            None
+        };
+    if let Some(name) = viewer {
+        let pane = window(socket, session, name, None).await?;
+        let mut lease = pane.clone();
         lease["kind"] = "tmux-pane".into();
         lease["ownership"] = "hrc".into();
-        lease["allowedOps"] = json!({"inspect":true,"sendInput":true,"sendInterrupt":true,"capture":true,"resize":true});
-        allocation["tuiWindow"] = tui;
+        lease["allowedOps"] = if presentation == "terminal" {
+            json!({"inspect":true,"sendInput":true,"sendInterrupt":true,"capture":true,"resize":true})
+        } else {
+            json!({"inspect":true,"sendInput":true,"sendInterrupt":true,"capture":true,"resize":false})
+        };
+        allocation[if name == "tui" {
+            "tuiWindow"
+        } else {
+            "observerWindow"
+        }] = pane;
         allocation["lease"] = lease;
+    }
+    if let Some(observer) = paths.get("observerSocketPath") {
+        allocation["observerSocketPath"] = observer.clone();
     }
     let pid = tmux(
         socket,
