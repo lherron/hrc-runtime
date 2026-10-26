@@ -322,6 +322,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
     // The front controls no brokers; Bun behind it owns execution.
     if !server.front {
         publication::start(&server)?;
+        lifecycle::rows::boot(&server)?;
         lifecycle::credentials::start(&server)?;
         broker::reattach(&server).await?;
         recovery::start(&server);
@@ -370,7 +371,10 @@ pub async fn serve(role: front::Role) -> Result<()> {
             };
             let mut attribution = json!({"reason":reason,"grant":grant});
             if attribution["grant"].is_null() { attribution["ungranted"] = true.into(); }
-            *owned.lifecycle.shutdown_attribution.lock().unwrap() = Some(attribution);
+            *owned.lifecycle.shutdown_attribution.lock().unwrap() = Some(attribution.clone());
+            if !owned.front && let Err(error) = lifecycle::rows::begin_shutdown(&owned,&attribution) {
+                stderr_json("error","server","server.lifecycle_shutdown_record_failed",json!({"error":error.to_string()}));
+            }
             // Stop projecting before the store closes; brokers keep their ledgers.
             owned
                 .controller
@@ -1028,7 +1032,7 @@ fn status(
     }
     let db = server.store.lock().unwrap();
     let binary = env::current_exe().map_err(anyhow::Error::from)?;
-    let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":{"mode":"unmanaged","packagePath":binary.parent(),"processStartedAt":server.started_at,"runningEqualsInstalled":false},"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"lastRestart":null,"mailKicker":"absent","node":server.federation.config.summary(),"capabilities":{"semanticCore":{"sessions":true,"ensureRuntime":false,"dispatchTurn":false,"inFlightInput":false,"capture":false,"attach":false,"clearContext":false},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":false,"literalInput":false,"surfaceBindings":false,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":{"available":false}},"serverLifecycle":false,"selfRestart":false,"sessionRestart":false,"federatedSessionRead":false}});
+    let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":{"mode":"unmanaged","packagePath":binary.parent(),"processStartedAt":server.started_at,"runningEqualsInstalled":false},"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"lastRestart":lifecycle::rows::last_restart(&db.sqlite)?,"mailKicker":"absent","node":server.federation.config.summary(),"capabilities":{"semanticCore":{"sessions":true,"ensureRuntime":false,"dispatchTurn":false,"inFlightInput":false,"capture":false,"attach":false,"clearContext":false},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":false,"literalInput":false,"surfaceBindings":false,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":{"available":false}},"serverLifecycle":false,"selfRestart":false,"sessionRestart":false,"federatedSessionRead":false}});
     if query.get("includeSessions").is_some_and(|v| v == "true") {
         value["sessions"] = json!(
             db.sessions()?
