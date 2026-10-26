@@ -72,7 +72,7 @@ fn missing_intent(message: &str) -> ApiError {
         StatusCode::UNPROCESSABLE_ENTITY,
         "missing_runtime_intent",
         message.to_owned(),
-        None,
+        Some(json!({})),
     )
 }
 
@@ -135,7 +135,40 @@ async fn ensure(server: &Shared, body: &Value) -> Result<Response, ApiError> {
     let session = context::auto_rotate(server, session, allow_stale, "runtime-start").await?;
     let started =
         attached::start(server, session, intent, style == Some("fresh_pty"), None).await?;
-    Ok(Json(started).into_response())
+    Ok(Json(with_identity(server, started)?).into_response())
+}
+
+/// toStartRuntimeResponse leads with the runtime snapshot's identity, which
+/// Bun joins from the session's continuity.
+fn with_identity(server: &Shared, started: Value) -> Result<Value, ApiError> {
+    if started.get("identity").is_some() {
+        return Ok(started);
+    }
+    let host = started["hostSessionId"].as_str().unwrap_or("");
+    let identity = {
+        let db = server.store.lock().unwrap();
+        let scope: Option<String> = db
+            .sqlite
+            .query_row(
+                "SELECT scope_ref FROM sessions WHERE host_session_id=?",
+                [host],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(anyhow::Error::from)?;
+        match scope {
+            Some(scope) => db.optional_identity(&scope, &stored_lane(&db.sqlite, host)?)?,
+            None => None,
+        }
+    };
+    let Some(identity) = identity else {
+        return Ok(started);
+    };
+    let mut out = json!({"identity":identity});
+    if let Value::Object(fields) = started {
+        out.as_object_mut().unwrap().extend(fields);
+    }
+    Ok(out)
 }
 
 fn has_prompt(intent: &Value) -> bool {
@@ -458,21 +491,23 @@ impl Claim {
             return Err(prompt_unported());
         }
         let lock = summon::namespace_lock(self.scope.mutex_key());
-        let (session, slot, replayed) = {
+        let (session, slot, replayed, minted) = {
             let _held = lock.lock().await;
             let replayed = self.replay(server)?;
-            let (session, slot, replayed) = match replayed {
-                Some((session, slot)) => (session, slot, true),
+            // A minted session's record carries no identity (Bun joins it on
+            // read), so a fresh mint's claim omits it; replay and recycle read it.
+            let (session, slot, replayed, minted) = match replayed {
+                Some((session, slot)) => (session, slot, true, false),
                 None => {
-                    let (session, slot) = self.claim(server).await?;
-                    (session, slot, false)
+                    let (session, slot, minted) = self.claim(server).await?;
+                    (session, slot, false, minted)
                 }
             };
             // Registered before the lock is released, so the next claimant
             // reads this slot occupied while it boots.
             let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
             STARTING.lock().unwrap().insert(host);
-            (session, slot, replayed)
+            (session, slot, replayed, minted)
         };
         let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
         let intent = localize(&self.intent, &session);
@@ -485,7 +520,7 @@ impl Claim {
         )
         .await;
         STARTING.lock().unwrap().remove(&host);
-        let mut started = started?;
+        let mut started = with_identity(server, started?)?;
         let scope = session["scopeRef"].as_str().unwrap_or("");
         let (lane, identity) = {
             let db = server.store.lock().unwrap();
@@ -494,7 +529,7 @@ impl Claim {
             (lane, identity)
         };
         let mut claim = json!({"identity":identity,"slot":slot,"scopeRef":scope,"sessionRef":format!("{scope}/lane:{lane}"),"hostSessionId":host,"idempotencyKey":self.key,"replayed":replayed,"conflictPolicy":self.policy});
-        if claim["identity"].is_null() {
+        if minted || claim["identity"].is_null() {
             claim.as_object_mut().unwrap().remove("identity");
         }
         started["claim"] = claim;
@@ -555,7 +590,7 @@ impl Claim {
     }
 
     /// prepareClaimTarget / prepareExactClaimTarget, materialized.
-    async fn claim(&self, server: &Shared) -> Result<(Value, String), ApiError> {
+    async fn claim(&self, server: &Shared) -> Result<(Value, String, bool), ApiError> {
         let row = ClaimRow {
             idempotency_key: self.key.clone(),
             request_hash: self.hash.clone(),
@@ -586,7 +621,11 @@ impl Claim {
                 .unwrap()
                 .continuity_session(&scope, lane)?;
             let Some(existing) = existing else {
-                return Ok((self.mint(server, &scope, row, reason, details).await?, slot));
+                return Ok((
+                    self.mint(server, &scope, row, reason, details).await?,
+                    slot,
+                    true,
+                ));
             };
             if !free(server, &existing)? {
                 if self.policy == "reject" {
@@ -615,7 +654,7 @@ impl Claim {
                 },
             )
             .await?;
-            return Ok((context::session(server, &rotation)?, slot));
+            return Ok((context::session(server, &rotation)?, slot, false));
         }
         Err(ApiError::domain(
             StatusCode::CONFLICT,
