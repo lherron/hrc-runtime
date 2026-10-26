@@ -545,6 +545,30 @@ async function prepareProductionRelease(
   await runCommand('bun', ['install', '--frozen-lockfile'], releasePath)
   await runCommand('bun', ['run', 'clean'], releasePath)
   await runCommand('bun', ['run', 'build'], releasePath)
+  const hrcBuild = createPraesidiumBuild({
+    canonicalRemote: source.canonicalRemote,
+    sourceCommit: source.sourceCommit,
+    setVersion: await releaseBuildVersion(options.sourceRoot, options.publicationMode),
+    builtAt: new Date().toISOString(),
+  })
+  const aspContracts = await readInstalledAspContracts(releasePath)
+  // The Rust release reads its source identity from this manifest (kernel-release
+  // input digest, hrc-native build.rs), because a release snapshot has no .git.
+  // installAtomicRelease rewrites it with the final installedAt after preparation.
+  await writeFile(
+    join(releasePath, 'praesidium-release.json'),
+    `${JSON.stringify(
+      {
+        schema: 1,
+        releaseId: basename(releasePath),
+        hrcBuild,
+        aspContracts,
+        installedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    )}\n`
+  )
   await prepareKernelRelease(
     options.sourceRoot,
     releasePath,
@@ -562,15 +586,7 @@ async function prepareProductionRelease(
     )
   }
 
-  return {
-    hrcBuild: createPraesidiumBuild({
-      canonicalRemote: source.canonicalRemote,
-      sourceCommit: source.sourceCommit,
-      setVersion: await releaseBuildVersion(options.sourceRoot, options.publicationMode),
-      builtAt: new Date().toISOString(),
-    }),
-    aspContracts: await readInstalledAspContracts(releasePath),
-  }
+  return { hrcBuild, aspContracts }
 }
 
 async function runUnlinkedInstall(
