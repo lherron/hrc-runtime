@@ -74,18 +74,18 @@ The critical path is N0 → N1 → N2 → N3 → N4 → N6. N5 can start after N
 
 ## Progress
 
-As of 2026-10-26 13:00Z. The wrkq tasks are authoritative. This section records package state and the scope moves made since r2.
+As of 2026-10-26 13:50Z. The wrkq tasks are authoritative. This section records package state and the scope moves made since r2.
 
 | Package | Task | State |
 |---|---|---|
 | N0 | T-11817 | Closed. |
 | N1 | T-11818 | Closed at ff24579a: gates 1–4 pass, 0 GAP:N1. |
-| N2 | T-11823 (clod; helper cody T-11878 on EPR projection) | Active. Landing 6 crate half is on main at d40cdcef (graded PASS): startup reconcile, lease GC, resume-continuation, retained-evidence recovery, bipc sweep, and recoverFinalSummary on both paths. The crash path now clears active_run_id. n2-routes 141/141 compare cases plus 18/18 per-owner invariants, n2-inspect-crash 11/11. Next is the harness half (TS=1, exclusive slot) with EPR. Restart-self waits on N3's door, which is now landed. |
-| N3 | T-11839 (clod) | Active. Landing 3 crate half is on main at bf18fc36 (graded PASS): turn-handoff with durable finalization, lazy-target admission, and the drain lease. handoff 37/37, publication 9/9. Final gates 1–3 are running on landed main. Next is the TS half: 153 dispositions, n3-* cases, and the new UNSUPPORTED coverage class. |
-| N4 | T-11872 (clod; helper cody T-11879 on packaging/status, kernel, telemetry) | Active. Landing 4 is on main at 1a2cd24b (graded PASS): bindings, diagnostics, forensics, federation/runtimes, previews/run, first-turn watchdog, ACP bridge. rb4: gate 40, place 37, fed 325, home 325, reg 34, ops 32, wd 7/7. The collective-history fingerprint matches 22,215/22,215 live max3 rows. Next is collective history, then the helper's work. The ingest listener and persona allowlist are postponed with no producer. |
-| N5 | T-11819 (clod; helper cody T-11880 on the key-order sweep) | All 55 commands native. Lifecycle is PASS (79326662). T-11877 (stale server.lock reclaim) is closed and PASS at 3fed13c5, installed: 13/13 per owner, identical outcomes. Next: the key-order sweep table, the torn-stderr-line fix, aggregate gates 1–4 and cleanup. |
-| F | T-11822 (clod) | Landed through 0d16b420. The `route.not_served` log and the bounded front drain on SIGTERM with an open follow are queued, and the drain fix must land before any front restart on a fronted node. hrcdev enable is pending a Claude login on the hrcdev seat; then 24h, svc, max3. |
-| N6 | — | Not started. Prerequisites: T-11877 (done), the key-order sweep fixes and N2 recovery. Each node flip needs Lance's go. |
+| N2 | T-11823 (clod; helper cody T-11896 on the restart-self e2e driver) | Active. The crate and harness halves of landing 6 are on main (d40cdcef, a58a6b6a). EPR (T-11878) landed at 0580bacb: cmp-n2-participant 39/39, verify exit 0, graded PASS. Next: native restart-self plus its timer, crate-only (flip gate 3). The aspc stamp and two key-order fixes (local 49679293) wait for the flip unless they ride along free. GAP:N2 attribution (T-11897) is parked. |
+| N3 | T-11839 | Closed at 3b3b9990: n3 cases plus the UNSUPPORTED coverage class, GAP:N3=0. |
+| N4 | T-11872 (clod) | Active. Landing 4 (1a2cd24b) and the flip fixes (77355f22: resolve through the summon seam, lazy placement_ledger, WRKQD_TOKEN_FILE for broker runtimes) are on main. The collective-history TS landing holds the verify slot now (flip gate 2). GAP:N4 attribution (T-11898) is parked. |
+| N5 | T-11819 (clod) | Parked until the max3 flip: a 6-commit local stack (GAP:N5=0, store key order) and helper T-11880's runtime-read key order. Resume from C-31859. |
+| F | T-11822 | Parked. Landed through 9d7d7c2d; rollout pending hrcdev login. Resume from H-00680. The max3 step may be overtaken by the flip. |
+| N6 | T-11893 / T-11894 / T-11895 (clod) | max3 flip ruled for 2026-10-26 (Lance, 13:35Z: "i want real live traffic on the overnight rust work. no more hedging"). It does not wait for agent-spaces' aspd soak. Gates: N4 fixes (done), EPR (done), N4 collective history, native restart-self, and flip prep: runbook, rollback and owner plist (T-11893), day-1 route.not_served audit and preflight (T-11894), and a Bun→rusthrc→Bun rehearsal on a store copy (T-11895). Every non-prereq seat is parked until the flip lands (Lance, 13:50Z). |
 
 Scope moves since r2:
 - `GET /v1/presentation/runtimes` and `POST /v1/presentation/seats/read` move N4 → N3. The unchanged kernel needs both to bootstrap, and N3's gate 2 is the unchanged kernel.
