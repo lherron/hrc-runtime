@@ -583,13 +583,5 @@ pub fn start(server: &Shared) -> Result<()> {
 }
 
 pub(super) fn node_id(server: &Shared) -> String {
-    let path = std::env::var_os("HRC_PEER_CONFIG_FILE")
-        .filter(|p| !p.is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| server.state.join("federation.json"));
-    std::fs::read(path)
-        .ok()
-        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
-        .and_then(|v| v["nodeId"].as_str().map(str::to_owned))
-        .unwrap_or_else(super::local_node_id)
+    server.federation.node_id().to_owned()
 }
