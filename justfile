@@ -187,8 +187,10 @@ cargo-check:
     python3 crates/hrc-kernel/e2e/restart_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-restart-e2e-$(date +%s)-$$}/restart"
     python3 crates/hrc-kernel/e2e/send_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-send-e2e-$(date +%s)-$$}/send"
 
-# Standing native workflows run post-push, separately from the landing gate.
-# Requires a named installed Bun baseline, aspd, tmux and model credentials.
+# Standing native workflows, run by hand only. They compare native against a
+# named installed Bun baseline with live model turns (aspd, tmux and model
+# credentials required), so they stay off the post-push runner under the
+# 2026-10-26 no-Bun-in-the-gate ruling.
 e2e-native-full:
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-kernel
     python3 crates/hrc-native/e2e/full.py --artifacts "${HRC_NATIVE_FULL_ARTIFACTS:-${FOUNDRY_ARTIFACTS:-/tmp}/hrc-native-full-$(date +%s)-$$}"

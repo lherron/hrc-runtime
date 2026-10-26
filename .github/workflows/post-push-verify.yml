@@ -97,12 +97,6 @@ jobs:
           kill "$watchdog" 2>/dev/null || true
           exit "$rc"
 
-      - name: Native full workflows
-        working-directory: ${{ env.WORKTREE }}
-        run: |
-          mkdir -p "$(dirname "$LOCK")"
-          lockf "$LOCK" just e2e-native-full
-
       - name: Record the run
         if: always()
         working-directory: ${{ env.WORKTREE }}

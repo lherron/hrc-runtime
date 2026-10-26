@@ -5,7 +5,7 @@ runs `status.py`, `metrics.py`, `passthrough.py`, `daemon_entrypoints.py` and
 `client_errors.py`. Coverage-obligation names in differential's report do not
 mean those other scripts ran. `metrics_isolation.py` is a shared helper.
 
-`just e2e-native-full` is the separate post-push native workflow set; it does
+`just e2e-native-full` is the separate, run-by-hand native workflow set; it does
 not imply the remaining CLI qualification corpus ran. The scripts below stay
 manual because they require explicitly owned seats, paired captures, private
 ledger/daemon environments or model calls. Supply their `--help` inputs on

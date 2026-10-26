@@ -28,7 +28,7 @@ def main():
     args = p.parse_args()
     # Drivers which require a clean terminal must still enforce that contract.
     if any(os.environ.get(k) for k in ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX')):
-        p.error('run e2e-native-full in a clean ghostmux terminal (or the post-push runner)')
+        p.error('run e2e-native-full in a clean ghostmux terminal')
     art = args.artifacts.resolve()
     art.mkdir(parents=True, exist_ok=True)
     results = []

@@ -3,8 +3,9 @@
 `just cargo-check` runs `foundation.py` here, plus the CLI differential chain
 and the five kernel workflows. It runs no other native scripts.
 
-`just e2e-native-full` runs eight standing product workflows after `just verify`
-in `.github/workflows/post-push-verify.yml`: schema refusal without writes,
+`just e2e-native-full` runs eight standing product workflows, by hand only. It
+is not on the post-push runner, because it needs a Bun baseline and live model
+turns (Lance ruling 2026-10-26: no Bun in the gate). The workflows: schema refusal without writes,
 owner recovery/lifecycle, accounting, the front door, cold birth and reattach,
 mid-turn broker restart, submission doors, and maintenance live-seat safety.
 It builds the native/kernel binaries and runs each script even if an earlier
