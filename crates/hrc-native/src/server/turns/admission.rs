@@ -663,7 +663,7 @@ pub(crate) mod tests {
         let (scratch, store) = fixture::ScratchStore::new()?;
         let runtime = scratch.root.join("run");
         let state = scratch.root.join("state");
-        let config = hrc_cli::FederationConfig {
+        let config = hrc_common::federation::FederationConfig {
             node_id: "test-node".into(),
             node_id_provenance: "config",
             source_path: String::new(),
