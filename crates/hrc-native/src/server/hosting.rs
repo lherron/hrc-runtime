@@ -213,9 +213,20 @@ pub async fn serve(role: front::Role) -> Result<()> {
         )
         .await?;
     } else {
-        // The front's shutdown stays writer-free and retains its existing shape.
+        // The front's shutdown stays writer-free. A forwarded follow (kernel,
+        // ACP, subscribers) never ends on its own, so an unbounded drain held
+        // SIGTERM until launchd's SIGKILL. Give in-flight requests the same
+        // drain budget as the owner; exiting closes what is still streaming.
         if !already_drained {
-            serving.await?;
+            match tokio::time::timeout(lifecycle::shutdown::REQUEST_DRAIN, &mut serving).await {
+                Ok(result) => result?,
+                Err(_) => stderr_json(
+                    "warn",
+                    "server",
+                    "server.front.drain_timeout",
+                    json!({"drainMs":lifecycle::shutdown::REQUEST_DRAIN.as_millis()}),
+                ),
+            }
         }
         let _ = stop_writer.send(());
         writer_task.await?;

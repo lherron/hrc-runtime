@@ -421,8 +421,28 @@ def main():
         check('log-files-disjoint', not any('servedBy' in r for r in bunm) and rust and bunm)
         gates['2'] = {'pass': True, 'rustRecords': len(rust), 'bunRecords': len(bunm)}
 
+        # A front restart under a live follower (e.g. activating a new rusthrc):
+        # SIGTERM must exit cleanly within the drain bound, not wait out the
+        # stream until launchd's SIGKILL.
+        follower = UnixHTTP(public)
+        follower.timeout = 60
+        follower.request('GET', stream)
+        follower.getresponse().readline()
+        started = time.monotonic()
+        proc = owners.pop('front-1')
+        proc.send_signal(signal.SIGTERM)
+        try:
+            code = proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            code = None
+        took = time.monotonic() - started
+        follower.close()
+        check('front-sigterm-under-follower', code == 0 and took < 8 and not public.exists(),
+              seconds=round(took, 2), exit=code)
         # Front crash recovery: SIGKILL, then a fresh front takes over.
-        stop('front-1', signal.SIGKILL)
+        front('front-1b')
+        stop('front-1b', signal.SIGKILL)
         check('front-killed-leaves-bun', responsive(private) and not responsive(public))
         front('front-2')
         check('front-restart-after-kill', responsive(public))
@@ -446,7 +466,7 @@ def main():
               and not (run_dir / 'rusthrc-front.pid').exists())
         # rusthrc-server.err.log is checked as L2 JSON (log-format@2): every line
         # the front wrote, stdout and stderr, must parse.
-        plain = [l for name in ('front-1', 'front-2') for l in (art / f'{name}.log').read_text().splitlines()
+        plain = [l for name in ('front-1', 'front-1b', 'front-2') for l in (art / f'{name}.log').read_text().splitlines()
                  if l.strip() and not l.lstrip().startswith('{')]
         check('front-logs-all-json', not plain, plain=plain[:5])
         os.kill(broker_pid, 0)
