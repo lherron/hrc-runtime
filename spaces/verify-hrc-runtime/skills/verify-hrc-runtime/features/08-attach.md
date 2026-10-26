@@ -1,8 +1,9 @@
 # 8. Attach
 
 A human (or ghostmux) joins a live runtime's terminal and leaves it running. Code:
-`packages/hrc-cli/src/cli/handlers-scope-attach.ts`, `handlers-scope-run.ts`; server `runtime-io-handlers.ts`
-(`/v1/runtimes/attach`), `tmux-socket.ts`. Docs: `docs/cli-surface.md` (run/start/attach),
+`packages/hrc-cli/src/cli/handlers-scope-attach.ts`, `handlers-scope-run.ts`, `runtime-select.ts` (the Ghostty
+bind and the tmux exec); server `surface-handlers.ts` (POST `/v1/runtimes/attach`), `server-session-methods.ts`
+(GET `/v1/attach`), `tmux-socket.ts`. Docs: `docs/cli-surface.md` (run/start/attach),
 `docs/isolated-daemon-smoke-recipe.md` ("Driving viewers and attach in isolation"),
 `docs/runbooks/broker-tmux-ghostmux-e2e.md`.
 
@@ -13,7 +14,8 @@ A human (or ghostmux) joins a live runtime's terminal and leaves it running. Cod
   runtime stays `ready`.
 - `hrc attach <runtimeId>`: always prints the attach descriptor JSON (`transport`, `argv`, `bindingFence`
   with hostSessionId, runtimeId, generation, windowId, paneId) and never attaches, TTY or not (GET
-  `/v1/attach`). Concurrent callers each get their own whole descriptor (b6468220, T-10760). A scope target
+  `/v1/attach`). Concurrent callers each get their own whole descriptor (b6468220, T-10760). Only an id that
+  starts with `rt-` takes this form; any other selector is treated as a scope (source-read). A scope target
   with no TTY still execs tmux: `open terminal failed: not a terminal`, rc 2.
 - `hrc attach <target> --dry-run`: the local plan (POST `/v1/runtimes/attach`, then exec the argv).
 - `hrc run <target>`: start-or-reattach and attach; interactive only (not driven separately: its attach half
@@ -63,6 +65,6 @@ client, a detach prints `[detached (from session hrc-…-<rt>)]` with exit 0, th
 with zero clients, and `attach <runtimeId>` without a TTY prints a descriptor whose `argv` names that socket
 and `:tui`.
 
-Driven 2026-10-19 (T-11363 upkeep) on installed d8451409, scratch `t-11363` (the resumed generation's
+Driven 2026-10-26 (T-11864 upkeep) on installed 02661aeb, scratch `t-11864` (the resumed generation's
 runtime; two concurrent descriptors both whole; scope attach without a TTY rc 2):
-`var/wrkq-artifacts/T-11363/08-attach/drive.txt`.
+`var/wrkq-artifacts/T-11864/08-attach/drive.txt`.

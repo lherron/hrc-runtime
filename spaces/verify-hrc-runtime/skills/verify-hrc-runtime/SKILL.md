@@ -16,13 +16,23 @@ clod, cody and the foundry resident when they run in project hrc-runtime.
 
 Scratch or live:
 
-- **Scratch (the default for anything that writes).** `hv scratch up --name <task>` starts an isolated
-  `hrc server serve` from the installed `hrc` on its own runtime and state roots (`/tmp/hv/<name>/run`,
-  `/tmp/hv/<name>/state`), in a fresh ghostmux tab, and waits until it answers `server status`. Run every
-  `hrc` verb against it with `hv run <name> -- hrc …`. It is a real daemon with a fresh store: it births
-  real harness runtimes (through the live aspd, which only prepares), and it never touches the live
-  `state.sqlite`, ACP webhook or event-ingest port. Use it for starts, turns, sends, terminates, resumes,
-  sweeps, captures and the HTTP API.
+- **Scratch (the default for anything that writes).** `hv scratch up --name <task>` copies the installed
+  release to `/tmp/hv/<name>/release` and starts `hrc server serve` from that copy on its own runtime and
+  state roots (`/tmp/hv/<name>/run`, `/tmp/hv/<name>/state`) and its own wrkq store (`/tmp/hv/<name>/wrkq`), in
+  a fresh ghostmux tab, and waits until it answers `server status`. Run every `hrc` verb against it with
+  `hv run <name> -- hrc …`. It is a real daemon with a fresh store: it births real harness runtimes (through
+  the live aspd, which only prepares), and it never touches the live `state.sqlite`, ledger, ACP webhook or
+  event-ingest port. Use it for starts, turns, sends, terminates, resumes, sweeps, captures and the HTTP API.
+  - **Never run `hrc server serve` from the installed tree.** A daemon whose package sits in a release under
+    `hrc-runtime-releases` reports `release.mode: atomic` and prunes that directory when it starts; a scratch
+    daemon started that way deleted production's running release on 2026-10-26 (04:50Z, reported by Mable
+    in EN-36056). The copy reports `unmanaged` (`releaseId` and `sourceCommit` null in status; `hv scratch
+    up` prints `copyOf` and `sourceCommit` from the copy's manifest), and `hv` stops and refuses
+    `atomic_release` if it ever sees `atomic`. Record `ls ~/.bun/install/hrc-runtime-releases/` before and after a pass; it must not change.
+  - The launcher drops every inherited `HARNESS*`, `TMUX*`, `HRC_*`, `AGENT*`, `ASP_*`, `CLAUDE*`, `CODEX*` and
+    `WRKQ*` variable before it sets its own, so no child reaches the caller's broker, tmux server or the live
+    ledger. A seat's posts to the ledger fail against the empty private store
+    (`session_project_event.post_failed` in `serve.log`); that is the isolation working.
   - Birth the blank agent `tabularasa@hrc-runtime:<slug>` (claude, no spaces) with a one-word prompt
     ("Reply with exactly the word OK and nothing else. No tools."). Each turn is a real model call.
   - The daemon runs in a ghostmux tab because `hrc server serve` refuses to boot under a coding-agent
@@ -31,15 +41,20 @@ Scratch or live:
 - **Live (read-only).** The launchd daemon (`com.praesidium.hrc-server`, socket
   `~/praesidium/var/run/hrc/hrc.sock`). On it run `hrc server status`, `hrc doctor`, `hrc target locate`,
   `hrc monitor show|watch|events|transcript|stats|search`, `hrc runtime list|inspect|diagnostics`,
-  `hrc admin metrics report`, `hrc admin registrations gc` (no scopes is
-  a read-only projection) and dry-run `admin runs`. Use live when the claim is about the installed node
-  itself: its release, its federation, its bindings.
+  `hrc admin metrics report|routes`, `hrc target bindings`, `just front-door-status` and dry-run
+  `admin runs`. Use live when the claim is about the installed node itself: its release, its federation, its
+  bindings.
 - **Never** restart or stop the live daemon (`hrc server restart|stop`), run `just install`, publish, deploy
   or retire on live from this skill. Those belong to Mable primary (restart) and the install doctrine
   (`~/praesidium/build_deploy_guide.md`). When a drive needs one, write the step down, mark it
   `needs operator`, and drive what you can around it.
-- Test **what is installed.** `hv` runs the installed `hrc` (`~/.bun/bin/hrc` → the current atomic
-  release), not the checkout. A change is not testable here until it is installed; until then say so.
+- Test **what is installed.** `hv` runs the installed `hrc` CLI (`~/.bun/bin/hrc` → the current atomic
+  release) and a byte copy of that release as the scratch daemon, not the checkout. A change is not testable
+  here until it is installed; until then say so. The release also ships `rusthrc` and `hrc-kernel`
+  (`bin/`): this skill grades the Bun daemon and the Bun `hrc` CLI. The native port (P-00866) proves itself
+  through its own conformance; don't count a native feature as driven here unless you drove `rusthrc`
+  itself, and check `.api.listenSocketPath == .api.socketPath` (or `just front-door-status` says `direct`)
+  before you claim Bun answered a socket read (feature 1).
 
 ## Doctor
 
@@ -100,7 +115,8 @@ for a path that doesn't exist. `hrc info` lists the paths.
 ## Cleanup
 
 `hv scratch down <name>` terminates every non-terminated runtime on the scratch, stops the daemon it
-started (SIGTERM, then SIGKILL after 5 s), closes its ghostmux tab and removes `run/` and `state/`. It keeps
+started (SIGTERM, then SIGKILL after 5 s), closes its ghostmux tab and removes `run/`, `state/`, the release
+copy and the wrkq store. It keeps
 the daemon's log (serve.log), the launcher script hv wrote for it and its start time (up_at) in
 `/tmp/hv/<name>/` for a post-mortem; they are scratch files, not repo paths. A terminated harness can still
 name `/tmp/hv/<name>` for a few seconds after `down` returns (a resumed claude for ~3 s on 2026-10-05,
@@ -127,8 +143,8 @@ refusal prints `{error, message, next}` and exits 1. Put it on your path or call
 
 | Verb | Invocation | Does |
 | --- | --- | --- |
-| `scratch up` | `hv scratch up [--name N]` | Starts the installed `hrc server serve` on `/tmp/hv/N/{run,state}` in a new ghostmux tab, waits up to 30 s for `server status`, prints root, pid, surface, socket, stateRoot, sourceCommit and runningEqualsInstalled. A daemon that exits at boot refuses `daemon_exited` with serve.log's last line. N defaults to `hv` and is lowercased |
-| `scratch down` | `hv scratch down N [--dry-run]` | Terminates N's live runtimes, stops its daemon, closes its tab, removes `run/` and `state/` |
+| `scratch up` | `hv scratch up [--name N]` | Copies the installed release to `/tmp/hv/N/release`, migrates a private wrkq store in `/tmp/hv/N/wrkq`, starts `bun <copy>/packages/hrc-cli/src/cli.ts server serve` on `/tmp/hv/N/{run,state}` with a scrubbed environment in a new ghostmux tab, waits up to 30 s for `server status`, prints root, pid, surface, socket, stateRoot, releaseMode, copyOf and sourceCommit. A daemon that exits at boot refuses `daemon_exited` with serve.log's last line; one that reports `atomic` is stopped and refused `atomic_release`. N defaults to `hv` and is lowercased |
+| `scratch down` | `hv scratch down N [--dry-run]` | Terminates N's live runtimes, stops its daemon, closes its tab, removes `run/`, `state/`, `release/` and `wrkq/` |
 | `scratch list` | `hv scratch list` | Every scratch under `/tmp/hv` with pid and liveness |
 | `run` | `hv run N -- CMD…` | Runs CMD with only `HRC_RUNTIME_DIR` and `HRC_STATE_DIR` pointed at N, so `hrc` and `curl` address the scratch. Refuses `not_up` without a socket |
 | `env` | `hv env N` | Prints the two `export` lines, for a shell or a ghostmux `--command` |

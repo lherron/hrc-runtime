@@ -1,9 +1,11 @@
 # 4. HTTP API on the daemon socket
 
 The daemon's HTTP surface on its unix socket. Every `hrc` verb and the SDK (`HrcClient`, package
-`hrc-sdk`) ride it; ACP and the viewer are its other clients. About 130 `/v1/*` routes; this feature drives
-the observation routes a consumer pages. Code: `packages/hrc-server/src/server-exact-routes.ts`,
-`server-routing.ts`, `bounded-event-stream.ts`, `event-handlers.ts`. Contract: `docs/lifecycle-event-tail.md`.
+`hrc-sdk`) ride it; ACP, the viewer and `hrc-kernel` are its other clients. About 99 `/v1/*` routes on
+2026-10-26 (about 119 before the T-11542/T-11566..T-11569/T-11711 retirements); this feature drives the
+observation routes a consumer pages. Code: `packages/hrc-server/src/server-exact-routes.ts`,
+`server-request-methods.ts` (pattern routes), `bounded-event-stream.ts`, `event-handlers.ts`,
+`federation/scope-read-routing.ts`. Contract: `docs/lifecycle-event-tail.md`.
 
 ## Sub-features
 
@@ -18,6 +20,13 @@ the observation routes a consumer pages. Code: `packages/hrc-server/src/server-e
   that node's `ledgerIncarnationId` and `headHrcSeq`; a local scope answers here with no header. A home that
   can't be resolved is a retryable 503 (`session_home_pending|unknown|unreachable`; source-read, not driven).
   `/v1/status` `.capabilities.federatedSessionRead` says the node does this.
+- `GET /v1/events/page?afterSeq=S&limit=N[&ledgerIncarnationId=I]` (T-11441, the kernel's forward reader):
+  `{ledgerIncarnationId, head, rows, scannedThrough}`, rows ascending from `afterSeq+1`. `afterSeq` is required
+  (400 "afterSeq is required"), `limit` is 1..1000 (400 for 1001), a wrong incarnation is 409 `cursor_invalid`.
+  It is not scope-routed (source-read: a `scopeRef` param is ignored).
+- Retired routes answer a plain-text 404: `/v1/registrations/gc`, `/v1/bridges`, `/v1/messages`,
+  `/v1/turn-admission`, `/v1/hooks/ingest`, `/v1/launches` (driven 2026-10-26), plus the session title and
+  archive/clear-context/create-successor routes (source-read).
 - `GET /v1/sessions[?latestGeneration=true]`: a bare array of host sessions; `latestGeneration` keeps only each
   scope's newest generation (T-10832). `POST /v1/sessions/restart` is what `hrc restart` calls (feature 2).
 - Refusals: `limit` outside 1..500 → 400 `malformed_request` ("limit must be between 1 and 500" for 501,
@@ -47,6 +56,11 @@ curl -s -w ' http=%{http_code}' --unix-socket $S 'http://hrc/v1/events/tail?limi
 curl -s --unix-socket $S 'http://hrc/v1/events/tail?limit=5&eventKind=turn.completed' | jq -c '[.events[] | {hrcSeq, eventKind, runId}]'
 curl -s --unix-socket $S http://hrc/v1/events/head
 curl -s --unix-socket $S 'http://hrc/v1/sessions?latestGeneration=true' | jq -c '[.[] | {hostSessionId, generation, status}]'
+curl -s --unix-socket $S 'http://hrc/v1/events/page?afterSeq=0&limit=5' | jq -c '{ledgerIncarnationId, head, scannedThrough, n: (.rows|length)}'
+curl -s -w ' http=%{http_code}' --unix-socket $S 'http://hrc/v1/events/page?afterSeq=0&limit=1001'      # 400
+curl -s -w ' http=%{http_code}' --unix-socket $S 'http://hrc/v1/events/page?limit=5'                    # 400 afterSeq is required
+curl -s -w ' http=%{http_code}' --unix-socket $S 'http://hrc/v1/events/page?afterSeq=0&limit=5&ledgerIncarnationId=bogus'   # 409
+for p in /v1/registrations/gc /v1/bridges /v1/launches; do curl -s -o /dev/null -w "$p %{http_code}\n" --unix-socket $S http://hrc$p; done   # 404
 L=~/praesidium/var/run/hrc/hrc.sock    # live, read-only: remote-homed scope vs local control
 curl -s -D- -o /dev/null --unix-socket $L 'http://hrc/v1/events/tail?limit=1&scopeRef=agent:mable:project:hrc-runtime:task:minisvc' | grep -iE '^HTTP|x-hrc-home-node'
 curl -s -D- -o /dev/null --unix-socket $L 'http://hrc/v1/events/tail?limit=1&scopeRef=agent:clod:project:hrc-runtime:task:<task>' | grep -iE '^HTTP|x-hrc-home-node'
@@ -64,6 +78,9 @@ curl -s -D- -o /dev/null --unix-socket $L 'http://hrc/v1/events/tail?limit=1&sco
   in the pane, a participant's own prompt) has no `runId` since e822f2a9 (T-11306), so "one per run" holds
   only when every turn came through `start`/`send`/`turn` (source-read; this drive dispatched all six).
 - `/v1/sessions` is a bare array; `.sessions` on it is a jq error.
+- **Which daemon answered.** Clients always dial the public `hrc.sock`. On a fronted node `rusthrc` answers
+  there and Bun listens on `hrc-bun.sock`; check `.api.listenSocketPath == .api.socketPath` (feature 1) before
+  you grade a route as Bun's. Direct on max3 and on every scratch on 2026-10-26.
 - `headHrcSeq` stays the global head on a history page (59 on every page of the T-10297 drive, 46 on
   T-11363's); bound
   your paging by `truncated`, not by `headHrcSeq`.
@@ -72,10 +89,10 @@ curl -s -D- -o /dev/null --unix-socket $L 'http://hrc/v1/events/tail?limit=1&sco
 
 Paging backwards from the newest page with the returned incarnation walks contiguous, ascending pages to
 `truncated: false` at `hrcSeq` 1; the three refusals answer 400, 400 and 409 with the documented codes; an
-`eventKind` filter returns only that kind, one `turn.completed` per run the scratch drove; on live a
-remote-homed scope's tail carries `x-hrc-home-node` and the local control does not.
+`eventKind` filter returns only that kind, one `turn.completed` per run the scratch drove; `/v1/events/page`
+answers from `afterSeq` with its own 400/409 refusals; retired routes are 404; on live a remote-homed scope's
+tail carries `x-hrc-home-node` and the local control does not.
 
-Driven 2026-10-19 (T-11363 upkeep) on installed d8451409, scratch `t-11363` (46 events in two contiguous
-pages of 25, three `turn.completed` for three runs at that point) and live read-only for the routed tail:
-`var/wrkq-artifacts/T-11363/04-http-api/drive.txt`, `05-placement-federation/drive.txt` (routed tail) and
-`02-runtime-lifecycle/drive.txt` (`latestGeneration`).
+Driven 2026-10-26 (T-11864 upkeep) on installed 02661aeb, scratch `t-11864` (65 events in three contiguous
+pages of 25, four `turn.completed` for four runs at that point, `latestGeneration` kept gen 2) and live
+read-only for the routed tail (`x-hrc-home-node: svc`): `var/wrkq-artifacts/T-11864/04-http-api/drive.txt`.

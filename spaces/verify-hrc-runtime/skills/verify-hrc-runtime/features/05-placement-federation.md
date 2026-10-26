@@ -2,9 +2,10 @@
 
 Where a scope lives: the declared policy (agent profile `[placement]`), the established binding (local
 ledger, then the svc registry) and the runtimes observed on this node; and the node's federation with its
-peers. Code: `packages/hrc-cli/src/cli/handlers-federation.ts`, `register-federation.ts`,
-`handlers-registration-gc.ts`; server `placement-federation-handlers.ts`, `placements-resolve.ts`,
-`federation/`, `server-federation-startup.ts`, `registration-gc-handlers.ts`. Docs:
+peers. Code: `packages/hrc-cli/src/cli/handlers-federation.ts`, `register-federation.ts`; server
+`placement-federation-handlers.ts`, `placements-resolve.ts`, `federation/` (the registry client is split into
+`registry-client.ts`, `registry-http-client.ts`, `registry-local-client.ts`, `registry-attempt.ts` since
+6c6f4547, wire unchanged), `server-federation-startup.ts`. Docs:
 `docs/federation-peer-protocol.md`, `docs/federation-registry-retirement.md`,
 `docs/federation-binding-registry-rebuild.md`.
 
@@ -27,8 +28,8 @@ peers. Code: `packages/hrc-cli/src/cli/handlers-federation.ts`, `register-federa
 - Scope-homed reads: session, event and run reads for a scope homed on another node are forwarded there
   (T-10418; the routed tail is driven in feature 4). A peer that just failed its probe is skipped by the
   session index for 30 s (571c6c56, source-read).
-- `hrc admin registrations gc [--json]` with no scopes: the read-only retirement candidate projection
-  (`candidates`, `lingerMs`). With scopes and `--yes` it retires: operator only.
+- `hrc admin registrations gc` is gone with the external-registration surface (4c7c3653, T-11542): `unknown
+  command: registrations`, rc 2, and `/v1/registrations/gc` is 404 (2026-10-26). Nothing replaced it.
 - Not driven: `hrc federation retire <scope>` (permanent fence + binding delete), the registry rebuild.
   Both are operator steps on a real scope.
 
@@ -46,7 +47,6 @@ hrc target locate mable@hrc-runtime:minisvc --fail-on-skew >/dev/null; echo "rc=
 hrc server status --json | jq -c .node
 hrc doctor --json | jq -c '.[] | select(.name|test("node|federation|placement-skew"))'
 hrc doctor --json | jq '[.[] | select(.name == "placement-policy")] | length'     # == scan.unreadable below
-hrc admin registrations gc --json
 hrc target bindings --json | jq -c '{gateMode, localNodeId, scan: (.scan|{scanned, skewed: (.skewed|length), unreadable: (.unreadable|length), truncated})}'
 jq -c 'select(.event|test("federation.bindings.scan_"))' ~/praesidium/var/logs/hrc-runtime/hrc-server.log | tail -2 | cut -c1-300
 hv run <task> -- hrc target bindings --json | jq -c '{federationConfigured, gateMode, scanned: .scan.scanned}'
@@ -56,8 +56,9 @@ hv run <task> -- hrc target locate tabularasa@hrc-runtime:hvprobe --json | jq -c
 ## Gotchas
 
 - **A remote-homed scope reads `observed.runtimeCount: 0` here and that is correct.** `mable@…:minisvc` is
-  bound to svc (`source: registry`, `isLocal: false`); `observed` is this node only (peer observation is not
-  built). Don't read 0 as "not running".
+  bound to svc (`source: registry`, `isLocal: false`); `target locate`'s `observed` is this node only. Peers'
+  runtimes are projected on `GET /v1/federation/runtimes` (source-read), not in `locate`. Don't read 0 as "not
+  running".
 - **A single-node scratch never binds.** After a start, a send and a resume, the scratch scope still read
   `authority: {state: unbound}` with 2 runtimes observed (2026-10-05). Bindings are a federated-node
   behavior; prove binding on live.
@@ -70,9 +71,9 @@ hv run <task> -- hrc target locate tabularasa@hrc-runtime:hvprobe --json | jq -c
 `target locate` shows a local scope bound in the ledger with a live runtime observed, a remote scope bound
 in the registry to its home node with nothing observed here, and `--fail-on-skew` exits 0 where doctor's
 `placement-skew` reports no disagreement; `target bindings` counts the same bindings and unreadable
-declarations as doctor (4305 and 5 on 2026-10-19, `gateMode: enforce`, no `truncated`); doctor shows every
-peer healthy; the registrations projection answers (empty `candidates` on 2026-10-19); the scratch shows
+declarations as doctor (4305 and 5 on 2026-10-19; 4603 and 5 on 2026-10-26, `gateMode: enforce`, no
+`truncated`, the slowest scan 13149 ms of the 20 s budget); doctor shows every peer healthy; the scratch shows
 single-node and unbound (`target bindings`: `federationConfigured: false`, `gateMode: off`, `scanned: 0`).
 
-Driven 2026-10-19 (T-11363 upkeep) on live max3 (installed d8451409) and scratch `t-11363`:
-`var/wrkq-artifacts/T-11363/05-placement-federation/drive.txt`.
+Driven 2026-10-26 (T-11864 upkeep) on live max3 (installed 02661aeb) and scratch `t-11864`:
+`var/wrkq-artifacts/T-11864/05-placement-federation/drive.txt`.

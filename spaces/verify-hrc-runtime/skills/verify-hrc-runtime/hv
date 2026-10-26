@@ -10,6 +10,7 @@ set -uo pipefail
 # socket path must fit 104 bytes (a root under var/state overflows: "File name too long").
 HV_HOME="${HV_HOME:-/tmp/hv}"
 LIVE_ASPD_SOCKET="${HV_ASPD_SOCKET:-$HOME/praesidium/var/aspd/run/aspd.sock}"
+INSTALLED_LINK="$HOME/.bun/install/hrc-runtime-current"
 
 die() { # error message next
   jq -cn --arg e "$1" --arg m "$2" --arg n "${3:-}" '{error:$e,message:$m,next:$n}'
@@ -42,23 +43,38 @@ cmd_up() {
     die already_up "scratch $name is up (pid $(cat "$d/pid"))" "hv scratch down $name"
   fi
   command -v ghostmux >/dev/null || die no_ghostmux "ghostmux is not on PATH" "install ghostmux"
-  mkdir -p "$d/run" "$d/state"
+  command -v wrkqadm >/dev/null || die no_wrkqadm "wrkqadm is not on PATH" "install wrkq"
+  local bun_bin installed
+  bun_bin="$(command -v bun)" || die no_bun "bun is not on PATH" "install bun"
+  installed="$(cd "$INSTALLED_LINK" 2>/dev/null && pwd -P)" || die no_release "$INSTALLED_LINK does not resolve" "ls ~/.bun/install"
+  [ -f "$installed/packages/hrc-cli/src/cli.ts" ] || die no_release "$installed has no packages/hrc-cli/src/cli.ts" "ls $installed"
+  mkdir -p "$d/run" "$d/state" "$d/wrkq"
   rm -f "$d/pid" "$d/exit"
   date -u +%Y-%m-%dT%H:%M:%SZ > "$d/up_at"
-  # The launcher sets only what an isolated daemon needs. It omits the live
-  # plist's HRC_ACP_WEBHOOK_URL (would post events to the live ACP),
-  # HRC_EVENT_INGEST_TCP_PORT (port clash with the live daemon) and node identity.
+  # A daemon whose package sits in a release under hrc-runtime-releases reports mode atomic and
+  # prunes that directory at start: a scratch run from the installed tree deleted production's
+  # running release on 2026-10-26 (04:50Z, EN-36056). Run a copy outside it, which reports unmanaged.
+  rm -rf "$d/release"
+  cp -R "$installed" "$d/release" || die copy_failed "cp -R $installed $d/release failed" "df -h $HV_HOME"
+  # Its own wrkq store, so nothing the scratch or its seats do reaches the live ledger.
+  rm -f "$d/wrkq/wrkq.db"
+  wrkqadm migrate --db "$d/wrkq/wrkq.db" >/dev/null 2>&1 || die wrkq_failed "wrkqadm migrate --db $d/wrkq/wrkq.db failed" "wrkqadm migrate --help"
+  # The launcher drops every harness, seat, tmux, HRC, ASP and wrkq variable it inherits, then sets
+  # only what an isolated daemon needs. It omits the live plist's HRC_ACP_WEBHOOK_URL (would post
+  # events to the live ACP), HRC_EVENT_INGEST_TCP_PORT (port clash with the live daemon) and node
+  # identity.
   cat > "$d/launch.sh" <<SH
 #!/bin/sh
 cd "$d"
+for v in \$(env | cut -d= -f1 | grep -E '^(HARNESS|TMUX|HRC_|AGENT|ASP_|CLAUDE|CODEX|WRKQ)[A-Za-z0-9_]*\$'); do unset "\$v" 2>/dev/null; done
 export HRC_RUNTIME_DIR="$d/run" HRC_STATE_DIR="$d/state"
-export ASP_HOME="\${ASP_HOME:-$HOME/praesidium/var/spaces-repo}"
+export ASP_HOME="$HOME/praesidium/var/spaces-repo"
 export HRC_ASPD_SOCKET="$LIVE_ASPD_SOCKET"
+export HRC_WRKQ_DB="$d/wrkq/wrkq.db" WRKQ_DB="$d/wrkq/wrkq.db"
 export HRC_HEADLESS_CODEX_BROKER_ENABLED=1 HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED=1 HRC_BROKER_DURABLE_IPC_ENABLED=1
 export HRC_CODEX_CLI_TMUX_BROKER_ENABLED=0 HRC_MAIL_KICKER_ENABLED=0
-unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CODEX_SANDBOX
 echo \$\$ > "$d/pid"
-exec hrc server serve >> "$d/serve.log" 2>&1
+exec "$bun_bin" "$d/release/packages/hrc-cli/src/cli.ts" server serve >> "$d/serve.log" 2>&1
 SH
   chmod +x "$d/launch.sh"
   local surface
@@ -78,9 +94,16 @@ SH
     sleep 0.5
   done
   [ -n "$ok" ] || die not_ready "scratch $name did not answer status in 30 s; read $d/serve.log" "hv scratch down $name"
-  with_env "$name" hrc server status --json | jq -c --arg n "$name" --arg root "$d" \
+  local status
+  status="$(with_env "$name" hrc server status --json)"
+  if [ "$(printf '%s' "$status" | jq -r '.release.mode')" = "atomic" ]; then
+    cmd_down "$name" >/dev/null
+    die atomic_release "scratch $name reported release.mode atomic; stopped it before it could prune" "hv scratch up --name $name"
+  fi
+  printf '%s' "$status" | jq -c --arg n "$name" --arg root "$d" \
     --arg surface "$(cat "$d/surface")" --arg pid "$(cat "$d/pid" 2>/dev/null)" \
-    '{name:$n, root:$root, pid:($pid|tonumber? // null), surface:$surface, socket:.api.socketPath, stateRoot:.api.stateRoot, sourceCommit:.release.hrcBuild.sourceCommit, runningEqualsInstalled:.release.runningEqualsInstalled}'
+    --argjson manifest "$(jq -c '{releaseId, sourceCommit: .hrcBuild.sourceCommit}' "$d/release/praesidium-release.json")" \
+    '{name:$n, root:$root, pid:($pid|tonumber? // null), surface:$surface, socket:.api.socketPath, stateRoot:.api.stateRoot, releaseMode:.release.mode, copyOf:$manifest.releaseId, sourceCommit:$manifest.sourceCommit}'
 }
 
 cmd_down() {
@@ -104,7 +127,7 @@ cmd_down() {
   fi
   if [ -n "$dry" ]; then
     jq -cn --arg n "$name" --arg root "$d" --arg pid "$pid" --arg s "$surface" --argjson rt "$runtimes" \
-      '{name:$n, dry_run:true, would_terminate:$rt, would_stop_pid:($pid|tonumber? // null), would_kill_surface:$s, would_remove:[$root+"/run",$root+"/state"]}'
+      '{name:$n, dry_run:true, would_terminate:$rt, would_stop_pid:($pid|tonumber? // null), would_kill_surface:$s, would_remove:[$root+"/run",$root+"/state",$root+"/release",$root+"/wrkq"]}'
     return 0
   fi
   local rt
@@ -117,7 +140,7 @@ cmd_down() {
     pid_alive "$pid" && kill -KILL "$pid" 2>/dev/null
   fi
   [ -n "$surface" ] && ghostmux kill-surface -t "$surface" --force >/dev/null 2>&1
-  rm -rf "$d/run" "$d/state" "$d/pid" "$d/surface"
+  rm -rf "$d/run" "$d/state" "$d/release" "$d/wrkq" "$d/pid" "$d/surface"
   jq -cn --arg n "$name" --argjson rt "$runtimes" --arg pid "$pid" \
     '{name:$n, terminated:$rt, stopped_pid:($pid|tonumber? // null), removed:true, kept:["serve.log","launch.sh","up_at"]}'
 }

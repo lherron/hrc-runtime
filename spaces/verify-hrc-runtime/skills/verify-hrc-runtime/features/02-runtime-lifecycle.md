@@ -2,9 +2,10 @@
 
 Births, reads and ends a managed runtime for a scope, and carries its conversation across ends. Code:
 `packages/hrc-cli/src/cli/handlers-scope-start.ts`, `handlers-scope-run.ts`, `handlers-runtime.ts`,
-`handlers-runtime-inspect.ts`, `handlers-session.ts`, `handlers-control.ts` (send, peek, summon), `handlers-restart.ts`;
-server `runtime-start-handlers.ts`, `runtime-control-handlers.ts`, `runtime-list-handlers.ts`,
-`runtime-inspect-handlers.ts`, `session-resume-continuation.ts`, `session-restart.ts`. Docs: `docs/cli-surface.md` (run/start/attach),
+`handlers-runtime-inspect.ts`, `handlers-session.ts`, `handlers-restart.ts`, and
+`packages/hrc-cli/src/target/live-commands.ts` (send, peek, summon); server `runtime-start-handlers.ts`,
+`runtime-control-handlers.ts`, `runtime-list-handlers.ts`, `runtime-inspect-handlers.ts`, `selector-message-handlers/selector-input.ts` (send), `session-resume-continuation.ts`,
+`session-restart.ts`. Docs: `docs/cli-surface.md` (run/start/attach),
 `docs/target-handles.md`.
 
 ## Sub-features
@@ -41,8 +42,11 @@ server `runtime-start-handlers.ts`, `runtime-control-handlers.ts`, `runtime-list
 - `hrc restart <scope> [--force] [--json]` (T-10850, `POST /v1/sessions/restart`): ends the conversation and
   relaunches fresh: archives the host session, births generation+1 with no continuation (`{ok,
   priorHostSessionId, hostSessionId, generation, launch: {status, runtimeId}}`) and terminates the old
-  runtime. A busy or unobservable seat is refused with `ok: false`, `code: runtime_busy`, rc 1, nothing
-  changed; `--force` skips that check (not driven). Not `restartme` (self, after a handoff) and not
+  runtime. A busy, starting or unobservable seat is refused with `ok: false`, `code: runtime_busy`
+  (`seat is turn-active|starting; not restarted`), rc 1, nothing changed; `--force` skips that check (driven
+  2026-10-26). When the inherited intent carries an `initialPrompt`, restart replays it as the new generation's
+  first turn and answers only once that turn finishes (c45b450f; source-read: tabularasa's intent has none, so
+  nothing was replayed). Not `restartme` (self, after a handoff) and not
   `server restart` (the daemon).
 - Not driven here: `start --force-restart|--new-session|--no-viewer|--app-server-viewer|--on-conflict`,
   `hrc run` (interactive; feature 8 covers the attach half), `hrc restartme`, and the continuity writes
@@ -81,6 +85,7 @@ hv run <task> -- hrc monitor transcript <new runtimeId> --tail 6   # the recalle
 hv run <task> -- hrc runtime capture <new runtimeId> | tail -8         # the pane, rc 0
 hv run <task> -- hrc runtime inspect <new runtimeId> --json | jq -c '.hrc | {status, contextReading}'
 hv run <task> -- hrc restart $T --json                                 # generation+1, launch.started
+until hv run <task> -- hrc peek $T --lines 12 | grep -q 'bypass permissions'; do sleep 1; done   # TUI up first (Gotchas, T-11870)
 hv run <task> -- hrc turn $T 'Which single words did you reply with earlier in this conversation? Answer as a comma-separated list, or NONE if there were none. No tools.' --wait final --timeout 3m --json | jq -c '{generation, final: .terminal.finalMessage}'   # NONE
 hv run <task> -- hrc send $T 'Count slowly from 1 to 40, one number per line. No tools.' --json; sleep 3
 hv run <task> -- hrc restart $T --json; echo "rc=$?"                   # runtime_busy, rc 1
@@ -109,8 +114,15 @@ hv run <task> -- hrc restart $T --json; echo "rc=$?"                   # runtime
 - **`send` mints a run.** A submitting send answers `runId` and `status: started`: there is no envelope or
   obligation, but the turn it causes is in `hrc_events`. Still true after e822f2a9 (2026-10-19), which only
   drops the run from turns the broker takes with no HRC dispatch (typed in the pane).
-- **`restart` and `resume` differ by the continuation.** On 2026-10-19 resume's generation 2 recalled `OK,
-  SENT`; restart's generation 3 answered `NONE` to the same question (`T-11363/02-runtime-lifecycle/drive.txt`).
+- **`restart` and `resume` differ by the continuation.** On 2026-10-19 and 2026-10-26 resume's generation 2
+  recalled `OK, SENT`; a restarted generation answered `NONE` to the same question
+  (`T-11864/02-runtime-lifecycle/drive.txt`).
+- **A turn sent the instant `restart` returns can wedge the new seat (product gap T-11870).** `restart` answers
+  once the broker binds; a turn 0.2 s later was admitted (`idle -> starting`, `submission-steer-admitted`) but
+  never typed into the still-booting claude TUI. The seat stayed `starting` for more than 4 min
+  (`broker.seat.stalled`, then `broker.dispatch_authority.disagreement`), `turn --wait final` timed out, and every
+  later `restart` refused `runtime_busy: seat is starting` until `--force` (2 of 3 back-to-back tries on
+  2026-10-26; waiting for the TUI's status line first passed). Wait for the pane before the post-restart turn.
 - `hrc runtime capture` refused every broker-hosted runtime on 5bdb6c4e (`expected.windowName: main`,
   `observed: tui`; T-10353). d24cd877 ended it: rc 0 with the pane on 2026-10-19.
 - **`hrc start --json` answers `transport: headless`** at `stage: accepted`; the runtime is `tmux` once it is
@@ -126,9 +138,10 @@ hv run <task> -- hrc restart $T --json; echo "rc=$?"                   # runtime
 The start's runtime reaches `ready`, `peek` shows the model's one-word answer, `inspect` returns both authority
 views, `terminate` answers `ok: true` and `runtime list` empties, and `resume` births a new generation whose
 transcript recalls every word the earlier turns produced (`OK, SENT` after a start and a send on
-2026-10-05 and 2026-10-19; the `TWO` turn of feature 3 now runs on the resumed generation); `restart` births
-generation+1 that recalls nothing (`NONE`) and refuses a busy seat with `runtime_busy`.
+2026-10-05, 2026-10-19 and 2026-10-26; the `TWO` turn of feature 3 now runs on the resumed generation); `restart`
+births generation+1 that recalls nothing (`NONE`) and refuses a busy seat with `runtime_busy`.
 
-Driven 2026-10-19 (T-11363 upkeep) on installed d8451409, aspd 25445c15, scratch `t-11363` (resume recalled
-`OK, SENT`; restart gen 3 answered `NONE`): `var/wrkq-artifacts/T-11363/02-runtime-lifecycle/drive.txt`,
-`evidence/t-11363/`.
+Driven 2026-10-26 (T-11864 upkeep) on installed 02661aeb, aspd 15dbde97, claude 2.1.310, scratch `t-11864`
+(resume recalled `OK, SENT`; restarted gen 4 answered `NONE`; gens 3 and 5 wedged, T-11870; `runtime_busy` on a
+`starting` and a `turn-active` seat): `var/wrkq-artifacts/T-11864/02-runtime-lifecycle/drive.txt`,
+`evidence/t-11864/`.
