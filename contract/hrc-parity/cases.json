@@ -257,6 +257,14 @@
         "recurring-jobs-at-boot-and-cadence"
       ],
       "requiredInP0": false
+    },
+    "n2-recovery": {
+      "assertionIds": [
+        "owed-prompt-delivered-once",
+        "lost-continuations-fail-positively",
+        "others-untouched"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [
@@ -1285,8 +1293,8 @@
     "startup:packages/hrc-server/src/index.ts:27323:27550": "n2-restart",
     "startup:packages/hrc-server/src/index.ts:27323:27735": "n2-restart",
     "startup:packages/hrc-server/src/index.ts:25548:25573": "GAP:N2",
-    "startup:packages/hrc-server/src/index.ts:28539:28826": "GAP:N2",
-    "startup:packages/hrc-server/src/index.ts:28583:28622": "GAP:N2",
+    "startup:packages/hrc-server/src/index.ts:28539:28826": "n2-recovery",
+    "startup:packages/hrc-server/src/index.ts:28583:28622": "n2-recovery",
     "startup:packages/hrc-server/src/index.ts:25876:25905": "GAP:N4",
     "startup:packages/hrc-server/src/index.ts:21146:21184": "GAP:N4",
     "startup:packages/hrc-server/src/index.ts:25945:25982": "GAP:N4",
@@ -1419,8 +1427,8 @@
     "startup:packages/hrc-server/src/index.ts:27323:27550": "N2 broker reattach (broker::reattach) at boot; gate-2 restart proves reattach with no duplicates.",
     "startup:packages/hrc-server/src/index.ts:27323:27735": "N2 broker reattach (broker::reattach) at boot; gate-2 restart proves reattach with no duplicates.",
     "startup:packages/hrc-server/src/index.ts:25548:25573": "N2 broker lease GC (renderer control socket and orphan lease sweep) not yet native.",
-    "startup:packages/hrc-server/src/index.ts:28539:28826": "N2 cold-boot input continuation recovery not yet native.",
-    "startup:packages/hrc-server/src/index.ts:28583:28622": "N2 cold-boot input continuation recovery not yet native.",
+    "startup:packages/hrc-server/src/index.ts:28539:28826": "N2 cold-boot input recovery after reattach (recovery::start); n2-recovery plants Bun-shaped accepted runs and compares both owners.",
+    "startup:packages/hrc-server/src/index.ts:28583:28622": "N2 cold-boot input recovery after reattach (recovery::start); n2-recovery plants Bun-shaped accepted runs and compares both owners.",
     "startup:packages/hrc-server/src/index.ts:25876:25905": "First-turn watchdog evaluator is N4 diagnostics (mable 2026-10-26); N2 keeps arming first_turn_watch rows.",
     "startup:packages/hrc-server/src/index.ts:21146:21184": "Federation services are N4.",
     "startup:packages/hrc-server/src/index.ts:25945:25982": "Foreign-home shadow teardown is N4 federation.",
