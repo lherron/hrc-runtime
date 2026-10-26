@@ -318,7 +318,9 @@ async fn steps(
         server,
         trace.session["scopeRef"].as_str().unwrap_or(""),
         "resolve-session",
-    ) {
+    )
+    .await
+    {
         trace.push("refused");
         return Err(error);
     }

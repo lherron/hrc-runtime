@@ -225,14 +225,15 @@ async fn run(server: &Shared, body: &Value) -> Result<Response, ApiError> {
     }
     let target = if let Some(session) = runtime_views::find_target_session(server, reference)? {
         Target::Session(session)
-    } else if request.create_if_missing
-        && request.runtime_intent.is_some()
-        && !codex_owned(reference)
+    } else if let Some(intent) = request
+        .runtime_intent
+        .as_ref()
+        .filter(|_| request.create_if_missing && !codex_owned(reference))
     {
         let (scope, lane) = runtime_views::parse_target_ref(reference)?;
         let owned = server.clone();
         let reference = reference.to_owned();
-        let intent = request.runtime_intent.as_ref().unwrap().clone();
+        let intent = intent.clone();
         Target::Lazy {
             scope_ref: scope.into(),
             lane_ref: lane.into(),
