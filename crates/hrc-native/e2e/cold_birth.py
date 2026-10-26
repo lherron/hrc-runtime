@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -38,6 +39,11 @@ def main():
     args.artifacts.mkdir(parents=True, exist_ok=True)
     release = args.bun_release.resolve()
     assert release.parent.name != 'hrc-runtime-releases'
+    bin_dir = root / 'bin'
+    bin_dir.mkdir()
+    cli = release / 'packages/hrc-cli/bin/hrc.js'
+    assert cli.is_file()
+    (bin_dir / 'hrc').symlink_to(cli)
     project = root / 'n1-t11818'
     project.mkdir()
     (root / 'run').mkdir()
@@ -45,7 +51,8 @@ def main():
     config = root / 'federation.json'
     config.write_text(json.dumps({'nodeId': 'n1-t11818', 'peers': {}}))
     config.chmod(0o600)
-    env = dict(os.environ)
+    env = dict(os.environ, PATH=str(bin_dir)+os.pathsep+os.environ.get('PATH',''))
+    assert Path(shutil.which('hrc',path=env['PATH'])).resolve()==cli.resolve()
     for k in ('HRC_SESSION_REF', 'HRC_RUNTIME_ID', 'HRC_RUN_ID', 'HRC_HOST_SESSION_ID',
               'HRC_EVENT_FORWARD_URL', 'HRC_EVENT_INGEST_TCP_PORT', 'HRC_EVENT_FORWARD_SOURCE_REF',
               'WRKQ_DB_PATH', 'WRKQ_DB_PATH_FILE', 'WRKQD_NODE_TOKENS', 'WRKQD_NODE_TOKENS_FILE', 'WRKQD_UNIX'):
@@ -61,7 +68,7 @@ def main():
                HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED='1')
     db_path = root / 'state/state.sqlite'
     scope = 'agent:tabularasa:project:n1-t11818:task:native-' + str(time.time_ns())
-    steps, gates, owners, logs = [], {}, [], []
+    steps, gates, owners, logs = [{'name':'named-bun-cli','resolvedPath':str(cli.resolve()),'releasePath':str(release)}], {}, [], []
     def command(name, argv, timeout=120):
         run = subprocess.run([str(v) for v in argv], env=env, cwd=project,
                              capture_output=True, text=True, timeout=timeout)

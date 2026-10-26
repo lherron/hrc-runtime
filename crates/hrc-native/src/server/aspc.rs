@@ -630,3 +630,32 @@ pub async fn resolve_placement(body: Value) -> Result<Value, ApiError> {
     }
     Ok(result)
 }
+
+pub fn placement_bindings(
+    server: &super::Server,
+    query: &std::collections::HashMap<String, String>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    if query.get("home").map(String::as_str) != Some("self")
+        || query.get("state").map(String::as_str) != Some("active")
+    {
+        return Err(ApiError::bad(
+            "only home=self&state=active is served by this route",
+            Some(json!({"field":"home"})),
+        ));
+    }
+    let local = super::local_node_id();
+    let db = server.store.lock().unwrap();
+    // Bun also returns an empty enumeration for an absent pre-federation
+    // ledger or a repository read error. This route never creates the table.
+    let bindings = db.sqlite.prepare(
+        "SELECT scope_ref,home_node_id,state FROM placement_ledger WHERE state='active' AND home_node_id=? ORDER BY scope_ref",
+    ).and_then(|mut stmt| {
+        stmt.query_map([&local], |row| Ok(json!({
+            "scopeRef":row.get::<_,String>(0)?,
+            "homeNodeId":row.get::<_,String>(1)?,
+            "state":row.get::<_,String>(2)?,
+        })))?.collect::<Result<Vec<_>,_>>()
+    }).unwrap_or_default();
+    Ok(axum::Json(json!({"localNodeId":local,"bindings":bindings})).into_response())
+}

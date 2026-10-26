@@ -90,9 +90,27 @@ def main():
             if lane=='main':host=created['body']['hostSessionId']
         written=call('PATCH','/v1/sessions/metadata',{'scopeRef':scope,'set':{'title':'N1 index title'}})
         assert written['status']==200,written
+        local_node=call('GET','/v1/status')['body']['node']['nodeId']
         down()
+        fixture = """
+import {openHrcDatabase} from PATH_DATABASE;
+import {createPlacementLedgerRepository} from PATH_LEDGER;
+const db=openHrcDatabase(process.argv[1]);
+const ledger=createPlacementLedgerRepository(db.sqlite);
+const base=process.argv[2],local=process.argv[3],at='2026-10-25T12:00:00.000Z';
+for (const [suffix,node] of [['local-a',local],['local-b',local],['remote','n1-remote'],['retired',local]]) {
+  ledger.installActive({scopeRef:base+'-'+suffix,homeNodeId:node,updatedAt:at});
+}
+ledger.retire({scopeRef:base+'-retired',expectedHomeNodeId:local,reason:'n1 scratch fixture',retiredAt:at});
+db.close();
+""".replace('PATH_DATABASE',json.dumps(str(release/'packages/hrc-store-sqlite/src/database.ts'))).replace('PATH_LEDGER',json.dumps(str(release/'packages/hrc-store-sqlite/src/federation-repositories.ts')))
+        subprocess.run(['bun','-e',fixture,str(dbpath),scope,local_node],env=env,check=True,capture_output=True)
         with sqlite3.connect(dbpath) as source, sqlite3.connect(root/'snapshot.sqlite') as target:source.backup(target)
         cases = [
+            ('placement-bindings','GET','/v1/placement/bindings?home=self&state=active',None),
+            ('placement-bindings-missing','GET','/v1/placement/bindings',None),
+            ('placement-bindings-wrong-state','GET','/v1/placement/bindings?home=self&state=retired',None),
+            ('placement-bindings-untrimmed','GET','/v1/placement/bindings?home=%20self&state=active',None),
             ('index-page','GET','/v1/sessions/page?limit=1',None),
             ('index-page-all','GET','/v1/sessions/page',None),
             ('index-page-filter','GET',query('/v1/sessions/page',agentId='tabularasa',projectId='n1-t11818',effectiveStatus='inactive',executionMode='nonInteractive',q='n1-t11818'),None),
@@ -129,7 +147,7 @@ def main():
                 before_events=metadata_events()
                 value=call(method,path,body)
                 observed.append({'case':name,'method':method,'path':path,'request':body,'response':value,'before':before,'after':time.time(),'metadataEvents':metadata_events()-before_events,'databaseMaxHrcSeq':highwater})
-            first=observed[0]['response']['body']
+            first=next(row for row in observed if row['case']=='index-page')['response']['body']
             if isinstance(first,dict) and 'nextCursor' in first:
                 numeric_cursor=json.loads(base64.urlsafe_b64decode(first['nextCursor']+'='*(-len(first['nextCursor'])%4)))
                 numeric_cursor['v']=5.0

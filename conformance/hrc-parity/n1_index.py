@@ -3,7 +3,7 @@ import datetime
 import json
 from pathlib import Path
 
-CASES = ('index-page','index-page-all','index-page-filter','index-page-empty',
+CASES = ('placement-bindings','placement-bindings-missing','placement-bindings-wrong-state','placement-bindings-untrimmed','index-page','index-page-all','index-page-filter','index-page-empty',
          'index-page-lossy','index-page-lane','index-page-limit','index-page-limit-fraction',
          'index-page-limit-overflow','index-page-status','index-page-mode',
          'index-page-nodes','index-page-nodes-order','index-page-duplicate-limit','index-cursor-number','index-page-cursor','index-facets','index-facets-filter',
@@ -38,6 +38,8 @@ def compare(args, checks):
             next_page=by_name['index-next']['response']['body']
             positive=(len(full.get('items',[]))==2 and any(i.get('title')=='N1 index title' for i in full['items']) and facets.get('total')==2 and len(next_page.get('items',[]))==1 and 'nextCursor' not in next_page)
             positive=positive and by_name['index-facets-agent']['response']['body'].get('byAgentId')=={'tabularasa':2} and by_name['index-facets-effective']['response']['body'].get('byEffectiveStatus')=={'inactive':2} and by_name['index-facets-execution']['response']['body'].get('byExecutionMode')=={'nonInteractive':2}
+            binding=by_name['placement-bindings']['response']['body']
+            positive=positive and len(binding.get('bindings',[]))==2 and all(row['state']=='active' and row['homeNodeId']==binding['localNodeId'] and row['scopeRef'].endswith(('-local-a','-local-b')) for row in binding['bindings'])
             checks.append({'id':kind+':positive-controls','pass':positive,'reason':'nonempty pages, title, cursor termination and excluded-dimension facets must be exercised','failureCode':1})
         subjects[kind] = by_name
     cases = []

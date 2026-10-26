@@ -154,6 +154,33 @@ pub async fn serve() -> Result<()> {
     drop(owner);
     Ok(())
 }
+fn local_node_id() -> String {
+    let mut bytes = [0u8; 256];
+    // gethostname has no filesystem side effects and matches node:os.hostname.
+    if unsafe { libc::gethostname(bytes.as_mut_ptr().cast(), bytes.len()) } != 0 {
+        return "unknown-node".into();
+    }
+    let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+    let raw = String::from_utf8_lossy(&bytes[..end]);
+    let short = raw.trim().split('.').next().unwrap_or("").to_lowercase();
+    let result: String = short
+        .chars()
+        .take(64)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "._-".contains(c) {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if result.is_empty() || result == "local" {
+        "unknown-node".into()
+    } else {
+        result
+    }
+}
+
 async fn shutdown() {
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("install SIGTERM handler");
@@ -296,6 +323,7 @@ fn implemented(method: &Method, path: &str) -> bool {
             "/v1/sessions/metadata",
             "/v1/runtimes",
             "/v1/runtimes/live-refs",
+            "/v1/placement/bindings",
         ]
         .contains(&path)
             || path.starts_with("/v1/sessions/by-host/")))
@@ -337,6 +365,9 @@ fn handle(
     body: &[u8],
     headers: &HeaderMap,
 ) -> std::result::Result<Response, ApiError> {
+    if *method == Method::GET && path == "/v1/placement/bindings" {
+        return aspc::placement_bindings(server, query);
+    }
     if *method == Method::GET && ["/v1/sessions/page", "/v1/sessions/facets"].contains(&path) {
         return index::handle(server, path, query);
     }

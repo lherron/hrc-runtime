@@ -16,32 +16,6 @@ fn bad(message: &str, field: &str) -> ApiError {
 fn optional<'a>(query: &'a HashMap<String, String>, field: &str) -> Option<&'a str> {
     query.get(field).map(|v| v.trim()).filter(|v| !v.is_empty())
 }
-fn node_id() -> String {
-    let mut bytes = [0u8; 256];
-    // gethostname has no filesystem side effects and matches node:os.hostname.
-    if unsafe { libc::gethostname(bytes.as_mut_ptr().cast(), bytes.len()) } != 0 {
-        return "unknown-node".into();
-    }
-    let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-    let raw = String::from_utf8_lossy(&bytes[..end]);
-    let short = raw.trim().split('.').next().unwrap_or("").to_lowercase();
-    let result: String = short
-        .chars()
-        .take(64)
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || "._-".contains(c) {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    if result.is_empty() || result == "local" {
-        "unknown-node".into()
-    } else {
-        result
-    }
-}
 
 pub fn handle(
     server: &Server,
@@ -49,7 +23,7 @@ pub fn handle(
     query: &HashMap<String, String>,
 ) -> Result<Response, ApiError> {
     let page = path == "/v1/sessions/page";
-    let local = node_id();
+    let local = super::local_node_id();
     let known = vec![local.clone()];
     let mut filters = HashMap::new();
     for field in [
