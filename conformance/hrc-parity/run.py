@@ -93,7 +93,7 @@ def digest(path):
 
 def write(path, data):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(data, indent=2, sort_keys=True) + '\n')
+    Path(path).write_text(json.dumps(data, indent=2) + '\n')
 
 
 def check(checks, id, passed, reason, code=1):
@@ -533,6 +533,21 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n2-participant':
         from n2_participant import compare as compare_participant
         return compare_participant(args, checks)
+    order = None
+    if getattr(args, 'suite', '').startswith(('n1-', 'n2-')):
+        from key_order import compare_suite
+        order = compare_suite(args, checks)
+        # Keep the wire findings even if a pre-existing value gate raises on
+        # a missing driver artifact after an earlier behavioral failure.
+        write(Path(args.out) / 'key-order.json', order)
+    data = compare_values(args, checks)
+    if order is not None:
+        data['keyOrder'] = order
+        data['behaviorQualified'] = data.get('behaviorQualified', False) and all(c['pass'] for c in checks)
+    return data
+
+
+def compare_values(args, checks):
     if getattr(args, 'suite', '').startswith('n5-'):
         from n5_suites import compare as compare_n5
         return compare_n5(args, checks)

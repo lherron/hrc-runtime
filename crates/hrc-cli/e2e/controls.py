@@ -10,6 +10,8 @@ import argparse, json, os, shutil, subprocess, sys, uuid
 from pathlib import Path
 from metrics_isolation import isolated_suite
 from runtime import normalize, ROOT
+sys.path.insert(0, str(ROOT / 'conformance/hrc-parity'))
+from key_order import cli_orders
 sys.path.insert(0, str(ROOT / 'crates/hrc-native/e2e'))
 from foundation import UnixHTTP
 
@@ -98,6 +100,7 @@ def main():
             raw_records = []
             effects = []
             interrupts = []
+            interrupts_raw = []
             for label, cmd in [('oracle', [bun, str(a.oracle.resolve())]), ('subject', [str(a.binary.resolve())])]:
                 intent = dict(seat['intent'])
                 intent.pop('initialPrompt', None)
@@ -111,6 +114,7 @@ def main():
                     interrupt = subprocess.run(cmd + ['runtime', 'interrupt', own], env=env if label == 'oracle' else dict(env, PATH=str(a.artifacts / 'no-bun')), capture_output=True, text=True, timeout=30)
                     (a.artifacts / ('interrupt-' + label + '-' + own + '.json')).write_text(json.dumps(dict(exit=interrupt.returncode, stdout=interrupt.stdout, stderr=interrupt.stderr), indent=2))
                     assert interrupt.returncode == 0, interrupt.stderr
+                    interrupts_raw.append(dict(exit=interrupt.returncode, stdout=interrupt.stdout, stderr=interrupt.stderr))
                     assert json.loads(interrupt.stdout) == dict(ok=True, hostSessionId=hsid, runtimeId=own)
                     interrupts.append(dict(exit=interrupt.returncode, stdout=json.dumps(dict(json.loads(interrupt.stdout), runtimeId='<owned-runtime>', hostSessionId='<owned-host>'), sort_keys=True), stderr=interrupt.stderr))
                     c = subprocess.run(cmd + argv, env=env if label == 'oracle' else dict(env, PATH=str(a.artifacts / 'no-bun')), capture_output=True, text=True, timeout=60)
@@ -134,8 +138,12 @@ def main():
                     final = call('POST', '/v1/runtimes/inspect', {'runtimeId': own})
                     assert final['status'] == 'terminated'
             if not flags:
-                results.append(dict(argv=['runtime', 'interrupt', '<fresh-owned-runtime>'], oracle=interrupts[0], subject=interrupts[1], **{'pass': interrupts[0] == interrupts[1]}))
+                results.append(dict(argv=['runtime', 'interrupt', '<fresh-owned-runtime>'], oracle=interrupts[0], subject=interrupts[1], oracleRaw=interrupts_raw[0], subjectRaw=interrupts_raw[1], **{'pass': interrupts[0] == interrupts[1]}))
             results.append(dict(argv=['runtime', 'terminate', '<fresh-owned-runtime>'] + flags, oracle=records[0], subject=records[1], oracleRaw=raw_records[0], subjectRaw=raw_records[1], effects=effects, **{'pass': records[0] == records[1]}))
+    for result in results:
+        result['keyOrder'] = cli_orders(result.get('oracleRaw', result['oracle']),
+                                        result.get('subjectRaw', result['subject']))
+        result['pass'] = result['pass'] and result['keyOrder']['pass']
     report = dict(cases=results, **{'pass': sum((r['pass'] for r in results)), 'fail': sum((not r['pass'] for r in results))})
     (a.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))

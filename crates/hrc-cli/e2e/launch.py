@@ -12,9 +12,12 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 from metrics_isolation import isolated_suite
 from runtime import normalize as normalize_runtime, ROOT
+sys.path.insert(0, str(ROOT / 'conformance/hrc-parity'))
+from key_order import cli_orders
 
 # These fields incorporate the daemon preview's fresh dry-run identities.
 # Every preview is compared to TWO Bun invocations before this normalization
@@ -132,6 +135,10 @@ def main():
             c = subprocess.run(command + argv, env=child_env, cwd=ROOT, capture_output=True, text=True, timeout=90)
             observed.append(dict(exit=c.returncode, stdout=c.stdout, stderr=c.stderr))
         results.append(dict(argv=argv, oracle=observed[0], oracleRepeat=observed[1], subject=observed[2], oracleStable=normalize(observed[0]) == normalize(observed[1]), **{'pass': normalize(observed[0]) == normalize(observed[1]) == normalize(observed[2])}))
+        results[-1]['keyOrder'] = cli_orders(observed[0], observed[2])
+        results[-1]['oracleRepeatKeyOrder'] = cli_orders(observed[0], observed[1])
+        results[-1]['pass'] = (results[-1]['pass'] and results[-1]['keyOrder']['pass']
+                               and results[-1]['oracleRepeatKeyOrder']['pass'])
     after = structure()
     assert before == after, 'previews must not create or rotate runtime/session generations'
     report = dict(before=before, after=after, cases=results, **{'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results)})
