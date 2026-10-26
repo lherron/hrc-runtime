@@ -11,6 +11,7 @@ mod evidence;
 mod federation;
 mod front;
 mod ledger;
+mod lifecycle;
 mod mail;
 mod messages;
 mod streams;
@@ -80,6 +81,7 @@ struct Server {
     reaped: Mutex<HashSet<String>>,
     /// Bumped after every committed ledger write; followers re-query on change.
     ledger: tokio::sync::watch::Sender<u64>,
+    lifecycle: lifecycle::State,
     /// Runtimes with a seat probe in flight (probeSeatInBackground).
     probing: Mutex<HashSet<String>>,
     /// runtime -> literal text buffered until an Enter (pendingBrokerLiteralInputs).
@@ -293,6 +295,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         controller: controller::State::default(),
         reaped: Mutex::new(HashSet::new()),
         ledger: tokio::sync::watch::Sender::new(0),
+        lifecycle: lifecycle::State::new(&runtime, !front),
         probing: Mutex::new(HashSet::new()),
         literal: Mutex::new(HashMap::new()),
         attached: Mutex::new(HashMap::new()),
@@ -319,12 +322,27 @@ pub async fn serve(role: front::Role) -> Result<()> {
     // The front controls no brokers; Bun behind it owns execution.
     if !server.front {
         publication::start(&server)?;
+        lifecycle::credentials::start(&server)?;
         broker::reattach(&server).await?;
         recovery::start(&server);
         participants::resume(&server)?;
         sweeps::start(&server);
         reconcile::start(&server);
         sweeps::start_retention(&server);
+        let prior = server.lifecycle.admission.snapshot();
+        if prior["state"] == "closed" {
+            server
+                .lifecycle
+                .admission
+                .reopen(None)
+                .map_err(|e| anyhow::anyhow!(e.message))?;
+            stderr_json(
+                "info",
+                "server",
+                "server.turn_admission.reopened_after_warmup",
+                json!({"operationId":prior["operationId"],"requestedBy":prior["requestedBy"],"closedAt":prior["closedAt"]}),
+            );
+        }
     }
     let role = if server.front { "front" } else { "native" };
     let bun_socket = server.bun_passthrough.clone();
