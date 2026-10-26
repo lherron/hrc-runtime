@@ -120,6 +120,8 @@ pub async fn serve(role: front::Role) -> Result<()> {
         recovery::start(&server);
         participants::resume(&server)?;
         sweeps::start(&server);
+        // The bridge's cursor precedes the watchdog's boot pass.
+        acp_bridge::start(&server);
         first_turn::start(&server);
         reconcile::start(&server);
         startup::start_gc(&server);

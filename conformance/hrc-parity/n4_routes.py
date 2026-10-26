@@ -190,15 +190,16 @@ def compare_ops(args, checks):
 # First-turn watchdog: each owner trips the same armed rows on its own copy of
 # one frozen store. The e2e masks timestamps, the scratch root and event seqs
 # (by ordinal among the watchdog events); everything else compares in order.
-WATCHDOG_SECTIONS = ('events', 'watches', 'runs', 'artifacts', 'bundles')
+WATCHDOG_SECTIONS = ('events', 'watches', 'runs', 'artifacts', 'bundles', 'webhook', 'emissions')
 
 
 def compare_watchdog(args, checks):
     a = json.loads((Path(args.baseline) / 'watchdog.json').read_text())
     b = json.loads((Path(args.candidate) / 'watchdog.json').read_text())
     checks.append({'id': 'case-matrix', 'pass': len(a['events']) == 8 and len(a['bundles']) == 4
-                   and set(a) == set(WATCHDOG_SECTIONS) == set(b),
-                   'reason': 'four trips with diagnostics, three rows left armed, on both owners', 'failureCode': 1})
+                   and len(a['webhook']) == 8 and set(a) == set(WATCHDOG_SECTIONS) == set(b),
+                   'reason': 'four trips with diagnostics and bridged (each retried once), three rows left '
+                             'armed, on both owners', 'failureCode': 1})
     cases = []
     for name in WATCHDOG_SECTIONS:
         passed = canonical(a[name]) == canonical(b[name])

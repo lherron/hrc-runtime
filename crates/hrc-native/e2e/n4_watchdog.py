@@ -15,19 +15,27 @@ exactly as the other does. Cases:
   disarmed      disarmed row: untouched
   started       first turn already observed: untouched
 
+The ACP event bridge is enabled on both owners (loopback webhook, declared
+co-resident node): every trip is posted, the webhook refuses each event's
+first attempt with 503, so delivery must retry once; the open run carries a
+dispatch origin that the envelope must name.
+
 Failure modes: a row tripped early or twice, a trip without its stamp, a run
 re-terminated, a bundle field missing instead of named in failures, a prompt
 written in clear, a pointer published before its directory, and event or
-manifest key-order drift.
+manifest key-order drift, a bridged event missing or posted without its
+retry, and an emissions ledger that disagrees.
 """
 import argparse
 import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import re
 import shutil
 import sqlite3
 import subprocess
+import threading
 import time
 
 from n3_scratch import Scratch
@@ -35,6 +43,22 @@ from n3_scratch import Scratch
 PROJECT = 'n4-t11872w'
 CASES = ['open-run', 'completed-run', 'no-runtime', 'rotated', 'future', 'disarmed', 'started']
 TRIPPED = 4
+POSTS = []
+
+
+class Hook(BaseHTTPRequestHandler):
+    """Refuse each event's first delivery with 503, accept the retry."""
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers['content-length'])))
+        seen = sum(1 for p in POSTS if p['body']['event_id'] == body['event_id'])
+        POSTS.append({'path': self.path, 'contentType': self.headers['content-type'], 'attempt': seen + 1,
+                      'body': body})
+        self.send_response(503 if seen == 0 else 200)
+        self.send_header('content-length', '0')
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
 PROMPT = 'n4 watchdog priming prompt'
 
 
@@ -74,10 +98,12 @@ def fixtures(db_path, root, tmux):
                            (rt, hsid, scope(case), 'main', 2 if case == 'rotated' else 1, 'tmux', 'claude-code',
                             'anthropic', 'terminated', tmux_json, 0, stamp, stamp))
                 done = case == 'completed-run'
+                origin = ('agent:clod', 'agent', 'EN-n4') if case == 'open-run' else (None, None, None)
                 db.execute('INSERT INTO runs (run_id, host_session_id, runtime_id, scope_ref, lane_ref, generation, '
-                           'transport, status, accepted_at, completed_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                           'transport, status, accepted_at, completed_at, updated_at, origin_actor, origin_kind, '
+                           'origin_causation_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                            (f'run-w-{case}', hsid, rt, scope(case), 'main', 1, 'tmux',
-                            'completed' if done else 'accepted', stamp, stamp if done else None, stamp))
+                            'completed' if done else 'accepted', stamp, stamp if done else None, stamp, *origin))
             if case == 'open-run':
                 db.execute('INSERT INTO broker_invocations (invocation_id, operation_id, runtime_id, run_id, broker_protocol, '
                            'broker_driver, invocation_state, capabilities_json, spec_hash, start_request_hash, '
@@ -111,7 +137,7 @@ def observe(s, root):
 
     def text(v):
         v = v.replace(str(root), '<root>')
-        v = re.sub(r'(diagnostics |first-turn-missing[-/])(\d+)', lambda m: m[1] + seq(int(m[2])), v)
+        v = re.sub(r'(diagnostics |first-turn-missing[-/]|^' + PROJECT + r':)(\d+)', lambda m: m[1] + seq(int(m[2])), v)
         return TS.sub('<ts>', v)
 
     def norm(v, key=None):
@@ -119,8 +145,10 @@ def observe(s, root):
             return {k: norm(x, k) for k, x in v.items()}
         if isinstance(v, list):
             return [norm(x) for x in v]
-        if key in ('tripEventSeq', 'trip_event_seq', 'diagnostics_event_seq', 'hrc_seq'):
+        if key in ('tripEventSeq', 'trip_event_seq', 'diagnostics_event_seq', 'hrc_seq', 'event_seq'):
             return seq(v)
+        if key == 'tripEventId':
+            return seq(int(v))
         return text(v) if isinstance(v, str) else v
 
     out = {'events': [norm({**{k: v for k, v in e.items() if k != 'payload_json'},
@@ -140,6 +168,9 @@ def observe(s, root):
             'pane': (d / 'pane.txt').read_text() if (d / 'pane.txt').exists() else None,
         }
     out['bundles'] = bundles
+    out['webhook'] = norm(sorted(POSTS, key=lambda p: (p['body']['event_seq'], p['attempt'])))
+    out['emissions'] = norm(s.rows('SELECT event_id, scope_ref, event, emitted_at FROM acp_bridge_emissions '
+                                   'ORDER BY scope_ref'))
     return out
 
 
@@ -153,7 +184,10 @@ def main():
     args = p.parse_args()
     s = Scratch(args.scratch_root, args.installed_release, args.aspd_socket, args.binary, args.artifacts,
                 project_id=PROJECT)
-    s.env.update(HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS='1')
+    hook = ThreadingHTTPServer(('127.0.0.1', 0), Hook)
+    threading.Thread(target=hook.serve_forever, daemon=True).start()
+    s.env.update(HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS='1', HRC_ACP_NODE_ID=PROJECT,
+                 HRC_ACP_WEBHOOK_URL=f'http://127.0.0.1:{hook.server_address[1]}/hrc-events')
     sock = s.root / 'run/n4w-tmux.sock'
     out = {}
     try:
@@ -175,17 +209,21 @@ def main():
             shutil.rmtree(s.root / 'run/artifacts', ignore_errors=True)
             with sqlite3.connect(frozen) as src, sqlite3.connect(s.db_path) as dst:
                 src.backup(dst)
+            POSTS.clear()
             proc = s.up(owner, 'watchdog')
             s.wait(lambda: len(s.rows("SELECT 1 FROM hrc_events WHERE event_kind='first_turn_missing.diagnostics'"))
                    >= TRIPPED, timeout=60, what=f'{owner} diagnostics')
-            # Two more evaluation intervals: nothing else may trip.
+            s.wait(lambda: len(POSTS) >= 2 * TRIPPED, timeout=30, what=f'{owner} webhook retries')
+            # Two more evaluation intervals: nothing else may trip or post.
             time.sleep(2.5)
             s.down(proc)
             out[owner] = observe(s, s.root)
             (args.artifacts / owner).mkdir(exist_ok=True)
             (args.artifacts / owner / 'watchdog.json').write_text(json.dumps(out[owner], indent=1) + '\n')
-        print(json.dumps({o: {'events': len(v['events']), 'bundles': len(v['bundles'])} for o, v in out.items()}))
+        print(json.dumps({o: {'events': len(v['events']), 'bundles': len(v['bundles']), 'posts': len(v['webhook'])}
+                          for o, v in out.items()}))
     finally:
+        hook.shutdown()
         subprocess.run(['tmux', '-S', str(sock), 'kill-server'], capture_output=True, timeout=5)
         (args.artifacts / 'steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
         s.cleanup('agent:')

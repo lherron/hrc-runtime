@@ -1,4 +1,5 @@
 mod accounting;
+mod acp_bridge;
 mod aspc;
 mod attached;
 mod broker;
