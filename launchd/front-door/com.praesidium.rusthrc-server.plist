@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- T-11822 front door. Rendered and loaded only by `just front-door-enable`,
+     never by launchd-install: it binds the public hrc.sock, so it may run only
+     while Bun's job listens on __BUN_SOCKET__. -->
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>HRC_RUNTIME_DIR</key>
+		<string>__RUNTIME_DIR__</string>
+		<key>HRC_STATE_DIR</key>
+		<string>__STATE_DIR__</string>
+		<key>LANG</key>
+		<string>en_US.UTF-8</string>
+		<key>PATH</key>
+		<string>__HOME__/.local/bin:__HOME__/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>ExitTimeOut</key>
+	<integer>15</integer>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.praesidium.rusthrc-server</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__HOME__/.bun/bin/rusthrc</string>
+		<string>server</string>
+		<string>--front</string>
+		<string>--bun-socket</string>
+		<string>__BUN_SOCKET__</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/praesidium/var/logs/hrc-runtime/rusthrc-server.log</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/praesidium/var/logs/hrc-runtime/rusthrc-server.out.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>__HOME__/praesidium</string>
+</dict>
+</plist>

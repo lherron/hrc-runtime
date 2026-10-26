@@ -2,6 +2,7 @@ mod accounting;
 mod aspc;
 mod broker;
 mod compile;
+mod front;
 mod index;
 mod proxy;
 mod rpc;
@@ -40,6 +41,8 @@ struct Server {
     brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
     runtime: PathBuf,
     bun_passthrough: Option<PathBuf>,
+    /// Front-door role: only front::is_front_safe routes are served natively.
+    front: bool,
     state: PathBuf,
     started_at: String,
     started: Instant,
@@ -50,8 +53,48 @@ struct Owner {
     socket: PathBuf,
     pid: PathBuf,
     raw: String,
+    /// The front's flock; the kernel releases it however the process dies.
+    _held: Option<fs::File>,
 }
 impl Owner {
+    /// Bun keeps server.lock and server.pid in this runtime dir, so the front
+    /// has its own. A held flock means a live front; a stale file is reclaimed,
+    /// so launchd can respawn the front after a crash.
+    fn acquire_front(runtime: &std::path::Path) -> Result<Self> {
+        use std::os::fd::AsRawFd;
+        fs::create_dir_all(runtime)?;
+        let socket = runtime.join("hrc.sock");
+        let lock = runtime.join("rusthrc-front.lock");
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock)?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            bail!("rusthrc front already running ({} is held)", lock.display());
+        }
+        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+            bail!("hrc server already running at {}", socket.display());
+        }
+        let raw = format!(
+            "{}\n",
+            json!({"pid":std::process::id(),"createdAt":timestamp(),"role":"front"})
+        );
+        file.set_len(0)?;
+        (&file).write_all(raw.as_bytes())?;
+        if socket.exists() {
+            fs::remove_file(&socket)?;
+        }
+        let pid = runtime.join("rusthrc-front.pid");
+        fs::write(&pid, format!("{}\n", std::process::id()))?;
+        Ok(Self {
+            lock,
+            socket,
+            pid,
+            raw,
+            _held: Some(file),
+        })
+    }
     fn acquire(runtime: &std::path::Path) -> Result<Self> {
         fs::create_dir_all(runtime)?;
         let socket = runtime.join("hrc.sock");
@@ -74,6 +117,7 @@ impl Owner {
             socket,
             pid: runtime.join("server.pid"),
             raw,
+            _held: None,
         };
         if owner.socket.exists() {
             fs::remove_file(&owner.socket)?;
@@ -92,20 +136,46 @@ impl Drop for Owner {
     }
 }
 
-pub async fn serve() -> Result<()> {
+pub fn runtime_root() -> Result<PathBuf> {
     let home = env::var("HOME").context("HOME is required")?;
-    let runtime = PathBuf::from(
-        env::var("HRC_RUNTIME_DIR").unwrap_or_else(|_| format!("{home}/praesidium/var/run/hrc")),
-    );
+    Ok(PathBuf::from(env::var("HRC_RUNTIME_DIR").unwrap_or_else(
+        |_| format!("{home}/praesidium/var/run/hrc"),
+    )))
+}
+
+/// Recognize a front-door argv; see front::invocation.
+pub fn front_invocation(args: &[String]) -> Result<Option<front::FrontConfig>> {
+    front::invocation(args, &runtime_root()?)
+}
+
+pub async fn serve(front: Option<front::FrontConfig>) -> Result<()> {
+    let home = env::var("HOME").context("HOME is required")?;
+    let runtime = runtime_root()?;
     let state = PathBuf::from(
         env::var("HRC_STATE_DIR").unwrap_or_else(|_| format!("{home}/praesidium/var/state/hrc")),
     );
     // Schema refusal precedes all filesystem effects, including ownership files.
-    let store = Store::open(&state.join("state.sqlite"))?;
-    let bun_passthrough = env::var("HRC_BUN_PASSTHROUGH_SOCKET")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from);
+    // The front never writes: a read-only handle makes that structural.
+    let store = if front.is_some() {
+        Store::open_readonly(&state.join("state.sqlite"))?
+    } else {
+        Store::open(&state.join("state.sqlite"))?
+    };
+    let bun_passthrough = match &front {
+        Some(front) => Some(front.bun_socket.clone()),
+        None => env::var("HRC_BUN_PASSTHROUGH_SOCKET")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from),
+    };
+    if let Some(front) = &front
+        && let Err(error) = std::os::unix::net::UnixStream::connect(&front.bun_socket)
+    {
+        bail!(
+            "--bun-socket {} is unreachable: {error}",
+            front.bun_socket.display()
+        );
+    }
     if let Some(path) = &bun_passthrough {
         if !path.is_absolute() {
             bail!("HRC_BUN_PASSTHROUGH_SOCKET must be absolute");
@@ -114,7 +184,11 @@ pub async fn serve() -> Result<()> {
             bail!("Bun pass-through socket must not be the native listener");
         }
     }
-    let owner = Owner::acquire(&runtime)?;
+    let owner = if front.is_some() {
+        Owner::acquire_front(&runtime)?
+    } else {
+        Owner::acquire(&runtime)?
+    };
     let listener = UnixListener::bind(&owner.socket)?;
     if let Some(target) = &bun_passthrough
         && target.canonicalize().ok() == owner.socket.canonicalize().ok()
@@ -139,15 +213,21 @@ pub async fn serve() -> Result<()> {
         brokers: Mutex::new(HashMap::new()),
         runtime,
         bun_passthrough,
+        front: front.is_some(),
         state,
         started_at: timestamp(),
         started: Instant::now(),
     });
-    broker::reattach(&server).await?;
+    // The front controls no brokers; Bun behind it owns execution.
+    if !server.front {
+        broker::reattach(&server).await?;
+    }
+    let role = if server.front { "front" } else { "native" };
+    let bun_socket = server.bun_passthrough.clone();
     let app = Router::new().fallback(dispatch).with_state(server);
     eprintln!(
         "{}",
-        json!({"ts":timestamp(),"level":"info","component":"server","event":"server.listening","data":{"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc"}})
+        json!({"ts":timestamp(),"level":"info","component":"server","event":"server.listening","data":{"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc","role":role,"bunSocket":bun_socket}})
     );
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
@@ -258,7 +338,9 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();
     let headers = request.headers().clone();
-    if !implemented(&method, uri.path()) {
+    if !implemented(&method, uri.path())
+        || (server.front && !front::is_front_safe(&method, uri.path()))
+    {
         let response = proxy::forward(
             server.bun_passthrough.as_deref(),
             method.clone(),

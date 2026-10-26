@@ -72,6 +72,42 @@ use separate native/Bun state roots; N6 owns the serve-only production design.
 copy, including large requests, malformed JSON, query strings, postponed N1
 routes and a live bounded-event stream.
 
+## Front-door role (T-11822)
+
+`rusthrc server --front --bun-socket <abs>` is the node's front door. It binds
+the public `<runtime>/hrc.sock` while Bun, still the execution owner, runs
+`hrc server serve --listen-socket <runtime>/hrc-bun.sock` on the same runtime
+and state dirs. The front natively serves only the front-safe reads in
+`src/server/front.rs` (pinned kernel read set intersected with compared,
+implemented routes) and forwards every other request verbatim, streams
+included. It opens the store read-only, reattaches no brokers, mints no IDs,
+and keeps its own `rusthrc-front.lock`/`.pid` (a flock, so launchd can respawn
+it after a crash) beside Bun's `server.lock`/`server.pid`. It refuses to start
+without a reachable `--bun-socket` or beside a live listener on `hrc.sock`.
+Brokers keep the public socket as `HRC_MAIL_STOP_SOCKET`. The plain native
+role refuses an explicit non-default `--listen-socket`.
+
+On a node, `just front-door-enable '<reason>'` and `just front-door-disable
+'<reason>'` move between the two modes (one HRC restart each; Mable seats with
+restart authority on the node only), and `just front-door-status` reports the
+mode. The rusthrc job template lives in `launchd/front-door/`, outside the
+`launchd-install` glob, and `launchd-install` keeps Bun's `--listen-socket` on a
+fronted node.
+
+`e2e/front_door.py` is the scratch workflow for gates 1-3: Bun on the private
+socket, front refusals, the installed `hrc` CLI and a real model turn through
+the front, front-safe native reads against Bun, verbatim forwarding and live
+streams, the kernel and a scratch mail injector through the front, the
+low-rate log reconciliation, SIGKILL recovery, and rollback with the broker
+reattached. Run it from a clean ghostmux terminal:
+
+```
+python3 crates/hrc-native/e2e/front_door.py --rusthrc crates/target/debug/rusthrc \
+  --kernel crates/target/debug/hrc-kernel --bun-release /tmp/hrcf-rel-T11822 \
+  --aspd-socket /Users/lherron/praesidium/var/aspd/run/aspd.sock \
+  --injector 0.1.0-dev.20261023155744 --scratch-root /tmp/hrcf/1 --artifacts /tmp/hrcf-results
+```
+
 Every main-listener request, including pass-through traffic and refusals, uses
 Bun's normalized route labels, client strata and weighted metric schema in
 `<stateRoot>/metrics/rusthrc-server-<day>.ndjson`, with `servedBy` identifying
