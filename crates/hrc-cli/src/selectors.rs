@@ -474,6 +474,14 @@ pub(crate) fn continuity(raw: &str, client: &Daemon) -> Result<(String, String)>
         _ => get_host(&host(raw, client)?),
     }
 }
+/// The (scopeRef, laneRef) a scope, session or handle selector names; `None`
+/// for object selectors. A lane is present only when the selector carries one.
+pub(crate) fn scope_lane(raw: &str, client: &Daemon) -> Result<Option<(String, Option<String>)>> {
+    Ok(match parse(raw, Some(client))? {
+        Selector::Scope(scope, lane) => Some((scope, lane)),
+        _ => None,
+    })
+}
 fn mismatch(raw: &str, received: &str) -> Error {
     Error::selector(
         SourceCode::TypeMismatch,

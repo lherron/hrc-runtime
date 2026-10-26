@@ -9,10 +9,14 @@ macro_rules! cli_println {
 pub(crate) use cli_print;
 pub(crate) use cli_println;
 
+mod admin;
 mod client;
 mod commands;
+mod forensics;
 mod inspect;
+mod js;
 mod launch;
+mod local;
 mod metrics;
 mod parse;
 mod passthrough;

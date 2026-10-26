@@ -3,6 +3,11 @@ use serde_json::{Value, json};
 
 pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
     let path = args.path();
+    if let Some(result) =
+        crate::admin::dispatch(&path, args).or_else(|| crate::local::dispatch(&path, args))
+    {
+        return result;
+    }
     match path.as_str() {
         "start" | "run" | "attach" => crate::launch::command(args),
         "runtime capture" | "runtime interrupt" | "runtime terminate" | "capture status"
@@ -26,6 +31,9 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
             Ok(())
         }
         "server status" => crate::server_status::command(args),
+        "monitor events" => crate::forensics::events(args),
+        "monitor transcript" => crate::forensics::transcript(args),
+        "monitor stats" => crate::forensics::stats(args),
         "target locate" => {
             let raw = &args.positionals[0];
             let qualified = crate::scope::Qualified::parse(raw, false).map_err(|e| {

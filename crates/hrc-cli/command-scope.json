@@ -200,7 +200,7 @@
     {
       "command": "monitor events",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "monitor search",
@@ -220,12 +220,12 @@
     {
       "command": "monitor stats",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "monitor transcript",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "monitor wait",
