@@ -307,6 +307,13 @@ async fn locate_scope(server: &Server, scope: &str) -> Value {
     location
 }
 
+/// The peer listener's POST /v1/federation/locate: this node's own report,
+/// never a further peer hop. `None` for a scope that will not canonicalize.
+pub async fn locate_for_peer(server: &Server, scope: &str) -> Option<Value> {
+    hrc_cli::validate_scope(scope).ok()?;
+    Some(locate_scope(server, scope).await)
+}
+
 pub async fn locate(
     server: &Server,
     query: &HashMap<String, String>,

@@ -291,7 +291,27 @@ fn session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
         ],
     )?;
     result["laneRef"] = canonical_lane(result["laneRef"].as_str().unwrap()).into();
-    Ok(result)
+    // hrc-store-sqlite mapSessionRow key order.
+    let mut fields = result.as_object().cloned().unwrap_or_default();
+    let mut ordered = Map::new();
+    for key in [
+        "hostSessionId",
+        "scopeRef",
+        "laneRef",
+        "generation",
+        "status",
+        "priorHostSessionId",
+        "createdAt",
+        "updatedAt",
+        "lastAppliedIntentJson",
+        "continuation",
+    ] {
+        if let Some(v) = fields.remove(key) {
+            ordered.insert(key.into(), v);
+        }
+    }
+    ordered.extend(fields);
+    Ok(ordered.into())
 }
 
 fn runtime_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {

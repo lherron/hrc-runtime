@@ -306,6 +306,11 @@ pub async fn serve(role: front::Role) -> Result<()> {
     {
         federation::registry_listener::start(server.clone(), &bind).await?;
     }
+    if !server.front
+        && let Some(bind) = server.federation.config.peer_listener_bind.clone()
+    {
+        federation::peer_listener::start(server.clone(), &bind).await?;
+    }
     // The front controls no brokers; Bun behind it owns execution.
     if !server.front {
         publication::start(&server)?;
@@ -424,14 +429,20 @@ impl Server {
 async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
     let entry = accounting::Entry::new(&request);
     let mutating = request.method() != Method::GET;
-    let response = dispatch_inner(&server, request).await;
+    let response = dispatch_inner(&server, request, false).await;
     // Every request-path transaction has committed once its response exists.
     if mutating {
         server.ledger_committed();
     }
     entry.observe(server.accounting.clone(), response)
 }
-async fn dispatch_inner(server: &Shared, request: Request) -> Response {
+/// A home answering a forwarded read: no second hop, no outer accounting.
+async fn dispatch_local(server: &Shared, request: Request) -> Response {
+    let response = dispatch_inner(server, request, true).await;
+    server.ledger_committed();
+    response
+}
+async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();
     let headers = request.headers().clone();
@@ -462,7 +473,8 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
         Err(_) => return ApiError::bad("request body must be valid JSON", None).into_response(),
     };
     // T-10418: a scope-keyed read is answered by the scope's home.
-    if let Some(scoped) = federation::scope_of(&method, uri.path(), &query, &body)
+    if !local_only
+        && let Some(scoped) = federation::scope_of(&method, uri.path(), &query, &body)
         && let Some(response) = federation::route_request(server, scoped, &uri, &headers).await
     {
         return response;
@@ -884,7 +896,7 @@ fn handle(
         };
         let identity = db.identity(scope, lane)?;
         session["identity"] = identity.clone();
-        return Ok(Json(json!({"found":true,"hostSessionId":session["hostSessionId"],"generation":session["generation"],"created":created,"identity":identity,"session":session})).into_response());
+        return Ok(Json(json!({"found":true,"hostSessionId":session["hostSessionId"],"generation":session["generation"],"created":created,"session":session,"identity":identity})).into_response());
     }
     if method == Method::GET && path.starts_with("/v1/sessions/by-host/") {
         let host = path.trim_start_matches("/v1/sessions/by-host/");

@@ -95,3 +95,38 @@ def compare_registry(args, checks):
                        'failureCode': 1})
         cases.append({'id': name, 'pass': passed})
     return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}
+
+
+# Home direction: a Bun origin's federation reads with node B (the home and
+# registry host) run as Bun (baseline) and as native (candidate). Each run has
+# its own scratch root, ports, ledger and clocks; Bun's startup lifecycle row
+# shifts B's ledger sequence by one (N5 owns those rows natively).
+HOME_DYNAMIC = DYNAMIC | {'hostSessionId', 'activeHostSessionId', 'createdAt', 'updatedAt', 'ts',
+                          'ledgerIncarnationId', 'lastActivityAt', 'endpoint', 'registryEndpoint', 'headHrcSeq',
+                          'statusChangedAt', 'expectedLedgerIncarnationId', 'currentLedgerIncarnationId',
+                          'designatedAt', 'supersededAt', 'hrcSeq', 'streamSeq', 'replayHeadHrcSeq'}
+
+
+def home_canonical(value):
+    import re
+    if isinstance(value, dict):
+        return [(k, '<dynamic>' if k in HOME_DYNAMIC else home_canonical(x)) for k, x in value.items()]
+    if isinstance(value, list):
+        return [home_canonical(x) for x in value]
+    if isinstance(value, str):
+        return re.sub(r'hsid-[0-9a-f-]+', '<hsid>', re.sub(r'(/private)?/tmp/n4[^/"]*', '<root>', value))
+    return value
+
+
+def compare_home(args, checks):
+    a = json.loads((Path(args.baseline) / 'federation.json').read_text())
+    b = json.loads((Path(args.candidate) / 'federation.json').read_text())
+    checks.append({'id': 'case-matrix', 'pass': len(a) == PER_CONFIG * len(CONFIGS) and set(a) == set(b),
+                   'reason': 'every origin case against both homes', 'failureCode': 1})
+    cases = []
+    for name in a:
+        passed = name in b and home_canonical(a[name]) == home_canonical(b[name])
+        checks.append({'id': 'compare:' + name, 'pass': passed,
+                       'reason': 'a Bun origin must see the same answers from a native home', 'failureCode': 1})
+        cases.append({'id': name, 'pass': passed})
+    return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}

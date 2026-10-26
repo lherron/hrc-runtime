@@ -3,6 +3,7 @@
 //! registry-reply.ts) and the one home-authority resolution
 //! (home-authority.ts) that locate and scope-read routing share.
 mod locate;
+pub mod peer_listener;
 pub mod registry_listener;
 mod routing;
 pub mod summon;

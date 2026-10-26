@@ -90,13 +90,17 @@ pub fn handle(
         result.as_object_mut().unwrap().remove("rejected");
         return Ok(Some(Json(result).into_response()));
     }
-    let mut result = db.metadata(scope, lane)?;
+    let stored = db.metadata(scope, lane)?;
+    // session-metadata-handlers.ts: the continuity view, then the metadata.
+    let mut result = if metadata { stored.clone() } else { json!({}) };
     if !metadata {
         let facts=db.sqlite.query_row("SELECT effective_status,execution_mode,last_activity_at FROM session_index WHERE scope_ref=? AND lane_ref=?",[scope,lane],|r|Ok(json!({"effectiveStatus":r.get::<_,String>(0)?,"executionMode":r.get::<_,String>(1)?,"lastActivityAt":r.get::<_,String>(2)?}))).unwrap_or_else(|_|json!({"effectiveStatus":"inactive","executionMode":"nonInteractive","lastActivityAt":session["updatedAt"]}));
         result["continuity"] = json!({"scopeRef":scope,"laneRef":hrc_store::canonical_lane(lane)});
         result["identity"] = session["identity"].clone();
         result["generation"] = json!({"hostSessionId":session["hostSessionId"],"generation":session["generation"],"status":session["status"],"createdAt":session["createdAt"],"lastAppliedIntent":session.get("lastAppliedIntentJson").cloned().unwrap_or(json!({})),"continuation":session.get("continuation").cloned().unwrap_or(json!({}))});
         result["facts"] = facts;
+        result["metadata"] = stored["metadata"].clone();
+        result["metadataSources"] = stored["metadataSources"].clone();
     }
     Ok(Some(Json(result).into_response()))
 }
