@@ -79,10 +79,12 @@ build outputs, `node_modules`, and `praesidium-release.json`. That manifest
 records the release ID, the exact local HRC package build candidate, the exact
 ASP package build selected by the lock/install, and the installation
 time. Cutover is refused unless both coherent build tuples validate. The
-checkout's `node_modules` is not removed or rewritten by a main-checkout
+checkout's dependency graph is not removed or rewritten by a main-checkout
 install. The final rename of `hrc-runtime-current` changes both CLI names
 together. The Bun `hrc-cli` package declares no `hrc` bin, so publishing or
-globally installing the current package cannot reclaim the command. `hrcchat`,
+globally installing the current package cannot reclaim the command. Install also
+removes stale `node_modules/.bin/hrc` symlinks to Bun entrypoints in the checkout
+and its parent development workspace. `hrcchat`,
 `hrcmail`, `hrc-desktop-hook` and `hrc-viewer` remain ACP-owned.
 
 Main-checkout atomic installs are local release selection. They archive the

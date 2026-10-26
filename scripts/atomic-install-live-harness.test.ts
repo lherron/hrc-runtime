@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { realpathSync } from 'node:fs'
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -188,6 +189,14 @@ describe('T-06685 installed CLI continuity harness', () => {
 
   test('reinstall repairs a legacy link and refuses a release missing rusthrc', async () => {
     const fixture = await makeAtomicSurface()
+    const workspaceBins = [
+      join(fixture.sourceRoot, 'node_modules/.bin'),
+      join(dirname(fixture.sourceRoot), 'node_modules/.bin'),
+    ]
+    for (const bin of workspaceBins) {
+      await mkdir(bin, { recursive: true })
+      await symlink(join(fixture.oldRelease, 'packages/hrc-cli/src/cli.ts'), join(bin, 'hrc'))
+    }
     for (const id of ['release-first', 'release-second']) {
       await installAtomicRelease({
         context: 'main',
@@ -205,6 +214,9 @@ describe('T-06685 installed CLI continuity harness', () => {
         join(fixture.paths.currentLink, 'bin', 'rusthrc')
       )
       expect(invokeInstalled(fixture.binPath).stdout).toBe(`${id}:dependency-ok\n`)
+    }
+    for (const bin of workspaceBins) {
+      await expect(lstat(join(bin, 'hrc'))).rejects.toMatchObject({ code: 'ENOENT' })
     }
     await expect(
       installAtomicRelease({

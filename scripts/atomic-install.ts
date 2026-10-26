@@ -281,9 +281,9 @@ async function validateReleaseShape(releasePath: string, releaseId: string): Pro
 }
 
 /**
- * Convert Bun's direct checkout links into stable indirections without changing
- * what is currently installed. Once bootstrapped, every future release is one
- * atomic rename of `currentLink`.
+ * Convert legacy Bun links to the installed native CLI and stable package
+ * indirections. Once bootstrapped, every future release is one atomic rename
+ * of `currentLink`.
  */
 export async function bootstrapInstalledSurface(
   paths: InstalledSurfacePaths,
@@ -298,6 +298,24 @@ export async function bootstrapInstalledSurface(
     await atomicSymlink(bootstrapRoot, paths.currentLink)
   } else {
     await realpath(paths.currentLink)
+  }
+
+  // Bun leaves obsolete workspace bin links behind when a package drops its
+  // bin declaration. They shadow PATH inside `bun run`, including in the
+  // generated parent workspace. Remove only links to our legacy Bun entrypoints.
+  for (const root of new Set([sourceRoot, dirname(sourceRoot)])) {
+    const legacyBin = join(root, 'node_modules', '.bin', 'hrc')
+    if ((await pathKind(legacyBin)) !== 'symlink') continue
+    let target: string
+    try {
+      target = await realpath(legacyBin)
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') continue
+      throw error
+    }
+    if (/[/\\]hrc-cli[/\\](?:src[/\\]cli\.ts|bin[/\\]hrc\.js)$/.test(target)) {
+      await rm(legacyBin)
+    }
   }
 
   for (const bin of ['hrc', 'rusthrc']) {
