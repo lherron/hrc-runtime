@@ -619,6 +619,9 @@ def compare_values(args, checks):
     if getattr(args, 'suite', None) == 'n4-history':
         from n4_routes import compare_history
         return compare_history(args, checks)
+    if getattr(args, 'suite', None) == 'n4-svc-authority':
+        from n4_routes import compare_svc_authority
+        return compare_svc_authority(args, checks)
     if getattr(args, 'suite', None) == 'n2-turns':
         from n2_turns import compare as compare_n2_turns
         return compare_n2_turns(args, checks)

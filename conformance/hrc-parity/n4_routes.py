@@ -237,3 +237,44 @@ def canon_history(value):
     if isinstance(value, list):
         return [canon_history(x) for x in value]
     return value
+
+
+# svc on its own data (T-11931): one scratch svc per owner on a copy of the
+# real registry and collective-history rows. Read cases compare every value,
+# seeded clocks included; only rows a case writes carry clocks minted per run.
+SVC_AUTHORITY_CASES = 69
+# Inbound verbs native does not serve yet (peer_listener.rs answers
+# peer_upgrade_required); Bun advertises them, native leaves them absent so a
+# capability-gated origin refuses typed instead of calling. svc saw 0 of each in
+# the 14 days before T-11931.
+SVC_UNSERVED_CAPABILITIES = ('establish', 'rosterStart', 'exactStart', 'semanticTurnHandoff')
+
+
+def svc_canonical(value, mutates):
+    if isinstance(value, dict):
+        return [(k, '<dynamic>' if k in DYNAMIC or k in ('observedAt', 'startedAt')
+                 or (mutates and k in REGISTRY_DYNAMIC)
+                 else svc_canonical(x, mutates)) for k, x in value.items()]
+    if isinstance(value, list):
+        return [svc_canonical(x, mutates) for x in value]
+    return value
+
+
+def compare_svc_authority(args, checks):
+    a = json.loads((Path(args.baseline) / 'svc-authority.json').read_text())
+    b = json.loads((Path(args.candidate) / 'svc-authority.json').read_text())
+    checks.append({'id': 'case-matrix', 'pass': len(a) == SVC_AUTHORITY_CASES and list(a) == list(b),
+                   'reason': 'every registry, peer-history and local case on both svc owners', 'failureCode': 1})
+    cases = []
+    for name, x in a.items():
+        y = b.get(name, {})
+        if name == 'peer:health':
+            caps = x.get('body', {}).get('capabilities', {})
+            x = {**x, 'body': {**x['body'], 'capabilities': {
+                k: v for k, v in caps.items() if k not in SVC_UNSERVED_CAPABILITIES}}}
+        passed = all(svc_canonical(x.get(k), x['mutates']) == svc_canonical(y.get(k), x['mutates'])
+                     for k in ('status', 'body'))
+        checks.append({'id': 'compare:' + name, 'pass': passed,
+                       'reason': 'status, fields, values and key order must match Bun on svc data', 'failureCode': 1})
+        cases.append({'id': name, 'pass': passed, 'bunMs': x['ms'], 'nativeMs': y.get('ms')})
+    return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}

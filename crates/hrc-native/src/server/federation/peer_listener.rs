@@ -202,9 +202,13 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
                 // Only what this daemon serves; the rest is absent, not false.
                 "capabilities": {"locate":true,"health":true,"runtimeProjection":true,"federatedSessionRead":true},
             });
+            let caps = health["capabilities"].as_object_mut().unwrap();
+            // Bun's capability order: runtimeProjection, collectiveHistory, ...,
+            // serverLifecycle, federatedSessionRead.
+            if !server.front {
+                caps.shift_insert(3, "serverLifecycle".into(), true.into());
+            }
             if history::serves(server) {
-                // Bun's capability order: runtimeProjection, collectiveHistory, ...
-                let caps = health["capabilities"].as_object_mut().unwrap();
                 caps.shift_insert(3, "collectiveHistory".into(), true.into());
             }
             let query: std::collections::HashMap<String, String> =
@@ -300,8 +304,12 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
             Ok(upgrade())
         }
         ("POST", "/v1/federation/server-lifecycle") => {
-            record(&body)?;
-            Ok(upgrade())
+            let body = record(&body)?;
+            if server.front {
+                return Ok(upgrade());
+            }
+            let (status, value) = crate::server::lifecycle::route::peer(server, peer, &body).await;
+            Ok(reply(value, status))
         }
         ("POST", "/v1/federation/roster-start" | "/v1/federation/exact-start") => {
             let body = record(&body)?;

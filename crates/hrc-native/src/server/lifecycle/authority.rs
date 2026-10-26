@@ -27,7 +27,7 @@ pub fn error(action: &str, target: &str, code: &'static str, message: String) ->
         Some(detail),
     )
 }
-fn project(scope: Option<&str>) -> &str {
+pub fn project(scope: Option<&str>) -> &str {
     scope
         .and_then(|s| s.split(':').collect::<Vec<_>>().get(3).copied())
         .unwrap_or("<project>")
@@ -40,15 +40,32 @@ pub fn refused(
     code: &'static str,
     detail: &str,
 ) -> ApiError {
+    error(
+        action,
+        target,
+        code,
+        refusal_text(action, target, project, detail),
+    )
+}
+/// lifecycleRefusalText plus the parenthesized detail.
+pub fn refusal_text(action: &str, target: &str, project: &str, detail: &str) -> String {
     let node_seat = match target {
         "svc" => ", this node's Mable seat (mable@<project>:minisvc)",
         "hrcdev" => ", this node's Mable seat (mable@hrc-runtime:hrcdev)",
         _ => "",
     };
-    let message = format!(
+    format!(
         "only mable@<project>:primary{node_seat} or Lance may {action} the HRC server on {target}; request it from mable@{project}:primary ({detail})"
-    );
-    error(action, target, code, message)
+    )
+}
+/// isMablePrimaryScope: a canonical, role-free mable task scope named primary.
+pub fn mable_primary(scope: &str) -> bool {
+    let p: Vec<_> = scope.split(':').collect();
+    hrc_cli::validate_scope(scope).is_ok()
+        && p.len() == 6
+        && p[4] == "task"
+        && p[1] == "mable"
+        && p[5] == "primary"
 }
 pub fn authorize(
     server: &Server,
@@ -66,7 +83,7 @@ pub fn authorize(
     let p: Vec<_> = scope.split(':').collect();
     // Canonical ScopeRef validation excludes role-bearing and project-less callers.
     let exact = hrc_cli::validate_scope(scope).is_ok() && p.len() == 6 && p[4] == "task";
-    let primary = exact && p[1] == "mable" && p[5] == "primary";
+    let primary = mable_primary(scope);
     let local = exact
         && p[1] == "mable"
         && server.federation.config.node_id_provenance == "declared"
