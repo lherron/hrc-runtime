@@ -379,6 +379,19 @@ async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> 
             .unwrap()
             .participant_broker_graph(reg, &a, &hello)?;
     }
+    attach_and_activate(server, reg, &a, &intent, &identity, &ack).await
+}
+
+/// stagedAttach / activateParticipant / replay: release events only after activation.
+async fn attach_and_activate(
+    server: &Shared,
+    reg: &Value,
+    a: &Value,
+    intent: &Value,
+    identity: &Value,
+    ack: &Value,
+) -> Result<()> {
+    let id = string(a, "attempt_id")?;
     let (client, events) = JsonRpc::connect_broker(
         Path::new(string(&intent["endpoint"], "socketPath")?),
         Duration::from_secs(120),
@@ -442,12 +455,12 @@ async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> 
         "broker reattach status returned another invocation"
     );
     server.store.lock().unwrap().participant_transition(
-        &id,
+        id,
         &["INVOCATION_READY", "ACTIVE", "DETACHED"],
         "ATTACH_CONFIRMED",
     )?;
     // No event projection or ACK precedes durable participant activation.
-    server.store.lock().unwrap().activate_participant(reg, &a)?;
+    server.store.lock().unwrap().activate_participant(reg, a)?;
     // Reuse the ordinary controller's replay, delta flush, commit-before-ACK
     // and live event consumer. The candidate's notifications have been held on
     // `events` while the attempt/epoch and activation transaction were checked.
@@ -473,6 +486,7 @@ async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> 
     )?;
     Ok(())
 }
+
 pub fn schedule(server: &Shared, registration_id: &str, attempt_id: &str) {
     if !server
         .participant_work

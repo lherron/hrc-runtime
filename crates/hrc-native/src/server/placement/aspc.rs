@@ -593,6 +593,29 @@ pub async fn resolve_placement(server: &super::Server, body: Value) -> Result<Va
     }
     let session = AspSession::connect(&["resolveRuntimeDeclaration"]).await?;
     let observed=session.call("aspc.resolveRuntimeDeclaration",json!({"schemaVersion":"aspc-resolve-runtime-declaration-request/v1","context":context})).await?;
+    validate_placement_declaration(&observed, &agent, project.as_deref(), root.as_deref(), &cwd)?;
+    Ok(assemble_placement(
+        &observed,
+        &session,
+        &agent,
+        project.as_deref(),
+        explicit,
+        task.as_deref(),
+        root.as_deref(),
+        source,
+        branch.as_deref(),
+        worktree_warning,
+    ))
+}
+
+/// placements-resolve.ts: validate the declaration before assembling public key order.
+fn validate_placement_declaration(
+    observed: &Value,
+    agent: &str,
+    project: Option<&str>,
+    root: Option<&Path>,
+    cwd: &str,
+) -> Result<(), ApiError> {
     if observed["ok"] != true {
         if observed["resolution"]["code"] == "agent_not_found" {
             let searched = observed["searchedAgentRoots"]
@@ -606,10 +629,10 @@ pub async fn resolve_placement(server: &super::Server, body: Value) -> Result<Va
                 .filter(|v| !v.is_empty())
                 .unwrap_or_else(|| "no agent roots".into());
             let mut detail = json!({"source":"agent-profile","producerCode":"agent_not_found","agentId":agent,"searchedAgentRoots":observed["searchedAgentRoots"]});
-            if let Some(root) = &root {
+            if let Some(root) = root {
                 detail["projectRoot"] = json!(root);
             }
-            detail["cwd"] = cwd.clone().into();
+            detail["cwd"] = cwd.into();
             return Err(ApiError::domain(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "declaration_invalid",
@@ -619,7 +642,7 @@ pub async fn resolve_placement(server: &super::Server, body: Value) -> Result<Va
         }
         let Some(resolution) = observed.get("resolution") else {
             return Err(declaration_refusal(
-                &observed,
+                observed,
                 "",
                 "resolveRuntimeDeclaration",
             ));
@@ -633,10 +656,10 @@ pub async fn resolve_placement(server: &super::Server, body: Value) -> Result<Va
             }),
             "producerCode": resolution["code"],
         });
-        if let Some(id) = &project {
-            detail["projectId"] = id.clone().into();
+        if let Some(id) = project {
+            detail["projectId"] = id.into();
         }
-        if let Some(root) = &root {
+        if let Some(root) = root {
             detail["projectRoot"] = json!(root);
         }
         return Err(ApiError::domain(
@@ -648,18 +671,7 @@ pub async fn resolve_placement(server: &super::Server, body: Value) -> Result<Va
             Some(detail),
         ));
     }
-    Ok(assemble_placement(
-        &observed,
-        &session,
-        &agent,
-        project.as_deref(),
-        explicit,
-        task.as_deref(),
-        root.as_deref(),
-        source,
-        branch.as_deref(),
-        worktree_warning,
-    ))
+    Ok(())
 }
 
 /// placements-resolve.ts `assemblePlacementResponse`, in its key order.

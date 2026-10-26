@@ -3,6 +3,59 @@ use super::*;
 use std::future::IntoFuture;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
+/// Boot the peer listeners, then reconcile ownership before arming background work.
+async fn start_owner_services(server: &Shared) -> Result<()> {
+    // F0's registry listener: bound before serving, so a bad bind refuses boot.
+    if !server.front
+        && let Some(bind) = server.federation.config.registry_bind.clone()
+    {
+        federation::registry_listener::start(server.clone(), &bind).await?;
+    }
+    if !server.front
+        && let Some(bind) = server.federation.config.peer_listener_bind.clone()
+    {
+        federation::peer_listener::start(server.clone(), &bind).await?;
+    }
+    // The front controls no brokers; Bun behind it owns execution.
+    if !server.front {
+        publication::start(server)?;
+        lifecycle::rows::boot(server)?;
+        lifecycle::credentials::start(server)?;
+        self_restart::start(server);
+        startup::reconcile(server).await?;
+        // Bun reconciles before its server (and finalizers) exist. Started
+        // earlier, the pump wakes on every startup commit and rescans
+        // messages under the store mutex the next row is waiting for.
+        handoff::start(server);
+        retained::start(server);
+        recovery::start(server);
+        participants::resume(server)?;
+        sweeps::start(server);
+        // The bridge's cursor precedes the watchdog's boot pass.
+        acp_bridge::start(server);
+        first_turn::start(server);
+        federation::history::start(server);
+        reconcile::start(server);
+        startup::start_gc(server);
+        sweeps::start_retention(server);
+        let prior = server.lifecycle.admission.snapshot();
+        if prior["state"] == "closed" {
+            server
+                .lifecycle
+                .admission
+                .reopen(None)
+                .map_err(|e| anyhow::anyhow!(e.message))?;
+            stderr_json(
+                "info",
+                "server",
+                "server.turn_admission.reopened_after_warmup",
+                json!({"operationId":prior["operationId"],"requestedBy":prior["requestedBy"],"closedAt":prior["closedAt"]}),
+            );
+        }
+    }
+    Ok(())
+}
+
 pub async fn serve(role: Role) -> Result<()> {
     std::panic::set_hook(Box::new(|info| {
         let payload = info.payload();
@@ -115,54 +168,7 @@ pub async fn serve(role: Role) -> Result<()> {
         started: Instant::now(),
     });
     status_runtime::start(&server);
-    // F0's registry listener: bound before serving, so a bad bind refuses boot.
-    if !server.front
-        && let Some(bind) = server.federation.config.registry_bind.clone()
-    {
-        federation::registry_listener::start(server.clone(), &bind).await?;
-    }
-    if !server.front
-        && let Some(bind) = server.federation.config.peer_listener_bind.clone()
-    {
-        federation::peer_listener::start(server.clone(), &bind).await?;
-    }
-    // The front controls no brokers; Bun behind it owns execution.
-    if !server.front {
-        publication::start(&server)?;
-        lifecycle::rows::boot(&server)?;
-        lifecycle::credentials::start(&server)?;
-        self_restart::start(&server);
-        startup::reconcile(&server).await?;
-        // Bun reconciles before its server (and finalizers) exist. Started
-        // earlier, the pump wakes on every startup commit and rescans
-        // messages under the store mutex the next row is waiting for.
-        handoff::start(&server);
-        retained::start(&server);
-        recovery::start(&server);
-        participants::resume(&server)?;
-        sweeps::start(&server);
-        // The bridge's cursor precedes the watchdog's boot pass.
-        acp_bridge::start(&server);
-        first_turn::start(&server);
-        federation::history::start(&server);
-        reconcile::start(&server);
-        startup::start_gc(&server);
-        sweeps::start_retention(&server);
-        let prior = server.lifecycle.admission.snapshot();
-        if prior["state"] == "closed" {
-            server
-                .lifecycle
-                .admission
-                .reopen(None)
-                .map_err(|e| anyhow::anyhow!(e.message))?;
-            stderr_json(
-                "info",
-                "server",
-                "server.turn_admission.reopened_after_warmup",
-                json!({"operationId":prior["operationId"],"requestedBy":prior["requestedBy"],"closedAt":prior["closedAt"]}),
-            );
-        }
-    }
+    start_owner_services(&server).await?;
     let role = if server.front { "front" } else { "native" };
     let bun_socket = server.bun_passthrough.clone();
     let owned = server.clone();

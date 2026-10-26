@@ -305,32 +305,18 @@ pub async fn admit(server: &Shared, req: &Request<'_>) -> (Result<Admitted, ApiE
     (result, trace)
 }
 
-async fn steps(
+/// resolveSessionFence / idempotency replay, before participant or capability work.
+fn resolve_fences_and_idempotency(
     server: &Shared,
     req: &Request<'_>,
     trace: &mut Trace,
-) -> Result<Admitted, ApiError> {
-    let lease =
-        crate::server::lifecycle::admission_lease(server).inspect_err(|_| trace.push("refused"))?;
-    trace.lease = Some(lease);
-    trace.push("passed"); // drain-lease
-    if let Err(error) = crate::server::federation::summon::assert_scope_not_retired(
-        server,
-        trace.session["scopeRef"].as_str().unwrap_or(""),
-        "resolve-session",
-    )
-    .await
-    {
-        trace.push("refused");
-        return Err(error);
-    }
-    trace.push("passed"); // retired-persona
+    session: &mut Value,
+) -> Result<Option<Admitted>, ApiError> {
     // fence
-    let mut session = req.target.view();
     let lazy = matches!(&req.target, Target::Lazy { .. });
     let mut fence_outcome = "skipped:not-carried";
     if !lazy && (req.fences.is_some() || req.door == "turns") {
-        let active = continuity_active(server, &session).inspect_err(|_| trace.push("refused"))?;
+        let active = continuity_active(server, session).inspect_err(|_| trace.push("refused"))?;
         let fence = req.fences.cloned().unwrap_or(json!({}));
         if fence["followLatest"] != true {
             if let Some(expected) = fence["expectedHostSessionId"].as_str()
@@ -352,7 +338,7 @@ async fn steps(
                 ));
             }
         }
-        session = active;
+        *session = active;
         trace.session = session.clone();
         if req.fences.is_some() {
             fence_outcome = "passed";
@@ -373,11 +359,41 @@ async fn steps(
         if let Some(run_id) = existing {
             trace.push("replayed");
             trace.run_id = Some(run_id.clone());
-            return Ok(Admitted::Replayed(super::replay_body(server, &run_id)?));
+            return Ok(Some(Admitted::Replayed(super::replay_body(
+                server, &run_id,
+            )?)));
         }
         fence_outcome = "passed";
     }
     trace.push(fence_outcome);
+    Ok(None)
+}
+
+async fn steps(
+    server: &Shared,
+    req: &Request<'_>,
+    trace: &mut Trace,
+) -> Result<Admitted, ApiError> {
+    let lease =
+        crate::server::lifecycle::admission_lease(server).inspect_err(|_| trace.push("refused"))?;
+    trace.lease = Some(lease);
+    trace.push("passed"); // drain-lease
+    if let Err(error) = crate::server::federation::summon::assert_scope_not_retired(
+        server,
+        trace.session["scopeRef"].as_str().unwrap_or(""),
+        "resolve-session",
+    )
+    .await
+    {
+        trace.push("refused");
+        return Err(error);
+    }
+    trace.push("passed"); // retired-persona
+    let mut session = req.target.view();
+    if let Some(replayed) = resolve_fences_and_idempotency(server, req, trace, &mut session)? {
+        return Ok(replayed);
+    }
+    let lazy = matches!(&req.target, Target::Lazy { .. });
     // participant-resolution
     let participant = {
         let db = server.store.lock().unwrap();

@@ -165,6 +165,8 @@ fn local_nodes(uri: &Uri) -> Uri {
         .unwrap_or_else(|_| uri.clone())
 }
 
+// Keep peer method/path validation and dispatch together as one protocol route table.
+#[allow(clippy::too_many_lines)]
 async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<Response, Invalid> {
     let method = request.method().clone();
     let uri = request.uri().clone();
