@@ -11,7 +11,7 @@ async fn main() -> anyhow::Result<()> {
             Err(error) => {
                 hrc_cli::begin_invocation(&args);
                 hrc_cli::finish_invocation(1);
-                return Err(error);
+                exit_json(&error);
             }
         }
     } else {
@@ -38,5 +38,19 @@ async fn main() -> anyhow::Result<()> {
     }
     let result = server::serve(front).await;
     hrc_cli::finish_invocation(if result.is_ok() { 0 } else { 1 });
-    result
+    if let Err(error) = result {
+        exit_json(&error);
+    }
+    Ok(())
+}
+
+/// A daemon/front failure is one JSON line on stderr, never anyhow's plain text.
+fn exit_json(error: &anyhow::Error) -> ! {
+    server::stderr_json(
+        "error",
+        "server",
+        "server.exit",
+        serde_json::json!({"error":format!("{error:#}")}),
+    );
+    std::process::exit(1);
 }

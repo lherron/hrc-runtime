@@ -41,9 +41,15 @@ pub async fn forward(
         .map_err(|e| failure(e.to_string()))?;
     // The connection task owns the socket while the response body is streamed;
     // collecting this body would deadlock a live event feed.
+    let socket_path = socket.to_path_buf();
     tokio::spawn(async move {
         if let Err(error) = connection.await {
-            eprintln!("Bun pass-through connection: {error}");
+            super::stderr_json(
+                "warn",
+                "proxy",
+                "proxy.connection_error",
+                serde_json::json!({"socketPath":socket_path,"error":error.to_string()}),
+            );
         }
     });
     let mut request = Request::new(body);

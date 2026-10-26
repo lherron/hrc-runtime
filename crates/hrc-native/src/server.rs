@@ -150,7 +150,34 @@ pub fn front_invocation(args: &[String]) -> Result<Option<front::FrontConfig>> {
     front::invocation(args, &runtime_root()?)
 }
 
+/// One L2 JSON line on stderr, in accounting::emit's shape. The daemon's stderr
+/// (rusthrc-server.err.log) holds only these lines (T-11822, log-format@2).
+pub fn stderr_json(level: &str, component: &str, event: &str, data: Value) {
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "{}",
+        json!({"ts":timestamp(),"server":"rusthrc","level":level,"component":component,"event":event,"data":data})
+    );
+}
+
 pub async fn serve(front: Option<front::FrontConfig>) -> Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()));
+        stderr_json(
+            "error",
+            "server",
+            "server.panic",
+            json!({"message":message,"location":location}),
+        );
+    }));
     let home = env::var("HOME").context("HOME is required")?;
     let runtime = runtime_root()?;
     let state = PathBuf::from(
@@ -229,9 +256,11 @@ pub async fn serve(front: Option<front::FrontConfig>) -> Result<()> {
     let role = if server.front { "front" } else { "native" };
     let bun_socket = server.bun_passthrough.clone();
     let app = Router::new().fallback(dispatch).with_state(server);
-    eprintln!(
-        "{}",
-        json!({"ts":timestamp(),"level":"info","component":"server","event":"server.listening","data":{"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc","role":role,"bunSocket":bun_socket}})
+    stderr_json(
+        "info",
+        "server",
+        "server.listening",
+        json!({"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc","role":role,"bunSocket":bun_socket}),
     );
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
@@ -315,7 +344,12 @@ impl ApiError {
 }
 impl From<anyhow::Error> for ApiError {
     fn from(error: anyhow::Error) -> Self {
-        eprintln!("{error:#}");
+        stderr_json(
+            "error",
+            "server",
+            "server.internal_error",
+            json!({"error":format!("{error:#}")}),
+        );
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "internal_error",

@@ -396,10 +396,28 @@ def main():
         front('front-2')
         check('front-restart-after-kill', responsive(public))
 
-        # Gate 3: rollback -- stop the front, Bun back on hrc.sock, brokers reattach.
+        # Gate 3: rollback in front-door-disable's order -- Bun stops first while
+        # the front still serves an open forwarded follow, then the front stops,
+        # then Bun comes back on hrc.sock and brokers reattach.
+        held = UnixHTTP(public)
+        held.timeout = 30
+        held.request('GET', stream)
+        held_response = held.getresponse()
+        held_response.readline()
+        check('bun-clean-stop', stop('bun-1') == 0)
+        try:
+            held_response.read()
+        except (OSError, HTTPException):
+            pass
+        held.close()
+        check('front-without-bun-is-502', request(public, 'GET', '/v1/health')['status'] == 502)
         check('front-clean-stop', stop('front-2') == 0 and not public.exists()
               and not (run_dir / 'rusthrc-front.pid').exists())
-        check('bun-clean-stop', stop('bun-1') == 0)
+        # rusthrc-server.err.log is checked as L2 JSON (log-format@2): every line
+        # the front wrote, stdout and stderr, must parse.
+        plain = [l for name in ('front-1', 'front-2') for l in (art / f'{name}.log').read_text().splitlines()
+                 if l.strip() and not l.lstrip().startswith('{')]
+        check('front-logs-all-json', not plain, plain=plain[:5])
         os.kill(broker_pid, 0)
         bun('bun-2')
         second = turn('turn-after-rollback')
