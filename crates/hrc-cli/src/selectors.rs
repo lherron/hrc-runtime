@@ -42,7 +42,7 @@ pub(crate) fn token(value: &str, label: &str) -> std::result::Result<(), String>
     }
     Ok(())
 }
-pub(crate) fn validate_scope(scope: &str) -> std::result::Result<(), String> {
+pub fn validate_scope(scope: &str) -> std::result::Result<(), String> {
     let p = scope.split(':').collect::<Vec<_>>();
     if p.len() < 2 || p[0] != "agent" {
         return Err("ScopeRef must start with \"agent:<agentId>\"".into());

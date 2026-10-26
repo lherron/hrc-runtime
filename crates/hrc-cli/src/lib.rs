@@ -21,6 +21,9 @@ mod scope;
 mod selectors;
 mod server_status;
 
+/// Validate a canonical agent ScopeRef using the operator CLI's shared grammar.
+pub use selectors::validate_scope;
+
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy)]
