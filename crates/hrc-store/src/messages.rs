@@ -66,6 +66,7 @@ pub(crate) fn message_row(r: &Row<'_>) -> rusqlite::Result<Value> {
     }
     Ok(v)
 }
+const PENDING_HANDOFF: &str = "m.phase='request' AND m.execution_state NOT IN ('completed','failed') AND m.run_id IS NOT NULL AND json_type(m.metadata_json,'$.semanticTurnHandoff') IS NOT NULL AND COALESCE(json_extract(m.metadata_json,'$.federationSemanticTurnOrigin'),0)<>1 AND NOT EXISTS(SELECT 1 FROM messages r WHERE r.phase='response' AND r.reply_to_message_id=m.message_id)";
 impl Store {
     pub fn message_by_id(&self, id: &str) -> Result<Option<Value>> {
         Ok(self
@@ -83,8 +84,26 @@ impl Store {
     }
     /// Requests whose durable semantic marker can recover an in-memory
     /// finalizer. Terminal requests and already correlated replies stay out.
-    pub fn pending_handoffs(&self, limit: i64) -> Result<Vec<Value>> {
-        Ok(self.sqlite.prepare("SELECT m.* FROM messages m WHERE m.phase='request' AND m.execution_state NOT IN ('completed','failed') AND m.run_id IS NOT NULL AND json_type(m.metadata_json,'$.semanticTurnHandoff') IS NOT NULL AND COALESCE(json_extract(m.metadata_json,'$.federationSemanticTurnOrigin'),0)<>1 AND NOT EXISTS(SELECT 1 FROM messages r WHERE r.phase='response' AND r.reply_to_message_id=m.message_id) ORDER BY m.message_seq ASC LIMIT ?")?.query_map([limit],message_row)?.collect::<rusqlite::Result<_>>()?)
+    /// This scans every message, so only boot recovery pages through it.
+    pub fn pending_handoffs(&self, after_seq: i64, limit: i64) -> Result<Vec<Value>> {
+        let sql = format!(
+            "SELECT m.* FROM messages m WHERE m.message_seq>? AND {PENDING_HANDOFF} ORDER BY m.message_seq ASC LIMIT ?"
+        );
+        Ok(self
+            .sqlite
+            .prepare(&sql)?
+            .query_map([after_seq, limit], message_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+    /// The latest pending request for a run (the scan's winner too), by idx_messages_run.
+    pub fn pending_handoff_for_run(&self, run_id: &str) -> Result<Option<Value>> {
+        let sql = format!(
+            "SELECT m.* FROM messages m WHERE m.run_id=? AND {PENDING_HANDOFF} ORDER BY m.message_seq DESC LIMIT 1"
+        );
+        Ok(self
+            .sqlite
+            .query_row(&sql, [run_id], message_row)
+            .optional()?)
     }
     /// The response and terminal request state commit together. An observer
     /// retry/restart can never insert a second response for this request.

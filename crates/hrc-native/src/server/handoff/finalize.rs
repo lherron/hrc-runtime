@@ -2,22 +2,61 @@
 use crate::server::{Shared, projection::db, stderr_json, turns};
 use anyhow::Result;
 use rusqlite::{OptionalExtension, types::Value as Sql};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::time::Duration;
 
-fn pump(server: &Shared) -> Result<()> {
+const TERMINAL: &str = "event_kind IN ('turn.completed','turn.zombied','turn.reaped')";
+
+/// The first pass recovers every durable pending request (owner restart);
+/// later passes see only terminal events past `cursor`, by idx_hrc_events_kind_seq,
+/// as Bun finalizes per terminal event. The wake fires on every ledger commit,
+/// so a per-pass messages scan under the store mutex starved ingest (T-11915).
+fn pump(server: &Shared, cursor: &mut Option<i64>) -> Result<()> {
     let Some(_write) = server.owner_writes.enter() else {
         return Ok(());
     };
     let active = server.handoff.active.lock().unwrap().clone();
     let db = server.store.lock().unwrap();
     let mut requests = HashMap::new();
-    for request in db.pending_handoffs(100)? {
+    let mut add = |request: Value| {
         if let Some(run) = request["execution"]["runId"].as_str() {
             requests.insert(run.to_owned(), request);
         }
-    }
+    };
+    let next = match *cursor {
+        None => {
+            let head: i64 = db.sqlite.query_row(
+                "SELECT COALESCE(MAX(hrc_seq),0) FROM hrc_events",
+                [],
+                |r| r.get(0),
+            )?;
+            let mut after = 0;
+            loop {
+                let page = db.pending_handoffs(after, 100)?;
+                let Some(last) = page.last().and_then(|m| m["messageSeq"].as_i64()) else {
+                    break;
+                };
+                after = last;
+                page.into_iter().for_each(&mut add);
+            }
+            head
+        }
+        Some(from) => {
+            let mut head = from;
+            let mut terminal = db.sqlite.prepare_cached(&format!("SELECT hrc_seq, run_id FROM hrc_events WHERE {TERMINAL} AND hrc_seq>? AND run_id IS NOT NULL ORDER BY hrc_seq ASC"))?;
+            for row in terminal.query_map([from], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })? {
+                let (seq, run) = row?;
+                head = seq;
+                if let Some(request) = db.pending_handoff_for_run(&run)? {
+                    add(request);
+                }
+            }
+            head
+        }
+    };
     for (run, (id, ready)) in active {
         if ready && let Some(request) = db.message_by_id(&id)? {
             requests.insert(run, request);
@@ -25,7 +64,7 @@ fn pump(server: &Shared) -> Result<()> {
     }
     let mut ready = Vec::new();
     for (run_id, request) in requests {
-        let terminal = db.lifecycle_rows("SELECT * FROM hrc_events WHERE run_id=? AND event_kind IN ('turn.completed','turn.zombied','turn.reaped') ORDER BY hrc_seq ASC LIMIT 1",&[Sql::Text(run_id.clone())],true)?.pop();
+        let terminal = db.lifecycle_rows(&format!("SELECT * FROM hrc_events WHERE run_id=? AND {TERMINAL} ORDER BY hrc_seq ASC LIMIT 1"),&[Sql::Text(run_id.clone())],true)?.pop();
         if let Some(event) = terminal {
             ready.push((run_id, request, event));
         }
@@ -103,6 +142,8 @@ fn pump(server: &Shared) -> Result<()> {
         }
         server.handoff.active.lock().unwrap().remove(&run_id);
     }
+    // Advanced only after every candidate finalized, so a failed pass retries.
+    *cursor = Some(next);
     Ok(())
 }
 
@@ -112,6 +153,7 @@ pub fn start(server: &Shared) {
     let mut wake = server.ledger.subscribe();
     let task = tokio::spawn(async move {
         let mut timer = tokio::time::interval(Duration::from_secs(1));
+        let mut cursor = None;
         loop {
             tokio::select! {_=timer.tick()=>{},r=wake.changed()=>{if r.is_err(){return;}}}
             if owned
@@ -121,7 +163,7 @@ pub fn start(server: &Shared) {
             {
                 return;
             }
-            if let Err(error) = pump(&owned) {
+            if let Err(error) = pump(&owned, &mut cursor) {
                 stderr_json(
                     "warn",
                     "messages",
