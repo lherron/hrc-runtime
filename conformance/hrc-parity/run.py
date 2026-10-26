@@ -533,6 +533,9 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n2-participant':
         from n2_participant import compare as compare_participant
         return compare_participant(args, checks)
+    if getattr(args, 'suite', '').startswith('n5-'):
+        from n5_suites import compare as compare_n5
+        return compare_n5(args, checks)
     if getattr(args, 'suite', None) == 'n2-continuation':
         from n2_continuation import compare as compare_n2_continuation
         return compare_n2_continuation(args, checks)
@@ -1370,6 +1373,9 @@ UNSUPPORTED_REASONS = {
     'NOT-PORTED per mable EN-36185: legacy HRC delivery state retained for ACP import compatibility; no production daemon caller (only evaluateSeatHint, ported N3); active delivery/recovery owned and gated by the unchanged ACP injector. Evidence: wrkq-artifacts/T-11839/legacy-delivery-disposition.json.',
     'NOT-PORTED (N3 T-11839): no production daemon caller of full-row getBySeq; native monitor_message_by_seq retains the monitor projection and full message query is ported. Evidence: crates/hrc-store/src/monitor_read.rs, wrkq-artifacts/T-11839/messages-land2.',
     'Plan "Explicitly unsupported": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced.',
+    # N5 (T-11819): Lance's scope ruling relayed in EN-35340/35341 (T-11820
+    # audit) keeps these Bun-owned; mable EN-36516 admits them as UNSUPPORTED.
+    'Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820.',
 }
 
 

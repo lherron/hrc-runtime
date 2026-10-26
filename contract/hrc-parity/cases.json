@@ -406,7 +406,13 @@
         "direct-CLI-open-remains-uninstrumented"
       ],
       "requiredInP0": false
-    }
+    },
+    "n5-cli": {"assertionIds": ["help-grammar-differential", "every-qualification-line-driven", "postponed-commands-exec-same-release-bun", "no-production-metrics"], "requiredInP0": false},
+    "n5-status": {"assertionIds": ["readonly-schema-diagnostics", "ruled-unsupported-only"], "requiredInP0": false},
+    "n5-monitor": {"assertionIds": ["filtered-lifecycle-reads", "high-water-cursor", "task-predicates", "row-projection"], "requiredInP0": false},
+    "n5-lifecycle": {"assertionIds": ["grant-authority-and-refusals", "credential-rotation-reconcile", "canonical-lifecycle-rows", "remote-origins"], "requiredInP0": false},
+    "n5-shutdown": {"assertionIds": ["bounded-teardown-steps", "held-body-drain-per-listener", "owner-writes-drained"], "requiredInP0": false},
+    "n5-server-owner": {"assertionIds": ["dead-owner-reclaim", "live-and-malformed-refusal", "concurrent-reclaimers"], "requiredInP0": false}
   },
   "coverageRules": [
     {
@@ -751,7 +757,7 @@
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/schema-guard.ts:<module>:readStoreSchemaState:",
-      "target": "GAP:N5",
+      "target": "n5-status",
       "reason": "N5 server status owns non-refusing readonly schema diagnostics."
     },
     {
@@ -911,22 +917,22 @@
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listFromHrcSeqFiltered:",
-      "target": "GAP:N5",
+      "target": "n5-monitor",
       "reason": "N5 monitor owns direct-store filtered lifecycle reads and its high-water cursor."
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:maxHrcSeq:",
-      "target": "GAP:N5",
+      "target": "n5-monitor",
       "reason": "N5 monitor owns direct-store filtered lifecycle reads and its high-water cursor."
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:<module>:escapeLike:",
-      "target": "GAP:N5",
+      "target": "n5-monitor",
       "reason": "N5 monitor owns direct-store task filters and lifecycle matching."
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:<module>:taskScopePredicate:",
-      "target": "GAP:N5",
+      "target": "n5-monitor",
       "reason": "N5 monitor owns direct-store task filters and lifecycle matching."
     },
     {
@@ -991,12 +997,12 @@
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:buildLifecycleWhere:",
-      "target": "GAP:N5",
+      "target": "n5-monitor",
       "reason": "N5 monitor owns direct-store lifecycle filtering and row projection."
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:mapHrcEventRow:",
-      "target": "GAP:N5",
+      "target": "n5-monitor",
       "reason": "N5 monitor owns direct-store lifecycle filtering and row projection."
     },
     {
@@ -1181,17 +1187,17 @@
     },
     {
       "idPrefix": "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts",
-      "target": "GAP:N5",
+      "target": "n5-status",
       "reason": "N5 owns direct-store status diagnostics and metadata inspection."
     },
     {
       "idPrefix": "store-source:packages/hrc-store-sqlite/src/statement-telemetry.ts",
-      "target": "GAP:N5",
+      "target": "n5-status",
       "reason": "N5 owns direct-store status diagnostics and metadata inspection."
     },
     {
       "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/statement-telemetry.ts",
-      "target": "GAP:N5",
+      "target": "n5-status",
       "reason": "N5 owns direct-store status diagnostics and metadata inspection."
     },
     {
@@ -1210,24 +1216,48 @@
       "reason": "Bun owns creation/upgrade SQL for execution/recovery tables; N1 admits the current schema without porting a migrator."
     },
     {
-      "kind": "cli-command",
-      "target": "GAP:N5"
-    },
-    {
-      "kind": "cli-alias",
-      "target": "GAP:N5"
-    },
-    {
-      "kind": "package-bin",
-      "target": "GAP:N5"
-    },
-    {
       "kind": "direct-store-call",
-      "target": "GAP:N5"
+      "pathPrefix": "scripts/",
+      "target": "UNSUPPORTED",
+      "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
     },
     {
       "kind": "direct-store-open",
-      "target": "GAP:N5"
+      "pathPrefix": "scripts/",
+      "target": "UNSUPPORTED",
+      "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
+    },
+    {
+      "kind": "direct-store-call",
+      "pathPrefix": "packages/hrc-cli/src/run-invocation.ts",
+      "target": "UNSUPPORTED",
+      "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
+    },
+    {
+      "kind": "direct-store-call",
+      "pathPrefix": "packages/hrc-capture-verifier/",
+      "target": "UNSUPPORTED",
+      "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
+    },
+    {
+      "kind": "cli-command",
+      "target": "n5-cli"
+    },
+    {
+      "kind": "cli-alias",
+      "target": "n5-cli"
+    },
+    {
+      "kind": "package-bin",
+      "target": "n5-cli"
+    },
+    {
+      "kind": "direct-store-call",
+      "target": "n5-cli"
+    },
+    {
+      "kind": "direct-store-open",
+      "target": "n5-cli"
     },
     {
       "kind": "auxiliary-route",
@@ -1375,7 +1405,7 @@
     "cli:hrc run annotate": "direct-cli-sdk",
     "cli:hrc run export": "direct-cli-sdk",
     "file:state-wal-shm": "n1-schema-refusal",
-    "file:lifecycle-credentials": "GAP:N5",
+    "file:lifecycle-credentials": "n5-lifecycle",
     "file:broker-leases-raw-provider-artifacts": "n2-retained",
     "file:session-publication-cursor": "n3-publication",
     "file:server-publication-cursor": "n3-publication",
@@ -1488,13 +1518,13 @@
     "timer:packages/hrc-server/src/event-ingest/forwarder.ts:2765": "GAP:N4",
     "timer:packages/hrc-server/src/acp-event-bridge.ts:13698": "GAP:N4",
     "timer:packages/hrc-server/src/first-turn-bundle.ts:7920": "GAP:N4",
-    "timer:packages/hrc-server/src/server-stop-methods.ts:2462": "GAP:N5",
-    "timer:packages/hrc-server/src/server-stop-methods.ts:4947": "GAP:N5",
-    "timer:packages/hrc-server/src/server-stop-methods.ts:6300": "GAP:N5",
-    "timer:packages/hrc-server/src/server-lock.ts:8464": "GAP:N5",
-    "timer:packages/hrc-server/src/server-lifecycle-controller.ts:17004": "GAP:N5",
-    "timer:packages/hrc-server/src/server-lifecycle-controller.ts:25206": "GAP:N5",
-    "timer:packages/hrc-server/src/index.ts:26108": "GAP:N5",
+    "timer:packages/hrc-server/src/server-stop-methods.ts:2462": "n5-shutdown",
+    "timer:packages/hrc-server/src/server-stop-methods.ts:4947": "n5-shutdown",
+    "timer:packages/hrc-server/src/server-stop-methods.ts:6300": "n5-shutdown",
+    "timer:packages/hrc-server/src/server-lock.ts:8464": "n5-server-owner",
+    "timer:packages/hrc-server/src/server-lifecycle-controller.ts:17004": "n5-lifecycle",
+    "timer:packages/hrc-server/src/server-lifecycle-controller.ts:25206": "n5-lifecycle",
+    "timer:packages/hrc-server/src/index.ts:26108": "n5-lifecycle",
     "public:POST:/v1/turns": "n2-routes",
     "public:GET:/v1/runs": "n2-routes",
     "public:GET:/v1/capture": "n2-routes",
@@ -1543,7 +1573,8 @@
     "store-op:packages/hrc-store-sqlite/src/collective-history-repository.ts:CollectiveHistoryRepository:selectRows:12966": "n4-history",
     "store-source:packages/hrc-store-sqlite/src/collective-history-columns.ts": "n4-history",
     "store-source:packages/hrc-store-sqlite/src/collective-history-repository.ts": "n4-history",
-    "public:POST:/v1/server/lifecycle": "GAP:N5",
+    "public:POST:/v1/server/lifecycle": "n5-lifecycle",
+    "direct:packages/hrc-capture-verifier/src/sqlite.ts:3286": "n5-cli",
     "public:GET:/v1/broker-events": "n3-events",
     "public:GET:/v1/broker-events/follow": "n3-events",
     "public:GET:/v1/broker-events/query": "n3-events",
@@ -1832,7 +1863,8 @@
     "store-op:packages/hrc-store-sqlite/src/collective-history-repository.ts:CollectiveHistoryRepository:selectRows:12966": "Collective history (N4): n4-history replicates real rows Bun to S, then each owner boots on the same store with tamper/change/insert controls, and compares collective queries and authority verbs against Bun in key order.",
     "store-source:packages/hrc-store-sqlite/src/collective-history-columns.ts": "Collective history (N4): n4-history replicates real rows Bun to S, then each owner boots on the same store with tamper/change/insert controls, and compares collective queries and authority verbs against Bun in key order.",
     "store-source:packages/hrc-store-sqlite/src/collective-history-repository.ts": "Collective history (N4): n4-history replicates real rows Bun to S, then each owner boots on the same store with tamper/change/insert controls, and compares collective queries and authority verbs against Bun in key order.",
-    "public:POST:/v1/server/lifecycle": "N4 → N5 by mable EN-35963: grant-authorized local execution-owner stop/restart plus canonical lifecycle rows; native qualification pending.",
+    "public:POST:/v1/server/lifecycle": "N4 → N5 by mable EN-35963: grant-authorized local execution-owner stop/restart plus canonical lifecycle rows; lifecycle_actions and lifecycle_peer drive it on the native owner.",
+    "direct:packages/hrc-capture-verifier/src/sqlite.ts:3286": "broker-verify candidates reads the readonly store natively (n5b_admin); full capture verification stays Bun-owned.",
     "schema-sql:packages/hrc-store-sqlite/src/migrations/schema-migrations-mail-delivery.ts:12058": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced.",
     "schema-sql:packages/hrc-store-sqlite/src/migrations/schema-migrations-mail-delivery.ts:12444": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced.",
     "schema-sql:packages/hrc-store-sqlite/src/migrations/schema-migrations-mail-delivery.ts:13799": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced.",

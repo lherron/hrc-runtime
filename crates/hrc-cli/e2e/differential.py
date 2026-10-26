@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[3]
 # Declared normalization: created IDs and timestamps can change between calls.
 NORMALIZATION = {'timestamps': r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z'}
 
+OUTSIDE_NATIVE = 'Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820.'
+
 
 def nodes(node):
     yield node
@@ -107,7 +109,8 @@ def main():
     assert set(suites) == {key for key, value in decisions.items() if value['disposition'] == 'IMPLEMENT'}
     qualification, unsupported = [], []
     for item in coverage['items']:
-        if item['target'] != 'GAP:N5' and item['kind'] != 'cli-command':
+        # N5's lines are its n5-* cases plus the outside-native UNSUPPORTED lines.
+        if not str(item['target']).startswith('n5-') and item.get('reason') != OUTSIDE_NATIVE and item['kind'] != 'cli-command':
             continue
         row = {'line': item['id']}
         if item['kind'] == 'cli-command':
@@ -148,7 +151,7 @@ def main():
             elif '/hrc-capture-verifier/' in path and (item['kind'] == 'direct-store-open' or symbol == 'listCandidates.rows'):
                 row.update(suite='n5b_admin.py', reason='Native broker-verify candidates uses the readonly store; full verification stays postponed.')
             else:
-                row.update(reason='Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820.')
+                row.update(reason=OUTSIDE_NATIVE)
                 unsupported.append(row)
         qualification.append(row)
     report = {'commandScope': scope, 'normalization': NORMALIZATION, 'rustHelpAddition': {'paths': ['server', 'server serve'], 'text': rust_server_help}, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'qualification': qualification, 'qualificationNote': 'Suite names are coverage obligations, not behavioral PASS results. Aggregate qualification supplies their actual results.', 'unsupported': unsupported}
