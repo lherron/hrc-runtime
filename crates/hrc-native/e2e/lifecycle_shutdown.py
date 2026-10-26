@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import secrets
 import socket
 import sqlite3
 import subprocess
@@ -30,6 +31,8 @@ def main():
     for name in ('binary', 'oracle', 'environment', 'artifacts'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--held-only', action='store_true')
+    parser.add_argument('--listener', choices=('unix', 'peer', 'registry'), default='unix')
+    parser.add_argument('--federation-host', default='100.73.60.81')
     args = parser.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items()
@@ -42,6 +45,21 @@ def main():
     with tempfile.TemporaryDirectory(prefix='s-', dir='/tmp/n5-server-owned-11819') as tmp:
         root = Path(tmp)
         env.update(HRC_RUNTIME_DIR=str(root/'run'), HRC_STATE_DIR=str(root/'state'))
+        ports = {}
+        token = secrets.token_hex(24)
+        if args.listener != 'unix':
+            for name in ('peer', 'registry', 'unused'):
+                with socket.socket() as probe:
+                    probe.bind((args.federation_host, 0))
+                    ports[name] = probe.getsockname()[1]
+            config = root/'federation.json'
+            config.write_text(json.dumps(dict(nodeId='n5stop',
+                peers={'n5other': dict(endpoint=f'http://{args.federation_host}:{ports["unused"]}', token=token)},
+                registry=dict(bind=f'http://{args.federation_host}:{ports["registry"]}'),
+                peerListener=dict(bind=f'http://{args.federation_host}:{ports["peer"]}'),
+                gate=dict(mode='off', registryHost='n5stop'))))
+            config.chmod(0o600)
+            env['HRC_PEER_CONFIG_FILE'] = str(config)
         oracle = copied_bun_cli(args.oracle, root/'release')
         proc = None
         held = None
@@ -83,15 +101,23 @@ def main():
             proc.terminate()
             proc.wait(timeout=15)
             for partial in ([True] if args.held_only else [False, True]):
-                name = 'held-request' if partial else 'clean'
+                name = ('held-request' if partial else 'clean')+'-'+args.listener
                 boot([str(args.binary.resolve())], name)
                 before = facts()[-1][0]
                 if partial:
-                    held = socket.socket(socket.AF_UNIX)
-                    held.connect(str(root/'run/hrc.sock'))
+                    if args.listener == 'unix':
+                        held = socket.socket(socket.AF_UNIX)
+                        held.connect(str(root/'run/hrc.sock'))
+                        path = '/v1/sessions/resolve'
+                        auth = ''
+                    else:
+                        held = socket.create_connection((args.federation_host, ports[args.listener]), timeout=3)
+                        path = ('/v1/federation/server-lifecycle' if args.listener == 'peer'
+                                else '/v1/federation/registry/establish')
+                        auth = 'Authorization: Bearer '+token+'\r\n'
                     # Expect/100-continue proves the server parsed headers before
                     # the deliberately incomplete body parks dispatch_inner.
-                    held.sendall(b'POST /v1/sessions/resolve HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\nExpect: 100-continue\r\nContent-Type: application/json\r\n\r\n')
+                    held.sendall(('POST '+path+' HTTP/1.1\r\nHost: localhost\r\n'+auth+'Content-Length: 100000\r\nExpect: 100-continue\r\nContent-Type: application/json\r\n\r\n').encode())
                     held.settimeout(3)
                     assert b'100 Continue' in held.recv(4096)
                     held.sendall(b'{')
@@ -114,7 +140,8 @@ def main():
                 assert kinds == (['server.shutting_down'] if partial else ['server.shutting_down', 'server.stopped']), kinds
                 if partial:
                     assert 2.5 <= elapsed < 10, elapsed
-                    assert 'request_drain_timeout' in (args.artifacts/(name+'.log')).read_text()
+                    log = (args.artifacts/(name+'.log')).read_text()
+                    assert ('request_drain_timeout' if args.listener == 'unix' else 'federation_listeners') in log
                     held.close()
                     held = None
                 assert not (root/'run/hrc.sock').exists() and not (root/'run/server.lock').exists()

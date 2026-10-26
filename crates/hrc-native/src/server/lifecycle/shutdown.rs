@@ -105,6 +105,15 @@ pub async fn finish(
         "info",
         "server",
         "server.stop.step",
+        json!({"step":"federation_listeners"}),
+    );
+    if !crate::server::federation::stop_listeners(server, REQUEST_DRAIN).await {
+        incomplete(&mut reasons, "federation_listeners_not_quiescent");
+    }
+    stderr_json(
+        "info",
+        "server",
+        "server.stop.step",
         json!({"step":"owner_writes"}),
     );
     if !server.owner_writes.close_and_drain(STEP).await {
