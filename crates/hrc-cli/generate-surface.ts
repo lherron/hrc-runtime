@@ -1,7 +1,25 @@
 import type { Command } from 'commander'
 // Build-time data only: rusthrc never invokes Bun or the legacy CLI.
 import { buildProgram } from '../../packages/hrc-cli/src/cli/build-program'
+import { cmdAttach } from '../../packages/hrc-cli/src/cli/handlers-scope-attach'
+import { printManagedScopeUsage } from '../../packages/hrc-cli/src/cli/handlers-scope-managed'
 import { renderRootHelp } from '../../packages/hrc-cli/src/cli/help'
+const actionUsage: Record<string, string> = {}
+for (const name of ['start', 'run', 'attach'] as const) {
+  let text = ''
+  const original = process.stdout.write
+  process.stdout.write = ((chunk: string) => {
+    text += chunk
+    return true
+  }) as typeof original
+  try {
+    if (name === 'attach') await cmdAttach([])
+    else printManagedScopeUsage(name)
+  } finally {
+    process.stdout.write = original
+  }
+  actionUsage[name] = text
+}
 const root = buildProgram()
 function completeHelp(command: Command): string {
   let output = ''
@@ -14,11 +32,13 @@ function completeHelp(command: Command): string {
   return output
 }
 function surface(command: Command, path: string[]): unknown {
+  const usage = path.length === 1 ? actionUsage[path[0] ?? ''] : undefined
   return {
     path,
     name: command.name(),
     aliases: command.aliases(),
     usage: command.usage(),
+    ...(usage ? { actionUsage: usage } : {}),
     help: path.length ? completeHelp(command) : renderRootHelp(root, 'agent'),
     humanHelp: path.length ? completeHelp(command) : renderRootHelp(root, 'human'),
     arguments: command.registeredArguments.map((a) => ({

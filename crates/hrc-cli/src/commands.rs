@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
     let path = args.path();
     match path.as_str() {
+        "start" | "run" | "attach" => crate::launch::command(args),
         "server status" => crate::server_status::command(args),
         "target locate" => {
             let raw = &args.positionals[0];

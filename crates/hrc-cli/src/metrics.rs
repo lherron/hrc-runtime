@@ -133,6 +133,24 @@ impl Span {
         }
     }
 }
+/// Startup is recorded at the terminal handoff, independently of session lifetime.
+pub(crate) fn launch(command: &str, startup_ms: f64, phases: Vec<Value>) {
+    if std::env::var("HRC_METRICS").ok().as_deref() == Some("0") {
+        return;
+    }
+    let mut record = json!({"v":1,"kind":"launch","ts":hrc_store::timestamp(),"bin":"rusthrc","cmd":command,"startupMs":startup_ms,"phases":phases,"pid":std::process::id()});
+    if let Ok(mut state) = STATE.lock()
+        && let Some(cli) = state.record.as_mut()
+    {
+        cli["startupMs"] = startup_ms.into();
+        for key in ["agent", "project"] {
+            if let Some(value) = cli.get(key) {
+                record[key] = value.clone();
+            }
+        }
+    }
+    let _ = write_record(record);
+}
 pub(crate) fn finish(exit_code: i32) {
     let record = (|| {
         let mut state = STATE.lock().ok()?;

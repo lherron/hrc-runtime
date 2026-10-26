@@ -12,9 +12,11 @@ pub(crate) use cli_println;
 mod client;
 mod commands;
 mod inspect;
+mod launch;
 mod metrics;
 mod parse;
 mod passthrough;
+mod preview;
 mod scope;
 mod selectors;
 mod server_status;
@@ -26,6 +28,7 @@ pub(crate) struct Error {
     message: String,
     code: i32,
     domain: Option<Value>,
+    reported: bool,
 }
 impl Error {
     pub(crate) fn usage(message: impl Into<String>) -> Self {
@@ -33,6 +36,7 @@ impl Error {
             message: message.into(),
             code: 2,
             domain: None,
+            reported: false,
         }
     }
     pub(crate) fn failure(message: impl Into<String>) -> Self {
@@ -40,6 +44,7 @@ impl Error {
             message: message.into(),
             code: 1,
             domain: None,
+            reported: false,
         }
     }
 }
@@ -115,9 +120,11 @@ pub fn run(args: Vec<String>) -> i32 {
         parsed.and_then(|parsed| {
             if parsed.help
                 || args.is_empty()
-                || parsed.node["children"]
-                    .as_array()
-                    .is_some_and(|a| !a.is_empty())
+                || (parsed.positionals.is_empty()
+                    && !parsed.node["actionUsage"].is_string()
+                    && parsed.node["children"]
+                        .as_array()
+                        .is_some_and(|a| !a.is_empty()))
             {
                 let human = parsed.flag("human")
                     || (!parsed.flag("agent")
@@ -146,7 +153,9 @@ pub fn run(args: Vec<String>) -> i32 {
     let code = match result {
         Ok(code) => code,
         Err(error) => {
-            if let Some(domain) = error.domain {
+            if error.reported {
+                // Scope commands already emitted their structured stdout envelope.
+            } else if let Some(domain) = error.domain {
                 if json_errors {
                     eprintln!("{}", serde_json::json!({"error": domain}));
                 } else {

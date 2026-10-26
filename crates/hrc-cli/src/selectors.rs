@@ -448,7 +448,7 @@ pub(crate) fn continuity(raw: &str, client: &Daemon) -> Result<(String, String)>
             Some(_) if !source.contains('@') => ("selector", 0),
             _ => ("target", 0),
         };
-        Error { message: reason.into(), code: 2, domain: Some(json!({"code":"invalid_selector","message":reason,"detail":{"kind":kind,"position":position,"reason":reason},"usage":true})) }
+        Error { reported: false, message: reason.into(), code: 2, domain: Some(json!({"code":"invalid_selector","message":reason,"detail":{"kind":kind,"position":position,"reason":reason},"usage":true})) }
     })?;
     match selector {
         Selector::Scope(scope, lane) => Ok((scope, lane.unwrap_or_else(|| "main".into()))),

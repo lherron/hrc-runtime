@@ -85,9 +85,27 @@ pub(crate) fn parse<'a>(surface: &'a Value, args: &[String]) -> Result<Parsed<'a
                         opt["flags"].as_str().unwrap()
                     ),
                 ));
+            } else if key == "wait" && opt["optional"] == true {
+                "completed".into()
             } else {
                 "true".into()
             };
+            if let Some(choices) = opt["choices"].as_array()
+                && !choices.iter().any(|c| c.as_str() == Some(&value))
+            {
+                return Err(command_error(
+                    &parsed,
+                    format!(
+                        "error: option '{}' argument '{value}' is invalid. Allowed choices are {}.",
+                        opt["flags"].as_str().unwrap(),
+                        choices
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                ));
+            }
             if key == "output" && value != "json" {
                 return Err(command_error(
                     &parsed,
@@ -121,7 +139,10 @@ pub(crate) fn parse<'a>(surface: &'a Value, args: &[String]) -> Result<Parsed<'a
             parsed.positionals.push(token.clone());
         }
     }
-    if !parsed.node["children"].as_array().unwrap().is_empty() && !parsed.positionals.is_empty() {
+    if !parsed.node["children"].as_array().unwrap().is_empty()
+        && parsed.node["arguments"].as_array().unwrap().is_empty()
+        && !parsed.positionals.is_empty()
+    {
         let mut names = vec!["help".to_owned()];
         for child in parsed.node["children"].as_array().unwrap() {
             names.push(child["name"].as_str().unwrap().to_owned());

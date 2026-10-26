@@ -36,6 +36,15 @@ impl Daemon {
     pub fn post(&self, path: &str, body: Value) -> Result<Value> {
         self.request("POST", path, &[], Some(body)).map(|r| r.0)
     }
+    pub fn post_bounded(
+        &self,
+        path: &str,
+        body: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value> {
+        self.request_with_timeout("POST", path, &[], Some(body), Some(timeout))
+            .map(|r| r.0)
+    }
     pub fn request(
         &self,
         method: &str,
@@ -43,11 +52,24 @@ impl Daemon {
         query: &[(String, String)],
         body: Option<Value>,
     ) -> Result<(Value, Option<String>)> {
+        self.request_with_timeout(method, path, query, body, None)
+    }
+    fn request_with_timeout(
+        &self,
+        method: &str,
+        path: &str,
+        query: &[(String, String)],
+        body: Option<Value>,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<(Value, Option<String>)> {
         let span = crate::metrics::Span::begin(path, method);
         let mut request = self
             .client
             .request(method.parse().unwrap(), format!("http://localhost{path}"))
             .query(query);
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
+        }
         if let Some(span) = span.as_ref() {
             request = request.header("x-hrc-request-id", &span.id);
         }
@@ -120,6 +142,7 @@ impl Daemon {
                 }
                 domain["usage"] = usage.into();
                 return Err(Error {
+                    reported: false,
                     message: domain["message"].as_str().unwrap_or_default().to_owned(),
                     code: if usage { 2 } else { 1 },
                     domain: Some(domain),

@@ -10,23 +10,48 @@ use serde_json::{Value, json};
 pub(crate) struct Qualified {
     pub scope: String,
     pub lane: String,
-    agent: String,
+    pub agent: String,
     project: Option<String>,
     explicit_task: bool,
     explicit_role: bool,
     project_origin: &'static str,
 }
-fn default_project() -> Option<String> {
-    if let Ok(project) = std::env::var("ASP_PROJECT") {
-        return Some(project);
+fn agents_root() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
+    let expand = |value: String| {
+        if value == "~" {
+            home.clone()
+        } else if let Some(path) = value.strip_prefix("~/") {
+            home.join(path)
+        } else {
+            value.into()
+        }
+    };
+    if let Ok(root) = std::env::var("ASP_AGENTS_ROOT")
+        && !root.is_empty()
+    {
+        return Some(expand(root));
     }
-    let mut dir = std::env::current_dir().ok()?;
-    let agents = std::env::var_os("ASP_AGENTS_ROOT")
+    let asp = std::env::var_os("ASP_HOME")
         .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(|h| std::path::PathBuf::from(h).join("praesidium/var/agents"))
-        });
+        .unwrap_or_else(|| home.join(".asp"));
+    if let Some(root) = std::fs::read_to_string(asp.join("config.toml"))
+        .ok()
+        .and_then(|s| s.parse::<toml::Value>().ok())
+        .and_then(|v| {
+            v.get("agents-root")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned)
+        })
+    {
+        return Some(expand(root));
+    }
+    let root = home.join("praesidium/var/agents");
+    root.exists().then_some(root)
+}
+fn cwd_project() -> Option<String> {
+    let mut dir = std::env::current_dir().ok()?;
+    let agents = agents_root();
     loop {
         if agents.as_ref().is_some_and(|root| dir.starts_with(root)) {
             return None;
@@ -39,8 +64,84 @@ fn default_project() -> Option<String> {
         }
     }
 }
+fn default_project() -> Option<String> {
+    std::env::var("ASP_PROJECT").ok().or_else(cwd_project)
+}
+fn managed_project(input: &str, args: &crate::parse::Parsed<'_>) -> Option<String> {
+    use std::io::IsTerminal;
+    if input.contains('@') || input.contains(":project:") {
+        return None;
+    }
+    if !args.flag("attach-only")
+        && let Some(project) = args.value("project-id")
+    {
+        return Some(project.into());
+    }
+    let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let asp = std::env::var("ASP_PROJECT").ok();
+    let cwd = cwd_project();
+    if interactive
+        && let (Some(asp), Some(cwd)) = (&asp, &cwd)
+        && asp != cwd
+    {
+        eprintln!(
+            "[hrc] cwd is project '{cwd}' but ASP_PROJECT='{asp}'; using '{cwd}'. Pass '<agent>@{asp}' or --project-id {asp} to target ASP_PROJECT instead."
+        );
+        return Some(cwd.clone());
+    }
+    if asp.is_some() || cwd.is_some() {
+        return asp.or(cwd);
+    }
+    if !interactive
+        || args.flag("dry-run")
+        || args.flag("no-register")
+        || args.path() == "attach"
+        || args.flag("attach-only")
+    {
+        return None;
+    }
+    let cwd = std::env::current_dir().ok()?;
+    if agents_root().is_some_and(|a| cwd.starts_with(a)) {
+        return None;
+    }
+    let id = cwd.file_name()?.to_string_lossy().into_owned();
+    eprint!(
+        "\nNo project marker found for {}.\nRegister as project '{id}' (writes asp-targets.toml here)? [Y/n] ",
+        cwd.display()
+    );
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer).ok()?;
+    if !["", "y", "yes"].contains(&answer.trim().to_lowercase().as_str()) {
+        eprintln!("Skipping project registration.\n");
+        return None;
+    }
+    let marker = cwd.join("asp-targets.toml");
+    match std::fs::write(
+        &marker,
+        format!(
+            "# asp-targets.toml — project marker for {id}\n# Add [targets.<name>] tables to define run targets.\nschema = 1\n"
+        ),
+    ) {
+        Ok(()) => {
+            eprintln!("Wrote {}\n", marker.display());
+            Some(id)
+        }
+        Err(error) => {
+            eprintln!("Failed to write {}: {error}", marker.display());
+            None
+        }
+    }
+}
+
 impl Qualified {
     pub fn parse(input: &str, caller_task: bool) -> Result<Self> {
+        Self::parse_with_project(input, caller_task, None)
+    }
+    fn parse_with_project(
+        input: &str,
+        caller_task: bool,
+        project_hint: Option<String>,
+    ) -> Result<Self> {
         let (handle, directives) = input
             .split_once('+')
             .map(|(h, d)| (h, Some(d)))
@@ -122,7 +223,9 @@ impl Qualified {
             "inferred"
         };
         if project.is_none() {
-            project = default_project().filter(|s| !s.is_empty());
+            project = project_hint
+                .or_else(default_project)
+                .filter(|s| !s.is_empty());
         }
         if task.is_none() && project.is_some() {
             task = if caller_task {
@@ -177,6 +280,111 @@ impl Qualified {
             explicit_role,
             project_origin,
         })
+    }
+    /// Launch uses strict placement and retains the daemon observation; read
+    /// selectors continue to use their advisory observation below.
+    pub fn managed(input: &str, args: &crate::parse::Parsed<'_>) -> Result<(Self, Value)> {
+        let attach = args.path() == "attach" || args.flag("attach-only");
+        let option = |key: &str| if attach { None } else { args.value(key) };
+        let cwd_override = option("cwd");
+        if let Some(cwd) = cwd_override {
+            if !std::path::Path::new(cwd).is_absolute() {
+                return Err(Error::failure(format!(
+                    "--cwd must be an absolute path: {cwd}"
+                )));
+            }
+            if !std::path::Path::new(cwd).is_dir() {
+                return Err(Error::failure(format!(
+                    "--cwd does not exist or is not a directory: {cwd}"
+                )));
+            }
+        }
+        let mut qualified = Self::parse_with_project(input, false, managed_project(input, args))
+            .map_err(|mut error| {
+                let message = &error.message;
+                let code = if message.starts_with("provisioning directive")
+                    && message.contains(" is denied:")
+                {
+                    Some("DENIED_PROVISION_KEY")
+                } else if message.starts_with("unknown provisioning")
+                    || message.starts_with("empty provisioning")
+                {
+                    Some("UNKNOWN_PROVISION_KEY")
+                } else if message.starts_with("provisioning key")
+                    && message.contains("more than once")
+                {
+                    Some("AMBIGUOUS_DIRECTIVE")
+                } else if message.starts_with("invalid value")
+                    || (message.starts_with("provisioning directive")
+                        && message.contains("empty value"))
+                {
+                    Some("INVALID_PROVISION_VALUE")
+                } else {
+                    None
+                };
+                if let Some(code) = code {
+                    error.domain = Some(json!({"code":code,"message":message,"detail":{}}));
+                }
+                error
+            })?;
+        if option("project-id").is_some() {
+            qualified.project_origin = "explicit";
+        }
+        let cwd = std::env::current_dir().map_err(|e| Error::failure(e.to_string()))?;
+        let root = option("project-root")
+            .map(std::path::PathBuf::from)
+            .or_else(|| option("project-id").map(|_| cwd.clone()))
+            .map(|p| if p.is_absolute() { p } else { cwd.join(p) });
+        let mut request = json!({"agentId":qualified.agent,"projectOrigin":qualified.project_origin,"cwd":root.as_ref().unwrap_or(&cwd)});
+        if let Some(root) = root {
+            request["projectRoot"] = root.to_string_lossy().into_owned().into();
+        }
+        if let Some(project) = &qualified.project {
+            request["projectId"] = project.clone().into();
+        }
+        if let Some(task) = qualified
+            .scope
+            .split(':')
+            .collect::<Vec<_>>()
+            .windows(2)
+            .find(|p| p[0] == "task")
+        {
+            request["taskId"] = task[1].into();
+        }
+        let client = Daemon::connect().map_err(|mut error| {
+            let socket = crate::client::runtime_root().join("hrc.sock");
+            error.domain=Some(json!({"code":"runtime_unavailable","message":error.message,"detail":{"code":"hrc_daemon_missing_socket","socketPath":socket}}));
+            error
+        })?;
+        let mut observed = match client.post("/v1/placements/resolve", request) {
+            Ok(observed) => observed,
+            Err(error)
+                if error
+                    .domain
+                    .as_ref()
+                    .is_some_and(|d| d["detail"]["producerCode"] == "agent_not_found") =>
+            {
+                let detail = &error.domain.as_ref().unwrap()["detail"];
+                let mut observed = json!({});
+                for key in ["searchedAgentRoots", "projectRoot", "cwd"] {
+                    if let Some(value) = detail.get(key) {
+                        observed[key] = value.clone();
+                    }
+                }
+                observed
+            }
+            Err(error) => return Err(error),
+        };
+        if qualified.explicit_task
+            && !qualified.explicit_role
+            && let Some(role) = observed["identity"]["role"].as_str()
+        {
+            qualified.scope.push_str(&format!(":role:{role}"));
+        }
+        if let Some(cwd) = cwd_override {
+            observed["cwd"] = cwd.into();
+        }
+        Ok((qualified, observed))
     }
     pub fn observe(&mut self, client: &Daemon) -> Result<()> {
         let mut request = json!({"agentId":self.agent,"projectOrigin":self.project_origin,"taskWorktreeAssociation":"advisory"});

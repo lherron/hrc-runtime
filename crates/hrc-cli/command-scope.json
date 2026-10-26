@@ -130,7 +130,7 @@
     {
       "command": "attach",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "capture",
@@ -260,7 +260,7 @@
     {
       "command": "run",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "run annotate",
@@ -445,7 +445,7 @@
     {
       "command": "start",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "summon",
