@@ -6,6 +6,7 @@ positions in each owner's own ledger, so each side is checked for validity
 (the cursor precedes the run's first row) rather than equality.
 """
 import json
+import re
 from pathlib import Path
 
 from n2_turns import Norm, TIMED, UNPOSITIONED, born_after_fix, fallback_duplicates
@@ -22,6 +23,23 @@ def strip_cursors(value):
     if isinstance(value, list):
         return [strip_cursors(v) for v in value]
     return value
+
+
+# Values each owner derives from its own scope name (routes-bun vs
+# routes-native): the task id, every compile/profile hash, the bipc leaf (a
+# digest of the runtime id), the broker pid, and a context token count that
+# tracks the scope's length.
+OWNER_DERIVED = {'taskId', 'planHash', 'compileId', 'selectedProfileId', 'selectedProfileHash',
+                 'specHash', 'startRequestHash', 'brokerPid', 'usedTokens'}
+BIPC = re.compile(r'bipc/[0-9a-f]{12}')
+
+
+def mask_owner(value):
+    if isinstance(value, dict):
+        return {k: ('<owner>' if k in OWNER_DERIVED else mask_owner(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [mask_owner(v) for v in value]
+    return BIPC.sub('bipc/<leaf>', value) if isinstance(value, str) else value
 
 
 def kinds(observation, fixed):
@@ -91,6 +109,8 @@ def compare(args, checks):
             continue
         left = {'status': a['status'], 'body': strip_cursors(bun[2](a['body'])), 'events': kinds(a, fixed['bun'])}
         right = {'status': b['status'], 'body': strip_cursors(native[2](b['body'])), 'events': kinds(b, fixed['native'])}
+        if name.startswith('runtimes:'):
+            left['body'], right['body'] = mask_owner(left['body']), mask_owner(right['body'])
         for key in ('sessions', 'runtimes'):
             if key in a or key in b:
                 left[key], right[key] = a.get(key), b.get(key)

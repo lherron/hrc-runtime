@@ -9,6 +9,7 @@ a malformed body that reaches the broker.
 """
 import argparse
 import json
+import re
 import subprocess
 import os
 from pathlib import Path
@@ -222,6 +223,10 @@ def main():
         gen3 = s.rows("SELECT host_session_id FROM sessions WHERE scope_ref=? AND status='active'", (scope,))[0]['host_session_id']
         s.wait(lambda: s.rows("SELECT 1 FROM runtimes WHERE host_session_id=? AND status='ready'", (gen3,)), 300, 'relaunched seat ready')
         time.sleep(1)
+        # The list over a later generation after status transitions, live and
+        # with terminal history.
+        case('runtimes:after-rotation', 'GET', f'/v1/runtimes?scopeRef={scope}')
+        case('runtimes:after-rotation-all', 'GET', f'/v1/runtimes?scopeRef={scope}&all=true')
         case('invoke:fresh-context', 'POST', invoke, {'target': session_ref, 'body': PROMPT, 'origin': origin, 'freshContext': True}, settle=False)
         fresh = observations[-1]['body'].get('runId') if isinstance(observations[-1]['body'], dict) else None
         if fresh:
@@ -238,6 +243,19 @@ def main():
         case('drop:unknown', 'POST', drop, {'hostSessionId': 'hsid-00000000-0000-0000-0000-000000000000'})
         case('drop:ok', 'POST', drop, {'hostSessionId': active, 'reason': ' n2 case '})
         case('drop:again', 'POST', drop, {'hostSessionId': active})
+        restart = '/v1/sessions/restart'
+        gen = s.rows('SELECT generation FROM sessions WHERE host_session_id=?', (active,))[0]['generation']
+        case('restart:not-object', 'POST', restart, [])
+        case('restart:unknown-field', 'POST', restart, {'hostSessionId': active, 'expectedGeneration': gen, 'bogus': 1})
+        case('restart:no-generation', 'POST', restart, {'hostSessionId': active})
+        case('restart:bad-force', 'POST', restart, {'hostSessionId': active, 'expectedGeneration': gen, 'force': 'yes'})
+        case('restart:stale', 'POST', restart, {'hostSessionId': active, 'expectedGeneration': gen + 7})
+        case('restart:ok', 'POST', restart, {'hostSessionId': active, 'expectedGeneration': gen})
+        nxt = s.rows("SELECT host_session_id FROM sessions WHERE scope_ref=? AND status='active'", (scope,))[0]['host_session_id']
+        s.wait(lambda: s.rows("SELECT 1 FROM runtimes WHERE host_session_id=? AND status='ready'", (nxt,)), 300, 'restarted seat ready')
+        [o for o in observations if o['case'] == 'restart:ok'][-1]['sessions'] = s.rows('SELECT generation, status, continuation_reuse_disabled FROM sessions WHERE scope_ref=? ORDER BY generation', (scope,))
+        [o for o in observations if o['case'] == 'restart:ok'][-1]['runtimes'] = s.rows('SELECT generation, status FROM runtimes WHERE scope_ref=? ORDER BY created_at', (scope,))
+        case('restart:old-host', 'POST', restart, {'hostSessionId': active, 'expectedGeneration': gen})
         if not args.only or 'terminate:final' in args.only.split(','):
             [o for o in observations if o['case'] == 'terminate:final'][0]['finalRows'] = {
                 'runtime': s.rows('SELECT status, active_run_id, active_invocation_id FROM runtimes WHERE runtime_id=?', (runtime,)),
@@ -245,6 +263,10 @@ def main():
                 'invocation': s.rows('SELECT invocation_state FROM broker_invocations WHERE runtime_id=? ORDER BY created_at DESC LIMIT 1', (runtime,)),
                 'lease': s.rows("SELECT event_kind, payload_json FROM hrc_events WHERE runtime_id=? AND event_kind IN ('runtime.terminated','runtime.crashed','runtime.stale','runtime.dead') ORDER BY hrc_seq", (runtime,)),
             }
+        for o in observations:
+            # A controller instance names its own owner process.
+            if o['case'].startswith('runtimes:'):
+                o['body'] = json.loads(re.sub(r'hrc-server:\d+', 'hrc-server:<pid>', json.dumps(o['body'])))
         for o in observations:
             # The provider's continuation key is its own session id on each owner.
             if isinstance(o['body'], dict) and isinstance(o['body'].get('previousContinuationKey'), str):
