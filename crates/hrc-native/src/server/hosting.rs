@@ -3,7 +3,7 @@ use super::*;
 use std::future::IntoFuture;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
-pub async fn serve(role: front::Role) -> Result<()> {
+pub async fn serve(role: Role) -> Result<()> {
     std::panic::set_hook(Box::new(|info| {
         let payload = info.payload();
         let message = payload

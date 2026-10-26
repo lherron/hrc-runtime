@@ -9,7 +9,22 @@ fn main() {
         package["version"].as_str().unwrap()
     );
     let root = std::path::Path::new("../..");
-    let commit = if root.join(".git").exists() {
+    let release = root.join("praesidium-release.json");
+    let commit = if let Some(commit) = option_env!("HRC_SOURCE_COMMIT") {
+        commit.to_owned()
+    } else if release.exists() {
+        // Atomic installs build from a selected snapshot without a .git directory.
+        println!("cargo:rerun-if-changed={}", release.display());
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(release).expect("selected release manifest"))
+                .expect("release manifest JSON");
+        manifest["hrcBuild"]["sourceCommit"]
+            .as_str()
+            .expect("release sourceCommit")
+            .to_owned()
+    } else {
+        // Development identity is sampled only when real build inputs change.
+        // Watching Git refs/logs would rebuild the native crate on every commit.
         let result = std::process::Command::new("git")
             .args(["rev-parse", "HEAD"])
             .output()
@@ -18,29 +33,9 @@ fn main() {
             result.status.success(),
             "native builds require a source commit"
         );
-        // Resolve the actual worktree HEAD and common branch refs.
-        for name in ["HEAD", "logs/HEAD", "refs/heads"] {
-            let path = std::process::Command::new("git")
-                .args(["rev-parse", "--git-path", name])
-                .output()
-                .unwrap();
-            println!(
-                "cargo:rerun-if-changed={}",
-                String::from_utf8(path.stdout).unwrap().trim()
-            );
-        }
-        String::from_utf8(result.stdout).unwrap().trim().to_owned()
-    } else {
-        // Atomic install builds from its selected, verified source snapshot,
-        // which intentionally contains no .git directory.
-        let path = root.join("praesidium-release.json");
-        println!("cargo:rerun-if-changed={}", path.display());
-        let manifest: serde_json::Value =
-            serde_json::from_slice(&fs::read(path).expect("selected release manifest"))
-                .expect("release manifest JSON");
-        manifest["hrcBuild"]["sourceCommit"]
-            .as_str()
-            .expect("release sourceCommit")
+        String::from_utf8(result.stdout)
+            .expect("Git SHA is UTF-8")
+            .trim()
             .to_owned()
     };
     assert!(

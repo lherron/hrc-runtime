@@ -301,7 +301,7 @@ async fn forward_stream(
     uri: &Uri,
 ) -> Result<Response, ApiError> {
     let response = open(server, scoped, scope, home, peer, uri, None).await?;
-    if response.status() != reqwest::StatusCode::OK {
+    if response.status() != StatusCode::OK {
         let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::OK);
         let text = capped(response, scope, home).await?;
         return match serde_json::from_slice::<Value>(&text) {

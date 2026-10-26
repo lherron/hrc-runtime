@@ -286,7 +286,7 @@ const DESIGNATION_COLUMNS: &str = "scope_ref, designation_epoch, home_node_id, p
      birth_envelope_id, sender_scope_ref, designated_at, state, superseded_by, superseded_at";
 
 /// mapDesignation key order.
-fn designation_row(row: &rusqlite::Row) -> rusqlite::Result<Value> {
+fn designation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     let mut v = json!({
         "scopeRef": row.get::<_, String>(0)?,
         "homeNodeId": row.get::<_, String>(2)?,
@@ -497,7 +497,7 @@ impl Node {
     /// message is empty; `retrying` reclassifies it as unreachable.
     async fn attempt<T, F>(budget: Duration, work: F) -> Result<T, RegistryError>
     where
-        F: std::future::Future<Output = Result<T, RegistryError>>,
+        F: Future<Output = Result<T, RegistryError>>,
     {
         tokio::time::timeout(budget.min(PER_ATTEMPT), work)
             .await
@@ -977,7 +977,7 @@ impl Node {
     ) -> Result<T, RegistryError>
     where
         F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = Result<T, (RegistryError, bool)>>,
+        Fut: Future<Output = Result<T, (RegistryError, bool)>>,
     {
         let deadline = Instant::now() + TOTAL;
         let mut n = 1;

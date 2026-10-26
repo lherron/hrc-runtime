@@ -281,7 +281,7 @@ fn boot_ms() -> Option<f64> {
         tv_sec: 0,
         tv_usec: 0,
     };
-    let mut size = std::mem::size_of::<libc::timeval>();
+    let mut size = size_of::<libc::timeval>();
     let mut mib = [libc::CTL_KERN, libc::KERN_BOOTTIME];
     let rc = unsafe {
         libc::sysctl(

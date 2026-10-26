@@ -6,7 +6,7 @@ publish.workspace = true
 
 [dependencies]
 hrc-store = { path = "../hrc-store" }
-anyhow = "1"
+anyhow.workspace = true
 cardo-core.workspace = true
 cardo-runtime.workspace = true
 cardo-store.workspace = true
@@ -15,3 +15,6 @@ serde_json.workspace = true
 reqwest.workspace = true
 chrono.workspace = true
 unicode-segmentation.workspace = true
+
+[lints]
+workspace = true

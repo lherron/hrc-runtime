@@ -13,8 +13,35 @@ cardo-core = { git = "https://github.com/lherron/cardo", rev = "1796e1c7e3b6bcfd
 cardo-runtime = { git = "https://github.com/lherron/cardo", rev = "1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd" }
 cardo-store = { git = "https://github.com/lherron/cardo", rev = "1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd" }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }
+# Record JSON is fingerprinted in its own key order (collective_history.rs).
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 crossbeam-channel = "0.5"
 unicode-segmentation = "1"
+
+rusqlite = { version = "0.39", features = ["bundled"] }
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+libc = "0.2"
+sha2 = "0.10"
+toml = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "process", "io-util"] }
+regex = "1"
+axum = "0.8"
+base64 = "0.22"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body = "1"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+
+[workspace.lints.rust]
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+large_futures = "warn"

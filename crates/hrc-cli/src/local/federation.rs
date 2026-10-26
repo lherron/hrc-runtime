@@ -5,7 +5,7 @@ use super::{js_json, js_keys, node_join};
 use reqwest::Url;
 use serde_json::{Map, Value, json};
 
-type Fallible<T> = std::result::Result<T, String>;
+type Fallible<T> = Result<T, String>;
 
 const GATE_MODES: [&str; 3] = ["off", "advisory", "enforce"];
 

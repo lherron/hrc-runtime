@@ -106,7 +106,7 @@ pub async fn forward(
                 Some(detail),
             ));
         }
-        let message = if status == reqwest::StatusCode::NOT_FOUND {
+        let message = if status == StatusCode::NOT_FOUND {
             format!(
                 "{}: the running daemon predates the lifecycle contract and cannot authorize this; activate it with the documented break-glass: launchctl kickstart -k gui/$UID/com.praesidium.hrc-server",
                 peer.node_id

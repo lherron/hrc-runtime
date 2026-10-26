@@ -129,7 +129,7 @@ pub fn runtime_root() -> Result<PathBuf> {
 }
 
 /// Recognize an explicit daemon role argv; see front::invocation.
-pub fn front_invocation(args: &[String]) -> Result<Option<front::Role>> {
+pub fn front_invocation(args: &[String]) -> Result<Option<Role>> {
     front::invocation(args, &runtime_root()?)
 }
 

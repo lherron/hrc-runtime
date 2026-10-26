@@ -16,7 +16,7 @@ const COLUMNS: &str = "runtime_id, generation, scope_ref, lane_ref, host_session
      trip_event_seq, bundle_dir";
 
 /// toDiagnosticsTrip, with the bundle directory for loading.
-fn trip(row: &rusqlite::Row) -> rusqlite::Result<(Value, Option<String>)> {
+fn trip(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Value, Option<String>)> {
     let mut v = json!({
         "tripEventSeq": row.get::<_, Option<i64>>(10)?.unwrap_or(0),
         "runtimeId": row.get::<_, String>(0)?,

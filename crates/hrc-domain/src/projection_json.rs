@@ -107,7 +107,7 @@ fn project<'a>(route: &str, raw: &'a RawValue, path: &mut Vec<Segment<'a>>) -> R
     match raw.get().as_bytes().first() {
         Some(b'{') => {
             // Keys use serde's strict String decoder; no replacement/renaming.
-            let Fields(fields) = serde_json::from_str::<Fields>(raw.get()).map_err(|_| ())?;
+            let Fields(fields) = serde_json::from_str::<Fields<'_>>(raw.get()).map_err(|_| ())?;
             let mut out = serde_json::Map::new();
             for (key, value) in &fields {
                 // Keep borrowed path components local to this descent.

@@ -171,7 +171,7 @@ fn target_checks(client: &Daemon, input: &str) -> Vec<Check> {
         Ok(target) => target,
         Err(e) => {
             let detail = match &e.domain {
-                Some(domain) => format!("[{}] {}", crate::js::member(domain, "code"), message(&e)),
+                Some(domain) => format!("[{}] {}", member(domain, "code"), message(&e)),
                 None => message(&e),
             };
             return vec![check("target-lookup", "fail", Some(detail))];
