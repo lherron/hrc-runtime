@@ -759,12 +759,61 @@ pub fn consume(
             "harness broker event consumer failed",
             json!({"runtimeId":runtime_id,"error":error}),
         );
-        if let Err(e) = mark_crash_terminal(&server, &runtime_id, "broker_process_closed", &error) {
-            log(
-                "warn",
-                "broker.crash_terminal.failed",
-                json!({"runtimeId":runtime_id,"error":e.to_string()}),
-            );
-        }
+        try_mark_crash(
+            server.clone(),
+            runtime_id.clone(),
+            error,
+            1,
+            std::time::Instant::now(),
+        );
+    });
+}
+
+/// tryMarkBrokerCrashTerminal: a crash-terminal bookkeeping write that fails
+/// retries (3 attempts at 1 s·2^n; under SQLITE_BUSY, within the 15 s busy
+/// window) so a crashed broker never leaves its runtime non-terminal.
+fn try_mark_crash(
+    server: Shared,
+    runtime_id: String,
+    error: String,
+    attempt: u32,
+    started: std::time::Instant,
+) {
+    if shutting(&server) {
+        return;
+    }
+    let Err(store_error) =
+        mark_crash_terminal(&server, &runtime_id, "broker_process_closed", &error)
+    else {
+        return;
+    };
+    let sqlite_busy = busy(&store_error);
+    let elapsed = started.elapsed();
+    let scheduled = if sqlite_busy {
+        elapsed < Duration::from_secs(15)
+    } else {
+        attempt < 3
+    };
+    log(
+        "error",
+        "harness broker crash bookkeeping failed",
+        json!({"runtimeId":runtime_id,"brokerErrorCode":"broker_process_closed","error":format!("{store_error:#}"),"attempt":attempt,"sqliteBusy":sqlite_busy,"elapsedMs":elapsed.as_millis() as u64,"retryWindowMs":15000,"retryScheduled":scheduled}),
+    );
+    if !scheduled {
+        return;
+    }
+    let next = attempt + 1;
+    let delay = if sqlite_busy {
+        let exponential = Duration::from_millis((100u64 << (next - 2).min(10)).min(1000));
+        exponential.min(Duration::from_secs(15).saturating_sub(elapsed))
+    } else {
+        Duration::from_millis(1000u64 << (next - 2))
+    };
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        let Some(_write) = server.owner_writes.enter() else {
+            return;
+        };
+        try_mark_crash(server.clone(), runtime_id, error, next, started);
     });
 }
