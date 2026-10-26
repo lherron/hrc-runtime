@@ -36,6 +36,7 @@ mod reconcile;
 mod recovery;
 mod restart;
 mod resume;
+mod retained;
 mod rpc;
 mod runs;
 mod runtime_views;

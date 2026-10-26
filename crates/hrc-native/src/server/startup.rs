@@ -21,6 +21,7 @@ use tokio::process::Command;
 
 mod probe;
 mod sweeps;
+pub use probe::broker_health;
 use probe::*;
 pub use sweeps::start_gc;
 use sweeps::*;

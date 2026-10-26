@@ -116,6 +116,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
         lifecycle::rows::boot(&server)?;
         lifecycle::credentials::start(&server)?;
         startup::reconcile(&server).await?;
+        retained::start(&server);
         recovery::start(&server);
         participants::resume(&server)?;
         sweeps::start(&server);

@@ -44,6 +44,153 @@ fn failed_reason(p: &Value) -> String {
         .to_owned()
 }
 
+/// projectRetainedState: the retained-evidence allowlist. Invocation terminal
+/// state, absorbed-auxiliary settlement against exact historical owners,
+/// submission dispositions only where none exists, run terminals only where the
+/// run has none, and the historical run's buffer. Nothing else: no runtime
+/// status, active run, continuation, activity or awaiting-input write.
+pub fn project_retained(
+    db: &Connection,
+    mem: &mut Memory,
+    envelope: &Value,
+    ctx: &Ctx,
+    now: &str,
+    stale: bool,
+) -> Result<()> {
+    let invocation = envelope["invocationId"].as_str().unwrap_or("");
+    let kind = envelope["type"].as_str().unwrap_or("");
+    let p = &envelope["payload"];
+    match kind {
+        "invocation.exited" => {
+            hrc_store::fail_unresolved_absorbed(db, &ctx.runtime_id, Some(invocation), now)?;
+            return db::update_invocation(
+                db,
+                invocation,
+                &terminal_reason_cols(exited_reason(p), now, "exited"),
+            );
+        }
+        "invocation.failed" => {
+            if retryable_failure(envelope) {
+                return Ok(());
+            }
+            hrc_store::fail_unresolved_absorbed(db, &ctx.runtime_id, Some(invocation), now)?;
+            return db::update_invocation(
+                db,
+                invocation,
+                &terminal_reason_cols(failed_reason(p), now, "failed"),
+            );
+        }
+        "invocation.disposed" => {
+            hrc_store::fail_unresolved_absorbed(db, &ctx.runtime_id, Some(invocation), now)?;
+            return disposed(db, invocation, now);
+        }
+        "permission.resolved" | "permission.cancelled" => return Ok(()),
+        _ => {}
+    }
+    if stale {
+        return Ok(());
+    }
+    let at = envelope["time"].as_str().unwrap_or(now);
+    // recordRetainedSubmissionDisposition: never over live evidence.
+    let dispose = |disposition: &str| -> Result<()> {
+        if let Some(sub) = super::owners::payload_submission_id(p) {
+            db.execute(
+                "INSERT INTO submission_admissions (submission_id, disposition, disposed_at) VALUES (?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET disposition = excluded.disposition, disposed_at = excluded.disposed_at WHERE submission_admissions.disposition IS NULL",
+                rusqlite::params![sub, disposition, at],
+            )?;
+        }
+        Ok(())
+    };
+    match kind {
+        "submission.executed" | "turn.attributed" => {
+            if kind == "submission.executed" {
+                dispose("executed")?;
+            }
+            if let Some(owner) = super::owners::exact_turn_owner(db, envelope)? {
+                super::owners::settle_prior_absorbed(db, envelope, &owner, now)?;
+            }
+        }
+        "submission.absorbed" => {
+            dispose("absorbed")?;
+            if let Some(owner) = super::owners::exact_turn_owner(db, envelope)? {
+                super::owners::settle_absorbed(db, envelope, &owner, now)?;
+            }
+        }
+        "submission.rejected"
+        | "submission.expired"
+        | "submission.cancelled"
+        | "submission.lost"
+        | "turn.completed"
+        | "turn.failed"
+        | "turn.interrupted" => {
+            if let Some(d) = kind.strip_prefix("submission.") {
+                dispose(d)?;
+            }
+            retained_run_terminal(db, mem, envelope, ctx, now)?;
+        }
+        "assistant.message.completed" => {
+            let text_value = super::events::assistant_text(p);
+            completed_message_buffer(db, mem, ctx, &text_value, now)?;
+        }
+        "assistant.message.delta" => {
+            append_buffer(db, mem, ctx, p["text"].as_str().unwrap_or(""), now)?
+        }
+        "assistant.message.started" => {
+            if let Some(run) = ctx.run_id.as_deref() {
+                let tail: Option<String> = db.query_row("SELECT text FROM runtime_buffers WHERE run_id = ? ORDER BY chunk_seq DESC LIMIT 1", [run], |r| r.get(0)).optional()?;
+                if tail.is_some_and(|t| t != "\n\n") {
+                    append_buffer(db, mem, ctx, "\n\n", now)?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+/// projectRetainedRunTerminal: settles only a run with no recorded terminal.
+fn retained_run_terminal(
+    db: &Connection,
+    mem: &mut Memory,
+    envelope: &Value,
+    ctx: &Ctx,
+    now: &str,
+) -> Result<()> {
+    let Some(run_id) = ctx.run_id.as_deref() else {
+        return Ok(());
+    };
+    let kind = envelope["type"].as_str().unwrap_or("");
+    let p = &envelope["payload"];
+    let occurred = envelope["time"].as_str().unwrap_or(now);
+    if db::run(db, run_id)?.is_some_and(|r| r.completed_at.is_none()) {
+        let (status, code, message) = match kind {
+            "turn.completed" => ("completed", None, None),
+            "turn.failed" => ("failed", None, p["message"].as_str()),
+            "turn.interrupted" | "submission.cancelled" => ("cancelled", None, None),
+            "submission.lost" => (
+                "failed",
+                Some("runtime_unavailable"),
+                Some(p["reason"].as_str().unwrap_or("turn-correlation-lost")),
+            ),
+            _ => ("failed", None, p["reason"].as_str()),
+        };
+        db::mark_run_completed(
+            db,
+            run_id,
+            db::Completion {
+                status,
+                completed_at: occurred,
+                updated_at: now,
+                error_code: code,
+                error_message: message,
+            },
+        )?;
+    }
+    if kind.starts_with("turn.") {
+        mem.next_chunk.remove(run_id);
+    }
+    Ok(())
+}
+
 /// projectState dispatch; `stale`/`fenced` gate as in Bun.
 #[allow(clippy::too_many_arguments)]
 pub fn project(

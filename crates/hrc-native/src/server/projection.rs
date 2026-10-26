@@ -24,6 +24,8 @@ pub struct Memory {
     pub next_chunk: HashMap<String, i64>,
     /// invocation -> (contiguous ignored-delta high-water, runtime)
     ignored: HashMap<String, (i64, String)>,
+    /// The same, under the retained-evidence fence.
+    retained_ignored: HashMap<String, (i64, String)>,
 }
 
 pub struct Ctx {
@@ -35,6 +37,8 @@ pub struct Ctx {
     pub transport: String,
     pub operation_id: String,
     pub run_id: Option<String>,
+    /// Some("retained") inside applyRetained.
+    pub evidence_origin: Option<String>,
 }
 impl Ctx {
     pub fn ev(&self, ts: &str) -> events::Ev {
@@ -47,6 +51,7 @@ impl Ctx {
             runtime_id: Some(self.runtime_id.clone()),
             run_id: self.run_id.clone(),
             transport: Some(self.transport.clone()),
+            evidence_origin: self.evidence_origin.clone(),
             ..Default::default()
         }
     }
@@ -122,10 +127,97 @@ pub fn apply(db: &Connection, mem: &mut Memory, envelope: &Value) -> Result<Outc
     }
 }
 
+/// BrokerEventMapper.applyRetained: one committed envelope recovered offline
+/// from a dead worker's ledger, under the retained-evidence fence. Same
+/// transaction, idempotence, mirror and cursor as `apply`; state effects are
+/// the retained allowlist, and every semantic envelope advances
+/// retained_projected_through_seq.
+pub fn apply_retained(db: &Connection, mem: &mut Memory, envelope: &Value) -> Result<Outcome> {
+    if is_delta(envelope) {
+        return ignore_delta_in(db, mem, envelope, true);
+    }
+    let invocation = envelope["invocationId"].as_str().unwrap_or("").to_owned();
+    let snapshot = mem.next_chunk.clone();
+    // BEGIN IMMEDIATE: recovery commits while other writers share the store.
+    let tx = rusqlite::Transaction::new_unchecked(db, rusqlite::TransactionBehavior::Immediate)?;
+    let result = flush_retained_in_tx(&tx, mem, &invocation)
+        .and_then(|_| project_in(&tx, mem, envelope, true))
+        .and_then(|outcome| {
+            if !outcome.idempotent {
+                tx.execute(
+                    "UPDATE broker_invocations SET retained_projected_through_seq = MAX(COALESCE(retained_projected_through_seq, 0), ?) WHERE invocation_id = ?",
+                    params![envelope["seq"].as_i64().unwrap_or(0), invocation],
+                )?;
+            }
+            Ok(outcome)
+        });
+    match result.and_then(|r| tx.commit().map(|_| r).map_err(Into::into)) {
+        Ok(outcome) => {
+            mem.retained_ignored.remove(&invocation);
+            Ok(outcome)
+        }
+        Err(error) => {
+            mem.next_chunk = snapshot;
+            Err(error)
+        }
+    }
+}
+fn retained_cursor(inv: &db::Inv, db: &Connection) -> Result<i64> {
+    let fence: Option<i64> = db.query_row(
+        "SELECT retained_projected_through_seq FROM broker_invocations WHERE invocation_id = ?",
+        [&inv.invocation_id],
+        |r| r.get(0),
+    )?;
+    Ok(fence.unwrap_or(inv.last_projected_seq))
+}
+fn flush_retained_in_tx(db: &Connection, mem: &Memory, invocation: &str) -> Result<i64> {
+    let Some(inv) = db::invocation(db, invocation)? else {
+        bail!("broker invocation not found for event: {invocation}");
+    };
+    let cursor = retained_cursor(&inv, db)?;
+    match mem.retained_ignored.get(invocation) {
+        Some((through, _)) if *through > cursor => {
+            db.execute(
+                "UPDATE broker_invocations SET retained_projected_through_seq = ?, updated_at = ? WHERE invocation_id = ?",
+                params![through, hrc_store::timestamp(), invocation],
+            )?;
+            Ok(*through)
+        }
+        _ => Ok(cursor),
+    }
+}
+/// flushIgnoredDeltas(invocation, retained = true)
+pub fn flush_retained(db: &Connection, mem: &mut Memory, invocation: &str) -> Result<i64> {
+    if !mem.retained_ignored.contains_key(invocation) {
+        let Some(inv) = db::invocation(db, invocation)? else {
+            return Ok(0);
+        };
+        return retained_cursor(&inv, db);
+    }
+    let tx = db.unchecked_transaction()?;
+    let through = flush_retained_in_tx(&tx, mem, invocation)?;
+    tx.commit()?;
+    mem.retained_ignored.remove(invocation);
+    Ok(through)
+}
+
 fn ignore_delta(db: &Connection, mem: &mut Memory, envelope: &Value) -> Result<Outcome> {
+    ignore_delta_in(db, mem, envelope, false)
+}
+fn ignore_delta_in(
+    db: &Connection,
+    mem: &mut Memory,
+    envelope: &Value,
+    retained: bool,
+) -> Result<Outcome> {
     let invocation = envelope["invocationId"].as_str().unwrap_or("").to_owned();
     let seq = envelope["seq"].as_i64().unwrap_or(0);
-    let (cursor, runtime) = match mem.ignored.get(&invocation) {
+    let pending = if retained {
+        mem.retained_ignored.get(&invocation)
+    } else {
+        mem.ignored.get(&invocation)
+    };
+    let (cursor, runtime) = match pending {
         Some((c, r)) => (*c, r.clone()),
         None => {
             let Some(inv) = db::invocation(db, &invocation)? else {
@@ -137,7 +229,12 @@ fn ignore_delta(db: &Connection, mem: &mut Memory, envelope: &Value) -> Result<O
                     inv.runtime_id
                 );
             }
-            (inv.last_projected_seq, inv.runtime_id)
+            let cursor = if retained {
+                retained_cursor(&inv, db)?
+            } else {
+                inv.last_projected_seq
+            };
+            (cursor, inv.runtime_id)
         }
     };
     if seq > cursor + 1 {
@@ -147,7 +244,11 @@ fn ignore_delta(db: &Connection, mem: &mut Memory, envelope: &Value) -> Result<O
         );
     }
     if seq == cursor + 1 {
-        mem.ignored.insert(invocation, (seq, runtime));
+        if retained {
+            mem.retained_ignored.insert(invocation, (seq, runtime));
+        } else {
+            mem.ignored.insert(invocation, (seq, runtime));
+        }
     }
     Ok(Outcome {
         idempotent: true,
@@ -520,6 +621,14 @@ fn mark(
 
 /// project-envelope.ts `project`, inside apply's transaction.
 fn project(db: &Connection, mem: &mut Memory, envelope: &Value) -> Result<Outcome> {
+    project_in(db, mem, envelope, false)
+}
+fn project_in(
+    db: &Connection,
+    mem: &mut Memory,
+    envelope: &Value,
+    retained: bool,
+) -> Result<Outcome> {
     let now = hrc_store::timestamp();
     let invocation_id = envelope["invocationId"].as_str().unwrap_or("");
     let Some(inv) = db::invocation(db, invocation_id)? else {
@@ -538,7 +647,8 @@ fn project(db: &Connection, mem: &mut Memory, envelope: &Value) -> Result<Outcom
         Some(op) if op.runtime_id == inv.runtime_id => op.generation.unwrap_or(rt.generation),
         _ => rt.generation,
     };
-    let run_id = owners::resolve_run_id(db, envelope, &inv, &rt, false)?;
+    // Retained history never borrows the current runtime owner.
+    let run_id = owners::resolve_run_id(db, envelope, &inv, &rt, retained)?;
     let ctx = Ctx {
         runtime_id: rt.runtime_id.clone(),
         host_session_id: rt.host_session_id.clone(),
@@ -548,6 +658,7 @@ fn project(db: &Connection, mem: &mut Memory, envelope: &Value) -> Result<Outcom
         transport: lifecycle_transport(&rt.transport).to_owned(),
         operation_id: inv.operation_id.clone(),
         run_id: run_id.clone(),
+        evidence_origin: retained.then(|| "retained".to_owned()),
     };
     let persisted = events::with_repair_correlation(db, envelope, run_id.as_deref());
     let hash = format!(
@@ -561,7 +672,7 @@ fn project(db: &Connection, mem: &mut Memory, envelope: &Value) -> Result<Outcom
         &persisted,
         &rt.runtime_id,
         run_id.as_deref(),
-        None,
+        retained.then_some("retained"),
     )?;
     let outcome = |idempotent| Outcome {
         idempotent,
@@ -613,11 +724,16 @@ fn project(db: &Connection, mem: &mut Memory, envelope: &Value) -> Result<Outcom
     let fenced = participant_fenced(db, invocation_id)?;
     let stale = fenced || stale_envelope(&persisted, &inv);
     provider_transcript(db, &persisted, &inv, &rt, &ctx, &now)?;
-    state::project(db, mem, &persisted, &ctx, &now, stale, fenced, &mut derived)?;
+    if retained {
+        state::project_retained(db, mem, &persisted, &ctx, &now, stale)?;
+    } else {
+        state::project(db, mem, &persisted, &ctx, &now, stale, fenced, &mut derived)?;
+    }
     if !stale && !state::retryable_failure(&persisted) {
         events::emit_lifecycle(db, &persisted, &ctx.ev(&now), &now)?;
     }
-    if !stale && !fenced {
+    // Context readings belong to live terminal projection only.
+    if !stale && !fenced && !retained {
         context::project(db, &persisted, &ctx, &now)?;
     }
     if !stale && persisted["type"] == "submission.withdrawn" {

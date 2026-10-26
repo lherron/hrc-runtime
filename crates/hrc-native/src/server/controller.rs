@@ -371,6 +371,27 @@ async fn backfill(server: &Shared, runtime: &str, invocation: &str, candidates: 
         active(server, runtime).filter(|(i, _)| i == invocation)
     else {
         unrecoverable("client_unavailable", json!({}));
+        // A terminal runtime's gap is repaired only from its retained evidence;
+        // a non-terminal gap waits for the next live attach.
+        let terminal = {
+            let db = server.store.lock().unwrap();
+            db::runtime(&db.sqlite, runtime)
+                .ok()
+                .flatten()
+                .is_some_and(|r| matches!(r.status.as_str(), "terminated" | "failed"))
+        };
+        if terminal {
+            let (server, runtime) = (server.clone(), runtime.to_owned());
+            tokio::spawn(async move {
+                if let Err(error) = super::retained::recover(&server, &runtime, "gap").await {
+                    log(
+                        "warn",
+                        "retained_evidence.gap_attempt_failed",
+                        json!({"runtimeId":runtime,"error":format!("{error:#}")}),
+                    );
+                }
+            });
+        }
         return;
     };
     let _ = active_invocation;

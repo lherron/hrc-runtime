@@ -173,7 +173,7 @@ pub(super) async fn bounded(
 // ── lease probe (startup-reconcile/broker-probe.ts) ───────────────────────────
 
 /// probeBrokerHealth: hello + broker.health; any failure is `unreachable`.
-pub(super) async fn broker_health(socket: &Path) -> &'static str {
+pub async fn broker_health(socket: &Path) -> &'static str {
     let probe = async {
         let client = JsonRpc::connect(socket, HEALTH_PROBE_BUDGET).await?;
         let result = async {
