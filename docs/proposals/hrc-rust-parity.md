@@ -92,7 +92,7 @@ Scope moves since r2:
 - Native server lifecycle moves to N5 as one owner: `POST /v1/server/lifecycle` (from N4) and the `server.started` / `shutting_down` / `stopped` ledger rows with grant attribution. N5 writes them through N2's append path, only on a non-front daemon; the front role stays writer-free.
 - The 11 slow-statement telemetry items (`hrc-store-sqlite/src/statement-telemetry.ts`) move N5 → N4. Only the daemon instruments statements.
 - Continuation on `aspc.compileHarnessInvocation` is assigned to N2, including births on a scope with a stored continuation. N1's fresh-scope gates missed it; agent-spaces T-11833 found it.
-- The claude-code-tmux Stop-fallback duplicate `turn.message` (agent-spaces T-11837) must land before N6. A Rust owner answers the Stop-hook mail decision about 100× faster than Bun and exposes the race on nearly every turn.
+- The claude-code-tmux Stop-fallback duplicate `turn.message` (agent-spaces T-11837) was an N6 blocker. A fast Stop-hook mail decision raced the transcript reader; the measured rate was 38% on Stop paths under ~100 ms. It was fixed and deployed to max3 aspd a34f6e14 on 2026-10-26 08:39Z, with svc and hrcdev following. Seats keep the old broker until rebirth.
 
 Rule added after an incident: a scratch Bun daemon started from the installed tree deleted production's running release (2026-10-26 04:50Z). Scratch Bun daemons run only from a `cp -R` of the release with an atomic-mode refusal. T-11830 (02661aeb) makes every release prune keep any release a live process holds.
 
