@@ -195,7 +195,7 @@ fn validate_scope_handle(handle: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 /// agent-scope `parseScopeHandle`: the canonical scope ref.
-fn parse_scope_handle(handle: &str) -> std::result::Result<String, String> {
+pub(crate) fn parse_scope_handle(handle: &str) -> std::result::Result<String, String> {
     validate_scope_handle(handle).map_err(|e| format!("Invalid ScopeHandle \"{handle}\": {e}"))?;
     let s = split_handle(handle);
     let scope = build_scope_ref(s.agent, s.project, s.task, s.role);

@@ -160,6 +160,62 @@ class Node:
             log.close()
 
 
+def registry_cases(endpoint, token):
+    """Every registry route and refusal against B's listener, in a fixed order."""
+    import urllib.request, urllib.error
+    out = {}
+
+    def call(name, method, path, body=None, auth=token):
+        headers = {'content-type': 'application/json'}
+        if auth is not None:
+            headers['authorization'] = auth if auth.startswith('Basic') else f'Bearer {auth}'
+        req = urllib.request.Request(endpoint + path, data=None if body is None else json.dumps(body).encode(),
+                                     method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as res:
+                status, raw = res.status, res.read()
+        except urllib.error.HTTPError as error:
+            status, raw = error.code, error.read()
+        out[name] = {'status': status, 'body': json.loads(raw) if raw else None}
+
+    q = lambda s: quote(s, safe='')
+    call('no-auth', 'GET', '/v1/federation/registry/consult?scopeRef=' + q(scope('registry-foreign')), auth=None)
+    call('bad-token', 'GET', '/v1/federation/registry/consult?scopeRef=' + q(scope('registry-foreign')), auth='nope')
+    call('basic-auth', 'GET', '/v1/federation/registry/consult?scopeRef=' + q(scope('registry-foreign')), auth='Basic x')
+    call('consult-missing', 'GET', '/v1/federation/registry/consult')
+    call('consult-bound', 'GET', '/v1/federation/registry/consult?scopeRef=' + q(scope('registry-foreign')))
+    call('consult-unbound', 'GET', '/v1/federation/registry/consult?scopeRef=' + q(scope('nowhere')))
+    call('consult-invalid', 'GET', '/v1/federation/registry/consult?scopeRef=bogus')
+    call('designation-none', 'GET', '/v1/federation/registry/designation?scopeRef=' + q(scope('nowhere')))
+    call('designation-live', 'GET', '/v1/federation/registry/designation?scopeRef=' + q(scope('unborn')))
+    call('designation-missing', 'GET', '/v1/federation/registry/designation')
+    call('unborn-self', 'GET', '/v1/federation/registry/unborn-designations?homeNodeId=n4a')
+    call('unborn-other', 'GET', '/v1/federation/registry/unborn-designations?homeNodeId=n4b')
+    call('unborn-missing', 'GET', '/v1/federation/registry/unborn-designations')
+    call('designate-live', 'POST', '/v1/federation/registry/designate-birth', {'scopeRef': scope('unborn')})
+    call('designate-no-envelope', 'POST', '/v1/federation/registry/designate-birth', {'scopeRef': scope('fresh')})
+    call('designate-bad-body', 'POST', '/v1/federation/registry/designate-birth', ['x'])
+    call('designate-missing', 'POST', '/v1/federation/registry/designate-birth', {})
+    call('establish-mismatch', 'POST', '/v1/federation/registry/establish', {'scopeRef': scope('fresh'), 'homeNodeId': 'n4b'})
+    call('establish-provenance', 'POST', '/v1/federation/registry/establish', {'scopeRef': scope('fresh'), 'homeNodeId': 'n4a', 'placementSource': 'x'})
+    call('establish-bad-decision', 'POST', '/v1/federation/registry/establish', {'scopeRef': scope('fresh'), 'homeNodeId': 'n4a', 'birthDesignation': {'action': 'nope'}})
+    call('establish-invalid-scope', 'POST', '/v1/federation/registry/establish', {'scopeRef': 'bogus', 'homeNodeId': 'n4a'})
+    call('establish-created', 'POST', '/v1/federation/registry/establish', {'scopeRef': scope('fresh'), 'homeNodeId': 'n4a'})
+    call('establish-existing', 'POST', '/v1/federation/registry/establish', {'scopeRef': scope('fresh'), 'homeNodeId': 'n4a'})
+    call('establish-supersede', 'POST', '/v1/federation/registry/establish', {'scopeRef': scope('unborn'), 'homeNodeId': 'n4a', 'birthDesignation': {'action': 'supersede', 'supersededBy': 'pin'}})
+    call('designation-superseded', 'GET', '/v1/federation/registry/designation?scopeRef=' + q(scope('unborn')))
+    call('unborn-after', 'GET', '/v1/federation/registry/unborn-designations?homeNodeId=n4a')
+    call('delete-mismatch', 'POST', '/v1/federation/registry/delete', {'scopeRef': scope('fresh'), 'expectedHomeNodeId': 'n4b', 'retiredAt': '2026-10-26T11:00:00.000Z'})
+    call('delete-conflict', 'POST', '/v1/federation/registry/delete', {'scopeRef': scope('registry-foreign'), 'expectedHomeNodeId': 'n4a', 'retiredAt': '2026-10-26T11:00:00.000Z'})
+    call('delete-missing-retired', 'POST', '/v1/federation/registry/delete', {'scopeRef': scope('fresh'), 'expectedHomeNodeId': 'n4a'})
+    call('delete-deleted', 'POST', '/v1/federation/registry/delete', {'scopeRef': scope('fresh'), 'expectedHomeNodeId': 'n4a', 'retiredAt': '2026-10-26T11:00:00.000Z'})
+    call('delete-idempotent', 'POST', '/v1/federation/registry/delete', {'scopeRef': scope('fresh'), 'expectedHomeNodeId': 'n4a', 'retiredAt': '2026-10-26T11:00:00.000Z'})
+    call('consult-after-delete', 'GET', '/v1/federation/registry/consult?scopeRef=' + q(scope('fresh')))
+    call('unknown-route', 'GET', '/v1/federation/registry/nope')
+    call('wrong-method', 'POST', '/v1/federation/registry/consult')
+    return out
+
+
 def scope(task):
     return f'agent:{AGENT}:project:{PROJECT}:task:{task}'
 
@@ -172,6 +228,8 @@ def main():
     p.add_argument('--scratch-root', type=Path, required=True)
     p.add_argument('--artifacts', type=Path, required=True)
     p.add_argument('--owners', default='bun,native')
+    # B as native exercises the native registry listener from a Bun origin.
+    p.add_argument('--b-owner', choices=['bun', 'native'], default='bun')
     args = p.parse_args()
     if args.scratch_root.exists():
         raise SystemExit('scratch root must be fresh')
@@ -215,7 +273,9 @@ def main():
                 b.db, scope('registry-foreign'), scope('ledger-foreign'), now)
     observations = {}
     try:
-        b.up('bun', None, 'home')
+        b.up(args.b_owner, args.binary, 'home')
+        registry = registry_cases(f'http://{TAILNET}:{ports["b_registry"]}', token)
+        (args.artifacts / f'registry-{args.b_owner}.json').write_text(json.dumps(registry, indent=1) + '\n')
         # Real continuity at the home so forwarded reads return rows.
         for task in ('registry-foreign', 'ledger-foreign'):
             status, value, _ = b.http('POST', '/v1/sessions/resolve', {'sessionRef': scope(task) + '/lane:main', 'create': True})

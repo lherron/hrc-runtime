@@ -554,6 +554,9 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n4-placement':
         from n4_routes import compare_placement
         return compare_placement(args, checks)
+    if getattr(args, 'suite', None) == 'n4-registry':
+        from n4_routes import compare_registry
+        return compare_registry(args, checks)
     if getattr(args, 'suite', None) == 'n2-turns':
         from n2_turns import compare as compare_n2_turns
         return compare_n2_turns(args, checks)

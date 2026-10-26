@@ -3,7 +3,9 @@
 //! registry-reply.ts) and the one home-authority resolution
 //! (home-authority.ts) that locate and scope-read routing share.
 mod locate;
+pub mod registry_listener;
 mod routing;
+pub mod summon;
 
 pub use locate::{designations, locate};
 pub use routing::{route_request, scope_of};
@@ -16,7 +18,7 @@ use serde_json::{Map, Value, json};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -92,7 +94,7 @@ enum Client {
         token: String,
     },
     /// This node hosts the registry; its store is read in-process.
-    Local(Mutex<Connection>),
+    Local(Arc<Mutex<Connection>>),
 }
 
 /// Placement-ledger row (federation-repositories.ts PlacementLedgerRecord).
@@ -106,6 +108,9 @@ pub struct LedgerRow {
 pub struct Node {
     pub config: FederationConfig,
     client: Client,
+    /// The binding registry store, open whenever `registry.bind` is set: the
+    /// listener serves it even when gate.registryHost names another node.
+    pub registry_db: Option<Arc<Mutex<Connection>>>,
     http: reqwest::Client,
     /// home-authority.ts `foreignHomeMemo`: one consult per scope per process.
     memo: Mutex<HashMap<String, Binding>>,
@@ -286,19 +291,24 @@ fn log(level: &str, event: &str, data: Value) {
 impl Node {
     /// server-federation-startup.ts `resolveFederationRegistryClient`, with the
     /// registry store opened when this node is the declared registry host.
-    pub fn new(config: FederationConfig, state: &Path) -> anyhow::Result<Self> {
+    /// The front never writes, so it opens no registry store.
+    pub fn new(config: FederationConfig, state: &Path, front: bool) -> anyhow::Result<Self> {
         let path = &config.source_path;
         let id = &config.node_id;
+        let registry_db = match &config.registry_bind {
+            Some(_) if !front => Some(Arc::new(Mutex::new(open_registry(&registry_path(state))?))),
+            _ => None,
+        };
         let unavailable = |s: String| Ok(Client::Unavailable(s));
         let client = if config.registry_host.as_deref() == Some(id.as_str()) {
-            if config.registry_bind.is_none() {
-                unavailable(format!(
+            match (&config.registry_bind, &registry_db) {
+                (None, _) => unavailable(format!(
                     "gate.registryHost names this node (\"{id}\"), but {path} does not configure a local registry listener; add top-level \"registry\": {{\"bind\": \"<tailnet-url>\"}}"
-                ))
-            } else {
-                Ok(Client::Local(Mutex::new(open_registry(&registry_path(
-                    state,
-                ))?)))
+                )),
+                (Some(_), Some(db)) => Ok(Client::Local(db.clone())),
+                (Some(_), None) => unavailable(format!(
+                    "the local binding registry on node \"{id}\" is configured but unavailable"
+                )),
             }
         } else if config.registry_host.is_none() && config.registry_bind.is_some() {
             unavailable(format!(
@@ -330,6 +340,7 @@ impl Node {
         Ok(Self {
             config,
             client,
+            registry_db,
             http,
             memo: Mutex::new(HashMap::new()),
         })

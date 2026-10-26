@@ -66,3 +66,32 @@ def compare_placement(args, checks):
                        'failureCode': 1})
         cases.append({'id': name, 'pass': passed})
     return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}
+
+
+# Registry listener: the same ordered request list against node B's registry,
+# B run as Bun (baseline) or native (candidate). Registry clocks are minted per run.
+REGISTRY_DYNAMIC = {'createdAt', 'updatedAt', 'designatedAt', 'supersededAt'}
+REGISTRY_CASES = 34
+
+
+def registry_canonical(value):
+    if isinstance(value, dict):
+        return [(k, '<dynamic>' if k in REGISTRY_DYNAMIC else registry_canonical(x)) for k, x in value.items()]
+    if isinstance(value, list):
+        return [registry_canonical(x) for x in value]
+    return value
+
+
+def compare_registry(args, checks):
+    a = json.loads((Path(args.baseline) / 'registry-bun.json').read_text())
+    b = json.loads((Path(args.candidate) / 'registry-native.json').read_text())
+    checks.append({'id': 'case-matrix', 'pass': len(a) == REGISTRY_CASES and set(a) == set(b),
+                   'reason': 'every registry route and refusal on both registry hosts', 'failureCode': 1})
+    cases = []
+    for name in a:
+        passed = name in b and registry_canonical(a[name]) == registry_canonical(b[name])
+        checks.append({'id': 'compare:' + name, 'pass': passed,
+                       'reason': 'status, fields, values and key order must match the Bun registry host',
+                       'failureCode': 1})
+        cases.append({'id': name, 'pass': passed})
+    return {'suite': args.suite, 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}

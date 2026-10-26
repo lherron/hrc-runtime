@@ -1,5 +1,9 @@
 //! Target-session minting and intent persistence on the local authority path.
-use super::{ApiError, Shared, runtime_views};
+use super::{
+    ApiError, Shared,
+    federation::summon::{SummonRequest, with_summon_authority},
+    runtime_views,
+};
 use axum::{
     Json,
     http::StatusCode,
@@ -42,19 +46,7 @@ pub async fn ensure(server: &Shared, body: Value) -> Result<Response, ApiError> 
         ));
     }
     let (scope, lane) = runtime_views::parse_target_ref(raw)?;
-    if let Some(message) = server
-        .store
-        .lock()
-        .unwrap()
-        .target_birth_refusal(scope, lane)?
-    {
-        return Err(ApiError::domain(
-            StatusCode::CONFLICT,
-            "stale_context",
-            message,
-            Some(json!({"scopeRef":scope,"laneRef":lane,"reason":"host_absent","retryable":true})),
-        ));
-    }
+    super::federation::summon::assert_reserved_address_allows_birth(server, scope, lane)?;
     let existing = runtime_views::find_target_session(server, raw)?;
     let persist = body["persistIntent"] != false;
     let session = if let Some(mut session) = existing {
@@ -82,12 +74,25 @@ pub async fn ensure(server: &Shared, body: Value) -> Result<Response, ApiError> 
         }
         session
     } else {
-        let (mut session, created) = server.store.lock().unwrap().create_target_session(
-            scope,
-            lane,
-            if persist { Some(intent) } else { None },
-            body["birthCause"].as_str(),
-        )?;
+        let summon = SummonRequest {
+            scope_ref: scope,
+            lane_ref: Some(lane),
+            path: "ensure-target",
+            intent: "implicit",
+            known_session: None,
+            origin: None,
+            capability_hint: Some(json!({"placement":intent["placement"]})),
+            provision: intent.get("provision").cloned(),
+        };
+        let (mut session, created) = with_summon_authority(server, summon, || async {
+            Ok(server.store.lock().unwrap().create_target_session(
+                scope,
+                lane,
+                if persist { Some(intent) } else { None },
+                body["birthCause"].as_str(),
+            )?)
+        })
+        .await?;
         // Bun's fresh response is the pre-continuity insert result. Identity
         // becomes available on subsequent reads, after continuity publication.
         if !created {

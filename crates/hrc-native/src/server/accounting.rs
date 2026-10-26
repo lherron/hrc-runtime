@@ -241,6 +241,9 @@ fn route(method: &str, path: &str) -> String {
     "unmatched".into()
 }
 pub(super) struct Entry {
+    listener: &'static str,
+    /// Federation listeners: the node the handler's own token check authenticated.
+    peer: Option<String>,
     method: String,
     served_by: &'static str,
     route: String,
@@ -274,6 +277,8 @@ impl Entry {
             })
             .collect();
         Self {
+            listener: "main",
+            peer: None,
             method: request.method().to_string(),
             served_by: "native",
             route: route(request.method().as_str(), request.uri().path()),
@@ -292,10 +297,27 @@ impl Entry {
             started: Instant::now(),
         }
     }
+    /// A non-main listener: its routes are exact paths, the rest `unmatched`.
+    pub fn listener(
+        request: &Request,
+        listener: &'static str,
+        route: String,
+        peer: Option<String>,
+    ) -> Self {
+        Self {
+            listener,
+            peer,
+            route,
+            ..Self::new(request)
+        }
+    }
     fn base(&self, status: u16) -> Value {
-        let mut v = json!({"listener":"main","servedBy":self.served_by,"method":self.method,"route":self.route,"path":self.path,"status":status,"durationMs":(self.started.elapsed().as_secs_f64()*10000.0).round()/10.0,"client":self.client});
+        let mut v = json!({"listener":self.listener,"servedBy":self.served_by,"method":self.method,"route":self.route,"path":self.path,"status":status,"durationMs":(self.started.elapsed().as_secs_f64()*10000.0).round()/10.0,"client":self.client});
         if !self.request_id.trim().is_empty() {
             v["requestId"] = utf16_prefix(self.request_id.trim(), 128).into();
+        }
+        if let Some(peer) = &self.peer {
+            v["peer"] = peer.clone().into();
         }
         v
     }
@@ -329,6 +351,12 @@ impl Entry {
         let mut metric = json!({"v":1,"kind":"server","servedBy":self.served_by,"ts":now.to_rfc3339_opts(SecondsFormat::Millis,true),"route":self.route,"method":self.method,"client":self.client,"ms":ms,"status":status});
         if !self.request_id.trim().is_empty() {
             metric["reqId"] = self.request_id.clone().into();
+        }
+        if self.listener != "main" {
+            metric["listener"] = self.listener.into();
+        }
+        if let Some(peer) = &self.peer {
+            metric["peer"] = peer.clone().into();
         }
         if weight > 1 {
             metric["sampleWeight"] = weight.into();

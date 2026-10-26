@@ -252,6 +252,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
     let federation = federation::Node::new(
         hrc_cli::load_federation_config(&state.to_string_lossy()).map_err(anyhow::Error::msg)?,
         &state,
+        front,
     )?;
     let owner = if front {
         Owner::acquire_front(&runtime)?
@@ -299,6 +300,12 @@ pub async fn serve(role: front::Role) -> Result<()> {
         started_at: timestamp(),
         started: Instant::now(),
     });
+    // F0's registry listener: bound before serving, so a bad bind refuses boot.
+    if !server.front
+        && let Some(bind) = server.federation.config.registry_bind.clone()
+    {
+        federation::registry_listener::start(server.clone(), &bind).await?;
+    }
     // The front controls no brokers; Bun behind it owns execution.
     if !server.front {
         publication::start(&server)?;

@@ -37,6 +37,15 @@ pub use local::{FederationConfig, FederationPeer, load_federation_config};
 /// Validate a canonical agent ScopeRef using the operator CLI's shared grammar.
 pub use selectors::validate_scope;
 
+/// agent-scope `parseScopeRef` then `parseScopeHandle`, re-formatted as a
+/// canonical ScopeRef; `None` when neither spelling parses.
+pub fn canonical_scope_ref(raw: &str) -> Option<String> {
+    if validate_scope(raw).is_ok() {
+        return Some(raw.to_owned());
+    }
+    monitor::selector::parse_scope_handle(raw).ok()
+}
+
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy)]
