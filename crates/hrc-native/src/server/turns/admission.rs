@@ -287,8 +287,8 @@ async fn steps(
     req: &Request<'_>,
     trace: &mut Trace,
 ) -> Result<Admitted, ApiError> {
-    let lease = crate::server::lifecycle::admission_lease(server)
-        .inspect_err(|_| trace.push("refused"))?;
+    let lease =
+        crate::server::lifecycle::admission_lease(server).inspect_err(|_| trace.push("refused"))?;
     trace.lease = Some(lease);
     trace.push("passed"); // drain-lease
     trace.push("passed"); // retired-persona (no local persona allowlist; retired-scope gate is N4)
