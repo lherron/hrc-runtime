@@ -15,9 +15,10 @@ fn terminal(state: &Value) -> bool {
 }
 fn absorbed(db: &Connection, runtime: &str) -> Result<Vec<Value>> {
     let mut result = Vec::new();
+    // The planner prefers the type index, which walks every absorbed event in the table.
     for mut row in rows(
         db,
-        "SELECT * FROM broker_invocation_events WHERE runtime_id=? AND type='submission.absorbed' ORDER BY invocation_id,seq",
+        "SELECT * FROM broker_invocation_events INDEXED BY idx_broker_invocation_events_runtime_time_invocation_seq WHERE runtime_id=? AND type='submission.absorbed' ORDER BY invocation_id,seq",
         runtime,
     )? {
         let event: Value = serde_json::from_str(

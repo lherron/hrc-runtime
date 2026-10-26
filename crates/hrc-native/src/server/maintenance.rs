@@ -627,21 +627,14 @@ async fn dispose(server: &Server, body: &Value) -> std::result::Result<Response,
         ));
     }
     let id = ids[0];
-    let runtime = server
-        .store
-        .lock()
-        .unwrap()
-        .runtimes()?
-        .into_iter()
-        .find(|r| r["runtimeId"] == id)
-        .ok_or_else(|| {
-            ApiError::domain(
-                StatusCode::NOT_FOUND,
-                "unknown_runtime",
-                format!("unknown runtime: {id}"),
-                Some(json!({})),
-            )
-        })?;
+    let runtime = server.store.lock().unwrap().runtime(id)?.ok_or_else(|| {
+        ApiError::domain(
+            StatusCode::NOT_FOUND,
+            "unknown_runtime",
+            format!("unknown runtime: {id}"),
+            Some(json!({})),
+        )
+    })?;
     let facts = server.store.lock().unwrap().maintenance_facts(&runtime)?;
     if !held(&runtime, &facts) {
         return Err(ApiError::domain(
@@ -745,13 +738,17 @@ async fn run(
     reason: &str,
     emit_summary: bool,
 ) -> std::result::Result<Value, ApiError> {
-    let all = server.store.lock().unwrap().runtimes()?;
     let defaults = if prune {
         vec!["stale".into()]
     } else {
         vec!["ready".into(), "busy".into()]
     };
     let statuses = q.statuses.as_ref().unwrap_or(&defaults);
+    // `selected` stays the authority; SQL only skips rows it would reject.
+    let all = server.store.lock().unwrap().runtimes_where(
+        &format!("status IN ({})", vec!["?"; statuses.len()].join(",")),
+        rusqlite::params_from_iter(statuses),
+    )?;
     let age = if let Some(age) = &q.age {
         duration(age)?
     } else if prune {

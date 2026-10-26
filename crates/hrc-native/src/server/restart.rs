@@ -264,9 +264,8 @@ pub fn refuse_participant(
     let participant = {
         let db = server.store.lock().unwrap();
         let external = db
-            .runtimes()?
+            .runtimes_where("host_session_id=?", [host])?
             .into_iter()
-            .filter(|r| r["hostSessionId"] == host)
             .any(|r| r["runtimeStateJson"]["lifecycleOwner"] == "external");
         external
             || db

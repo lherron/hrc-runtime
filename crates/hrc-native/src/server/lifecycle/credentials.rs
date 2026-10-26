@@ -92,7 +92,7 @@ pub fn reconcile(server: &Server) -> Result<()> {
         let store = server.store.lock().unwrap();
         let mut q = store
             .sqlite
-            .prepare("SELECT runtime_id,scope_ref,generation,status FROM runtimes")?;
+            .prepare("SELECT runtime_id,scope_ref,generation,status FROM runtimes WHERE status IN ('starting','ready','busy','awaiting_input','stopping') AND scope_ref LIKE 'agent:%'")?;
         q.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,

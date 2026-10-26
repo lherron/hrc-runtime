@@ -518,10 +518,7 @@ async fn attach(server: &Shared, rt: &db::Rt, h: &Hosting, token_path: &Path) ->
     let runtime_id = rt.runtime_id.as_str();
     let runtime = {
         let db = server.store.lock().unwrap();
-        db.runtimes()?
-            .into_iter()
-            .find(|r| r["runtimeId"] == runtime_id)
-            .context("runtime vanished")?
+        db.runtime(runtime_id)?.context("runtime vanished")?
     };
     let socket = Path::new(h.endpoint["socketPath"].as_str().unwrap_or(""));
     let connected = async {

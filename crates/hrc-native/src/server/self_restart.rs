@@ -124,11 +124,7 @@ pub async fn handle(
     })?;
     let (runtime, session) = {
         let db = server.store.lock().unwrap();
-        let Some(runtime) = db
-            .runtimes()?
-            .into_iter()
-            .find(|r| r["runtimeId"] == binding.runtime_id.as_str())
-        else {
+        let Some(runtime) = db.runtime(&binding.runtime_id)? else {
             return Err(refused(
                 "credential_revoked",
                 "the calling runtime is no longer recorded".into(),
