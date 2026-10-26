@@ -15,6 +15,17 @@ use tokio::net::UnixStream;
 #[derive(Clone, Copy)]
 pub(super) struct BunResponse;
 
+/// Bun's unknown-route response, byte for byte (server-request-methods.ts):
+/// Bun writes `text/plain;charset=utf-8` with no space, unlike axum's default.
+pub fn not_found() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        [(axum::http::header::CONTENT_TYPE, "text/plain;charset=utf-8")],
+        "Not Found",
+    )
+        .into_response()
+}
+
 pub async fn forward(
     socket: Option<&Path>,
     method: Method,
@@ -23,7 +34,15 @@ pub async fn forward(
     body: Body,
 ) -> Result<Response, ApiError> {
     let Some(socket) = socket else {
-        return Ok((StatusCode::NOT_FOUND, "Not Found").into_response());
+        // The wire stays Bun's bare unknown-route 404. The log line keeps an
+        // unimplemented route from passing for a handled one (T-11841).
+        super::stderr_json(
+            "warn",
+            "proxy",
+            "route.not_served",
+            serde_json::json!({"method":method.as_str(),"path":uri.path(),"servedBy":"native","reason":"not-served-natively-no-bun-socket"}),
+        );
+        return Ok(not_found());
     };
     let failure = |message: String| {
         ApiError::domain(

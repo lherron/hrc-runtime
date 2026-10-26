@@ -747,7 +747,7 @@ fn handle(
     if method == Method::GET && path == "/v1/runs" {
         return runs::list(server, query);
     }
-    Ok((StatusCode::NOT_FOUND, "Not Found").into_response())
+    Ok(proxy::not_found())
 }
 fn status(
     server: &Server,
