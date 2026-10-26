@@ -1457,7 +1457,7 @@
     "startup:packages/hrc-server/src/index.ts:21146:21184": "Federation services are N4.",
     "startup:packages/hrc-server/src/index.ts:25945:25982": "Foreign-home shadow teardown is N4 federation.",
     "startup:packages/hrc-server/src/index.ts:29260:29389": "Event forwarder is N4 and POSTPONED-unconfigured: no node sets HRC_EVENT_FORWARD_* (max3, svc, hrcdev plists checked, mable 2026-10-26).",
-    "startup:packages/hrc-server/src/index.ts:29773:30556": "Event ingest listener is N4 with evidence required: max3 sets HRC_EVENT_INGEST_TCP_PORT; implement unless traffic evidence proves no producer (mable 2026-10-26).",
+    "startup:packages/hrc-server/src/index.ts:29773:30556": "Event ingest listener is N4 and POSTPONED-no-producer: svc logged 0 ingest requests of ~568k http.request (Oct 23-26), max3 1 manual probe of ~274k (Oct 14-26); no node sets HRC_EVENT_FORWARD_URL (T-11872, mable 2026-10-26).",
     "timer:packages/hrc-server/src/broker/controller/bc-events.ts:13983": "Gap backfill debounce in the N2 controller (controller::schedule_gap).",
     "timer:packages/hrc-server/src/broker/controller/bc-submission.ts:15422": "Seat monitor interval (controller::seat::monitor).",
     "timer:packages/hrc-server/src/broker/controller/dispatch-probe.ts:1966": "Per-request broker control probe timeout inside the broker start, not a job.",
