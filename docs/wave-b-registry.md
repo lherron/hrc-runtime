@@ -163,7 +163,7 @@ config/auth/storage during a failed cutover.
 
 ## Verification
 
-Verify the canonical endpoint from `svc`, `lab`, and `max3`:
+Verify the canonical endpoint from `svc` and `max3`:
 
 ```bash
 curl -fsS http://mini:4873/-/ping

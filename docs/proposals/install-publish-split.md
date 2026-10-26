@@ -14,7 +14,7 @@ The two operations have different authority:
 
 | Operation | Authority | Result |
 | --- | --- | --- |
-| `just install` | local node | builds a committed `HEAD` into an atomic release and selects it; does not fetch containment or contact a registry |
+| `just install` | local node | builds a committed `HEAD` into an atomic release and selects it; does not fetch containment or write a registry |
 | `just publish` | canonical HRC publisher | proves and publishes the selected release tuple under `latest` |
 | `just install-dev` / `just publish-worktree` | local development worktree | may publish only the isolated `worktree` tag; cannot advance `latest` |
 
