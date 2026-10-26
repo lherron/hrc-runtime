@@ -23,7 +23,7 @@ from urllib.parse import urlencode
 from foundation import UnixHTTP
 
 
-def main(case_factory=None, observe=None, paginate=True):
+def main(case_factory=None, observe=None, paginate=True, before_subject=None, before_request=None):
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--bun-release', type=Path, required=True)
@@ -215,8 +215,10 @@ db.close();'''.replace('PATH',json.dumps(str(release/'packages/hrc-store-sqlite/
             with sqlite3.connect(root/'snapshot.sqlite') as source,sqlite3.connect(db_path) as target:source.backup(target)
             owner_before=time.time()
             owner=up(kind,1)
+            if before_subject is not None: before_subject(kind, db_path, root)
             values=[]
             for name,method,path,body in cases:
+                initial = before_request(kind, name, db_path) if before_request is not None else None
                 before=time.time()
                 status,raw,headers=http(method,path,body)
                 try:response=json.loads(raw)
@@ -226,6 +228,7 @@ db.close();'''.replace('PATH',json.dumps(str(release/'packages/hrc-store-sqlite/
                     persisted_state=rows('SELECT runtime_state_json FROM runtimes WHERE runtime_id=?',(response['runtimeId'],))[0]['runtime_state_json']
                     persisted_probe=json.loads(persisted_state or '{}').get('brokerDispatchDiagnostics',{}).get('liveSeatProbe')
                 record={'persistedProbe':persisted_probe,'case':name,'method':method,'path':path,'request':body,'status':status,'body':response,'headers':headers,'before':before,'after':time.time(),'ownerPid':owner.pid,'ownerBefore':owner_before}
+                if initial is not None: record["initial"] = initial
                 if observe is not None:record.update(observe(kind,record,db_path))
                 values.append(record)
             if paginate:
