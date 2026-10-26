@@ -350,7 +350,7 @@
     {
       "command": "server start",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "server status",

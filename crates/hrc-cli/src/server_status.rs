@@ -347,6 +347,7 @@ pub(crate) fn collect_with_tmux(include_tmux: bool) -> Value {
             "runtimeRoot",
             "stateRoot",
             "socketPath",
+            "listenSocketPath",
             "dbPath",
             "cwd",
             "binaryPath",
@@ -431,6 +432,14 @@ fn render(s: &Value) -> String {
             }
         ),
     ];
+    if let Some(listen) = s["api"]["listenSocketPath"].as_str()
+        && s["socketPath"].as_str() != Some(listen)
+    {
+        lines.insert(
+            lines.len() - 1,
+            format!("  listen:       {listen} (behind front door)"),
+        );
+    }
     let tm = &s["tmux"];
     let tm_summary = if tm["available"] == true {
         if tm["running"] == true {

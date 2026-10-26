@@ -115,7 +115,7 @@ fn stop_proof(before: &Value, timeout: f64) -> Result<()> {
     let begin = Instant::now();
     while begin.elapsed().as_secs_f64() * 1000.0 < timeout {
         let observed = crate::server_status::collect_with_tmux(false);
-        if observed["socketResponsive"] != true && !alive(before["pid"].as_i64()) {
+        if observed["running"] != true && !alive(before["pid"].as_i64()) {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(100));

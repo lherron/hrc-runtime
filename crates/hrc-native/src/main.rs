@@ -17,12 +17,25 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
-    if front.is_none() && !hrc_cli::is_daemon_invocation(&args) {
+    let start = if front.is_none() {
+        let startup_args = args.clone();
+        tokio::task::spawn_blocking(move || hrc_cli::prepare_server_start(&startup_args)).await?
+    } else {
+        hrc_cli::ServerStart::Unhandled
+    };
+    let foreground_start = match start {
+        hrc_cli::ServerStart::Finished(code) => std::process::exit(code),
+        hrc_cli::ServerStart::Foreground => true,
+        hrc_cli::ServerStart::Unhandled => false,
+    };
+    if front.is_none() && !foreground_start && !hrc_cli::is_daemon_invocation(&args) {
         // Blocking HTTP and terminal commands own this thread, outside Tokio.
         let code = tokio::task::spawn_blocking(move || hrc_cli::run(args)).await?;
         std::process::exit(code);
     }
-    hrc_cli::begin_invocation(&args);
+    if !foreground_start {
+        hrc_cli::begin_invocation(&args);
+    }
     let result = server::serve(front).await;
     hrc_cli::finish_invocation(if result.is_ok() { 0 } else { 1 });
     result

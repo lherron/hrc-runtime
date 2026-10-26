@@ -42,8 +42,9 @@ def main():
         tools = root / 'tools'; tools.mkdir()
         oracle_tools = root / 'oracle-tools'; oracle_tools.mkdir()
         (oracle_tools / 'bun').symlink_to(bun)
-        (tools / 'wrkq').symlink_to(shutil.which('wrkq'))
-        (oracle_tools / 'wrkq').symlink_to(shutil.which('wrkq'))
+        for tool in ('wrkq', 'tmux'):
+            (tools / tool).symlink_to(shutil.which(tool))
+            (oracle_tools / tool).symlink_to(shutil.which(tool))
         env = {k:v for k,v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ', 'HARNESS_BROKER_')) and k not in ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX')}
         env.update(HOME=str(home), HRC_RUNTIME_DIR=str(runtime), HRC_STATE_DIR=str(state), HRC_PEER_CONFIG_FILE=str(root / 'no-federation.json'), HRC_ACP_WEBHOOK_URL='', PATH=f'{tools}:/usr/bin:/bin', NO_COLOR='1', FORCE_COLOR='0')
         env.update(WRKQ_DB=a.wrkq_db, HRC_WRKQ_DB=a.wrkq_db, WRKQD_TOKEN_FILE=str(a.token_file), HRC_WRKQD_TOKEN_FILE=str(a.token_file))
@@ -115,6 +116,16 @@ with (root/'children.ndjson').open('a') as f:f.write(json.dumps(dict(pid=p.pid,l
             if not ready(f) and not (f['runtime'] / 'server.lock').exists():break
             time.sleep(.1)
         assert not ready(f)
+        for _ in range(100):
+            live = []
+            for pid in pids:
+                try:os.kill(pid, 0); live.append(pid)
+                except ProcessLookupError:pass
+            if not live:break
+            time.sleep(.05)
+        assert not live, ('owned fixture process survived', live)
+        assert not (f['runtime'] / 'hrc.sock').exists()
+        assert not (f['runtime'] / 'hrc-bun.sock').exists()
         (a.artifacts / (f['name'] + '-cleanup.json')).write_text(json.dumps(dict(root=str(f['root']), pids=sorted(pids), healthy=False), indent=2))
 
     def invoke(f, argv=(), oracle=False, extra=None):
