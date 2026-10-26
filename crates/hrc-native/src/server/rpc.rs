@@ -32,9 +32,11 @@ impl JsonRpc {
         let (calls, incoming) = mpsc::channel(64);
         tokio::spawn(async move {
             if let Err(error) = drive(stream, incoming).await {
-                eprintln!(
-                    "{}",
-                    json!({"ts":hrc_store::timestamp(),"level":"warn","component":"rpc","event":"rpc.closed","data":{"message":error.to_string()}})
+                super::stderr_json(
+                    "warn",
+                    "rpc",
+                    "rpc.closed",
+                    json!({"message":error.to_string()}),
                 );
             }
         });

@@ -14,7 +14,7 @@ pub enum ParticipantJoin {
 fn uuid(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4())
 }
-fn raw_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+pub(crate) fn raw_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     use rusqlite::types::ValueRef;
     let mut out = serde_json::Map::new();
     for index in 0..row.as_ref().column_count() {

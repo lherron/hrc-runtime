@@ -67,6 +67,9 @@ def compare(args, checks):
 
 
 def compare_passthrough(args, checks):
+    control = json.loads((Path(args.candidate) / 'env-inert.json').read_text())
+    checks.append({'id':'proxy:legacy-env-inert','pass':control.get('explicitArgument') is False and str(control.get('legacyEnvironment','')).startswith('/') and all(control.get('withoutEnvironment',{}).get(k)==control.get('withEnvironment',{}).get(k) for k in ('method','path','status','body')) and control.get('withEnvironment',{}).get('status')==404 and control.get('withEnvironment',{}).get('body')=='Not Found',
+                   'reason':'a live backend in the retired environment variable must be inert without --bun-socket','failureCode':1})
     baseline = json.loads((Path(args.baseline) / 'observations.json').read_text())
     candidate = json.loads((Path(args.candidate) / 'observations.json').read_text())
     checks.append({'id': 'proxy:nonempty-identical-cases', 'pass': len(baseline) >= 11 and len(baseline) == len(candidate),

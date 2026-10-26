@@ -5,6 +5,7 @@ mod compile;
 mod front;
 pub use front::Role;
 mod index;
+mod maintenance;
 mod participants;
 mod proxy;
 mod rpc;
@@ -416,6 +417,18 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
                 Err(e)
             }
         }
+    } else if method == Method::POST
+        && ["/v1/runtimes/prune", "/v1/runtimes/sweep"].contains(&uri.path())
+    {
+        match parse_body(&body) {
+            Ok(value) => {
+                maintenance::handle(server, value, uri.path() == "/v1/runtimes/prune").await
+            }
+            Err(mut error) => {
+                error.detail = Some(json!({}));
+                Err(error)
+            }
+        }
     } else if method == Method::POST && uri.path() == "/v1/participants/attach" {
         match parse_body(&body) {
             Ok(value) => participants::attach(server, value).await,
@@ -521,6 +534,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/turns",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
+                "/v1/runtimes/prune",
+                "/v1/runtimes/sweep",
                 "/v1/surfaces/bind",
                 "/v1/targets/ensure",
                 "/v1/participants/register",

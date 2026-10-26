@@ -43,9 +43,9 @@ def main():
     def up(kind,proxy=None):
         state=root/kind/'state';runtime=root/kind/'run'
         env=dict(base,HRC_STATE_DIR=str(state),HRC_RUNTIME_DIR=str(runtime),HRC_EVENT_INGEST_SOCKET=str(runtime/'ingest.sock'))
-        if proxy:env['HRC_BUN_PASSTHROUGH_SOCKET']=str(proxy)
         log=(args.artifacts/(kind+'.log')).open('w');logs.append(log)
         argv=[str(args.binary.resolve()),'server'] if kind.startswith('native') else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
+        if proxy:argv.extend(['--bun-socket',str(proxy)])
         proc=subprocess.Popen(argv,env=env,cwd=root,stdout=log,stderr=log);owners.append(proc)
         socket=runtime/'hrc.sock'
         for _ in range(300):

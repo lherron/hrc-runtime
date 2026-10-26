@@ -44,11 +44,12 @@ def main():
         result={'method':method,'path':path,'status':response.status,'headers':headers,'body':content}
         http.close()
         return result
-    def up(kind,proxy=None):
+    def up(kind,proxy=None,legacy_env=None):
         env=dict(base,HRC_RUNTIME_DIR=str(root/kind/'run'),HRC_STATE_DIR=str(root/kind/'state'),HRC_EVENT_INGEST_SOCKET=str(root/kind/'run/ingest.sock'))
-        if proxy:env['HRC_BUN_PASSTHROUGH_SOCKET']=str(proxy)
-        log=(args.artifacts/(kind+'.log')).open('w');logs.append(log)
+        if legacy_env:env['HRC_BUN_PASSTHROUGH_SOCKET']=str(legacy_env)
+        log=(args.artifacts/(kind+'.log')).open('a');logs.append(log)
         argv=[str(args.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
+        if proxy:argv.extend(['--bun-socket',str(proxy)])
         proc=subprocess.Popen(argv,env=env,cwd=root,stdout=log,stderr=log);owners.append(proc)
         socket=root/kind/'run/hrc.sock'
         for _ in range(300):
@@ -72,6 +73,17 @@ def main():
         disabled=request(native,'GET','/v1/targets')
         assert disabled['status']==404 and disabled['body']=='Not Found', disabled
         observations.append({'noSocket':disabled})
+        owners[-1].send_signal(signal.SIGTERM)
+        owners[-1].wait(timeout=20)
+        # The exported legacy variable is deliberately set to a live backend.
+        # With no argument it must still behave exactly like no backend.
+        native=up('native',legacy_env=bun)
+        inert=request(native,'GET','/v1/targets')
+        assert all(inert[k]==disabled[k] for k in ('method','path','status','body')), (disabled,inert)
+        control={'legacyEnvironment':str(bun),'explicitArgument':False,'withoutEnvironment':disabled,'withEnvironment':inert}
+        (args.artifacts/'native/env-inert.json').parent.mkdir(exist_ok=True)
+        (args.artifacts/'native/env-inert.json').write_text(json.dumps(control,indent=2)+'\n')
+        observations.append({'legacyEnvInert':control})
         owners[-1].send_signal(signal.SIGTERM)
         owners[-1].wait(timeout=20)
         native=up('native',bun)

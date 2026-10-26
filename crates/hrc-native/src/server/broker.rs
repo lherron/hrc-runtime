@@ -471,9 +471,11 @@ pub async fn reattach(server: &Shared) -> Result<()> {
                     .unwrap()
                     .insert(string(&runtime, "runtimeId")?.to_owned(), client);
             }
-            Err(error) => eprintln!(
-                "{}",
-                json!({"ts":hrc_store::timestamp(),"level":"warn","component":"broker","event":"broker.reattach.failed","data":{"runtimeId":runtime["runtimeId"],"message":error.to_string()}})
+            Err(error) => super::stderr_json(
+                "warn",
+                "broker",
+                "broker.reattach.failed",
+                json!({"runtimeId":runtime["runtimeId"],"message":error.to_string()}),
             ),
         }
     }
@@ -544,9 +546,11 @@ async fn attach_one(server: &Shared, runtime: &Value) -> Result<JsonRpc> {
     {
         super::runtimes::record_probe(server, &observed, &probe, "binding-established")?;
     }
-    eprintln!(
-        "{}",
-        json!({"ts":hrc_store::timestamp(),"level":"info","component":"broker","event":"broker.reattach.complete","data":{"runtimeId":runtime["runtimeId"],"invocationId":runtime["activeInvocationId"],"currentSeq":attach["currentSeq"],"lastProjectedSeq":seq,"eventsHeld":true}})
+    super::stderr_json(
+        "info",
+        "broker",
+        "broker.reattach.complete",
+        json!({"runtimeId":runtime["runtimeId"],"invocationId":runtime["activeInvocationId"],"currentSeq":attach["currentSeq"],"lastProjectedSeq":seq,"eventsHeld":true}),
     );
     Ok(client)
 }

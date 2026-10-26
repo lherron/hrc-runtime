@@ -480,7 +480,12 @@ pub fn schedule(server: &Shared, registration_id: &str, attempt_id: &str) {
         let result = run(&server, &reg_id, &id).await;
         server.participant_work.lock().unwrap().remove(&id);
         if let Err(error) = result {
-            eprintln!("participant establishment bookkeeping: {error:#}");
+            super::super::stderr_json(
+                "error",
+                "participant",
+                "participant.establishment.bookkeeping_failed",
+                json!({"attemptId":id,"error":format!("{error:#}")}),
+            );
         }
     });
 }
@@ -530,9 +535,11 @@ async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
                     &error.to_string(),
                     delays[count.min(3)],
                 )?;
-                eprintln!(
-                    "{}",
-                    json!({"ts":hrc_store::timestamp(),"level":"warn","component":"server","event":"participant.establishment.pending","data":{"registrationId":reg["registration_id"],"attemptId":id,"error":error.to_string()}})
+                super::super::stderr_json(
+                    "warn",
+                    "server",
+                    "participant.establishment.pending",
+                    json!({"registrationId":reg["registration_id"],"attemptId":id,"error":error.to_string()}),
                 );
             }
         }

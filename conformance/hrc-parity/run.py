@@ -1296,22 +1296,23 @@ def coverage_report(observed, definitions):
     cases = definitions['cases']
     def target_for(item):
         if item['id'] in definitions['coverageOverrides']:
-            return definitions['coverageOverrides'][item['id']]
+            return definitions['coverageOverrides'][item['id']], None
         for rule in definitions['coverageRules']:
             if (('kind' not in rule or rule['kind'] == item['kind'])
                 and item['id'].startswith(rule.get('idPrefix', ''))
                 and item.get('path', '').startswith(rule.get('pathPrefix', ''))
                 and ('pathPattern' not in rule or re.search(rule['pathPattern'], item.get('path', '')))):
-                return rule['target']
-        return None
+                return rule['target'], rule.get('reason')
+        return None, None
     items = []
     for item in observed['items']:
-        target = target_for(item)
+        target, rule_reason = target_for(item)
         # Current main contains no supported UNSUPPORTED mapping. Adding one
         # requires an explicit plan reason allowlist here, not arbitrary prose.
         if target not in cases and target not in {'GAP:N' + str(i) for i in range(1, 7)}:
             target = None
-        items.append({**item, 'target': target, **({'reason': definitions['coverageReasons'][item['id']]} if item['id'] in definitions.get('coverageReasons', {}) else {})})
+        reason = definitions.get('coverageReasons', {}).get(item['id'], rule_reason)
+        items.append({**item, 'target': target, **({'reason': reason} if reason is not None else {})})
     counts = Counter({'GAP:N' + str(i): 0 for i in range(1, 7)})
     counts['UNSUPPORTED'] = 0
     counts.update(i['target'] or 'UNMAPPED' for i in items)

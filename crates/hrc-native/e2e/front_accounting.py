@@ -27,9 +27,9 @@ def call(endpoint,path,ua='front-ready',request_id=None):
 
 def up(kind,proxy=None):
  state=root/kind/'state';runtime=root/kind/'run';env=dict(base,HRC_STATE_DIR=str(state),HRC_RUNTIME_DIR=str(runtime),HRC_EVENT_INGEST_SOCKET=str(runtime/'ingest.sock'))
- if proxy:env['HRC_BUN_PASSTHROUGH_SOCKET']=str(proxy)
  log=(a.artifacts/(kind+'.log')).open('w');logs.append(log)
  argv=[str(a.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
+ if proxy:argv.extend(['--bun-socket',str(proxy)])
  owner=subprocess.Popen(argv,env=env,cwd=root,stdout=log,stderr=log);owners.append(owner);endpoint=runtime/'hrc.sock'
  for _ in range(300):
   assert owner.poll() is None,kind+' exited'

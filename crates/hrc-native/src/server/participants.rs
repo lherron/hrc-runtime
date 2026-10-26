@@ -442,7 +442,12 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
             .participant_registration(reg_id)?
             .unwrap();
         if let Err(error) = establishment::hosting(server, &current, &persisted) {
-            eprintln!("participant hosting intent: {error:#}");
+            super::stderr_json(
+                "error",
+                "participant",
+                "participant.hosting_intent.failed",
+                json!({"registrationId":reg_id,"error":format!("{error:#}")}),
+            );
             return Ok(attachment_reply(
                 "pending",
                 "participant_hosting_intent_unavailable",

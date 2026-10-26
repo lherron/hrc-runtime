@@ -41,7 +41,12 @@ pub(super) fn number(s: &str) -> Option<f64> {
 pub fn stale_threshold_sec() -> i64 {
     std::env::var("HRC_STALE_GENERATION_HOURS")
         .ok()
-        .and_then(|s| s.parse::<f64>().ok())
+        .and_then(|s| {
+            let s = s.trim_start();
+            std::iter::once(s.len())
+                .chain(s.char_indices().map(|(i, _)| i).rev())
+                .find_map(|end| s[..end].parse::<f64>().ok())
+        })
         .filter(|h| h.is_finite() && *h >= 0.0)
         .map(|h| (h * 3600.0).floor() as i64)
         .unwrap_or(86_400)
@@ -296,9 +301,11 @@ pub async fn probe(server: &Shared, runtime: &Value, cause: &str) -> Result<Valu
         ),
     };
     if let Err(error) = recorded {
-        eprintln!(
-            "{}",
-            json!({"ts":hrc_store::timestamp(),"level":"warn","component":"broker","event":"broker.dispatch_observability.failed","data":{"runtimeId":id,"cause":cause,"error":error.to_string()}})
+        super::stderr_json(
+            "warn",
+            "broker",
+            "broker.dispatch_observability.failed",
+            json!({"runtimeId":id,"cause":cause,"error":error.to_string()}),
         );
     }
     result

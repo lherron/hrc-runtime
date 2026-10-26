@@ -214,3 +214,25 @@ projects and absent private endpoints. No Foundry host or harness is launched.
 The checker independently recomputes the allocation-derived descriptor hash and
 anchors it to the actual request before comparing the complete frozen bytes.
 This covers initial registration; replacement/carried continuation remains N2.
+
+`crates/hrc-native/e2e/maintenance.py` runs ordinary Bun seat birth once, retains
+that real live broker as a safety control, and compares sequential owners on
+one Bun-authored snapshot. It adds only endpoint-free orphan rows after startup,
+including a completed run, output buffer and surface binding. `compare --suite
+n1-maintenance` requires every ordered request, full before/after rows, dry-run
+immutability, confirmed dependent-row deletion, continuation flags, stale facts
+and summary facts. The empty apply case must mint Bun's system summary session.
+Successful ledger-inclusive retention recovery remains a separate N2 workflow;
+the N1 case checks manifest and retained-evidence refusals on its own scopes.
+
+All optional native pass-through drivers use the explicit `server --bun-socket
+<absolute-path>` argument. The proxy driver also exports the retired
+`HRC_BUN_PASSTHROUGH_SOCKET` with a live private backend and starts without the
+argument: its unknown-route response must equal the no-backend control.
+Accounting, front accounting and proxy cases use separate owner stores.
+
+Coverage rules preserve their one-line workflow reasons in the generated
+report. Tested N1 methods use stable declaration prefixes; other Store methods
+and schema consumers remain named N2–N5 gaps. Consuming a Bun-created current
+schema does not claim a Rust migration writer. The held mobile-provisioning
+source gaps retain their withdrawn-baseline status under N4.

@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 mod broker;
 mod index;
+mod maintenance;
 mod metadata;
 mod monitor_read;
 mod participants;

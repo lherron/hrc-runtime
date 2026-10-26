@@ -201,9 +201,813 @@
         "request-anchored-descriptor-hash-and-frozen-bytes"
       ],
       "requiredInP0": false
+    },
+    "n1-maintenance": {
+      "assertionIds": [
+        "dry-and-confirmed-prune",
+        "orphan-aging-and-live-safety",
+        "canonical-row-satellites-continuation-and-events",
+        "request-grammar-and-retained-evidence-refusals"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:buildWhere:",
+      "target": "n1-session-index",
+      "reason": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:countMap:",
+      "target": "n1-session-index",
+      "reason": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:escapeLike:",
+      "target": "n1-session-index",
+      "reason": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:mapRow:",
+      "target": "n1-session-index",
+      "reason": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:facets:",
+      "target": "n1-session-index",
+      "reason": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:listPage:",
+      "target": "n1-session-index",
+      "reason": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:maxBrokerSeq:",
+      "target": "n1-runtime-reads",
+      "reason": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:decorate:",
+      "target": "n1-runtime-reads",
+      "reason": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getByRuntimeId:",
+      "target": "n1-runtime-reads",
+      "reason": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAll:",
+      "target": "n1-runtime-reads",
+      "reason": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByHostSessionId:",
+      "target": "n1-runtime-reads",
+      "reason": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:bind:",
+      "target": "n1-runtime-surfaces",
+      "reason": "Exercised by the N1 surface bind workflow, including exact row readback, retry and displacement within one transaction."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:findBySurface:",
+      "target": "n1-runtime-surfaces",
+      "reason": "Exercised by the N1 surface bind workflow, including exact row readback, retry and displacement within one transaction."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:unbindOtherGhosttyClientTty:",
+      "target": "n1-runtime-surfaces",
+      "reason": "Exercised by the N1 surface bind workflow, including exact row readback, retry and displacement within one transaction."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:ContinuityRepository:upsert:",
+      "target": "n1-target-placement",
+      "reason": "Exercised by the named passing N1 workflow; other operations in the file retain their own owners."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:insert:",
+      "target": "n1-target-placement",
+      "reason": "Exercised by the named passing N1 workflow; other operations in the file retain their own owners."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:listByScopeRef:",
+      "target": "n1-target-placement",
+      "reason": "Exercised by the named passing N1 workflow; other operations in the file retain their own owners."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:updateIntent:",
+      "target": "n1-target-placement",
+      "reason": "Exercised by the named passing N1 workflow; other operations in the file retain their own owners."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:<module>:allowsParticipantHostBindingTransition:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:<module>:mapBinding:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:<module>:mapReservation:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:getBindingById:",
+      "target": "GAP:N2",
+      "reason": "N2 participant succession/delivery reads own this binding lookup; initial attach row readback does not qualify those workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:getBindingByRegistrationId:",
+      "target": "GAP:N2",
+      "reason": "N2 participant reconnect/recovery owns binding lookup by registration."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:getLiveBindingByHostIncarnationId:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:getReservationByAddress:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:getReservationById:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:hasHeldReservationForScope:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:insertBinding:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:insertReservation:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:listBindingsByReservationId:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:listReservationsByClassId:",
+      "target": "GAP:N4",
+      "reason": "N4 roster/admin inspection owns class reservation enumeration."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts:ParticipantHostBindingRepository:transitionBinding:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:attachPreparedDescriptor:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:confirmInitialActivation:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:getAttempt:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:getAttemptByRegistrationId:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:getDirectRegistrationByAddressAndIncarnation:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:getRegistrationById:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:getRegistrationByScopeRef:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:insertAttempt:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:insertRegistration:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:listAttemptsByRegistrationId:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:markEstablishmentCompleted:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:recordContinuationSelectionIfAbsent:",
+      "target": "GAP:N2",
+      "reason": "N2 carried-continuation/replacement work owns this conditional selection update."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:recordEstablishmentFailure:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:setServingSocketPathIfAbsent:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:setSnapshotIfAbsent:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-repository.ts:ParticipantRegistrationRepository:transitionAttempt:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-rows.ts:<module>:mapAttempt:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-rows.ts:<module>:mapRegistration:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/participant-registration-types.ts:<module>:allowsParticipantAttemptTransition:",
+      "target": "n1-participants",
+      "reason": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-metadata-repository.ts:SessionMetadataRepository:get:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 metadata read/write/clear/reject comparisons exercise exact scope/lane JSON rows and transaction effects."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-metadata-repository.ts:SessionMetadataRepository:rows:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 metadata read/write/clear/reject comparisons exercise exact scope/lane JSON rows and transaction effects."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-metadata-repository.ts:SessionMetadataRepository:write:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 metadata read/write/clear/reject comparisons exercise exact scope/lane JSON rows and transaction effects."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-identity.ts:<module>:canonicalLaneRef:",
+      "target": "n1-target-placement",
+      "reason": "Passing placement/target and session cases compare parsed identities and canonical lanes."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-identity.ts:<module>:deriveSessionIdentity:",
+      "target": "n1-target-placement",
+      "reason": "Passing placement/target and session cases compare parsed identities and canonical lanes."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-identity.ts:<module>:readSessionIdentity:",
+      "target": "n1-target-placement",
+      "reason": "Passing placement/target and session cases compare parsed identities and canonical lanes."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:count:",
+      "target": "n1-session-projection",
+      "reason": "Passing session projection/read cases exercise host resolution, filtered windows and row identity mapping."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:decorate:",
+      "target": "n1-session-projection",
+      "reason": "Passing session projection/read cases exercise host resolution, filtered windows and row identity mapping."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:getByHostSessionId:",
+      "target": "n1-session-projection",
+      "reason": "Passing session projection/read cases exercise host resolution, filtered windows and row identity mapping."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:listByFilters:",
+      "target": "n1-session-projection",
+      "reason": "Passing session projection/read cases exercise host resolution, filtered windows and row identity mapping."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:setContinuationReuseDisabled:",
+      "target": "n1-maintenance",
+      "reason": "Passing sweep apply compares continuation reuse disabled and the updated session row."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:ContinuityRepository:getByKey:",
+      "target": "n1-target-placement",
+      "reason": "Passing target/placement cases exercise stable scope/lane continuity and stored sessions."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-title-repository.ts:SessionTitleRepository:getByHostSessionId:",
+      "target": "n1-session-index",
+      "reason": "Passing N1 index page/facet cases read canonical title rows; title mutation remains N4."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-title-repository.ts:SessionTitleRepository:listAll:",
+      "target": "n1-session-index",
+      "reason": "Passing N1 index page/facet cases read canonical title rows; title mutation remains N4."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/schema-guard.ts:<module>:assertStoreSchemaCurrent:",
+      "target": "n1-schema-refusal",
+      "reason": "Gate3 exercises missing/unknown migration refusal before canonical store/control writes."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/schema-guard.ts:<module>:buildMessage:",
+      "target": "n1-schema-refusal",
+      "reason": "Gate3 exercises missing/unknown migration refusal before canonical store/control writes."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/schema-guard.ts:<module>:readStoreSchemaState:",
+      "target": "GAP:N5",
+      "reason": "N5 server status owns non-refusing readonly schema diagnostics."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations.ts:<module>:allocateStoreEventStreamSeq:",
+      "target": "cold-second-turn",
+      "reason": "N1 cold birth appends canonical facts with the shared store sequence allocator; Bun replays the held broker events."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:count:",
+      "target": "n1-runtime-reads",
+      "reason": "Passing real-seat runtime/target reads compare counts, host selection and canonical live references."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getLatestByHostSessionId:",
+      "target": "n1-runtime-reads",
+      "reason": "Passing real-seat runtime/target reads compare counts, host selection and canonical live references."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listLiveSessionRefRows:",
+      "target": "n1-runtime-reads",
+      "reason": "Passing real-seat runtime/target reads compare counts, host selection and canonical live references."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listLiveSessionRefs:",
+      "target": "n1-runtime-reads",
+      "reason": "Passing real-seat runtime/target reads compare counts, host selection and canonical live references."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:insert:",
+      "target": "n1-participant-live",
+      "reason": "Passing real participant broker activation compares the full canonical runtime/operation/invocation graph and retained owner shutdown."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:update:",
+      "target": "n1-participant-live",
+      "reason": "Passing real participant broker activation compares the full canonical runtime/operation/invocation graph and retained owner shutdown."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:updateRunId:",
+      "target": "n1-participant-live",
+      "reason": "Passing real participant broker activation compares the full canonical runtime/operation/invocation graph and retained owner shutdown."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:updateStatus:",
+      "target": "n1-participant-live",
+      "reason": "Passing real participant broker activation compares the full canonical runtime/operation/invocation graph and retained owner shutdown."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:pruneRuntime:",
+      "target": "n1-maintenance",
+      "reason": "Passing confirmed prune compares deletion of runtime/run/buffer/surface and retention of lifecycle facts."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:pruneRuntimes:",
+      "target": "GAP:N2",
+      "reason": "N2 retained-ledger recovery owns successful ledger-inclusive disposition/cascade; N1 compares its scratch manifest safety refusals."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:countPruneRows:",
+      "target": "GAP:N2",
+      "reason": "N2 retained-ledger recovery owns successful ledger-inclusive disposition/cascade; N1 compares its scratch manifest safety refusals."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:insert:",
+      "target": "cold-second-turn",
+      "reason": "N1 cold birth and maintenance exercise canonical initial run rows and runtime run ownership reads; turn completion stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:getByRunId:",
+      "target": "cold-second-turn",
+      "reason": "N1 cold birth and maintenance exercise canonical initial run rows and runtime run ownership reads; turn completion stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts:RunRepository:listByRuntimeId:",
+      "target": "cold-second-turn",
+      "reason": "N1 cold birth and maintenance exercise canonical initial run rows and runtime run ownership reads; turn completion stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts:BrokerInvocationRepository:getByInvocationId:",
+      "target": "n1-participant-live",
+      "reason": "Passing real N1 participant activation compares canonical invocation identity, capabilities, timestamps and broker control ownership."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts:BrokerInvocationRepository:insert:",
+      "target": "n1-participant-live",
+      "reason": "Passing real N1 participant activation compares canonical invocation identity, capabilities, timestamps and broker control ownership."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts:BrokerInvocationRepository:listByRuntimeId:",
+      "target": "n1-participant-live",
+      "reason": "Passing real N1 participant activation compares canonical invocation identity, capabilities, timestamps and broker control ownership."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts:BrokerInvocationRepository:update:",
+      "target": "n1-participant-live",
+      "reason": "Passing real N1 participant activation compares canonical invocation identity, capabilities, timestamps and broker control ownership."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts:RuntimeOperationRepository:getByOperationId:",
+      "target": "n1-participant-live",
+      "reason": "Passing real N1 participant activation compares the canonical prepared/start operation graph."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts:RuntimeOperationRepository:insert:",
+      "target": "n1-participant-live",
+      "reason": "Passing real N1 participant activation compares the canonical prepared/start operation graph."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts:RuntimeOperationRepository:update:",
+      "target": "n1-participant-live",
+      "reason": "Passing real N1 participant activation compares the canonical prepared/start operation graph."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker.ts:<module>:mapBrokerInvocationRow:",
+      "target": "n1-participant-live",
+      "reason": "Passing real N1 participant activation compares every captured canonical operation/invocation field."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker.ts:<module>:mapRuntimeOperationRow:",
+      "target": "n1-participant-live",
+      "reason": "Passing real N1 participant activation compares every captured canonical operation/invocation field."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-input-repositories.ts:InputRepository:insert:",
+      "target": "cold-second-turn",
+      "reason": "N1 cold turn admission writes and correlates the initial input before handing it to the real harness; later input projection stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-input-repositories.ts:InputRepository:recordCorrelation:",
+      "target": "cold-second-turn",
+      "reason": "N1 cold turn admission writes and correlates the initial input before handing it to the real harness; later input projection stays N2."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/broker-input-repositories.ts:SubmissionAdmissionRepository:upsertAdmission:",
+      "target": "cold-second-turn",
+      "reason": "N1 cold turn admission persists the canonical admission row before provisioning."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:append:",
+      "target": "cold-second-turn",
+      "reason": "N1 cold birth and metadata/maintenance workflows append ordered canonical HRC facts; event API and projection remain N2/N3."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:appendPersisted:",
+      "target": "cold-second-turn",
+      "reason": "N1 cold birth and metadata/maintenance workflows append ordered canonical HRC facts; event API and projection remain N2/N3."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:appendWithinExistingTransaction:",
+      "target": "cold-second-turn",
+      "reason": "N1 cold birth and metadata/maintenance workflows append ordered canonical HRC facts; event API and projection remain N2/N3."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:allocatedHrcSeq:",
+      "target": "GAP:N3",
+      "reason": "N3 kernel lifecycle tail/page consumers own this allocated high-water read."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:listFromHrcSeqFiltered:",
+      "target": "GAP:N5",
+      "reason": "N5 monitor owns direct-store filtered lifecycle reads and its high-water cursor."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:HrcLifecycleEventRepository:maxHrcSeq:",
+      "target": "GAP:N5",
+      "reason": "N5 monitor owns direct-store filtered lifecycle reads and its high-water cursor."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:<module>:escapeLike:",
+      "target": "GAP:N5",
+      "reason": "N5 monitor owns direct-store task filters and lifecycle matching."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/event-repositories.ts:<module>:taskScopePredicate:",
+      "target": "GAP:N5",
+      "reason": "N5 monitor owns direct-store task filters and lifecycle matching."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:allocateStreamSeq:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:execute:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:fromSqliteBoolean:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:mapRuntimeRow:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:mapSessionRow:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:parseJson:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:parseRequiredJson:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:requireRecord:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:serializeJson:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:toSessionRef:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:toSqliteBoolean:",
+      "target": "n1-session-routes",
+      "reason": "Passing N1 wire and canonical-row workflows exercise sequence, identity, nullable JSON and boolean conversions; unexercised query/projection helpers remain assigned separately."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:mapSurfaceBindingRow:",
+      "target": "n1-runtime-surfaces",
+      "reason": "Passing N1 bind/attach comparisons exercise the complete canonical surface binding shape."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:buildLifecycleWhere:",
+      "target": "GAP:N5",
+      "reason": "N5 monitor owns direct-store lifecycle filtering and row projection."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/shared.ts:<module>:mapHrcEventRow:",
+      "target": "GAP:N5",
+      "reason": "N5 monitor owns direct-store lifecycle filtering and row projection."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/mail/",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/mail/",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/mail/",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/message-repository.ts",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/message-repository.ts",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/message-repository.ts",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/collective-history",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/collective-history",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/collective-history",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/lifecycle-append-hub.ts",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/lifecycle-append-hub.ts",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/lifecycle-append-hub.ts",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/wrkq/",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/wrkq/",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/wrkq/",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations/schema-migrations-mail-delivery.ts",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/migrations/schema-migrations-mail-delivery.ts",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/migrations/schema-migrations-mail-delivery.ts",
+      "target": "GAP:N3",
+      "reason": "N3 owns message/mail delivery, publication and lifecycle streaming workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/federation-repositories.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/federation-repositories.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/roster-claim-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/roster-claim-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/roster-claim-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/transcript-index-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/transcript-index-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/transcript-index-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/session-title-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/session-title-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/session-title-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/migrations/schema-migrations-federation-mail.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/migrations/schema-migrations-federation-mail.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/migrations/schema-migrations-federation-mail.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/repositories/acp-bridge-emission-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/repositories/acp-bridge-emission-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/repositories/acp-bridge-emission-repository.ts",
+      "target": "GAP:N4",
+      "reason": "N4 owns federation/binding/roster authority and transcript/admin workflows."
+    },
+    {
+      "idPrefix": "store-op:packages/hrc-store-sqlite/src/statement-telemetry.ts",
+      "target": "GAP:N5",
+      "reason": "N5 owns direct-store status diagnostics and metadata inspection."
+    },
+    {
+      "idPrefix": "store-source:packages/hrc-store-sqlite/src/statement-telemetry.ts",
+      "target": "GAP:N5",
+      "reason": "N5 owns direct-store status diagnostics and metadata inspection."
+    },
+    {
+      "idPrefix": "schema-sql:packages/hrc-store-sqlite/src/statement-telemetry.ts",
+      "target": "GAP:N5",
+      "reason": "N5 owns direct-store status diagnostics and metadata inspection."
+    },
+    {
+      "kind": "store-operation",
+      "target": "GAP:N2",
+      "reason": "N2 execution/recovery owns unexercised store mutations and schema consumers; Bun remains the schema migration writer."
+    },
+    {
+      "kind": "store-source",
+      "target": "GAP:N2",
+      "reason": "N2 execution/recovery owns the unexercised store source; specific passing N1 operations take precedence."
+    },
+    {
+      "kind": "schema-sql",
+      "target": "GAP:N2",
+      "reason": "Bun owns creation/upgrade SQL for execution/recovery tables; N1 admits the current schema without porting a migrator."
+    },
     {
       "kind": "cli-command",
       "target": "GAP:N5"
@@ -223,18 +1027,6 @@
     {
       "kind": "direct-store-open",
       "target": "GAP:N5"
-    },
-    {
-      "kind": "store-source",
-      "target": "GAP:N1"
-    },
-    {
-      "kind": "store-operation",
-      "target": "GAP:N1"
-    },
-    {
-      "kind": "schema-sql",
-      "target": "GAP:N1"
     },
     {
       "kind": "auxiliary-route",
@@ -341,7 +1133,8 @@
     },
     {
       "kind": "normative-source-gap",
-      "target": "GAP:N1"
+      "target": "GAP:N4",
+      "reason": "Withdrawn mobile provisioning backend amendment has no claimed current Bun behavior; N4 owns the held administration/provisioning source gap."
     },
     {
       "kind": "package-export",
@@ -381,7 +1174,7 @@
     "cli:hrc run annotate": "direct-cli-sdk",
     "cli:hrc run export": "direct-cli-sdk",
     "file:state-wal-shm": "n1-schema-refusal",
-    "file:lifecycle-credentials": "GAP:N1",
+    "file:lifecycle-credentials": "GAP:N4",
     "file:broker-leases-raw-provider-artifacts": "GAP:N2",
     "file:session-publication-cursor": "GAP:N3",
     "file:server-publication-cursor": "GAP:N3",
@@ -392,8 +1185,8 @@
     "public:PATCH:/v1/sessions/metadata": "n1-session-routes",
     "public:GET:/v1/runtimes/live-refs": "n1-session-routes",
     "public:POST:/v1/surfaces/unbind": "n1-bun-passthrough",
-    "public:POST:/v1/runtimes/sweep": "GAP:N1",
-    "public:POST:/v1/runtimes/prune": "GAP:N1",
+    "public:POST:/v1/runtimes/sweep": "n1-maintenance",
+    "public:POST:/v1/runtimes/prune": "n1-maintenance",
     "public:POST:/v1/runtimes/ensure": "n1-bun-passthrough",
     "public:POST:/v1/runtimes/attach": "n1-runtime-surfaces",
     "public:GET:/v1/targets": "n1-bun-passthrough",
@@ -401,42 +1194,36 @@
     "public:GET:/v1/placement/bindings": "n1-session-index",
     "public:GET:/v1/sessions/page": "n1-session-index",
     "public:GET:/v1/sessions/facets": "n1-session-index",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:buildWhere:1866": "n1-session-index",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:countMap:3896": "n1-session-index",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:escapeLike:1732": "n1-session-index",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:mapRow:3205": "n1-session-index",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:facets:5765": "n1-session-index",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:listPage:4590": "n1-session-index",
     "store-source:packages/hrc-store-sqlite/src/session-index-repository.ts": "n1-session-index",
     "public:GET:/v1/runtimes": "n1-runtime-reads",
     "public:GET:/v1/runtimes/:runtimeId/seat": "n1-runtime-reads",
     "public:GET:/v1/targets/by-session-ref": "n1-runtime-reads",
     "public:POST:/v1/runtimes/inspect": "n1-runtime-reads",
-    "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:maxBrokerSeq:29770": "n1-runtime-reads",
-    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:decorate:2821": "n1-runtime-reads",
-    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getByRuntimeId:5766": "n1-runtime-reads",
-    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAll:10826": "n1-runtime-reads",
-    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByHostSessionId:6433": "n1-runtime-reads",
     "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "n1-runtime-reads",
     "public:POST:/v1/surfaces/bind": "n1-runtime-surfaces",
-    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:bind:678": "n1-runtime-surfaces",
-    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:findBySurface:3629": "n1-runtime-surfaces",
-    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:unbindOtherGhosttyClientTty:2599": "n1-runtime-surfaces",
     "store-source:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts": "n1-runtime-surfaces",
     "public:POST:/v1/placements/resolve": "n1-target-placement",
     "public:POST:/v1/targets/ensure": "n1-target-placement",
-    "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:ContinuityRepository:upsert:3971": "n1-target-placement",
-    "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:insert:7639": "n1-target-placement",
-    "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:listByScopeRef:8826": "n1-target-placement",
-    "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:updateIntent:9330": "n1-target-placement",
     "store-source:packages/hrc-store-sqlite/src/repositories/session-repositories.ts": "n1-target-placement",
     "public:POST:/v1/participants/register": "n1-participants",
-    "public:POST:/v1/participants/attach": "n1-participants"
+    "public:POST:/v1/participants/attach": "n1-participants",
+    "store-source:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts": "n1-participants",
+    "store-source:packages/hrc-store-sqlite/src/participant-registration-repository.ts": "n1-participants",
+    "store-source:packages/hrc-store-sqlite/src/participant-registration-rows.ts": "n1-participants",
+    "store-source:packages/hrc-store-sqlite/src/participant-registration-types.ts": "n1-participants",
+    "store-source:packages/hrc-store-sqlite/src/session-metadata-repository.ts": "n1-session-routes",
+    "store-source:packages/hrc-store-sqlite/src/session-identity.ts": "n1-target-placement",
+    "store-source:packages/hrc-store-sqlite/src/session-title-repository.ts": "n1-session-index",
+    "store-source:packages/hrc-store-sqlite/src/schema-guard.ts": "n1-schema-refusal",
+    "store-source:packages/hrc-store-sqlite/src/database.ts": "n1-schema-refusal",
+    "store-source:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts": "n1-participant-live",
+    "store-source:packages/hrc-store-sqlite/src/repositories/event-repositories.ts": "cold-second-turn",
+    "store-source:packages/hrc-store-sqlite/src/repositories/shared.ts": "n1-session-routes"
   },
   "coverageReasons": {
     "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:POST:/v1/runtimes/sweep": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending.",
-    "public:POST:/v1/runtimes/prune": "IMPLEMENT: confirmed production calls in the T-11820 14-day recount, promoted by EN-35369; native comparison pending.",
+    "public:POST:/v1/runtimes/sweep": "Compared dry and destructive scratch maintenance, actual live broker protection, complete wire errors, row satellites, continuation flags and ordered lifecycle facts against Bun.",
+    "public:POST:/v1/runtimes/prune": "Compared dry and destructive scratch maintenance, actual live broker protection, complete wire errors, row satellites, continuation flags and ordered lifecycle facts against Bun.",
     "public:POST:/v1/runtimes/ensure": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:POST:/v1/runtimes/attach": "Real ready-seat Bun/native attach and surface workflow compares full descriptors, binding fences, retries, tty displacement and committed surface events.",
     "public:GET:/v1/targets": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
@@ -444,28 +1231,27 @@
     "public:GET:/v1/placement/bindings": "Compared active local bindings, excluding remote and retired rows, plus required-query errors against Bun in the N1 index workflow.",
     "public:GET:/v1/sessions/page": "Local session-index HTTP and SQL projection compared against Bun, including filters, pagination, facets and actual-ledger high-water; peer aggregation remains the N4 federation workflow.",
     "public:GET:/v1/sessions/facets": "Local session-index HTTP and SQL projection compared against Bun, including filters, pagination, facets and actual-ledger high-water; peer aggregation remains the N4 federation workflow.",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:buildWhere:1866": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:countMap:3896": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:escapeLike:1732": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:<module>:mapRow:3205": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:facets:5765": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
-    "store-op:packages/hrc-store-sqlite/src/session-index-repository.ts:SessionIndexRepository:listPage:4590": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
     "store-source:packages/hrc-store-sqlite/src/session-index-repository.ts": "Exercised by the passing N1 index page/facet case: row identity/title mapping, escaped search, filters, keyset traversal and excluded facet dimensions.",
     "file:state-wal-shm": "EN-35424 gate3: six real refusal cases preserve main DB and WAL frames, permit SQLite SHM coordination, preserve control files and list the failed CLI usage record.",
     "public:GET:/v1/runtimes": "Real completed-seat Bun/native comparison: full list/filter/cursor, inspect, live/failing seat and target responses; probe observations persist. Event projection and startup reconciliation remain N2.",
     "public:GET:/v1/runtimes/:runtimeId/seat": "Real completed-seat Bun/native comparison: full list/filter/cursor, inspect, live/failing seat and target responses; probe observations persist. Event projection and startup reconciliation remain N2.",
     "public:GET:/v1/targets/by-session-ref": "Real completed-seat Bun/native comparison: full list/filter/cursor, inspect, live/failing seat and target responses; probe observations persist. Event projection and startup reconciliation remain N2.",
     "public:POST:/v1/runtimes/inspect": "Real completed-seat Bun/native comparison: full list/filter/cursor, inspect, live/failing seat and target responses; probe observations persist. Event projection and startup reconciliation remain N2.",
-    "store-op:packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts:BrokerInvocationEventRepository:maxBrokerSeq:29770": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
-    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:decorate:2821": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
-    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:getByRuntimeId:5766": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
-    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listAll:10826": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
-    "store-op:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts:RuntimeRepository:listByHostSessionId:6433": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
     "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
     "public:POST:/v1/surfaces/bind": "Real ready-seat Bun/native attach and surface workflow compares full descriptors, binding fences, retries, tty displacement and committed surface events.",
-    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:bind:678": "Exercised by the N1 surface bind workflow, including exact row readback, retry and displacement within one transaction.",
-    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:findBySurface:3629": "Exercised by the N1 surface bind workflow, including exact row readback, retry and displacement within one transaction.",
-    "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:unbindOtherGhosttyClientTty:2599": "Exercised by the N1 surface bind workflow, including exact row readback, retry and displacement within one transaction.",
-    "store-source:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts": "Surface binding queries and writes exercised by the N1 bind workflow; other bridge operations remain separate operation gaps."
+    "store-source:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts": "Surface binding queries and writes exercised by the N1 bind workflow; other bridge operations remain separate operation gaps.",
+    "file:lifecycle-credentials": "N4 owns the consuming POST /v1/server/lifecycle authorization workflow and its credential-file compatibility.",
+    "store-source:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/participant-registration-repository.ts": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/participant-registration-rows.ts": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/participant-registration-types.ts": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/session-metadata-repository.ts": "Passing N1 metadata read/write/clear/reject comparisons exercise exact scope/lane JSON rows and transaction effects. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/session-identity.ts": "Passing placement/target and session cases compare parsed identities and canonical lanes. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/session-title-repository.ts": "Passing N1 index page/facet cases read canonical title rows; title mutation remains N4. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/schema-guard.ts": "Gate3 exercises schema admission/refusal; readonly CLI diagnostics remain N5. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/database.ts": "N1 schema cases exercise opening the existing canonical database and admission; Bun retains schema creation/upgrade. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/repositories/broker-lifecycle-repositories.ts": "Passing real N1 participant activation exercises the canonical operation/invocation repository; recovery operations remain N2. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/repositories/event-repositories.ts": "N1 lifecycle appends are exercised by birth and maintenance; stream/query operations remain individually assigned. Other operations retain individual workflow owners.",
+    "store-source:packages/hrc-store-sqlite/src/repositories/shared.ts": "N1 session/metadata/runtime workflows exercise common row/JSON helpers; other helper operations retain their own owners. Other operations retain individual workflow owners."
   }
 }
