@@ -450,7 +450,7 @@
     {
       "command": "summon",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "target",

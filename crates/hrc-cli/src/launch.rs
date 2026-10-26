@@ -240,7 +240,7 @@ fn prompt(args: &Parsed<'_>, command: &str) -> Result<Option<String>> {
     }
     Ok(sources.pop().map(|s| s.1))
 }
-fn intent(
+pub(crate) fn intent(
     args: &Parsed<'_>,
     command: &str,
     scope: &Qualified,
@@ -266,12 +266,14 @@ fn intent(
         } else {
             format!("searched: {}", roots.join(", "))
         };
-        return Err(Error::failure(format!(
-            "agent \"{}\" not found; {suffix}",
-            scope.agent
-        )));
+        let message = format!("agent \"{}\" not found; {suffix}", scope.agent);
+        return Err(if command == "summon" {
+            Error::usage(message)
+        } else {
+            Error::failure(message)
+        });
     }
-    let mut body = json!({"agentId":scope.agent,"agentRoot":placement["agentRoot"],"cwd":placement.get("cwd").unwrap_or(&placement["agentRoot"]),"runMode":"task","interactive":true,"preferredMode":if command=="start" {"headless"} else {"interactive"}});
+    let mut body = json!({"agentId":scope.agent,"agentRoot":placement["agentRoot"],"cwd":placement.get("cwd").unwrap_or(&placement["agentRoot"]),"runMode":"task","interactive":command!="summon","preferredMode":match command { "start"=>"headless", "summon"=>"nonInteractive", _=>"interactive" }});
     if let Some(root) = placement.get("projectRoot") {
         body["projectRoot"] = root.clone();
     }
@@ -301,6 +303,9 @@ fn intent(
         eprintln!("{warning}");
     }
     let mut intent = response["intent"].clone();
+    if command == "summon" {
+        return Ok(intent);
+    }
     intent["placement"]["correlation"] = json!({"sessionRef":{"scopeRef":scope.scope,"laneRef":if scope.lane=="main" {"main".into()} else {format!("lane:{}",scope.lane)}}});
     if args.flag("debug") {
         intent["launch"] = json!({"env":{"HRC_DEBUG":"1"}});

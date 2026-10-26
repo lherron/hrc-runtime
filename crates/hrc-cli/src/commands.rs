@@ -12,6 +12,7 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
         "start" | "run" | "attach" => crate::launch::command(args),
         "restart" => restart(args),
         "send" => send(args),
+        "summon" => summon(args),
         "runtime capture" | "runtime interrupt" | "runtime terminate" | "capture status"
         | "admin surface bind" => runtime_control(args),
         "session drop-continuation" | "session rotate" => {
@@ -212,6 +213,46 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
             "N5 command implementation pending: hrc {path}"
         ))),
     }
+}
+
+fn summon(args: &Parsed<'_>) -> Result<()> {
+    let target = args
+        .positionals
+        .first()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Error::usage("summon requires <target>"))?;
+    let (scope, placement) = crate::scope::Qualified::target(target)?;
+    let client = Daemon::connect()?;
+    let intent = crate::launch::intent(args, "summon", &scope, &placement, None, &client)?;
+    let result = client.post(
+        "/v1/targets/ensure",
+        json!({"sessionRef":format!("{}/lane:{}",scope.scope,scope.lane),"runtimeIntent":intent}),
+    )?;
+    if args.flag("json") {
+        print_json(&result);
+    } else {
+        crate::cli_println!(
+            "Summoned: {}\n  state: {}",
+            text(&result["sessionRef"]),
+            text(&result["state"])
+        );
+        if let Some(host) = result["activeHostSessionId"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+        {
+            crate::cli_println!("  hostSessionId: {host}");
+        }
+        if let Some(generation) = result.get("generation") {
+            crate::cli_println!("  generation: {generation}");
+        }
+        crate::cli_println!(
+            "  capabilities: dm={} send={} peek={}",
+            result["capabilities"]["dmReady"],
+            result["capabilities"]["sendReady"],
+            result["capabilities"]["peekReady"]
+        );
+    }
+    Ok(())
 }
 
 fn send(args: &Parsed<'_>) -> Result<()> {

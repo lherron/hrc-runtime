@@ -351,11 +351,7 @@ impl Qualified {
         {
             request["taskId"] = task[1].into();
         }
-        let client = Daemon::connect().map_err(|mut error| {
-            let socket = crate::client::runtime_root().join("hrc.sock");
-            error.domain=Some(json!({"code":"runtime_unavailable","message":error.message,"detail":{"code":"hrc_daemon_missing_socket","socketPath":socket}}));
-            error
-        })?;
+        let client = placement_client()?;
         let mut observed = match client.post("/v1/placements/resolve", request) {
             Ok(observed) => observed,
             Err(error)
@@ -387,7 +383,24 @@ impl Qualified {
         Ok((qualified, observed))
     }
     pub fn observe(&mut self, client: &Daemon) -> Result<()> {
-        let mut request = json!({"agentId":self.agent,"projectOrigin":self.project_origin,"taskWorktreeAssociation":"advisory"});
+        let observation = self.observe_placement(client, "advisory")?;
+        for warning in observation["warnings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            eprintln!("[hrc] warning: {warning}");
+        }
+        Ok(())
+    }
+    pub fn target(input: &str) -> Result<(Self, Value)> {
+        let mut scope = Self::parse(input, true)?;
+        let observation = scope.observe_placement(&placement_client()?, "strict")?;
+        Ok((scope, observation))
+    }
+    fn observe_placement(&mut self, client: &Daemon, association: &str) -> Result<Value> {
+        let mut request = json!({"agentId":self.agent,"projectOrigin":self.project_origin,"taskWorktreeAssociation":association});
         if let Some(project) = &self.project {
             request["projectId"] = project.clone().into();
         }
@@ -408,26 +421,25 @@ impl Qualified {
                 {
                     self.scope.push_str(&format!(":role:{role}"));
                 }
-                for warning in observation["warnings"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                {
-                    eprintln!("[hrc] warning: {warning}");
-                }
-                Ok(())
+                Ok(observation)
             }
             Err(e)
                 if e.domain
                     .as_ref()
                     .is_some_and(|d| d["detail"]["producerCode"] == "agent_not_found") =>
             {
-                Ok(())
+                Ok(e.domain.as_ref().unwrap()["detail"].clone())
             }
             Err(e) => Err(e),
         }
     }
+}
+fn placement_client() -> Result<Daemon> {
+    Daemon::connect().map_err(|mut error| {
+        let socket = crate::client::runtime_root().join("hrc.sock");
+        error.domain = Some(json!({"code":"runtime_unavailable","message":error.message,"detail":{"code":"hrc_daemon_missing_socket","socketPath":socket}}));
+        error
+    })
 }
 fn validate_directives(block: &str) -> Result<()> {
     const KEYS: &[&str] = &[
