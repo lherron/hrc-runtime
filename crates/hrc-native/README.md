@@ -45,6 +45,22 @@ stale-generation auto-rotation and fresh-context rotation (refused with
 `runtime_unavailable`), participant delivery, and format 2. Every committed
 ledger write bumps `Server.ledger` (a data-free watch counter followers re-query on).
 
+The preempt door's authority is `turns::admission::preempt_admission`, which
+asks capability first, then the operator principal, then turn ownership.
+
+Runtime doors (N2): `GET /v1/runs` (`server/runs.rs`, Bun's filter parse and
+ordering; scope-home forwarding is N4), `POST /v1/interrupt` and
+`/v1/terminate` (`server/control.rs`: tmux C-c or broker interrupt; broker
+stop → dispose → close within 15 s, lease teardown, `runtime.terminated`),
+`GET /v1/attach`, `GET /v1/capture`, `POST /v1/capture/by-selector`,
+`/v1/runtimes/capture/status` and `/v1/runtimes/broker/inspect`
+(`server/io.rs`). A broker client's `close()` half-closes and drains the
+frames the broker already sent (`invocation.disposed` follows the dispose
+reply). While a terminate finalizes a runtime, its projected exit writes no
+second terminal record. Not yet native: final-summary recovery on inspect,
+external-participant terminate (both refused with `runtime_unavailable`), and
+the retained-evidence terminal outcome.
+
 `e2e/n2_routes.py` records per-case requests on a real seat for
 `run.py compare --suite n2-routes`. `e2e/n2_continuation.py` re-births a seat
 on a stored continuation behind a logging aspd proxy; `--suite

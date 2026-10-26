@@ -11,6 +11,11 @@ from pathlib import Path
 from n2_turns import Norm, TIMED
 
 CURSORS = ('fromSeq', 'afterSeq')
+# Bun answers a scope-filtered read through the federation home registry
+# (forwardScopedGet); rusthrc reads no federation.json yet and answers locally,
+# as Bun does with no federation config.
+GAPS = {'runs:scope': 'GAP:N4 scope-home routing of scoped GET /v1/runs',
+        'broker-inspect:terminated': 'GAP:N2 retained-evidence terminal outcome (N2 recovery landing)'}
 
 
 def strip_cursors(value):
@@ -69,6 +74,10 @@ def compare(args, checks):
         left = {'status': a['status'], 'body': strip_cursors(bun[2](a['body'])), 'events': kinds(a)}
         right = {'status': b['status'], 'body': strip_cursors(native[2](b['body'])), 'events': kinds(b)}
         passed = left == right
-        check('compare:' + name, passed, json.dumps({'bun': left, 'native': right}, default=str)[:4000])
+        detail = json.dumps({'bun': left, 'native': right}, default=str)[:4000]
+        if not passed and name in GAPS:
+            check('compare:' + name, False, GAPS[name] + ': ' + detail, 2)
+        else:
+            check('compare:' + name, passed, detail)
         cases.append({'id': name, 'pass': passed})
     return {'suite': 'n2-routes', 'cases': cases, 'behaviorQualified': all(c['pass'] for c in checks)}

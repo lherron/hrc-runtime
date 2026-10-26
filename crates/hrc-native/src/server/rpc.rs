@@ -9,7 +9,7 @@ use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
-    sync::{mpsc, oneshot},
+    sync::{Notify, mpsc, oneshot},
 };
 
 type Reply = oneshot::Sender<std::result::Result<Value, String>>;
@@ -25,6 +25,7 @@ pub type Inbound = Arc<dyn Fn(&str, &Value) -> Result<Value> + Send + Sync>;
 pub struct JsonRpc {
     calls: mpsc::Sender<Call>,
     timeout: Duration,
+    closer: Arc<Notify>,
 }
 
 struct Peer {
@@ -69,8 +70,10 @@ impl JsonRpc {
             .context("RPC connect timeout")?
             .with_context(|| format!("RPC service unavailable at {}", path.display()))?;
         let (calls, incoming) = mpsc::channel(64);
+        let closer = Arc::new(Notify::new());
+        let closed = closer.clone();
         tokio::spawn(async move {
-            if let Err(error) = drive(stream, incoming, peer).await {
+            if let Err(error) = drive(stream, incoming, peer, closed).await {
                 super::stderr_json(
                     "warn",
                     "rpc",
@@ -79,7 +82,15 @@ impl JsonRpc {
                 );
             }
         });
-        Ok(Self { calls, timeout })
+        Ok(Self {
+            calls,
+            timeout,
+            closer,
+        })
+    }
+    /// Close the transport for every clone (client.close()); pending calls fail.
+    pub fn close(&self) {
+        self.closer.notify_one();
     }
 
     pub fn is_closed(&self) -> bool {
@@ -119,15 +130,33 @@ impl JsonRpc {
     }
 }
 
-async fn drive(stream: UnixStream, mut calls: mpsc::Receiver<Call>, peer: Peer) -> Result<()> {
+async fn drive(
+    stream: UnixStream,
+    mut calls: mpsc::Receiver<Call>,
+    peer: Peer,
+    closer: Arc<Notify>,
+) -> Result<()> {
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
     let mut next_id = 1_u64;
     let mut pending = HashMap::<u64, Reply>::new();
     let mut surfaced = HashMap::<String, i64>::new();
+    // close() half-closes (socket.end()): no new calls, but frames the peer
+    // already sent, such as invocation.disposed after a dispose reply, are still
+    // read until it closes or the drain bound passes.
+    let drain = tokio::time::sleep(Duration::from_secs(86_400 * 365));
+    tokio::pin!(drain);
+    let mut closing = false;
     loop {
         tokio::select! {
-            call = calls.recv() => {
+            _ = closer.notified(), if !closing => {
+                closing = true;
+                calls.close();
+                let _ = write.shutdown().await;
+                drain.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(5));
+            }
+            _ = &mut drain => return Ok(()),
+            call = calls.recv(), if !closing => {
                 let Some(call) = call else { return Ok(()); };
                 let id = next_id;
                 next_id += 1;
@@ -138,7 +167,10 @@ async fn drive(stream: UnixStream, mut calls: mpsc::Receiver<Call>, peer: Peer) 
                 write.write_all(&raw).await.context("write RPC request")?;
             }
             line = lines.next_line() => {
-                let Some(line) = line.context("read RPC response")? else { bail!("RPC peer closed"); };
+                let Some(line) = line.context("read RPC response")? else {
+                    if closing { return Ok(()); }
+                    bail!("RPC peer closed");
+                };
                 let frame: Value = serde_json::from_str(&line).context("malformed RPC JSON")?;
                 if let Some(method) = frame["method"].as_str() {
                     if frame.get("id").is_some_and(|id| !id.is_null()) {
@@ -152,7 +184,9 @@ async fn drive(stream: UnixStream, mut calls: mpsc::Receiver<Call>, peer: Peer) 
                         };
                         let mut raw = serde_json::to_vec(&response)?;
                         raw.push(b'\n');
-                        write.write_all(&raw).await.context("write RPC response")?;
+                        if !closing {
+                            write.write_all(&raw).await.context("write RPC response")?;
+                        }
                     } else if method == "invocation.event"
                         && let Some(events) = &peer.events
                     {

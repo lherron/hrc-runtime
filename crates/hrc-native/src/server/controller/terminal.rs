@@ -35,6 +35,11 @@ pub async fn mark_invocation_terminal(
     idempotent: bool,
 ) -> Result<()> {
     let invocation = envelope["invocationId"].as_str().unwrap_or("").to_owned();
+    // The terminate in flight finalizes the runtime and writes its terminal
+    // event; Bun projects this exit after that finalize and records nothing.
+    if super::is_terminating(server, runtime_id) {
+        return Ok(());
+    }
     let closing = intentional_close_reason(server, runtime_id);
     let user_exit = {
         let db = server.store.lock().unwrap();

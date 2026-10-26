@@ -459,13 +459,18 @@ async fn wait_stage(
         .into_response())
 }
 
+enum Admit {
+    /// (receipt, replayed, public door report)
+    Receipt(Value, bool, Option<Value>),
+    Rejected(Value),
+}
 /// The admission + route + record shared by every door.
 async fn admitted(
     server: &Shared,
     req: Request<'_>,
     options: route::Options<'_>,
     require_submission: bool,
-) -> Result<(Value, bool, Option<Value>), ApiError> {
+) -> Result<Admit, ApiError> {
     let (result, mut trace) = admission::admit(server, &req).await;
     let plan = match result {
         Err(error) => {
@@ -474,7 +479,11 @@ async fn admitted(
         }
         Ok(Admitted::Replayed(body)) => {
             admission::record(server, &req, &mut trace, Outcome::Replayed);
-            return Ok((body, true, None));
+            return Ok(Admit::Receipt(body, true, None));
+        }
+        Ok(Admitted::Rejected { code, body }) => {
+            admission::record(server, &req, &mut trace, Outcome::RefusedWith(code));
+            return Ok(Admit::Rejected(body));
         }
         Ok(Admitted::Plan(plan)) => plan,
     };
@@ -545,7 +554,7 @@ async fn admitted(
             accepted: routed["admission"] != "rejected",
         },
     );
-    Ok((routed, false, door_report))
+    Ok(Admit::Receipt(routed, false, door_report))
 }
 
 /// publicDoorReport: steer always reports its door; invoke only when downgraded.
@@ -605,8 +614,12 @@ pub async fn dispatch_turn(server: &Shared, body: Value) -> Result<Response, Api
         runtime_intent: intent.as_ref(),
         allow_stale_generation: req.allow_stale_generation,
         run_id: Some(run_id.clone()),
+        origin: None,
     };
-    let (receipt, replayed, report) = admitted(server, admission, options, false).await?;
+    let (receipt, replayed, report) = match admitted(server, admission, options, false).await? {
+        Admit::Receipt(receipt, replayed, report) => (receipt, replayed, report),
+        Admit::Rejected(body) => return Ok(Json(body).into_response()),
+    };
     wait_stage(server, receipt, &req.wait_for, replayed, report).await
 }
 
@@ -640,7 +653,7 @@ pub async fn submission(server: &Shared, door: &str, body: Value) -> Result<Resp
     })?;
     let run_id = format!("run-{}", Uuid::new_v4());
     let principal = req.origin["principalRef"].as_str().unwrap_or("");
-    let operator = ["agent:lance", "lance", "human:lance"].contains(&principal);
+    let operator = admission::is_operator(principal);
     let kind = if operator || principal.starts_with("human:") {
         "human"
     } else if principal.starts_with("agent:") {
@@ -675,8 +688,12 @@ pub async fn submission(server: &Shared, door: &str, body: Value) -> Result<Resp
         runtime_intent: req.runtime_intent.as_ref(),
         allow_stale_generation: false,
         run_id: Some(run_id.clone()),
+        origin: Some(&req.origin),
     };
-    let (receipt, replayed, report) = admitted(server, admission, options, true).await?;
+    let (receipt, replayed, report) = match admitted(server, admission, options, true).await? {
+        Admit::Receipt(receipt, replayed, report) => (receipt, replayed, report),
+        Admit::Rejected(body) => return Ok(Json(body).into_response()),
+    };
     wait_stage(
         server,
         receipt,

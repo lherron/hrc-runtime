@@ -35,6 +35,8 @@ pub struct Request<'a> {
     pub runtime_intent: Option<&'a Value>,
     pub allow_stale_generation: bool,
     pub run_id: Option<String>,
+    /// The submission origin; the preempt door's authority is asked of it.
+    pub origin: Option<&'a Value>,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +57,11 @@ pub struct Plan {
 pub enum Admitted {
     Replayed(Value),
     Plan(Box<Plan>),
+    /// A refusal answered with a 200 body (refusal.cause is a Response).
+    Rejected {
+        code: &'static str,
+        body: Value,
+    },
 }
 
 /// The admission trace and the partial target it was computed over.
@@ -77,6 +84,7 @@ impl Trace {
 }
 pub enum Outcome<'a> {
     Refused(&'a ApiError),
+    RefusedWith(&'static str),
     Replayed,
     Routed { accepted: bool },
     PossibleWrite(&'a ApiError),
@@ -108,6 +116,10 @@ pub fn record(server: &Shared, req: &Request<'_>, trace: &mut Trace, outcome: Ou
         Outcome::Refused(e) => {
             payload["outcome"] = "refused".into();
             payload["refusalCode"] = refusal_code(e).into();
+        }
+        Outcome::RefusedWith(code) => {
+            payload["outcome"] = "refused".into();
+            payload["refusalCode"] = code.into();
         }
         Outcome::Replayed => payload["outcome"] = "replayed".into(),
         Outcome::Routed { accepted } => {
@@ -369,6 +381,23 @@ async fn steps(
         }
     }
     // capability-authority
+    if req.intent == "preempt"
+        && let Some(origin) = req.origin
+    {
+        let admission = preempt_admission(server, &session, origin).await?;
+        if admission != "authorized" {
+            trace.push("refused");
+            let (code, reason) = if admission == "preempt-unsupported" {
+                ("preempt_unsupported", "unsupported:preempt")
+            } else {
+                ("preempt_unauthorized", "authority-denied")
+            };
+            return Ok(Admitted::Rejected {
+                code,
+                body: json!({"submissionId":format!("hrc-rejected-{}",uuid::Uuid::new_v4()),"admission":"rejected","reason":reason,"disposition":{"type":"rejected","reason":reason}}),
+            });
+        }
+    }
     let (report, report_runtime) = {
         let db = server.store.lock().unwrap();
         door_report(&db.sqlite, &session, req.intent)?
@@ -457,4 +486,106 @@ async fn steps(
         intent,
         observation,
     })))
+}
+
+const OPERATOR_PRINCIPALS: [&str; 3] = ["agent:lance", "lance", "human:lance"];
+pub fn is_operator(principal: &str) -> bool {
+    OPERATOR_PRINCIPALS.contains(&principal)
+}
+
+/// preemptAdmission: the one gate both preempt entry paths pass through.
+/// Capability is asked first and of everyone; then an operator is authorized,
+/// and anyone else must own a submission in the turn it would interrupt.
+/// Returns authorized | preempt-unsupported | authority-denied.
+pub async fn preempt_admission(
+    server: &Shared,
+    session: &Value,
+    origin: &Value,
+) -> Result<&'static str, ApiError> {
+    let runtime = {
+        let db = server.store.lock().unwrap();
+        let rt =
+            active_broker_runtime(&db.sqlite, session["hostSessionId"].as_str().unwrap_or(""))?;
+        let refuses = rt.as_ref().is_some_and(|r| {
+            admission_classes(&db.sqlite, r).is_some_and(|c| !c.iter().any(|x| x == "preempt"))
+        });
+        if refuses {
+            return Ok("preempt-unsupported");
+        }
+        rt
+    };
+    let principal = origin["principalRef"].as_str().unwrap_or("");
+    if is_operator(principal) {
+        return Ok("authorized");
+    }
+    if origin.get("envelopeId").is_none() {
+        return Ok("authority-denied");
+    }
+    let Some(rt) = runtime else {
+        return Ok("authority-denied");
+    };
+    let Some(invocation) = rt.active_invocation_id.clone() else {
+        return Ok("authority-denied");
+    };
+    Ok(
+        if origin_owns_active_turn(server, &rt.runtime_id, &invocation, principal).await? {
+            "authorized"
+        } else {
+            "authority-denied"
+        },
+    )
+}
+
+/// preemptOriginOwnsActiveTurn: an admission.requested row of this principal,
+/// carrying an envelope, among the active turn's manifest submissions.
+async fn origin_owns_active_turn(
+    server: &Shared,
+    runtime_id: &str,
+    invocation: &str,
+    principal: &str,
+) -> Result<bool, ApiError> {
+    let Ok(probe) =
+        crate::server::controller::seat::probe(server, runtime_id, "explicit-probe").await
+    else {
+        return Ok(false);
+    };
+    if probe["seat"]["state"] != "turn-active" {
+        return Ok(false);
+    }
+    let turn = probe["seat"]["turnId"].clone();
+    let Ok((_, manifest)) = crate::server::controller::submit::with_active(
+        server,
+        runtime_id,
+        "turn.manifest",
+        |i| json!({"invocationId":i,"turnId":turn}),
+        (
+            "broker_turn_manifest_failed",
+            "broker_turn_manifest_timeout",
+        ),
+        false,
+    )
+    .await
+    else {
+        return Ok(false);
+    };
+    let ids: Vec<&str> = manifest["submissionIds"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let db = server.store.lock().unwrap();
+    let mut stmt = db
+        .sqlite
+        .prepare("SELECT broker_event_json FROM broker_invocation_events WHERE invocation_id=? AND type='admission.requested' ORDER BY seq ASC")
+        .map_err(anyhow::Error::from)?;
+    let rows = stmt
+        .query_map([invocation], |r| r.get::<_, String>(0))
+        .map_err(anyhow::Error::from)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(anyhow::Error::from)?;
+    Ok(rows.iter().any(|raw| {
+        let p: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
+        p["submissionId"].as_str().is_some_and(|s| ids.contains(&s))
+            && p["origin"]["principalRef"] == principal
+            && p["origin"]["envelopeId"].is_string()
+    }))
 }

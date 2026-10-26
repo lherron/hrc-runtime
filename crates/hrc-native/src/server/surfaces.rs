@@ -70,6 +70,11 @@ pub fn attach(server: &Server, body: Value) -> Result<Response, ApiError> {
     object(&body)?;
     let id = text(&body, "runtimeId")?;
     optional_text(&body, "ownerRunId", false)?;
+    descriptor(server, id, false)
+}
+/// attachRuntimeEffectfully over an already-reconciled runtime; `strict` marks
+/// the GET /v1/attach door (strictRuntimeId on the replacement refusal).
+pub fn descriptor(server: &Server, id: &str, strict: bool) -> Result<Response, ApiError> {
     let runtime = runtimes::runtime(server, id)?;
     let detail = json!({"runtimeId":id,"transport":runtime["transport"]});
     if runtime["transport"] == "sdk" {
@@ -86,6 +91,9 @@ pub fn attach(server: &Server, body: Value) -> Result<Response, ApiError> {
         let mut detail = json!({"runtimeId":id,"hostSessionId":runtime["hostSessionId"],"transport":runtime["transport"],"replacementRequired":true});
         if let Some(kind) = runtime.get("controllerKind") {
             detail["controllerKind"] = kind.clone();
+        }
+        if strict {
+            detail["strictRuntimeId"] = true.into();
         }
         return Err(unavailable(
             "runtime cannot be attached without replacing it",

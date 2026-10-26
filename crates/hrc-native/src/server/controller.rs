@@ -41,7 +41,39 @@ pub struct State {
     closing: Mutex<HashMap<String, String>>,
     /// invocation -> (runtime, missing seqs, debounce generation)
     gaps: Mutex<HashMap<String, Gap>>,
+    /// Runtimes a terminate is finalizing; their projected exit records nothing.
+    terminating: Mutex<std::collections::HashSet<String>>,
     pub shutting_down: std::sync::atomic::AtomicBool,
+}
+
+/// Held while a terminate owns a runtime's terminal record.
+pub struct Terminating<'a>(&'a Server, String);
+impl Drop for Terminating<'_> {
+    fn drop(&mut self) {
+        self.0
+            .controller
+            .terminating
+            .lock()
+            .unwrap()
+            .remove(&self.1);
+    }
+}
+pub fn begin_terminating<'a>(server: &'a Server, runtime: &str) -> Terminating<'a> {
+    server
+        .controller
+        .terminating
+        .lock()
+        .unwrap()
+        .insert(runtime.to_owned());
+    Terminating(server, runtime.to_owned())
+}
+pub fn is_terminating(server: &Server, runtime: &str) -> bool {
+    server
+        .controller
+        .terminating
+        .lock()
+        .unwrap()
+        .contains(runtime)
 }
 
 pub(super) fn log(level: &str, event: &str, data: Value) {

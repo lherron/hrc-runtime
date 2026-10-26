@@ -94,6 +94,87 @@ def main():
                             ('blank', '?runtimeId=&status='), ('unknown', '?runId=run-nope'), ('first-wins', '?limit=1&limit=5')]:
             case('runs:' + name, 'GET', runs + query)
         case('runs:wrong-method', 'POST', runs, {})
+        interrupt, terminate = '/v1/interrupt', '/v1/terminate'
+        case('interrupt:not-object', 'POST', interrupt, [])
+        case('interrupt:missing-runtime', 'POST', interrupt, {})
+        case('interrupt:bad-owner', 'POST', interrupt, {'runtimeId': runtime, 'ownerRunId': ' '})
+        case('interrupt:unknown', 'POST', interrupt, {'runtimeId': 'rt-nope'})
+        case('interrupt:owner-idle', 'POST', interrupt, {'runtimeId': runtime, 'ownerRunId': 'run-nope'})
+        if not args.only or 'interrupt:active' in args.only.split(','):
+            slow = 'Count from 1 to 400, one number per line, with no other text. No tools.'
+            _, started = s.http('POST', turns, {'hostSessionId': host, 'prompt': slow, 'waitFor': 'turn_started'}, timeout=600)
+            time.sleep(4)
+            case('interrupt:active-other-owner', 'POST', interrupt, {'runtimeId': runtime, 'ownerRunId': 'run-nope'})
+            case('interrupt:active', 'POST', interrupt, {'runtimeId': runtime, 'ownerRunId': started['runId']})
+            s.wait(lambda: s.rows("SELECT 1 FROM runs WHERE run_id=? AND completed_at IS NOT NULL", (started['runId'],)),
+                   300, 'interrupted run settles')
+            idle()
+            observations[-1]['settledRun'] = s.rows('SELECT status, error_code FROM runs WHERE run_id=?', (started['runId'],))[0]
+        case('interrupt:idle', 'POST', interrupt, {'runtimeId': runtime})
+        idle()
+        case('attach:missing', 'GET', '/v1/attach')
+        case('attach:unknown', 'GET', '/v1/attach?runtimeId=rt-nope')
+        case('attach:ok', 'GET', f'/v1/attach?runtimeId={runtime}')
+        case('capture:missing', 'GET', '/v1/capture?runtimeId=%20')
+        case('capture:unknown', 'GET', '/v1/capture?runtimeId=rt-nope')
+        case('capture:ok', 'GET', f'/v1/capture?runtimeId={runtime}')
+        by_selector = '/v1/capture/by-selector'
+        case('capture-selector:no-selector', 'POST', by_selector, {'lines': 3})
+        case('capture-selector:no-ref', 'POST', by_selector, {'selector': {'sessionRef': ''}})
+        case('capture-selector:unknown', 'POST', by_selector, {'selector': {'sessionRef': prefix + 'nobody/lane:main'}})
+        case('capture-selector:ok', 'POST', by_selector, {'selector': {'sessionRef': session_ref}})
+        case('capture-selector:lines', 'POST', by_selector, {'selector': {'sessionRef': session_ref}, 'lines': 2})
+        status_door = '/v1/runtimes/capture/status'
+        case('capture-status:not-object', 'POST', status_door, 'x')
+        case('capture-status:missing', 'POST', status_door, {'runtimeId': '  '})
+        case('capture-status:unknown', 'POST', status_door, {'runtimeId': 'rt-nope'})
+        case('capture-status:ok', 'POST', status_door, {'runtimeId': runtime})
+        inspect = '/v1/runtimes/broker/inspect'
+        case('broker-inspect:missing', 'POST', inspect, {})
+        case('broker-inspect:bad-flag', 'POST', inspect, {'runtimeId': runtime, 'includeDisposed': 1})
+        case('broker-inspect:bad-recover', 'POST', inspect, {'runtimeId': runtime, 'recoverFinalSummary': {'timeoutMs': -1}})
+        case('broker-inspect:unknown', 'POST', inspect, {'runtimeId': 'rt-nope'})
+        case('broker-inspect:no-invocations', 'POST', inspect, {'runtimeId': runtime, 'includeInvocations': False})
+        case('broker-inspect:ok', 'POST', inspect, {'runtimeId': runtime, 'includeDisposed': True})
+        for o in observations:
+            # Pane text is each owner's own screen; the shape is what compares.
+            if o['case'].startswith('capture') and isinstance(o['body'], dict) and isinstance(o['body'].get('text'), str):
+                text = o['body']['text']
+                o['body'] = dict(o['body'], text='<text:nonempty>' if text.strip() else '<text:empty>')
+                if o['case'] == 'capture-selector:lines':
+                    o['body']['lineCount'] = len(text.split('\n'))
+        case('terminate:not-object', 'POST', terminate, [])
+        case('terminate:missing-runtime', 'POST', terminate, {'dropContinuation': True})
+        case('terminate:bad-drop', 'POST', terminate, {'runtimeId': runtime, 'dropContinuation': 'yes'})
+        case('terminate:bad-reason', 'POST', terminate, {'runtimeId': runtime, 'reason': 7})
+        case('terminate:unknown', 'POST', terminate, {'runtimeId': 'rt-nope'})
+        case('terminate:final', 'POST', terminate, {'runtimeId': runtime, 'reason': 'n2 route case', 'source': 'e2e',
+                                                     'actor': 'agent:clod'})
+        time.sleep(2)
+        case('terminate:again', 'POST', terminate, {'runtimeId': runtime})
+        case('interrupt:terminated', 'POST', interrupt, {'runtimeId': runtime})
+        case('attach:terminated', 'GET', f'/v1/attach?runtimeId={runtime}')
+        case('capture:terminated', 'GET', f'/v1/capture?runtimeId={runtime}')
+        case('capture-status:terminated', 'POST', status_door, {'runtimeId': runtime})
+        case('capture-selector:terminated', 'POST', by_selector, {'selector': {'sessionRef': session_ref}})
+        case('broker-inspect:terminated', 'POST', inspect, {'runtimeId': runtime})
+        if not args.only or 'terminate:final' in args.only.split(','):
+            [o for o in observations if o['case'] == 'terminate:final'][0]['finalRows'] = {
+                'runtime': s.rows('SELECT status, active_run_id, active_invocation_id FROM runtimes WHERE runtime_id=?', (runtime,)),
+                'session': s.rows('SELECT continuation_reuse_disabled FROM sessions WHERE host_session_id=?', (host,)),
+                'invocation': s.rows('SELECT invocation_state FROM broker_invocations WHERE runtime_id=? ORDER BY created_at DESC LIMIT 1', (runtime,)),
+                'lease': s.rows("SELECT event_kind, payload_json FROM hrc_events WHERE runtime_id=? AND event_kind IN ('runtime.terminated','runtime.crashed','runtime.stale','runtime.dead') ORDER BY hrc_seq", (runtime,)),
+            }
+        for o in observations:
+            # Broker-reported pass-through: transcript diagnostic counts and the
+            # live seq/context reading move with harness timing, not with HRC.
+            body = o['body'] if isinstance(o['body'], dict) else {}
+            for row in (body.get('capture') or {}).get('blockedUnknown', []) if isinstance(body.get('capture'), dict) else []:
+                row['count'] = '<count>'
+            for inv in body.get('invocations', []) if isinstance(body.get('invocations'), list) else []:
+                for key in ('currentSeq', 'context'):
+                    if key in inv:
+                        inv[key] = '<' + key + '>'
         (args.artifacts / f'{args.owner}.json').write_text(json.dumps(
             {'observations': observations, 'scratchRoot': str(s.root), 'scope': scope, 'runtimeId': runtime,
              'hostSessionId': host}, indent=1, default=str) + '\n')

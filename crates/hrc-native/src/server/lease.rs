@@ -429,3 +429,46 @@ pub async fn reap(server: &Shared, runtime_id: &str, reason: &str) {
         );
     }
 }
+
+/// hasBrokerLeasedTmux
+pub fn has_leased_tmux(rt: &db::Rt) -> bool {
+    !controller::is_external_lifecycle_owner(rt)
+        && (leased_substrate(rt) || (hosting(rt).is_none() && socket_path(rt).is_some()))
+}
+/// teardownBrokerLeasedTmux: kill the lease session and its server, refusing
+/// a socket outside this daemon's runtime root.
+pub async fn teardown(server: &Server, rt: &db::Rt, message: &str) {
+    if controller::is_external_lifecycle_owner(rt) {
+        return;
+    }
+    let Some(socket) = socket_path(rt) else {
+        return;
+    };
+    if !std::path::Path::new(&socket).starts_with(&server.runtime) {
+        super::stderr_json(
+            "warn",
+            "broker",
+            "broker.adoption.tmux_teardown_rejected",
+            json!({"runtimeId":rt.runtime_id,"runtimeRoot":server.runtime,"rejectedPaths":[socket],"reason":"broker_adoption_path_outside_runtime_root"}),
+        );
+        return;
+    }
+    let session = session_name(rt);
+    let result: Result<()> = async {
+        let (exists, _, _) = tmux(&socket, &["has-session", "-t", &session]).await?;
+        if exists {
+            tmux(&socket, &["kill-session", "-t", &session]).await?;
+        }
+        tmux(&socket, &["kill-server"]).await?;
+        Ok(())
+    }
+    .await;
+    if let Err(error) = result {
+        super::stderr_json(
+            "warn",
+            "broker",
+            message,
+            json!({"runtimeId":rt.runtime_id,"socketPath":socket,"sessionName":session,"error":error.to_string()}),
+        );
+    }
+}

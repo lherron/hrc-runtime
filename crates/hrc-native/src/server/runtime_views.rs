@@ -305,15 +305,17 @@ pub async fn inspect(server: &Shared, body: Value) -> Result<Response, ApiError>
             out[key] = v.clone();
         }
     }
-    let retained = {
-        let db = server.store.lock().unwrap();
-        let mut statement=db.sqlite.prepare("SELECT invocation_id,outcome,outcome_class,trigger,attempts,recorded_at FROM retained_evidence_outcomes o WHERE o.runtime_id=? AND o.outcome_id=(SELECT MAX(i.outcome_id) FROM retained_evidence_outcomes i WHERE i.runtime_id=? AND i.invocation_id=o.invocation_id) ORDER BY o.outcome_id ASC").map_err(anyhow::Error::from)?;
-        statement.query_map([id,id],|r|Ok(json!({"invocationId":r.get::<_,String>(0)?,"outcome":r.get::<_,String>(1)?,"class":r.get::<_,String>(2)?,"trigger":r.get::<_,String>(3)?,"attempts":r.get::<_,i64>(4)?,"recordedAt":r.get::<_,String>(5)?}))).map_err(anyhow::Error::from)?.collect::<Result<Vec<_>,_>>().map_err(anyhow::Error::from)?
-    };
+    let retained = retained_evidence(server, id)?;
     if !retained.is_empty() {
         out["retainedEvidence"] = json!(retained);
     }
     Ok(Json(out).into_response())
+}
+/// retainedEvidenceInspectFacts: the latest outcome per invocation.
+pub fn retained_evidence(server: &Server, id: &str) -> Result<Vec<Value>, ApiError> {
+    let db = server.store.lock().unwrap();
+    let mut statement=db.sqlite.prepare("SELECT invocation_id,outcome,outcome_class,trigger,attempts,recorded_at FROM retained_evidence_outcomes o WHERE o.runtime_id=? AND o.outcome_id=(SELECT MAX(i.outcome_id) FROM retained_evidence_outcomes i WHERE i.runtime_id=? AND i.invocation_id=o.invocation_id) ORDER BY o.outcome_id ASC").map_err(anyhow::Error::from)?;
+    Ok(statement.query_map([id,id],|r|Ok(json!({"invocationId":r.get::<_,String>(0)?,"outcome":r.get::<_,String>(1)?,"class":r.get::<_,String>(2)?,"trigger":r.get::<_,String>(3)?,"attempts":r.get::<_,i64>(4)?,"recordedAt":r.get::<_,String>(5)?}))).map_err(anyhow::Error::from)?.collect::<Result<Vec<_>,_>>().map_err(anyhow::Error::from)?)
 }
 fn unavailable(v: &Value) -> bool {
     ["terminated", "dead", "stale", "crashed", "detached"]

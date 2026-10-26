@@ -2,6 +2,7 @@ mod accounting;
 mod aspc;
 mod broker;
 mod compile;
+mod control;
 mod controller;
 mod events;
 mod evidence;
@@ -12,6 +13,7 @@ mod streams;
 mod subscribers;
 pub use front::Role;
 mod index;
+mod io;
 mod lease;
 mod maintenance;
 mod participants;
@@ -19,6 +21,7 @@ mod presentation;
 mod projection;
 mod proxy;
 mod rpc;
+mod runs;
 mod runtime_views;
 mod runtimes;
 mod sessions;
@@ -463,6 +466,10 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
         }
     } else if method == Method::GET && uri.path() == "/v1/targets/by-session-ref" {
         runtime_views::target(server, &query).await
+    } else if method == Method::GET && uri.path() == "/v1/attach" {
+        io::attach(server, &query).await
+    } else if method == Method::GET && uri.path() == "/v1/capture" {
+        io::capture(server, &query).await
     } else if method == Method::GET && runtime_seat_id(uri.path()).is_some() {
         match decode_path(runtime_seat_id(uri.path()).unwrap()) {
             Ok(id) => runtimes::seat(server, &id).await,
@@ -520,6 +527,27 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
     } else if method == Method::POST && uri.path() == "/v1/submissions/invoke" {
         match parse_body(&body) {
             Ok(value) => turns::submission(server, "invoke", value).await,
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/capture/by-selector" {
+        match parse_body(&body) {
+            Ok(value) => io::capture_by_selector(server, value).await,
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/runtimes/broker/inspect" {
+        match parse_body(&body) {
+            Ok(value) => io::broker_inspect(server, value).await,
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && uri.path() == "/v1/runtimes/capture/status" {
+        match parse_body(&body) {
+            Ok(value) => io::capture_status(server, value).await,
+            Err(e) => Err(e),
+        }
+    } else if method == Method::POST && ["/v1/interrupt", "/v1/terminate"].contains(&uri.path()) {
+        match parse_body(&body) {
+            Ok(value) if uri.path() == "/v1/interrupt" => control::interrupt(server, value).await,
+            Ok(value) => control::terminate(server, value).await,
             Err(e) => Err(e),
         }
     } else if method == Method::POST && uri.path() == "/v1/declarations/resolve" {
@@ -605,6 +633,9 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/sessions/facets",
                 "/v1/sessions/metadata",
                 "/v1/runtimes",
+                "/v1/runs",
+                "/v1/attach",
+                "/v1/capture",
                 "/v1/targets/by-session-ref",
                 "/v1/runtimes/live-refs",
                 "/v1/placement/bindings",
@@ -617,6 +648,11 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/sessions/resolve",
                 "/v1/turns",
                 "/v1/submissions/invoke",
+                "/v1/interrupt",
+                "/v1/terminate",
+                "/v1/runtimes/capture/status",
+                "/v1/runtimes/broker/inspect",
+                "/v1/capture/by-selector",
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
                 "/v1/runtimes/prune",
@@ -787,6 +823,9 @@ fn handle(
     }
     if method == Method::GET && path == "/v1/runtimes" {
         return runtimes::list(server, query);
+    }
+    if method == Method::GET && path == "/v1/runs" {
+        return runs::list(server, query);
     }
     Ok((StatusCode::NOT_FOUND, "Not Found").into_response())
 }
