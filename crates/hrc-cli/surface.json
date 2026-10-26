@@ -204,13 +204,21 @@
           "aliases": [],
           "usage": "[options]",
           "allowExcessArguments": true,
-          "help": "Usage: hrc server serve [options]\n\nrun the server in the foreground for supervisors\n\nOptions:\n  --allow-persona <agentIds...>  allow only these agent personas to execute\n                                 locally (omitted means unrestricted)\n  -h, --help                     display help for command\n",
-          "humanHelp": "Usage: hrc server serve [options]\n\nrun the server in the foreground for supervisors\n\nOptions:\n  --allow-persona <agentIds...>  allow only these agent personas to execute\n                                 locally (omitted means unrestricted)\n  -h, --help                     display help for command\n",
+          "help": "Usage: hrc server serve [options]\n\nrun the server in the foreground for supervisors\n\nOptions:\n  --allow-persona <agentIds...>  allow only these agent personas to execute\n                                 locally (omitted means unrestricted)\n  --listen-socket <path>         absolute socket to listen on behind a front\n                                 door (default: <runtimeRoot>/hrc.sock)\n  -h, --help                     display help for command\n",
+          "humanHelp": "Usage: hrc server serve [options]\n\nrun the server in the foreground for supervisors\n\nOptions:\n  --allow-persona <agentIds...>  allow only these agent personas to execute\n                                 locally (omitted means unrestricted)\n  --listen-socket <path>         absolute socket to listen on behind a front\n                                 door (default: <runtimeRoot>/hrc.sock)\n  -h, --help                     display help for command\n",
           "arguments": [],
           "options": [
             {
               "flags": "--allow-persona <agentIds...>",
               "long": "--allow-persona",
+              "required": true,
+              "optional": false,
+              "mandatory": false,
+              "negate": false
+            },
+            {
+              "flags": "--listen-socket <path>",
+              "long": "--listen-socket",
               "required": true,
               "optional": false,
               "mandatory": false,
