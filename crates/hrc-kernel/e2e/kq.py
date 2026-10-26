@@ -6,7 +6,7 @@ whole-table scans, no store lock. Prefer it to `hrc runtime list` / `/v1/status`
 for read-only inspection. Socket: $HRC_KERNEL_SOCKET, else the default below.
   kq.py status                      ingest binding: caught_up, cursor, resync
   kq.py seats [regex]               hrc.seat rows: sessionRef, status, latest event
-  kq.py runtimes [regex]            hrc.runtime rows
+  kq.py runtimes [regex]            hrc.runtime rows, one JSON object per line
   kq.py busy                        runtimes whose status is busy
   kq.py raw <op> '<json args>'      any kernel op
 """
@@ -75,7 +75,7 @@ def main():
             p = r['payload']
             if pat and not pat.search(json.dumps(p)):
                 continue
-            print(json.dumps(p)[:400])
+            print(json.dumps(p))
     elif cmd == 'raw':
         print(json.dumps(call(sys.argv[2], json.loads(sys.argv[3]) if len(sys.argv) > 3 else {})))
     else:
