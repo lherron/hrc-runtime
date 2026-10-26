@@ -10,6 +10,8 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
     }
     match path.as_str() {
         "start" | "run" | "attach" => crate::launch::command(args),
+        "restart" => restart(args),
+        "send" => send(args),
         "runtime capture" | "runtime interrupt" | "runtime terminate" | "capture status"
         | "admin surface bind" => runtime_control(args),
         "session drop-continuation" | "session rotate" => {
@@ -209,6 +211,152 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
         _ => Err(Error::failure(format!(
             "N5 command implementation pending: hrc {path}"
         ))),
+    }
+}
+
+fn send(args: &Parsed<'_>) -> Result<()> {
+    let target = args
+        .positionals
+        .first()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Error::usage("send requires <target>"))?;
+    let body = consume_body(
+        args.positionals.get(1).map(String::as_str),
+        args.value("file"),
+    )?
+    .filter(|body| !body.is_empty())
+    .ok_or_else(|| Error::usage("send requires text (positional, -, or --file)"))?;
+    let client = Daemon::connect()?;
+    let mut scope = crate::scope::Qualified::parse(target, true)?;
+    scope.observe(&client)?;
+    let reference = format!("{}/lane:{}", scope.scope, scope.lane);
+    let result = client.post(
+        "/v1/literal-input/by-selector",
+        json!({"selector":{"sessionRef":reference},"text":body,"enter":args.last_flag("enter","no-enter",true)}),
+    )?;
+    if args.flag("json") {
+        print_json(&result);
+    } else {
+        crate::cli_println!("Sent to {reference}");
+    }
+    Ok(())
+}
+
+pub(crate) fn consume_body(positional: Option<&str>, file: Option<&str>) -> Result<Option<String>> {
+    use std::io::Read;
+    let file = file.filter(|path| !path.is_empty());
+    if file.is_none() && positional != Some("-") {
+        return Ok(positional.map(str::to_owned));
+    }
+    let label = file.map_or_else(|| "stdin".to_owned(), |path| format!("--file {path}"));
+    let bytes = if let Some(path) = file {
+        std::fs::read(path)
+    } else {
+        let mut bytes = Vec::new();
+        std::io::stdin().read_to_end(&mut bytes).map(|_| bytes)
+    }
+    .map_err(|error| {
+        use std::io::ErrorKind;
+        let detail = match error.kind() {
+            ErrorKind::NotFound => Some(("ENOENT", "no such file or directory", "open")),
+            ErrorKind::PermissionDenied => Some(("EACCES", "permission denied", "open")),
+            ErrorKind::NotADirectory => Some(("ENOTDIR", "not a directory", "open")),
+            ErrorKind::IsADirectory => Some(("EISDIR", "illegal operation on a directory", "read")),
+            _ => None,
+        };
+        let detail = detail.map_or_else(
+            || error.to_string(),
+            |(code, message, syscall)| {
+                let path = file.map_or_else(String::new, |path| format!(", {syscall} '{path}'"));
+                format!("{code}: {message}{path}")
+            },
+        );
+        Error::usage(format!("cannot read {label}: {detail}"))
+    })?;
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+fn restart(args: &Parsed<'_>) -> Result<()> {
+    let target = &args.positionals[0];
+    let (scope, _) = crate::scope::Qualified::managed(target, args)?;
+    let client = Daemon::connect()?;
+    let status = client.get("/v1/status", &[])?;
+    if status["capabilities"]["sessionRestart"] != true {
+        return Err(Error::failure(format!(
+            "the running HRC daemon predates hrc restart; ask mable@{}:primary to restart it",
+            scope.scope.split(':').nth(3).unwrap_or("<project>")
+        )));
+    }
+    let resolved = client.post(
+        "/v1/sessions/resolve",
+        json!({"sessionRef":format!("{}/lane:{}",scope.scope,scope.lane)}),
+    )?;
+    if resolved["found"] != true {
+        return Err(Error::failure(format!(
+            "no session exists for \"{target}\". Start one with: hrc start {target}"
+        )));
+    }
+    let mut body = json!({"hostSessionId":resolved["hostSessionId"],"expectedGeneration":resolved["generation"]});
+    if args.flag("force") {
+        body["force"] = true.into();
+    }
+    let result = match client.post("/v1/sessions/restart", body) {
+        Ok(result) => result,
+        Err(mut error) => {
+            let Some(domain) = error.domain.as_mut() else {
+                return Err(error);
+            };
+            if args.flag("json") {
+                print_json(
+                    &json!({"ok":false,"code":domain["code"],"message":domain["message"],"detail":domain.get("detail").cloned().unwrap_or_else(||json!({}))}),
+                );
+                error.reported = true;
+            } else {
+                let hint = if ["runtime_busy", "seat_unobservable"].contains(&text(&domain["code"]))
+                {
+                    format!(
+                        "\n  interrupt the turn first, or override with: hrc restart {target} --force"
+                    )
+                } else {
+                    String::new()
+                };
+                error.message = format!("restart refused: {}{hint}", error.message);
+                domain["message"] = error.message.clone().into();
+                error.json_message = None;
+            }
+            return Err(error);
+        }
+    };
+    let started = result["launch"]["status"] == "started";
+    if args.flag("json") {
+        let mut output = json!({"ok":started});
+        if let Some(fields) = result.as_object() {
+            output.as_object_mut().unwrap().extend(fields.clone());
+        }
+        print_json(&output);
+    } else {
+        let generation = result["generation"].as_i64().unwrap_or(0);
+        crate::cli_println!(
+            "{target}: generation {} → {generation} ({})",
+            generation - 1,
+            text(&result["hostSessionId"])
+        );
+        if started {
+            crate::cli_println!("  launched {}", text(&result["launch"]["runtimeId"]));
+        } else {
+            crate::cli_println!(
+                "  launch failed: {}\n  recover with: hrc start {target}",
+                text(&result["launch"]["message"])
+            );
+        }
+    }
+    if started {
+        Ok(())
+    } else {
+        Err(Error {
+            reported: true,
+            ..Error::failure("")
+        })
     }
 }
 fn text(value: &Value) -> &str {

@@ -245,7 +245,7 @@
     {
       "command": "restart",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "restartme",
@@ -330,7 +330,7 @@
     {
       "command": "send",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "server",

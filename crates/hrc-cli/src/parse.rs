@@ -8,6 +8,7 @@ pub(crate) struct Parsed<'a> {
     pub positionals: Vec<String>,
     pub help: bool,
     global_agent: bool,
+    option_order: Vec<String>,
 }
 impl Parsed<'_> {
     pub fn flag(&self, key: &str) -> bool {
@@ -18,6 +19,21 @@ impl Parsed<'_> {
     }
     pub fn value(&self, key: &str) -> Option<&str> {
         self.options.get(key).map(String::as_str)
+    }
+    pub fn last_flag(&self, positive: &str, negative: &str, default: bool) -> bool {
+        self.option_order
+            .iter()
+            .rev()
+            .find_map(|key| {
+                if key == positive {
+                    Some(true)
+                } else if key == negative {
+                    Some(false)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(default)
     }
     pub fn path(&self) -> String {
         self.node["path"]
@@ -37,6 +53,7 @@ pub(crate) fn parse<'a>(surface: &'a Value, args: &[String]) -> Result<Parsed<'a
         positionals: Vec::new(),
         help: false,
         global_agent: false,
+        option_order: Vec::new(),
     };
     let mut index = 0;
     let mut literal = false;
@@ -119,6 +136,7 @@ pub(crate) fn parse<'a>(surface: &'a Value, args: &[String]) -> Result<Parsed<'a
             if key == "agent" && !takes_value {
                 parsed.global_agent = value == "true";
             } else {
+                parsed.option_order.push(key.clone());
                 parsed.options.insert(key, value);
             }
         } else if !literal && parsed.positionals.is_empty() {
