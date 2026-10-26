@@ -556,6 +556,9 @@ def compare_values(args, checks):
     if getattr(args, 'suite', '').startswith('n5-'):
         from n5_suites import compare as compare_n5
         return compare_n5(args, checks)
+    if getattr(args, 'suite', None) == 'n2-restart-self':
+        from n2_restart_self import compare as compare_n2_restart_self
+        return compare_n2_restart_self(args, checks)
     if getattr(args, 'suite', None) == 'n2-continuation':
         from n2_continuation import compare as compare_n2_continuation
         return compare_n2_continuation(args, checks)
