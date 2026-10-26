@@ -99,7 +99,7 @@ fn live_conflict(message: String, mut detail: Value, runtime: (String, String)) 
 }
 
 /// omitPersistedSelectionForReuse
-fn omit_selection(mut intent: Value) -> Value {
+pub(super) fn omit_selection(mut intent: Value) -> Value {
     if let Some(m) = intent.as_object_mut() {
         m.shift_remove("selection");
         m.shift_remove("summonDirectives");

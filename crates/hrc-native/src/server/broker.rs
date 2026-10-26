@@ -82,8 +82,24 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         attach,
     } = birth;
     let host = string(&session, "hostSessionId")?.to_owned();
+    // normalizeDispatchIntent: a session that never applied an intent (minted
+    // with persistIntent:false, its first birth failed) has nothing to replay,
+    // and a directive-only intent has no placement to birth into.
+    if !intent.is_object() {
+        return Err(ApiError::domain(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "missing_runtime_intent",
+            "runtimeIntent is required when the session has no prior intent",
+            Some(json!({})),
+        ));
+    }
     if !intent["placement"].is_object() {
-        return Err(ApiError::bad("runtimeIntent.placement is required", None));
+        return Err(ApiError::domain(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "missing_runtime_intent",
+            "runtimeIntent must be complete before dispatch",
+            Some(json!({"reason":"directive_only_runtime_intent"})),
+        ));
     }
     let reuse_disabled = server
         .store

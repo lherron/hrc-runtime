@@ -184,7 +184,7 @@ class Scratch:
         out = []
         for record in self.rows('SELECT runtime_state_json FROM runtimes'):
             state = json.loads(record['runtime_state_json'] or '{}')
-            path = state.get('tmux', {}).get('socketPath')
+            path = (state.get('tmux') or {}).get('socketPath')
             if path:
                 assert Path(path).resolve().is_relative_to((self.root / 'run').resolve()), path
                 out.append(path)

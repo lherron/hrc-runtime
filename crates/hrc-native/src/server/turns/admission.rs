@@ -450,13 +450,7 @@ async fn steps(
     // execution-presentation
     let intent = match req.runtime_intent {
         Some(i) => i.clone(),
-        None => {
-            let mut stored = session["lastAppliedIntentJson"].clone();
-            if let Some(m) = stored.as_object_mut() {
-                m.shift_remove("selection");
-            }
-            stored
-        }
+        None => crate::server::resume::omit_selection(session["lastAppliedIntentJson"].clone()),
     };
     trace.push("passed");
     // rotation
