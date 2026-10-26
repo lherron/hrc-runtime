@@ -8,29 +8,46 @@ fn main() {
         "cargo:rustc-env=HRC_API_VERSION={}",
         package["version"].as_str().unwrap()
     );
-    let commit = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .expect("git source identity");
-    assert!(
-        commit.status.success(),
-        "native builds require a source commit"
-    );
-    println!(
-        "cargo:rustc-env=HRC_SOURCE_COMMIT={}",
-        String::from_utf8(commit.stdout).unwrap().trim()
-    );
-    // Resolve git's actual worktree HEAD and branch ref (a worktree .git is a file).
-    for name in ["HEAD", "logs/HEAD", "refs/heads"] {
-        let path = std::process::Command::new("git")
-            .args(["rev-parse", "--git-path", name])
+    let root = std::path::Path::new("../..");
+    let commit = if root.join(".git").exists() {
+        let result = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
             .output()
-            .unwrap();
-        println!(
-            "cargo:rerun-if-changed={}",
-            String::from_utf8(path.stdout).unwrap().trim()
+            .expect("git source identity");
+        assert!(
+            result.status.success(),
+            "native builds require a source commit"
         );
-    }
+        // Resolve the actual worktree HEAD and common branch refs.
+        for name in ["HEAD", "logs/HEAD", "refs/heads"] {
+            let path = std::process::Command::new("git")
+                .args(["rev-parse", "--git-path", name])
+                .output()
+                .unwrap();
+            println!(
+                "cargo:rerun-if-changed={}",
+                String::from_utf8(path.stdout).unwrap().trim()
+            );
+        }
+        String::from_utf8(result.stdout).unwrap().trim().to_owned()
+    } else {
+        // Atomic install builds from its selected, verified source snapshot,
+        // which intentionally contains no .git directory.
+        let path = root.join("praesidium-release.json");
+        println!("cargo:rerun-if-changed={}", path.display());
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(path).expect("selected release manifest"))
+                .expect("release manifest JSON");
+        manifest["hrcBuild"]["sourceCommit"]
+            .as_str()
+            .expect("release sourceCommit")
+            .to_owned()
+    };
+    assert!(
+        commit.len() == 40 && commit.bytes().all(|c| c.is_ascii_hexdigit()),
+        "native sourceCommit must be a 40-character Git SHA"
+    );
+    println!("cargo:rustc-env=HRC_SOURCE_COMMIT={commit}");
     accounting_tables();
 }
 
