@@ -115,11 +115,12 @@ pub async fn serve(role: front::Role) -> Result<()> {
         publication::start(&server)?;
         lifecycle::rows::boot(&server)?;
         lifecycle::credentials::start(&server)?;
-        broker::reattach(&server).await?;
+        startup::reconcile(&server).await?;
         recovery::start(&server);
         participants::resume(&server)?;
         sweeps::start(&server);
         reconcile::start(&server);
+        startup::start_gc(&server);
         sweeps::start_retention(&server);
         let prior = server.lifecycle.admission.snapshot();
         if prior["state"] == "closed" {

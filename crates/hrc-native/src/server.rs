@@ -40,6 +40,7 @@ mod runs;
 mod runtime_views;
 mod runtimes;
 mod sessions;
+mod startup;
 mod surfaces;
 mod sweeps;
 mod targets;

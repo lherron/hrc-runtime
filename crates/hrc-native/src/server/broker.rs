@@ -574,7 +574,7 @@ async fn window(socket: &str, session: &str, name: &str, command: Option<&str>) 
         json!({"socketPath":socket,"sessionName":session,"windowName":name,"sessionId":ids[0],"windowId":ids[1],"paneId":ids[2]}),
     )
 }
-async fn hello(client: &JsonRpc, release: &Value) -> Result<Value> {
+pub(super) async fn hello(client: &JsonRpc, release: &Value) -> Result<Value> {
     let hello = client.request("broker.hello",json!({"clientInfo":{"name":"hrc-server"},"protocolVersions":["harness-broker/0.2"],"capabilities":{"permissionRequests":true}})).await?;
     ensure!(
         hello["protocolVersion"] == release["worker"]["protocol"],
@@ -678,49 +678,4 @@ async fn launch(
     let (client, events) = connection.context("broker did not listen")?;
     let hello = hello(&client, release).await?;
     Ok((client, events, hello, allocation))
-}
-
-pub async fn reattach(server: &Shared) -> Result<()> {
-    let runtimes = server.store.lock().unwrap().runtimes()?;
-    for runtime in runtimes {
-        if runtime["controllerKind"] != "harness-broker"
-            || super::lease::unavailable(runtime["status"].as_str().unwrap_or(""))
-            || ["failed", "stopped", "disposed"]
-                .iter()
-                .any(|s| runtime["status"] == *s)
-        {
-            continue;
-        }
-        if let Err(error) = attach_one(server, &runtime).await {
-            super::stderr_json(
-                "warn",
-                "broker",
-                "broker.reattach.failed",
-                json!({"runtimeId":runtime["runtimeId"],"message":format!("{error:#}")}),
-            );
-        }
-    }
-    Ok(())
-}
-async fn attach_one(server: &Shared, runtime: &Value) -> Result<()> {
-    let state = &runtime["runtimeStateJson"];
-    let endpoint = &state["broker"]["endpoint"];
-    let socket = Path::new(string(endpoint, "socketPath")?);
-    let token_path = Path::new(string(&endpoint["attachTokenRef"], "path")?);
-    let root = server.runtime.canonicalize()?;
-    // Refuse persisted endpoints that escape this daemon's runtime root before
-    // making a connection or reading a credential.
-    ensure!(
-        socket.canonicalize()?.starts_with(&root) && token_path.canonicalize()?.starts_with(&root),
-        "broker endpoint outside runtime root"
-    );
-    let (client, events) = JsonRpc::connect_broker(
-        socket,
-        Duration::from_secs(30),
-        controller::permission_handler(Arc::downgrade(server)),
-    )
-    .await?;
-    hello(&client, &state["executionRelease"]).await?;
-    controller::attach_and_replay(server, runtime, client.clone(), events, token_path).await?;
-    Ok(())
 }
