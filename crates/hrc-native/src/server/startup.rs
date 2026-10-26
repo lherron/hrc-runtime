@@ -629,7 +629,7 @@ fn broker_candidates(server: &Server) -> Result<Vec<String>> {
         server,
         &format!(
             "controller_kind = 'harness-broker' AND {}",
-            lease::AVAILABLE_SQL
+            lease::AVAILABLE_SQL.as_str()
         ),
     )
 }
@@ -822,7 +822,7 @@ fn legacy_sweep(server: &Server) -> Result<()> {
         &tx,
         &format!(
             "controller_kind IS NOT 'harness-broker' AND {}",
-            lease::AVAILABLE_SQL
+            lease::AVAILABLE_SQL.as_str()
         ),
     )?;
     let mut marked = 0;

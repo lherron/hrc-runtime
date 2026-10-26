@@ -12,14 +12,12 @@ use std::time::Duration;
 use tokio::process::Command;
 
 pub fn unavailable(status: &str) -> bool {
-    matches!(
-        status,
-        "terminated" | "dead" | "stale" | "crashed" | "detached"
-    )
+    hrc_store::status::UNAVAILABLE.contains(&status)
 }
 /// `unavailable` as a SQL predicate on runtimes.status.
-pub const AVAILABLE_SQL: &str =
-    "status NOT IN ('terminated', 'dead', 'stale', 'crashed', 'detached')";
+pub static AVAILABLE_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!("status NOT IN ({})", hrc_store::status::unavailable_sql())
+});
 fn terminal_invocation_state(state: &str) -> bool {
     matches!(state, "exited" | "failed" | "disposed")
 }

@@ -4,19 +4,12 @@ use crate::{Error, Result, client::Daemon, parse::Parsed};
 use serde_json::{Map, Value, json};
 
 const HUMAN_CLIP_CHARS: usize = 1_000;
-const TERMINAL: [&str; 8] = [
-    "dead",
-    "stale",
-    "terminated",
-    "stopped",
-    "failed",
-    "disposed",
-    "crashed",
-    "exited",
-];
+use hrc_store::status::FORENSIC_TERMINAL;
 
 pub(crate) fn is_terminal_status(status: &Value) -> bool {
-    status.as_str().is_some_and(|s| TERMINAL.contains(&s))
+    status
+        .as_str()
+        .is_some_and(|s| FORENSIC_TERMINAL.contains(&s))
 }
 
 type Range = (Option<u64>, Option<u64>);

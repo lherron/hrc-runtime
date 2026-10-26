@@ -49,7 +49,7 @@ fn object(body: &Value) -> Result<(), ApiError> {
     }
 }
 fn is_unavailable(runtime: &Value) -> bool {
-    ["terminated", "dead", "stale", "crashed", "detached"]
+    hrc_store::status::UNAVAILABLE
         .iter()
         .any(|s| runtime["status"] == *s)
 }

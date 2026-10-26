@@ -274,7 +274,7 @@ pub fn retained_evidence(server: &Server, id: &str) -> Result<Vec<Value>, ApiErr
     Ok(statement.query_map([id,id],|r|Ok(json!({"invocationId":r.get::<_,String>(0)?,"outcome":r.get::<_,String>(1)?,"class":r.get::<_,String>(2)?,"trigger":r.get::<_,String>(3)?,"attempts":r.get::<_,i64>(4)?,"recordedAt":r.get::<_,String>(5)?}))).map_err(anyhow::Error::from)?.collect::<Result<Vec<_>,_>>().map_err(anyhow::Error::from)?)
 }
 fn unavailable(v: &Value) -> bool {
-    ["terminated", "dead", "stale", "crashed", "detached"]
+    hrc_store::status::UNAVAILABLE
         .iter()
         .any(|s| v["status"] == *s)
 }
