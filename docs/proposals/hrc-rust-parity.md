@@ -33,11 +33,31 @@ Lance ruling, 2026-10-25: this campaign implements only routes and CLI commands 
 - **Order.** Within each package, T1 routes first: the steady loops of the kernel, the mail injector, ACP, the brokers and CLI status reads. Gates use those clients unchanged where possible.
 - **CLI pass-through (N5).** `rusthrc <postponed command>` execs the same release's `packages/hrc-cli/bin/hrc.js` under bun with identical argv, stdio and exit code.
 - **Daemon pass-through (N1).** `rusthrc server` forwards any route it does not implement, verbatim and including streams, to an optional configured Bun socket. With none configured, it returns the unknown-route envelope.
-- **Open, decided in N6's design.** On a Rust-owned node the pass-through target cannot be a full Bun daemon, because that is two execution owners. The candidate is a Bun serve-only mode on a private socket: store and HTTP handlers, with no recovery, controllers, timers, broker attach, publishers or listeners other than that socket. Postponed routes that only need the store work through it. Postponed routes that need a live controller (e.g. clear-context, in-flight-input, runtime attach, the run sweeps) would fail on a Rust-owned node. If one fires, that is evidence it is used: implement it or roll the node back. A serve-only mode is a Bun change, so it needs Lance's go and Daedalus review before N6.
+- **Serve-only Bun after the flip.** See "Both on every node": after a node's flip, Bun runs serve-only behind Rust and answers the postponed routes. Postponed routes that need a live controller (e.g. clear-context, in-flight-input, the run sweeps) fail on a Rust-owned node. If one fires, that is evidence it is used: implement it or flip the node back.
+
+## Both on every node: Rust front door
+
+Lance ruling 2026-10-25: during the transition Bun and Rust both run on each node, as Bun and hrc-kernel do today. One process owns execution at a time. Bun's claims, broker control and event wakeups live in process-local state, so two owners on one store would race.
+
+**Topology.** `rusthrc server` binds the node's public `hrc.sock`. Bun binds a private socket (`hrc-bun.sock`) in the same runtime dir and uses the same state root. Every client (CLI, kernel, mail injector, ACP, broker callbacks) reaches Rust. Rust answers what it may serve and forwards everything else verbatim, streams included. Execution owners connect to brokers directly over the brokers' own sockets, so broker IPC does not pass through the front.
+
+| Stage | Execution owner | Rust answers natively | Forwarded to Bun |
+|---|---|---|---|
+| Front (package F) | Bun | The front-safe read set: routes proven free of side effects and of dependence on Bun process memory | Everything else, including streams until Rust has its own wake source |
+| Flip (N6) | Rust | Every implemented route | Postponed routes; Bun runs serve-only |
+| Rollback | Bun | Front-safe reads | Everything else |
+
+**Front-safe read set.** Start from the side-effect-free read set pinned for the kernel in stage 1 (migration doc section 4), intersected with routes Rust implements and passes compare on. Routes that reconcile or record activity on read (e.g. `GET /v1/runtimes` liveness reconciliation, runtime capture) forward. Event streams and follows forward until Rust has a wake source that does not depend on Bun's in-process append hub, and its added latency is measured.
+
+**Access logging moves to Rust.** Rust's front door logs every request it receives: `<stateRoot>/metrics/rusthrc-server-<day>.ndjson` plus L3 lines in rusthrc's own log, with the same schema, sampling, retention and suppression list as Bun, and `servedBy: native|bun`. When Rust forwards a request, Bun also logs it, in its own unchanged files (`server-<day>.ndjson`, `hrc-server.log`). The two never share a file. Rust forwards the client's User-Agent and reqId verbatim, so the two records of a forwarded request join by reqId. The usage audit counts the Rust file as the node's full request population once a node is fronted. Bun's file is the forwarded subset, and the audit never sums the two. CLI usage records are unchanged: one record per invocation, from whichever binary ran.
+
+**Bun changes (package F):** (1) a configurable listen socket path, so Bun can sit behind Rust on the same runtime and state dirs. Default unchanged. (2) Serve-only mode is N6's. Neither is a feature flag. Each is a deployment role chosen by the node's service config.
+
+**Failure and rollback.** Rust in the request path is a new single point of failure for the node API. launchd keeps rusthrc alive. Rollback from the front stage: stop rusthrc, restart Bun on `hrc.sock`. Brokers reattach across HRC restarts as today. Moving Bun's socket takes one HRC restart per node.
 
 ## Packages
 
-The critical path is N0 → N1 → N2 → N3 → N4 → N6. N5 can start after N1 and qualifies each command once its daemon package lands. Each package is one Cody task seat on main, filed when armed.
+The critical path is N0 → N1 → N2 → N3 → N4 → N6. N5 can start after N1 and qualifies each command once its daemon package lands. F (front door) follows N1 and runs alongside N2–N4. Packages alternate between clod and cody task seats, and a large package splits by family.
 
 | Package | Delivers | Closes when (each a real workflow on isolated scratch; Bun daemon down for the Rust subject) |
 |---|---|---|
@@ -47,6 +67,7 @@ The critical path is N0 → N1 → N2 → N3 → N4 → N6. N5 can start after N
 | **N3 Messages and streams** | DM, handoff, query, wait and watch; response finalization; lifecycle, raw and message streams; wrkq session and server publication with cursors. | (1) `wrkc say` to a seat on the Rust daemon gets exactly one reply, including across a daemon restart between delivery and reply. (2) The kernel follows Rust's event stream across replay into live with no gap or duplicate. (3) A lost publication ACK recovers with no duplicate publish. |
 | **N4 Federation, operations, kernel** | Whatever peer, registry and ingest surface survives T-11712; transcript index and search; diagnostics; native packaging and status; the kernel projecting from the native ledger. | (1) Mixed Bun and Rust scratch nodes deliver mail and a reply in both directions. (2) Transcript search returns the same hits as Bun on the same store. (3) The installed Rust release reports its own `sourceCommit` and owner identity, so a proxy cannot pass. (4) Loggia attaches to a seat through the native kernel. |
 | **N5 `rusthrc`** | A Rust CLI for every `hrc` command in the coverage report, with the same arguments, JSON/NDJSON output, exit codes and PTY attach. The TS SDK stays for TS clients. | (1) The runner's CLI cases pass with `rusthrc` against both daemons. (2) Real PTY `attach` and `monitor` work. (3) Unchanged Bun `hrc` still passes against the Rust daemon. |
+| **F Front door** | Bun configurable listen socket; rusthrc front mode with the front-safe read set and verbatim forwarding; separate-file access logging; launchd service for rusthrc; deploy hrcdev → svc → max3 with Bun still execution owner. | (1) On scratch, a rusthrc front with Bun behind on the same state root serves the front-safe reads natively and forwards everything else, and the unchanged CLI, kernel, injector and a real turn all work through it. (2) Every request appears once in `rusthrc-server-*`, forwarded ones once more in Bun's `server-*`, joined by reqId, with no shared file. (3) Rollback (stop rusthrc, Bun back on `hrc.sock`) restores service with brokers reattached. (4) hrcdev runs fronted for 24h with no request errors attributable to the front, then svc, then max3. |
 | **N6 Node handoff** | A reviewed per-node switch procedure: close admission, settle or record pending work, stop the old owner without killing brokers, start the new one, verify. Rollback is the same procedure in reverse. | (1) On scratch, Bun → Rust → Bun keeps the same seats, history and pending input, with one owner at a time and a real turn after each switch. (2) Then hrcdev, then svc, then max3, each authorized separately by Lance. |
 
 ## Explicitly unsupported
