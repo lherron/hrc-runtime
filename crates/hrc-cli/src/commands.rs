@@ -1,3 +1,8 @@
+mod messaging;
+mod sessions;
+use messaging::{restart, send, summon};
+use sessions::{session_get, session_list};
+
 use crate::{Error, Result, client::Daemon, parse::Parsed, print_json};
 use serde_json::{Value, json};
 
@@ -219,271 +224,9 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
     }
 }
 
-fn summon(args: &Parsed<'_>) -> Result<()> {
-    let target = args
-        .positionals
-        .first()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| Error::usage("summon requires <target>"))?;
-    let (scope, placement) = crate::scope::Qualified::target(target)?;
-    let client = Daemon::connect()?;
-    let intent = crate::launch::intent(args, "summon", &scope, &placement, None, &client)?;
-    let result = client.post(
-        "/v1/targets/ensure",
-        json!({"sessionRef":format!("{}/lane:{}",scope.scope,scope.lane),"runtimeIntent":intent}),
-    )?;
-    if args.flag("json") {
-        print_json(&result);
-    } else {
-        crate::cli_println!(
-            "Summoned: {}\n  state: {}",
-            text(&result["sessionRef"]),
-            text(&result["state"])
-        );
-        if let Some(host) = result["activeHostSessionId"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-        {
-            crate::cli_println!("  hostSessionId: {host}");
-        }
-        if let Some(generation) = result.get("generation") {
-            crate::cli_println!("  generation: {generation}");
-        }
-        crate::cli_println!(
-            "  capabilities: dm={} send={} peek={}",
-            result["capabilities"]["dmReady"],
-            result["capabilities"]["sendReady"],
-            result["capabilities"]["peekReady"]
-        );
-    }
-    Ok(())
-}
-
-fn send(args: &Parsed<'_>) -> Result<()> {
-    let target = args
-        .positionals
-        .first()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| Error::usage("send requires <target>"))?;
-    let body = consume_body(
-        args.positionals.get(1).map(String::as_str),
-        args.value("file"),
-    )?
-    .filter(|body| !body.is_empty())
-    .ok_or_else(|| Error::usage("send requires text (positional, -, or --file)"))?;
-    let client = Daemon::connect()?;
-    let mut scope = crate::scope::Qualified::parse(target, true)?;
-    scope.observe(&client)?;
-    let reference = format!("{}/lane:{}", scope.scope, scope.lane);
-    let result = client.post(
-        "/v1/literal-input/by-selector",
-        json!({"selector":{"sessionRef":reference},"text":body,"enter":args.last_flag("enter","no-enter",true)}),
-    )?;
-    if args.flag("json") {
-        print_json(&result);
-    } else {
-        crate::cli_println!("Sent to {reference}");
-    }
-    Ok(())
-}
-
-pub(crate) fn consume_body(positional: Option<&str>, file: Option<&str>) -> Result<Option<String>> {
-    use std::io::Read;
-    let file = file.filter(|path| !path.is_empty());
-    if file.is_none() && positional != Some("-") {
-        return Ok(positional.map(str::to_owned));
-    }
-    let label = file.map_or_else(|| "stdin".to_owned(), |path| format!("--file {path}"));
-    let bytes = if let Some(path) = file {
-        std::fs::read(path)
-    } else {
-        let mut bytes = Vec::new();
-        std::io::stdin().read_to_end(&mut bytes).map(|_| bytes)
-    }
-    .map_err(|error| {
-        use std::io::ErrorKind;
-        let detail = match error.kind() {
-            ErrorKind::NotFound => Some(("ENOENT", "no such file or directory", "open")),
-            ErrorKind::PermissionDenied => Some(("EACCES", "permission denied", "open")),
-            ErrorKind::NotADirectory => Some(("ENOTDIR", "not a directory", "open")),
-            ErrorKind::IsADirectory => Some(("EISDIR", "illegal operation on a directory", "read")),
-            _ => None,
-        };
-        let detail = detail.map_or_else(
-            || error.to_string(),
-            |(code, message, syscall)| {
-                let path = file.map_or_else(String::new, |path| format!(", {syscall} '{path}'"));
-                format!("{code}: {message}{path}")
-            },
-        );
-        Error::usage(format!("cannot read {label}: {detail}"))
-    })?;
-    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
-}
-
-fn restart(args: &Parsed<'_>) -> Result<()> {
-    let target = &args.positionals[0];
-    let (scope, _) = crate::scope::Qualified::managed(target, args)?;
-    let client = Daemon::connect()?;
-    let status = client.get("/v1/status", &[])?;
-    if status["capabilities"]["sessionRestart"] != true {
-        return Err(Error::failure(format!(
-            "the running HRC daemon predates hrc restart; ask mable@{}:primary to restart it",
-            scope.scope.split(':').nth(3).unwrap_or("<project>")
-        )));
-    }
-    let resolved = client.post(
-        "/v1/sessions/resolve",
-        json!({"sessionRef":format!("{}/lane:{}",scope.scope,scope.lane)}),
-    )?;
-    if resolved["found"] != true {
-        return Err(Error::failure(format!(
-            "no session exists for \"{target}\". Start one with: hrc start {target}"
-        )));
-    }
-    let mut body = json!({"hostSessionId":resolved["hostSessionId"],"expectedGeneration":resolved["generation"]});
-    if args.flag("force") {
-        body["force"] = true.into();
-    }
-    let result = match client.post("/v1/sessions/restart", body) {
-        Ok(result) => result,
-        Err(mut error) => {
-            let Some(domain) = error.domain.as_mut() else {
-                return Err(error);
-            };
-            if args.flag("json") {
-                print_json(
-                    &json!({"ok":false,"code":domain["code"],"message":domain["message"],"detail":domain.get("detail").cloned().unwrap_or_else(||json!({}))}),
-                );
-                error.reported = true;
-            } else {
-                let hint = if ["runtime_busy", "seat_unobservable"].contains(&text(&domain["code"]))
-                {
-                    format!(
-                        "\n  interrupt the turn first, or override with: hrc restart {target} --force"
-                    )
-                } else {
-                    String::new()
-                };
-                error.message = format!("restart refused: {}{hint}", error.message);
-                domain["message"] = error.message.clone().into();
-                error.json_message = None;
-            }
-            return Err(error);
-        }
-    };
-    let started = result["launch"]["status"] == "started";
-    if args.flag("json") {
-        let mut output = json!({"ok":started});
-        if let Some(fields) = result.as_object() {
-            output.as_object_mut().unwrap().extend(fields.clone());
-        }
-        print_json(&output);
-    } else {
-        let generation = result["generation"].as_i64().unwrap_or(0);
-        crate::cli_println!(
-            "{target}: generation {} → {generation} ({})",
-            generation - 1,
-            text(&result["hostSessionId"])
-        );
-        if started {
-            crate::cli_println!("  launched {}", text(&result["launch"]["runtimeId"]));
-        } else {
-            crate::cli_println!(
-                "  launch failed: {}\n  recover with: hrc start {target}",
-                text(&result["launch"]["message"])
-            );
-        }
-    }
-    if started {
-        Ok(())
-    } else {
-        Err(Error {
-            reported: true,
-            ..Error::failure("")
-        })
-    }
-}
 fn text(value: &Value) -> &str {
     value.as_str().unwrap_or("undefined")
 }
-fn session_get(args: &Parsed<'_>) -> Result<()> {
-    let client = Daemon::connect()?;
-    let raw = &args.positionals[0];
-    let get_host = |id: &str| {
-        client.get(
-            &format!("/v1/sessions/by-host/{}", crate::client::path_segment(id)),
-            &[],
-        )
-    };
-    if args.flag("live") {
-        let id = crate::selectors::host(raw, &client)?;
-        let session = get_host(&id)?;
-        let mut inspections = vec![];
-        let mut query = vec![("hostSessionId".into(), id), ("limit".into(), "500".into())];
-        loop {
-            let (runtimes, cursor) = client.request("GET", "/v1/runtimes", &query, None)?;
-            for rt in runtimes.as_array().into_iter().flatten() {
-                let mut body = json!({"runtimeId":rt["runtimeId"]});
-                if args.flag("probe") {
-                    body["probeLiveness"] = true.into();
-                }
-                let mut row = json!({"runtimeId":rt["runtimeId"],"generation":rt["generation"]});
-                match client.post("/v1/runtimes/broker/inspect", body) {
-                    Ok(inspection) => row["inspection"] = inspection,
-                    Err(e) => row["inspectionError"] = e.message.into(),
-                }
-                inspections.push(row);
-            }
-            let Some(cursor) = cursor.filter(|s| !s.is_empty()) else {
-                break;
-            };
-            query.retain(|(k, _)| k != "cursor");
-            query.push(("cursor".into(), cursor));
-        }
-        print_json(&json!({"session":session,"runtimes":inspections}));
-        return Ok(());
-    }
-    let read = || -> Result<Value> {
-        let (scope, lane) = if raw.starts_with("hsid-")
-            || raw.starts_with("hsid_")
-            || raw.starts_with("host:")
-            || !raw.contains([':', '@', '~'])
-        {
-            let id = if let Some(id) = raw.strip_prefix("host:") {
-                id.into()
-            } else if raw.starts_with("hsid-") || raw.starts_with("hsid_") {
-                raw.clone()
-            } else {
-                crate::selectors::host(raw, &client)?
-            };
-            let row = get_host(&id)?;
-            if row.get("identity").is_none_or(Value::is_null) {
-                return Ok(row);
-            }
-            (text(&row["scopeRef"]).into(), text(&row["laneRef"]).into())
-        } else {
-            crate::selectors::continuity(raw, &client)?
-        };
-        client.get(
-            "/v1/sessions/get",
-            &[("scopeRef".into(), scope), ("laneRef".into(), lane)],
-        )
-    };
-    let result = read().map_err(|e| {
-        if e.domain
-            .as_ref()
-            .is_some_and(|d| d["code"] == "unknown_host_session")
-        {
-            Error::usage(e.message)
-        } else {
-            e
-        }
-    })?;
-    print_json(&result);
-    Ok(())
-}
-
 fn admin_status(args: &Parsed<'_>) -> Result<()> {
     let status =
         Daemon::connect()?.get("/v1/status", &[("includeSessions".into(), "false".into())])?;
@@ -680,68 +423,6 @@ fn runtime_list(args: &Parsed<'_>) -> Result<()> {
     }
     Ok(())
 }
-fn session_list(args: &Parsed<'_>) -> Result<()> {
-    let mut query = Vec::new();
-    for (key, param) in [("scope", "scopeRef"), ("lane", "laneRef")] {
-        if let Some(value) = args.value(key) {
-            query.push((param.into(), value.into()));
-        }
-    }
-    if args.flag("all") {
-        query.push(("all".into(), "true".into()));
-    } else if let Some(since) = args.value("since").filter(|s| !s.is_empty()) {
-        let (digits, unit) = since.split_at(
-            since
-                .char_indices()
-                .next_back()
-                .map(|(i, _)| i)
-                .unwrap_or(0),
-        );
-        let multiplier = match unit {
-            "s" => 1000.,
-            "m" => 60_000.,
-            "h" => 3_600_000.,
-            "d" => 86_400_000.,
-            "w" => 604_800_000.,
-            _ => 0.,
-        };
-        if multiplier == 0. || digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(Error::failure(format!(
-                "invalid --since duration: {since} (expected e.g. 12h, 7d, 2w)"
-            )));
-        }
-        let millis = chrono::Utc::now().timestamp_millis() as f64
-            - digits.parse::<f64>().unwrap_or(f64::INFINITY) * multiplier;
-        if !millis.is_finite() {
-            return Err(Error::failure("Invalid time value"));
-        }
-        let date = chrono::DateTime::from_timestamp_millis(millis as i64)
-            .ok_or_else(|| Error::failure("Invalid time value"))?;
-        query.push((
-            "updatedSince".into(),
-            date.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        ));
-    }
-    let sessions = Daemon::connect()?.get("/v1/sessions", &query)?;
-    if args.flag("porcelain") {
-        for session in sessions.as_array().into_iter().flatten() {
-            crate::cli_println!(
-                "{}\t{}\t{}\tg{}\t{}\t{}\t{}",
-                text(&session["hostSessionId"]),
-                text(&session["scopeRef"]),
-                text(&session["laneRef"]),
-                session["generation"],
-                text(&session["status"]),
-                text(&session["createdAt"]),
-                text(&session["updatedAt"])
-            );
-        }
-        return Ok(());
-    }
-    print_json(&sessions);
-    Ok(())
-}
-
 fn show(args: &Parsed<'_>) -> Result<()> {
     use crate::selectors::{Snapshot, Target};
     let client = Daemon::connect()?;
@@ -897,4 +578,38 @@ fn runtime_control(args: &Parsed<'_>) -> Result<()> {
         }
         error
     })
+}
+
+pub(crate) fn consume_body(positional: Option<&str>, file: Option<&str>) -> Result<Option<String>> {
+    use std::io::Read;
+    let file = file.filter(|path| !path.is_empty());
+    if file.is_none() && positional != Some("-") {
+        return Ok(positional.map(str::to_owned));
+    }
+    let label = file.map_or_else(|| "stdin".to_owned(), |path| format!("--file {path}"));
+    let bytes = if let Some(path) = file {
+        std::fs::read(path)
+    } else {
+        let mut bytes = Vec::new();
+        std::io::stdin().read_to_end(&mut bytes).map(|_| bytes)
+    }
+    .map_err(|error| {
+        use std::io::ErrorKind;
+        let detail = match error.kind() {
+            ErrorKind::NotFound => Some(("ENOENT", "no such file or directory", "open")),
+            ErrorKind::PermissionDenied => Some(("EACCES", "permission denied", "open")),
+            ErrorKind::NotADirectory => Some(("ENOTDIR", "not a directory", "open")),
+            ErrorKind::IsADirectory => Some(("EISDIR", "illegal operation on a directory", "read")),
+            _ => None,
+        };
+        let detail = detail.map_or_else(
+            || error.to_string(),
+            |(code, message, syscall)| {
+                let path = file.map_or_else(String::new, |path| format!(", {syscall} '{path}'"));
+                format!("{code}: {message}{path}")
+            },
+        );
+        Error::usage(format!("cannot read {label}: {detail}"))
+    })?;
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
 }
