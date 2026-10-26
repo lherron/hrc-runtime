@@ -120,3 +120,13 @@ returns the prior row without another event. `e2e/runtime_surfaces.py` reuses th
 real-seat workflow and `compare --suite n1-surfaces` compares descriptors,
 errors, complete binding rows and event payloads. Timestamp normalization first
 checks request bounds and the committed row/event correspondence.
+
+Target ensure mints a local session address and continuity without launching a
+worker. It persists the supplied intent unless `persistIntent` is false, returns
+the existing address on retry, and refuses reserved participant addresses.
+`e2e/target_placement.py` compares real ASP placement, target creation, intent
+updates, role identities and selector errors. `compare --suite
+n1-target-placement` checks full responses, session/continuity rows and creation
+facts; new identifiers are mapped bijectively after their shape and clocks are
+checked. Archived continuation succession belongs to N2; federated summon
+authority belongs to N4.

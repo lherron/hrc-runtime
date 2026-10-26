@@ -530,6 +530,9 @@ def validate_case_observations(id, observations, checks, status=None, installed_
 
 
 def compare(args, checks):
+    if getattr(args, 'suite', None) == 'n1-target-placement':
+        from n1_target_placement import compare as compare_target_placement
+        return compare_target_placement(args, checks)
     if getattr(args, 'suite', None) == 'n1-surfaces':
         from n1_surfaces import compare as compare_surfaces
         return compare_surfaces(args, checks)

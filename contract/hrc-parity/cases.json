@@ -149,6 +149,15 @@
         "canonical-surface-rows-and-events"
       ],
       "requiredInP0": false
+    },
+    "n1-target-placement": {
+      "assertionIds": [
+        "real-profile-placement",
+        "target-intent-persistence-and-no-persist",
+        "fresh-address-session-continuity-and-event",
+        "role-identities-and-selector-errors"
+      ],
+      "requiredInP0": false
     }
   },
   "coverageRules": [
@@ -370,7 +379,14 @@
     "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:bind:678": "n1-runtime-surfaces",
     "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:findBySurface:3629": "n1-runtime-surfaces",
     "store-op:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts:SurfaceBindingRepository:unbindOtherGhosttyClientTty:2599": "n1-runtime-surfaces",
-    "store-source:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts": "n1-runtime-surfaces"
+    "store-source:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts": "n1-runtime-surfaces",
+    "public:POST:/v1/placements/resolve": "n1-target-placement",
+    "public:POST:/v1/targets/ensure": "n1-target-placement",
+    "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:ContinuityRepository:upsert:3971": "n1-target-placement",
+    "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:insert:7639": "n1-target-placement",
+    "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:listByScopeRef:8826": "n1-target-placement",
+    "store-op:packages/hrc-store-sqlite/src/repositories/session-repositories.ts:SessionRepository:updateIntent:9330": "n1-target-placement",
+    "store-source:packages/hrc-store-sqlite/src/repositories/session-repositories.ts": "n1-target-placement"
   },
   "coverageReasons": {
     "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",

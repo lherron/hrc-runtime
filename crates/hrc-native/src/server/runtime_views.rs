@@ -1,5 +1,5 @@
 //! Read projections shared by runtime inspection and target discovery.
-use super::{ApiError, Shared, aspc, runtimes};
+use super::{ApiError, Server, Shared, aspc, runtimes};
 use axum::{
     Json,
     http::StatusCode,
@@ -320,28 +320,47 @@ fn unavailable(v: &Value) -> bool {
         .iter()
         .any(|s| v["status"] == *s)
 }
-pub async fn target(server: &Shared, q: &HashMap<String, String>) -> Result<Response, ApiError> {
-    let raw = q
-        .get("sessionRef")
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| {
-            ApiError::bad(
-                "sessionRef is required",
-                Some(json!({"field":"sessionRef"})),
-            )
-        })?;
-    let (scope, lane) = super::parse_session_ref(raw).map_err(|mut e| {
-        e.code = "invalid_selector";
-        e
+pub fn parse_target_ref(raw: &str) -> Result<(&str, &str), ApiError> {
+    let raw = raw.trim();
+    let parts = raw.split('/').collect::<Vec<_>>();
+    let invalid = |message: &str, detail: Value| {
+        ApiError::domain(
+            StatusCode::BAD_REQUEST,
+            "invalid_selector",
+            message,
+            Some(detail),
+        )
+    };
+    if parts.len() != 2 || !parts[1].starts_with("lane:") {
+        return Err(invalid(
+            "sessionRef must use \"<scopeRef>/lane:<laneRef>\" format",
+            json!({"sessionRef":raw}),
+        ));
+    }
+    let scope = parts[0].trim();
+    let lane = &parts[1].trim()[5..];
+    if scope.is_empty() || lane.is_empty() {
+        return Err(invalid(
+            "sessionRef must include non-empty scopeRef and laneRef values",
+            json!({"sessionRef":raw}),
+        ));
+    }
+    hrc_cli::validate_scope(scope).map_err(|error| {
+        invalid(
+            &format!("sessionRef must include a canonical agent ScopeRef: {error}"),
+            json!({"sessionRef":raw,"scopeRef":scope}),
+        )
     })?;
-    let lane = if lane == "default" { "main" } else { lane };
+    Ok((scope, if lane == "default" { "main" } else { lane }))
+}
+pub fn find_target_session(server: &Server, raw: &str) -> Result<Option<Value>, ApiError> {
+    let (scope, lane) = parse_target_ref(raw)?;
     let lanes = if lane == "main" {
         vec!["main", "default"]
     } else {
         vec![lane]
     };
-    let (mut session, runtimes) = {
+    let mut session = {
         let db = server.store.lock().unwrap();
         let mut sessions: Vec<_> = db
             .sessions()?
@@ -360,23 +379,53 @@ pub async fn target(server: &Shared, q: &HashMap<String, String>) -> Result<Resp
                 s["updatedAt"].as_str().unwrap_or("").to_owned(),
             )
         });
-        let s = sessions.pop().ok_or_else(|| {
-            ApiError::domain(
-                StatusCode::NOT_FOUND,
-                "unknown_session",
-                format!("unknown session \"{raw}\""),
-                Some(json!({"sessionRef":raw})),
-            )
-        })?;
-        (s, db.runtimes()?)
+        let Some(session) = sessions.pop() else {
+            return Ok(None);
+        };
+        session
     };
-    let lane = hrc_store::storage_lane(session["laneRef"].as_str().unwrap_or("main"));
-    let lane = if lane == "default" { "main" } else { lane }.to_owned();
-    let id = server.store.lock().unwrap().identity(
+    let identity = server.store.lock().unwrap().identity(
         scope,
         hrc_store::storage_lane(session["laneRef"].as_str().unwrap_or("main")),
     )?;
-    session["identity"] = id;
+    session["identity"] = identity;
+    Ok(Some(session))
+}
+pub async fn target(server: &Shared, q: &HashMap<String, String>) -> Result<Response, ApiError> {
+    let raw = q
+        .get("sessionRef")
+        .map(|v| v.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            ApiError::bad(
+                "sessionRef is required",
+                Some(json!({"field":"sessionRef"})),
+            )
+        })?;
+    let session = find_target_session(server, raw)?.ok_or_else(|| {
+        ApiError::domain(
+            StatusCode::NOT_FOUND,
+            "unknown_session",
+            format!("unknown session \"{raw}\""),
+            Some(json!({"sessionRef":raw})),
+        )
+    })?;
+    Ok(Json(target_session_view(server, &session, true).await?).into_response())
+}
+pub async fn target_session_view(
+    server: &Shared,
+    session: &Value,
+    probe_artifact: bool,
+) -> Result<Value, ApiError> {
+    let scope = session["scopeRef"].as_str().unwrap_or("");
+    let raw_lane = hrc_store::storage_lane(session["laneRef"].as_str().unwrap_or("main"));
+    let lane = if raw_lane == "default" {
+        "main"
+    } else {
+        raw_lane
+    }
+    .to_owned();
+    let runtimes = server.store.lock().unwrap().runtimes()?;
     let rows: Vec<_> = runtimes
         .iter()
         .filter(|r| r["hostSessionId"] == session["hostSessionId"])
@@ -398,7 +447,8 @@ pub async fn target(server: &Shared, q: &HashMap<String, String>) -> Result<Resp
         }v
     });
     let mut artifact = "unknown".to_owned();
-    if session["status"] == "archived"
+    if probe_artifact
+        && session["status"] == "archived"
         && session["continuation"]["key"]
             .as_str()
             .is_some_and(|s| !s.is_empty())
@@ -447,7 +497,7 @@ pub async fn target(server: &Shared, q: &HashMap<String, String>) -> Result<Resp
         Some("tmux" | "headless") => "headless",
         _ => "none",
     };
-    let mut out = json!({"sessionRef":format!("{scope}/lane:{lane}"),"scopeRef":scope,"identity":session["identity"],"laneRef":hrc_store::canonical_lane(&lane),"state":state,"activeHostSessionId":session["hostSessionId"],"generation":session["generation"],"capabilities":{"state":state,"modesSupported":if mode=="none"{json!([])}else{json!([mode])},"defaultMode":mode,"dmReady":mode!="none","sendReady":view.as_ref().is_some_and(|v|v["supportsLiteralSend"]==true),"peekReady":view.as_ref().is_some_and(|v|v["supportsCapture"]==true)}});
+    let mut out = json!({"sessionRef":format!("{scope}/lane:{lane}"),"scopeRef":scope,"laneRef":hrc_store::canonical_lane(&lane),"state":state,"activeHostSessionId":session["hostSessionId"],"generation":session["generation"],"capabilities":{"state":state,"modesSupported":if mode=="none"{json!([])}else{json!([mode])},"defaultMode":mode,"dmReady":mode!="none","sendReady":view.as_ref().is_some_and(|v|v["supportsLiteralSend"]==true),"peekReady":view.as_ref().is_some_and(|v|v["supportsCapture"]==true)}});
     for key in ["lastAppliedIntentJson", "continuation"] {
         if let Some(v) = session.get(key) {
             out[key] = v.clone();
@@ -456,5 +506,8 @@ pub async fn target(server: &Shared, q: &HashMap<String, String>) -> Result<Resp
     if let Some(v) = view {
         out["runtime"] = v;
     }
-    Ok(Json(out).into_response())
+    if let Some(identity) = session.get("identity") {
+        out["identity"] = identity.clone();
+    }
+    Ok(out)
 }

@@ -9,6 +9,7 @@ mod runtime_views;
 mod runtimes;
 mod sessions;
 mod surfaces;
+mod targets;
 
 use anyhow::{Context, Result, bail};
 use axum::{
@@ -305,6 +306,14 @@ async fn dispatch_inner(server: &Shared, request: Request) -> Response {
                 Err(e)
             }
         }
+    } else if method == Method::POST && uri.path() == "/v1/targets/ensure" {
+        match parse_body(&body) {
+            Ok(value) => targets::ensure(server, value).await,
+            Err(mut error) => {
+                error.detail = Some(json!({}));
+                Err(error)
+            }
+        }
     } else if method == Method::POST && uri.path() == "/v1/turns" {
         match parse_body(&body) {
             Ok(value) => broker::turn(server, value).await,
@@ -387,6 +396,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/runtimes/inspect",
                 "/v1/runtimes/attach",
                 "/v1/surfaces/bind",
+                "/v1/targets/ensure",
                 "/v1/placements/resolve",
                 "/v1/declarations/resolve",
             ]

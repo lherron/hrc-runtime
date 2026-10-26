@@ -13,6 +13,7 @@ mod index;
 mod metadata;
 mod monitor_read;
 mod surfaces;
+mod targets;
 pub use metadata::{MetadataWrite, validate_metadata};
 pub use monitor_read::{MonitorFilters, escape_like, parse_task_id};
 
@@ -133,6 +134,28 @@ impl Store {
     }
 
     pub fn create_session(&mut self, scope: &str, lane: &str) -> Result<(Value, bool)> {
+        self.create_session_with_event(scope, lane, None, &json!({"created":true}))
+    }
+    pub fn create_target_session(
+        &mut self,
+        scope: &str,
+        lane: &str,
+        intent: Option<&Value>,
+        birth_cause: Option<&str>,
+    ) -> Result<(Value, bool)> {
+        let mut payload = json!({"created":true,"summon":true});
+        if let Some(cause) = birth_cause {
+            payload["birthCause"] = cause.into();
+        }
+        self.create_session_with_event(scope, lane, intent, &payload)
+    }
+    fn create_session_with_event(
+        &mut self,
+        scope: &str,
+        lane: &str,
+        intent: Option<&Value>,
+        payload: &Value,
+    ) -> Result<(Value, bool)> {
         let tx = self
             .sqlite
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -153,13 +176,13 @@ impl Store {
         let host = format!("hsid-{}", Uuid::new_v4());
         let now = timestamp();
         let identity = derive_identity(scope);
-        tx.execute("INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,created_at,updated_at) VALUES (?,?,?,1,'active',?,?)", params![host,scope,lane,now,now])?;
+        tx.execute("INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,created_at,updated_at,last_applied_intent_json) VALUES (?,?,?,1,'active',?,?,?)", params![host,scope,lane,now,now,intent.map(Value::to_string)])?;
         tx.execute("INSERT INTO continuities(scope_ref,lane_ref,active_host_session_id,updated_at,scope_kind,agent_id,project_id,task_id,role_name) VALUES (?,?,?,?,?,?,?,?,?)", params![scope,lane,host,now,identity["kind"].as_str(),identity["agentId"].as_str(),identity["projectId"].as_str(),identity["taskId"].as_str(),identity["roleName"].as_str()])?;
         append_event(
             &tx,
             &json!({"hostSessionId":host,"scopeRef":scope,"laneRef":lane,"generation":1}),
             "session.created",
-            &json!({"created":true}),
+            payload,
         )?;
         tx.commit()?;
         Ok((
@@ -293,6 +316,17 @@ pub fn derive_identity(scope: &str) -> Value {
     }
     identity = json!({"kind":"agent","agentId":parts[1]});
     match parts.as_slice() {
+        ["agent", _, "project", project, "task", task, "role", role] => {
+            identity["kind"] = "project-task-role".into();
+            identity["projectId"] = (*project).into();
+            identity["taskId"] = (*task).into();
+            identity["roleName"] = (*role).into();
+        }
+        ["agent", _, "project", project, "role", role] => {
+            identity["kind"] = "project-role".into();
+            identity["projectId"] = (*project).into();
+            identity["roleName"] = (*role).into();
+        }
         ["agent", _, "project", project, "task", task] => {
             identity["kind"] = "project-task".into();
             identity["projectId"] = (*project).into();
