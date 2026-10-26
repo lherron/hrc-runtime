@@ -106,6 +106,10 @@ def main():
                              'fenceEqualsCursor': inv['retained_projected_through_seq'] == inv['last_projected_seq'],
                              'lastEventIsCursor': inv['last_event_seq'] == inv['last_projected_seq']}
         out['retainedMirror'] = [r['type'] for r in s.rows("SELECT type FROM broker_invocation_events WHERE invocation_id=? AND evidence_origin='retained' ORDER BY seq", (invocation,))]
+        # The broker wrote this tail with no owner up: it is this run's input,
+        # and every non-delta envelope must be mirrored once, in order.
+        out['ledgerTail'] = [e['type'] for e in map(parse, ledger.read_text().splitlines())
+                             if e and e.get('invocationId') == invocation and e.get('seq', 0) > projected_before and not e['type'].endswith('.delta')]
         out['liveMirrorAfter'] = s.rows("SELECT COUNT(*) AS n FROM broker_invocation_events WHERE invocation_id=? AND seq>? AND (evidence_origin IS NULL OR evidence_origin!='retained')", (invocation, projected_before))[0]['n']
         out['retainedLifecycle'] = [r['event_kind'] for r in s.rows("SELECT event_kind FROM hrc_events WHERE runtime_id=? AND evidence_origin='retained' ORDER BY hrc_seq", (runtime,))]
         rt = s.rows('SELECT status, runtime_state_json FROM runtimes WHERE runtime_id=?', (runtime,))[0]
