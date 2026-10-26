@@ -746,6 +746,117 @@ pub(crate) mod tests {
         store.sqlite.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv','op','rt','harness-broker/0.2','test','running',?,'h','h','h','{}','now','now')", [json!({"admission":{"classes":classes}}).to_string()])?;
         Ok(())
     }
+    fn assert_recorded_admission(
+        server: &Shared,
+        name: &str,
+        expected: &str,
+    ) -> anyhow::Result<()> {
+        let raw: String = server.store.lock().expect("test store lock").sqlite.query_row("SELECT payload_json FROM hrc_events WHERE event_kind='submission.admission' ORDER BY hrc_seq DESC LIMIT 1", [], |r| r.get(0))?;
+        let payload: Value = serde_json::from_str(&raw)?;
+        let mut keys = vec!["door", "intent", "effectiveDoor", "trace", "outcome"];
+        let outcome = match expected {
+            "replayed" => "replayed",
+            "possible_write" => "possible_write",
+            "preempt_unsupported"
+            | "preempt_unauthorized"
+            | "stale_context"
+            | "scope-retired"
+            | "server_draining" => "refused",
+            _ => "routed",
+        };
+        assert_eq!(payload["outcome"], outcome, "{name}");
+        match outcome {
+            "routed" => {
+                keys.push("routeOutcome");
+                assert_eq!(
+                    payload["routeOutcome"],
+                    if expected == "rejected_unlanded" {
+                        "rejected_unlanded"
+                    } else {
+                        "accepted"
+                    }
+                );
+            }
+            "refused" => keys.push("refusalCode"),
+            "possible_write" => keys.push("uncertainCause"),
+            _ => {}
+        }
+        assert_eq!(
+            payload
+                .as_object()
+                .expect("payload object")
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            keys,
+            "{name}"
+        );
+        assert_eq!(payload["trace"].as_array().expect("trace array").len(), 9);
+        for (i, step) in payload["trace"]
+            .as_array()
+            .expect("trace array")
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(step["step"], STEPS[i], "{name}");
+            assert_eq!(
+                step.as_object()
+                    .expect("trace object")
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                ["step", "outcome"]
+            );
+        }
+        if expected == "replayed" {
+            assert_eq!(payload["trace"][2]["outcome"], "replayed");
+            assert_eq!(payload["trace"][8]["outcome"], "skipped:replay");
+        }
+        let mut expected_trace = vec![
+            "passed",
+            "passed",
+            "skipped:not-carried",
+            "skipped:not-applicable",
+            "skipped:not-carried",
+            "passed",
+            "passed",
+            "passed",
+            "passed",
+        ];
+        let refusal_step = match name {
+            "draining" => Some(0),
+            "retired" => Some(1),
+            "stale-fence" => Some(2),
+            "refused-class" | "unauthorized-preempt" => Some(5),
+            _ => None,
+        };
+        if let Some(step) = refusal_step {
+            expected_trace[step] = "refused";
+            expected_trace[step + 1..].fill("not-reached");
+        } else if name == "idempotent-replay" {
+            expected_trace[2] = "replayed";
+            expected_trace[3..].fill("skipped:replay");
+        }
+        assert_eq!(
+            payload["trace"]
+                .as_array()
+                .expect("trace array")
+                .iter()
+                .map(|s| s["outcome"].as_str().expect("step outcome"))
+                .collect::<Vec<_>>(),
+            expected_trace,
+            "{name}"
+        );
+        if outcome == "refused" {
+            let code = match expected {
+                "scope-retired" => "session_retired",
+                "server_draining" => "daemon_draining",
+                other => other,
+            };
+            assert_eq!(payload["refusalCode"], code, "{name}");
+        }
+        Ok(())
+    }
     /// Bun admit.ts outcomes plus the distinct authority/fence paths in steps.ts.
     #[tokio::test]
     async fn admit_outcome_table() -> anyhow::Result<()> {
@@ -890,110 +1001,7 @@ pub(crate) mod tests {
                 }
             };
             record(&server, &req, &mut trace, outcome);
-            let raw: String = server.store.lock().expect("test store lock").sqlite.query_row("SELECT payload_json FROM hrc_events WHERE event_kind='submission.admission' ORDER BY hrc_seq DESC LIMIT 1", [], |r| r.get(0))?;
-            let payload: Value = serde_json::from_str(&raw)?;
-            let mut keys = vec!["door", "intent", "effectiveDoor", "trace", "outcome"];
-            let outcome = match expected {
-                "replayed" => "replayed",
-                "possible_write" => "possible_write",
-                "preempt_unsupported"
-                | "preempt_unauthorized"
-                | "stale_context"
-                | "scope-retired"
-                | "server_draining" => "refused",
-                _ => "routed",
-            };
-            assert_eq!(payload["outcome"], outcome, "{name}");
-            match outcome {
-                "routed" => {
-                    keys.push("routeOutcome");
-                    assert_eq!(
-                        payload["routeOutcome"],
-                        if expected == "rejected_unlanded" {
-                            "rejected_unlanded"
-                        } else {
-                            "accepted"
-                        }
-                    );
-                }
-                "refused" => keys.push("refusalCode"),
-                "possible_write" => keys.push("uncertainCause"),
-                _ => {}
-            }
-            assert_eq!(
-                payload
-                    .as_object()
-                    .expect("payload object")
-                    .keys()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-                keys,
-                "{name}"
-            );
-            assert_eq!(payload["trace"].as_array().expect("trace array").len(), 9);
-            for (i, step) in payload["trace"]
-                .as_array()
-                .expect("trace array")
-                .iter()
-                .enumerate()
-            {
-                assert_eq!(step["step"], STEPS[i], "{name}");
-                assert_eq!(
-                    step.as_object()
-                        .expect("trace object")
-                        .keys()
-                        .map(String::as_str)
-                        .collect::<Vec<_>>(),
-                    ["step", "outcome"]
-                );
-            }
-            if expected == "replayed" {
-                assert_eq!(payload["trace"][2]["outcome"], "replayed");
-                assert_eq!(payload["trace"][8]["outcome"], "skipped:replay");
-            }
-            let mut expected_trace = vec![
-                "passed",
-                "passed",
-                "skipped:not-carried",
-                "skipped:not-applicable",
-                "skipped:not-carried",
-                "passed",
-                "passed",
-                "passed",
-                "passed",
-            ];
-            let refusal_step = match name {
-                "draining" => Some(0),
-                "retired" => Some(1),
-                "stale-fence" => Some(2),
-                "refused-class" | "unauthorized-preempt" => Some(5),
-                _ => None,
-            };
-            if let Some(step) = refusal_step {
-                expected_trace[step] = "refused";
-                expected_trace[step + 1..].fill("not-reached");
-            } else if name == "idempotent-replay" {
-                expected_trace[2] = "replayed";
-                expected_trace[3..].fill("skipped:replay");
-            }
-            assert_eq!(
-                payload["trace"]
-                    .as_array()
-                    .expect("trace array")
-                    .iter()
-                    .map(|s| s["outcome"].as_str().expect("step outcome"))
-                    .collect::<Vec<_>>(),
-                expected_trace,
-                "{name}"
-            );
-            if outcome == "refused" {
-                let code = match expected {
-                    "scope-retired" => "session_retired",
-                    "server_draining" => "daemon_draining",
-                    other => other,
-                };
-                assert_eq!(payload["refusalCode"], code, "{name}");
-            }
+            assert_recorded_admission(&server, name, expected)?;
             drop(trace);
             assert_eq!(server.lifecycle.admission.snapshot()["activeAdmissions"], 0);
         }

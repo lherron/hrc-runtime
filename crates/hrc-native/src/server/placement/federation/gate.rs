@@ -889,6 +889,11 @@ mod tests {
 
     #[tokio::test]
     async fn evaluate_decision_table() -> anyhow::Result<()> {
+        evaluate_cases().await?;
+        placement_cases().await?;
+        registry_local_case().await
+    }
+    async fn evaluate_cases() -> anyhow::Result<()> {
         // Mode, config presence, scope, ledger home/state, capability hint,
         // expected reason/allow/enforced/retryable. No shared daemon is used.
         let rows = [
@@ -1070,6 +1075,9 @@ mod tests {
                 assert_eq!(evaluation.capability_source, Some("presence-heuristic"));
             }
         }
+        Ok(())
+    }
+    async fn placement_cases() -> anyhow::Result<()> {
         // Placement decisions use the same evaluator's pure policy stage. Keep
         // these isolated from ASP profile discovery and remote registry IO.
         let (scratch, server) = server("enforce", true)?;
@@ -1213,10 +1221,12 @@ mod tests {
             );
             assert_eq!(evaluation.allow, reason == "virgin-establishment");
         }
+        Ok(())
+    }
+    async fn registry_local_case() -> anyhow::Result<()> {
         // The registry-local variant must carry its concrete binding, rather
         // than silently degrading to local-authority or virgin placement.
-        let (scratch, mut server) =
-            crate::server::turns::admission::tests::server("enforce", true)?;
+        let (scratch, mut server) = server("enforce", true)?;
         let mut config = server.federation.config.clone();
         config.registry_host = Some("test-node".into());
         config.registry_bind = Some("http://127.0.0.1:1".into());
