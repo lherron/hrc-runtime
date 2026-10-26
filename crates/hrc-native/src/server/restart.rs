@@ -145,8 +145,10 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         db.session(&req.host)?
     }
     .ok_or_else(|| ApiError::missing_host(&req.host))?;
-    // Phase A: every refusal below mutates nothing. The retired-scope fence is N4.
+    // Phase A: every refusal below mutates nothing. assertLocalPersonaAllowed
+    // has no native gate yet (N4).
     let scope = session["scopeRef"].as_str().unwrap_or("").to_owned();
+    super::federation::summon::assert_scope_not_retired(server, &scope, "resolve-session")?;
     let lane = {
         let db = server.store.lock().unwrap();
         db.sqlite
