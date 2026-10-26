@@ -9,7 +9,6 @@ import argparse
 import json
 from pathlib import Path
 import sqlite3
-import subprocess
 import time
 from n4_federation import Node
 
@@ -45,6 +44,7 @@ def main():
         proc = node.up('bun', a.binary, 'seed')
         status, joined, _ = node.http('POST','/v1/participants/register',base)
         assert status == 200 and joined['status']=='registered', joined
+        with sqlite3.connect(node.db) as src, sqlite3.connect(node.root/'minted.sqlite') as dst: src.backup(dst)
         descriptor = json.loads(node.run('descriptor', ['bun', Path(__file__).with_name('participant_descriptor.mjs'), node.release, node.root], json.dumps(joined)))
         attach = {k:joined['identity'][k] for k in ('registrationId','attemptId','attachEpoch')}
         attach.update(socketPath=base['socketPath'], descriptor=descriptor)
@@ -57,19 +57,41 @@ def main():
         with sqlite3.connect(node.db) as src, sqlite3.connect(node.root/'seed.sqlite') as dst: src.backup(dst)
         prior = {'hostIncarnationId':base['hostIncarnationId'], 'runtimeId':joined['identity']['runtimeId'], 'generation':joined['generation']}
         body = dict(base, hostIncarnationId='foundry-successor', socketPath=str(node.root/'new.sock'), expectedPredecessor=prior, continuation='continue')
-        plans = [('foundry-continue', body), ('foundry-fresh', dict(body, continuation='fresh')),
-                 ('wrong-predecessor', dict(body, expectedPredecessor=dict(prior,generation=99))),
-                 ('missing-predecessor', {k:v for k,v in body.items() if k!='expectedPredecessor'})]
+        plans = [('foundry-continue', body, 'seed'), ('foundry-fresh', dict(body, continuation='fresh'), 'seed'),
+                 ('wrong-predecessor', dict(body, expectedPredecessor=dict(prior,generation=99)), 'seed'),
+                 ('missing-predecessor', {k:v for k,v in body.items() if k!='expectedPredecessor'}, 'seed'),
+                 ('bridge', dict(body,hostIncarnationId=base['hostIncarnationId']), 'seed'),
+                 ('pre-attach-implicit', {k:v for k,v in body.items() if k!='expectedPredecessor'}, 'minted'),
+                 ('pre-attach-explicit', body, 'minted'),
+                 ('pre-attach-own', dict(body,hostIncarnationId=base['hostIncarnationId']), 'minted'),
+                 ('legacy-arris', dict(body,hostIncarnationId=base['hostIncarnationId']), 'legacy'),
+                 ('no-durable-endpoint', body, 'no-endpoint'),
+                 ('retired-only', body, 'retired'),
+                 ('reuse-disabled', body, 'disabled'),
+                 ('continuation-invalidated', body, 'invalidated'),
+                 ('declaration-mismatch', body, 'seed')]
         results = {}
         for owner in a.owners.split(','):
             observed=[]
-            for name, request in plans:
-                with sqlite3.connect(node.root/'seed.sqlite') as src, sqlite3.connect(node.db) as dst: src.backup(dst)
+            for name, request, variant in plans:
+                source='minted' if variant in ('minted','legacy') else 'seed'
+                with sqlite3.connect(node.root/(source+'.sqlite')) as src, sqlite3.connect(node.db) as dst: src.backup(dst)
+                with sqlite3.connect(node.db) as db:
+                    if variant=='legacy':
+                        value=json.dumps({'provider':'arris','kind':'host-incarnation','key':'legacy'})
+                        db.execute('UPDATE sessions SET continuation_json=?',(value,))
+                        db.execute("UPDATE participant_registration_attempts SET continuation_carried=1,continuation_selected_json=?,continuation_reason='carried'",(value,))
+                    if variant=='no-endpoint':db.execute('UPDATE participant_registration_attempts SET attach_socket_path=NULL')
+                    if variant=='retired':db.execute("UPDATE participant_host_bindings SET state='RETIRED',disposition_reason='fixture-retired'")
+                    if variant=='disabled':db.execute('UPDATE sessions SET continuation_reuse_disabled=1')
+                if variant=='invalidated':
+                    node.bun_store('barrier', "const db=openHrcDatabase(a[0]);db.hrcEvents.append({ts:'2026-10-26T18:00:00.000Z',hostSessionId:a[1],scopeRef:a[2],laneRef:'main',generation:1,category:'session',eventKind:'session.continuation_dropped',payload:{}});db.close()",node.db,joined['hostSessionId'],base['requestedSessionRef'])
                 proc=node.up(owner,a.binary,name)
                 before=snapshot(node)
                 for label in (name,name+'-retry'):
-                    t=time.time();status,reply,_=node.http('POST','/v1/participants/register',request)
-                    observed.append({'case':label,'request':request,'status':status,'body':reply,'before':t,'after':time.time(),'durable':snapshot(node),'seed':before})
+                    current_request=dict(request,continuation='fresh') if name=='declaration-mismatch' and label.endswith('-retry') else request
+                    t=time.time();status,reply,_=node.http('POST','/v1/participants/register',current_request)
+                    observed.append({'case':label,'request':current_request,'status':status,'body':reply,'before':t,'after':time.time(),'durable':snapshot(node),'seed':before})
                 node.down(proc);proc=None
             results[owner]=observed
             directory=a.artifacts/owner;directory.mkdir(exist_ok=True)

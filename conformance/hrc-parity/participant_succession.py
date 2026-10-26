@@ -35,17 +35,39 @@ def compare(args, checks):
                 value = UUID.sub(lambda m:aliases.setdefault(m[0],f'intent:{len(aliases)}'),value)
                 value = CLOCK.sub('<clock>',value)
             return value
+        seen_clocks=set()
+        def clocks(value):
+            if isinstance(value,dict): return set().union(*(clocks(v) for v in value.values())) if value else set()
+            if isinstance(value,list): return set().union(*(clocks(v) for v in value)) if value else set()
+            return set(CLOCK.findall(value)) if isinstance(value,str) else set()
+        expected_names=['foundry-continue','foundry-fresh','wrong-predecessor','missing-predecessor']
+        check('required-cases',all(n in [r['case'] for r in rows] for n in expected_names),'core outage cases cannot be absent')
         for row in rows:
-            success = row['case'].startswith(('foundry-continue','foundry-fresh'))
-            check(row['case']+':status',row['status']==(200 if success else 409), 'replacement succeeds only with the exact predecessor')
-            if success:
-                body=row['body']; d=row['durable']
-                check(row['case']+':registered',isinstance(body,dict) and body.get('status')=='registered','typed join result')
-                check(row['case']+':cardinality',len(d['sessions'])==2 and len(d['participant_registration_attempts'])==2 and len(d['participant_registrations'])==1,'one successor, including on retry')
-                check(row['case']+':lineage',d['sessions'][0]['status']=='archived' and d['sessions'][1]['prior_host_session_id']==d['sessions'][0]['host_session_id'],'session lineage survives retirement')
-                check(row['case']+':retirement',d['participant_host_bindings'][0]['state']=='RETIRED' and d['participant_registration_attempts'][0]['recovery_disposition']=='abandoned','predecessor is durably retired before successor')
-            else:
-                check(row['case']+':no-allocation',len(row['durable']['participant_registration_attempts'])==1,'failed fences never allocate')
+            name=row['case'].removesuffix('-retry')
+            refused=name in ('wrong-predecessor','missing-predecessor') or row['case']=='declaration-mismatch-retry'
+            pending=name in ('no-durable-endpoint','retired-only')
+            own=name=='pre-attach-own'
+            bridge=name in ('bridge','legacy-arris')
+            success=not refused and not pending
+            d=row['durable']; body=row['body']
+            check(row['case']+':status',row['status']==(409 if refused else 200),'typed HTTP status follows the replacement gate')
+            check(row['case']+':typed',isinstance(body,dict) and body.get('status')==('rejected' if refused else 'pending' if pending else 'registered'),'every branch returns the join envelope')
+            expected_attempts=2 if (success and not own) or row['case']=='declaration-mismatch-retry' else 1
+            check(row['case']+':cardinality',len(d['participant_registration_attempts'])==expected_attempts and len(d['participant_registrations'])==1,'one successor at most, including on retry')
+            if success and not own:
+                check(row['case']+':sessions',len(d['sessions'])==(1 if bridge else 2),'bridge retains its session; host replacement increments generation')
+                if not bridge:
+                    check(row['case']+':lineage',d['sessions'][0]['status']=='archived' and d['sessions'][1]['prior_host_session_id']==d['sessions'][0]['host_session_id'],'session lineage survives retirement')
+                    check(row['case']+':retirement',d['participant_host_bindings'][0]['state']=='RETIRED' and d['participant_registration_attempts'][0]['recovery_disposition']=='abandoned','predecessor is durably retired before successor')
+                reason=body.get('continuation',{}).get('reason') if isinstance(body,dict) else None
+                expected_reason={'foundry-continue':'carried','foundry-fresh':'participant_fresh','legacy-arris':'continuation_invalidated','reuse-disabled':'reuse_disabled','continuation-invalidated':'continuation_invalidated'}.get(name)
+                if expected_reason:check(row['case']+':selection',reason==expected_reason,'continuation selection follows the declaration and durable barriers')
+            new_clocks=clocks(d)|clocks(body)
+            seed_clocks=clocks(row['seed'])
+            for clock in new_clocks-seen_clocks-seed_clocks:
+                at=datetime.datetime.fromisoformat(clock.replace('Z','+00:00')).timestamp()
+                check(row['case']+':clock:'+clock,row['before']-.01<=at<=row['after']+.01,'new durable clocks must be written within the request')
+            seen_clocks.update(new_clocks)
         subjects[kind]=[{k:normalize(v) for k,v in r.items() if k not in ('before','after','seed')} for r in rows]
     def order(value):
         if isinstance(value,dict):return [(k,order(v)) for k,v in value.items()]
