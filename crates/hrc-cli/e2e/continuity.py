@@ -90,6 +90,7 @@ def main():
                 selectors = [host, 'host:' + host, scope, 'scope:' + scope, 'session:' + scope + '/lane:main', scope + '/lane:main', 'session:' + scope + '/lane:alternate', 'session:' + scope + '/lane:missing', 'hsid-missing', 'runtime:rt-missing', 'msg:missing', 'wat:foo', 'scope:', 'session:bad', 'seq:no']
                 cases = [command + [selector] for command in (['session', 'get'], ['session', 'meta', 'get']) for selector in selectors]
                 cases += [['session', 'get', selector, '--live'] for selector in (host, 'scope:' + scope, 'session:' + scope + '/lane:alternate')]
+                positive_cases = []
                 if args.extended:
                     commands = [
                         ['runtime', 'list'], ['runtime', 'list', '--all'],
@@ -99,10 +100,10 @@ def main():
                         ['session', 'list', '--scope', scope],
                         ['session', 'resolve', '--scope', scope],
                         ['session', 'resolve', '--scope', scope, '--lane', 'alternate'],
-                        ['target', 'bindings'], ['target', 'locate', 'tabularasa@n5-t11819:n5-continuity'],
                         ['runtime', 'sweep', '--dry-run'], ['runtime', 'prune', '--dry-run'],
                     ]
-                    cases += [command + flags for command in commands for flags in ([], ['--json'])]
+                    positive_cases = [command + flags for command in commands for flags in ([], ['--json'])]
+                    cases += positive_cases
                     # A nonempty two-lane continuity discriminates an inert fixture.
                     sessions = call('GET', '/v1/sessions?all=true')
                     assert len([row for row in sessions if row['scopeRef'] == scope]) == 2, sessions
@@ -113,7 +114,9 @@ def main():
                         if label == 'subject': command_env['PATH'] = str(root / 'no-bun')
                         c = subprocess.run(command + argv, env=command_env, cwd=ROOT, text=True, capture_output=True, timeout=20)
                         observed.append(dict(exit=c.returncode, stdout=c.stdout, stderr=c.stderr))
-                    results.append(dict(owner=owner, argv=argv, oracle=observed[0], subject=observed[1], **{'pass': normalize(observed[0]) == normalize(observed[1])}))
+                    positive = argv in positive_cases
+                    good = normalize(observed[0]) == normalize(observed[1]) and (not positive or all(row['exit'] == 0 for row in observed))
+                    results.append(dict(owner=owner, argv=argv, requiresSuccess=positive, oracle=observed[0], subject=observed[1], **{'pass': good}))
                 down()
         finally: down()
     report = dict(extended=args.extended, cases=results, **{'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results)})

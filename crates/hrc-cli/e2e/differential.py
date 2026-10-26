@@ -87,7 +87,8 @@ def main():
     # This bounded run proves grammar; execution belongs to the named suites.
     # Report the approved 55/39 split instead of obsolete implementation gaps.
     families = {
-        'runtime.py': 'runtime list|runtime inspect|runtime status|show|ls|session list|session get|session meta get|session resolve|admin status',
+        'runtime.py': 'runtime list|runtime inspect|runtime status|show|ls|session list|session get|session meta get|admin status',
+        'continuity.py': 'session resolve',
         'targets.py': 'target locate|target bindings|peek',
         'launch.py': 'start|run|attach',
         'restart.py': 'restart', 'restartme.py': 'restartme',
@@ -115,11 +116,11 @@ def main():
             if command == 'server':
                 row.update(suite='daemon_entrypoints.py', reason='Bare server is the native daemon entrypoint; its help is native too.')
             elif decision['disposition'] == 'IMPLEMENT':
-                row.update(suite=suites[command], reason='Native execution qualification is in this separate suite; help alone does not qualify it.')
+                row.update(suite=suites[command], **({'requiredArguments': ['--extended']} if command == 'session resolve' else {}), reason='Native execution qualification is in this separate suite; help alone does not qualify it.')
             else:
                 row.update(suite='passthrough.py', reason='POSTPONED by T-11820 observed-use audit; exact argv/streams/PID/exit exec the same-release Bun CLI.')
         elif item['kind'] == 'cli-alias':
-            row.update(suite='runtime.py', reason='list aliases ls; human/JSON alias grammar also runs in this bounded suite.')
+            row.update(suite='continuity.py', requiredArguments=['--extended'], reason='list aliases ls; both spellings execute against Bun and native owners.')
         elif item['kind'] == 'package-bin':
             row.update(suite='passthrough.py', reason='Release resolution and exec identity; installed PATH provenance is a separate Gate 4 drive.')
         else:
