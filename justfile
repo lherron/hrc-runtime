@@ -187,6 +187,12 @@ cargo-check:
     python3 crates/hrc-kernel/e2e/restart_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-restart-e2e-$(date +%s)-$$}/restart"
     python3 crates/hrc-kernel/e2e/send_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-send-e2e-$(date +%s)-$$}/send"
 
+# Standing native workflows run post-push, separately from the landing gate.
+# Requires a named installed Bun baseline, aspd, tmux and model credentials.
+e2e-native-full:
+    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-kernel
+    python3 crates/hrc-native/e2e/full.py --artifacts "${HRC_NATIVE_FULL_ARTIFACTS:-${FOUNDRY_ARTIFACTS:-/tmp}/hrc-native-full-$(date +%s)-$$}"
+
 # -- Ephemeral development environment (T-06896) -----------------------------
 #
 # hrc-runtime is a daemon project, so "the environment the suite needs" is a

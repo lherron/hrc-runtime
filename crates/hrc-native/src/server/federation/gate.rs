@@ -881,3 +881,380 @@ async fn observe_capability(
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::turns::admission::tests::{binding, server};
+
+    #[tokio::test]
+    async fn evaluate_decision_table() -> anyhow::Result<()> {
+        // Mode, config presence, scope, ledger home/state, capability hint,
+        // expected reason/allow/enforced/retryable. No shared daemon is used.
+        let rows = [
+            (
+                "enforce",
+                false,
+                "",
+                None,
+                false,
+                false,
+                "gate-dark",
+                true,
+                false,
+                false,
+            ),
+            (
+                "off",
+                true,
+                "",
+                None,
+                false,
+                false,
+                "gate-dark",
+                true,
+                false,
+                false,
+            ),
+            (
+                "enforce",
+                true,
+                "",
+                None,
+                false,
+                false,
+                "non-agent-scope",
+                true,
+                false,
+                false,
+            ),
+            (
+                "enforce",
+                true,
+                "invalid",
+                None,
+                false,
+                false,
+                "non-agent-scope",
+                true,
+                false,
+                false,
+            ),
+            (
+                "enforce",
+                true,
+                "agent:test",
+                Some("test-node"),
+                true,
+                false,
+                "scope-retired",
+                false,
+                true,
+                false,
+            ),
+            (
+                "enforce",
+                true,
+                "agent:test",
+                Some("other"),
+                false,
+                false,
+                "bound-elsewhere",
+                false,
+                true,
+                false,
+            ),
+            (
+                "advisory",
+                true,
+                "agent:test",
+                Some("other"),
+                false,
+                false,
+                "bound-elsewhere",
+                false,
+                false,
+                false,
+            ),
+            (
+                "enforce",
+                true,
+                "agent:test",
+                None,
+                false,
+                false,
+                "registry-unreachable",
+                false,
+                true,
+                true,
+            ),
+            (
+                "advisory",
+                true,
+                "agent:test",
+                None,
+                false,
+                false,
+                "registry-unreachable",
+                false,
+                false,
+                true,
+            ),
+            (
+                "enforce",
+                true,
+                "agent:test",
+                Some("test-node"),
+                false,
+                false,
+                "local-authority",
+                true,
+                false,
+                false,
+            ),
+            (
+                "enforce",
+                true,
+                "agent:test",
+                Some("test-node"),
+                false,
+                true,
+                "capability-project-checkout-missing",
+                false,
+                true,
+                false,
+            ),
+        ];
+        for (
+            mode,
+            configured,
+            scope,
+            home,
+            retired,
+            missing,
+            reason,
+            allowed,
+            enforced,
+            retryable,
+        ) in rows
+        {
+            let (scratch, server) = server(mode, configured)?;
+            if let Some(home) = home {
+                binding(&server, scope, home, retired)?;
+            }
+            let hint = json!({"placement":{"agentRoot":scratch.root,"projectRoot":if missing { scratch.root.join("absent") } else { scratch.root.clone() }},"harness":{"id":null}});
+            let request = Request {
+                scope_ref: scope,
+                path: "/v1/sessions/resolve",
+                intent: "implicit",
+                origin: None,
+                participant_claim: false,
+                capability_hint: Some(&hint),
+                provision: None,
+            };
+            let (evaluation, actual_enforced) = evaluate(&server, &request).await;
+            assert_eq!(
+                (
+                    evaluation.reason,
+                    evaluation.allow,
+                    actual_enforced,
+                    evaluation.retryable
+                ),
+                (reason, allowed, enforced, retryable),
+                "{mode} {scope} {home:?}: {}",
+                evaluation.diagnostic
+            );
+            assert_eq!(evaluation.home.as_deref(), home.filter(|_| !retired));
+            if missing {
+                assert_eq!(evaluation.capability.as_deref(), Some("project-checkout"));
+                assert_eq!(evaluation.capability_source, Some("presence-heuristic"));
+            }
+        }
+        // Placement decisions use the same evaluator's pure policy stage. Keep
+        // these isolated from ASP profile discovery and remote registry IO.
+        let (scratch, server) = server("enforce", true)?;
+        let hint = json!({"placement":{"agentRoot":scratch.root},"harness":{"id":null}});
+        let scope = "agent:test:project:fixture:task:work";
+        let known = vec!["test-node".into(), "other".into()];
+        let rows = [
+            (None, None, "implicit", None, "undeclared-placement"),
+            (
+                None,
+                Some(json!({"node":false})),
+                "implicit",
+                None,
+                "invalid-provision-value",
+            ),
+            (
+                None,
+                Some(json!({"node":"local"})),
+                "implicit",
+                None,
+                "invalid-provision-value",
+            ),
+            (
+                None,
+                Some(json!({"node":"bad node"})),
+                "implicit",
+                None,
+                "invalid-provision-value",
+            ),
+            (
+                None,
+                Some(json!({"node":"unknown"})),
+                "implicit",
+                None,
+                "unknown-node",
+            ),
+            (
+                Some(json!({"placement":{"pins":{"fixture:work":"local"}}})),
+                None,
+                "implicit",
+                None,
+                "invalid-pin",
+            ),
+            (
+                Some(json!({"placement":{"pins":{"fixture:work":"test-node"}}})),
+                Some(json!({"node":"other"})),
+                "implicit",
+                None,
+                "placement-directive-conflict",
+            ),
+            (
+                Some(json!({"placement":{"pins":{"fixture:work":"other"}}})),
+                None,
+                "implicit",
+                None,
+                "pin-mismatch",
+            ),
+            (
+                Some(json!({"placement":{"homes":{"work":"other"}}})),
+                None,
+                "implicit",
+                None,
+                "pin-mismatch",
+            ),
+            (
+                Some(json!({"placement":{"homes":{"work":"local"}}})),
+                None,
+                "implicit",
+                None,
+                "invalid-pin",
+            ),
+            (
+                Some(json!({"placement":{"homes":{"work":"test-node"}}})),
+                Some(json!({"node":"other"})),
+                "implicit",
+                None,
+                "placement-directive-conflict",
+            ),
+            (
+                None,
+                Some(json!({"node":"other"})),
+                "implicit",
+                None,
+                "routed-elsewhere",
+            ),
+            (
+                Some(json!({"provisioning":{"node":"other"}})),
+                None,
+                "implicit",
+                None,
+                "routed-elsewhere",
+            ),
+            (
+                Some(json!({"provisioning":{"node":"local"}})),
+                None,
+                "implicit",
+                None,
+                "invalid-pin",
+            ),
+            (None, None, "explicit_local", None, "virgin-establishment"),
+            (
+                Some(json!({"placement":{}})),
+                None,
+                "implicit",
+                None,
+                "virgin-establishment",
+            ),
+            (
+                Some(json!({"placement":{}})),
+                None,
+                "implicit",
+                Some("federated-establish"),
+                "routed-elsewhere",
+            ),
+            (
+                None,
+                Some(json!({"node":"test-node"})),
+                "implicit",
+                Some("federated-establish"),
+                "virgin-establishment",
+            ),
+        ];
+        for (policy, provision, intent, origin, reason) in rows {
+            let request = Request {
+                scope_ref: scope,
+                path: "/v1/sessions/resolve",
+                intent,
+                origin,
+                participant_claim: false,
+                capability_hint: Some(&hint),
+                provision: provision.as_ref(),
+            };
+            let evaluation =
+                match designated_home(scope, policy.as_ref(), "test-node", &request, &known) {
+                    Err(refusal) => refusal,
+                    Ok(designated) => virgin_placement(&server, scope, &request, designated).await,
+                };
+            assert_eq!(
+                evaluation.reason, reason,
+                "policy={policy:?}, provision={provision:?}"
+            );
+            assert_eq!(evaluation.allow, reason == "virgin-establishment");
+        }
+        // The registry-local variant must carry its concrete binding, rather
+        // than silently degrading to local-authority or virgin placement.
+        let (scratch, mut server) =
+            crate::server::turns::admission::tests::server("enforce", true)?;
+        let mut config = server.federation.config.clone();
+        config.registry_host = Some("test-node".into());
+        config.registry_bind = Some("http://127.0.0.1:1".into());
+        std::sync::Arc::get_mut(&mut server)
+            .expect("unshared test server")
+            .federation = super::super::Node::new(config, &scratch.root.join("state"), false)?;
+        server
+            .federation
+            .registry_db
+            .as_ref()
+            .expect("local registry")
+            .lock()
+            .expect("registry lock")
+            .execute(
+                "INSERT INTO binding_registry VALUES('agent:test','test-node','created','updated')",
+                [],
+            )?;
+        let hint = json!({"placement":{"agentRoot":scratch.root},"harness":{"id":null}});
+        let request = Request {
+            scope_ref: "agent:test",
+            path: "/v1/sessions/resolve",
+            intent: "implicit",
+            origin: None,
+            participant_claim: false,
+            capability_hint: Some(&hint),
+            provision: None,
+        };
+        let (evaluation, enforced) = evaluate(&server, &request).await;
+        assert_eq!(
+            (evaluation.reason, evaluation.allow, enforced),
+            ("registry-bound-local", true, false)
+        );
+        assert_eq!(
+            evaluation.registry_binding,
+            Some(
+                json!({"scopeRef":"agent:test","homeNodeId":"test-node","createdAt":"created","updatedAt":"updated"})
+            )
+        );
+        Ok(())
+    }
+}

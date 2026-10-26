@@ -644,3 +644,343 @@ pub fn stale_age(session: &Value, allow_stale: bool) -> Option<(i64, i64)> {
     let threshold = stale_threshold_sec();
     (threshold > 0 && age >= threshold).then_some((age, threshold))
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::server::{Server, accounting, federation, lifecycle, release};
+    use std::sync::{Arc, Mutex};
+    mod fixture {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../hrc-store/src/test_support.rs"
+        ));
+    }
+    pub(crate) fn server(
+        mode: &str,
+        configured: bool,
+    ) -> anyhow::Result<(fixture::ScratchStore, Shared)> {
+        let (scratch, store) = fixture::ScratchStore::new()?;
+        let runtime = scratch.root.join("run");
+        let state = scratch.root.join("state");
+        let config = hrc_cli::FederationConfig {
+            node_id: "test-node".into(),
+            node_id_provenance: "config",
+            source_path: String::new(),
+            source_exists: configured,
+            peers: vec![],
+            registry_bind: None,
+            peer_listener_bind: None,
+            gate_mode: mode.into(),
+            registry_host: None,
+        };
+        let federation = federation::Node::new(config, &state, false)?;
+        let started_at = hrc_store::timestamp();
+        let server = Arc::new(Server {
+            store: Mutex::new(store),
+            accounting: accounting::Accounting::new(),
+            brokers: Default::default(),
+            participant_work: Default::default(),
+            projection: Default::default(),
+            subscribers: Default::default(),
+            wrkq: Default::default(),
+            publication: Default::default(),
+            handoff: Default::default(),
+            self_restart: Default::default(),
+            controller: Default::default(),
+            reaped: Default::default(),
+            ledger: tokio::sync::watch::Sender::new(0),
+            lifecycle: lifecycle::State::new(&runtime, true),
+            probing: Default::default(),
+            literal: Default::default(),
+            attached: Default::default(),
+            owner_writes: Default::default(),
+            runtime,
+            bun_passthrough: None,
+            federation,
+            front: false,
+            state,
+            release: release::Release::capture(&started_at)?,
+            event_loop: Default::default(),
+            started_at,
+            started: std::time::Instant::now(),
+        });
+        Ok((scratch, server))
+    }
+    pub(crate) fn binding(
+        server: &Shared,
+        scope: &str,
+        home: &str,
+        retired: bool,
+    ) -> anyhow::Result<()> {
+        let store = server.store.lock().expect("test store lock");
+        federation::install_active(
+            &store.sqlite,
+            &json!({"scopeRef":scope,"homeNodeId":home,"createdAt":"now","updatedAt":"now"}),
+        )
+        .map_err(anyhow::Error::msg)?;
+        if retired {
+            store.sqlite.execute("UPDATE placement_ledger SET state='retired',retired_at='now',retirement_reason='test' WHERE scope_ref=?", [scope])?;
+        }
+        Ok(())
+    }
+    fn broker(server: &Shared, session: &Value, classes: Value) -> anyhow::Result<()> {
+        let store = server.store.lock().expect("test store lock");
+        store.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,active_invocation_id,created_at,updated_at) VALUES('rt',?,?,'main',1,'headless','ready',0,'harness-broker','inv','now','now')", rusqlite::params![session["hostSessionId"].as_str(),session["scopeRef"].as_str()])?;
+        store.sqlite.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv','op','rt','harness-broker/0.2','test','running',?,'h','h','h','{}','now','now')", [json!({"admission":{"classes":classes}}).to_string()])?;
+        Ok(())
+    }
+    /// Bun admit.ts outcomes plus the distinct authority/fence paths in steps.ts.
+    #[tokio::test]
+    async fn admit_outcome_table() -> anyhow::Result<()> {
+        let rows = [
+            ("fresh-seat", "invoke", None, None, "accepted"),
+            (
+                "live-exclusive",
+                "invoke",
+                Some(json!(["exclusive"])),
+                None,
+                "accepted",
+            ),
+            (
+                "invoke-downgrade",
+                "invoke",
+                Some(json!(["steer"])),
+                None,
+                "enqueue",
+            ),
+            (
+                "steer-downgrade",
+                "steer",
+                Some(json!(["exclusive"])),
+                None,
+                "enqueue",
+            ),
+            ("idempotent-replay", "invoke", None, None, "replayed"),
+            (
+                "refused-class",
+                "preempt",
+                Some(json!(["exclusive"])),
+                Some("agent:lance"),
+                "preempt_unsupported",
+            ),
+            (
+                "operator-preempt",
+                "preempt",
+                Some(json!(["preempt"])),
+                Some("agent:lance"),
+                "accepted",
+            ),
+            (
+                "unauthorized-preempt",
+                "preempt",
+                None,
+                Some("agent:other"),
+                "preempt_unauthorized",
+            ),
+            ("stale-fence", "invoke", None, None, "stale_context"),
+            ("retired", "invoke", None, None, "scope-retired"),
+            ("draining", "invoke", None, None, "server_draining"),
+            ("rejected-route", "invoke", None, None, "rejected_unlanded"),
+            ("uncertain-route", "invoke", None, None, "possible_write"),
+        ];
+        for (name, intent, classes, principal, expected) in rows {
+            let (_scratch, server) = server(
+                if name == "retired" { "enforce" } else { "off" },
+                name == "retired",
+            )?;
+            let session = server
+                .store
+                .lock()
+                .expect("test store lock")
+                .create_session("agent:test:project:fixture", "main")?
+                .0;
+            if let Some(classes) = classes {
+                broker(&server, &session, classes)?;
+            }
+            if name == "retired" {
+                binding(&server, "agent:test:project:fixture", "test-node", true)?;
+            }
+            if name == "draining" {
+                server
+                    .lifecycle
+                    .admission
+                    .close(&json!({"operationId":"test"}))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e.message))?;
+            }
+            if name == "idempotent-replay" {
+                server.store.lock().expect("test store lock").sqlite.execute("INSERT INTO runs(run_id,host_session_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,dispatch_idempotency_key) VALUES('run',?,?,'main',1,'headless','accepted','now','now','key')", rusqlite::params![session["hostSessionId"].as_str(),session["scopeRef"].as_str()])?;
+            }
+            let origin = principal.map(|p| json!({"principalRef":p}));
+            let fences = (name == "stale-fence").then(|| json!({"expectedGeneration":99}));
+            let req = Request {
+                door: "turns",
+                intent,
+                target: Target::Session(session),
+                fences: fences.as_ref(),
+                idempotency_key: (name == "idempotent-replay").then_some("key"),
+                established: None,
+                fresh_context: None,
+                runtime_intent: None,
+                allow_stale_generation: true,
+                run_id: None,
+                origin: origin.as_ref(),
+            };
+            let (result, mut trace) = admit(&server, &req).await;
+            let error = ApiError::bad("route may have written", None);
+            let outcome = match &result {
+                Ok(Admitted::Plan(plan)) => {
+                    assert_eq!(
+                        plan.effective_door,
+                        if expected == "enqueue" {
+                            "enqueue"
+                        } else {
+                            intent
+                        },
+                        "{name}"
+                    );
+                    assert_eq!(trace.steps.len(), 9, "{name}");
+                    if expected == "possible_write" {
+                        Outcome::PossibleWrite(&error)
+                    } else {
+                        Outcome::Routed {
+                            accepted: expected != "rejected_unlanded",
+                        }
+                    }
+                }
+                Ok(Admitted::Replayed(body)) => {
+                    assert_eq!(expected, "replayed", "{name}");
+                    assert_eq!(body["runId"], "run");
+                    Outcome::Replayed
+                }
+                Ok(Admitted::Rejected { code, body }) => {
+                    assert_eq!(*code, expected, "{name}");
+                    assert_eq!(body["admission"], "rejected");
+                    Outcome::RefusedWith(code)
+                }
+                Err(error) => {
+                    assert_eq!(
+                        error
+                            .detail
+                            .as_ref()
+                            .and_then(|v| v["code"].as_str().or_else(|| v["reason"].as_str()))
+                            .unwrap_or(error.code),
+                        expected,
+                        "{name}: {}",
+                        error.message
+                    );
+                    Outcome::Refused(error)
+                }
+            };
+            record(&server, &req, &mut trace, outcome);
+            let raw: String = server.store.lock().expect("test store lock").sqlite.query_row("SELECT payload_json FROM hrc_events WHERE event_kind='submission.admission' ORDER BY hrc_seq DESC LIMIT 1", [], |r| r.get(0))?;
+            let payload: Value = serde_json::from_str(&raw)?;
+            let mut keys = vec!["door", "intent", "effectiveDoor", "trace", "outcome"];
+            let outcome = match expected {
+                "replayed" => "replayed",
+                "possible_write" => "possible_write",
+                "preempt_unsupported"
+                | "preempt_unauthorized"
+                | "stale_context"
+                | "scope-retired"
+                | "server_draining" => "refused",
+                _ => "routed",
+            };
+            assert_eq!(payload["outcome"], outcome, "{name}");
+            match outcome {
+                "routed" => {
+                    keys.push("routeOutcome");
+                    assert_eq!(
+                        payload["routeOutcome"],
+                        if expected == "rejected_unlanded" {
+                            "rejected_unlanded"
+                        } else {
+                            "accepted"
+                        }
+                    );
+                }
+                "refused" => keys.push("refusalCode"),
+                "possible_write" => keys.push("uncertainCause"),
+                _ => {}
+            }
+            assert_eq!(
+                payload
+                    .as_object()
+                    .expect("payload object")
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                keys,
+                "{name}"
+            );
+            assert_eq!(payload["trace"].as_array().expect("trace array").len(), 9);
+            for (i, step) in payload["trace"]
+                .as_array()
+                .expect("trace array")
+                .iter()
+                .enumerate()
+            {
+                assert_eq!(step["step"], STEPS[i], "{name}");
+                assert_eq!(
+                    step.as_object()
+                        .expect("trace object")
+                        .keys()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>(),
+                    ["step", "outcome"]
+                );
+            }
+            if expected == "replayed" {
+                assert_eq!(payload["trace"][2]["outcome"], "replayed");
+                assert_eq!(payload["trace"][8]["outcome"], "skipped:replay");
+            }
+            let mut expected_trace = vec![
+                "passed",
+                "passed",
+                "skipped:not-carried",
+                "skipped:not-applicable",
+                "skipped:not-carried",
+                "passed",
+                "passed",
+                "passed",
+                "passed",
+            ];
+            let refusal_step = match name {
+                "draining" => Some(0),
+                "retired" => Some(1),
+                "stale-fence" => Some(2),
+                "refused-class" | "unauthorized-preempt" => Some(5),
+                _ => None,
+            };
+            if let Some(step) = refusal_step {
+                expected_trace[step] = "refused";
+                expected_trace[step + 1..].fill("not-reached");
+            } else if name == "idempotent-replay" {
+                expected_trace[2] = "replayed";
+                expected_trace[3..].fill("skipped:replay");
+            }
+            assert_eq!(
+                payload["trace"]
+                    .as_array()
+                    .expect("trace array")
+                    .iter()
+                    .map(|s| s["outcome"].as_str().expect("step outcome"))
+                    .collect::<Vec<_>>(),
+                expected_trace,
+                "{name}"
+            );
+            if outcome == "refused" {
+                let code = match expected {
+                    "scope-retired" => "session_retired",
+                    "server_draining" => "daemon_draining",
+                    other => other,
+                };
+                assert_eq!(payload["refusalCode"], code, "{name}");
+            }
+            drop(trace);
+            assert_eq!(server.lifecycle.admission.snapshot()["activeAdmissions"], 0);
+        }
+        Ok(())
+    }
+}
