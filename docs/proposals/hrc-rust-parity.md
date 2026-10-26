@@ -74,18 +74,18 @@ The critical path is N0 → N1 → N2 → N3 → N4 → N6. N5 can start after N
 
 ## Progress
 
-As of 2026-10-26 07:40Z. The wrkq tasks are authoritative. This section records package state and the scope moves made since r2.
+As of 2026-10-26 12:20Z. The wrkq tasks are authoritative. This section records package state and the scope moves made since r2.
 
 | Package | Task | State |
 |---|---|---|
 | N0 | T-11817 | Closed. |
 | N1 | T-11818 | Closed at ff24579a: gates 1–4 pass, 0 GAP:N1. |
-| N2 | T-11823 (clod) | Active. Landing 1 (61c733d5) owns the broker event path: projection, ACK after commit, replay. |
-| N3 | T-11839 (cody) | Active. |
-| N4 | T-11872 (clod) | Active since 2026-10-26 09:00Z. The first landing is federation locate, designations and scoped-read home routing, which N3's injector gate and N2's runs:scope need. Transcript routes are postponed with zero use, so plan gate 2 is deferred. Handoff: the 23 collective-history operations (`var/wrkq-artifacts/T-11839/n4-collective-history-handoff.json`); the 11 slow-statement telemetry items; scoped-read home routing (`federation/scope-read-routing.ts`; Bun routes scoped `GET /v1/runs` through the home registry, native answers locally, required before N6 because production nodes have peers); and aspc `inspectRuntimePlacement` (`POST /v1/previews/run`) and `observeRuntimeCapability` (federation summon). |
-| N5 | T-11819 (cody), N5b T-11821 | All 55 implement commands native and installed (8d7c3502). Remaining: Rust-only server help, the launch/commands split, aggregate gates. |
-| F | T-11822 (clod) | Landed through a002f77a. hrcdev enable is pending a Claude login on the hrcdev seat; then 24h, svc, max3. |
-| N6 | — | Not started. |
+| N2 | T-11823 (clod) | Active. Five landings through b441752b (broker event path, warm turns, invoke, continuation). Landing 6 is queued for the verify slot: startup reconcile, broker lease GC, resume-continuation on the summon seam, retained-evidence recovery, bipc sweep. Then restart-self (waits on N3's handoff door) and EPR projection. `scheduleBrokerCrashTerminalRetry` is ported but ungated (EN-36421). `GAP:N2 broker-inspect:terminated` closes with a real mid-turn broker SIGKILL. |
+| N3 | T-11839 (cody) | Active. Two landings through e712283a. It holds the verify slot for semantic handoff delivery, durable finalization, lazy-target admission and the N5 drain lease. Final gates 1–3 then run on landed main. |
+| N4 | T-11872 (clod) | Active since 2026-10-26 09:00Z. Three landings through 06d58f27: federation locate, designations, scoped-read home routing, registry-first placement, registry and peer listeners, and the summon-gate evaluator. Queued for the verify slot: bindings skew, runtime-diagnostics, broker-forensics, federation/runtimes, previews/run and the first-turn watchdog evaluator. The first landing was federation locate, designations and scoped-read home routing, which N3's injector gate and N2's runs:scope need. Transcript routes are postponed with zero use, so plan gate 2 is deferred. Handoff: the 23 collective-history operations (`var/wrkq-artifacts/T-11839/n4-collective-history-handoff.json`); the 11 slow-statement telemetry items; scoped-read home routing (`federation/scope-read-routing.ts`; Bun routes scoped `GET /v1/runs` through the home registry, native answers locally, required before N6 because production nodes have peers); and aspc `inspectRuntimePlacement` (`POST /v1/previews/run`) and `observeRuntimeCapability` (federation summon). |
+| N5 | T-11819 (cody), N5b T-11821 | All 55 commands native. The native lifecycle is installed at 79326662 and graded PASS (EN-36418). Remaining: T-11877 (stale `server.lock` reclaim after a SIGKILLed owner, which must land before N6), then the N1/N2/N5 key-order sweep, aggregate gates and cleanup. |
+| F | T-11822 (clod) | Landed through 0d16b420. The `route.not_served` log and the bounded front drain on SIGTERM with an open follow are queued, and the drain fix must land before any front restart on a fronted node. hrcdev enable is pending a Claude login on the hrcdev seat; then 24h, svc, max3. |
+| N6 | — | Not started. Prerequisites: T-11877, the key-order sweep fixes and N2 recovery. Each node flip needs Lance's go. |
 
 Scope moves since r2:
 - `GET /v1/presentation/runtimes` and `POST /v1/presentation/seats/read` move N4 → N3. The unchanged kernel needs both to bootstrap, and N3's gate 2 is the unchanged kernel.
