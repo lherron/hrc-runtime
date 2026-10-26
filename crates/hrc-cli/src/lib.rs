@@ -32,8 +32,9 @@ mod server_start;
 mod server_status;
 mod turn;
 
+pub use js::trim as trim_js;
 /// federation.json for the daemon (federation-config.ts resolveFederationConfig).
-pub use local::{FederationConfig, FederationPeer, load_federation_config};
+pub use local::{FederationConfig, FederationPeer, is_valid_node_id, load_federation_config};
 /// Validate a canonical agent ScopeRef using the operator CLI's shared grammar.
 pub use selectors::validate_scope;
 

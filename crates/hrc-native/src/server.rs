@@ -348,6 +348,7 @@ pub async fn serve(role: front::Role) -> Result<()> {
     let bun_socket = server.bun_passthrough.clone();
     let owned = server.clone();
     let closing = server.clone();
+    let final_owner = server.clone();
     let app = Router::new().fallback(dispatch).with_state(server);
     stderr_json(
         "info",
@@ -357,7 +358,19 @@ pub async fn serve(role: front::Role) -> Result<()> {
     );
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            shutdown().await;
+            let mut requested = owned.lifecycle.requested.subscribe();
+            let (reason, grant) = tokio::select! {
+                reason = shutdown() => (reason, owned.lifecycle.pending_grant.lock().unwrap().clone()),
+                grant = async {
+                    loop {
+                        if let Some(grant) = requested.borrow_and_update().clone() { break grant; }
+                        if requested.changed().await.is_err() { std::future::pending::<()>().await; }
+                    }
+                } => (format!("lifecycle:{}",grant["action"].as_str().unwrap()),Some(grant)),
+            };
+            let mut attribution = json!({"reason":reason,"grant":grant});
+            if attribution["grant"].is_null() { attribution["ungranted"] = true.into(); }
+            *owned.lifecycle.shutdown_attribution.lock().unwrap() = Some(attribution);
             // Stop projecting before the store closes; brokers keep their ledgers.
             owned
                 .controller
@@ -396,12 +409,23 @@ pub async fn serve(role: front::Role) -> Result<()> {
     writer_task.await?;
     // No child kills or broker disposal: the owner can be replaced by Bun.
     drop(owner);
+    let restart = !final_owner.front
+        && final_owner
+            .lifecycle
+            .shutdown_attribution
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|a| a["grant"]["action"] == "restart");
+    if restart && lifecycle::actuation::job_label().is_none() {
+        lifecycle::actuation::successor(&final_owner)?;
+    }
     Ok(())
 }
-async fn shutdown() {
+async fn shutdown() -> String {
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("install SIGTERM handler");
-    tokio::select! { _ = tokio::signal::ctrl_c()=>{}, _ = term.recv()=>{} }
+    tokio::select! { _ = tokio::signal::ctrl_c()=>"SIGINT".into(), _ = term.recv()=>"SIGTERM".into() }
 }
 
 #[derive(Debug)]
@@ -526,7 +550,9 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
     {
         return response;
     }
-    let result = if method == Method::GET && uri.path() == "/v1/federation/locate" {
+    let result = if method == Method::POST && uri.path() == "/v1/server/lifecycle" {
+        lifecycle::route::handle(server, &body, &headers).await
+    } else if method == Method::GET && uri.path() == "/v1/federation/locate" {
         federation::locate(server, &query).await
     } else if method == Method::GET && uri.path() == "/v1/federation/designations" {
         federation::designations(server, &query).await
@@ -756,6 +782,7 @@ fn implemented(method: &Method, path: &str) -> bool {
         || (*method == Method::POST
             && [
                 "/v1/server/subscribers",
+                "/v1/server/lifecycle",
                 "/v1/server/subscribers/ack",
                 "/v1/presentation/seats/read",
                 "/v1/internal/mail/hint-decision",

@@ -89,7 +89,7 @@ pub(crate) fn is_space(c: char) -> bool {
     )
 }
 
-pub(crate) fn trim(s: &str) -> &str {
+pub fn trim(s: &str) -> &str {
     s.trim_matches(is_space)
 }
 

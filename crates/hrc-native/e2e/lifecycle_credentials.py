@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,7 @@ def main():
     for flag in ('binary', 'oracle', 'environment', 'seat', 'artifacts'):
         p.add_argument('--' + flag, type=Path, required=True)
     p.add_argument('--native-lane', default='main')
+    p.add_argument('--authority-checks', action='store_true')
     a = p.parse_args()
     a.artifacts.mkdir(parents=True, exist_ok=True)
     source = json.loads(a.environment.read_text())
@@ -38,6 +40,8 @@ def main():
     assert str(a.environment.resolve()).startswith('/private/tmp/n5-server-owned-11819/')
     env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ', 'HARNESS_BROKER_'))}
     env.update(source)
+    env.pop('XPC_SERVICE_NAME', None)
+    env.pop('HRC_LAUNCHD_LABEL', None)
     owned = []
     proc = None
     report = {'cases': [], 'deliveries': []}
@@ -112,12 +116,57 @@ def main():
                            hostSessionId=host, runtimeIntent=intent, prompt='Reply with OK. No tools.', waitFor='accepted')))
             owned.append(runtime['runtimeId'])
             return runtime['runtimeId']
+        def authority_probe(owner, mable, other):
+            def headers(rid, value=None, session=None):
+                row = call('POST', '/v1/runtimes/inspect', dict(runtimeId=rid))
+                return {'x-hrc-lifecycle-runtime-id': rid,
+                        'x-hrc-lifecycle-credential': value or credential(rid).decode(),
+                        'x-hrc-lifecycle-session-ref': session or row['scopeRef'] + '/lane:main'}
+            base = {'action': 'restart', 'reason': 'Owned authority refusal comparison'}
+            cases = [('missing', base, {}, 'credential_missing'),
+                     ('unknown', base, headers(mable, value='0'*64), 'credential_unknown'),
+                     ('mismatch', base, headers(mable, session='agent:tabularasa:project:n5-t11819:task:primary/lane:main'), 'credential_mismatch'),
+                     ('not-authorized', base, headers(other), 'not_authorized'),
+                     ('reason-required', {'action': 'restart'}, headers(mable), 'reason_required'),
+                     ('unknown-node', dict(base, targetNode='n5-no-peer'), headers(mable), 'unknown_node')]
+            invalid = [None, [], {}, {'action':'wat'}, dict(base, bogus=True), dict(base, force='yes'),
+                       dict(base, wait=True, drain=True), dict(base, action='stop', drain=True),
+                       dict(base, waitTimeoutMs=0), dict(base, proofTimeoutMs=1.5)]
+            cases += [('invalid-' + str(i), body, {}, None) for i, body in enumerate(invalid)]
+            def rows():
+                with sqlite3.connect('file:' + str(root/'state/state.sqlite') + '?mode=ro', uri=True) as db:
+                    return db.execute("SELECT hrc_seq,event_kind,payload_json FROM hrc_events WHERE scope_ref='server:hrc' AND source_ref IS NULL AND evidence_origin IS NULL ORDER BY hrc_seq").fetchall()
+            before = rows()
+            results = []
+            for name, body, auth, refusal in cases:
+                h = UnixHTTP(root/'run/hrc.sock')
+                h.request('POST', '/v1/server/lifecycle', json.dumps(body), dict(auth, **{'Content-Type':'application/json'}))
+                r = h.getresponse()
+                raw = r.read().decode()
+                h.close()
+                value = json.loads(raw) if raw.lstrip().startswith('{') else {'raw': raw}
+                results.append(dict(case=name, status=r.status, body=value))
+                (a.artifacts / (owner+'-authority.json')).write_text(json.dumps(results, indent=2)+'\n')
+                assert r.status == (403 if refusal else 400), (name, r.status, value)
+                if refusal:
+                    assert value['error']['code'] == 'server_lifecycle_refused', value
+                    assert value['error']['detail']['refusal'] == refusal, value
+                else:
+                    assert value['error']['code'] == 'malformed_request', value
+                assert rows() == before, 'refused lifecycle call appended durable server facts'
+            (a.artifacts / (owner+'-authority.json')).write_text(json.dumps(results, indent=2)+'\n')
+            return results
         def passed(name, **data):
             report['cases'].append(dict(case=name, **data, **{'pass': True}))
         try:
             up('bun')
             rid = start('mable')
             original = credential(rid)
+            baseline = None
+            if a.authority_checks:
+                other = start('tabularasa')
+                baseline = authority_probe('bun', rid, other)
+                call('POST', '/v1/terminate', dict(runtimeId=other, reason='owned oracle authority cleanup'))
             passed('real Bun runtime mints protected credential', runtimeId=rid)
             down()
             up('native')
@@ -130,6 +179,10 @@ def main():
             rid2 = start('tabularasa', 'native')
             credential(rid2)
             passed('runtime commit wake mints new binding', runtimeId=rid2)
+            if a.authority_checks:
+                observed = authority_probe('native', rid, rid2)
+                assert observed == baseline, (baseline, observed)
+                passed('lifecycle caller and malformed-body refusals match Bun without ledger writes', comparisons=len(observed))
             for runtime in (rid2, rid):
                 call('POST', '/v1/terminate', dict(runtimeId=runtime, reason='owned credential qualification'))
                 path = root / 'run/lifecycle' / (runtime + '.credential')

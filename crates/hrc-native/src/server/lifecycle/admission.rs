@@ -211,13 +211,7 @@ impl Gate {
         Ok(self.snapshot())
     }
 }
-pub fn admission_lease(server: &Server) -> Result<AdmissionLease, ApiError> {
-    admission_lease_for(server, false)
-}
 /// Only a continuation with verified durable ownership may bypass closure.
-pub fn admission_lease_for(
-    server: &Server,
-    existing_accepted_run: bool,
-) -> Result<AdmissionLease, ApiError> {
+pub fn lease(server: &Server, existing_accepted_run: bool) -> Result<AdmissionLease, ApiError> {
     server.lifecycle.admission.admit(existing_accepted_run)
 }

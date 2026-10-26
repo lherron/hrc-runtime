@@ -20,6 +20,9 @@ fn node_char(c: char) -> bool {
 fn is_reserved(value: &str) -> bool {
     value.to_lowercase() == "local"
 }
+pub fn is_valid_node_id(value: &str) -> bool {
+    node_id_violation(value).is_none()
+}
 
 /// node-id.ts `describeNodeIdViolation`.
 fn node_id_violation(value: &str) -> Option<String> {
