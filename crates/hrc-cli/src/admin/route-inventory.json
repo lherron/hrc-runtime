@@ -1,0 +1,707 @@
+{
+  "generatedBy": "crates/hrc-cli/src/admin/generate-route-inventory.ts",
+  "inventory": [
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/participants/attach"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/participants/register"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/sessions/resolve"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/sessions/get"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/sessions/metadata"
+    },
+    {
+      "listener": "main",
+      "method": "PATCH",
+      "route": "/v1/sessions/metadata"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/sessions"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/sessions/page"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/sessions/facets"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/events"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/events/tail"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/events/page"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/events/bounded-stream"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/broker-events"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/broker-events/query"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/broker-events/follow"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/server/subscribers"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/events/head"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/broker-forensics"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/transcript-search"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/transcript-index/status"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/transcript-index/rebuild"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/events/latest-by-session"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/server/subscribers"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/server/subscribers/ack"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/server/lifecycle"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/ensure"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/start"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/restart-self"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/command-runs/launch"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/broker-sessions/open"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/attach"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/inspect"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/broker/inspect"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/capture/status"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/capture/release"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/capture/recover"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/sweep"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/prune"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/server/tmux/kill-broker-leases"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runs/sweep-zombies"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runs/reconcile-active"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runs/recover-unstarted"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runs/prepare-attached"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runs/resume-attached"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/turns"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/submissions/steer"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/submissions/enqueue"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/submissions/invoke"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/submissions/preempt"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/submissions/preempt/admission"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/submissions/withdraw"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/active-run-contributions"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/in-flight-input"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/capture"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/attach"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/surfaces/bind"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/surfaces/unbind"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/surfaces"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/interrupt"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/terminate"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/clear-context"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/sessions/restart"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/sessions/drop-continuation"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/sessions/resume-continuation"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/runtime-diagnostics"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/presentation/seats/read"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/presentation/runtimes"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/health"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/status"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/federation/locate"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/federation/peers"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/federation/runtimes"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/federation/retire"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/federation/bindings"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/federation/designations"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/placement/bindings"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/runtimes/live-refs"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/targets"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/targets/by-session-ref"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/messages/query"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/messages/turn-handoff"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/targets/ensure"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/capture/by-selector"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/literal-input/by-selector"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/messages/wait"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/messages/watch"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/internal/mail/stop-decision"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/internal/mail/hint-decision"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/declarations/resolve"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/placements/resolve"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/previews/run"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/runs"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/runtimes"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/inputs/:inputId/watch"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/inputs/:inputId"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/sessions/by-host/:hostSessionId"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/runtimes/:runtimeId/seat"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/active-run-contributions/:inputApplicationId"
+    },
+    {
+      "listener": "ingest",
+      "method": "POST",
+      "route": "/v1/ingest"
+    },
+    {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/federation/health"
+    },
+    {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/sessions/metadata"
+    },
+    {
+      "listener": "peer",
+      "method": "PATCH",
+      "route": "/v1/sessions/metadata"
+    },
+    {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/sessions/get"
+    },
+    {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/sessions/page"
+    },
+    {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/sessions/facets"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/sessions/resolve"
+    },
+    {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/events/tail"
+    },
+    {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/events/bounded-stream"
+    },
+    {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/runs"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/federation/locate"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/federation/roster-start"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/federation/exact-start"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/federation/establish"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/federation/server-lifecycle"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/federation/history/replicate"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/federation/history/query"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/federation/history/checkpoint"
+    },
+    {
+      "listener": "registry",
+      "method": "GET",
+      "route": "/v1/federation/registry/designation"
+    },
+    {
+      "listener": "registry",
+      "method": "GET",
+      "route": "/v1/federation/registry/unborn-designations"
+    },
+    {
+      "listener": "registry",
+      "method": "POST",
+      "route": "/v1/federation/registry/designate-birth"
+    },
+    {
+      "listener": "registry",
+      "method": "GET",
+      "route": "/v1/federation/registry/consult"
+    },
+    {
+      "listener": "registry",
+      "method": "POST",
+      "route": "/v1/federation/registry/establish"
+    },
+    {
+      "listener": "registry",
+      "method": "POST",
+      "route": "/v1/federation/registry/delete"
+    }
+  ],
+  "suppressedPoll": [
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/broker-events/follow"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/events"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/server/subscribers"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/sessions/by-host/:hostSessionId"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/targets/by-session-ref"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/federation/locate"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/broker-events/query"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/runtimes"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/runtimes/inspect"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/sessions"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/events/latest-by-session"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/runs"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/server/subscribers/ack"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/events/page"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/status"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/presentation/runtimes"
+    }
+  ]
+}

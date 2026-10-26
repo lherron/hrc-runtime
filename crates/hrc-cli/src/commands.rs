@@ -34,6 +34,10 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
         "monitor events" => crate::forensics::events(args),
         "monitor transcript" => crate::forensics::transcript(args),
         "monitor stats" => crate::forensics::stats(args),
+        "monitor show" => crate::monitor::show::command(args),
+        "monitor wait" => crate::monitor::wait::command(args),
+        "monitor watch" => crate::monitor::watch::command(args),
+        "monitor session-report" => crate::monitor::session_report::command(args),
         "target locate" => {
             let raw = &args.positionals[0];
             let qualified = crate::scope::Qualified::parse(raw, false).map_err(|e| {

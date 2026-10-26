@@ -11,8 +11,10 @@ use uuid::Uuid;
 mod broker;
 mod index;
 mod metadata;
+mod monitor_read;
 mod surfaces;
 pub use metadata::{MetadataWrite, validate_metadata};
+pub use monitor_read::{MonitorFilters, escape_like, parse_task_id};
 
 pub fn canonical_lane(lane: &str) -> String {
     if lane == "main" || lane == "lane:main" {

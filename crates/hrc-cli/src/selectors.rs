@@ -200,30 +200,8 @@ fn parse(raw: &str, client: Option<&Daemon>) -> Result<Selector> {
     }
     let mut observed_role = None;
     if let Some(client) = client {
-        let mut request = json!({"agentId":agent,"projectOrigin":if project.is_some(){"explicit"}else{"inferred"},"taskWorktreeAssociation":"advisory"});
-        if let Some(p) = project {
-            request["projectId"] = p.into();
-        }
-        if let Some(t) = resolved_task {
-            request["taskId"] = t.into();
-        }
-        match client.post("/v1/placements/resolve", request) {
-            Ok(answer) => {
-                observed_role = answer["identity"]["role"].as_str().map(str::to_owned);
-                if let Some(warnings) = answer["warnings"].as_array() {
-                    for warning in warnings {
-                        if let Some(w) = warning.as_str() {
-                            eprintln!("[hrc] warning: {w}");
-                        }
-                    }
-                }
-            }
-            Err(e)
-                if e.domain
-                    .as_ref()
-                    .is_some_and(|d| d["detail"]["producerCode"] == "agent_not_found") => {}
-            Err(e) => return Err(invalid(raw, e.message)),
-        }
+        observed_role = placement_role(agent, project, resolved_task, client)
+            .map_err(|e| invalid(raw, e.message))?;
     }
     if let Some(role) = role.or_else(|| {
         if task.is_some() {
@@ -239,6 +217,43 @@ fn parse(raw: &str, client: Option<&Daemon>) -> Result<Selector> {
     }
     let lane = lane.map(str::to_owned);
     Ok(Selector::Scope(scope, lane))
+}
+/// The profile's default role for a handle (hrc-sdk resolveProfileAwareScopeInput
+/// observation). An unknown agent resolves without a role; placement warnings
+/// print as `[hrc] warning:` lines.
+pub(crate) fn placement_role(
+    agent: &str,
+    project: Option<&str>,
+    task: Option<&str>,
+    client: &Daemon,
+) -> Result<Option<String>> {
+    let mut request = json!({"agentId":agent,"projectOrigin":if project.is_some(){"explicit"}else{"inferred"},"taskWorktreeAssociation":"advisory"});
+    if let Some(p) = project {
+        request["projectId"] = p.into();
+    }
+    if let Some(t) = task {
+        request["taskId"] = t.into();
+    }
+    match client.post("/v1/placements/resolve", request) {
+        Ok(answer) => {
+            if let Some(warnings) = answer["warnings"].as_array() {
+                for warning in warnings {
+                    if let Some(w) = warning.as_str() {
+                        eprintln!("[hrc] warning: {w}");
+                    }
+                }
+            }
+            Ok(answer["identity"]["role"].as_str().map(str::to_owned))
+        }
+        Err(e)
+            if e.domain
+                .as_ref()
+                .is_some_and(|d| d["detail"]["producerCode"] == "agent_not_found") =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
 }
 impl Snapshot {
     pub(crate) fn fetch(client: &Daemon) -> Result<Self> {

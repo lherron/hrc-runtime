@@ -20,7 +20,7 @@
     {
       "command": "admin broker-verify candidates",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "admin broker-verify run",
@@ -35,7 +35,7 @@
     {
       "command": "admin events drain",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "admin metrics",
@@ -45,12 +45,12 @@
     {
       "command": "admin metrics report",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "admin metrics routes",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "admin runs",
@@ -60,7 +60,7 @@
     {
       "command": "admin runs reconcile-active",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "admin runs recover-unstarted",
@@ -70,7 +70,7 @@
     {
       "command": "admin runs sweep-zombies",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "admin runtime",
@@ -120,7 +120,7 @@
     {
       "command": "admin worktrees audit",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "admin worktrees prune",
@@ -155,7 +155,7 @@
     {
       "command": "doctor",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "federation",
@@ -185,7 +185,7 @@
     {
       "command": "info",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "ls",
@@ -210,12 +210,12 @@
     {
       "command": "monitor session-report",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "monitor show",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "monitor stats",
@@ -230,12 +230,12 @@
     {
       "command": "monitor wait",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "monitor watch",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "peek",
@@ -285,7 +285,7 @@
     {
       "command": "runtime diagnostics",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "runtime inspect",
@@ -305,7 +305,7 @@
     {
       "command": "runtime prune",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "runtime send",
@@ -320,7 +320,7 @@
     {
       "command": "runtime sweep",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "runtime terminate",
@@ -365,7 +365,7 @@
     {
       "command": "server subscribers",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "server tmux",
@@ -380,7 +380,7 @@
     {
       "command": "server tmux status",
       "disposition": "IMPLEMENT",
-      "implementation": "pending"
+      "implementation": "native"
     },
     {
       "command": "session",

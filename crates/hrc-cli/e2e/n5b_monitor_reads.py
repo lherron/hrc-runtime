@@ -48,6 +48,21 @@ def main():
     for extra in (['--tail', '2'], ['--tail', '1', '--json'], ['--full'], ['--kinds', 'user'], ['--kinds', 'cot,notice'],
                   ['--kinds', 'bogus,user,x'], ['--kinds', ''], ['--tail', '0'], ['--tail', 'abc'], ['--seq', '1..9'], ['--seq', 'x']):
         runner.case(['monitor', 'transcript', rid] + extra)
+    role_scope = scope + ':role:reviewer'
+    for selector in (None, rid, 'runtime:' + rid, 'host:' + host, 'scope:' + scope, scope, handle, handle + '~main', handle + '~other',
+                     'session:' + seat['sessionRef'], 'scope:' + role_scope, 'runtime:rt-missing', 'host:hsid-missing',
+                     'scope:agent:nobody:project:hrc-runtime:task:none', 'nobody@hrc-runtime:none', 'msg:missing', 'seq:1', 'seq:99999999999999999',
+                     'seq:x', 'wat:foo', 'runtime:', 'scope:bad', 'session:bad', 'session:' + scope + '/lane:', 'Bad Handle', 'alice:t1', 'a@b~c d', ''):
+        for flags in ([], ['--json']):
+            runner.case(['monitor', 'show'] + ([] if selector is None else [selector]) + flags)
+    runner.case(['monitor', 'show', 'a', 'b'])
+    sr = ['monitor', 'session-report']
+    for extra in (['--runtime', rid], ['--runtime', rid, '--json'], ['--runtime', 'runtime:' + rid, '--scope', 'label', '--json'],
+                  ['--runtime', handle], ['--runtime', handle, '--scope', 'x y', '--json'], ['--runtime', 'runtime:rt-missing'],
+                  ['--runtime', 'runtime:rt-missing', '--json'], ['--runtime', 'wat:foo', '--json'], ['--scope', 'only-scope', '--json'],
+                  ['--json'], [], ['--wait-key', '--wait-timeout', '1'], ['--runtime', rid, '--wait-key', '--wait-timeout', '0.4'],
+                  ['--runtime', rid, '--wait-key', '--wait-timeout', 'x', '--json'], ['--wait-timeout', '1', '--json']):
+        runner.case(sr + extra)
     return runner.finish(seat=rid, execution='native-required; Bun absent from subject PATH')
 
 

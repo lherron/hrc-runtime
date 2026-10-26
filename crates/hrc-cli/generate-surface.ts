@@ -3,7 +3,7 @@ import type { Command } from 'commander'
 import { buildProgram } from '../../packages/hrc-cli/src/cli/build-program'
 import { cmdAttach } from '../../packages/hrc-cli/src/cli/handlers-scope-attach'
 import { printManagedScopeUsage } from '../../packages/hrc-cli/src/cli/handlers-scope-managed'
-import { renderRootHelp } from '../../packages/hrc-cli/src/cli/help'
+import { buildInfoText, renderRootHelp } from '../../packages/hrc-cli/src/cli/help'
 const actionUsage: Record<string, string> = {}
 for (const name of ['start', 'run', 'attach'] as const) {
   let text = ''
@@ -62,7 +62,12 @@ function surface(command: Command, path: string[]): unknown {
     children: command.commands.map((c) => surface(c, [...path, c.name()])),
   }
 }
-const output = `${JSON.stringify(surface(root, []), null, 2)}\n`
+// `hrc info` text per view without the node block; rusthrc renders THIS NODE.
+const info = {
+  agent: buildInfoText(root, undefined, 'agent'),
+  human: buildInfoText(root, undefined, 'human'),
+}
+const output = `${JSON.stringify({ ...(surface(root, []) as object), info }, null, 2)}\n`
 const target = new URL('./surface.json', import.meta.url)
 if (process.argv.includes('--check')) {
   if ((await Bun.file(target).text()) !== output)
