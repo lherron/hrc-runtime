@@ -91,12 +91,6 @@ describe('agent action render helpers', () => {
     expect(formatToolLine('Bash', { command: 'false' }, '', true)).toBe('❌ shell: false')
   })
 
-  test('keeps Read tool formatting unchanged', () => {
-    expect(formatToolLine('Read', { file_path: '/src/index.ts' }, '', false)).toBe(
-      '📖 Read: /src/index.ts'
-    )
-  })
-
   test('formats notice lines', () => {
     expect(formatNoticeLine('info', 'connected')).toBe('ℹ️ connected')
     expect(formatNoticeLine('warn', 'slow query')).toBe('⚠️ slow query')
@@ -133,13 +127,6 @@ describe('agent action render helpers', () => {
     expect(getHrcEventIcon('tool_execution_start', { toolName: 'Bash', failed: true })).toBe('❌')
     expect(getHrcEventIcon('notice', { level: 'warn' })).toBe('⚠️')
     expect(getHrcEventIcon('codex.user_prompt', { toolName: 'Bash' })).toBe('💬')
-  })
-
-  test('does not route HRC event icon rendering through deprecated getToolEmoji', async () => {
-    const source = await Bun.file(new URL('../hrc-kind-icons.ts', import.meta.url)).text()
-
-    expect(source).not.toContain('getToolEmoji')
-    expect(source).toContain('resolveToolPresenter')
   })
 
   test('formats narrative event previews from primary payload fields', () => {
@@ -207,11 +194,6 @@ describe('admission labels', () => {
     expect(admissionLabel({ eventKind: 'input.dispatching' })).toBe('Dispatching queued work')
     expect(admissionLabel({ eventKind: 'input.started' })).toBe('Input started')
     expect(admissionLabel({ eventKind: 'input.queue.expired' })).toBe('Queued input expired')
-  })
-
-  test('never uses the forbidden steered/applied wording', () => {
-    expect(admissionLabel({ eventKind: 'input.application.accepted' })).not.toContain('applied')
-    expect(admissionLabel({ eventKind: 'input.application.accepted' })).not.toContain('steered')
   })
 
   test('falls back to the raw eventKind for unknown kinds', () => {

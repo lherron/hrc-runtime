@@ -42,18 +42,15 @@ describe('parseFence (T-00949)', () => {
     expect(fence.followLatest).toBe(true)
   })
 
-  test('parses empty/undefined fence as no-op fence', () => {
+  test('T-00949: undefined and empty fences parse as no-op fences', () => {
     const fence = parseFence(undefined)
     expect(fence.expectedHostSessionId).toBeUndefined()
     expect(fence.expectedGeneration).toBeUndefined()
     expect(fence.followLatest).toBeUndefined()
-  })
-
-  test('parses empty object as no-op fence', () => {
-    const fence = parseFence({})
-    expect(fence.expectedHostSessionId).toBeUndefined()
-    expect(fence.expectedGeneration).toBeUndefined()
-    expect(fence.followLatest).toBeUndefined()
+    const empty = parseFence({})
+    expect(empty.expectedHostSessionId).toBeUndefined()
+    expect(empty.expectedGeneration).toBeUndefined()
+    expect(empty.followLatest).toBeUndefined()
   })
 
   test('rejects fence with both expectedHostSessionId and followLatest', () => {
@@ -88,10 +85,14 @@ describe('validateFence (T-00949)', () => {
     expect(result.ok).toBe(true)
   })
 
-  test('stale expectedHostSessionId is rejected', () => {
+  test('T-00949: stale host session is rejected with error detail', () => {
     const result = validateFence({ expectedHostSessionId: 'hsid-old' }, currentState)
     expect(result.ok).toBe(false)
     expect(result.errorCode).toBe(HrcErrorCode.STALE_CONTEXT)
+    if (!result.ok) {
+      expect(typeof result.message).toBe('string')
+      expect(result.message.length).toBeGreaterThan(0)
+    }
   })
 
   test('matching expectedGeneration passes', () => {
@@ -122,32 +123,17 @@ describe('validateFence (T-00949)', () => {
     expect(result.errorCode).toBe(HrcErrorCode.STALE_CONTEXT)
   })
 
-  test('followLatest bypasses stale checks', () => {
-    const result = validateFence({ followLatest: true }, currentState)
-    expect(result.ok).toBe(true)
-  })
-
   test('no-op fence (empty) passes', () => {
     const result = validateFence({}, currentState)
     expect(result.ok).toBe(true)
   })
 
-  test('result includes resolved hostSessionId and generation on success', () => {
+  test('T-00949: followLatest bypasses stale checks and resolves current identity', () => {
     const result = validateFence({ followLatest: true }, currentState)
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.resolvedHostSessionId).toBe('hsid-current')
       expect(result.resolvedGeneration).toBe(5)
-    }
-  })
-
-  test('result includes error detail on stale rejection', () => {
-    const result = validateFence({ expectedHostSessionId: 'hsid-old' }, currentState)
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.errorCode).toBe(HrcErrorCode.STALE_CONTEXT)
-      expect(typeof result.message).toBe('string')
-      expect(result.message.length).toBeGreaterThan(0)
     }
   })
 })

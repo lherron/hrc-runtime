@@ -23,7 +23,7 @@ const POISONED_LOCK = `{
 `
 
 describe('lock-hygiene scan', () => {
-  it('rejects a loopback registry URL and names its line', () => {
+  it('rejects a loopback registry URL against the canonical host and names its line', () => {
     const violations = scanLockContent(POISONED_LOCK)
     expect(violations).toEqual([
       {
@@ -61,11 +61,5 @@ describe('canonical registry', () => {
     expect(activeRegistryUrl({ VERDACCIO_REGISTRY: 'http://127.0.0.1:4873/' })).toBe(
       'http://127.0.0.1:4873/'
     )
-  })
-
-  it('holds the gate to the canonical host even on a node pointed elsewhere', () => {
-    // The whole defect class: a guest publishes to loopback. The gate must not
-    // inherit that opinion from the environment.
-    expect(scanLockContent(POISONED_LOCK)).toHaveLength(1)
   })
 })

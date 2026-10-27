@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { scanEnvFile } from './check-env-hygiene.js'
 
 describe('env-hygiene scan', () => {
-  it('flags credential/principal keys and passes context keys', () => {
+  it('flags credentials while accepting empty and context-only files', () => {
     const content = [
       'WRKQ_PROJECT_ROOT=hrc-runtime',
       'WRKQ_DB_PATH=/tmp/wrkq.db',
@@ -16,9 +16,6 @@ describe('env-hygiene scan', () => {
     ].join('\n')
 
     expect(scanEnvFile(content).sort()).toEqual(['CP_TOKEN', 'WRKQD_TOKEN', 'WRKQ_ACTOR'])
-  })
-
-  it('accepts an empty or context-only file', () => {
     expect(scanEnvFile('')).toEqual([])
     expect(scanEnvFile('ASP_HOME=/x\nTOOL_STACK=dev\n')).toEqual([])
   })

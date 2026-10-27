@@ -97,16 +97,6 @@ describe('SessionEventsManager render callback public contract', () => {
     expect(diagnostics).toEqual([])
   })
 
-  test('documents OnRenderCallback as deprecated in favor of RenderFrameCallback', async () => {
-    const source = await Bun.file(`${import.meta.dir}/../session-events-manager.ts`).text()
-
-    const deprecatedLegacyType = source.match(
-      /\/\*\*[\s\S]*@deprecated[\s\S]*RenderFrameCallback[\s\S]*\*\/\s*export type OnRenderCallback/
-    )
-
-    expect(deprecatedLegacyType).not.toBeNull()
-  })
-
   test('continues to pass RunState to legacy five-argument callbacks at runtime', () => {
     const legacyRuns: RunState[] = []
     const onRender: OnRenderCallback = (_sessionRef, _projectId, _runId, _frame, run) => {

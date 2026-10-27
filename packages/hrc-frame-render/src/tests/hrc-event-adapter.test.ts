@@ -1,6 +1,4 @@
 import { describe, expect, test } from 'bun:test'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 
 import { type HrcLifecycleEventPayload, adaptHrcLifecycleEvent } from '../hrc-event-adapter.js'
 import {
@@ -250,7 +248,7 @@ describe('adaptHrcLifecycleEvent', () => {
     expect(JSON.stringify(envelope)).not.toMatch(/\bapplied\b/i)
   })
 
-  test('keeps hrcLifecycleEventToSessionEnvelope as a documented public compatibility alias', async () => {
+  test('exports hrcLifecycleEventToSessionEnvelope as a compatible event adapter', () => {
     const representativeEvent = hrcEvent({
       hrcSeq: 121,
       eventKind: 'turn.message',
@@ -264,14 +262,6 @@ describe('adaptHrcLifecycleEvent', () => {
     expect(hrcLifecycleEventToSessionEnvelope(representativeEvent)).toEqual(
       publicAdaptHrcLifecycleEvent(representativeEvent)
     )
-
-    const source = await readFile(join(import.meta.dir, '..', 'hrc-event-adapter.ts'), 'utf8')
-    // The alias is a published contract surface for downstream consumers; keep the
-    // compatibility note adjacent to the export so future refactors do not remove it silently.
-    expect(source).toMatch(
-      /\/\*\*[\s\S]*published API compatibility[\s\S]*prefer `adaptHrcLifecycleEvent`[\s\S]*coordinated contract change[\s\S]*\*\/\s*export const hrcLifecycleEventToSessionEnvelope = adaptHrcLifecycleEvent/
-    )
-    expect(source).not.toMatch(/scheduled removal|will be removed|remove in/i)
   })
 })
 

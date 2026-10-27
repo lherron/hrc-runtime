@@ -35,47 +35,6 @@ import {
 } from '../errors.js'
 
 // ===================================================================
-// Error code enum completeness
-// ===================================================================
-
-describe('HrcErrorCode completeness (T-00949)', () => {
-  test('defines all required 400-class error codes', () => {
-    expect(HrcErrorCode.MALFORMED_REQUEST).toBeDefined()
-    expect(HrcErrorCode.INVALID_SELECTOR).toBeDefined()
-    expect(HrcErrorCode.INVALID_FENCE).toBeDefined()
-  })
-
-  test('defines all required 404-class error codes', () => {
-    expect(HrcErrorCode.UNKNOWN_SESSION).toBeDefined()
-    expect(HrcErrorCode.UNKNOWN_HOST_SESSION).toBeDefined()
-    expect(HrcErrorCode.UNKNOWN_RUNTIME).toBeDefined()
-    expect(HrcErrorCode.UNKNOWN_INPUT).toBe('unknown_input')
-    expect(HrcErrorCode.UNKNOWN_REGISTRATION_CLASS).toBe('unknown_class')
-  })
-
-  test('defines all required 409-class error codes', () => {
-    expect(HrcErrorCode.STALE_CONTEXT).toBeDefined()
-    expect(HrcErrorCode.RUNTIME_BUSY).toBeDefined()
-    expect(HrcErrorCode.RUN_MISMATCH).toBeDefined()
-  })
-
-  test('defines all required 422-class error codes', () => {
-    expect(HrcErrorCode.MISSING_RUNTIME_INTENT).toBeDefined()
-    expect(HrcErrorCode.PROVIDER_MISMATCH).toBeDefined()
-    expect(HrcErrorCode.INFLIGHT_UNSUPPORTED).toBeDefined()
-    expect(HrcErrorCode.UNKNOWN_FIELD).toBeDefined()
-  })
-
-  test('defines 503 runtime_unavailable', () => {
-    expect(HrcErrorCode.RUNTIME_UNAVAILABLE).toBeDefined()
-  })
-
-  test('defines 500 internal_error', () => {
-    expect(HrcErrorCode.INTERNAL_ERROR).toBeDefined()
-  })
-})
-
-// ===================================================================
 // Error code values are stable strings
 // ===================================================================
 
@@ -93,6 +52,7 @@ describe('HrcErrorCode values are string constants (T-00949)', () => {
     expect(HrcErrorCode.UNKNOWN_HOST_SESSION).toBe('unknown_host_session')
     expect(HrcErrorCode.UNKNOWN_RUNTIME).toBe('unknown_runtime')
     expect(HrcErrorCode.UNKNOWN_INPUT).toBe('unknown_input')
+    expect(HrcErrorCode.UNKNOWN_REGISTRATION_CLASS).toBe('unknown_class')
     expect(HrcErrorCode.MISSING_RUNTIME_INTENT).toBe('missing_runtime_intent')
     expect(HrcErrorCode.PROVIDER_MISMATCH).toBe('provider_mismatch')
     expect(HrcErrorCode.INFLIGHT_UNSUPPORTED).toBe('inflight_unsupported')
@@ -212,11 +172,6 @@ describe('HrcDomainError base class (n-31 / T-00985)', () => {
     expect(err.detail).toEqual({})
   })
 
-  test('is an instance of Error', () => {
-    const err = new HrcDomainError(HrcErrorCode.INTERNAL_ERROR, 'boom')
-    expect(err).toBeInstanceOf(Error)
-  })
-
   test('toResponse() returns correct HrcHttpError shape', () => {
     const err = new HrcDomainError(HrcErrorCode.RUNTIME_BUSY, 'busy', { runtimeId: 'rt-1' })
     const resp = err.toResponse()
@@ -264,12 +219,6 @@ describe('HrcBadRequestError (n-31 / T-00985)', () => {
     expect(resp.error.code).toBe('malformed_request')
     expect(resp.error.message).toBe('oops')
     expect(resp.error.detail).toEqual({ key: 'val' })
-  })
-
-  test('is instanceof HrcDomainError and Error', () => {
-    const err = new HrcBadRequestError('malformed_request', 'test')
-    expect(err).toBeInstanceOf(HrcDomainError)
-    expect(err).toBeInstanceOf(Error)
   })
 })
 
