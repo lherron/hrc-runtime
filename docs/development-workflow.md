@@ -1,10 +1,10 @@
 # Development workflow
 
 Repo rules for changing hrc-runtime that every validation or dependency change
-touches: which paths skip the code hooks, how specs amend records, the dependency
-pin table, the repo-split boundary, and how ASP comes in and HRC goes out through
-Verdaccio. Moved from the root `AGENTS.md`. What fails when each rule is broken:
-[rule-enforcers.md](rule-enforcers.md). Day-to-day commands:
+touches: which paths skip the code hooks, how specs amend records, how to find
+code, the dependency pin table, the repo-split boundary, and how ASP comes in
+and HRC goes out through Verdaccio. Moved from the root `AGENTS.md`. What fails
+when each rule is broken: [rule-enforcers.md](rule-enforcers.md). Day-to-day commands:
 [operations-runbook.md](operations-runbook.md).
 
 ## Validation scope
@@ -21,6 +21,14 @@ Verdaccio. Moved from the root `AGENTS.md`. What fails when each rule is broken:
   Daedalus: the aspd route boundary lived in two invariants
   (`aspd-prepared-execution-release` and `asp-toolchain-selection`), and
   amending only one drew a rejection (T-08554 F1).
+
+## Finding code
+
+Prefer live-code discovery over static prose:
+`bun scripts/find-entry-points.ts <topic>` ranks definitions and entry points
+for a topic, and `bun scripts/explain-area.ts <file|dir>` prints an area's
+layer, exports and import edges. Both read the TypeScript packages only; the
+native owner lives in `crates/`, so search it with `rg` as well.
 
 ## Test entry points and timing
 

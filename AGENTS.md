@@ -39,9 +39,6 @@ the agent digest of the published references `/a/hrc-build-deploy-guide` and
   ([docs/fleet-deployment.md](docs/fleet-deployment.md)). "hrcdev" always means
   the Tart VM node on max3.
 
-Dependency flow, pins, and repo-split rules:
-[docs/development-workflow.md](docs/development-workflow.md).
-
 ## Validation
 
 - `just verify` is the landing gate: architecture records plus the cargo leg
@@ -50,20 +47,11 @@ Dependency flow, pins, and repo-split rules:
   only when your change touches Bun/TS code. `just check` runs the structural
   guards.
 - `bun run build` before `bun run typecheck` (TypeScript project references).
-- Prefer live-code discovery over static prose:
-  `bun scripts/find-entry-points.ts <topic>`,
-  `bun scripts/explain-area.ts <file|dir>`.
-- Isolated-daemon smoke:
-  [docs/isolated-daemon-smoke-recipe.md](docs/isolated-daemon-smoke-recipe.md).
-- Rule → enforcer table (what fails when a rule is broken):
-  [docs/rule-enforcers.md](docs/rule-enforcers.md).
-- Enablement lessons:
-  [docs/agent-enablement-changelog.md](docs/agent-enablement-changelog.md#retro-cadence).
-- Changes confined to `.hookignore` paths (`docs/`, `architecture/`, prose)
-  skip the lefthook code suites; a new top-level directory is code until added.
-- A spec change that moves a boundary must amend EVERY active architecture
-  record that states it. Grep the records for the old premise before
-  submitting to Daedalus.
+- Which paths skip the code hooks, amending every record a spec moves, test
+  entry points, live-code discovery scripts, dependency pins and repo-split
+  rules: [docs/development-workflow.md](docs/development-workflow.md). The
+  isolated-daemon smoke, the rule → enforcer table and the enablement lessons
+  are indexed in [docs/README.md](docs/README.md).
 - Before citing any verification, ask what it would print if the thing checked
   were absent. Known commands that answer confidently while checking nothing
   (missing JSON keys, SQL `LIKE` wildcards, piped `git push`, torn `cp` of the
@@ -76,9 +64,7 @@ Enforced by `bun run check:boundaries`: HRC source **must not** import `acp-*`,
 `gateway-discord`, `gateway-ios`, `coordination-substrate`, `wrkq-lib`, or
 `wlearn`; it may import ASP packages by name (resolved via Verdaccio). Tests
 must not assert the other repo's behavior; shared render semantics live in
-`agent-action-render` / `hrc-frame-render`. The mail kicker now lives in
-agent-control-plane as `hrc-mail-injector`
-([docs/operations-runbook.md](docs/operations-runbook.md#mail-kicker-now-in-agent-control-plane)).
+`agent-action-render` / `hrc-frame-render`.
 
 ## Inspecting live HRC through the kernel
 
@@ -92,7 +78,7 @@ the daemon nothing. `hrc runtime list`, `/v1/status`, `/v1/runtimes` and
 under the single store mutex and delay mail and turns for everyone.
 
 - The projection trails the ledger by the kernel's ingest lag (seconds; check
-  `kq.py status`). Grade a turn from `hrc_events`, not from the kernel.
+  `kq.py status`).
 - Seat rows report `active`/`inactive`; busy/ready lives on `hrc.runtime` rows.
 - `seat.summon`, `seat.restart` and `seat.send` are write ops on the same wire;
   `kq.py raw` reaches them. Use them only when you mean to act.
@@ -105,7 +91,7 @@ under the single store mutex and delay mail and turns for everyone.
   regardless of process liveness. Mind it on long tool calls.
 - Changing a daemon's plist env requires `launchctl bootout` + `bootstrap`;
   `restart`/`kickstart` do NOT re-read the plist.
-- Grade a turn from `hrc_events` (`turn.message`, `turn.completed`), not from
-  the start response.
+- Grade a turn from `hrc_events` (`turn.message`, `turn.completed`), never
+  from the start response or the kernel projection.
 - This is a shared worktree with several agents landing at once: capture
   `git push` status unpiped and confirm `git status -sb` shows no `ahead`.
