@@ -9,6 +9,7 @@ tearing down the independently owned broker on owner shutdown.
 import argparse
 import json
 import socket
+import sqlite3
 import subprocess
 import time
 import uuid
@@ -62,26 +63,35 @@ def rows(s):
     return {t: s.rows("SELECT * FROM " + t) for t in tables}
 
 
-def register(s, scope, record):
+def register(s, scope, record, single=True):
+    incarnation = "participant-" + str(uuid.uuid4())
     status, joined = s.http(
         "POST",
         "/v1/participants/register",
         {
             "registrationMode": "direct",
             "requestedSessionRef": scope,
-            "hostIncarnationId": "participant-" + str(uuid.uuid4()),
+            "hostIncarnationId": incarnation,
             "workspaceCwd": str(s.project),
         },
     )
     assert status == 200, joined
+    record["hostIncarnationId"] = incarnation
     record["joined"] = joined
-    record["joinRows"] = rows(s)
-    assert len(record["joinRows"]["runtimes"]) == 0
+    if single:
+        record["joinRows"] = rows(s)
+        assert len(record["joinRows"]["runtimes"]) == 0
     return joined
 
 
-def attach(s, args, scope, joined, record, brokerlog, held):
-    """Real ASP compile, a participant-served broker, attach, ACTIVE."""
+def attach(
+    s, args, scope, joined, record, brokerlog, held, endpoint_name="participant.sock", single=True
+):
+    """Real ASP compile, a participant-served broker, attach, ACTIVE.
+
+    `single=False` attaches one of several participants in the same store and
+    leaves the establishment outcome to the caller.
+    """
     status, placement = s.http(
         "POST",
         "/v1/placements/resolve",
@@ -160,8 +170,12 @@ def attach(s, args, scope, joined, record, brokerlog, held):
     )
     d = json.loads(generated.stdout)
     record["descriptor"] = d
-    endpoint = s.root / "participant.sock"
-    ledger = s.root / "events.ndjson"
+    endpoint = s.root / endpoint_name
+    ledger = s.root / (
+        "events.ndjson" if single else joined["identity"]["attemptId"] + ".ndjson"
+    )
+    if endpoint.exists():
+        endpoint.unlink()
     worker = compiled["executionRelease"]["worker"]
     assert worker["executable"].startswith("/Users/lherron/praesidium/var/aspd/releases/")
     broker = held["broker"] = subprocess.Popen(
@@ -180,6 +194,7 @@ def attach(s, args, scope, joined, record, brokerlog, held):
         stdout=brokerlog,
         stderr=brokerlog,
     )
+    held.setdefault("brokers", []).append(broker)
     for _ in range(300):
         assert broker.poll() is None, args.owner + " broker exited"
         if endpoint.exists():
@@ -197,11 +212,17 @@ def attach(s, args, scope, joined, record, brokerlog, held):
     assert record["attach"][0] == 200, record["attach"]
     for _ in range(1200):
         snapshot = rows(s)
-        attempt = snapshot["participant_registration_attempts"][0]
+        attempt = next(
+            a
+            for a in snapshot["participant_registration_attempts"]
+            if a["attempt_id"] == joined["identity"]["attemptId"]
+        )
         if attempt["establishment_work_state"] in ["completed", "exhausted"]:
             break
         time.sleep(0.1)
     record["durable"] = snapshot
+    if not single:
+        return identity, broker, endpoint, ledger, body, snapshot
     assert (
         attempt["state"] == "ACTIVE" and attempt["establishment_work_state"] == "completed"
     ), attempt
@@ -385,10 +406,138 @@ def delivery(s, args, scope, record, brokerlog, held):
     record["brokerAliveAfterShutdown"] = broker.poll() is None
 
 
+RESPAWN_CASES = (
+    "advance",
+    "epoch-not-advancing",
+    "predecessor-not-absorbed",
+    "different-binding",
+)
+
+
+def respawn(s, args, prefix, record, brokerlog, held):
+    """Same-incarnation seat.respawn onto the participant's live runtime (T-11996).
+
+    The host keeps its incarnation and names its predecessor exactly while the
+    old broker is gone but its runtime is not settled: a bridge successor on
+    the same runtime at the next attach epoch. Establishment must advance that
+    runtime to the new invocation, so a turn then lands on it.
+
+    Failure modes: the reused runtime refused as a bookkeeping conflict (the
+    T-11996 incident), so the seat never establishes; an advance that accepts a
+    runtime whose committed epoch it does not exceed, whose predecessor is not
+    absorbed, or which another binding wrote (one injected row each, the three
+    controls); a deterministic conflict retried to exhaustion instead of
+    answered once; a respawn that mints a fresh runtime instead of bridging.
+    """
+    owner = s.up(args.owner, "respawn-initial")
+    cases = record["cases"] = {}
+    for name in RESPAWN_CASES:
+        c = cases[name] = {"scope": prefix + "respawn-" + name}
+        joined = register(s, c["scope"], c, single=False)
+        identity, broker, *_ = attach(
+            s, args, c["scope"], joined, c, brokerlog, held, name + ".sock", single=False
+        )
+        c["first"] = {**identity, "attemptId": joined["identity"]["attemptId"]}
+        c["firstBroker"] = broker
+        attempt = s.rows(
+            "SELECT state,establishment_work_state FROM participant_registration_attempts WHERE attempt_id=?",
+            (c["first"]["attemptId"],),
+        )[0]
+        assert attempt == {"state": "ACTIVE", "establishment_work_state": "completed"}, attempt
+    for c in cases.values():
+        s.wait(
+            lambda: s.rows(
+                "SELECT 1 FROM hrc_events WHERE event_kind='turn.completed' AND runtime_id=?",
+                (c["first"]["runtimeId"],),
+            ),
+            180,
+            "participant initial turn " + c["scope"],
+        )
+    record["beforeRespawn"] = rows(s)
+    # seat.respawn: the child that served the broker exits. With the owner down
+    # nothing settles the loss first, so the predecessor runtime stays live in
+    # the store while its transport is dead, as foundry's respawn found it.
+    s.down(owner)
+    for name, c in cases.items():
+        broker = c.pop("firstBroker")
+        broker.terminate()
+        broker.wait(timeout=20)
+        # The respawning child takes its harness with it. Its presentation
+        # server is keyed by runtime, which the bridge successor reuses.
+        hosting = s.rows(
+            "SELECT realized_hosting_json FROM participant_registration_attempts WHERE attempt_id=?",
+            (c["first"]["attemptId"],),
+        )[0]["realized_hosting_json"]
+        tui = json.loads(hosting)["presentation"]["tuiWindow"]
+        assert Path(tui["socketPath"]).is_relative_to(s.root / "run"), tui
+        subprocess.run(
+            ["tmux", "-S", tui["socketPath"], "kill-server"], capture_output=True, timeout=5
+        )
+        endpoint = s.root / (name + ".sock")
+        if endpoint.exists():
+            endpoint.unlink()
+    owner = s.up(args.owner, "respawn")
+    for c in cases.values():
+        first = c["first"]
+        c["respawn"] = s.http(
+            "POST",
+            "/v1/participants/register",
+            {
+                "registrationMode": "direct",
+                "requestedSessionRef": c["scope"],
+                "hostIncarnationId": c["hostIncarnationId"],
+                "workspaceCwd": str(s.project),
+                "expectedPredecessor": {
+                    "hostIncarnationId": c["hostIncarnationId"],
+                    "runtimeId": first["runtimeId"],
+                    "generation": first["generation"],
+                },
+            },
+        )
+        assert c["respawn"][0] == 200, c["respawn"]
+    # Controls: one durable row each that the advance must refuse.
+    with sqlite3.connect(s.db_path, timeout=30) as db:
+        db.execute(
+            "UPDATE runtimes SET runtime_state_json=json_set(runtime_state_json,'$.participantRegistration.attachEpoch',2) WHERE runtime_id=?",
+            (cases["epoch-not-advancing"]["first"]["runtimeId"],),
+        )
+        db.execute(
+            "UPDATE participant_registration_attempts SET state='DETACHED' WHERE attempt_id=?",
+            (cases["predecessor-not-absorbed"]["first"]["attemptId"],),
+        )
+        # The schema itself refuses two bindings on one runtime, so this
+        # control lifts that trigger for its single update; the advance check
+        # is the second line behind it.
+        (trigger,) = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='participant_attempt_runtime_owner_update'"
+        ).fetchone()
+        db.execute("DROP TRIGGER participant_attempt_runtime_owner_update")
+        db.execute(
+            "UPDATE participant_registration_attempts SET host_binding_id='participant-binding-t11996-other' WHERE attempt_id=?",
+            (cases["different-binding"]["first"]["attemptId"],),
+        )
+        db.execute(trigger)
+    record["injected"] = rows(s)
+    for name, c in cases.items():
+        second = c["second"] = {}
+        attach(
+            s, args, c["scope"], c["respawn"][1], second, brokerlog, held, name + ".sock", single=False
+        )
+    # The respawned broker runs no initial prompt of its own (every owner);
+    # an addressed turn is what proves the advanced invocation serves work.
+    advance = cases["advance"]
+    status, reply = deliver(
+        s, advance["scope"], advance["first"]["hostSessionId"], "steer", "RESPAWNED", True
+    )
+    advance["delivery"] = [status, reply]
+    record["final"] = rows(s)
+    s.down(owner)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--owner", choices=["bun", "native"], required=True)
-    p.add_argument("--mode", choices=["epr", "delivery"], default="epr")
+    p.add_argument("--mode", choices=["epr", "delivery", "respawn"], default="epr")
     for key in ("binary", "installed-release", "aspd-socket", "scratch-root", "artifacts"):
         p.add_argument("--" + key, type=Path, required=True)
     args = p.parse_args()
@@ -408,7 +557,10 @@ def main():
     try:
         s.init_substrate()
         (s.root / "run/btmux").mkdir()
-        (delivery if args.mode == "delivery" else epr)(s, args, scope, record, brokerlog, held)
+        if args.mode == "respawn":
+            respawn(s, args, prefix, record, brokerlog, held)
+        else:
+            (delivery if args.mode == "delivery" else epr)(s, args, scope, record, brokerlog, held)
         record["pass"] = True
     finally:
         record["observed"] = rows(s)
@@ -428,10 +580,10 @@ def main():
                 subprocess.run(
                     ["tmux", "-S", tui["socketPath"], "kill-server"], capture_output=True, timeout=5
                 )
-        broker = held.get("broker")
-        if broker and broker.poll() is None:
-            broker.terminate()
-            broker.wait(timeout=20)
+        for broker in held.get("brokers", []):
+            if broker.poll() is None:
+                broker.terminate()
+                broker.wait(timeout=20)
         brokerlog.close()
     print(json.dumps({"owner": args.owner, "pass": True, "artifacts": str(s.artifacts)}))
 

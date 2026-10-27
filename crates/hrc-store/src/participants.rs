@@ -15,6 +15,127 @@ pub enum ParticipantJoin {
         attempt: Value,
     },
 }
+/// A refusal that no retry can change: the durable rows disagree, and nothing
+/// the scheduler waits for will make them agree. Establishment work exhausts
+/// on its first answer instead of spending its whole budget (T-10741).
+#[derive(Debug)]
+pub struct ParticipantBookkeepingConflict(pub String);
+impl std::fmt::Display for ParticipantBookkeepingConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for ParticipantBookkeepingConflict {}
+fn bookkeeping_conflict(detail: String) -> anyhow::Error {
+    ParticipantBookkeepingConflict(format!(
+        "participant runtime bookkeeping conflicts with the committed attempt: {detail}"
+    ))
+    .into()
+}
+/// JS template rendering of a row value: absent is `undefined`.
+fn js(v: &Value) -> String {
+    match v {
+        Value::Null => "undefined".into(),
+        Value::String(s) => s.clone(),
+        v => v.to_string(),
+    }
+}
+/// assertExistingParticipantRuntime: `Ok(false)` is the same attempt,
+/// `Ok(true)` a same-binding, higher-epoch successor that advances the runtime.
+fn advances_existing_runtime(
+    db: &Connection,
+    runtime: &Value,
+    reg: &Value,
+    attempt: &Value,
+    descriptor: &Value,
+) -> Result<bool> {
+    if runtime["status"] == "terminated" {
+        return Err(bookkeeping_conflict(format!(
+            "runtime {} is terminated ({})",
+            js(&runtime["runtime_id"]),
+            runtime["lifecycle_terminal_reason"]
+                .as_str()
+                .unwrap_or("reason unrecorded")
+        )));
+    }
+    let conflicts: Vec<String> = [
+        ("hostSessionId", "host_session_id"),
+        ("scopeRef", "scope_ref"),
+        ("laneRef", "lane_ref"),
+        ("generation", "generation"),
+    ]
+    .iter()
+    .filter(|(_, column)| runtime[*column] != reg[*column])
+    .map(|(field, column)| {
+        format!(
+            "{field} runtime={} registration={}",
+            js(&runtime[*column]),
+            js(&reg[*column])
+        )
+    })
+    .collect();
+    if !conflicts.is_empty() {
+        return Err(bookkeeping_conflict(conflicts.join("; ")));
+    }
+    if runtime["active_operation_id"] == attempt["operation_id"]
+        && runtime["active_invocation_id"] == attempt["invocation_id"]
+        && runtime["selected_profile_hash"] == descriptor["descriptorHash"]
+    {
+        return Ok(false);
+    }
+    // The prior invocation is immutable evidence that the shared runtime
+    // belongs to the same binding; a larger committed attach epoch is the
+    // only operation allowed to advance it.
+    let prior = if !runtime["active_invocation_id"].is_null()
+        && reg["continuity_policy"] == "host-incarnation"
+        && !attempt["host_binding_id"].is_null()
+    {
+        runtime["runtime_state_json"]
+            .as_str()
+            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+            .map(|state| state["participantRegistration"].clone())
+            .unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
+    let (prior_attempt, prior_epoch) = (&prior["attemptId"], &prior["attachEpoch"]);
+    if prior_attempt.is_null() || !prior_epoch.is_number() {
+        return Err(bookkeeping_conflict(format!(
+            "runtime {} names no prior participant attempt to advance from (activeInvocationId={})",
+            js(&runtime["runtime_id"]),
+            runtime["active_invocation_id"].as_str().unwrap_or("none")
+        )));
+    }
+    if attempt["attach_epoch"].as_f64() <= prior_epoch.as_f64() {
+        return Err(bookkeeping_conflict(format!(
+            "attachEpoch {} does not advance the runtime's committed epoch {prior_epoch}",
+            js(&attempt["attach_epoch"])
+        )));
+    }
+    let predecessor = db
+        .query_row(
+            "SELECT * FROM participant_registration_attempts WHERE attempt_id=?",
+            [prior_attempt
+                .as_str()
+                .map_or_else(|| prior_attempt.to_string(), str::to_owned)],
+            raw_row,
+        )
+        .optional()?;
+    if !predecessor.is_some_and(|p| {
+        p["host_binding_id"] == attempt["host_binding_id"]
+            && p["invocation_id"] == runtime["active_invocation_id"]
+            && p["operation_id"] == runtime["active_operation_id"]
+            && ["ABANDONED", "TERMINAL", "SUPERSEDED"]
+                .iter()
+                .any(|s| p["state"] == *s)
+    }) {
+        return Err(ParticipantBookkeepingConflict(
+            "participant runtime advance lacks an absorbing same-binding predecessor".into(),
+        )
+        .into());
+    }
+    Ok(true)
+}
 fn uuid(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4())
 }
@@ -401,6 +522,7 @@ impl Store {
         attempt: &Value,
         error: &str,
         delay_ms: i64,
+        max_attempts: i64,
     ) -> Result<()> {
         let now = timestamp();
         let next = self.sqlite.query_row(
@@ -408,7 +530,7 @@ impl Store {
             params![now, delay_ms as f64 / 1000.0],
             |r| r.get::<_, String>(0),
         )?;
-        self.sqlite.execute("UPDATE participant_registration_attempts SET establishment_attempt_count=establishment_attempt_count+1,establishment_work_state=CASE WHEN establishment_attempt_count+1>=5 THEN 'exhausted' ELSE 'retry_wait' END,establishment_next_attempt_at=CASE WHEN establishment_attempt_count+1>=5 THEN NULL ELSE ? END,establishment_last_error=?,updated_at=? WHERE attempt_id=? AND attach_epoch=? AND establishment_work_state IN ('pending','retry_wait')",params![next,error,now,attempt["attempt_id"].as_str(),attempt["attach_epoch"].as_i64()])?;
+        self.sqlite.execute("UPDATE participant_registration_attempts SET establishment_attempt_count=establishment_attempt_count+1,establishment_work_state=CASE WHEN establishment_attempt_count+1>=?1 THEN 'exhausted' ELSE 'retry_wait' END,establishment_next_attempt_at=CASE WHEN establishment_attempt_count+1>=?1 THEN NULL ELSE ?2 END,establishment_last_error=?3,updated_at=?4 WHERE attempt_id=?5 AND attach_epoch=?6 AND establishment_work_state IN ('pending','retry_wait')",params![max_attempts,next,error,now,attempt["attempt_id"].as_str(),attempt["attach_epoch"].as_i64()])?;
         Ok(())
     }
     pub fn participant_broker_graph(
@@ -465,19 +587,41 @@ impl Store {
         );
         let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":attempt["runtime_id"],"hostSessionId":reg["host_session_id"],"generation":reg["generation"],"status":"starting","lifecycleOwner":"external","participantRegistration":{"registrationId":reg["registration_id"],"attemptId":attempt["attempt_id"],"attachEpoch":attempt["attach_epoch"],"join":reg["join_direction"]},"broker":{"protocolVersion":hello["protocolVersion"],"endpoint":realized["endpoint"],"substrate":realized["substrate"],"presentation":realized["presentation"]},"invocation":{"invocationId":attempt["invocation_id"],"state":"ready","driver":descriptor["brokerDriver"]},"control":{"mode":"broker-ipc","brokerAttached":false}});
         let tx = self.sqlite.unchecked_transaction()?;
-        let existing=tx.query_row("SELECT host_session_id,scope_ref,lane_ref,generation,status,active_operation_id,active_invocation_id,selected_profile_hash FROM runtimes WHERE runtime_id=?",[attempt["runtime_id"].as_str()],raw_row).optional()?;
+        let existing = tx
+            .query_row(
+                "SELECT * FROM runtimes WHERE runtime_id=?",
+                [attempt["runtime_id"].as_str()],
+                raw_row,
+            )
+            .optional()?;
         if let Some(existing) = existing {
-            anyhow::ensure!(
-                existing["status"] != "terminated"
-                    && existing["host_session_id"] == reg["host_session_id"]
-                    && existing["scope_ref"] == reg["scope_ref"]
-                    && existing["lane_ref"] == reg["lane_ref"]
-                    && existing["generation"] == reg["generation"]
-                    && existing["active_operation_id"] == attempt["operation_id"]
-                    && existing["active_invocation_id"] == attempt["invocation_id"]
-                    && existing["selected_profile_hash"] == descriptor["descriptorHash"],
-                "participant runtime bookkeeping conflicts with the committed attempt"
-            );
+            let advance = advances_existing_runtime(&tx, &existing, reg, attempt, &descriptor)?;
+            let mut runtime_state = existing["runtime_state_json"]
+                .as_str()
+                .map(serde_json::from_str::<Value>)
+                .transpose()?
+                .unwrap_or_else(|| json!({}));
+            let owner_drift = runtime_state["lifecycleOwner"] != "external";
+            if advance {
+                runtime_state["status"] = "starting".into();
+                runtime_state["participantRegistration"] = state["participantRegistration"].clone();
+                runtime_state["invocation"] = state["invocation"].clone();
+            }
+            if owner_drift {
+                runtime_state["lifecycleOwner"] = "external".into();
+            }
+            if advance {
+                tx.execute("UPDATE runtimes SET active_operation_id=?,active_invocation_id=?,selected_profile_hash=?,status='starting',status_changed_at=?,runtime_state_json=?,updated_at=? WHERE runtime_id=?",params![attempt["operation_id"].as_str(),attempt["invocation_id"].as_str(),descriptor["descriptorHash"].as_str(),now,runtime_state.to_string(),now,attempt["runtime_id"].as_str()])?;
+            } else if owner_drift {
+                tx.execute(
+                    "UPDATE runtimes SET runtime_state_json=?,updated_at=? WHERE runtime_id=?",
+                    params![
+                        runtime_state.to_string(),
+                        now,
+                        attempt["runtime_id"].as_str()
+                    ],
+                )?;
+            }
         } else {
             tx.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,harness,provider,status,status_changed_at,supports_inflight_input,controller_kind,active_operation_id,active_invocation_id,selected_profile_hash,runtime_state_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'starting',?,1,'harness-broker',?,?,?,?,?,?)",params![attempt["runtime_id"].as_str(),reg["host_session_id"].as_str(),reg["scope_ref"].as_str(),reg["lane_ref"].as_str(),reg["generation"].as_i64(),transport,harness,provider,now,attempt["operation_id"].as_str(),attempt["invocation_id"].as_str(),descriptor["descriptorHash"].as_str(),state.to_string(),now,now])?;
         }

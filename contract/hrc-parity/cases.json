@@ -378,6 +378,15 @@
       ],
       "requiredInP0": false
     },
+    "n2-participant-respawn": {
+      "assertionIds": [
+        "same-incarnation-respawn-bridges-live-runtime",
+        "advance-activates-reused-runtime-and-delivers",
+        "non-advancing-unabsorbed-or-foreign-predecessor-refused-once",
+        "outcomes-match-bun"
+      ],
+      "requiredInP0": false
+    },
     "n4-history": {
       "assertionIds": [
         "replications-survive-owner-change",

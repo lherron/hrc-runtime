@@ -29,7 +29,7 @@ pub use statement_telemetry::{SlowStatement, Sqlite};
 mod targets;
 pub use metadata::{MetadataWrite, validate_metadata};
 pub use monitor_read::{MonitorFilters, escape_like, event_row, parse_task_id};
-pub use participants::ParticipantJoin;
+pub use participants::{ParticipantBookkeepingConflict, ParticipantJoin};
 
 pub fn canonical_lane(lane: &str) -> String {
     if lane == "main" || lane == "lane:main" {

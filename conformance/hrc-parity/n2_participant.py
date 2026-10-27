@@ -246,3 +246,141 @@ def compare_delivery(args, checks):
         "cases": [{"id": c["id"], "pass": c["pass"]} for c in checks],
         "behaviorQualified": all(c["pass"] for c in checks),
     }
+
+
+RESPAWN_CASES = ("advance", "epoch-not-advancing", "predecessor-not-absorbed", "different-binding")
+RESPAWN_REFUSALS = {
+    "epoch-not-advancing": "participant runtime bookkeeping conflicts with the committed attempt:"
+    " attachEpoch 2 does not advance the runtime's committed epoch 2",
+    "predecessor-not-absorbed": "participant runtime advance lacks an absorbing same-binding predecessor",
+    "different-binding": "participant runtime advance lacks an absorbing same-binding predecessor",
+}
+
+
+def _respawn_view(c, final):
+    """One case's replies and durable outcome, identities replaced by role."""
+    import re
+
+    first, second = c["first"], c["respawn"][1]["identity"]
+    runtime = [r for r in final["runtimes"] if r["scope_ref"] == c["scope"]]
+    attempt = next(
+        a for a in final["participant_registration_attempts"] if a["attempt_id"] == second["attemptId"]
+    )
+    state = json.loads(runtime[0]["runtime_state_json"]) if runtime else {}
+    view = {
+        "respawn": c["respawn"],
+        "runtimes": len(runtime),
+        "status": runtime[0]["status"] if runtime else None,
+        "activeInvocation": runtime[0]["active_invocation_id"] if runtime else None,
+        "activeOperation": runtime[0]["active_operation_id"] if runtime else None,
+        "committed": state.get("participantRegistration"),
+        "lifecycleOwner": state.get("lifecycleOwner"),
+        "attempt": {
+            k: attempt[k]
+            for k in (
+                "state",
+                "establishment_work_state",
+                "establishment_attempt_count",
+                "establishment_last_error",
+            )
+        },
+        "delivery": c.get("delivery"),
+    }
+    text = json.dumps(view, sort_keys=True)
+    for role, ident in (("first", first), ("second", second)):
+        for key in ("attemptId", "invocationId", "operationId", "requestId"):
+            text = text.replace(ident[key], "<" + role + "." + key + ">")
+    for key in ("registrationId", "runtimeId"):
+        text = text.replace(second[key], "<" + key + ">")
+    text = text.replace(first["hostSessionId"], "<hostSessionId>")
+    text = re.sub(r"run-[0-9a-f-]{36}", "<runId>", text)
+    text = re.sub(r"submission_<second.invocationId>_\d+", "<submissionId>", text)
+    text = re.sub(r"turn_<second.invocationId>_\d+", "<turnId>", text)
+    view = json.loads(text)
+    observation = (view["delivery"] or [None, {}])[1].get("observation")
+    if observation:
+        observation["lifecycle"]["fromSeq"] = "<seq>"
+        if "broker" in observation:
+            observation["broker"]["afterSeq"] = "<seq>"
+    return view
+
+
+def compare_respawn(args, checks):
+    """T-11996: a same-incarnation respawn advances the reused participant runtime."""
+
+    def check(name, passed, reason, code=1):
+        checks.append({"id": name, "pass": bool(passed), "reason": reason, "failureCode": code})
+
+    views = {}
+    for owner, directory in (("bun", args.baseline), ("native", args.candidate)):
+        d = json.loads((Path(directory) / (owner + ".json")).read_text())
+        check(owner + ":workflow-complete", d.get("pass") is True, "the respawn workflow must finish")
+        final = d.get("final") or d["observed"]
+        views[owner] = {}
+        for name in RESPAWN_CASES:
+            c = d["cases"].get(name)
+            if not c or "respawn" not in c:
+                check(owner + ":" + name + ":bridged", False, "case did not reach the respawn")
+                continue
+            first, (status, body) = c["first"], c["respawn"]
+            second = body["identity"]
+            check(
+                owner + ":" + name + ":bridged",
+                status == 200
+                and second["runtimeId"] == first["runtimeId"]
+                and second["attachEpoch"] == 2
+                and body["hostSessionId"] == first["hostSessionId"],
+                "the same-incarnation respawn bridges onto the live runtime at the next epoch: "
+                + json.dumps(c["respawn"]),
+            )
+            runtime = next(r for r in final["runtimes"] if r["runtime_id"] == first["runtimeId"])
+            attempt = next(
+                a
+                for a in final["participant_registration_attempts"]
+                if a["attempt_id"] == second["attemptId"]
+            )
+            if name == "advance":
+                committed = json.loads(runtime["runtime_state_json"])["participantRegistration"]
+                check(
+                    owner + ":advance:established",
+                    attempt["state"] == "ACTIVE"
+                    and attempt["establishment_work_state"] == "completed"
+                    and runtime["status"] != "terminated"
+                    and runtime["active_invocation_id"] == second["invocationId"]
+                    and runtime["active_operation_id"] == second["operationId"]
+                    and committed["attemptId"] == second["attemptId"]
+                    and committed["attachEpoch"] == 2,
+                    "the reused runtime becomes active on the respawned invocation: "
+                    + json.dumps([attempt, runtime], default=str),
+                )
+                status, reply = c.get("delivery") or [None, {}]
+                runs = {r["run_id"]: r for r in final["runs"]}
+                check(
+                    owner + ":advance:delivered",
+                    status == 200
+                    and reply.get("runtimeId") == first["runtimeId"]
+                    and reply.get("startIdentity", {}).get("invocationId") == second["invocationId"]
+                    and runs.get(reply.get("runId"), {}).get("status") == "completed",
+                    "a turn delivers on the new invocation of the same runtime: " + json.dumps(reply),
+                )
+            else:
+                check(
+                    owner + ":" + name + ":refused",
+                    attempt["establishment_work_state"] == "exhausted"
+                    and attempt["establishment_attempt_count"] == 1
+                    and attempt["establishment_last_error"] == RESPAWN_REFUSALS[name]
+                    and runtime["active_invocation_id"] == first["invocationId"],
+                    "the advance is refused once, by name, and the runtime keeps its invocation: "
+                    + json.dumps(attempt, default=str),
+                )
+            views[owner][name] = _respawn_view(c, final)
+    check(
+        "compare:respawn-outcomes",
+        views["bun"] == views["native"],
+        json.dumps(views, sort_keys=True),
+    )
+    return {
+        "suite": "n2-participant-respawn",
+        "cases": [{"id": c["id"], "pass": c["pass"]} for c in checks],
+        "behaviorQualified": all(c["pass"] for c in checks),
+    }

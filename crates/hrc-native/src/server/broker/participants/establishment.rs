@@ -576,10 +576,20 @@ async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
             Err(error) => {
                 let delays = [100, 250, 500, 1000];
                 let count = a["establishment_attempt_count"].as_u64().unwrap_or(0) as usize;
+                // A deterministic conflict exhausts on its first answer.
+                let max_attempts = if error
+                    .downcast_ref::<hrc_store::ParticipantBookkeepingConflict>()
+                    .is_some()
+                {
+                    1
+                } else {
+                    5
+                };
                 server.store.lock().unwrap().participant_work_failed(
                     &a,
                     &error.to_string(),
                     delays[count.min(3)],
+                    max_attempts,
                 )?;
                 super::super::stderr_json(
                     "warn",
