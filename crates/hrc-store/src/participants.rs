@@ -300,6 +300,27 @@ impl Store {
     pub fn participant_latest_attempt(&self, registration_id: &str) -> Result<Option<Value>> {
         latest(&self.sqlite, registration_id)
     }
+    /// getRegistrationByScopeRef: the registration addressed by a session's scope.
+    pub fn participant_registration_by_scope(&self, scope: &str) -> Result<Option<Value>> {
+        Ok(self
+            .sqlite
+            .query_row(
+                "SELECT * FROM participant_registrations WHERE scope_ref=?",
+                [scope],
+                raw_row,
+            )
+            .optional()?)
+    }
+    pub fn participant_host_binding(&self, id: &str) -> Result<Option<Value>> {
+        Ok(self
+            .sqlite
+            .query_row(
+                "SELECT * FROM participant_host_bindings WHERE binding_id=?",
+                [id],
+                raw_row,
+            )
+            .optional()?)
+    }
     pub fn participant_attempt(&self, id: &str) -> Result<Option<Value>> {
         Ok(self
             .sqlite

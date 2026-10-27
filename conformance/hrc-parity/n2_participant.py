@@ -142,3 +142,107 @@ def compare(args, checks):
         "cases": [{"id": c["id"], "pass": c["pass"]} for c in checks],
         "behaviorQualified": all(c["pass"] for c in checks),
     }
+
+
+DOORS = ("steer", "turn", "literal")
+
+
+def _normalized(d):
+    """Identities and seq cursors replaced by role names; everything else kept."""
+    import re
+
+    ident = d["identity"]
+    text = json.dumps({k: d[k] for k in ("pending", "active", "absorbing")}, sort_keys=True)
+    for key in ("registrationId", "attemptId", "runtimeId", "invocationId", "hostSessionId"):
+        text = text.replace(ident[key], "<" + key + ">")
+    text = re.sub(r"run-[0-9a-f-]{36}", "<runId>", text)
+    view = json.loads(text)
+    for phase in view.values():
+        for status, body in phase.values():
+            observation = body.get("observation") if isinstance(body, dict) else None
+            if observation:
+                observation["lifecycle"]["fromSeq"] = "<seq>"
+                if "broker" in observation:
+                    observation["broker"]["afterSeq"] = "<seq>"
+    return view
+
+
+def compare_delivery(args, checks):
+    """T-11960: addressed work into a participant-served scope, every door."""
+
+    def check(name, passed, reason, code=1):
+        checks.append({"id": name, "pass": bool(passed), "reason": reason, "failureCode": code})
+
+    views, traces = {}, {}
+    for owner, directory in (("bun", args.baseline), ("native", args.candidate)):
+        d = json.loads((Path(directory) / (owner + ".json")).read_text())
+        check(owner + ":workflow-complete", d.get("pass") is True, "the delivery workflow must finish")
+        runtime = d["runtimeId"]
+        for door in DOORS:
+            status, body = d["pending"][door]
+            reason = (body.get("error") or {}).get("detail", {}).get("reason")
+            check(
+                owner + ":pending:" + door,
+                status == 503
+                and (
+                    reason == "participant_attachment_pending"
+                    if door != "literal"
+                    # No participant runtime yet: Bun's literal falls back to
+                    # the latest interactive runtime, and there is none.
+                    else body["error"]["message"] == "no live literal-capable runtime is currently bound"
+                ),
+                "a registered, unattached participant keeps its work pending: " + json.dumps(body),
+            )
+            status, body = d["active"][door]
+            check(
+                owner + ":active:" + door,
+                status == 200 and body.get("runtimeId") == runtime and body.get("runId"),
+                "ACTIVE delivery lands in the attempt's own runtime: " + json.dumps(body),
+            )
+            status, body = d["absorbing"][door]
+            reason = (body.get("error") or {}).get("detail", {}).get("reason")
+            check(
+                owner + ":absorbing:" + door,
+                status == 503 and reason == "participant_attempt_absorbing",
+                "an absorbing attempt never serves addressed work: " + json.dumps(body),
+            )
+        check(
+            owner + ":pending:no-birth",
+            not d["pendingRows"]["runtimes"] and not d["pendingRows"]["runs"],
+            "pending work never births a substitute runtime",
+        )
+        runs = d["activeRows"]["runs"]
+        check(
+            owner + ":active:one-writer",
+            len(d["final"]["runtimes"]) == 1
+            and len(runs) == len(DOORS)
+            and all(r["runtime_id"] == runtime and r["status"] == "completed" for r in runs),
+            "every door's run completes in the one participant runtime: "
+            + json.dumps([(r["runtime_id"], r["status"]) for r in runs]),
+        )
+        check(
+            owner + ":broker-survives",
+            d["brokerAliveAfterShutdown"] is True,
+            "owner shutdown leaves the externally owned broker alive",
+        )
+        views[owner] = _normalized(d)
+        traces[owner] = [
+            json.loads(e["payload_json"])
+            for e in d["final"]["hrc_events"]
+            if e["event_kind"] == "submission.admission"
+        ]
+    check(
+        "compare:admission-traces",
+        len(traces["bun"]) == 8 and traces["bun"] == traces["native"],
+        json.dumps(traces, sort_keys=True),
+    )
+    check(
+        "compare:delivery-replies",
+        views["bun"] == views["native"],
+        json.dumps(views, sort_keys=True),
+    )
+    return {
+        "suite": "n2-participant-delivery",
+        "cases": [{"id": c["id"], "pass": c["pass"]} for c in checks],
+        "behaviorQualified": all(c["pass"] for c in checks),
+    }

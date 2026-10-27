@@ -13,6 +13,7 @@ use rusqlite::params;
 use serde_json::{Value, json};
 use std::time::Duration;
 
+#[derive(Clone, Copy)]
 pub struct Options<'a> {
     pub run_id: &'a str,
     pub prompt: &'a str,
@@ -516,6 +517,20 @@ fn input_failure(
 /// executeAdmittedTurn (format1): the live seat, else a birth. Returns the
 /// enriched route receipt.
 pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Value, ApiError> {
+    // R7.6: a participant resolves BEFORE reuse or birth, at the route every
+    // door shares, so no door births a substitute at a participant address.
+    if let Some(target) = crate::server::participants::delivery::target(server, &plan.session).await
+    {
+        let rt = target?;
+        // The doors wait at their own projection layer; the executor only mints
+        // the submission identity (deliverIntoAttachedParticipant).
+        let o = Options {
+            wait_for_completion: false,
+            ..*o
+        };
+        let body = input_turn(server, plan, &rt, &o).await?;
+        return enrich(server, body, plan);
+    }
     let host = plan.session["hostSessionId"]
         .as_str()
         .unwrap_or("")

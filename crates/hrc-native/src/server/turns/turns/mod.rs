@@ -766,8 +766,20 @@ pub async fn literal_flush(
         attach: None,
         headless: false,
     };
+    // A participant flush joins its reconnect and delivers into the runtime
+    // its linkage names (plan.participant?.runtime ?? runtime).
+    let participant = match crate::server::participants::delivery::target(server, &plan.session)
+        .await
+        .transpose()
+    {
+        Ok(rt) => rt,
+        Err(error) => {
+            admission::record(server, &req, &mut trace, Outcome::PossibleWrite(&error));
+            return Err(error);
+        }
+    };
     // enrichDispatchTurnResponse only: no public receipt projection here.
-    let body = match route::deliver(server, &plan, rt, &options)
+    let body = match route::deliver(server, &plan, participant.as_ref().unwrap_or(rt), &options)
         .await
         .and_then(|b| {
             if b["runId"].is_string() {

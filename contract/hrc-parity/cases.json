@@ -369,6 +369,15 @@
       ],
       "requiredInP0": false
     },
+    "n2-participant-delivery": {
+      "assertionIds": [
+        "pending-attachment-refused-typed-without-birth",
+        "active-steer-dispatch-literal-into-own-runtime",
+        "absorbing-attempt-refused-typed",
+        "replies-and-admission-traces-match-bun"
+      ],
+      "requiredInP0": false
+    },
     "n4-history": {
       "assertionIds": [
         "replications-survive-owner-change",

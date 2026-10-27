@@ -3,6 +3,7 @@
 //! are recorded as `submission.admission` once the route has answered.
 use crate::server::{
     ApiError, Shared,
+    participants::delivery::{self, Delivery},
     projection::{db, events},
 };
 use axum::http::StatusCode;
@@ -395,32 +396,57 @@ async fn steps(
     }
     let lazy = matches!(&req.target, Target::Lazy { .. });
     // participant-resolution
-    let participant = {
-        let db = server.store.lock().unwrap();
-        db.sqlite
-            .query_row(
-                "SELECT registration_id FROM participant_registrations WHERE scope_ref=? LIMIT 1",
-                [session["scopeRef"].as_str()],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(anyhow::Error::from)?
+    let participant = if lazy {
+        // No session yet: a participant address is never substituted by a birth.
+        let registered = {
+            let db = server.store.lock().unwrap();
+            db.participant_registration_by_scope(session["scopeRef"].as_str().unwrap_or(""))?
+                .is_some()
+        };
+        if registered {
+            trace.push("refused");
+            return Err(unavailable(
+                "participant addresses cannot be substituted by a birth",
+                json!({"reason":"participant_substitution"}),
+            ));
+        }
+        None
+    } else {
+        delivery::resolve(server, &session).inspect_err(|_| trace.push("refused"))?
     };
-    if let Some(registration) = participant {
-        trace.push("refused");
-        return Err(unavailable(
-            "participant delivery is not yet served natively",
-            json!({"scopeRef":session["scopeRef"],"registrationId":registration,"reason":"participant_native_unsupported"}),
-        ));
+    match &participant {
+        None => trace.push("skipped:not-applicable"),
+        Some(_) if req.fresh_context == Some(true) => {
+            trace.push("refused");
+            return Err(unavailable(
+                "fresh-context rotation is not supported for an externally owned participant address",
+                json!({"scopeRef":session["scopeRef"],"laneRef":session["laneRef"],"reason":"participant_rotation_unsupported","code":"runtime_unavailable"}),
+            ));
+        }
+        Some(Delivery::Refused {
+            kind,
+            reason,
+            detail,
+        }) => {
+            trace.push("refused");
+            return Err(delivery::refusal(&session, kind, reason, detail));
+        }
+        // A reconnect is route work, joined where the turn is delivered.
+        Some(_) => trace.push("passed"),
     }
-    trace.push("skipped:not-applicable");
     // ownership-proof
     match req.established.filter(|_| !lazy) {
         None => trace.push("skipped:not-carried"),
         Some(carried) => {
-            let rt = {
-                let db = server.store.lock().unwrap();
-                active_broker_runtime(&db.sqlite, session["hostSessionId"].as_str().unwrap_or(""))?
+            let rt = match participant.as_ref().and_then(Delivery::runtime) {
+                Some(rt) => Some(rt.clone()),
+                None => {
+                    let db = server.store.lock().unwrap();
+                    active_broker_runtime(
+                        &db.sqlite,
+                        session["hostSessionId"].as_str().unwrap_or(""),
+                    )?
+                }
             };
             if req.intent == "steer"
                 || rt
@@ -473,39 +499,14 @@ async fn steps(
     if let Target::Lazy { materialize, .. } = &req.target {
         session = materialize().await.inspect_err(|_| trace.push("refused"))?;
     }
-    if req.intent != "steer" {
-        let trigger = if req.door == "submission" {
-            format!("submission-{}", req.intent)
-        } else {
-            "dispatch-turn".to_owned()
-        };
-        session = crate::server::context::auto_rotate(
-            server,
-            session,
-            req.allow_stale_generation,
-            &trigger,
-        )
-        .await
-        .inspect_err(|_| trace.push("refused"))?;
-    }
-    if req.fresh_context == Some(true) {
-        let next = crate::server::context::rotate(
-            server,
-            &session,
-            crate::server::context::Rotation {
-                relaunch: false,
-                drop_continuation: true,
-                runtime_intent: req.runtime_intent.cloned(),
-                reason: Some(format!("submission-{}-fresh-context", req.intent)),
-                claim: None,
-            },
-        )
-        .await
-        .inspect_err(|_| trace.push("refused"))?;
-        session = crate::server::context::session(server, &next)?;
+    if participant.is_some() {
+        // An externally owned address is never rotated by HRC.
+        trace.push("skipped:not-applicable");
+    } else {
+        session = rotation(server, req, session, trace).await?;
+        trace.push("passed");
     }
     trace.session = session.clone();
-    trace.push("passed");
     // launch-carry-observation
     let observation = {
         let db = server.store.lock().unwrap();
@@ -544,6 +545,48 @@ async fn steps(
         intent,
         observation,
     })))
+}
+
+/// The rotation step for an HRC-owned session: auto-rotate a stale generation,
+/// then a requested fresh context.
+async fn rotation(
+    server: &Shared,
+    req: &Request<'_>,
+    mut session: Value,
+    trace: &mut Trace,
+) -> Result<Value, ApiError> {
+    if req.intent != "steer" {
+        let trigger = if req.door == "submission" {
+            format!("submission-{}", req.intent)
+        } else {
+            "dispatch-turn".to_owned()
+        };
+        session = crate::server::context::auto_rotate(
+            server,
+            session,
+            req.allow_stale_generation,
+            &trigger,
+        )
+        .await
+        .inspect_err(|_| trace.push("refused"))?;
+    }
+    if req.fresh_context == Some(true) {
+        let next = crate::server::context::rotate(
+            server,
+            &session,
+            crate::server::context::Rotation {
+                relaunch: false,
+                drop_continuation: true,
+                runtime_intent: req.runtime_intent.cloned(),
+                reason: Some(format!("submission-{}-fresh-context", req.intent)),
+                claim: None,
+            },
+        )
+        .await
+        .inspect_err(|_| trace.push("refused"))?;
+        session = crate::server::context::session(server, &next)?;
+    }
+    Ok(session)
 }
 
 const OPERATOR_PRINCIPALS: [&str; 3] = ["agent:lance", "lance", "human:lance"];

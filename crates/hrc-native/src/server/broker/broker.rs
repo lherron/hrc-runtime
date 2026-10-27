@@ -159,6 +159,21 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
 }
 
 pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError> {
+    // assertParticipantAddressNotSubstituted: delivery routes a participant
+    // into its own runtime before any birth; this backstop is for any caller
+    // that reaches a birth with one anyway.
+    let scope = birth.session["scopeRef"].as_str().unwrap_or("");
+    let registration = server
+        .store
+        .lock()
+        .unwrap()
+        .participant_registration_by_scope(scope)?;
+    if let Some(registration) = registration {
+        return Err(crate::server::turns::admission::unavailable(
+            "participant address cannot be served by a substitute runtime",
+            json!({"scopeRef":scope,"registrationId":registration["registration_id"],"reason":"participant_address_reserved"}),
+        ));
+    }
     let (identity, record) = prepare_dispatch(server, &birth).await?;
     let Birth {
         session,

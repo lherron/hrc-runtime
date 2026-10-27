@@ -58,7 +58,7 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `n2_continuation.py` | A seat re-born on a scope with a stored continuation compiles with it and continues. (protected by T-11899) | keep-manual |
 | `n2_inspect_crash.py` | N2 broker death mid-turn, then broker inspect with recoverFinalSummary, on (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n2_lanes.py` | N2 non-main lane on one owner (bun or native), for `compare --suite n2-lanes`. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n2_participant.py` | Real participant-owned EPR broker: staged replay, live turn, clean exit. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n2_participant.py` | Real participant-owned EPR broker: staged replay, live turn, clean exit; `--mode delivery` drives addressed steer/turn/literal into it pending, ACTIVE and absorbing, for `compare --suite n2-participant-delivery` (T-11960). (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n2_quit.py` | N2 human /quit on one owner (bun or native), for `compare --suite n2-quit`. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n2_recovery.py` | N2 cold-boot input recovery on one owner (bun or native), for `compare --suite n2-recovery`. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n2_restart.py` | N2 gate 2: restart rusthrc mid-turn, then hand the seat to the named Bun copy. | promote |

@@ -134,29 +134,25 @@ pub async fn literal_by_selector(server: &Shared, body: Value) -> Result<Respons
             }
         }
     }
-    let participant: Option<String> = {
-        let db = server.store.lock().unwrap();
-        db.sqlite
-            .query_row(
-                "SELECT registration_id FROM participant_registrations WHERE scope_ref=? LIMIT 1",
-                [session["scopeRef"].as_str()],
-                |r| r.get(0),
-            )
-            .ok()
+    // A resolved participant names its own runtime; a refused one falls back
+    // to the latest interactive runtime, as Bun's selector input does.
+    let participant = crate::server::participants::delivery::resolve(server, &session)?;
+    let rt = match participant.as_ref().and_then(|d| d.runtime()) {
+        Some(rt) => Some(rt.clone()),
+        None => latest_interactive(server, &host)?,
     };
-    if let Some(registration) = participant {
-        return Err(unavailable(
-            "participant delivery is not yet served natively",
-            json!({"scopeRef":session["scopeRef"],"registrationId":registration,"reason":"participant_native_unsupported"}),
-        ));
-    }
-    let Some(rt) = latest_interactive(server, &host)?.filter(|r| !lease::unavailable(&r.status))
-    else {
+    let Some(rt) = rt.filter(|r| !lease::unavailable(&r.status)) else {
         return Err(unavailable(
             "no live literal-capable runtime is currently bound",
             json!({"sessionRef":session_ref,"hostSessionId":host}),
         ));
     };
+    if rt.transport != "tmux" {
+        return Err(unavailable(
+            "runtime does not support literal input",
+            json!({"sessionRef":session_ref,"runtimeId":rt.runtime_id,"transport":rt.transport}),
+        ));
+    }
     let enter = body.get("enter") != Some(&Value::Bool(false));
     let literal = Literal {
         session: &session,

@@ -536,6 +536,9 @@ def compare(args, checks):
     if getattr(args, 'suite', None) == 'n2-participant':
         from n2_participant import compare as compare_participant
         return compare_participant(args, checks)
+    if getattr(args, 'suite', None) == 'n2-participant-delivery':
+        from n2_participant import compare_delivery
+        return compare_delivery(args, checks)
     order = None
     suite = getattr(args, 'suite', '')
     # This sweep's 15-module inventory predates the independently landing N2
