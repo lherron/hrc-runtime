@@ -11,9 +11,9 @@ default:
 
 # Project information
 info:
-    @echo "Current Project: spaces"
-    @echo "Description: Composable expertise modules, ASP registry"
-    @echo "Stack:       TypeScript (Bun workspace)"
+    @echo "Current Project: hrc-runtime"
+    @echo "Description: HRC runtime: rusthrc daemon + hrc CLI (Rust), hrc-kernel, TS client packages"
+    @echo "Stack:       Rust (cargo workspace, crates/) + TypeScript (Bun workspace, packages/)"
     @echo ""
     @echo "Key commands:"
     @echo "  just build     - Build all packages"
