@@ -15,6 +15,6 @@
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>5</integer>
-  <key>StandardOutPath</key><string>__LOG__</string>
-  <key>StandardErrorPath</key><string>__LOG__</string>
+  <key>StandardOutPath</key><string>__HOME__/praesidium/var/logs/hrc-runtime/hrc-turn-attention.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/praesidium/var/logs/hrc-runtime/hrc-turn-attention.err.log</string>
 </dict></plist>

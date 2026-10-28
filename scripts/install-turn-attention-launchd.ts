@@ -18,7 +18,6 @@ const status = JSON.parse(execFileSync('hrc', ['server', 'status', '--json'], { 
 if (!status.socketPath) throw new Error('HRC status missing socketPath')
 const label = 'com.praesidium.hrc-turn-attention'
 const plist = join(home, 'Library/LaunchAgents', `${label}.plist`)
-const log = join(home, 'praesidium/var/logs/hrc-runtime/turn-attention.log')
 await mkdir(join(home, 'Library/LaunchAgents'), { recursive: true })
 await mkdir(join(home, 'praesidium/var/logs/hrc-runtime'), { recursive: true })
 const xmlEscape = (s: string) =>
@@ -34,7 +33,6 @@ const values: Record<string, string> = {
   VERSION: version,
   SOCKET: status.socketPath,
   KEY: key,
-  LOG: log,
   STATE: join(home, 'praesidium/var/state/turn-attention/cursor.json'),
 }
 let xml = await readFile(
