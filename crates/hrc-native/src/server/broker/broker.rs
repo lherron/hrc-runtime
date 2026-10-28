@@ -804,7 +804,15 @@ async fn launch(
     let socket = string(paths, "btmuxSocketPath")?;
     let session = string(paths, "sessionName")?;
     let broker_window = window(socket, session, "broker", Some(&command)).await?;
-    tmux(socket, &["set-option", "-g", "remain-on-exit", "on"]).await?;
+    // Each seat owns its tmux server, so -g scopes to this seat. Passthrough and
+    // focus events let a harness draw Kitty graphics through tmux (T-12028).
+    for args in [
+        ["set-option", "-g", "remain-on-exit", "on"],
+        ["set-option", "-g", "allow-passthrough", "on"],
+        ["set-option", "-s", "focus-events", "on"],
+    ] {
+        tmux(socket, &args).await?;
+    }
     let mut allocation = json!({"brokerWindow":broker_window,"allocatedAt":hrc_store::timestamp(),"brokerCommand":command});
     // allocateBrokerSubstrate: terminal and the tmux-tui viewer (attachable +
     // terminalRequired) lease a tui pane; the observer viewer (attachable,
