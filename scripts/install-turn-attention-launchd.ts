@@ -46,13 +46,23 @@ const candidate = `${plist}.next`
 await writeFile(candidate, xml, { mode: 0o600 })
 await chmod(candidate, 0o600)
 execFileSync('plutil', ['-lint', candidate], { stdio: 'ignore' })
+// Adopt the rendered candidate before comparing, as install-mail-injector-launchd
+// does, so the job runs under praesidium-launch like the other fleet daemons.
+let adoptAvailable = true
+try {
+  execFileSync('sh', ['-c', 'command -v praesidium-adopt'], { stdio: 'ignore' })
+} catch {
+  adoptAvailable = false
+}
+if (adoptAvailable) execFileSync('praesidium-adopt', [candidate], { stdio: 'ignore' })
+const adopted = await readFile(candidate, 'utf8')
 const target = `gui/${process.getuid?.()}/${label}`
 let loaded = false
 try {
   execFileSync('launchctl', ['print', target], { stdio: 'ignore' })
   loaded = true
 } catch {}
-if (loaded && (await readFile(plist, 'utf8')) === xml) {
+if (loaded && (await readFile(plist, 'utf8')) === adopted) {
   const { unlink } = await import('node:fs/promises')
   await unlink(candidate)
   console.log(`turn-attention already current at ${version}`)

@@ -165,8 +165,19 @@ live(
         'invalid-attention-key'
       )
       expect(appends).toHaveLength(2)
-      expect(logs).toContain('turn-attention dropped')
-      expect(logs.match(/turn-attention dropped/g)).toHaveLength(1)
+      // The drop is one structured log line, in the fleet's JSON log shape.
+      const dropped = logs
+        .split('\n')
+        .filter((line) => line.startsWith('{'))
+        .map((line) => JSON.parse(line))
+        .filter((line) => line.event === 'turn_attention.dropped')
+      expect(dropped).toHaveLength(1)
+      expect(dropped[0]).toMatchObject({
+        level: 'warn',
+        component: 'hrc-turn-attention',
+        data: { turnId: completion.turnId },
+      })
+      expect(String(dropped[0].data.error)).toContain('401')
     } finally {
       child?.kill()
       if (child) await child.exited

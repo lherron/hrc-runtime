@@ -3,7 +3,7 @@
 <plist version="1.0"><dict>
   <key>Label</key><string>com.praesidium.hrc-turn-attention</string>
   <key>ProgramArguments</key><array>
-    <string>__BUNX__</string><string>--bun</string><string>hrc-turn-attention@__VERSION__</string>
+    <string>__BUNX__</string><string>--bun</string><string>--silent</string><string>hrc-turn-attention@__VERSION__</string>
   </array>
   <key>EnvironmentVariables</key><dict>
     <key>HOME</key><string>__HOME__</string>

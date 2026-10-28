@@ -29,12 +29,20 @@ function text(payload: unknown, role: string): string | undefined {
       .map((b) => b.text)
       .join('\n')
 }
+type Log = (event: string, data: Record<string, unknown>) => void
+
+// One JSON object per line, in the shape the other HRC daemons log.
+const jsonLog: Log = (event, data) =>
+  process.stderr.write(
+    `${JSON.stringify({ ts: new Date().toISOString(), level: 'warn', component: 'hrc-turn-attention', event, data })}\n`
+  )
+
 export class Subscriber {
   constructor(
     readonly cursor: Cursor,
     readonly classifyTurn: (turn: TurnText) => ReturnType<typeof classify>,
     readonly append: (body: unknown) => Promise<void>,
-    readonly log: (message: string) => void = console.error
+    readonly log: Log = jsonLog
   ) {}
   async accept(event: HrcLifecycleEvent) {
     if (event.hrcSeq <= this.cursor.afterSeq) return
@@ -71,7 +79,11 @@ export class Subscriber {
             })
           }
         } catch (error) {
-          this.log(`turn-attention dropped ${payload.turnId ?? event.hrcSeq}: ${String(error)}`)
+          this.log('turn_attention.dropped', {
+            turnId: payload.turnId ?? null,
+            hrcSeq: event.hrcSeq,
+            error: String(error),
+          })
         }
         delete this.cursor.turns[slot]
       }
