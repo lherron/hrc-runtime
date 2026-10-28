@@ -1428,7 +1428,8 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
     # pins max3's supervised version; max3 resolves its newly published tuple.
     attention_version=latest
     if [[ "$expected_node" != max3 ]]; then
-      attention_version="$(ssh -o BatchMode=yes max3 'plutil -extract ProgramArguments json -o - "$HOME/Library/LaunchAgents/com.praesidium.hrc-turn-attention.plist"' |
+      # -n: this script is bash -s stdin; a plain ssh would swallow the rest of it.
+      attention_version="$(ssh -n -o BatchMode=yes max3'plutil -extract ProgramArguments json -o - "$HOME/Library/LaunchAgents/com.praesidium.hrc-turn-attention.plist"' |
         jq -er '.[] | select(startswith("hrc-turn-attention@")) | sub("^hrc-turn-attention@"; "")')"
     fi
     # zsh reads the node's .zshenv, which exports TYPESAFE_API_KEY. Never echo it.
