@@ -27,6 +27,7 @@ import { DIRECT_STORE_OPEN_COMMANDS, readStoreSchemaState } from 'hrc-store-sqli
 
 import type { InstallContext, PublicationMode, SideEffectMode } from './install-policy'
 import { acquireInstallLock } from './lib/install-lock'
+import { gateKernelBootstrap } from './lib/kernel-bootstrap-gate'
 import { prepareKernelRelease } from './lib/kernel-release'
 import { ASP_CONTRACT_PACKAGE_NAMES, readInstalledAspContracts } from './lib/praesidium-build'
 import {
@@ -66,6 +67,8 @@ export type AtomicInstallOptions = {
   linkMode: SideEffectMode
   paths: InstalledSurfacePaths
   prepareRelease: (releasePath: string) => Promise<PreparedReleaseBuilds>
+  /** Runs on the validated release before the cutover; a throw keeps the previous current. */
+  gateRelease?: (releasePath: string) => Promise<void>
   /** Asked after the cutover so the running daemon's tree survives the prune. */
   readRunningRelease: (releasePath: string) => RunningReleaseAnswer
   releaseId?: string
@@ -368,6 +371,7 @@ export async function installAtomicRelease(options: AtomicInstallOptions): Promi
       `${JSON.stringify(manifest, null, 2)}\n`
     )
     await validateReleaseShape(releasePath, releaseId)
+    await options.gateRelease?.(releasePath)
     await atomicSymlink(releasePath, options.paths.currentLink)
     cutoverComplete = true
     // Still under the install lock, so no other install is preparing a release.
@@ -452,6 +456,24 @@ export function readRunningReleaseFromDaemon(releasePath: string): RunningReleas
   }
   // A running daemon with no atomic identity runs from a checkout, not a release.
   return { answered: true }
+}
+
+/**
+ * The release's hrc-kernel must catch up with seats on this node's live ledger
+ * before current moves to it (T-12019). A throw leaves the previous release
+ * current, and every deploy lane stops at the failed install.
+ */
+export async function gateReleaseKernel(
+  releasePath: string,
+  ledgerPath: string = resolveDatabasePath()
+): Promise<void> {
+  const { seats, caughtUpMs } = await gateKernelBootstrap(
+    join(releasePath, 'bin', 'hrc-kernel'),
+    ledgerPath
+  )
+  console.log(
+    `[install] hrc-kernel bootstrap gate PASS: ${seats} seats, caught up in ${caughtUpMs} ms`
+  )
 }
 
 export function defaultInstalledSurfacePaths(): InstalledSurfacePaths {
@@ -682,6 +704,7 @@ async function main(): Promise<void> {
     paths,
     sourceRoot: options.sourceRoot,
     readRunningRelease: readRunningReleaseFromDaemon,
+    gateRelease: gateReleaseKernel,
     prepareRelease: async (path) => {
       builds = await prepareProductionRelease(path, options, publicationSource)
       return builds

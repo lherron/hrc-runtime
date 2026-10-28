@@ -75,6 +75,65 @@ fn call(client: &KernelClient, operation: &str, arguments: Value) -> Result<Valu
         other => Err(format!("{operation}: {other:?}")),
     }
 }
+/// The hrc binding's last ingest error as `ingest.status` reports it, as
+/// `code: message`; None while its runs settle cleanly.
+fn binding_error(client: &KernelClient) -> Option<String> {
+    let status = match call(client, "ingest.status", json!({"document_id":"hrc"})) {
+        Ok(status) => status,
+        Err(e) => return Some(format!("ingest.status: {e}")),
+    };
+    status["bindings"]
+        .as_array()?
+        .iter()
+        .filter_map(|binding| binding.get("last_error").filter(|e| !e.is_null()))
+        .map(|e| {
+            format!(
+                "{}: {}",
+                e["code"].as_str().unwrap_or("error"),
+                e["message"].as_str().unwrap_or_default()
+            )
+        })
+        .next()
+}
+fn seat_count(client: &KernelClient) -> Result<usize, String> {
+    let mut count = 0;
+    let mut args = json!({"document_id":"hrc","type":"hrc.seat","limit":1000});
+    loop {
+        let reply = wire::document_query(client, json!("seats"), &args);
+        if reply["ok"] != true {
+            return Err(format!("document.query: {}", reply["error"]));
+        }
+        count += reply["result"]["rows"].as_array().map_or(0, Vec::len);
+        match reply["result"].get("next").filter(|next| !next.is_null()) {
+            Some(next) => args["cursor"] = next.clone(),
+            None => return Ok(count),
+        }
+    }
+}
+/// After serving starts, an ingest error is still the reason the seat set is
+/// wrong: log each new one, repeat a persisting one once a minute, and log the
+/// recovery. Stdout carries each change as `{"error": ...}` for the supervisor.
+fn watch_errors(client: KernelClient, mut current: Option<String>) {
+    let mut logged = Instant::now();
+    loop {
+        std::thread::sleep(Duration::from_secs(2));
+        let error = binding_error(&client);
+        if error != current {
+            match &error {
+                Some(e) => eprintln!("hrc-kernel: ingest error: {e}"),
+                None => eprintln!("hrc-kernel: ingest recovered"),
+            }
+            println!("{}", json!({"error": error}));
+            logged = Instant::now();
+            current = error;
+        } else if let Some(e) = &current
+            && logged.elapsed() >= Duration::from_secs(60)
+        {
+            eprintln!("hrc-kernel: ingest error persists: {e}");
+            logged = Instant::now();
+        }
+    }
+}
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut root = None;
     let mut hrc_socket = None;
@@ -198,9 +257,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     // Ready means caught up: a client's first read must be HRC's seat set, not
     // revision 0's empty one. Under Loggia's 30 s ready window, an HRC still not
-    // caught up is served anyway; `bootstrapping` stays true on every read.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let revision = loop {
+    // caught up is served anyway; `bootstrapping` stays true on every read, and
+    // the ready line names the ingest error that holds it there. The install
+    // gate (scripts/lib/kernel-bootstrap-gate.ts) reads this line.
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(20);
+    let (revision, bootstrapping) = loop {
         let snapshot = client.snapshot().map_err(|e| e.message)?;
         let document = snapshot
             .documents
@@ -211,19 +273,39 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Err(failure) => return Err(failure.message.clone().into()),
         };
         if !bootstrapping {
-            break document.revision;
+            break (document.revision, false);
         }
         if Instant::now() >= deadline {
-            eprintln!("hrc-kernel: HRC not caught up within 20 s; serving while bootstrapping");
-            break document.revision;
+            break (document.revision, true);
         }
         std::thread::sleep(Duration::from_millis(25));
     };
+    let caught_up_ms = (!bootstrapping).then(|| started.elapsed().as_millis() as u64);
+    let error = binding_error(&client);
+    let seats = seat_count(&client);
+    if bootstrapping {
+        eprintln!(
+            "hrc-kernel: HRC not caught up within 20 s; serving while bootstrapping: {}",
+            error.as_deref().unwrap_or("no ingest error reported")
+        );
+    } else if let Some(e) = &error {
+        eprintln!("hrc-kernel: ingest error: {e}");
+    }
+    let (seats, error) = match seats {
+        Ok(seats) => (Some(seats), error),
+        Err(e) => {
+            eprintln!("hrc-kernel: {e}");
+            (None, error.or(Some(e)))
+        }
+    };
+    let watch = client.clone();
     let server = wire::bind(client, &socket)?;
     println!(
         "{}",
-        json!({"status":"serving","socket":socket,"pid":std::process::id(),"document":"hrc","revision":revision})
+        json!({"status":"serving","socket":socket,"pid":std::process::id(),"document":"hrc","revision":revision,
+            "bootstrapping":bootstrapping,"caughtUpMs":caught_up_ms,"seats":seats,"error":error})
     );
+    std::thread::spawn(move || watch_errors(watch, error));
     server.run()?;
     drop(owner);
     drop(lock);
