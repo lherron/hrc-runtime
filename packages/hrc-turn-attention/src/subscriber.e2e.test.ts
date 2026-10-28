@@ -187,3 +187,34 @@ live(
   },
   40000
 )
+
+// Failure mode: HRC restarts or is unreachable and the stream dies. The process
+// must exit for launchd to restart it, leaving one JSON line, not a raw trace.
+test('subscriber process exits with one JSON line when HRC is unreachable', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'attention-exit-'))
+  try {
+    const child = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts')], {
+      env: {
+        ...process.env,
+        TYPESAFE_API_KEY: 'unused-key',
+        HRC_SOCKET_PATH: join(dir, 'missing.sock'),
+        HRC_TURN_ATTENTION_STATE_PATH: join(dir, 'cursor.json'),
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const code = await child.exited
+    const stderr = await new Response(child.stderr).text()
+    expect(code).toBe(1)
+    const lines = stderr.split('\n').filter((line) => line.trim().length > 0)
+    expect(lines).toHaveLength(1)
+    expect(JSON.parse(lines[0])).toMatchObject({
+      level: 'error',
+      component: 'hrc-turn-attention',
+      event: 'turn_attention.exited',
+    })
+    expect(stderr).not.toContain('unused-key')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

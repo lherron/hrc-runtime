@@ -10,10 +10,19 @@ if (process.argv.includes('--help')) {
 } else {
   const key = process.env['TYPESAFE_API_KEY']
   if (!key) throw new Error('TYPESAFE_API_KEY is required')
-  await run(
-    process.env['HRC_SOCKET_PATH'] ?? join(homedir(), 'praesidium/var/run/hrc/hrc.sock'),
-    process.env['HRC_TURN_ATTENTION_STATE_PATH'] ??
-      join(homedir(), 'praesidium/var/state/turn-attention/cursor.json'),
-    key
-  )
+  try {
+    await run(
+      process.env['HRC_SOCKET_PATH'] ?? join(homedir(), 'praesidium/var/run/hrc/hrc.sock'),
+      process.env['HRC_TURN_ATTENTION_STATE_PATH'] ??
+        join(homedir(), 'praesidium/var/state/turn-attention/cursor.json'),
+      key
+    )
+  } catch (error) {
+    // HRC restarted or is unreachable: exit for launchd to restart us from the
+    // persisted cursor, leaving one JSON line instead of a raw stack trace.
+    process.stderr.write(
+      `${JSON.stringify({ ts: new Date().toISOString(), level: 'error', component: 'hrc-turn-attention', event: 'turn_attention.exited', data: { error: String(error) } })}\n`
+    )
+    process.exit(1)
+  }
 }
