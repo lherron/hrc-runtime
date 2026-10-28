@@ -57,9 +57,33 @@ if (loaded && (await readFile(plist, 'utf8')) === xml) {
   await unlink(candidate)
   console.log(`turn-attention already current at ${version}`)
 } else {
-  if (loaded) execFileSync('launchctl', ['bootout', target], { stdio: 'ignore' })
+  // launchd refuses a bootstrap that lands before the old job has finished
+  // leaving, so wait for it to go and retry, as install-mail-injector-launchd does.
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  const isLoaded = () => {
+    try {
+      execFileSync('launchctl', ['print', target], { stdio: 'ignore' })
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (loaded) {
+    execFileSync('launchctl', ['bootout', target], { stdio: 'ignore' })
+    for (let i = 0; i < 50 && isLoaded(); i++) await sleep(200)
+  }
   const { rename } = await import('node:fs/promises')
   await rename(candidate, plist)
-  execFileSync('launchctl', ['bootstrap', `gui/${process.getuid?.()}`, plist], { stdio: 'ignore' })
+  for (let attempt = 1; ; attempt++) {
+    try {
+      execFileSync('launchctl', ['bootstrap', `gui/${process.getuid?.()}`, plist], {
+        stdio: 'ignore',
+      })
+      break
+    } catch (error) {
+      if (attempt === 5) throw new Error(`could not bootstrap ${target}`, { cause: error })
+      await sleep(2000)
+    }
+  }
   console.log(`turn-attention supervised at ${version}`)
 }
