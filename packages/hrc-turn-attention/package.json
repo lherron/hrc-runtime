@@ -1,0 +1,22 @@
+{
+  "name": "hrc-turn-attention",
+  "version": "0.1.0",
+  "description": "Node-local turn attention classifier subscriber",
+  "type": "module",
+  "main": "./dist/classifier.js",
+  "bin": {
+    "hrc-turn-attention": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "hrc-core": "*",
+    "hrc-sdk": "*"
+  }
+}

@@ -157,6 +157,17 @@
         "typescript": "^5.8.3",
       },
     },
+    "packages/hrc-turn-attention": {
+      "name": "hrc-turn-attention",
+      "version": "0.1.0",
+      "bin": {
+        "hrc-turn-attention": "./dist/cli.js",
+      },
+      "dependencies": {
+        "hrc-core": "*",
+        "hrc-sdk": "*",
+      },
+    },
   },
   "overrides": {
     "@types/bun": "1.3.14",
@@ -225,6 +236,8 @@
     "hrc-store-sqlite": ["hrc-store-sqlite@workspace:packages/hrc-store-sqlite"],
 
     "hrc-transcript-index": ["hrc-transcript-index@workspace:packages/hrc-transcript-index"],
+
+    "hrc-turn-attention": ["hrc-turn-attention@workspace:packages/hrc-turn-attention"],
 
     "json-schema-traverse": ["json-schema-traverse@1.0.0", "http://mini:4873/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz", {}, "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug=="],
 

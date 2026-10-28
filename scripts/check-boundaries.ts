@@ -22,6 +22,7 @@ const hrcPackages = [
   'hrc-capture-verifier',
   'hrc-server',
   'hrc-sdk',
+  'hrc-turn-attention',
   'hrc-cli',
   'hrc-frame-render',
 ]

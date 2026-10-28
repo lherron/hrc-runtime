@@ -33,6 +33,7 @@ const PACKAGES = [
   // hrc-capture-verifier is a runtime dep of hrc-cli; a registry install of
   // hrc-cli cannot resolve without it (devbox T-06833).
   'packages/hrc-cli',
+  'packages/hrc-turn-attention',
 ] as const
 
 type Manifest = {

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.praesidium.hrc-turn-attention</string>
+  <key>ProgramArguments</key><array>
+    <string>__BUNX__</string><string>--bun</string><string>hrc-turn-attention@__VERSION__</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>HOME</key><string>__HOME__</string>
+    <key>PATH</key><string>__HOME__/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HRC_SOCKET_PATH</key><string>__SOCKET__</string>
+    <key>HRC_TURN_ATTENTION_STATE_PATH</key><string>__STATE__</string>
+    <key>TYPESAFE_API_KEY</key><string>__KEY__</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>__LOG__</string>
+  <key>StandardErrorPath</key><string>__LOG__</string>
+</dict></plist>

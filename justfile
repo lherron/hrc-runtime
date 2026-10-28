@@ -817,6 +817,10 @@ _front-door-wait-health socket:
     echo "[front-door] nothing healthy on {{ socket }} after 120s" >&2
     exit 1
 
+# Install/reload the node-local classifier; Mable activates, key comes from env.
+install-turn-attention-launchd version:
+    bun scripts/install-turn-attention-launchd.ts '{{ version }}'
+
 # Install and (re)load the supervised hrc-mail-injector on THIS node, pinned to an
 # exact version (or `latest`, resolved to one here and pinned). Replaces any
 # earlier injector serving this node's HRC socket, supervised or not: two
@@ -1420,6 +1424,16 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
     if [[ -n "$injector_version" ]]; then
       just install-mail-injector-launchd "$injector_version"
     fi
+    # Classifier follows HRC on every node, beside the mail injector. A satellite
+    # pins max3's supervised version; max3 resolves its newly published tuple.
+    attention_version=latest
+    if [[ "$expected_node" != max3 ]]; then
+      attention_version="$(ssh -o BatchMode=yes max3 'plutil -extract ProgramArguments json -o - "$HOME/Library/LaunchAgents/com.praesidium.hrc-turn-attention.plist"' |
+        jq -er '.[] | select(startswith("hrc-turn-attention@")) | sub("^hrc-turn-attention@"; "")')"
+    fi
+    # zsh reads the node's .zshenv, which exports TYPESAFE_API_KEY. Never echo it.
+    zsh -c 'just install-turn-attention-launchd "$1"' -- "$attention_version"
+
 
     printf 'deployed %s: %s hrc %s (%s), aspd %s (%s), injector %s\n' \
       "$expected_node" "$owner" "$target_sha" "$release_root" "$aspd_sha" "$aspd_release" "${injector_version:-unchanged}"
