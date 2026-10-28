@@ -198,8 +198,11 @@ fn sibling_root(project: &str, cwd: &str, agent_root: Option<&str>) -> Option<Pa
             candidates.push(var.parent().unwrap_or(Path::new("/")).join(project));
         }
     }
+    // A missing candidate would walk up into whatever checkout encloses cwd,
+    // so a typo'd project id would place there instead of being refused.
     candidates
         .iter()
+        .filter(|candidate| candidate.is_dir())
         .find_map(|candidate| find_project_marker(candidate, None))
 }
 
@@ -633,4 +636,29 @@ pub async fn load_registry(server: &Server) -> Vec<Value> {
         .as_ref()
         .map(|(_, p)| p.clone())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // An explicit project id with no <cwd>/<id> directory must not walk up
+    // from that missing path into the checkout enclosing cwd.
+    #[test]
+    fn sibling_root_ignores_a_missing_candidate() {
+        let base = env::temp_dir().join(format!("hrc-sibling-{}", std::process::id()));
+        let checkout = base.join("checkout");
+        let nested = checkout.join("packages");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(checkout.join(MARKER), "").unwrap();
+        fs::create_dir_all(checkout.join("real").join(".git")).unwrap();
+        let cwd = checkout.to_string_lossy().into_owned();
+        assert_eq!(sibling_root("typo", &cwd, None), None);
+        assert_eq!(sibling_root("typo", &nested.to_string_lossy(), None), None);
+        assert_eq!(
+            sibling_root("real", &cwd, None),
+            Some(checkout.join("real"))
+        );
+        fs::remove_dir_all(&base).unwrap();
+    }
 }
