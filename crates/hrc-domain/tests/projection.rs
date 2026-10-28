@@ -170,3 +170,88 @@ fn bookkeeping_preserves_turn_display_but_advances_raw_freshness_and_generation_
     assert!(new_seat.get("latestEvent").is_none());
     assert_eq!(new_seat["lastHrcSeq"], 3075360);
 }
+
+// T-12015 §4 failure cases: unlit classification lighting a row; a dead seat
+// keeping attention; a later turn event or a new generation inheriting an older
+// signal; a tool ask projecting jev fields; preview dumping the payload.
+fn live_seat(events: &[serde_json::Value]) -> serde_json::Value {
+    let e = &events[0];
+    let session = json!({"scopeRef":"scope", "laneRef":"main", "hostSessionId":e["hostSessionId"], "generation":e["generation"], "status":"active", "updatedAt":e["ts"]});
+    let runtime = json!({"hostSessionId":e["hostSessionId"],"generation":e["generation"],"runtimeId":"rt","status":"ready"});
+    let edits = project(
+        &[session],
+        &[runtime],
+        events,
+        Utc.with_ymd_and_hms(2026, 10, 28, 14, 0, 0).unwrap(),
+    )
+    .unwrap();
+    edits.into_iter().find(|e| e["type"] == "hrc.seat").unwrap()["payload"].clone()
+}
+
+fn attention_event(seq: i64, lit: bool) -> serde_json::Value {
+    json!({"hostSessionId":"h","generation":1,"hrcSeq":seq,"category":"turn","eventKind":"turn.attention","ts":"2026-10-28T13:50:01.000Z","payload":{
+        "turnId":"turn_inv-a_1","invocationId":"inv-a","lit":lit,"state":"blocking","kind":"approval",
+        "p":{"blocking":0.91,"decision":0.06,"offer":0.02,"none":0.01},"confidence":0.84,"toLance":0.93,"waitingOnOther":0.12,
+        "excerpt":"  Should I commit and push?\n Waiting on your go. ","model":"jev-1.13.0","classifierVersion":"attention-v3","latencyMs":128}})
+}
+
+#[test]
+fn lit_attention_on_a_live_seat_projects_jev_fields_and_excerpt_preview() {
+    let completed = json!({"hostSessionId":"h","generation":1,"hrcSeq":10,"category":"turn","eventKind":"turn.completed","ts":"2026-10-28T13:50:00.000Z","payload":{"turnId":"turn_inv-a_1","invocationId":"inv-a","success":true}});
+    let seat = live_seat(&[completed.clone(), attention_event(11, true)]);
+    assert_eq!(
+        seat["attention"],
+        json!({"source":"jev","state":"blocking","kind":"approval","excerpt":"  Should I commit and push?\n Waiting on your go. ","at":"2026-10-28T13:50:01.000Z"})
+    );
+    assert_eq!(seat["latestEvent"]["kind"], "turn.attention");
+    assert_eq!(
+        seat["latestEvent"]["preview"],
+        "Should I commit and push? Waiting on your go."
+    );
+    // Completion without a classification yet is unclassified, not dark-lit.
+    assert!(live_seat(&[completed]).get("attention").is_none());
+}
+
+#[test]
+fn unlit_dead_cleared_and_rotated_attention_projects_nothing() {
+    let unlit = live_seat(&[attention_event(11, false)]);
+    assert!(unlit.get("attention").is_none());
+    assert_eq!(unlit["latestEvent"]["kind"], "turn.attention");
+    // No live runtime: the seat keeps latestEvent but loses attention.
+    let dead = seat_with_events(&[attention_event(11, true)]);
+    assert_eq!(dead["latestEvent"]["kind"], "turn.attention");
+    assert!(dead.get("attention").is_none());
+    // The next turn's events replace the selected event.
+    let next = json!({"hostSessionId":"h","generation":1,"hrcSeq":12,"category":"turn","eventKind":"turn.accepted","ts":"2026-10-28T13:51:00.000Z","payload":{}});
+    assert!(
+        live_seat(&[attention_event(11, true), next])
+            .get("attention")
+            .is_none()
+    );
+    // Non-turn bookkeeping after the attention event keeps it selected.
+    let bookkeeping = json!({"hostSessionId":"h","generation":1,"hrcSeq":12,"category":"runtime","eventKind":"runtime.context.updated","ts":"2026-10-28T13:51:00.000Z","payload":{}});
+    assert_eq!(
+        live_seat(&[attention_event(11, true), bookkeeping])["attention"]["source"],
+        "jev"
+    );
+    // A new generation inherits no older signal.
+    let mut rotated = json!({"hostSessionId":"h","generation":2,"hrcSeq":13,"category":"session","eventKind":"session.rotated","ts":"2026-10-28T13:52:00.000Z","payload":{}});
+    let seat = live_seat(&[rotated.clone(), attention_event(11, true)]);
+    assert!(seat.get("attention").is_none());
+    rotated["eventKind"] = json!("turn.awaiting_input");
+    assert_eq!(
+        live_seat(&[rotated, attention_event(11, true)])["attention"]["source"],
+        "tool"
+    );
+}
+
+#[test]
+fn awaiting_input_projects_tool_attention_without_jev_fields() {
+    // Captured shape from max3 hrc_events 2790749.
+    let ask = json!({"hostSessionId":"h","generation":1,"hrcSeq":20,"category":"turn","eventKind":"turn.awaiting_input","ts":"2026-10-28T13:55:00.000Z","payload":{"toolUseId":"toolu_01TZYz74ri6zgCEThwXep75o","toolName":"AskUserQuestion","invocationId":"inv-5adf9463","seq":31}});
+    assert_eq!(
+        live_seat(std::slice::from_ref(&ask))["attention"],
+        json!({"source":"tool","state":"blocking","kind":"information","at":"2026-10-28T13:55:00.000Z"})
+    );
+    assert!(seat_with_events(&[ask]).get("attention").is_none());
+}

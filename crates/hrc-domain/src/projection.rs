@@ -74,6 +74,21 @@ pub fn mobile_status(record: &Value, runtime: Option<&Value>) -> &'static str {
         _ => "inactive",
     }
 }
+/// hrc-runtime.turn-attention: a pure function of the selected display event.
+/// The append route's stale_turn fence keeps a classification from sitting
+/// above a newer turn event, so no fold state is needed to clear it.
+fn attention(display: &Value) -> Option<Value> {
+    let p = &display["payload"];
+    match text(display, "eventKind") {
+        "turn.attention" if p["lit"] == true => Some(
+            json!({"source":"jev","state":p["state"],"kind":p["kind"],"excerpt":p["excerpt"],"at":display["ts"]}),
+        ),
+        "turn.awaiting_input" => Some(
+            json!({"source":"tool","state":"blocking","kind":"information","at":display["ts"]}),
+        ),
+        _ => None,
+    }
+}
 pub fn upsert(typ: &str, key: Value, payload: Value, until: Value) -> Value {
     json!({"kind":"upsert","type":typ,"key":key,"payload":payload,"domain":{"live_until":until}})
 }
@@ -175,6 +190,9 @@ pub fn project_with_context(
             seat["latestEvent"] = json!({"kind":e["eventKind"],"time":e["ts"]});
             if let Some(preview) = crate::preview::preview(e, context) {
                 seat["latestEvent"]["preview"] = json!(preview);
+            }
+            if let Some(a) = rt.and(attention(e)) {
+                seat["attention"] = a;
             }
         }
         if let Some(r) = rt {

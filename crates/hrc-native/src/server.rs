@@ -86,6 +86,8 @@ mod transcript;
 #[path = "server/projection/writes.rs"]
 mod writes;
 
+#[path = "server/turns/attention.rs"]
+mod attention;
 #[path = "server/turns/context.rs"]
 mod context;
 #[path = "server/turns/control.rs"]
@@ -388,6 +390,8 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
                 && query.get("follow").map(String::as_str) == Some("true")))
     {
         streams::open(server, uri.path(), &query)
+    } else if method == Method::POST && uri.path() == "/v1/events/append" {
+        attention::append(server, &body)
     } else if method == Method::POST && uri.path() == "/v1/internal/mail/stop-decision" {
         Ok(mail::stop(server, &body).await)
     } else if method == Method::POST && uri.path() == "/v1/internal/mail/hint-decision" {
@@ -628,6 +632,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/presentation/seats/read",
                 "/v1/internal/mail/hint-decision",
                 "/v1/internal/mail/stop-decision",
+                "/v1/events/append",
             ]
             .contains(&path))
         || events::implements(method, path)

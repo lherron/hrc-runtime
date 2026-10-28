@@ -208,7 +208,10 @@ pub fn preview(event: &Value, recent: &[Value]) -> Option<String> {
         return None;
     }
     let payload = &event["payload"];
-    let raw = if is_result(event) {
+    let raw = if kind == "turn.attention" {
+        // hrc-runtime.turn-attention: the classified message tail, never the payload.
+        scalar(&payload["excerpt"]).unwrap_or_else(|| kind.to_owned())
+    } else if is_result(event) {
         let id = tool_id(payload);
         let call = recent
             .iter()
