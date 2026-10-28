@@ -27,6 +27,7 @@ pub mod status;
 mod surfaces;
 pub use statement_telemetry::{SlowStatement, Sqlite};
 mod targets;
+pub mod transcript_index;
 pub use metadata::{MetadataWrite, validate_metadata};
 pub use monitor_read::{MonitorFilters, escape_like, event_row, parse_task_id};
 pub use participants::{ParticipantBookkeepingConflict, ParticipantJoin};

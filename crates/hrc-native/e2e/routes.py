@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 from foundation import UnixHTTP
 
 
-def main(prepare=None, case_factory=None, observe=None, suite="n1-routes"):
+def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settle=None):
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--bun-release', type=Path, required=True)
@@ -120,12 +120,15 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes"):
         for kind in ('bun','native'):
             with sqlite3.connect(root/'snapshot.sqlite') as source,sqlite3.connect(dbpath) as target:source.backup(target)
             up(kind,kind)
+            # Background projections (the transcript follower) finish before cases run.
+            if settle: settle(dbpath, None)
             observed=[]
             for name,method,path,body in cases:
                 before=time.time()
                 before_events=metadata_events()
                 value=call(method,path,body)
                 observed.append({'case':name,'method':method,'path':path,'request':body,'response':value,'before':before,'after':time.time(),'metadataEvents':metadata_events()-before_events})
+                if settle: settle(dbpath, name)
                 if observe: observed[-1].update(observe(dbpath))
             down()
             results[kind]=observed

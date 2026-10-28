@@ -468,7 +468,7 @@ pub fn archive_idle_sessions(server: &Shared, days: f64) -> anyhow::Result<Value
     )
 }
 
-fn falsy(value: Option<String>) -> bool {
+pub(super) fn falsy(value: Option<String>) -> bool {
     value.is_some_and(|v| {
         ["0", "false", "no", "off", "disabled"].contains(&v.trim().to_lowercase().as_str())
     })

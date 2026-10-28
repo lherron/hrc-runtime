@@ -81,6 +81,8 @@ mod streams;
 mod subscribers;
 #[path = "server/projection/surfaces.rs"]
 mod surfaces;
+#[path = "server/projection/transcript.rs"]
+mod transcript;
 #[path = "server/projection/writes.rs"]
 mod writes;
 
@@ -181,6 +183,8 @@ struct Server {
     attached: Mutex<HashMap<String, attached::Pending>>,
     /// Background writers commit inside this fence; shutdown closes and drains it.
     owner_writes: writes::OwnerWrites,
+    /// Resident transcript index follower (tick serialization, repair count).
+    transcript: transcript::State,
     runtime: PathBuf,
     bun_passthrough: Option<PathBuf>,
     /// federation.json identity, peers and registry client (resolved at boot).
@@ -371,6 +375,12 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         diagnostics::handle(server, &query)
     } else if method == Method::GET && uri.path() == "/v1/broker-forensics" {
         forensics::handle(server, &query)
+    } else if method == Method::GET && uri.path() == "/v1/transcript-index/status" {
+        transcript::status(server)
+    } else if method == Method::POST && uri.path() == "/v1/transcript-index/rebuild" {
+        transcript::rebuild(server)
+    } else if method == Method::POST && uri.path() == "/v1/transcript-search" {
+        transcript::search(server, &body)
     } else if method == Method::GET
         && (uri.path() == "/v1/events/bounded-stream"
             || uri.path() == "/v1/broker-events"
@@ -643,6 +653,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/federation/runtimes",
                 "/v1/runtime-diagnostics",
                 "/v1/broker-forensics",
+                "/v1/transcript-index/status",
             ]
             .contains(&path)
                 || path.starts_with("/v1/sessions/by-host/")
@@ -687,6 +698,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/participants/attach",
                 "/v1/placements/resolve",
                 "/v1/declarations/resolve",
+                "/v1/transcript-search",
+                "/v1/transcript-index/rebuild",
             ]
             .contains(&path))
         || (*method == Method::PATCH && path == "/v1/sessions/metadata")

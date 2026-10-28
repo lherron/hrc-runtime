@@ -38,6 +38,7 @@ async fn start_owner_services(server: &Shared) -> Result<()> {
         reconcile::start(server);
         startup::start_gc(server);
         sweeps::start_retention(server);
+        transcript::start(server);
         let prior = server.lifecycle.admission.snapshot();
         if prior["state"] == "closed" {
             server
@@ -56,7 +57,8 @@ async fn start_owner_services(server: &Shared) -> Result<()> {
     Ok(())
 }
 
-pub async fn serve(role: Role) -> Result<()> {
+/// Panics become one L2 `server.panic` line on stderr.
+fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         let payload = info.payload();
         let message = payload
@@ -74,6 +76,10 @@ pub async fn serve(role: Role) -> Result<()> {
             json!({"message":message,"location":location}),
         );
     }));
+}
+
+pub async fn serve(role: Role) -> Result<()> {
+    install_panic_hook();
     let started_at = timestamp();
     let release = release::Release::capture(&started_at)?;
     let home = env::var("HOME").context("HOME is required")?;
@@ -151,6 +157,7 @@ pub async fn serve(role: Role) -> Result<()> {
         self_restart: self_restart::State::default(),
         controller: controller::State::default(),
         owner_writes: writes::OwnerWrites::default(),
+        transcript: transcript::State::default(),
         reaped: Mutex::new(HashSet::new()),
         ledger: tokio::sync::watch::Sender::new(0),
         lifecycle: lifecycle::State::new(&runtime, !front),

@@ -105,4 +105,5 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `session_projection.py` | Real owners, own historical fixtures: recency, liveness, ordering and parsing. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `steer_no_intent.py` | T-11928: `hrc turn` steers a seat that has a session but no live runtime. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `target_placement.py` | Real target-session intent and placement reads, on an existing ready scratch seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `transcript_index.py` | T-12013: transcript follower resume from Bun's cursor, late-prose/inversion repair, search, status and rebuild against Bun on one snapshot. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `turn_no_intent.py` | T-11928: the real `hrc turn` births a session that never applied an intent. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |

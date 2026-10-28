@@ -754,6 +754,7 @@ pub(crate) mod tests {
             literal: Default::default(),
             attached: Default::default(),
             owner_writes: Default::default(),
+            transcript: Default::default(),
             runtime,
             bun_passthrough: None,
             federation,
