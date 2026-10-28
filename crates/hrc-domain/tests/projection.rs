@@ -255,3 +255,26 @@ fn awaiting_input_projects_tool_attention_without_jev_fields() {
     );
     assert!(seat_with_events(&[ask]).get("attention").is_none());
 }
+
+// The hrc-kernel document rejects a seat whose payload carries an undeclared
+// field, and bootstrap then never catches up (Loggia lost every seat when
+// seat.attention shipped without its declaration).
+#[test]
+fn every_projected_seat_field_is_declared_including_attention() {
+    let declarations = hrc_domain::declarations::declarations();
+    let seat_type = declarations["node_types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "hrc.seat")
+        .unwrap();
+    let declared = seat_type["payload"]["fields"].as_object().unwrap();
+    let lit = live_seat(&[attention_event(11, true)]);
+    assert!(lit.get("attention").is_some());
+    for key in lit.as_object().unwrap().keys() {
+        assert!(
+            declared.contains_key(key),
+            "hrc.seat field {key} is not declared"
+        );
+    }
+}

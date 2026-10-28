@@ -26,7 +26,13 @@ pub fn declarations() -> Value {
     ]);
     seat["generation"] = json!({"kind":"integer"});
     seat["lastHrcSeq"] = json!({"kind":"integer"});
-    for name in ["latestEvent", "contextReading", "tmux", "metadata"] {
+    for name in [
+        "latestEvent",
+        "contextReading",
+        "tmux",
+        "metadata",
+        "attention",
+    ] {
         seat[name] = json!({"kind":"json"});
     }
     let mut runtime = fields(&[
