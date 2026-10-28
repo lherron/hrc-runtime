@@ -101,7 +101,17 @@ predicate: >
   collapse, result prefixes and 180-character truncation. Context is read
   during bootstrap, apply and resync, never retained as projection state.
   The window is bounded context, not a promise to recover calls outside it.
-  No HRC server behavior or activation changes with this extension.
+  No HRC server behavior or activation changes with this preview extension.
+  T-12015 adds optional seat.attention as a pure function of that same
+  selected display event and live-runtime presence, under the producer-owned
+  hrc-runtime.turn-attention contract. No event-fold state or additional
+  history read is introduced. Selected turn.attention with lit true exposes
+  jev attention; selected turn.awaiting_input exposes tool attention. Any
+  other selection or absence of a live runtime yields no attention.
+  The native append route's transactional completion-freshness fence prevents
+  a late classification from displacing a newer turn event. Preview formatting
+  for turn.attention uses its excerpt. Existing raw-event freshness, membership,
+  cursor and generation-selection predicates remain unchanged.
   T-11538 adds an explicit display-only Unicode recovery policy at the private
   HTTP projection decoder for successful page, tail, latest-by-session,
   sessions, presentation runtimes and seats/read responses. Ordinary strict
@@ -330,6 +340,7 @@ source:
   - wrkq:T-11538
   - wrkc:EN-33147
   - architecture/contracts/runtime-context-reading.yaml
+  - architecture/contracts/turn-attention.yaml
   - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
   - architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml
   - architecture/records/invariants/hrc-runtime.observable-release.yaml
@@ -421,6 +432,12 @@ validation_scope: >
   N6 inherits the serve-only boundary and pre-mutation refusal contract.
   Design approval authorizes none of these installs or activations.
 last_verified: >
+  2026-10-28 T-12015 turn-attention-jev etag 6, submitted in EN-38019,
+  approved by reading projector selection/bootstrap/apply, keyed event reads,
+  presentation-runtime filtering, event categories and preview code. The
+  additive attention predicate and append-order fence are recorded in
+  architecture/contracts/turn-attention.yaml. No implementation or live
+  acceptance is established by this design review.
   2026-10-20 design approval by source and contract reading against HRC
   e159381c and cardo main 1796e1c. Reviewed page coverage, presentation and
   session reads, attach resolvers, persisted context ownership, and cardo
@@ -492,4 +509,5 @@ reopen_when: >
   restart request/receipt, daemon authority, retry or cancellation semantics
   or unsupported cases change; or front/private socket roles, front-safe
   eligibility, serve-only effects, postponed-route refusal, forwarded stream
-  semantics, access-log ownership, sampling, joins or audit population change.
+  semantics, access-log ownership, sampling, joins or audit population change;
+  or selected-event attention semantics or its append-order fence change.

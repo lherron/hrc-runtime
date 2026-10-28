@@ -1,0 +1,80 @@
+id: hrc-runtime.turn-attention
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: node-local derived turn attention append authority and rebuildable seat presentation
+predicate: >
+  HRC owns the only append route for turn.attention. The native local-socket
+  route accepts no other event kind and performs no cross-node write. It
+  requires an existing local turn.completed identified by turnId and runtimeId,
+  derives scope from that completion rather than the caller, and refuses an
+  unknown turn. A repeat of (turnId, classifierVersion) returns the existing
+  event without appending. For a new classification, the named completion
+  must still be the latest category-turn event of its hostSessionId and
+  generation. This freshness check and the insert share one store transaction;
+  otherwise stale_turn is returned without an append.
+  The hrc-turn-attention package runs outside the daemon on each HRC node,
+  follows that node's events, and classifies only scopes whose task segment
+  does not match T- followed by digits. It reads the last assistant message_end
+  from turn.message, not the transcript index. Lance authorizes hosted jev
+  egress of the verbatim last 2500 characters of final text, last 400 characters
+  of turn.user_prompt, and agent, project and seat identity, with no masking,
+  obfuscation or redaction. Foundry is included. The hosted call has a
+  three-second timeout and cannot delay or fail turn completion. Errors,
+  timeouts and non-2xx responses log and append nothing; there are no retries
+  or classification queues. A private persisted cursor supports catch-up;
+  replay remains subject to append idempotency and freshness.
+  Successful classifications append category-turn turn.attention, including
+  none. Absence means unclassified. The event carries turnId, invocationId,
+  lit, state, kind, four ask probabilities, confidence, toLance,
+  waitingOnOther, excerpt, model, classifierVersion and latencyMs. The
+  subscriber computes lit as p.blocking plus p.decision at least 0.5;
+  state is the argmax and excerpt is at most the last 240 characters of
+  the classified message, never a generated summary. attention-v3 freezes
+  the task's questions and threshold; wording changes require a version
+  bump and G1 quality acceptance. Idle requests for new work and conditional
+  offers stay dark; direct next-action questions about work in hand light.
+  The seat projector derives attention solely from the same selected display
+  event as latestEvent, using existing generation and turn.* selection.
+  With a live runtime, selected turn.attention with lit true projects source
+  jev, state, kind, excerpt and at; selected turn.awaiting_input projects
+  source tool, state blocking, kind information and at. All other selections
+  and absence of a live runtime yield no attention. A later selected turn
+  event clears the field, and generation rotation inherits no older signal.
+  There is no retained fold state, additional history read or store schema
+  change. Empty bootstrap and keyed refresh reconstruct the same predicate.
+  turn.attention preview uses its excerpt. Loggia consumes this producer
+  field for Needs input, with needs-input urgency 5 above busy urgency 4.
+authority: >
+  Daedalus approval of T-12015 turn-attention-jev specification etag 6,
+  resubmitted in EN-38019, 2026-10-28. Hosted egress, unredacted text,
+  foundry inclusion and ask semantics follow Lance's rulings carried in
+  that specification.
+source:
+  - wrkq:T-12015
+  - architecture/contracts/hrc-rust-migration.yaml
+  - crates/hrc-domain/src/projector.rs
+  - crates/hrc-domain/src/projection.rs
+  - crates/hrc-domain/src/preview.rs
+  - crates/hrc-store/src/presentation.rs
+  - crates/hrc-store/src/lib.rs
+validation_scope: >
+  Requester owns task gates G1 through G5: classifier quality using the
+  subscriber request builder and real gold fixture; live max3 ask, clear,
+  none and tool attention; task-seat exclusion; invalid-key fail-open; and
+  installed Loggia row, hover and seatHeaders evidence. The revision names
+  a route unit test for stale_turn and deliberately excludes a live gate
+  forcing a next-turn start during classification. This review adds no gate.
+last_verified: >
+  2026-10-28 revised design read against single-event keyed reads, latest-turn
+  recovery, empty bootstrap, presentation-runtime filtering, event categories,
+  preview formatting and Loggia's descending urgency selection. F1 and F2
+  from EN-38018 resolve in specification etag 6. No implementation tests,
+  builds, installs, service operations or live acceptance were run by the
+  reviewer; implementation and deployment remain unverified.
+reopen_when: >
+  Append authority, completion identity, idempotency, transaction or freshness
+  fence, egress authorization, classifier isolation or failure handling,
+  classification eligibility, version semantics, event meaning, selected-event
+  attention predicate, generation or live-runtime lifetime, preview behavior,
+  or projection reconstruction changes.
