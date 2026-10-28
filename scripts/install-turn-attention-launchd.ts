@@ -46,6 +46,8 @@ const candidate = `${plist}.next`
 await writeFile(candidate, xml, { mode: 0o600 })
 await chmod(candidate, 0o600)
 execFileSync('plutil', ['-lint', candidate], { stdio: 'ignore' })
+// praesidium-adopt reads the multi-line layout plutil writes, not the compact template.
+execFileSync('plutil', ['-convert', 'xml1', candidate], { stdio: 'ignore' })
 // Adopt the rendered candidate before comparing, as install-mail-injector-launchd
 // does, so the job runs under praesidium-launch like the other fleet daemons.
 let adoptAvailable = true
