@@ -14,8 +14,8 @@ live(
     const dir = await mkdtemp(join(tmpdir(), 'attention-e2e-'))
     const socket = join(dir, 'hrc.sock')
     const state = join(dir, 'cursor.json')
-    const appends: any[] = []
-    let rows: any[] = []
+    const appends: unknown[] = []
+    let rows: ReturnType<typeof event>[] = []
     let streamMode = false
     const event = (seq: number, kind: string, payload: unknown, seat = 'primary') => ({
       hrcSeq: seq,
@@ -77,8 +77,10 @@ live(
       },
     })
     let child: ReturnType<typeof Bun.spawn> | undefined
-    const drive = async (turns: Record<string, unknown>, newRows: any[], apiKey: string) => {
+    const drive = async (turns: Record<string, unknown>, newRows: typeof rows, apiKey: string) => {
       rows = newRows
+      const head = rows.at(-1)?.hrcSeq
+      if (head === undefined) throw new Error('drive needs at least one row')
       await writeFile(
         state,
         JSON.stringify({ ledgerIncarnationId: 'ledger-fixture', afterSeq: 0, turns })
@@ -96,10 +98,10 @@ live(
       const deadline = Date.now() + 12000
       while (Date.now() < deadline) {
         const cursor = JSON.parse(await readFile(state, 'utf8'))
-        if (cursor.afterSeq === rows.at(-1).hrcSeq) break
+        if (cursor.afterSeq === head) break
         await Bun.sleep(25)
       }
-      expect(JSON.parse(await readFile(state, 'utf8')).afterSeq).toBe(rows.at(-1).hrcSeq)
+      expect(JSON.parse(await readFile(state, 'utf8')).afterSeq).toBe(head)
       child.kill()
       await child.exited
       const logs = await new Response(child.stderr).text()
@@ -157,7 +159,7 @@ live(
         key!
       )
       expect(appends).toHaveLength(2)
-      expect(appends[1].payload).toMatchObject({ lit: false, state: 'none' })
+      expect(appends[1]).toMatchObject({ payload: { lit: false, state: 'none' } })
       streamMode = false
       const logs = await drive(
         { 'hsid-fixture:1': { user: '', final: 'Should I commit and push?' } },
