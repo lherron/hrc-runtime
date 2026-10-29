@@ -29,6 +29,9 @@ Checks (spec T-12046 §4.2, §4.6, §5):
   6 terminate: supervisor, child and socket gone, row terminal
   7 tmux sibling: transport tmux, btmux socket with broker+tui windows,
     survives the restart, its tmux server gone after terminate
+  8 attached door (POST /v1/runs/prepare-attached) on both live seats: the
+    hrcpty seat stays operatorAttachable with its hrcpty block, the tmux
+    sibling's runtime.presentation keeps its tmux shape
 
 Never touches the live daemon (its socket is refused), the live aspd, or any
 shared service. Every process and root it creates is removed on exit.
@@ -474,6 +477,50 @@ def main():
                 and argv[0].endswith('/hrc-pty') and Path(argv[0]) == binary.parent / 'hrc-pty'
                 and argv[1:] == ['attach', '--socket', str(pty_sock)]
                 and att.get('bindingFence', {}).get('supervisorPid') == pty_pid, status=status, response=att)
+
+        # == 8. attached door on the live seats ================================
+        # POST /v1/runs/prepare-attached selects a live seat as-is and republishes
+        # its presentation (attachedRunSelected). An hrcpty seat stays
+        # attachable with its hrcpty block; the tmux sibling's event keeps its
+        # tmux shape (normalized copies land in attached-door.json for diffing).
+        door_intent = {'placement': {'agentRoot': str(root / PROJECT), 'projectRoot': str(root / PROJECT), 'cwd': str(root / PROJECT),
+                                     'runMode': 'task', 'bundle': {'kind': 'compose', 'compose': []}, 'dryRun': False},
+                       'harness': {'provider': 'anthropic', 'interactive': True}}
+        door = {}
+        for name, host, rid in (('hrcpty', pty_host, pty_rt), ('tmux', tmux_host, tmux_rt)):
+            before = len(r.events(rid, 'runtime.presentation'))
+            status, out = r.http('POST', '/v1/runs/prepare-attached', {'hostSessionId': host, 'intent': door_intent})
+            evs = r.events(rid, 'runtime.presentation')
+            row = r.runtime(rid)
+            door[name] = {'status': status, 'response': out, 'newEvents': [e['payload'] for e in evs[before:]],
+                          'presentationJson': json.loads(row['presentation_json'] or 'null')}
+        hd, td = door['hrcpty'], door['tmux']
+        hev = hd['newEvents'][-1] if hd['newEvents'] else {}
+        r.check('8.hrcpty-door-selects-live-seat', hd['status'] == 200 and hd['response'].get('status') == 'started'
+                and hd['response'].get('result', {}).get('runtimeId') == pty_rt and hd['response'].get('attach', {}).get('transport') == 'hrcpty',
+                status=hd['status'], response=hd['response'])
+        r.check('8.hrcpty-door-event-attachable', len(hd['newEvents']) == 1 and hev.get('presentation', {}).get('operatorAttachable') is True
+                and hev.get('invocation') == {'operatorAttachPending': True}
+                and hev.get('hrcpty', {}).get('socketPath') == str(pty_sock)
+                and hev.get('hrcpty', {}).get('attachCommand', '').endswith(f'attach --socket {pty_sock}')
+                and 'tmux' not in hev, events=hd['newEvents'])
+        r.check('8.hrcpty-door-row-attachable', (hd['presentationJson'] or {}).get('operatorAttachable') is True,
+                presentationJson=hd['presentationJson'])
+        status, seats = r.http('GET', '/v1/presentation/runtimes')
+        listed = seats if isinstance(seats, list) else next((v for v in seats.values() if isinstance(v, list)), []) if isinstance(seats, dict) else []
+        seat = next((x for x in listed if isinstance(x, dict) and x.get('runtimeId') == pty_rt), {})
+        r.check('8.hrcpty-presentation-row-keeps-hrcpty', seat.get('presentation', {}).get('operatorAttachable') is True
+                and seat.get('hrcpty', {}).get('socketPath') == str(pty_sock), status=status, seat=seat)
+        tev = td['newEvents'][-1] if td['newEvents'] else {}
+        r.check('8.tmux-door-event-shape', td['status'] == 200 and len(td['newEvents']) == 1
+                and tev.get('presentation', {}).get('operatorAttachable') is True and 'hrcpty' not in tev
+                and tev.get('tmux', {}).get('socketPath') == tmux_sock and tev.get('tmux', {}).get('attachTarget'),
+                status=td['status'], events=td['newEvents'])
+        norm = lambda v: json.loads(json.dumps(v).replace(str(root), '<root>').replace(tmux_rt, '<tmux_rt>').replace(pty_rt, '<pty_rt>'))
+        (args.artifacts / 'attached-door.json').write_text(json.dumps(
+            {'hrcpty': norm({'event': hev, 'presentationJson': hd['presentationJson'], 'attach': hd['response'].get('attach')}),
+             'tmux': norm({'event': tev, 'presentationJson': td['presentationJson']}),
+             'hrcptyAttachRaw': att, 'hrcptySeatRow': seat}, indent=2))
 
         # == 4. daemon restart =================================================
         old_daemon_pid = daemon.pid

@@ -84,7 +84,9 @@ pub fn publish_presentation(
         .as_ref()
         .map(|h| h["presentation"]["kind"].clone())
         .unwrap_or(Value::Null);
-    let attachable = kind == "tmux-tui" || kind == "observer";
+    // T-12046: an hrcpty seat attaches through its supervisor socket.
+    let hrcpty = kind == "hrcpty";
+    let attachable = kind == "tmux-tui" || kind == "observer" || hrcpty;
     let previous: Value = db
         .sqlite
         .query_row(
@@ -115,7 +117,11 @@ pub fn publish_presentation(
     )?;
     let mut payload =
         json!({"invocation":{"operatorAttachPending":attach_pending},"presentation":record});
-    if attachable && let Some(socket) = lease::socket_path(&rt) {
+    if hrcpty {
+        let p = &hosting.as_ref().unwrap()["presentation"];
+        payload["hrcpty"] =
+            json!({"socketPath":p["socketPath"],"attachCommand":p["attachCommand"]});
+    } else if attachable && let Some(socket) = lease::socket_path(&rt) {
         let session_name = lease::session_name(&rt);
         let target = match rt
             .tmux
