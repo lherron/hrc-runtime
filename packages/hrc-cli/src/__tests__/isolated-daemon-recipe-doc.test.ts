@@ -3,14 +3,15 @@ import { existsSync, readFileSync } from 'node:fs'
 
 const repoRoot = new URL('../../../..', import.meta.url)
 const recipeUrl = new URL('docs/isolated-daemon-smoke-recipe.md', repoRoot)
-const agentsUrl = new URL('AGENTS.md', repoRoot)
+// The docs index is the recipe's home; T-11989 trimmed it from AGENTS.md.
+const indexUrl = new URL('docs/README.md', repoRoot)
 
-test('documents the isolated-daemon smoke recipe and links it from AGENTS.md', () => {
+test('documents the isolated-daemon smoke recipe and links it from the docs index', () => {
   expect(existsSync(recipeUrl)).toBe(true)
-  expect(existsSync(agentsUrl)).toBe(true)
+  expect(existsSync(indexUrl)).toBe(true)
 
   const recipe = readFileSync(recipeUrl, 'utf8')
-  const agents = readFileSync(agentsUrl, 'utf8')
+  const index = readFileSync(indexUrl, 'utf8')
 
   for (const token of [
     'HRC_RUNTIME_DIR',
@@ -21,5 +22,5 @@ test('documents the isolated-daemon smoke recipe and links it from AGENTS.md', (
   ]) {
     expect(recipe).toContain(token)
   }
-  expect(agents).toContain('docs/isolated-daemon-smoke-recipe.md')
+  expect(index).toContain('](isolated-daemon-smoke-recipe.md)')
 })
