@@ -1,4 +1,4 @@
-use crate::projection::text;
+use crate::{api::HrcApi, projection::text};
 use cardo_core::doms::Node;
 use cardo_runtime::{
     core_adapter::resources::{Attachment, unavailable},
@@ -49,14 +49,17 @@ fn window_is_live(tmux: &Path, socket: &str, target: &str) -> bool {
     }
 }
 
-pub fn attach(node: &Node, mode: &str) -> Result<Attachment, DispatchFailure> {
+pub fn attach(api: &HrcApi, node: &Node, mode: &str) -> Result<Attachment, DispatchFailure> {
     let tmux = &node.payload["tmux"];
     let socket = text(tmux, "socketPath");
     let target = text(tmux, "attachTarget");
     if socket.is_empty() || target.is_empty() {
+        if node.payload["hrcpty"].is_object() {
+            return hrcpty(api, node, mode);
+        }
         return Err(unavailable(
             "no_tty",
-            "HRC presentation row has no tmux attach target",
+            "HRC presentation row has neither a tmux nor an hrc-pty attach surface",
         ));
     }
     let tmux_bin = std::env::var_os("PATH")
@@ -84,6 +87,49 @@ pub fn attach(node: &Node, mode: &str) -> Result<Attachment, DispatchFailure> {
     argv.extend(["-t".into(), target.into()]);
     Ok(Attachment {
         descriptor: json!({"socket":socket,"target":target,"argv":argv,"mode":mode}),
+        handshake: None,
+    })
+}
+
+/// An hrc-pty seat (T-12046 §5 step 5): rusthrc's own attach surface, its argv
+/// passed through as issued. The one edit is `--read-only` for a read-only
+/// mode, where the tmux branch adds `-r`. cardo frames the outer transport
+/// from the type (`tmux-attach`); the descriptor names its own.
+fn hrcpty(api: &HrcApi, node: &Node, mode: &str) -> Result<Attachment, DispatchFailure> {
+    let runtime = text(&node.payload, "runtimeId");
+    if runtime.is_empty() {
+        return Err(unavailable("ended", "hrc-pty seat has no runtime"));
+    }
+    let surface = api.attach_surface(runtime).map_err(|e| {
+        // hrc down is not the seat ending; a refusal of this runtime is.
+        let reason = if e.code == "hrc_unavailable" {
+            "no_tty"
+        } else {
+            "ended"
+        };
+        unavailable(reason, &e.to_string())
+    })?;
+    let argv = surface["argv"]
+        .as_array()
+        .filter(|_| surface["transport"] == "hrcpty");
+    let Some(argv) = argv else {
+        return Err(unavailable(
+            "ended",
+            &format!("runtime {runtime} no longer attaches through hrc-pty"),
+        ));
+    };
+    let mut argv = argv.clone();
+    if mode == "read-only" {
+        argv.push("--read-only".into());
+    }
+    Ok(Attachment {
+        descriptor: json!({
+            "transport": "hrcpty",
+            "socket": node.payload["hrcpty"]["socketPath"],
+            "argv": argv,
+            "mode": mode,
+            "bindingFence": surface["bindingFence"],
+        }),
         handshake: None,
     })
 }

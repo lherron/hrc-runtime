@@ -47,9 +47,13 @@ class NativeFixture:
                     t={'socketPath':tmux['socketPath'],'sessionName':session}
                     if window:t['windowName']=window
                     broker['presentation']={'kind':'tmux-tui','tuiWindow':{'sessionId':'$0','windowId':'@0','paneId':'%0'}}
+                pty=r.get('hrcpty')
+                if pty:  # rusthrc's leased-hrcpty hosting (T-12049)
+                    broker['substrate']={'kind':'leased-hrcpty','socketPath':pty['socketPath'],'pid':pty['supervisorPid'],'generation':r.get('generation',1)}
+                    broker['presentation']={'kind':'hrcpty','socketPath':pty['socketPath'],'attachCommand':pty['attachCommand']}
                 runtime_state={'broker':broker}
                 if r.get('contextReading'):runtime_state['contextReading']=r['contextReading']
-                db.execute('INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,created_at,updated_at,tmux_json,runtime_state_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(r['runtimeId'],r['hostSessionId'],r['scopeRef'],r.get('laneRef','main').removeprefix('lane:'),r.get('generation',1),'tmux',r.get('status','idle'),1,now,now,json.dumps(t),json.dumps(runtime_state)))
+                db.execute('INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,created_at,updated_at,tmux_json,runtime_state_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(r['runtimeId'],r['hostSessionId'],r['scopeRef'],r.get('laneRef','main').removeprefix('lane:'),r.get('generation',1),'hrcpty' if r.get('hrcpty') else 'tmux',r.get('status','idle'),1,now,now,json.dumps(t),json.dumps(runtime_state)))
             for e in state.get('events',[]):
                 db.execute('INSERT INTO hrc_events(hrc_seq,stream_seq,ts,host_session_id,scope_ref,lane_ref,generation,category,event_kind,runtime_id,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(e['hrcSeq'],e['hrcSeq'],e.get('ts',now),e.get('hostSessionId','hrc-server'),e.get('scopeRef','server:hrc'),e.get('laneRef','main'),e.get('generation',0),e.get('category','server'),e['eventKind'],e.get('runtimeId'),json.dumps(e.get('payload',{}),ensure_ascii=True)))
             db.execute("DELETE FROM sqlite_sequence WHERE name='hrc_events'")

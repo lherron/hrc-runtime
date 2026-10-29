@@ -197,7 +197,7 @@ pub fn project_with_context(
         }
         if let Some(r) = rt {
             seat["runtimeId"] = r["runtimeId"].clone();
-            for field in ["tmux", "title", "metadata"] {
+            for field in ["tmux", "hrcpty", "title", "metadata"] {
                 if let Some(v) = r.get(field) {
                     seat[field] = v.clone();
                 }

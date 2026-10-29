@@ -278,3 +278,40 @@ fn every_projected_seat_field_is_declared_including_attention() {
         );
     }
 }
+
+// T-12051: an hrc-pty seat's attach surface reaches the hrc.seat node beside
+// where tmux's does, and both the seat and the hrc.runtime node (the whole
+// presentation row) stay inside their declarations.
+#[test]
+fn hrcpty_attach_surface_projects_onto_seat_and_runtime_declared() {
+    let session = json!({"scopeRef":"scope","laneRef":"main","hostSessionId":"h","generation":1,"status":"active","updatedAt":"2026-10-28T13:50:00.000Z"});
+    let hrcpty = json!({"socketPath":"/r/bipc/abc/hrcpty.sock","supervisorPid":42,"attachCommand":"/b/hrc-pty attach --socket /r/bipc/abc/hrcpty.sock"});
+    let runtime = json!({"hostSessionId":"h","generation":1,"runtimeId":"rt","status":"ready","hrcpty":hrcpty});
+    let edits = project(
+        &[session],
+        &[runtime],
+        &[],
+        Utc.with_ymd_and_hms(2026, 10, 28, 14, 0, 0).unwrap(),
+    )
+    .unwrap();
+    let declarations = hrc_domain::declarations::declarations();
+    for name in ["hrc.seat", "hrc.runtime"] {
+        let payload = &edits.iter().find(|e| e["type"] == name).unwrap()["payload"];
+        assert_eq!(payload["hrcpty"], hrcpty, "{name} carries hrcpty");
+        let declared = declarations["node_types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap()["payload"]["fields"]
+            .as_object()
+            .unwrap()
+            .clone();
+        for key in payload.as_object().unwrap().keys() {
+            assert!(
+                declared.contains_key(key),
+                "{name} field {key} is not declared"
+            );
+        }
+    }
+}

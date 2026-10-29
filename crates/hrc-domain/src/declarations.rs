@@ -30,6 +30,7 @@ pub fn declarations() -> Value {
         "latestEvent",
         "contextReading",
         "tmux",
+        "hrcpty",
         "metadata",
         "attention",
     ] {
@@ -50,6 +51,7 @@ pub fn declarations() -> Value {
         "metadata",
         "presentation",
         "tmux",
+        "hrcpty",
         "contextReading",
         "operatorSurfaces",
     ] {

@@ -216,7 +216,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             },
         ))
     });
-    adapter.attacher("hrc.seat", hrc_domain::attach::attach);
+    let attach_api = api.clone();
+    adapter.attacher("hrc.seat", move |node, mode| {
+        hrc_domain::attach::attach(&attach_api, node, mode)
+    });
     forward_wake(
         source.as_ref(),
         adapter.ingest_waker(),

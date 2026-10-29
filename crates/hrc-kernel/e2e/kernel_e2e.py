@@ -167,6 +167,15 @@ def main():
                 value = s['sessions']
             elif u.path == '/v1/presentation/runtimes':
                 value = dict(ok=True, runtimes=s['runtimes'])
+            elif u.path == '/v1/attach':
+                # rusthrc's operator attach surface for an hrc-pty seat (T-12049).
+                runtime = next((r for r in s['runtimes'] if r['runtimeId'] == q['runtimeId'][0] and r.get('hrcpty')), None)
+                if runtime is None or s.get('attach_refused'):
+                    status, value = 409, dict(error=dict(code='runtime_unavailable', message='runtime cannot be attached without replacing it'))
+                else:
+                    value = dict(transport='hrcpty', argv=['/opt/hrc/bin/hrc-pty', 'attach', '--socket', runtime['hrcpty']['socketPath']],
+                                 bindingFence=dict(hostSessionId=runtime['hostSessionId'], runtimeId=runtime['runtimeId'],
+                                                   generation=runtime['generation'], supervisorPid=runtime['hrcpty']['supervisorPid']))
             elif u.path == '/v1/events/latest-by-session':
                 assert not q.get('category'), 'category cannot select the newest turn.* event'
                 value = s['events'][-1:]
@@ -327,9 +336,38 @@ def main():
             assert not paths, paths
             assert set(paths) <= allowed, set(paths)
             assert state['stream_opens'] == 0, 'native projection opened an API stream'
+            # T-12051: an hrc-pty seat attaches through rusthrc's own surface,
+            # argv verbatim plus --read-only for a read-only mode.
+            pty_socket = str(root / 'bipc/abc/hrcpty.sock')
+            with wake:
+                runtime = state['runtimes'][0]
+                runtime.pop('tmux')
+                runtime['hrcpty'] = dict(socketPath=pty_socket, supervisorPid=4242,
+                                         attachCommand=f'/opt/hrc/bin/hrc-pty attach --socket {pty_socket}')
+                state['events'].append(dict(bookkeeping, hostSessionId='hs-3', generation=3, hrcSeq=31, runtimeId='rt-3'))
+                state['head'] = 31
+                state['wake_revision'] += 1
+                wake.notify_all()
+            pty_row = wait_for(lambda: (r if (r := query())['rows'][0]['payload'].get('hrcpty') else None), 'seat carries hrcpty')['rows'][0]
+            assert pty_row['payload']['hrcpty']['socketPath'] == pty_socket and 'tmux' not in pty_row['payload'], pty_row
+            del paths[:]
+            pty_ro = wire.call('resource.attach', dict(document_id='hrc', id=pty_row['id']))
+            pty_rw = wire.call('resource.attach', dict(document_id='hrc', id=pty_row['id'], mode='normal'))
+            surface = ['/opt/hrc/bin/hrc-pty', 'attach', '--socket', pty_socket]
+            assert pty_ro['transport'] == 'tmux-attach' and pty_ro['descriptor']['transport'] == 'hrcpty', pty_ro
+            assert pty_ro['descriptor']['argv'] == surface + ['--read-only'] and pty_ro['descriptor']['mode'] == 'read-only', pty_ro
+            assert pty_rw['descriptor']['argv'] == surface and pty_rw['descriptor']['mode'] == 'normal', pty_rw
+            assert pty_rw['descriptor']['socket'] == pty_socket and pty_rw['descriptor']['bindingFence']['runtimeId'] == 'rt-3', pty_rw
+            assert paths == ['/v1/attach', '/v1/attach'], paths
+            with lock:
+                state['attach_refused'] = True
+            wire.file.write((json.dumps(dict(id='pty-ended', op='resource.attach', args=dict(document_id='hrc', id=pty_row['id'])))+'\n').encode())
+            pty_ended = json.loads(wire.file.readline())
+            assert not pty_ended['ok'] and pty_ended['error']['details']['reason'] == 'ended', pty_ended
+            del paths[:]
             report = dict(ready=ready, types=[n['name'] for n in discovery['node_types']],
                           initial=first, replay=after, cursor_before_replace=cursor,
-                          replacement=replaced, new_generation=new_generation, resync=resync, ended=ended, legacy_attach=legacy, tail_queries=tail_queries, paths=sorted(set(paths)), pass_=True)
+                          replacement=replaced, new_generation=new_generation, resync=resync, ended=ended, legacy_attach=legacy, hrcpty_attach=dict(read_only=pty_ro, normal=pty_rw, ended=pty_ended), tail_queries=tail_queries, paths=sorted(set(paths)), pass_=True)
             (evidence / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
             print('PASS bootstrap, ledger outage recovery, sparse/spill replay, stable generation row, attach, incarnation reset, subscribe/replay, pinned reads')
             wire.close()

@@ -153,6 +153,33 @@ impl HrcApi {
         }
         Ok(body)
     }
+    /// rusthrc's operator attach surface (`GET /v1/attach`) for one runtime,
+    /// which the `hrc.seat` attacher passes through for an hrc-pty seat. Like
+    /// every operator attach it reconciles that runtime's liveness first; it
+    /// is called on `resource.attach` only, never while projecting.
+    pub fn attach_surface(&self, runtime_id: &str) -> Result<Value, ApiError> {
+        let response = self
+            .client
+            .get("http://localhost/v1/attach")
+            .query(&[("runtimeId", runtime_id)])
+            .timeout(Duration::from_secs(10))
+            .send()?;
+        let status = response.status();
+        let body: Value = response.json()?;
+        if !status.is_success() {
+            return Err(ApiError {
+                code: body["error"]["code"]
+                    .as_str()
+                    .unwrap_or("hrc_refused")
+                    .into(),
+                message: body["error"]["message"]
+                    .as_str()
+                    .unwrap_or("HRC refused the attach")
+                    .into(),
+            });
+        }
+        Ok(body)
+    }
     pub fn page(
         &self,
         after: i64,
