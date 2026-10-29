@@ -1,0 +1,56 @@
+id: hrc-runtime.hrcpty-seat-supervision
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: hrcpty Claude seat process ownership, terminal replay and responder authority
+predicate: >
+  For the producer-selected claude-code-hrcpty driver, HRC owns the durable
+  runtime lease and allocates the hrcpty supervisor from the frozen selected
+  execution. The per-seat hrc-pty process owns both Claude's pty and the
+  harness-broker process independently of HRC and presentation-client lifetimes.
+  The broker retains per-seat admission and hook/transcript normalization;
+  HRC retains runtime lifecycle and committed broker-event projection. The
+  hrcpty transport and leased-hrcpty substrate are distinct from tmux, and
+  existing tmux drivers retain their substrate. Presentation attachment is a
+  raw byte relay and its detach does not terminate Claude. Child exit retains
+  the terminal model and final screen until lease teardown. Broker exit is
+  reported without respawn or invocation adoption; surviving Claude remains
+  attachable and capturable without claiming recovered broker control.
+  The detached terminal responder is armed exactly when no read-write client
+  is attached; read-only clients cannot write input or query replies to Claude.
+  Replay performs clearing resets and mode transitions before screen content,
+  preserves retained positioned and virtual Kitty placement classes and
+  identities, transmits each retained placed image before its placement, and
+  restores cursor state and unfinished VT continuation before live relay.
+  Virtual placement locations remain in the styled placeholder cells rather
+  than invented cursor coordinates. Images evicted by the configured 256 MiB
+  per-seat storage limit and images without placements are outside replay.
+  HRC and presentation restarts preserve the supervisor and Claude; a
+  supervisor crash does not promise child survival or supervisor recovery.
+authority: Lance ownership and driver-selection rulings 2026-10-29; Daedalus approval of wrkq:T-12046 spec REV 5, reply to EN-38360, 2026-10-29
+source:
+  - wrkq:T-12046
+  - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
+  - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
+  - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
+  - crates/hrc-native/src/server/broker/broker.rs
+  - crates/hrc-native/src/server/broker/controller/mod.rs
+  - crates/hrc-native/src/server/broker/controller/attach.rs
+required_tests:
+  - T-12046 G1 full-capability byte trace against direct Ghostty
+  - T-12046 G2 detached birth and later attach with capture and visible output evidence
+  - T-12046 G3 HRC and Loggia restart survival with unchanged Claude pid and subsequent delivery receipt
+  - T-12046 G4 coexistence of tmux Codex and hrcpty Claude deliveries
+  - T-12046 G5 exact-once multiline enqueue and steer plus ACP job and wrkf dispatchTurn evidence
+  - T-12047 E2 retained graphics replay fixture includes a virtual placement
+last_verified:
+  date: 2026-10-29
+  evidence: Design-only source verification of T-12046 REV 5 against HRC admission, allocation, transport-close and attach paths and scriptable-ghostty commit 07da02bffc358e42d3bdcab2660c160505dba9cb. No implementation gate, spike result, build, install or service-health result is established; runner evidence remains pending.
+reopen_when:
+  - supervisor, broker, HRC or presentation-client ownership or lifetime changes
+  - broker respawn, invocation adoption or supervisor crash recovery is introduced
+  - producer selection, frozen execution allocation or tmux coexistence boundaries change
+  - responder authority, read-only input filtering or raw relay semantics change
+  - replay ordering, placement-class identity, continuation or image-retention bounds change
+supersedes: []
+superseded_by: []
