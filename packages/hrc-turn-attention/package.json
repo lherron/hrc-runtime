@@ -13,7 +13,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "bun test src"
+    "test": "TYPESAFE_API_KEY= bun ../../scripts/hermetic-test.ts src"
   },
   "dependencies": {
     "hrc-core": "*",

@@ -31,10 +31,12 @@ G1 imports the production classifier, checks all 412 gold rows and the six idle
 IDs, and writes `fixtures/g1-results.jsonl` and `fixtures/g1-summary.json`.
 The original research harness is preserved as `fixtures/eval_jev.py`; its v3
 questions are copied verbatim into `src/questions.ts`. The process E2E test
-requires `TYPESAFE_API_KEY` and otherwise reports skipped. It uses a private HRC
-socket fixture grounded in real event rows and real jev, exercising catch-up,
-restart text, task exclusion, none append, and invalid-key fail-open. It does
-not stand in for G2–G5 on installed HRC/Loggia.
+requires `TYPESAFE_API_KEY` and otherwise reports skipped. The package `test`
+script (and so `just test`) blanks the key, so the suite never reaches jev; run
+it live by hand with `bun test src/subscriber.e2e.test.ts` from this package.
+It uses a private HRC socket fixture grounded in real event rows and real jev,
+exercising catch-up, restart text, task exclusion, none append, and
+invalid-key fail-open. It does not stand in for G2–G5 on installed HRC/Loggia.
 
 Publication joins the HRC selected-release tuple. After publishing, Mable runs
 `just install-turn-attention-launchd <version>` with `TYPESAFE_API_KEY` exported.
