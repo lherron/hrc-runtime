@@ -94,6 +94,8 @@ fn attach(args: AttachArgs, control: UnixStream) -> anyhow::Result<i32> {
     let ws = winsize();
     let mut params = size_params(&ws);
     params["readOnly"] = json!(args.read_only);
+    // Loggia's SSH relay runs the client on the far side of an ssh session.
+    params["remote"] = json!(std::env::var_os("SSH_CONNECTION").is_some());
     let attached = client.call("attach", params)?;
     let attach_id = attached["attachId"].as_str().unwrap_or("").to_owned();
 

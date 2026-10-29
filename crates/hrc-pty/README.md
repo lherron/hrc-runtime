@@ -16,6 +16,17 @@ hrc-pty version
 bound; startup errors come back on stderr with exit 1. The token defaults to
 `<ipcDir>/attach.token`, the log to `<ipcDir>/hrcpty.log`.
 
+## Clients and the child env
+
+The child's env carries `HRC_PTY_SOCKET=<ops socket>`, so a program in the
+seat can reach its supervisor (the token is `<ipcDir>/attach.token`).
+`hrc-pty attach` sends `remote: true` in its handshake when `SSH_CONNECTION`
+is set in its own env. hrc-pty keeps a focused bit per read-write client from
+the `CSI I`/`CSI O` focus reports on that client's data connection (true
+until the first report). Those bytes still reach the child. A report split
+across two reads is not recognised. `status.clients` counts `total`,
+`readWrite`, `readOnly`, `remote` and `focused`.
+
 ## libghostty-vt
 
 `GHOSTTY_COMMIT` pins the scriptable-ghostty commit. The default build links

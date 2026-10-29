@@ -68,6 +68,10 @@ impl ProcInfo {
 struct AttachedClient {
     tx: SyncSender<Arc<[u8]>>,
     read_only: bool,
+    /// `hrc-pty attach` ran with `SSH_CONNECTION` set (Loggia's SSH relay).
+    remote: bool,
+    /// The last `CSI I`/`CSI O` this client's terminal sent; true until the first.
+    focused: bool,
     stream: UnixStream,
 }
 
@@ -75,6 +79,7 @@ struct PendingAttach {
     cols: u16,
     rows: u16,
     read_only: bool,
+    remote: bool,
     cell_px: Option<(u32, u32)>,
 }
 
@@ -645,6 +650,7 @@ fn dispatch(shared: &Arc<Shared>, method: &str, params: &Value) -> anyhow::Resul
                 cols,
                 rows,
                 read_only: params["readOnly"].as_bool().unwrap_or(false),
+                remote: params["remote"].as_bool().unwrap_or(false),
                 cell_px: cell_px_param(params, cols, rows),
             };
             let id = random_id();
@@ -690,7 +696,13 @@ fn status(shared: &Shared) -> Value {
         "pid": std::process::id(),
         "child": st.child.json(),
         "broker": st.broker.json(),
-        "clients": {"total": st.clients.len(), "readWrite": st.read_write_clients(), "readOnly": st.clients.len() - st.read_write_clients()},
+        "clients": {
+            "total": st.clients.len(),
+            "readWrite": st.read_write_clients(),
+            "readOnly": st.clients.len() - st.read_write_clients(),
+            "remote": st.clients.values().filter(|c| c.remote).count(),
+            "focused": st.clients.values().filter(|c| !c.read_only && c.focused).count(),
+        },
         "responderArmed": st.read_write_clients() == 0,
         "responderAnswered": st.answered,
         "size": {"cols": st.size.0, "rows": st.size.1, "cellPx": st.cell_px.map(|(w, h)| json!({"w": w, "h": h}))},
@@ -771,7 +783,12 @@ fn spawn(shared: &Arc<Shared>, params: &Value) -> anyhow::Result<Value> {
         })
         .unwrap_or_default();
     anyhow::ensure!(!argv.is_empty(), "bad_request: argv is required");
-    let env = child_env(params);
+    let mut env = child_env(params);
+    // §4.3: the child can reach its supervisor (token at <ipcDir>/attach.token).
+    env.insert(
+        "HRC_PTY_SOCKET".into(),
+        shared.socket.to_string_lossy().into_owned(),
+    );
     anyhow::ensure!(
         terminfo_present(&env),
         "terminfo_missing: infocmp xterm-ghostty failed"
@@ -981,6 +998,8 @@ fn data_connection(
             AttachedClient {
                 tx,
                 read_only: pending.read_only,
+                remote: pending.remote,
+                focused: true,
                 stream: handle,
             },
         );
@@ -1009,7 +1028,15 @@ fn data_connection(
         };
         // Read-only clients' bytes, including their terminal's own query
         // replies, never reach the child (§4.3).
-        if !read_only && shared.write_master(&buf[..n]) {
+        if read_only {
+            continue;
+        }
+        if let Some(focused) = focus_report(&buf[..n])
+            && let Some(client) = shared.state.lock().unwrap().clients.get_mut(&attach_id)
+        {
+            client.focused = focused;
+        }
+        if shared.write_master(&buf[..n]) {
             shared.state.lock().unwrap().bytes_in += n as u64;
         }
     }
@@ -1027,6 +1054,16 @@ fn data_connection(
             json!({"attachId": attach_id, "readOnly": read_only}),
         );
     }
+}
+
+/// The last focus report in one read (`CSI I` focused, `CSI O` not). The bytes
+/// still reach the child; a report split across two reads is not seen.
+fn focus_report(bytes: &[u8]) -> Option<bool> {
+    bytes.windows(3).rev().find_map(|w| match w {
+        b"\x1b[I" => Some(true),
+        b"\x1b[O" => Some(false),
+        _ => None,
+    })
 }
 
 /// §4.3 step 2, in the REV 4/5 order: reset + sync start; modes; content;

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """hrc-pty spike e2e (T-12047 brief E1-E5): Claude Code as the child of a bare
 `hrc-pty serve`, attach clients in real Ghostty windows (ghostmux). No HRC,
-aspd, broker or tmux; the "broker" is `sleep`.
+aspd, broker or tmux; the "broker" is `sleep`. E6 (T-12053) needs neither
+Claude nor Ghostty: the child's HRC_PTY_SOCKET, clients.remote from an
+SSH_CONNECTION client, clients.focused across CSI O / CSI I.
 
   hrc_pty_e2e.py --binary crates/target/debug/hrc-pty --artifacts DIR [--scratch DIR]
 
@@ -467,18 +469,79 @@ def e5(run, ctx):
                                                                      run.path("e5.final-capture.json"), shot])
 
 
+# -- E6: Loggia animation player additions (T-12053, spec §4.3) --------------
+def e6(run):
+    ipc = os.path.join(run.scratch, "player-ipc")
+    pid, token = hrcpty.serve(run.binary, ipc, cols=80, rows=24, broker_argv=["/bin/sleep", "3600"])
+    sock = os.path.join(ipc, "hrcpty.sock")
+    ops = hrcpty.Ops(sock, token)
+    clients = []
+    try:
+        env_file = os.path.join(run.scratch, "player-child-env.txt")
+        ops.call("spawn", {"argv": ["/bin/sh", "-c", f"env > {env_file}; exec /bin/sleep 3600"], "env": run.env})
+        hrcpty.wait_until(lambda: os.path.exists(env_file) and os.path.getsize(env_file) > 0, 10)
+        child_env = dict(line.split("=", 1) for line in open(env_file).read().splitlines() if "=" in line)
+        shutil.copy(env_file, run.path("e6.child-env.txt"))
+        run.check("E6.child-env-socket", child_env.get("HRC_PTY_SOCKET") == sock,
+                  f"child HRC_PTY_SOCKET={child_env.get('HRC_PTY_SOCKET')!r}, ops socket {sock}",
+                  [run.path("e6.child-env.txt")])
+
+        def attach(extra_env):
+            env = {k: v for k, v in run.env.items() if k != "SSH_CONNECTION"}
+            env.update(extra_env)
+            proc = subprocess.Popen([run.binary, "attach", "--socket", sock], env=env, stdin=subprocess.PIPE,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            clients.append(proc)
+            return proc
+
+        def counts():
+            c = ops.call("status")["clients"]
+            return {k: c.get(k) for k in ("total", "readWrite", "readOnly", "remote", "focused")}
+
+        trail = [("idle", counts())]
+        remote = attach({"SSH_CONNECTION": "192.0.2.10 50000 192.0.2.20 22"})
+        trail.append(("ssh-attached", hrcpty.wait_until(lambda: (lambda c: c if c["total"] == 1 else None)(counts()), 10)))
+        local = attach({})
+        trail.append(("local-attached", hrcpty.wait_until(lambda: (lambda c: c if c["total"] == 2 else None)(counts()), 10)))
+        run.check("E6.remote-count", trail[0][1]["remote"] == 0 and trail[1][1]["remote"] == 1 and trail[2][1]["remote"] == 1,
+                  "remote 0 → 1 with the SSH_CONNECTION client, stays 1 when a local client joins", trail)
+
+        local.terminate()  # SIGTERM: the client restores its tty and exits 0
+        local.wait(timeout=10)
+        clients.remove(local)
+        steps = [("one-client", hrcpty.wait_until(lambda: (lambda c: c if c["total"] == 1 else None)(counts()), 10))]
+        for label, report, want in (("CSI O", b"\x1b[O", 0), ("CSI I", b"\x1b[I", 1)):
+            remote.stdin.write(report)
+            remote.stdin.flush()
+            steps.append((label, hrcpty.wait_until(lambda: (lambda c: c if c["focused"] == want else None)(counts()), 10)
+                          or counts()))
+        focused = [s[1]["focused"] for s in steps]
+        run.save("e6.status-trail.json", {"remote": trail, "focus": steps})
+        run.check("E6.focus", focused == [1, 0, 1], f"clients.focused {focused} across attach, CSI O, CSI I",
+                  [run.path("e6.status-trail.json")])
+    finally:
+        for proc in clients:
+            proc.kill()
+        try:
+            ops.call("signal", {"signal": "KILL"})
+            ops.call("shutdown")
+        except Exception:
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True)
     parser.add_argument("--artifacts", required=True)
     parser.add_argument("--scratch", default=os.path.expanduser("~/praesidium/var/scratch/hrc-runtime/T-12047/e2e"))
-    parser.add_argument("--only", help="comma list of e1,e2,e2k,e3,e5 (e2/e3/e5 need e1)")
+    parser.add_argument("--only", help="comma list of e1,e2,e2k,e3,e5,e6 (e2/e3/e5 need e1)")
     args = parser.parse_args()
     run = Run(args)
-    only = set((args.only or "e1,e2,e2k,e3,e5").split(","))
+    only = set((args.only or "e1,e2,e2k,e3,e5,e6").split(","))
     ctx = {}
     try:
-        subprocess.run(["ghostmux", "status"], check=True, capture_output=True)
+        if only - {"e6"}:
+            subprocess.run(["ghostmux", "status"], check=True, capture_output=True)
         if "e1" in only:
             e1(run, ctx)
         if "e2" in only:
@@ -491,6 +554,8 @@ def main():
             e3(run, ctx)
         if "e5" in only:
             e5(run, ctx)
+        if "e6" in only:
+            e6(run)
     except Exception as error:  # a crashed phase is a failed check, with its reason
         run.check("harness", False, f"{type(error).__name__}: {error}", [])
     finally:
