@@ -298,8 +298,10 @@ describe('T-06663 construction and secret egress', () => {
   })
 
   test('has only the two audited PeerToken reveal sites at outbound Authorization headers', () => {
+    // Code only: a reveal site is a call, and data files such as the
+    // turn-attention gold transcripts quote the reveal call as prose.
     const scan = Bun.spawnSync({
-      cmd: ['rg', '-n', String.raw`\.reveal\(\)`, 'packages'],
+      cmd: ['rg', '-n', '--type', 'ts', '--type', 'js', String.raw`\.reveal\(\)`, 'packages'],
       cwd: `${import.meta.dir}/../../../..`,
       stdout: 'pipe',
       stderr: 'pipe',
