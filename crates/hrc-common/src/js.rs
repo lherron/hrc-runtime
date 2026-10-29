@@ -299,3 +299,37 @@ pub fn read_text(path: &str) -> Result<String, (Option<i32>, String)> {
         .map_err(|e| (e.raw_os_error(), fs_error_message(&e, "read", path)))?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
+
+/// ICU root collation (Intl default `localeCompare`) for the ASCII repertoire:
+/// punctuation before digits before letters, case a tertiary difference.
+pub fn locale_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    const PUNCT: &str = "_-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$";
+    fn primary(c: char) -> Option<u32> {
+        if c.is_ascii_control() {
+            return None;
+        }
+        if c == ' ' {
+            return Some(1);
+        }
+        if let Some(i) = PUNCT.find(c) {
+            return Some(10 + i as u32);
+        }
+        if c.is_ascii_digit() {
+            return Some(100 + c as u32 - '0' as u32);
+        }
+        if c.is_ascii_alphabetic() {
+            return Some(200 + c.to_ascii_lowercase() as u32 - 'a' as u32);
+        }
+        Some(1000 + c as u32)
+    }
+    let keys = |s: &str| s.chars().filter_map(primary).collect::<Vec<_>>();
+    keys(a).cmp(&keys(b)).then_with(|| {
+        let tertiary = |s: &str| {
+            s.chars()
+                .filter(|c| primary(*c).is_some())
+                .map(|c| c.is_ascii_uppercase())
+                .collect::<Vec<_>>()
+        };
+        tertiary(a).cmp(&tertiary(b))
+    })
+}

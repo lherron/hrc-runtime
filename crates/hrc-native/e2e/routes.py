@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 from foundation import UnixHTTP
 
 
-def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settle=None):
+def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settle=None, compare=None):
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--bun-release', type=Path, required=True)
@@ -137,6 +137,11 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settl
             directory=args.artifacts/kind
             directory.mkdir(exist_ok=True)
             (directory/'observations.json').write_text(json.dumps(observations,indent=2)+'\n')
+        if compare:
+            compare(results)
+            (args.artifacts/'summary.json').write_text(json.dumps({'pass':True,'suite':suite})+'\n')
+            print(json.dumps({'pass':True,'suite':suite}))
+            return
         compared=subprocess.run(['python3',str(Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py'),
             'compare','--suite',suite,'--baseline',str(args.artifacts/'bun'),
             '--candidate',str(args.artifacts/'native'),'--out',str(args.artifacts/'compare')],capture_output=True,text=True)

@@ -1,7 +1,6 @@
 //! JavaScript value semantics the Bun CLI's output depends on: String()
 //! coercion, UTF-16 lengths, `\s` whitespace and ICU root `localeCompare`.
 use serde_json::Value;
-use std::cmp::Ordering;
 
 /// `String(value)` for a JSON value; a missing member renders as `undefined`.
 pub(crate) fn display(value: &Value) -> String {
@@ -94,39 +93,7 @@ pub(crate) fn utf16_prefix(s: &str, n: usize) -> String {
     out
 }
 
-/// ICU root collation (Intl default `localeCompare`) for the ASCII repertoire:
-/// punctuation before digits before letters, case a tertiary difference.
-pub(crate) fn locale_cmp(a: &str, b: &str) -> Ordering {
-    const PUNCT: &str = "_-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$";
-    fn primary(c: char) -> Option<u32> {
-        if c.is_ascii_control() {
-            return None;
-        }
-        if c == ' ' {
-            return Some(1);
-        }
-        if let Some(i) = PUNCT.find(c) {
-            return Some(10 + i as u32);
-        }
-        if c.is_ascii_digit() {
-            return Some(100 + c as u32 - '0' as u32);
-        }
-        if c.is_ascii_alphabetic() {
-            return Some(200 + c.to_ascii_lowercase() as u32 - 'a' as u32);
-        }
-        Some(1000 + c as u32)
-    }
-    let keys = |s: &str| s.chars().filter_map(primary).collect::<Vec<_>>();
-    keys(a).cmp(&keys(b)).then_with(|| {
-        let tertiary = |s: &str| {
-            s.chars()
-                .filter(|c| primary(*c).is_some())
-                .map(|c| c.is_ascii_uppercase())
-                .collect::<Vec<_>>()
-        };
-        tertiary(a).cmp(&tertiary(b))
-    })
-}
+pub(crate) use hrc_common::js::locale_cmp;
 
 /// `s.padStart(n)` / `s.padEnd(n)` with spaces, measured in UTF-16 units.
 pub(crate) fn pad_start(s: &str, n: usize) -> String {
@@ -330,6 +297,7 @@ pub(crate) fn json_roundtrip(value: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cmp::Ordering;
     #[test]
     fn numbers_match_ecmascript() {
         for (v, s) in [

@@ -709,6 +709,97 @@ fn history(db: &Connection, runtime_id: &str, envelope: &Value) -> Result<()> {
 
 static OWNED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
 
+/// Explicit operator door; automatic recovery continues through `recover`.
+pub async fn handle_recover(
+    server: &Shared,
+    bytes: &[u8],
+) -> Result<axum::response::Response, super::ApiError> {
+    use super::ApiError;
+    use axum::{Json, http::StatusCode, response::IntoResponse};
+    let body = super::parse_body(bytes)?;
+    let id = body["runtimeId"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad("runtimeId is required", Some(json!({}))))?;
+    let dry_run = body["dryRun"] == true;
+    if !dry_run && body["yes"] != true {
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error":{"code":"confirmation_required","message":"capture recover is mutating; pass yes (or dryRun)","detail":{"runtimeId":id}}}))).into_response());
+    }
+    let result = if dry_run {
+        dry_recover(server, id).await?
+    } else {
+        recover(server, id, "operator").await?
+    };
+    let value = result.ok_or_else(|| {
+        ApiError::domain(
+            StatusCode::NOT_FOUND,
+            "unknown_runtime",
+            format!("unknown runtime: {id}"),
+            Some(json!({})),
+        )
+    })?;
+    Ok(Json(value).into_response())
+}
+
+async fn dry_recover(server: &Shared, id: &str) -> Result<Option<Value>> {
+    let (runtime, invocation, prior) = {
+        let db = server.store.lock().unwrap();
+        let Some(runtime) = row(&db.sqlite, id)? else {
+            return Ok(None);
+        };
+        let invocation = target_invocation(&db.sqlite, &runtime)?;
+        let prior = invocation
+            .as_ref()
+            .map(|i| latest(&db.sqlite, id, i))
+            .transpose()?
+            .flatten();
+        (runtime, invocation, prior)
+    };
+    // Bun omits dryRun when no invocation exists, even on a dry request.
+    let Some(invocation) = invocation else {
+        return Ok(Some(response(
+            server,
+            id,
+            None,
+            "operator",
+            "offline_read_no_invocation",
+            false,
+            0,
+            false,
+            0,
+            None,
+            json!({}),
+            false,
+        )));
+    };
+    let refusal = refusal(server, &runtime, &invocation).await;
+    let release = release(&runtime.state);
+    let mut capability = json!({"declared":release.as_ref().is_some_and(|r|capability_declared(&r.release_root)==Some(true))});
+    if let Some(release) = release {
+        capability["releaseId"] = release.release_id.into();
+    }
+    let projected = cursor(&server.store.lock().unwrap().sqlite, &invocation);
+    let mut value = response(
+        server,
+        id,
+        Some(&invocation),
+        "operator",
+        prior.as_ref().map_or("not_attempted", |p| &p.0),
+        false,
+        prior.as_ref().map_or(0, |p| p.1),
+        false,
+        projected,
+        None,
+        prior.as_ref().map_or(json!({}), |p| p.2.clone()),
+        true,
+    );
+    value["eligibility"] = refusal.map_or_else(
+        || json!({"eligible":true}),
+        |(outcome, _)| json!({"eligible":false,"reason":outcome}),
+    );
+    value["capability"] = capability;
+    Ok(Some(value))
+}
+
 /// targetInvocationId: the active invocation, else the latest.
 fn target_invocation(db: &Connection, row: &Row) -> Result<Option<String>> {
     let all = invocations(db, &row.runtime_id)?;

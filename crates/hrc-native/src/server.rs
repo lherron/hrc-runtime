@@ -405,6 +405,12 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         status(server, &query)
             .await
             .map(|value| Json(value).into_response())
+    } else if method == Method::GET && uri.path() == "/v1/targets" {
+        runtime_views::list_targets(server, &query).await
+    } else if method == Method::GET && uri.path() == "/v1/surfaces" {
+        surfaces::list(server, &query)
+    } else if method == Method::POST && uri.path() == "/v1/capture/recover" {
+        retained::handle_recover(server, &body).await
     } else if method == Method::GET && uri.path() == "/v1/targets/by-session-ref" {
         runtime_views::target(server, &query).await
     } else if method == Method::GET && uri.path() == "/v1/attach" {
@@ -657,6 +663,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/attach",
                 "/v1/capture",
                 "/v1/targets/by-session-ref",
+                "/v1/targets",
+                "/v1/surfaces",
                 "/v1/runtimes/live-refs",
                 "/v1/placement/bindings",
                 "/v1/federation/locate",
@@ -697,6 +705,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/submissions/preempt",
                 "/v1/submissions/withdraw",
                 "/v1/messages/query",
+                "/v1/capture/recover",
                 "/v1/messages/turn-handoff",
                 "/v1/runtimes/restart-self",
                 "/v1/submissions/preempt/admission",

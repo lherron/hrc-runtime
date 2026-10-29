@@ -3,6 +3,13 @@ kind: contract
 status: active
 owner_project: hrc-runtime
 scope: Rust migration, delivered API-fed kernel/facades, isolated native parity, Rust front door and cohesive per-node owner transfer
+explicitly_unsupported_routes:
+  # T-12061 reachability audit, 2026-10-29. Retain SDK methods/consumers.
+  - "GET /v1/federation/peers: SDK method only; no live CLI or ACP caller."
+  - "POST /v1/broker-sessions/open: SDK and manual validation script only; no product entry point."
+  - "POST /v1/messages/wait: legacy ACP semantic-correlation reconciliation has no current producer or pending correlated rows."
+  - "POST /v1/messages/watch: standalone gateway-ios only; live ACP owns mobile streams independently."
+  - "POST /v1/server/tmux/kill-broker-leases: retained Bun server-stop cleanup only; installed Rust server stop is native."
 approved_source:
   revision: d04a6f9d
   draft: r3.3 (facade-first ruling, seat.summon, and scoped preview and seat.restart amendments)

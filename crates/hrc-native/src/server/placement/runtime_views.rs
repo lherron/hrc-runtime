@@ -375,6 +375,121 @@ pub async fn target(server: &Shared, q: &HashMap<String, String>) -> Result<Resp
     })?;
     Ok(Json(target_session_view(server, &session, true).await?).into_response())
 }
+/// Unbounded addressable-target catalog, matching handleListTargets. This is
+/// a persisted read: never probe brokers or continuation artifacts here.
+pub async fn list_targets(
+    server: &Shared,
+    q: &HashMap<String, String>,
+) -> Result<Response, ApiError> {
+    let optional = |key: &str| {
+        q.get(key)
+            .map(|v| hrc_common::js::trim(v))
+            .filter(|v| !v.is_empty())
+    };
+    let project = optional("projectId");
+    let lane = optional("lane").map(|v| if v == "default" { "main" } else { v });
+    let dormant = q.get("includeDormant").is_some_and(|v| v == "true");
+    let sessions = {
+        let db = server.store.lock().unwrap();
+        let mut sessions = Vec::new();
+        let mut statement = db
+            .sqlite
+            .prepare("SELECT * FROM sessions ORDER BY scope_ref,lane_ref,generation ASC")
+            .map_err(anyhow::Error::from)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>("lane_ref")?,
+                    hrc_store::session_row(row)?,
+                ))
+            })
+            .map_err(anyhow::Error::from)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(anyhow::Error::from)?;
+        for (raw_lane, mut session) in rows {
+            let scope = session["scopeRef"].as_str().unwrap_or("");
+            if scope.strip_prefix("app:").is_some_and(|id| !id.is_empty()) {
+                continue;
+            }
+            let stored_lane = raw_lane.as_str();
+            let active = db.continuity_session(scope, stored_lane)?;
+            if session["status"] == "archived" {
+                if !dormant
+                    || session["continuation"]["key"]
+                        .as_str()
+                        .is_none_or(str::is_empty)
+                {
+                    continue;
+                }
+            } else if active
+                .as_ref()
+                .is_some_and(|s| s["hostSessionId"] != session["hostSessionId"])
+            {
+                continue;
+            }
+            let identity = db.stored_identity(scope, stored_lane)?;
+            if project.is_some_and(|p| identity.as_ref().is_none_or(|v| v["projectId"] != p)) {
+                continue;
+            }
+            // SQL rows expose canonical lane spellings in the native store;
+            // Bun compares the raw lane, only aliasing default to main.
+            let normalized_lane = if stored_lane == "default" {
+                "main"
+            } else {
+                stored_lane
+            };
+            if lane.is_some_and(|l| l != normalized_lane) {
+                continue;
+            }
+            if let Some(identity) = identity {
+                session["identity"] = identity;
+            }
+            sessions.push(session);
+        }
+        sessions
+    };
+    let mut targets = std::collections::BTreeMap::<String, Value>::new();
+    let mut candidates = HashMap::<String, Vec<Value>>::new();
+    for session in sessions {
+        let view = target_session_view(server, &session, false).await?;
+        let key = view["sessionRef"].as_str().unwrap_or("").to_owned();
+        if view.get("runtime").is_some() || view.get("activeHostSessionId").is_some() {
+            let mut candidate = json!({});
+            for field in [
+                "sessionRef",
+                "scopeRef",
+                "laneRef",
+                "state",
+                "activeHostSessionId",
+                "generation",
+                "runtime",
+            ] {
+                if let Some(value) = view.get(field) {
+                    candidate[field] = value.clone();
+                }
+            }
+            candidates.entry(key.clone()).or_default().push(candidate);
+        }
+        if targets.get(&key).is_none_or(|v| {
+            view["generation"].as_i64().unwrap_or(0) >= v["generation"].as_i64().unwrap_or(0)
+        }) {
+            targets.insert(key, view);
+        }
+    }
+    for (key, view) in &mut targets {
+        if let Some(items) = candidates.remove(key).filter(|v| v.len() > 1) {
+            view["ambiguityCandidates"] = json!(items);
+        }
+    }
+    let mut views = targets.into_values().collect::<Vec<_>>();
+    views.sort_by(|a, b| {
+        hrc_common::js::locale_cmp(
+            a["sessionRef"].as_str().unwrap_or(""),
+            b["sessionRef"].as_str().unwrap_or(""),
+        )
+    });
+    Ok(Json(views).into_response())
+}
 pub async fn target_session_view(
     server: &Shared,
     session: &Value,

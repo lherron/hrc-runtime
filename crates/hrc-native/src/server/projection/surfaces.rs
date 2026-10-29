@@ -7,6 +7,24 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::{env, os::unix::fs::PermissionsExt, path::PathBuf};
+pub fn list(
+    server: &Server,
+    query: &std::collections::HashMap<String, String>,
+) -> Result<Response, ApiError> {
+    let id = query
+        .get("runtimeId")
+        .map(|s| hrc_common::js::trim(s))
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad("runtimeId is required", Some(json!({}))))?;
+    let db = server.store.lock().unwrap();
+    let runtime = db.runtime(id)?;
+    let rows = if runtime.as_ref().is_none_or(is_unavailable) {
+        Vec::new()
+    } else {
+        db.surfaces_for_runtime(id)?
+    };
+    Ok(Json(rows).into_response())
+}
 fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str, ApiError> {
     body[key]
         .as_str()

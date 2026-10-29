@@ -74,6 +74,13 @@ fn event(
     Ok(())
 }
 impl Store {
+    pub fn surfaces_for_runtime(&self, runtime: &str) -> Result<Vec<Value>> {
+        let mut statement = self.sqlite.prepare("SELECT * FROM surface_bindings WHERE runtime_id=? AND unbound_at IS NULL ORDER BY bound_at,surface_kind,surface_id")?;
+        Ok(statement
+            .query_map([runtime], row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn bind_surface(&self, body: &Value, runtime: &Value) -> Result<Value> {
         let now = timestamp();
         let tx = self.sqlite.unchecked_transaction()?;
