@@ -2,6 +2,15 @@
 
 ![Session runtime view](session-runtime-view.png)
 
+> **Superseded for Claude seats on 2026-10-29 (T-12046, hrc-pty).** Claude seats
+> whose profile selects `harness = "claude-hrcpty"` no longer run under tmux:
+> a per-seat `hrc-pty` supervisor (`crates/hrc-pty`) owns the pty, Claude and
+> the broker, tees output into headless libghostty-vt and relays raw bytes to
+> the Loggia leaf, so Claude sees `TERM=xterm-ghostty` directly. The tmux path
+> below still describes `claude-code-tmux` and the codex/pi/muse drivers. The
+> hrcpty design and dispatch route: `~/praesidium/var/wrkq-artifacts/T-12046/spec.md`
+> (REV 5, Daedalus-approved; invariant `hrc-runtime.hrcpty-seat-supervision`).
+
 This is a runtime view of one HRC-managed Claude Code seat on max3 (rusthrc). It
 shows every OS process from the operator's Loggia window down to the HRC ledger
 row, the libraries linked into each process, and the ACP mail path that puts
