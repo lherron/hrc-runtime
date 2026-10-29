@@ -1,0 +1,42 @@
+{
+  "attach": {
+    "transport": "hrcpty",
+    "argv": [
+      "/Users/lherron/praesidium/hrc-runtime/crates/target/debug/hrc-pty",
+      "attach",
+      "--socket",
+      "/tmp/h12049-14900/run/bipc/b545765ae8d8/hrcpty.sock"
+    ],
+    "bindingFence": {
+      "hostSessionId": "hsid-0dee4b1a-3152-4b8c-99d1-60111e3538b4",
+      "runtimeId": "rt-dc3b1ebf-faed-42b7-8a91-8b7d2988d976",
+      "generation": 1,
+      "supervisorPid": 14916
+    }
+  },
+  "presentationRow": {
+    "runtimeId": "rt-dc3b1ebf-faed-42b7-8a91-8b7d2988d976",
+    "hostSessionId": "hsid-0dee4b1a-3152-4b8c-99d1-60111e3538b4",
+    "scopeRef": "agent:hrcptye2e:project:t12049:task:pty-92199d5c",
+    "identity": {
+      "kind": "project-task",
+      "agentId": "hrcptye2e",
+      "projectId": "t12049",
+      "taskId": "pty-92199d5c"
+    },
+    "metadata": {},
+    "laneRef": "main",
+    "generation": 1,
+    "status": "ready",
+    "presentation": {
+      "operatorAttachable": true,
+      "viewerRequested": true
+    },
+    "hrcpty": {
+      "socketPath": "/tmp/h12049-14900/run/bipc/b545765ae8d8/hrcpty.sock",
+      "supervisorPid": 14916,
+      "attachCommand": "/Users/lherron/praesidium/hrc-runtime/crates/target/debug/hrc-pty attach --socket /tmp/h12049-14900/run/bipc/b545765ae8d8/hrcpty.sock"
+    },
+    "operatorSurfaces": []
+  }
+}

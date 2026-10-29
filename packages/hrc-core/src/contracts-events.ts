@@ -68,7 +68,8 @@ export type HrcEventCategory =
   /** The daemon itself, not any seat: `server.*` lifecycle provenance rows (T-08137). */
   | 'server'
 
-export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless'
+/** `'hrcpty'`: a seat hosted by its hrc-pty supervisor, no tmux (T-12046). */
+export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless' | 'hrcpty'
 
 export type HrcLifecycleEvent = {
   identity?: SessionIdentity | undefined

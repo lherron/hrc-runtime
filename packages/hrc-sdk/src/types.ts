@@ -3,6 +3,7 @@ import type {
   HrcMessageFilter,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  OperatorAttachDescriptor,
 } from 'hrc-core'
 import type {
   CaptureStateView,
@@ -343,18 +344,8 @@ export type SendInFlightInputResponse = {
   pendingTurns?: number | undefined
 }
 
-export type AttachDescriptor = {
-  transport: 'tmux'
-  argv: string[]
-  bindingFence: {
-    hostSessionId: string
-    runtimeId: string
-    generation: number
-    windowId?: string | undefined
-    tabId?: string | undefined
-    paneId?: string | undefined
-  }
-}
+/** GET /v1/attach: the operator attach descriptor, tmux or hrcpty. */
+export type AttachDescriptor = OperatorAttachDescriptor
 
 export type SurfaceListFilter = {
   runtimeId: string

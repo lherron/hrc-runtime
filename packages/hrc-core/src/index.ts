@@ -279,6 +279,7 @@ export type {
 export { HRC_RUNTIME_PRESENTATION_EVENT } from './contracts.js'
 export type {
   HrcPresentationRuntimeRow,
+  HrcPresentationHrcptyTarget,
   HrcPresentationTmuxTarget,
   HrcRuntimePresentationEventPayload,
   HrcRuntimePresentationRecord,
@@ -363,7 +364,9 @@ export type {
   RecoverUnstartedRunRequest,
   RecoverUnstartedRunResponse,
   RecoverUnstartedRunStatus,
+  HrcptyOperatorAttachDescriptor,
   OperatorAttachDescriptor,
+  TmuxOperatorAttachDescriptor,
   PrepareAttachedRunRequest,
   PrepareAttachedRunResponse,
   ResumeAttachedRunRequest,

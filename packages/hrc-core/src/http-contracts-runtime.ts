@@ -21,7 +21,9 @@ import type {
 } from './http-contracts-dispatch.js'
 import type { HrcRuntimeStatus } from './status-contracts.js'
 
-export type OperatorAttachDescriptor = {
+export type OperatorAttachDescriptor = TmuxOperatorAttachDescriptor | HrcptyOperatorAttachDescriptor
+
+export type TmuxOperatorAttachDescriptor = {
   transport: 'tmux'
   argv: string[]
   bindingFence: {
@@ -31,6 +33,22 @@ export type OperatorAttachDescriptor = {
     windowId?: string | undefined
     tabId?: string | undefined
     paneId?: string | undefined
+  }
+}
+
+/**
+ * An hrcpty seat attaches through its supervisor (T-12046 §5 step 5): `argv` is
+ * `[<hrc-pty>, 'attach', '--socket', <socketPath>]` and the fence names the
+ * supervisor process instead of a tmux pane.
+ */
+export type HrcptyOperatorAttachDescriptor = {
+  transport: 'hrcpty'
+  argv: string[]
+  bindingFence: {
+    hostSessionId: string
+    runtimeId: string
+    generation: number
+    supervisorPid: number
   }
 }
 

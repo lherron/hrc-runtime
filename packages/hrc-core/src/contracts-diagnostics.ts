@@ -126,6 +126,12 @@ export type HrcPresentationTmuxTarget = {
   attachTarget: string
 }
 
+/** Where an operator attaches an hrcpty seat: its supervisor's socket (T-12046). */
+export type HrcPresentationHrcptyTarget = {
+  socketPath: string
+  attachCommand: string
+}
+
 /**
  * `runtime.presentation` payload — appended on EVERY start/reuse invocation
  * that would spawn a viewer today (T-07594 §5.2).
@@ -138,6 +144,7 @@ export type HrcRuntimePresentationEventPayload = {
   invocation: { operatorAttachPending: boolean }
   presentation: HrcRuntimePresentationRecord
   tmux?: HrcPresentationTmuxTarget | undefined
+  hrcpty?: HrcPresentationHrcptyTarget | undefined
   title?: string | undefined
 }
 
@@ -159,6 +166,7 @@ export type HrcPresentationRuntimeRow = {
   /** Absent for generations created before the record shipped (§5.5). */
   presentation?: HrcRuntimePresentationRecord | undefined
   tmux?: HrcPresentationTmuxTarget | undefined
+  hrcpty?: (HrcPresentationHrcptyTarget & { supervisorPid: number }) | undefined
   title?: string | undefined
   /**
    * The runtime's persisted `runtimeStateJson.contextReading`, exactly as

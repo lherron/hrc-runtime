@@ -2335,6 +2335,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcPresentationHrcptyTarget",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts-diagnostics.ts",
+      "hash": "hrc-core|HrcPresentationHrcptyTarget|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcPresentationIntent",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-intents.ts",
@@ -2387,6 +2395,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-diagnostics.ts",
       "hash": "hrc-core|HrcProviderTranscriptReportedPayload|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcptyOperatorAttachDescriptor",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
+      "hash": "hrc-core|HrcptyOperatorAttachDescriptor|type",
       "count": 1
     },
     {
@@ -4755,6 +4771,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|TerminateRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TmuxOperatorAttachDescriptor",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
+      "hash": "hrc-core|TmuxOperatorAttachDescriptor|type",
       "count": 1
     },
     {
