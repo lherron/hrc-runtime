@@ -337,7 +337,8 @@ export function runtimeHarness(
 }
 
 function paneIdsFromAllocation(allocation: BrokerTmuxAllocation): Record<string, string | number> {
-  const lease = allocation.lease
+  // An hrcpty lease carries no tmux coordinates.
+  const lease = allocation.lease?.kind === 'tmux-pane' ? allocation.lease : undefined
   const ids: Record<string, string | number> = {}
   const sessionId = lease?.sessionId ?? allocation.sessionId
   const windowId = lease?.windowId ?? allocation.windowId

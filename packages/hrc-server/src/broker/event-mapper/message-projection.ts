@@ -212,6 +212,8 @@ export const messageProjectionMethods = {
     now: string
   ): void {
     const payload = envelope.payload as TerminalSurfaceReportedPayload
+    // An hrcpty supervisor socket is not a tmux surface binding.
+    if (payload.kind === 'hrcpty-socket') return
     // A `tmux-pane` lease is keyed by its pane id — the stable, unique lease
     // identifier (paneId is non-optional for tmux-pane). The legacy
     // `tmux-session` surface keeps the socket#session composite key, which a

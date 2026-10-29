@@ -186,8 +186,9 @@ export function getHarnessBrokerController(
     observerPaneAllocator,
     metricsStateRoot: this.options.stateRoot,
     waitForAttachedTerminal: async ({ allocation }) => {
-      const sessionName = allocation.lease?.sessionName ?? allocation.sessionName
-      const windowName = allocation.lease?.windowName ?? allocation.windowName
+      const lease = allocation.lease?.kind === 'tmux-pane' ? allocation.lease : undefined
+      const sessionName = lease?.sessionName ?? allocation.sessionName
+      const windowName = lease?.windowName ?? allocation.windowName
       if (!sessionName || !windowName) {
         throw new Error('broker attached launch missing TUI session/window identity')
       }
@@ -198,8 +199,7 @@ export function getHarnessBrokerController(
       await leaseTmux.waitForAttachedClient(sessionName, {
         timeoutMs: 5_000,
         intervalMs: 25,
-        activeWindowId:
-          typeof allocation.lease?.windowId === 'string' ? allocation.lease.windowId : undefined,
+        activeWindowId: typeof lease?.windowId === 'string' ? lease.windowId : undefined,
         activeWindowName: windowName,
       })
     },
