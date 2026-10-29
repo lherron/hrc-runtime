@@ -181,6 +181,7 @@ cargo-check:
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native
     python3 crates/hrc-cli/e2e/differential.py --binary crates/target/debug/rusthrc --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
     python3 crates/hrc-native/e2e/foundation.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
+    python3 crates/hrc-native/e2e/command_runs.py --binary crates/target/debug/rusthrc --scratch-root "/tmp/hrc-command-runs-$(date +%s)-$$" --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/command-runs"
     python3 crates/hrc-kernel/e2e/kernel_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-e2e-$(date +%s)-$$}"
     python3 crates/hrc-kernel/e2e/surrogate_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-surrogate-e2e-$(date +%s)-$$}/surrogate"
     python3 crates/hrc-kernel/e2e/summon_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-summon-e2e-$(date +%s)-$$}/summon"

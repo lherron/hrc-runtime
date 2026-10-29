@@ -114,6 +114,7 @@ pub async fn serve(role: Role) -> Result<()> {
         &state,
         front,
     )?;
+    let command_targets = command_runs::load_targets()?;
     let owner = if front {
         Owner::acquire_front(&runtime)?
     } else {
@@ -145,6 +146,7 @@ pub async fn serve(role: Role) -> Result<()> {
         writer.flush();
     });
     let server = Arc::new(Server {
+        command_targets,
         accounting,
         store: Mutex::new(store),
         brokers: Mutex::new(HashMap::new()),

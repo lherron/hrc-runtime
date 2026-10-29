@@ -736,6 +736,7 @@ pub(crate) mod tests {
         let federation = federation::Node::new(config, &state, false)?;
         let started_at = hrc_store::timestamp();
         let server = Arc::new(Server {
+            command_targets: Default::default(),
             store: Mutex::new(store),
             accounting: accounting::Accounting::new(),
             brokers: Default::default(),

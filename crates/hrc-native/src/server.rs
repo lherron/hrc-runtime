@@ -90,6 +90,8 @@ mod writes;
 
 #[path = "server/turns/attention.rs"]
 mod attention;
+#[path = "server/turns/command_runs.rs"]
+mod command_runs;
 #[path = "server/turns/context.rs"]
 mod context;
 #[path = "server/turns/control.rs"]
@@ -162,6 +164,7 @@ use tokio::net::UnixListener;
 
 type Shared = Arc<Server>;
 struct Server {
+    command_targets: serde_json::Map<String, Value>,
     store: Mutex<Store>,
     accounting: Arc<accounting::Accounting>,
     brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
@@ -563,6 +566,8 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
                 .map(|v| Json(v).into_response()),
             Err(e) => Err(e),
         }
+    } else if method == Method::POST && uri.path() == "/v1/command-runs/launch" {
+        command_runs::launch(server, &body).await
     } else if method == Method::POST && uri.path() == "/v1/sessions/resolve" {
         sessions::resolve(server, &body).await
     } else if method == Method::POST && uri.path() == "/v1/previews/run" {
@@ -668,6 +673,7 @@ fn implemented(method: &Method, path: &str) -> bool {
         || (*method == Method::POST
             && [
                 "/v1/sessions/resolve",
+                "/v1/command-runs/launch",
                 "/v1/previews/run",
                 "/v1/turns",
                 "/v1/submissions/invoke",
