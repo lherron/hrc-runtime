@@ -806,12 +806,16 @@ async fn launch(
     let broker_window = window(socket, session, "broker", Some(&command)).await?;
     // Each seat owns its tmux server, so -g scopes to this seat. Passthrough and
     // focus events let a harness draw Kitty graphics through tmux (T-12028).
+    // A terminal's graphics reply ends in ESC \, which tmux reads as the key
+    // M-\; an operator ~/.tmux.conf binding it (Lance's splits the window) then
+    // fires on every image redraw, so the seat drops that root binding.
     for args in [
-        ["set-option", "-g", "remain-on-exit", "on"],
-        ["set-option", "-g", "allow-passthrough", "on"],
-        ["set-option", "-s", "focus-events", "on"],
+        &["set-option", "-g", "remain-on-exit", "on"][..],
+        &["set-option", "-g", "allow-passthrough", "on"],
+        &["set-option", "-s", "focus-events", "on"],
+        &["unbind-key", "-T", "root", "M-\\"],
     ] {
-        tmux(socket, &args).await?;
+        tmux(socket, args).await?;
     }
     let mut allocation = json!({"brokerWindow":broker_window,"allocatedAt":hrc_store::timestamp(),"brokerCommand":command});
     // allocateBrokerSubstrate: terminal and the tmux-tui viewer (attachable +
