@@ -252,6 +252,39 @@ struct ApiError {
     detail: Option<Value>,
 }
 impl ApiError {
+    /// Broker JSON-RPC capability refusals are known admission outcomes.
+    fn unsupported_capability(code: Option<i64>, message: &str, mut detail: Value) -> Option<Self> {
+        let capability = message.strip_prefix("UnsupportedCapability: ")?.trim();
+        if code != Some(-32003) || capability.is_empty() {
+            return None;
+        }
+        detail["capability"] = capability.into();
+        Some(Self::domain(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_capability",
+            message,
+            Some(detail),
+        ))
+    }
+    fn into_response_for(mut self, headers: &HeaderMap) -> Response {
+        if self.code == "internal_error"
+            && let Some(id) = headers
+                .get("x-hrc-request-id")
+                .and_then(|v| v.to_str().ok())
+        {
+            let id = id.trim();
+            if !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+            {
+                let detail = self.detail.get_or_insert_with(|| json!({}));
+                detail["requestId"] = id.into();
+            }
+        }
+        self.into_response()
+    }
     fn domain(
         status: StatusCode,
         code: &'static str,
@@ -284,6 +317,15 @@ impl ApiError {
 }
 impl From<anyhow::Error> for ApiError {
     fn from(error: anyhow::Error) -> Self {
+        if let Some(reply) = error.downcast_ref::<rpc::ErrorReply>()
+            && let Some(refusal) = Self::unsupported_capability(
+                reply.0["code"].as_i64(),
+                reply.0["message"].as_str().unwrap_or(""),
+                json!({"brokerRpcCode":reply.0["code"]}),
+            )
+        {
+            return refusal;
+        }
         stderr_json(
             "error",
             "server",
@@ -299,12 +341,37 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
+    fn into_response(mut self) -> Response {
+        let mut request_id = None;
+        if self.code == "internal_error" {
+            let mut detail = self
+                .detail
+                .take()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({}));
+            if !detail["cause"].is_string() {
+                detail["cause"] = self.message.clone().into();
+            }
+            let id = detail["requestId"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("req-{}", uuid::Uuid::new_v4()));
+            detail["requestId"] = id.clone().into();
+            request_id = Some(id);
+            self.detail = Some(detail);
+            self.message = "internal server error".into();
+        }
         let mut value = json!({"error":{"code":self.code,"message":self.message}});
         if let Some(detail) = self.detail {
             value["error"]["detail"] = detail;
         }
-        (self.status, Json(value)).into_response()
+        let mut response = (self.status, Json(value)).into_response();
+        if let Some(id) = request_id {
+            response
+                .headers_mut()
+                .insert("x-hrc-request-id", id.parse().expect("safe request ID"));
+        }
+        response
     }
 }
 impl Server {
@@ -591,7 +658,7 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
     } else {
         handle(server, &method, uri.path(), &query, &body, &headers)
     };
-    result.unwrap_or_else(IntoResponse::into_response)
+    result.unwrap_or_else(|error| error.into_response_for(&headers))
 }
 fn runtime_seat_id(path: &str) -> Option<&str> {
     path.strip_prefix("/v1/runtimes/")?

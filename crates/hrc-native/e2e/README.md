@@ -44,6 +44,7 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | --- | --- | --- |
 | `accounting.py` | Real-owner accounting differential, with separate stores for proxy traffic. | promote |
 | `cold_birth.py` | N1 gates 1, 2 and 4 as one real workflow on fresh, isolated state. | promote |
+| `error_wire.py` | Internal error cause/request ID and real codex presentation broker capability refusal, with an unstructured turn control (T-12063). | keep-manual |
 | `ensure_archived_successor.py` | Archived ensure differential: real Bun repository snapshot, isolated owners. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `front_accounting.py` | Separate-state front accounting probe; real Bun behind a byte-forwarding tap. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `front_door.py` | F gates 1-3: rusthrc front on hrc.sock, Bun behind on hrc-bun.sock, one scratch state. (protected by T-11826) | promote |
