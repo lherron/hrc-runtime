@@ -336,10 +336,10 @@ fn runtime_list(args: &Parsed<'_>) -> Result<()> {
         ));
     }
     if let Some(transport) = args.value("transport")
-        && !["tmux", "headless", "sdk"].contains(&transport)
+        && !["tmux", "headless", "sdk", "hrcpty"].contains(&transport)
     {
         return Err(Error::usage(
-            "--transport must be one of: tmux, headless, sdk",
+            "--transport must be one of: tmux, headless, sdk, hrcpty",
         ));
     }
     let mut query = Vec::new();

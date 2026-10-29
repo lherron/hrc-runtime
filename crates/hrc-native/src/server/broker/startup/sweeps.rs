@@ -257,6 +257,24 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
         let db = server.store.lock().unwrap();
         db::runtimes_where(&db.sqlite, "controller_kind = 'harness-broker'")?
     };
+    // An hrcpty supervisor outliving its runtime is ended (T-12046 §4.6); its
+    // socket lives in bipc, never in btmux.
+    for rt in &brokers {
+        if let Some((socket, pid)) = hrcpty::substrate(rt)
+            && lease::unavailable(&rt.status)
+            && pid.is_some_and(hrcpty::alive)
+        {
+            match hrcpty::end_lease(&socket, pid).await {
+                Ok(()) => bump(&mut r, "killedLiveLeaseServers"),
+                Err(_) => bump(&mut r, "errors"),
+            }
+            log(
+                "info",
+                "broker.hrcpty_orphan_ended",
+                json!({"runtimeId":rt.runtime_id,"status":rt.status,"socketPath":socket,"pid":pid}),
+            );
+        }
+    }
     for rt in brokers {
         let id = rt.runtime_id.clone();
         let socket = rt_hosting(&rt)

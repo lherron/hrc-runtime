@@ -7,7 +7,9 @@
 //!
 //! Not here yet: the bipc directory sweep (it needs the retained-evidence holds)
 //! and the retained-evidence pass that rides the GC tick.
-use super::{Server, Shared, broker, controller, lease, projection::db, rpc::JsonRpc, stderr_json};
+use super::{
+    Server, Shared, broker, controller, hrcpty, lease, projection::db, rpc::JsonRpc, stderr_json,
+};
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
@@ -110,6 +112,11 @@ pub fn hosting(state: &Value, generation: i64) -> Option<Hosting> {
         let substrate = match s["kind"].as_str()? {
             "daemon-child" => json!({"kind":"daemon-child"}),
             "external" => json!({"kind":"external"}),
+            "leased-hrcpty" => {
+                let socket = s["socketPath"].as_str()?;
+                s["generation"].as_f64()?;
+                json!({"kind":"leased-hrcpty","socketPath":socket,"pid":s["pid"].as_i64()?,"generation":s["generation"],"eventLedgerPath":ledger(s)})
+            }
             "leased-tmux" => {
                 let socket = s["tmuxSocketPath"].as_str()?;
                 let session = s["sessionName"].as_str()?;
@@ -122,6 +129,13 @@ pub fn hosting(state: &Value, generation: i64) -> Option<Hosting> {
         let p = &broker["presentation"];
         let presentation = match p["kind"].as_str()? {
             "none" => json!({"kind":"none"}),
+            "hrcpty" => {
+                let mut out = json!({"kind":"hrcpty","socketPath":p["socketPath"].as_str()?,"operatorAttachTarget":true});
+                if let Some(c) = p["attachCommand"].as_str() {
+                    out["attachCommand"] = c.into();
+                }
+                out
+            }
             kind @ ("tmux-tui" | "observer") => {
                 let key = if kind == "observer" {
                     "observerWindow"
@@ -187,7 +201,8 @@ fn rt_hosting(rt: &db::Rt) -> Option<Hosting> {
     hosting(&rt.state_object(), rt.generation)
 }
 fn durable(h: &Hosting) -> bool {
-    h.endpoint["kind"] == "unix-jsonrpc-ndjson" && h.substrate["kind"] == "leased-tmux"
+    h.endpoint["kind"] == "unix-jsonrpc-ndjson"
+        && (h.substrate["kind"] == "leased-tmux" || h.substrate["kind"] == "leased-hrcpty")
 }
 /// getBrokerRuntimeTmuxSocketPath: the pre-durable lease in tmuxJson.
 fn compat_tmux_socket(rt: &db::Rt) -> Option<String> {
@@ -406,6 +421,11 @@ fn rejected_adoption_paths(rt: &db::Rt, h: &Hosting, root: &Path) -> Vec<Value> 
     if let Some(s) = h.substrate["tmuxSocketPath"].as_str() {
         candidates.push(("broker-lease-tmux-socket", s.to_owned()));
     }
+    if h.substrate["kind"] == "leased-hrcpty"
+        && let Some(s) = h.substrate["socketPath"].as_str()
+    {
+        candidates.push(("broker-lease-hrcpty-socket", s.to_owned()));
+    }
     if let Some(s) = compat_tmux_socket(rt) {
         candidates.push(("broker-compat-tmux-socket", s));
     }
@@ -581,6 +601,12 @@ async fn attach(server: &Shared, rt: &db::Rt, h: &Hosting, token_path: &Path) ->
         Ok(())
     })?;
     clear_recovery(server, runtime_id)?;
+    // Rediscovered by `hello` in classify; follow its exits again.
+    if h.substrate["kind"] == hrcpty::SUBSTRATE
+        && let Some(socket) = h.substrate["socketPath"].as_str()
+    {
+        hrcpty::watch(server, runtime_id, Path::new(socket));
+    }
     Ok(outcome("broker-attached", None))
 }
 

@@ -88,7 +88,9 @@ fn latest<'a>(rows: &'a Value, attempted: &std::collections::HashSet<String>) ->
         .iter()
         .filter(|r| !unavailable(r) && !attempted.contains(text(&r["runtimeId"])))
         .max_by_key(|r| {
-            let rank = if r["transport"] == "tmux" && r["status"] == "busy" {
+            let rank = if (r["transport"] == "tmux" || r["transport"] == "hrcpty")
+                && r["status"] == "busy"
+            {
                 2
             } else if r["transport"] == "headless" {
                 1

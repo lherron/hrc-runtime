@@ -1,7 +1,7 @@
 //! POST /v1/literal-input/by-selector (selector-message-handlers/selector-input.ts
 //! handleLiteralInputBySelector, handleBrokerLiteralInputBySelector).
 use super::{
-    ApiError, Shared,
+    ApiError, Shared, hrcpty,
     io::{selector_ref, selector_request, unknown_session},
     lease,
     projection::{db, events},
@@ -23,7 +23,7 @@ fn latest_interactive(server: &Shared, host: &str) -> Result<Option<db::Rt>, Api
     let id: Option<String> = db
         .sqlite
         .query_row(
-            "SELECT runtime_id FROM runtimes WHERE host_session_id=? AND transport='tmux' ORDER BY created_at DESC, runtime_id DESC LIMIT 1",
+            "SELECT runtime_id FROM runtimes WHERE host_session_id=? AND transport IN ('tmux','hrcpty') ORDER BY created_at DESC, runtime_id DESC LIMIT 1",
             [host],
             |r| r.get(0),
         )
@@ -147,7 +147,7 @@ pub async fn literal_by_selector(server: &Shared, body: Value) -> Result<Respons
             json!({"sessionRef":session_ref,"hostSessionId":host}),
         ));
     };
-    if rt.transport != "tmux" {
+    if rt.transport != "tmux" && rt.transport != "hrcpty" {
         return Err(unavailable(
             "runtime does not support literal input",
             json!({"sessionRef":session_ref,"runtimeId":rt.runtime_id,"transport":rt.transport}),
@@ -163,15 +163,20 @@ pub async fn literal_by_selector(server: &Shared, body: Value) -> Result<Respons
     {
         return broker_literal(server, &literal, &text, enter).await;
     }
-    let pane = pane(&rt)?;
-    if enter {
-        if !text.is_empty() {
+    if let Some((socket, _)) = hrcpty::substrate(&rt) {
+        // §4.5: one bracketed paste, then \r to submit.
+        hrcpty::input(&socket, &hrcpty::paste(&text, enter)).await?;
+    } else {
+        let pane = pane(&rt)?;
+        if enter {
+            if !text.is_empty() {
+                lease::tmux(&pane.0, &["send-keys", "-l", "-t", &pane.1, &text]).await?;
+            }
+            tokio::time::sleep(Duration::from_millis(1_000)).await;
+            lease::tmux(&pane.0, &["send-keys", "-t", &pane.1, "Enter"]).await?;
+        } else if !text.is_empty() {
             lease::tmux(&pane.0, &["send-keys", "-l", "-t", &pane.1, &text]).await?;
         }
-        tokio::time::sleep(Duration::from_millis(1_000)).await;
-        lease::tmux(&pane.0, &["send-keys", "-t", &pane.1, "Enter"]).await?;
-    } else if !text.is_empty() {
-        lease::tmux(&pane.0, &["send-keys", "-l", "-t", &pane.1, &text]).await?;
     }
     let now = hrc_store::timestamp();
     literal.record(
@@ -271,8 +276,12 @@ async fn broker_literal(
     let prompt = format!("{pending}{text}");
     if prompt.trim().is_empty() {
         server.literal.lock().unwrap().remove(&runtime_id);
-        let (socket, pane) = pane(l.rt)?;
-        lease::tmux(&socket, &["send-keys", "-t", &pane, "Enter"]).await?;
+        if let Some((socket, _)) = hrcpty::substrate(l.rt) {
+            hrcpty::input(&socket, b"\r").await?;
+        } else {
+            let (socket, pane) = pane(l.rt)?;
+            lease::tmux(&socket, &["send-keys", "-t", &pane, "Enter"]).await?;
+        }
         l.record(
             server,
             &now,
@@ -494,7 +503,7 @@ pub async fn contribution(server: &Shared, body: Value) -> Result<Response, ApiE
         }
         Some(rt) => {
             let run = rt.active_run_id.clone().unwrap_or_default();
-            let ask = rt.transport == "tmux" && {
+            let ask = (rt.transport == "tmux" || rt.transport == "hrcpty") && {
                 let db = server.store.lock().unwrap();
                 pending_ask(&db.sqlite, &run)?
             };
@@ -580,6 +589,16 @@ async fn answer(
     prompt: &str,
     body: &Value,
 ) -> Result<(), String> {
+    if let Some((socket, _)) = hrcpty::substrate(rt) {
+        hrcpty::input(&socket, &hrcpty::paste(prompt, true))
+            .await
+            .map_err(|e| e.to_string())?;
+    } else {
+        tmux_answer(rt, prompt).await?;
+    }
+    record_answer(server, rt, run_id, prompt, body)
+}
+async fn tmux_answer(rt: &db::Rt, prompt: &str) -> Result<(), String> {
     let (socket, pane) = pane(rt).map_err(|e| e.message)?;
     let send = async {
         if !prompt.is_empty() {
@@ -589,7 +608,15 @@ async fn answer(
         lease::tmux(&socket, &["send-keys", "-t", &pane, "Enter"]).await?;
         anyhow::Ok(())
     };
-    send.await.map_err(|e| e.to_string())?;
+    send.await.map_err(|e| e.to_string())
+}
+fn record_answer(
+    server: &Shared,
+    rt: &db::Rt,
+    run_id: &str,
+    prompt: &str,
+    body: &Value,
+) -> Result<(), String> {
     let now = hrc_store::timestamp();
     let db = server.store.lock().unwrap();
     let session: Option<(String, String, i64)> = db

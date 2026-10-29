@@ -97,6 +97,13 @@ pub fn hosting(runtime: &Value) -> Option<Value> {
         let s = &b["substrate"];
         match s["kind"].as_str()? {
             "daemon-child" | "external" => json!({"kind":s["kind"]}),
+            "leased-hrcpty" => {
+                let mut out = strings(s, &["kind", "socketPath"])?;
+                out["pid"] = s["pid"].as_i64()?.into();
+                s["generation"].as_f64()?;
+                out["generation"] = s["generation"].clone();
+                out
+            }
             "leased-tmux" => {
                 let mut out = strings(s, &["kind", "tmuxSocketPath", "sessionName"])?;
                 out["brokerWindow"] = identity(&s["brokerWindow"])?;
@@ -117,6 +124,14 @@ pub fn hosting(runtime: &Value) -> Option<Value> {
         let p = &b["presentation"];
         match p["kind"].as_str()? {
             "none" => json!({"kind":"none"}),
+            "hrcpty" => {
+                let mut out = strings(p, &["kind", "socketPath"])?;
+                out["operatorAttachTarget"] = true.into();
+                if p["attachCommand"].is_string() {
+                    out["attachCommand"] = p["attachCommand"].clone();
+                }
+                out
+            }
             "tmux-tui" | "observer" => {
                 let key = if p["kind"] == "observer" {
                     "observerWindow"
@@ -228,6 +243,9 @@ fn project(db: &Store, r: &Value) -> Result<Value, anyhow::Error> {
             };
             row["tmux"] = json!({"socketPath":socket,"attachTarget":target});
         }
+    }
+    if let Some(h) = hosting(r).filter(|h| h["presentation"]["kind"] == "hrcpty") {
+        row["hrcpty"] = json!({"socketPath":h["substrate"]["socketPath"],"supervisorPid":h["substrate"]["pid"],"attachCommand":h["presentation"]["attachCommand"]});
     }
     if let Some(title) = metadata["metadata"].get("title").filter(|v| v.is_string()) {
         row["title"] = title.clone();

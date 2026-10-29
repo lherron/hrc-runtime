@@ -58,9 +58,11 @@ export async function prepareKernelRelease(
   run: (command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) => Promise<void>
 ): Promise<void> {
   const digest = await inputDigest(releasePath)
-  for (const [binary, crate] of [
-    ['hrc-kernel', 'hrc-kernel'],
-    ['rusthrc', 'hrc-native'],
+  // hrc-pty is the per-seat supervisor rusthrc starts from beside itself (T-12046).
+  for (const [binary, crate, probe] of [
+    ['hrc-kernel', 'hrc-kernel', '--help'],
+    ['rusthrc', 'hrc-native', '--help'],
+    ['hrc-pty', 'hrc-pty', 'version'],
   ] as const) {
     const destination = join(releasePath, 'bin', binary)
     await mkdir(join(releasePath, 'bin'), { recursive: true })
@@ -90,6 +92,6 @@ export async function prepareKernelRelease(
     }
     await chmod(destination, 0o755)
     await writeFile(join(releasePath, 'bin', `${binary}.inputs`), `${digest}\n`)
-    await run(destination, ['--help'], releasePath)
+    await run(destination, [probe], releasePath)
   }
 }

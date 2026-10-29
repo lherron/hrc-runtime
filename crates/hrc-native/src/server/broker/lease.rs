@@ -2,7 +2,7 @@
 //! reconcileTmuxRuntimeLiveness, startup-reconcile/runtime-mutations.ts,
 //! controller-factory.ts reapBrokerTmuxLease).
 use super::{
-    Server, Shared, controller,
+    Server, Shared, controller, hrcpty,
     projection::{db, events},
 };
 use anyhow::Result;
@@ -307,9 +307,10 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
         db::runtime(&db.sqlite, runtime_id)?
     };
     let Some(rt) = rt else { return Ok(()) };
+    let supervisor = hrcpty::substrate(&rt);
     if controller::is_external_lifecycle_owner(&rt)
         || rt.controller_kind.as_deref() != Some("harness-broker")
-        || !(rt.transport == "tmux" || leased_substrate(&rt))
+        || !(rt.transport == "tmux" || leased_substrate(&rt) || supervisor.is_some())
         || unavailable(&rt.status)
     {
         return Ok(());
@@ -340,6 +341,9 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
         tx.commit()?;
         server.ledger_committed();
         return Ok(());
+    }
+    if let Some((socket, pid)) = supervisor {
+        return hrcpty_liveness(server, &rt, &socket, pid).await;
     }
     let Some(socket) = socket_path(&rt) else {
         return not_live(
@@ -380,6 +384,38 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
     Ok(())
 }
 
+/// An hrcpty seat is live while its supervisor answers `hello` as the
+/// recorded pid and still runs the broker; otherwise it is stale and its
+/// lease ends (§4.6).
+async fn hrcpty_liveness(
+    server: &Server,
+    rt: &db::Rt,
+    socket: &std::path::Path,
+    pid: Option<i64>,
+) -> Result<()> {
+    let status = match hrcpty::Ops::connect(socket).await {
+        Ok(ops) if ops.hello["pid"].as_i64() == pid => ops.call("status", json!({})).await.ok(),
+        _ => None,
+    };
+    if status
+        .as_ref()
+        .is_some_and(|s| s["broker"]["state"] == "running")
+    {
+        return Ok(());
+    }
+    let payload = json!({"runtimeId":rt.runtime_id,"socketPath":socket,"supervisorPid":pid,"supervisorLive":status.is_some(),"child":status.as_ref().map(|s| s["child"].clone()),"reason":if status.is_some(){"broker_hrcpty_broker_exited"}else{"broker_hrcpty_supervisor_missing"}});
+    not_live(server, &rt.runtime_id, payload.clone())?;
+    if let Err(error) = hrcpty::end_lease(socket, pid).await {
+        super::stderr_json(
+            "warn",
+            "broker",
+            "failed to end broker hrcpty lease",
+            json!({"payload":payload,"error":error.to_string()}),
+        );
+    }
+    Ok(())
+}
+
 /// reapBrokerTmuxLease: tear a user-exited lease down once per runtime.
 pub async fn reap(server: &Shared, runtime_id: &str, reason: &str) {
     if !server.reaped.lock().unwrap().insert(runtime_id.to_owned()) {
@@ -393,8 +429,20 @@ pub async fn reap(server: &Shared, runtime_id: &str, reason: &str) {
         let Some(rt) = rt else { return Ok(()) };
         if controller::is_external_lifecycle_owner(&rt)
             || rt.controller_kind.as_deref() != Some("harness-broker")
-            || (rt.transport != "tmux" && !leased_substrate(&rt))
         {
+            return Ok(());
+        }
+        if let Some((socket, pid)) = hrcpty::substrate(&rt) {
+            hrcpty::end_lease(&socket, pid).await?;
+            super::stderr_json(
+                "info",
+                "broker",
+                "broker.user_exit_reap.hrcpty_ended",
+                json!({"runtimeId":runtime_id,"socketPath":socket}),
+            );
+            return reconcile_liveness(server, runtime_id).await;
+        }
+        if rt.transport != "tmux" && !leased_substrate(&rt) {
             return Ok(());
         }
         let Some(socket) = socket_path(&rt) else {
@@ -478,12 +526,34 @@ pub fn reap_after_summary(server: &Shared, runtime_id: &str, reason: &str) {
 /// hasBrokerLeasedTmux
 pub fn has_leased_tmux(rt: &db::Rt) -> bool {
     !controller::is_external_lifecycle_owner(rt)
-        && (leased_substrate(rt) || (hosting(rt).is_none() && socket_path(rt).is_some()))
+        && (leased_substrate(rt)
+            || hrcpty::substrate(rt).is_some()
+            || (hosting(rt).is_none() && socket_path(rt).is_some()))
 }
 /// teardownBrokerLeasedTmux: kill the lease session and its server, refusing
 /// a socket outside this daemon's runtime root.
 pub async fn teardown(server: &Server, rt: &db::Rt, message: &str) {
     if controller::is_external_lifecycle_owner(rt) {
+        return;
+    }
+    if let Some((socket, pid)) = hrcpty::substrate(rt) {
+        if !socket.starts_with(&server.runtime) {
+            super::stderr_json(
+                "warn",
+                "broker",
+                "broker.adoption.hrcpty_teardown_rejected",
+                json!({"runtimeId":rt.runtime_id,"runtimeRoot":server.runtime,"rejectedPaths":[socket],"reason":"broker_adoption_path_outside_runtime_root"}),
+            );
+            return;
+        }
+        if let Err(error) = hrcpty::end_lease(&socket, pid).await {
+            super::stderr_json(
+                "warn",
+                "broker",
+                message,
+                json!({"runtimeId":rt.runtime_id,"socketPath":socket,"error":error.to_string()}),
+            );
+        }
         return;
     }
     let Some(socket) = socket_path(rt) else {

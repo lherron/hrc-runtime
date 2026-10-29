@@ -488,7 +488,33 @@ async fn assemble(
             }
         }
         _ => {
-            failures.insert("paneCapture".into(), "no_leased_tmux_pane".into());
+            // An hrcpty seat's screen comes from its supervisor (T-12046 §4.2).
+            let supervisor = {
+                let db = server.store.lock().unwrap();
+                super::projection::db::runtime(&db.sqlite, &watch.runtime_id)?
+                    .and_then(|rt| super::hrcpty::substrate(&rt))
+            };
+            match supervisor {
+                Some((socket, _)) => {
+                    let budget = PANE_CAPTURE.min(remaining(deadline));
+                    match tokio::time::timeout(budget, super::hrcpty::capture(&socket)).await {
+                        Err(_) => {
+                            failures.insert("paneCapture".into(), "pane_capture_timeout".into());
+                        }
+                        Ok(Err(error)) => {
+                            failures.insert("paneCapture".into(), error.to_string().into());
+                        }
+                        Ok(Ok(captured)) => {
+                            let text = captured["text"].as_str().unwrap_or("").to_owned();
+                            bundle["paneCapture"] = json!({"capturedAt":timestamp(),"text":text});
+                            pane = Some(text);
+                        }
+                    }
+                }
+                None => {
+                    failures.insert("paneCapture".into(), "no_leased_tmux_pane".into());
+                }
+            }
         }
     }
     bundle["failures"] = failures.clone().into();

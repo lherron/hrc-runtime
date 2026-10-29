@@ -38,6 +38,8 @@ mod compile;
 mod controller;
 #[path = "server/broker/first_turn.rs"]
 mod first_turn;
+#[path = "server/broker/hrcpty.rs"]
+mod hrcpty;
 #[path = "server/broker/lease.rs"]
 mod lease;
 #[path = "server/broker/maintenance.rs"]

@@ -59,7 +59,7 @@ async fn reusable(server: &Shared, host: &str) -> Result<Option<db::Rt>, ApiErro
         found
     };
     let Some(rt) = latest else { return Ok(None) };
-    if rt.transport != "tmux" {
+    if rt.transport != "tmux" && rt.transport != "hrcpty" {
         return Ok(Some(rt));
     }
     lease::reconcile_liveness(server, &rt.runtime_id).await?;

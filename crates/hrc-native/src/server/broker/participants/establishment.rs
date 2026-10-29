@@ -238,6 +238,11 @@ async fn realize(server: &Shared, attempt: &Value) -> Result<Value> {
             surface["ownership"] = "hrc".into();
             surface["allowedOps"] = json!({"inspect":true,"sendInput":true,"sendInterrupt":true,"capture":true,"resize":false});
             dispatch["runtime"] = json!({"terminalSurface":surface,"terminalSurfaceRequired":true});
+        } else if realized["presentation"]["kind"] == "hrcpty"
+            && let Some(socket) = realized["presentation"]["socketPath"].as_str()
+        {
+            let surface = super::super::hrcpty::lease(Path::new(socket), false);
+            dispatch["runtime"] = json!({"terminalSurface":surface,"terminalSurfaceRequired":true});
         }
         dispatch["lifecyclePolicy"] = intent["lifecyclePolicy"].clone();
         snapshot(

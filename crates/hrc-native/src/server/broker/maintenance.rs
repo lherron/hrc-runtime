@@ -232,8 +232,9 @@ fn held(r: &Value, facts: &Value) -> bool {
         return false;
     }
     let broker = &state["broker"];
-    let hosted = runtime_views::hosting(r).is_some_and(|h| h["substrate"]["kind"] == "leased-tmux")
-        && nonempty(&broker["substrate"]["eventLedgerPath"]).is_some();
+    let hosted = runtime_views::hosting(r).is_some_and(|h| {
+        h["substrate"]["kind"] == "leased-tmux" || h["substrate"]["kind"] == "leased-hrcpty"
+    }) && nonempty(&broker["substrate"]["eventLedgerPath"]).is_some();
     let command = broker["brokerCommand"].as_str().unwrap_or("");
     let command_ledger = command
         .split_whitespace()
@@ -358,6 +359,13 @@ async fn liveness(server: &Server, r: &Value, facts: &Value) -> Result<Option<St
             None
         }
     });
+    // An hrcpty seat is live while its supervisor runs (T-12046 §4.6).
+    if r["controllerKind"] == "harness-broker" && hosting["substrate"]["kind"] == "leased-hrcpty" {
+        let live = hosting["substrate"]["pid"]
+            .as_i64()
+            .is_some_and(super::hrcpty::alive);
+        return Ok(live.then(|| "live_broker_lease".into()));
+    }
     if r["controllerKind"] == "harness-broker"
         && let (Some(socket), Some(pane)) = (socket, pane)
     {

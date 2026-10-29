@@ -73,6 +73,11 @@ fn control(state: &Value, highwater: Value) -> Option<Value> {
             out[target] = window;
         }
     }
+    // T-12046: an hrcpty seat's operator attach is the supervisor socket.
+    if b["presentation"]["kind"] == "hrcpty" {
+        out["operatorAttach"] = json!({"transport":"hrcpty","socketPath":b["presentation"]["socketPath"],"attachCommand":b["presentation"]["attachCommand"]});
+        out["brokerProcess"] = json!({"command":b["brokerCommand"],"pid":b.get("brokerPid").filter(|v| v.is_number()),"supervisorPid":b["substrate"]["pid"],"generation":b.get("generation").filter(|v| v.is_number())});
+    }
     Some(out)
 }
 fn model(v: &Value) -> Option<Value> {
@@ -395,7 +400,7 @@ pub async fn target_session_view(
         .or_else(|| rows.iter().rev().find(|r| !unavailable(r)))
         .or_else(|| rows.last())
         .copied();
-    let view=r.filter(|r|!unavailable(r) && ["sdk","tmux","headless"].iter().any(|s|r["transport"]==*s)).map(|r|{
+    let view=r.filter(|r|!unavailable(r) && ["sdk","tmux","headless","hrcpty"].iter().any(|s|r["transport"]==*s)).map(|r|{
         let h=hosting(r);let operator=h.as_ref().is_some_and(|h|h["presentation"]["kind"]!="none");
         // target-view.ts toTargetRuntimeView key order.
         let mut v=json!({"runtimeId":r["runtimeId"],"transport":r["transport"],"status":r["status"],"supportsLiteralSend":r["transport"]=="tmux" || operator,"supportsCapture":r["transport"]!="headless" || operator});
@@ -456,7 +461,7 @@ pub async fn target_session_view(
     };
     let mode = match view.as_ref().map(|r| r["transport"].as_str().unwrap_or("")) {
         Some("sdk") => "nonInteractive",
-        Some("tmux" | "headless") => "headless",
+        Some("tmux" | "headless" | "hrcpty") => "headless",
         _ => "none",
     };
     let capabilities = json!({"state":state,"modesSupported":if mode=="none"{json!([])}else{json!([mode])},"defaultMode":mode,"dmReady":mode!="none","sendReady":view.as_ref().is_some_and(|v|v["supportsLiteralSend"]==true),"peekReady":view.as_ref().is_some_and(|v|v["supportsCapture"]==true)});

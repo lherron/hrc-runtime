@@ -111,6 +111,17 @@ pub fn descriptor_value(server: &Server, id: &str, strict: bool) -> Result<Value
     let operator = hosting
         .as_ref()
         .is_some_and(|h| h["presentation"]["kind"] != "none");
+    // T-12046 §5 step 5: an hrcpty seat attaches through its supervisor.
+    if let Some(h) = hosting
+        .as_ref()
+        .filter(|h| h["presentation"]["kind"] == "hrcpty")
+    {
+        let socket = h["presentation"]["socketPath"].as_str().unwrap_or("");
+        let fence = json!({"hostSessionId":runtime["hostSessionId"],"runtimeId":runtime["runtimeId"],"generation":runtime["generation"],"supervisorPid":h["substrate"]["pid"]});
+        return Ok(
+            json!({"transport":"hrcpty","argv":super::hrcpty::attach_argv(socket),"bindingFence":fence}),
+        );
+    }
     let (socket, target) = if runtime["controllerKind"] == "harness-broker"
         && (runtime["transport"] == "tmux" || operator)
     {

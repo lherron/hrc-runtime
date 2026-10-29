@@ -202,6 +202,14 @@ pub(crate) fn runtime(v: &Value) -> String {
             lines.push(format!("  {label:<13} {}", field(&v["tmux"], key)));
         }
     }
+    for (key, label) in [
+        ("socketPath", "hrcpty socket"),
+        ("supervisorPid", "hrcpty pid"),
+    ] {
+        if present(&v["hrcpty"], key) {
+            lines.push(format!("  {label:<13} {}", field(&v["hrcpty"], key)));
+        }
+    }
     lines.join("\n") + "\n"
 }
 pub(crate) fn broker(v: &Value) -> String {

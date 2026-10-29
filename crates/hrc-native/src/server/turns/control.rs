@@ -2,7 +2,7 @@
 //! handleInterrupt/handleTerminate, runtime-control-handlers/interrupt-terminate.ts,
 //! broker-dispose.ts, bc-rpc.ts dispose).
 use super::{
-    ApiError, Shared, controller, lease,
+    ApiError, Shared, controller, hrcpty, lease,
     projection::{db, events},
     turns::admission::unavailable,
 };
@@ -206,6 +206,26 @@ pub async fn interrupt(server: &Shared, body: Value) -> Result<Response, ApiErro
         }
         .into();
         return Ok(Json(out).into_response());
+    }
+    if let Some((socket, _)) = hrcpty::substrate(&rt) {
+        {
+            let db = server.store.lock().unwrap();
+            session_event(&db.sqlite, &rt, "")?;
+        }
+        hrcpty::interrupt(&socket).await?;
+        let now = hrc_store::timestamp();
+        commit(server, |db| {
+            touch(db, &rt.runtime_id, &now)?;
+            let ev = session_event(db, &rt, &now).map_err(|e| anyhow::anyhow!(e.message))?;
+            events::append(
+                db,
+                "runtime.interrupted",
+                &ev,
+                &json!({"transport":"hrcpty","socketPath":socket}),
+            )?;
+            Ok(())
+        })?;
+        return Ok(Json(action_response(&rt)).into_response());
     }
     if rt.transport == "tmux" {
         let (socket, _, pane) = tmux_pane(&rt)?;

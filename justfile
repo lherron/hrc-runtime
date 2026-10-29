@@ -305,6 +305,7 @@ install *options:
       --link-mode="$PRAESIDIUM_INSTALL_LINK_MODE" \
       --publication-mode="$PRAESIDIUM_INSTALL_PUBLICATION_MODE" \
       --source-root="$PWD"
+    bash scripts/install-ghostty-terminfo.sh
 
 # A node runs three processes this lane deploys, in dependency order:
 #   aspd          ASP preparation service (built in a throwaway agent-spaces

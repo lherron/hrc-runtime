@@ -1,6 +1,6 @@
 //! Durable external broker ownership: birth, then controller::consume projects
 //! and ACKs the broker ledger; startup reattach replays from the durable cursor.
-use super::{ApiError, Shared, compile, controller, rpc, rpc::JsonRpc};
+use super::{ApiError, Shared, compile, controller, hrcpty, rpc, rpc::JsonRpc};
 use anyhow::{Context, Result, bail, ensure};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -302,6 +302,9 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         );
     }
     controller::consume(server, &runtime_id, events, client);
+    if let Some(socket) = allocation["hrcpty"]["socketPath"].as_str() {
+        hrcpty::watch(server, &runtime_id, Path::new(socket));
+    }
     if let Some(run_id) = run
         && submission.is_none()
     {
@@ -386,6 +389,15 @@ async fn release_failed_start(server: &Shared, record: &Value, attempt: &StartAt
     let paths = &record["hosting"]["paths"];
     if let Some(socket) = paths["btmuxSocketPath"].as_str()
         && let Err(error) = tmux(socket, &["kill-server"]).await
+    {
+        controller::log(
+            "warn",
+            "never-started broker lease release failed",
+            json!({"runtimeId":record["runtimeId"],"error":error.to_string()}),
+        );
+    }
+    if let Some(socket) = paths["hrcptySocketPath"].as_str()
+        && let Err(error) = hrcpty::end_lease(Path::new(socket), None).await
     {
         controller::log(
             "warn",
@@ -633,6 +645,14 @@ fn preparation(
         "none"
     };
     let mut paths = json!({"brokerIpcSocketPath":socket,"ipcDir":ipc,"btmuxSocketPath":tmux,"sessionName":format!("hrc-{driver}-{runtime}"),"attachTokenPath":ipc.join("attach.token"),"eventLedgerPath":ipc.join("events.ndjson"),"brokerStderrPath":ipc.join("broker.err")});
+    // T-12046 §5 step 2: an hrcpty seat's supervisor socket replaces the btmux one.
+    if execution["hosting"]["terminalHost"] == "hrcpty" {
+        let map = paths.as_object_mut().unwrap();
+        map.shift_remove("btmuxSocketPath");
+        map.shift_remove("sessionName");
+        paths["hrcptySocketPath"] = json!(ipc.join("hrcpty.sock"));
+        paths["hrcptyPidPath"] = json!(ipc.join("hrcpty.pid"));
+    }
     // describeAspdHostingPaths: a viewer serves ONE observer socket beside b.sock.
     if presentation == "attachable" {
         paths["observerSocketPath"] = json!(ipc.join("observer.sock"));
@@ -776,11 +796,14 @@ async fn launch(
     let ipc = PathBuf::from(string(paths, "ipcDir")?);
     fs::create_dir_all(&ipc)?;
     fs::set_permissions(&ipc, fs::Permissions::from_mode(0o700))?;
-    fs::create_dir_all(
-        Path::new(string(paths, "btmuxSocketPath")?)
-            .parent()
-            .unwrap(),
-    )?;
+    let hrcpty_socket = paths["hrcptySocketPath"].as_str();
+    if hrcpty_socket.is_none() {
+        fs::create_dir_all(
+            Path::new(string(paths, "btmuxSocketPath")?)
+                .parent()
+                .unwrap(),
+        )?;
+    }
     let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     fs::write(string(paths, "attachTokenPath")?, token)?;
     fs::set_permissions(
@@ -795,6 +818,11 @@ async fn launch(
             .iter()
             .map(|v| v.as_str().unwrap().to_owned()),
     );
+    if let Some(socket) = hrcpty_socket {
+        let allocation = allocate_hrcpty(record, Path::new(socket), &argv).await?;
+        let (client, events, hello) = connect(server, paths, release).await?;
+        return Ok((client, events, hello, allocation));
+    }
     let command = format!(
         "exec {} 2>{}",
         argv.iter().map(|s| quote(s)).collect::<Vec<_>>().join(" "),
@@ -864,6 +892,33 @@ async fn launch(
     .await?
     .parse::<i64>()?;
     allocation["brokerPid"] = pid.into();
+    let (client, events, hello) = connect(server, paths, release).await?;
+    Ok((client, events, hello, allocation))
+}
+/// T-12046 §5 steps 2-3: `hrc-pty serve` owns the broker (and later Claude);
+/// the broker's lease is the supervisor's ops socket. No tmux call.
+async fn allocate_hrcpty(record: &Value, socket: &Path, argv: &[String]) -> Result<Value> {
+    let paths = &record["hosting"]["paths"];
+    let runtime_id = string(&record["admission"]["identity"], "runtimeId")?;
+    let pid = hrcpty::serve(socket, argv, string(paths, "brokerStderrPath")?, runtime_id).await?;
+    let status = hrcpty::Ops::connect(socket)
+        .await?
+        .call("status", json!({}))
+        .await?;
+    let resize = record["hosting"]["presentation"] == "terminal";
+    Ok(json!({
+        "allocatedAt":hrc_store::timestamp(),
+        "brokerCommand":argv.iter().map(|s| quote(s)).collect::<Vec<_>>().join(" "),
+        "brokerPid":status["broker"]["pid"],
+        "hrcpty":{"socketPath":socket,"pid":pid,"attachCommand":hrcpty::attach_command(&socket.to_string_lossy())},
+        "lease":hrcpty::lease(socket, resize),
+    }))
+}
+async fn connect(
+    server: &Shared,
+    paths: &Value,
+    release: &Value,
+) -> Result<(JsonRpc, tokio::sync::mpsc::UnboundedReceiver<Value>, Value)> {
     let ipc_socket = Path::new(string(paths, "brokerIpcSocketPath")?);
     let mut connection = None;
     for _ in 0..200 {
@@ -881,5 +936,5 @@ async fn launch(
     }
     let (client, events) = connection.context("broker did not listen")?;
     let hello = hello(&client, release).await?;
-    Ok((client, events, hello, allocation))
+    Ok((client, events, hello))
 }

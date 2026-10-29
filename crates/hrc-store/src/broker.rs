@@ -75,10 +75,19 @@ impl Store {
         let plan = &record["admission"]["plan"];
         let start = &execution["dispatchRequest"]["startRequest"];
         let now = timestamp();
-        let transport = if execution["hosting"]["terminalRequired"] == true {
+        let transport = if execution["hosting"]["terminalHost"] == "hrcpty" {
+            "hrcpty"
+        } else if execution["hosting"]["terminalRequired"] == true {
             "tmux"
         } else {
             "headless"
+        };
+        // An hrcpty run is broker-driven like a headless one; run recovery
+        // keeps its sdk/tmux/headless families (T-12046).
+        let run_transport = if transport == "hrcpty" {
+            "headless"
+        } else {
+            transport
         };
         let tmux = broker_tmux(execution, allocation, &id["generation"], true);
         let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":id["runtimeId"],"hostSessionId":id["hostSessionId"],"generation":id["generation"],"status":"starting","selection":plan["selection"],"hrcPolicy":{},"tmux":broker_tmux(execution, allocation, &id["generation"], false)});
@@ -88,7 +97,7 @@ impl Store {
         tx.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,tmux_json,supports_inflight_input,active_run_id,created_at,updated_at,status_changed_at,controller_kind,active_operation_id,active_invocation_id,plan_hash,selected_profile_hash,runtime_state_json) VALUES (?,?,?,?,?,?,'starting',?,1,?,?,?,?,'harness-broker',?,?,?,?,?)",params![s(id,"runtimeId")?,s(id,"hostSessionId")?,s(session,"scopeRef")?,crate::storage_lane(s(session,"laneRef")?),id["generation"].as_i64(),transport,if tmux.is_object(){Some(tmux.to_string())}else{None},id["runId"].as_str(),now,now,now,s(id,"operationId")?,s(id,"invocationId")?,s(plan,"planHash")?,s(&execution["profile"],"profileHash")?,state.to_string()])?;
         tx.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,run_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,start_request_projection_json,owner_server_instance_id,created_at,updated_at,lifecycle_policy_hash,execution_format) VALUES (?,?,?,?,?,?,'starting','{}',?,?,?,?,?,?,?,?,?,'format1')",params![s(id,"invocationId")?,s(id,"operationId")?,s(id,"runtimeId")?,id["runId"].as_str(),s(hello,"protocolVersion")?,s(execution,"driver")?,s(&record["admission"],"specHash")?,s(&execution["profile"],"startRequestHash")?,s(&execution["profile"],"profileHash")?,start["spec"].to_string(),start.to_string(),format!("hrc-server:{}",std::process::id()),now,now,record["dispatch"]["lifecyclePolicy"]["policyHash"].as_str()])?;
         if let Some(run) = id["runId"].as_str() {
-            tx.execute("INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,operation_id,invocation_id,dispatch_idempotency_key,dispatched_input_id,broker_submission_id,origin_actor,origin_kind,origin_causation_ref,execution_format,correlation_json) VALUES (?,?,?,?,?,?,?,'accepted',?,?,?,?,?,?,?,?,?,?,'format1',?)",params![run,s(id,"hostSessionId")?,s(id,"runtimeId")?,s(session,"scopeRef")?,crate::storage_lane(s(session,"laneRef")?),id["generation"].as_i64(),transport,now,now,s(id,"operationId")?,s(id,"invocationId")?,record["dispatchIdempotencyKey"].as_str(),start["initialInput"]["inputId"].as_str(),start["initialInput"]["inputId"].as_str(),origin.and_then(|o|o["actor"].as_str()),origin.and_then(|o|o["kind"].as_str()),origin.and_then(|o|o["causationRef"].as_str()),if start.get("initialInput").is_none(){Some(json!({"kind":"launch_carried_invoke_turn"}).to_string())}else{None}])?;
+            tx.execute("INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,operation_id,invocation_id,dispatch_idempotency_key,dispatched_input_id,broker_submission_id,origin_actor,origin_kind,origin_causation_ref,execution_format,correlation_json) VALUES (?,?,?,?,?,?,?,'accepted',?,?,?,?,?,?,?,?,?,?,'format1',?)",params![run,s(id,"hostSessionId")?,s(id,"runtimeId")?,s(session,"scopeRef")?,crate::storage_lane(s(session,"laneRef")?),id["generation"].as_i64(),run_transport,now,now,s(id,"operationId")?,s(id,"invocationId")?,record["dispatchIdempotencyKey"].as_str(),start["initialInput"]["inputId"].as_str(),start["initialInput"]["inputId"].as_str(),origin.and_then(|o|o["actor"].as_str()),origin.and_then(|o|o["kind"].as_str()),origin.and_then(|o|o["causationRef"].as_str()),if start.get("initialInput").is_none(){Some(json!({"kind":"launch_carried_invoke_turn"}).to_string())}else{None}])?;
             event(
                 &tx,
                 session,
@@ -159,6 +168,13 @@ impl Store {
         if let Some(observer) = allocation.get("observerWindow") {
             broker["observerWindow"] = observer.clone();
         }
+        // T-12046 §5 step 5: an hrcpty seat records its supervisor in the
+        // normalized hosting shape; it has no tmux windows.
+        let hrcpty = allocation.get("hrcpty");
+        if let Some(h) = hrcpty {
+            broker["substrate"] = json!({"kind":"leased-hrcpty","socketPath":h["socketPath"],"pid":h["pid"],"generation":id["generation"],"eventLedgerPath":paths["eventLedgerPath"]});
+            broker["presentation"] = json!({"kind":"hrcpty","socketPath":h["socketPath"],"operatorAttachTarget":true,"attachCommand":h["attachCommand"]});
+        }
         let tmux = broker_tmux(execution, allocation, &id["generation"], false);
         let capabilities = started
             .get("capabilities")
@@ -167,7 +183,7 @@ impl Store {
             .unwrap_or(json!({}));
         let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":id["runtimeId"],"hostSessionId":id["hostSessionId"],"generation":id["generation"],"status":status,"executionRelease":release,"selection":plan["selection"],"hrcPolicy":{},"createdAt":now,"updatedAt":now,"compile":{"compileId":plan["compileId"],"planHash":plan["planHash"],"selectedProfileId":execution["profile"]["profileId"],"selectedProfileHash":execution["profile"]["profileHash"],"specHash":record["admission"]["specHash"],"startRequestHash":execution["profile"]["startRequestHash"],"selection":plan["selection"]},"broker":broker,"control":{"mode":"broker-ipc","brokerAttached":true},"tmux":tmux,"invocation":{"invocationId":id["invocationId"],"state":snapshot["state"],"driver":execution["driver"],"harnessRuntime":plan["selection"]["harness"],"capabilities":capabilities},"permission":{"negotiated":true,"pending":[]},"input":{"pendingDepth":0}});
         // An operator attaching through the attached door needs no viewer window.
-        let presentation = json!({"operatorAttachable":allocation.get("tuiWindow").is_some(),"viewerRequested":plan["selection"]["presentation"] == true && !operator_attach_pending});
+        let presentation = json!({"operatorAttachable":allocation.get("tuiWindow").is_some() || hrcpty.is_some(),"viewerRequested":plan["selection"]["presentation"] == true && !operator_attach_pending});
         let tx = self.sqlite.transaction()?;
         tx.execute("UPDATE runtimes SET status=?,status_changed_at=?,runtime_state_json=?,presentation_json=?,updated_at=? WHERE runtime_id=?",params![status,now,state.to_string(),presentation.to_string(),now,s(id,"runtimeId")?])?;
         tx.execute("UPDATE broker_invocations SET invocation_state=?,capabilities_json=?,updated_at=? WHERE invocation_id=?",params![snapshot["state"].as_str().unwrap_or("ready"),capabilities.to_string(),now,s(id,"invocationId")?])?;
@@ -194,6 +210,18 @@ impl Store {
                 "runtime",
                 "runtime.presentation",
                 &json!({"invocation":{"operatorAttachPending":operator_attach_pending},"presentation":presentation,"tmux":{"socketPath":paths["btmuxSocketPath"],"attachTarget":format!("{}:tui",s(paths,"sessionName")?)}}),
+            )?;
+        } else if let Some(h) = hrcpty {
+            let mut runtime_only = id.clone();
+            runtime_only["runId"] = Value::Null;
+            event(
+                &tx,
+                &session,
+                &runtime_only,
+                None,
+                "runtime",
+                "runtime.presentation",
+                &json!({"invocation":{"operatorAttachPending":operator_attach_pending},"presentation":presentation,"hrcpty":{"socketPath":h["socketPath"],"attachCommand":h["attachCommand"]}}),
             )?;
         }
         tx.commit()?;

@@ -199,6 +199,8 @@ pub(super) struct Probe {
     pub(super) broker: Option<Pane>,
     pub(super) tui: Option<Pane>,
     pub(super) observer: Option<Pane>,
+    /// The hrc-pty supervisor's `hello` (leased-hrcpty only).
+    pub(super) supervisor: Option<Value>,
 }
 impl Probe {
     pub(super) fn live(&self) -> bool {
@@ -207,6 +209,23 @@ impl Probe {
 }
 /// probePersistedBrokerLease
 pub(super) async fn probe_lease(rt: &db::Rt, h: &Hosting) -> Result<Probe> {
+    if h.substrate["kind"] == hrcpty::SUBSTRATE {
+        let supervisor = match h.substrate["socketPath"].as_str() {
+            Some(socket) => hrcpty::hello(Path::new(socket)).await,
+            None => None,
+        };
+        let health = match h.endpoint["socketPath"].as_str() {
+            Some(endpoint) => broker_health(Path::new(endpoint)).await,
+            None => "unreachable",
+        };
+        return Ok(Probe {
+            health,
+            broker: None,
+            tui: None,
+            observer: None,
+            supervisor,
+        });
+    }
     let socket = h.substrate["tmuxSocketPath"]
         .as_str()
         .map(str::to_owned)
@@ -220,6 +239,7 @@ pub(super) async fn probe_lease(rt: &db::Rt, h: &Hosting) -> Result<Probe> {
         broker: None,
         tui: None,
         observer: None,
+        supervisor: None,
     };
     if let Some(socket) = &socket {
         probe.broker = inspect_window(socket, &session, "broker").await?;
@@ -296,6 +316,9 @@ pub(super) fn identity_mismatches(
     out
 }
 pub(super) fn probe_matches(h: &Hosting, probe: &Probe) -> bool {
+    if h.substrate["kind"] == hrcpty::SUBSTRATE {
+        return hrcpty_mismatches(h, probe.supervisor.as_ref()).is_empty();
+    }
     let Some(b) = &probe.broker else {
         return false;
     };
@@ -308,4 +331,14 @@ pub(super) fn probe_matches(h: &Hosting, probe: &Probe) -> bool {
         probe.observer.as_ref(),
     )
     .is_empty()
+}
+
+/// The supervisor answering `hello` on the recorded socket is the recorded pid.
+pub(super) fn hrcpty_mismatches(h: &Hosting, supervisor: Option<&Value>) -> Vec<Value> {
+    let recorded = &h.substrate["pid"];
+    let observed = supervisor.map(|s| s["pid"].clone()).unwrap_or(Value::Null);
+    if &observed == recorded {
+        return Vec::new();
+    }
+    vec![json!({"field":"hrcptyPid","recorded":recorded,"observed":observed})]
 }

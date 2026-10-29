@@ -92,10 +92,10 @@ pub fn query(
 ) -> Result<(Vec<Value>, Option<String>), ApiError> {
     let transport = optional(q, "transport");
     if let Some(v) = transport
-        && !["tmux", "headless", "sdk"].contains(&v)
+        && !["tmux", "headless", "sdk", "hrcpty"].contains(&v)
     {
         return Err(bad(
-            "transport must be one of: tmux, headless, sdk",
+            "transport must be one of: tmux, headless, sdk, hrcpty",
             "transport",
             json!(v),
         ));

@@ -318,17 +318,22 @@ pub(super) fn admit(response: &Value, request: &Value, operator: Option<&str>) -
     let terminal = hosting["terminalRequired"]
         .as_bool()
         .context("execution-hosting-invalid: terminalRequired")?;
+    // T-12046 §5: hrcpty is the supervisor-process terminal host beside tmux.
+    let host = hosting["terminalHost"].as_str();
     ensure!(
-        hosting.get("terminalHost").is_none() || hosting["terminalHost"] == "tmux",
+        matches!(host, None | Some("tmux" | "hrcpty")),
         "execution-hosting-invalid: terminalHost"
     );
     ensure!(
-        terminal == (hosting["terminalHost"] == "tmux"),
+        terminal == host.is_some(),
         "execution-hosting-invalid: terminal coherence"
     );
     ensure!(
         match hosting["executionTransport"].as_str() {
             Some("jsonrpc-stdio") => hosting["processExecution"] == "broker-process",
+            Some("pty") if host == Some("hrcpty") => {
+                hosting["processExecution"] == "supervisor-process"
+            }
             Some("pty") => hosting["processExecution"] == "broker-process" && terminal,
             Some("native-worker") => hosting["processExecution"] == "native-worker",
             _ => false,
@@ -345,7 +350,7 @@ pub(super) fn admit(response: &Value, request: &Value, operator: Option<&str>) -
         ensure!(
             surface.is_object()
                 && fulfillment == "attachable"
-                && surface["terminalHost"] == "tmux"
+                && surface["terminalHost"] == host.unwrap_or("tmux")
                 && (surface["transport"] == "websocket-unix"
                     || (surface["transport"] == "terminal" && terminal)),
             "execution-presentation-invalid: surface"
@@ -356,7 +361,7 @@ pub(super) fn admit(response: &Value, request: &Value, operator: Option<&str>) -
             selection["presentation"] == true
                 && selection["provenance"]["presentation"] == "compile-request"
                 && terminal
-                && execution["presentationSurface"]["terminalHost"] == "tmux",
+                && execution["presentationSurface"]["terminalHost"] == host.unwrap_or("tmux"),
             "execution_presentation_constraint_mismatch"
         );
     }

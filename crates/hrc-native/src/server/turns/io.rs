@@ -1,7 +1,8 @@
 //! GET /v1/attach and GET /v1/capture (server-session-methods.ts
 //! handleAttach/handleCapture, runtime-io-handlers.ts).
 use super::{
-    ApiError, Shared, lease, projection::db, runtime_views, surfaces, turns::admission::unavailable,
+    ApiError, Shared, hrcpty, lease, projection::db, runtime_views, surfaces,
+    turns::admission::unavailable,
 };
 use axum::{
     Json,
@@ -92,6 +93,14 @@ pub async fn capture(
             format!("runtime \"{id}\" is {status}"),
             json!({"runtimeId":id,"status":status}),
         ));
+    }
+    if let Some(socket) = runtime_views::hosting(&runtime)
+        .filter(|h| h["substrate"]["kind"] == hrcpty::SUBSTRATE)
+        .and_then(|h| h["substrate"]["socketPath"].as_str().map(str::to_owned))
+    {
+        let captured = hrcpty::capture(std::path::Path::new(&socket)).await?;
+        touch(server, &id)?;
+        return Ok(Json(json!({"text":captured["text"],"cursor":captured["cursor"],"screen":captured["screen"]})).into_response());
     }
     let Some(pane) = presentation_pane(&runtime)? else {
         return Err(ApiError::bad(
@@ -475,6 +484,9 @@ pub async fn capture_by_selector(server: &Shared, body: Value) -> Result<Respons
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(anyhow::Error::from)?;
         rows.concat()
+    } else if let Some((socket, _)) = hrcpty::substrate(&rt) {
+        let captured = hrcpty::capture(&socket).await?;
+        captured["text"].as_str().unwrap_or("").to_owned()
     } else {
         let pane = rt.tmux.as_ref();
         let field = |k: &str| pane.and_then(|t| t[k].as_str()).map(str::to_owned);
@@ -521,4 +533,19 @@ pub async fn capture_by_selector(server: &Shared, body: Value) -> Result<Respons
         Json(json!({"text":text,"sessionRef":selector_ref(&session),"runtimeId":rt.runtime_id}))
             .into_response(),
     )
+}
+
+/// Stamp capture activity on the runtime (the tmux capture's own write).
+fn touch(server: &Shared, id: &str) -> Result<(), ApiError> {
+    let now = hrc_store::timestamp();
+    {
+        let db = server.store.lock().unwrap();
+        db::update_runtime(
+            &db.sqlite,
+            id,
+            &db::activity_cols(&db.sqlite, id, &now, &now)?,
+        )?;
+    }
+    server.ledger_committed();
+    Ok(())
 }
