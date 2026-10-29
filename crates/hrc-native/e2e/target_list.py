@@ -24,6 +24,11 @@ db.close();
 '''.replace('DATABASE', json.dumps(str(release/'packages/hrc-store-sqlite/src/database.ts')))
     subprocess.run(['bun', '-e', script, str(dbpath), host], env=env, check=True, capture_output=True)
     with sqlite3.connect(dbpath) as db:
+        # Real max3 history includes continuities whose stored lane still
+        # includes lane:. Native convenience identity reads normalize it and
+        # fail; target listing must retain the exact ledger key.
+        db.execute("UPDATE sessions SET lane_ref='lane:alternate' WHERE scope_ref=? AND lane_ref='alternate'",(scope,))
+        db.execute("UPDATE continuities SET lane_ref='lane:alternate' WHERE scope_ref=? AND lane_ref='alternate'",(scope,))
         # Historical active incarnation: continuity must exclude it. The
         # legacy default spelling deliberately collides with canonical main.
         columns=[r[1] for r in db.execute('PRAGMA table_info(sessions)')]
@@ -43,8 +48,8 @@ def cases(scope, host):
         ('wrong-project','/v1/targets?projectId=absent'),
         ('main','/v1/targets?lane=main'),
         ('default-alias','/v1/targets?lane=default'),
-        ('alternate-active','/v1/targets?lane=alternate'),
-        ('alternate-dormant','/v1/targets?lane=alternate&includeDormant=true'),
+        ('alternate-active','/v1/targets?lane=lane:alternate'),
+        ('alternate-dormant','/v1/targets?lane=lane:alternate&includeDormant=true'),
         ('empty-filters','/v1/targets?projectId=%20&lane=%20'),
     ]]
 

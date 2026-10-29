@@ -5,6 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 fn strings(v: &Value, keys: &[&str]) -> Option<Value> {
@@ -412,7 +413,13 @@ pub async fn list_targets(
                 continue;
             }
             let stored_lane = raw_lane.as_str();
-            let active = db.continuity_session(scope, stored_lane)?;
+            // This predicate compares exact persisted keys. The convenience
+            // continuity_session reader hydrates identity through a normalized
+            // lane, which cannot read legacy continuities stored as lane:foo.
+            let active: Option<String> = db.sqlite.query_row(
+                "SELECT active_host_session_id FROM continuities WHERE scope_ref=? AND lane_ref=?",
+                [scope, stored_lane], |row| row.get(0),
+            ).optional().map_err(anyhow::Error::from)?;
             if session["status"] == "archived" {
                 if !dormant
                     || session["continuation"]["key"]
@@ -423,7 +430,7 @@ pub async fn list_targets(
                 }
             } else if active
                 .as_ref()
-                .is_some_and(|s| s["hostSessionId"] != session["hostSessionId"])
+                .is_some_and(|host| session["hostSessionId"] != host.as_str())
             {
                 continue;
             }
