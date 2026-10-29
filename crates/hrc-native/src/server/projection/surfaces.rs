@@ -290,3 +290,36 @@ pub fn bind(server: &Server, body: Value) -> Result<Response, ApiError> {
     )
     .into_response())
 }
+
+/// Idempotent unbind preserves the first disposition and emits one durable fact.
+pub fn unbind(server: &Server, body: Value) -> Result<Response, ApiError> {
+    object(&body)?;
+    let kind = text(&body, "surfaceKind")?;
+    let id = text(&body, "surfaceId")?;
+    // readOptionalStringField trims and omits blank reasons.
+    let reason = match body.get("reason") {
+        None => None,
+        Some(Value::String(s)) => (!s.trim().is_empty()).then(|| s.trim()),
+        _ => {
+            return Err(ApiError::bad(
+                "reason must be a string",
+                Some(json!({"field":"reason"})),
+            ));
+        }
+    };
+    let result = server
+        .store
+        .lock()
+        .unwrap()
+        .unbind_surface(kind, id, reason)?;
+    let binding = result.ok_or_else(|| {
+        ApiError::domain(
+            StatusCode::NOT_FOUND,
+            "unknown_surface",
+            format!("unknown surface binding \"{kind}:{id}\""),
+            Some(json!({"surfaceKind":kind,"surfaceId":id})),
+        )
+    })?;
+    server.ledger_committed();
+    Ok(Json(binding).into_response())
+}

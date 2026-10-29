@@ -81,6 +81,52 @@ impl Store {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    pub fn unbind_surface(
+        &self,
+        kind: &str,
+        id: &str,
+        reason: Option<&str>,
+    ) -> Result<Option<Value>> {
+        let tx = self.sqlite.unchecked_transaction()?;
+        let Some(existing) = find(&tx, kind, id)? else {
+            return Ok(None);
+        };
+        if existing.get("unboundAt").is_some() {
+            return Ok(Some(existing));
+        }
+        let session = self
+            .session(
+                existing["hostSessionId"]
+                    .as_str()
+                    .context("surface host missing")?,
+            )?
+            .context("surface session missing")?;
+        let now = timestamp();
+        tx.execute("UPDATE surface_bindings SET unbound_at=?,reason=? WHERE surface_kind=? AND surface_id=?", params![now,reason,kind,id])?;
+        let binding = find(&tx, kind, id)?.context("surface binding disappeared during unbind")?;
+        let mut payload = json!({"surfaceKind":kind,"surfaceId":id,"runtimeId":binding["runtimeId"],"unboundAt":now});
+        for key in ["clientTty", "reason"] {
+            if let Some(v) = binding
+                .get(key)
+                .filter(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+            {
+                payload[key] = v.clone();
+            }
+        }
+        event(
+            &tx,
+            &session,
+            binding["runtimeId"]
+                .as_str()
+                .context("surface runtime missing")?,
+            "surface.unbound",
+            &now,
+            &payload,
+        )?;
+        tx.commit()?;
+        Ok(Some(binding))
+    }
+
     pub fn bind_surface(&self, body: &Value, runtime: &Value) -> Result<Value> {
         let now = timestamp();
         let tx = self.sqlite.unchecked_transaction()?;

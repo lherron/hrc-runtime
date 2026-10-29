@@ -4,6 +4,8 @@ status: active
 owner_project: hrc-runtime
 scope: Rust migration, delivered API-fed kernel/facades, isolated native parity, Rust front door and cohesive per-node owner transfer
 explicitly_unsupported_routes:
+  - "POST /v1/runtimes/capture/release: operator-only CLI; the installed broker unconditionally rejects release because capture no longer blocks (raw_record_not_blocked, T-07883; confirmed T-12065)."
+  - "POST /v1/in-flight-input: runtime send reaches the Bun handler, but semantic SDK in-flight delivery unconditionally fails closed with inflight_unsupported because the SDK harness path is retired (T-12065)."
   # T-12061 reachability audit, 2026-10-29. Retain SDK methods/consumers.
   - "GET /v1/federation/peers: SDK method only; no live CLI or ACP caller."
   - "POST /v1/broker-sessions/open: SDK and manual validation script only; no product entry point."

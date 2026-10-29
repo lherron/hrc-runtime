@@ -39,6 +39,11 @@ fn lock_for(locks: &Locks, key: String) -> Arc<tokio::sync::Mutex<()>> {
     locks.lock().unwrap().entry(key).or_default().clone()
 }
 
+/// Shared scope authority lock for summon and ordered retirement.
+pub fn scope_lock(scope: &str) -> Arc<tokio::sync::Mutex<()>> {
+    lock_for(&SCOPE_LOCKS, scope.to_owned())
+}
+
 /// withScopeClaimMutex: one `roster:<agent>:<project>` lock serializes every
 /// claim-and-start in that namespace, suffix and exact alike.
 pub fn namespace_lock(key: String) -> Arc<tokio::sync::Mutex<()>> {
@@ -55,7 +60,7 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<T, ApiError>>,
 {
-    let scope = lock_for(&SCOPE_LOCKS, request.scope_ref.to_owned());
+    let scope = scope_lock(request.scope_ref);
     let _scope = scope.lock().await;
     let session = request
         .lane_ref

@@ -138,6 +138,218 @@ async fn ensure(server: &Shared, body: &Value) -> Result<Response, ApiError> {
     Ok(Json(with_identity(server, started)?).into_response())
 }
 
+/// Legacy operator ensure shares start's parser, rotation and birth machinery,
+/// but reuses any live realization and returns toEnsureRuntimeResponse.
+pub async fn operator_ensure(server: &Shared, body: Value) -> Result<Response, ApiError> {
+    if !body.is_object() && !body.is_array() {
+        return Err(ApiError::bad("request body must be an object", None));
+    }
+    let host = required(&body, "hostSessionId", "hostSessionId is required".into())?;
+    if !body["intent"].is_object() && !body["intent"].is_array() {
+        return Err(missing_intent("intent is required"));
+    }
+    let style = restart_style(&body)?;
+    let allow = match body.get("allowStaleGeneration") {
+        None => false,
+        Some(Value::Bool(b)) => *b,
+        _ => {
+            return Err(ApiError::bad(
+                "allowStaleGeneration must be a boolean",
+                Some(json!({"field":"allowStaleGeneration"})),
+            ));
+        }
+    };
+    parse::require_harness(&body["intent"])?;
+    let harness = &body["intent"]["harness"];
+    if !harness["interactive"].is_boolean() {
+        return Err(ApiError::bad(
+            "harness.interactive must be a boolean",
+            Some(json!({"field":"harness.interactive"})),
+        ));
+    }
+    if let Some(provider) = harness.get("provider") {
+        let provider = provider
+            .as_str()
+            .ok_or_else(|| {
+                ApiError::bad(
+                    "harness.provider must be a string",
+                    Some(json!({"field":"harness.provider"})),
+                )
+            })?
+            .trim();
+        if !provider.is_empty() && !["anthropic", "openai", "meta"].contains(&provider) {
+            return Err(ApiError::bad(
+                "harness.provider must be \"anthropic\", \"openai\", or \"meta\"",
+                Some(json!({"field":"harness.provider"})),
+            ));
+        }
+    }
+    let intent = parse::runtime_intent(&body["intent"]);
+    let session = server
+        .store
+        .lock()
+        .unwrap()
+        .session(&host)?
+        .ok_or_else(|| ApiError::missing_host(&host))?;
+    let session = context::auto_rotate(server, session, allow, "runtime-ensure").await?;
+    let host = session["hostSessionId"].as_str().unwrap_or("");
+    let existing = {
+        let db = server.store.lock().unwrap();
+        let id: Option<String> = db.sqlite.query_row("SELECT runtime_id FROM runtimes WHERE host_session_id=? ORDER BY created_at DESC,runtime_id DESC LIMIT 1", [host], |r| r.get(0)).optional().map_err(anyhow::Error::from)?;
+        match id {
+            Some(id) => db.runtime(&id)?,
+            None => None,
+        }
+    };
+    let runtime = if let Some(rt) = existing.as_ref().filter(|rt| {
+        style != Some("fresh_pty")
+            && !hrc_store::status::UNAVAILABLE
+                .iter()
+                .any(|s| rt["status"] == *s)
+    }) {
+        compatible_reuse(rt, &intent)?;
+        server.store.lock().unwrap().sqlite.execute("UPDATE sessions SET last_applied_intent_json=?,updated_at=? WHERE host_session_id=?", params![intent.to_string(),hrc_store::timestamp(),host]).map_err(anyhow::Error::from)?;
+        rt.clone()
+    } else {
+        if let Some(rt) = existing.as_ref() {
+            stale_for_reprovision(server, rt)?;
+        }
+        let started =
+            attached::start(server, session, intent, style == Some("fresh_pty"), None).await?;
+        super::runtimes::runtime(server, started["runtimeId"].as_str().unwrap_or(""))?
+    };
+    let runtime = with_identity(server, runtime)?;
+    let id = runtime["runtimeId"].as_str().unwrap_or("");
+    let mut out = json!({"runtimeId":id,"hostSessionId":runtime["hostSessionId"],"transport":"tmux","status":runtime["status"],"supportsInFlightInput":runtime["supportsInflightInput"]});
+    if let Some(identity) = runtime.get("identity") {
+        out["identity"] = identity.clone();
+    }
+    if !(runtime["controllerKind"] == "harness-broker" && runtime["transport"] == "tmux") {
+        let t = &runtime["tmuxJson"];
+        if [
+            "sessionName",
+            "sessionId",
+            "windowId",
+            "paneId",
+            "socketPath",
+        ]
+        .iter()
+        .any(|k| !t[k].is_string())
+        {
+            return Err(unavailable(
+                format!("runtime \"{id}\" is missing tmux state"),
+                json!({"runtimeId":id}),
+            ));
+        }
+        out["tmux"] =
+            json!({"sessionId":t["sessionId"],"windowId":t["windowId"],"paneId":t["paneId"]});
+    }
+    server.ledger_committed();
+    Ok(Json(out).into_response())
+}
+
+/// Preserve the legacy fresh-execution transition; an externally owned runtime
+/// is history managed by its participant and must not be staled here.
+fn stale_for_reprovision(server: &Shared, runtime: &Value) -> Result<(), ApiError> {
+    let id = runtime["runtimeId"].as_str().unwrap_or("");
+    let store = server.store.lock().unwrap();
+    let Some(rt) = super::projection::db::runtime(&store.sqlite, id)? else {
+        return Ok(());
+    };
+    if super::controller::is_external_lifecycle_owner(&rt)
+        || hrc_store::status::UNAVAILABLE.contains(&rt.status.as_str())
+    {
+        return Ok(());
+    };
+    let now = hrc_store::timestamp();
+    let tx = store
+        .sqlite
+        .unchecked_transaction()
+        .map_err(anyhow::Error::from)?;
+    if let Some(run) = &rt.active_run_id {
+        super::projection::db::mark_run_completed(
+            &tx,
+            run,
+            super::projection::db::Completion {
+                status: "failed",
+                completed_at: &now,
+                updated_at: &now,
+                error_code: Some("runtime_unavailable"),
+                error_message: Some("runtime staled for harness-broker reprovision"),
+            },
+        )?;
+    }
+    let payload = json!({"reason":"ensure-runtime-fresh-execution-requested"});
+    let mut state = rt.state_object();
+    state["status"] = "stale".into();
+    state["updatedAt"] = now.clone().into();
+    state["staleReason"] = payload["reason"].clone();
+    state["stalePayload"] = payload.clone();
+    tx.execute("UPDATE runtimes SET active_run_id=NULL,status='stale',status_changed_at=?,updated_at=?,runtime_state_json=? WHERE runtime_id=?",params![now,now,state.to_string(),id]).map_err(anyhow::Error::from)?;
+    let event = super::projection::events::Ev {
+        ts: now,
+        host_session_id: rt.host_session_id,
+        scope_ref: rt.scope_ref,
+        lane_ref: rt.lane_ref,
+        generation: rt.generation,
+        runtime_id: Some(id.to_owned()),
+        transport: matches!(rt.transport.as_str(), "sdk" | "tmux" | "headless")
+            .then_some(rt.transport),
+        ..Default::default()
+    };
+    super::projection::events::append(&tx, "runtime.stale", &event, &payload)?;
+    tx.commit().map_err(anyhow::Error::from)?;
+    Ok(())
+}
+
+fn compatible_reuse(rt: &Value, intent: &Value) -> Result<(), ApiError> {
+    let requested = intent.get("selection").and_then(Value::as_object);
+    let directives = intent.get("summonDirectives").and_then(Value::as_object);
+    if requested.is_none_or(|v| v.is_empty()) && directives.is_none_or(|v| v.is_empty()) {
+        return Ok(());
+    }
+    let realized = &rt["runtimeStateJson"]["selection"];
+    let mut detail = json!({"runtimeId":rt["runtimeId"],"replacementRequired":true});
+    let message = if !realized.is_object()
+        || ["harness", "modelProvider", "model"]
+            .iter()
+            .any(|k| !realized[*k].is_string())
+        || !realized["presentation"].is_boolean()
+        || ["harness", "modelProvider", "model", "presentation"]
+            .iter()
+            .any(|k| !realized["provenance"][*k].is_string())
+    {
+        "explicit v2 selection cannot reuse this runtime because HRC cannot compare it to a legacy runtime"
+    } else if directives.is_some_and(|v| !v.is_empty()) {
+        detail["summonDirectives"] = intent["summonDirectives"].clone();
+        detail["realizedSelection"] = realized.clone();
+        "raw summon directives require producer realization before this runtime can be reused"
+    } else if let Some(field) = [
+        "harness",
+        "modelProvider",
+        "model",
+        "reasoningEffort",
+        "presentation",
+    ]
+    .into_iter()
+    .find(|f| {
+        requested.is_some_and(|v| v.contains_key(*f)) && intent["selection"][*f] != realized[*f]
+    }) {
+        detail["field"] = field.into();
+        detail["requested"] = intent["selection"][field].clone();
+        detail["realized"] = realized[field].clone();
+        "explicit v2 selection does not match the established runtime; replacement is required"
+    } else {
+        return Ok(());
+    };
+    Err(ApiError::domain(
+        StatusCode::CONFLICT,
+        "stale_context",
+        message,
+        Some(detail),
+    ))
+}
+
 /// toStartRuntimeResponse leads with the runtime snapshot's identity, which
 /// Bun joins from the session's continuity.
 fn with_identity(server: &Shared, started: Value) -> Result<Value, ApiError> {
@@ -157,7 +369,7 @@ fn with_identity(server: &Shared, started: Value) -> Result<Value, ApiError> {
             .optional()
             .map_err(anyhow::Error::from)?;
         match scope {
-            Some(scope) => db.optional_identity(&scope, &stored_lane(&db.sqlite, host)?)?,
+            Some(scope) => db.stored_identity(&scope, &stored_lane(&db.sqlite, host)?)?,
             None => None,
         }
     };

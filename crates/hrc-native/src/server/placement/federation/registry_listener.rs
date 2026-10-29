@@ -423,7 +423,7 @@ pub(super) fn establish(
 }
 
 /// BindingRegistry.deleteBinding.
-fn delete(
+pub(super) fn delete(
     db: &mut Connection,
     scope: &str,
     expected: &str,

@@ -552,8 +552,26 @@ fn withdrawn_recovery(db: &Connection, envelope: &Value, ctx: &Ctx, now: &str) -
     if p["reason"] != "accepted_run_never_started" {
         return Ok(());
     }
-    let invocation = envelope["invocationId"].as_str().unwrap_or("");
-    let run = match ctx.run_id.as_deref() {
+    terminalize_withdrawn(
+        db,
+        &ctx.runtime_id,
+        ctx.run_id.as_deref(),
+        envelope["invocationId"].as_str().unwrap_or(""),
+        sub,
+        now,
+    )
+}
+
+/// Shared exact withdrawal projection for broker replay and operator recovery.
+pub fn terminalize_withdrawn(
+    db: &Connection,
+    runtime_id: &str,
+    run_id: Option<&str>,
+    invocation: &str,
+    sub: &str,
+    now: &str,
+) -> Result<()> {
+    let run = match run_id {
         Some(id) => db::run(db, id)?,
         None => None,
     };
@@ -563,7 +581,7 @@ fn withdrawn_recovery(db: &Connection, envelope: &Value, ctx: &Ctx, now: &str) -
     }) else {
         return Ok(());
     };
-    if run.runtime_id.as_deref() != Some(&ctx.runtime_id)
+    if run.runtime_id.as_deref() != Some(runtime_id)
         || run.invocation_id.as_deref() != Some(invocation)
         || run.status != "accepted"
         || run.started_at.is_some()
@@ -574,29 +592,29 @@ fn withdrawn_recovery(db: &Connection, envelope: &Value, ctx: &Ctx, now: &str) -
         return Ok(());
     }
     let changed = db.execute("UPDATE runs SET status = 'failed', completed_at = ?, updated_at = ?, error_code = ?, error_message = ? WHERE run_id = ? AND runtime_id = ? AND invocation_id = ? AND status = 'accepted' AND started_at IS NULL AND completed_at IS NULL AND dispatched_input_id = ? AND broker_submission_id = ?",
-        params![now, now, "run_accepted_never_started", "accepted broker submission was withdrawn before a turn started", run.run_id, ctx.runtime_id, invocation, sub, sub])?;
+        params![now, now, "accepted_run_never_started", "accepted broker submission was withdrawn before a turn started", run.run_id, runtime_id, invocation, sub, sub])?;
     if changed != 1 {
         return Ok(());
     }
-    db.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ? AND active_run_id = ?", params![now, ctx.runtime_id, run.run_id])?;
+    db.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ? AND active_run_id = ?", params![now, runtime_id, run.run_id])?;
     let ev = events::Ev {
         ts: now.to_owned(),
         host_session_id: run.host_session_id.clone(),
         scope_ref: run.scope_ref.clone(),
         lane_ref: run.lane_ref.clone(),
         generation: run.generation,
-        runtime_id: Some(ctx.runtime_id.clone()),
+        runtime_id: Some(runtime_id.to_owned()),
         run_id: Some(run.run_id.clone()),
         transport: matches!(run.transport.as_str(), "sdk" | "tmux" | "headless")
             .then(|| run.transport.clone()),
-        error_code: Some("run_accepted_never_started".into()),
+        error_code: Some("accepted_run_never_started".into()),
         ..Default::default()
     };
     events::append(
         db,
         "turn.reaped",
         &ev,
-        &json!({"runId":run.run_id,"runtimeId":ctx.runtime_id,"invocationId":invocation,"submissionId":sub,"reason":"accepted_run_never_started","finalizedRunStatus":"failed","source":"accepted-run-recovery"}),
+        &json!({"runId":run.run_id,"runtimeId":runtime_id,"invocationId":invocation,"submissionId":sub,"reason":"accepted_run_never_started","finalizedRunStatus":"failed","source":"accepted-run-recovery"}),
     )?;
     Ok(())
 }

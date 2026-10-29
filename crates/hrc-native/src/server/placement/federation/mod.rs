@@ -10,7 +10,9 @@ pub mod peer_listener;
 mod policy;
 mod projection;
 pub mod registry_listener;
+mod retirement;
 mod routing;
+pub use retirement::retire;
 pub mod summon;
 
 pub use locate::{bindings, designations, locate};

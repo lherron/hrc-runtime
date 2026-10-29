@@ -73,6 +73,8 @@ mod ledger;
 mod messages;
 #[path = "server/projection/projection/mod.rs"]
 mod projection;
+#[path = "server/broker/recover_unstarted.rs"]
+mod recover_unstarted;
 #[path = "server/projection/runs.rs"]
 mod runs;
 #[path = "server/projection/sessions.rs"]
@@ -621,6 +623,50 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
             Ok(value) => io::broker_inspect(server, value).await,
             Err(e) => Err(e),
         }
+    } else if method == Method::POST && uri.path() == "/v1/federation/retire" {
+        let result = match parse_body(&body) {
+            Ok(value) => federation::retire(server, value).await,
+            Err(e) => Err(e),
+        };
+        result.map_err(|mut error| {
+            if error.detail.is_none() {
+                error.detail = Some(json!({}));
+            }
+            error
+        })
+    } else if method == Method::POST && uri.path() == "/v1/runtimes/ensure" {
+        let result = match parse_body(&body) {
+            Ok(value) => start::operator_ensure(server, value).await,
+            Err(e) => Err(e),
+        };
+        result.map_err(|mut error| {
+            if error.detail.is_none() {
+                error.detail = Some(json!({}));
+            }
+            error
+        })
+    } else if method == Method::POST && uri.path() == "/v1/runs/recover-unstarted" {
+        let result = match parse_body(&body) {
+            Ok(value) => recover_unstarted::handle(server, value).await,
+            Err(e) => Err(e),
+        };
+        result.map_err(|mut error| {
+            if error.detail.is_none() {
+                error.detail = Some(json!({}));
+            }
+            error
+        })
+    } else if method == Method::POST && uri.path() == "/v1/surfaces/unbind" {
+        let result = match parse_body(&body) {
+            Ok(value) => surfaces::unbind(server, value),
+            Err(e) => Err(e),
+        };
+        result.map_err(|mut error| {
+            if error.detail.is_none() {
+                error.detail = Some(json!({}));
+            }
+            error
+        })
     } else if method == Method::POST && uri.path() == "/v1/runtimes/capture/status" {
         match parse_body(&body) {
             Ok(value) => io::capture_status(server, value).await,
@@ -755,6 +801,10 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/interrupt",
                 "/v1/terminate",
                 "/v1/runtimes/capture/status",
+                "/v1/federation/retire",
+                "/v1/runtimes/ensure",
+                "/v1/runs/recover-unstarted",
+                "/v1/surfaces/unbind",
                 "/v1/runtimes/broker/inspect",
                 "/v1/capture/by-selector",
                 "/v1/literal-input/by-selector",
