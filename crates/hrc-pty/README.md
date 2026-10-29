@@ -18,12 +18,15 @@ bound; startup errors come back on stderr with exit 1. The token defaults to
 
 ## libghostty-vt
 
-`GHOSTTY_COMMIT` pins the scriptable-ghostty commit. `build.rs` refuses to
-build when it differs from Loggia's `vendor/GHOSTTY_COMMIT`, and on first use
-builds the static lib with zig 0.17 (`scripts/build-libghostty-vt.sh`, about a
-minute) into `crates/target/libghostty-vt/<commit>/`. `just hrc-pty-lib` does
-the same by hand. The bindings are hand-written (`src/vt.rs`); a unit test
-checks every struct against the library's own ABI manifest.
+`GHOSTTY_COMMIT` pins the scriptable-ghostty commit. The default build links
+the debug-stripped static lib in `vendor/<commit>/` (with the headers it was
+built from), so no zig is needed anywhere. `build.rs` refuses a pin that
+differs from Loggia's `vendor/GHOSTTY_COMMIT` and only warns when there is no
+Loggia checkout to compare with. To move the pin: change `GHOSTTY_COMMIT`
+with Loggia's, then `just hrc-pty-vendor-lib` (zig 0.17 on PATH or `ZIG=`).
+`HRC_PTY_BUILD_VT=1` builds against a fresh source build instead of the
+vendor dir. The bindings are hand-written (`src/vt.rs`); a unit test checks
+every struct against the library's own ABI manifest.
 
 ## Responder answers
 

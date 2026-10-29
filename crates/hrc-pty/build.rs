@@ -1,6 +1,11 @@
-//! Links libghostty-vt built from scriptable-ghostty at the commit pinned in
-//! `GHOSTTY_COMMIT`, which must equal Loggia's vendored commit: hrc-pty's VT
-//! model and Loggia's renderer are the same parser or the replay is a guess.
+//! Links libghostty-vt at the commit pinned in `GHOSTTY_COMMIT`, which must
+//! equal Loggia's vendored commit: hrc-pty's VT model and Loggia's renderer
+//! are the same parser or the replay is a guess.
+//!
+//! By default the static lib comes from `vendor/<commit>/` (no toolchain
+//! needed). `HRC_PTY_BUILD_VT=1` rebuilds it from scriptable-ghostty with zig
+//! 0.17 instead; `scripts/vendor-libghostty-vt.sh` restages the vendor dir
+//! when the pin moves.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
@@ -15,8 +20,10 @@ fn main() {
     let pin = read_trimmed(&pin_file).expect("crates/hrc-pty/GHOSTTY_COMMIT");
     println!("cargo:rerun-if-changed={}", pin_file.display());
     println!("cargo:rerun-if-env-changed=HRC_PTY_LOGGIA_GHOSTTY_COMMIT");
-    println!("cargo:rerun-if-env-changed=HRC_PTY_LIBGHOSTTY_DIR");
+    println!("cargo:rerun-if-env-changed=HRC_PTY_BUILD_VT");
 
+    // Refuse only a real mismatch. Nodes and CI runners without a Loggia
+    // checkout have nothing to compare against.
     let home = env::var("HOME").unwrap_or_default();
     let loggia = env::var("HRC_PTY_LOGGIA_GHOSTTY_COMMIT")
         .map(PathBuf::from)
@@ -29,30 +36,39 @@ fn main() {
             loggia.display()
         ),
         None => println!(
-            "cargo:warning=Loggia's GHOSTTY_COMMIT not found at {}; pin {pin} unchecked",
+            "cargo:warning=Loggia's GHOSTTY_COMMIT not found at {}; pin {pin} not cross-checked",
             loggia.display()
         ),
     }
 
-    let lib_dir = env::var("HRC_PTY_LIBGHOSTTY_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| manifest.join("../target/libghostty-vt").join(&pin));
-    if read_trimmed(&lib_dir.join("COMMIT")).as_deref() != Some(pin.as_str()) {
+    let lib_dir = if env::var("HRC_PTY_BUILD_VT").as_deref() == Ok("1") {
+        let dir = manifest.join("../target/libghostty-vt").join(&pin);
         let status = Command::new("bash")
             .arg(manifest.join("scripts/build-libghostty-vt.sh"))
             .arg(&pin)
-            .arg(&lib_dir)
+            .arg(&dir)
             .status()
             .expect("run build-libghostty-vt.sh");
         assert!(status.success(), "building libghostty-vt {pin} failed");
-    }
+        println!("cargo:rerun-if-changed={}", dir.join("COMMIT").display());
+        dir
+    } else {
+        manifest.join("vendor").join(&pin)
+    };
+    let archive = if lib_dir.join("lib/libghostty-vt.a").exists() {
+        lib_dir.join("lib/libghostty-vt.a")
+    } else {
+        lib_dir.join("zig-out/lib/libghostty-vt.a")
+    };
     let built = read_trimmed(&lib_dir.join("COMMIT"));
     assert_eq!(
         built.as_deref(),
         Some(pin.as_str()),
-        "libghostty-vt at {} is not {pin}",
+        "libghostty-vt at {} is not {pin}; run scripts/vendor-libghostty-vt.sh",
         lib_dir.display()
     );
+    assert!(archive.exists(), "missing {}", archive.display());
+    println!("cargo:rerun-if-changed={}", archive.display());
 
     // Ghostty's own version format for a git build: X.Y.Z-<branch>+<short hash>.
     let zon = read_trimmed(&lib_dir.join("VERSION")).unwrap_or_else(|| "0.0.0".into());
@@ -62,19 +78,11 @@ fn main() {
         &pin[..9]
     );
     println!("cargo:rustc-env=HRC_PTY_GHOSTTY_COMMIT={pin}");
-    // zig-out/lib also holds the dylib, which ld64 prefers over the archive,
-    // so link from a directory that has only the archive.
+    // Link from a directory that holds only the archive: next to a dylib,
+    // ld64 would prefer the dylib.
     let link_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib");
     fs::create_dir_all(&link_dir).unwrap();
-    fs::copy(
-        lib_dir.join("zig-out/lib/libghostty-vt.a"),
-        link_dir.join("libghostty-vt.a"),
-    )
-    .unwrap();
+    fs::copy(&archive, link_dir.join("libghostty-vt.a")).unwrap();
     println!("cargo:rustc-link-search=native={}", link_dir.display());
     println!("cargo:rustc-link-lib=static=ghostty-vt");
-    println!(
-        "cargo:include={}",
-        lib_dir.join("zig-out/include").display()
-    );
 }

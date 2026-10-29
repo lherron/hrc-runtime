@@ -249,9 +249,9 @@ hrc-pty-record-answers:
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
     python3 crates/hrc-pty/e2e/record_answers.py --binary crates/target/debug/hrc-pty --out "${HRC_PTY_RECORD_ARTIFACTS:-/tmp/hrc-pty-record-$(date +%s)-$$}"
 
-# Build libghostty-vt at hrc-pty's pinned commit (cargo also builds it on demand)
-hrc-pty-lib:
-    bash crates/hrc-pty/scripts/build-libghostty-vt.sh "$(cat crates/hrc-pty/GHOSTTY_COMMIT)" "crates/target/libghostty-vt/$(cat crates/hrc-pty/GHOSTTY_COMMIT)"
+# Rebuild hrc-pty's vendored libghostty-vt from scriptable-ghostty (zig 0.17; after moving GHOSTTY_COMMIT)
+hrc-pty-vendor-lib:
+    bash crates/hrc-pty/scripts/vendor-libghostty-vt.sh
 
 # Clean build artifacts
 clean:

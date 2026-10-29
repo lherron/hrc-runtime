@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Build libghostty-vt (static) from scriptable-ghostty at the pinned commit.
+# Only reached when moving the pin (vendor-libghostty-vt.sh) or with
+# HRC_PTY_BUILD_VT=1; the default build links vendor/<commit>/.
 #
 #   build-libghostty-vt.sh <commit> <out-dir>
 #
@@ -13,10 +15,7 @@ commit="$1"
 out="$2"
 repo="${GHOSTTY_REPO:-$HOME/praesidium/scriptable-ghostty}"
 zig="${ZIG:-zig}"
-if ! "$zig" version 2>/dev/null | grep -q '^0\.17\.'; then
-  zig="$HOME/praesidium/var/tools/zig-aarch64-macos-0.17.0/zig"
-fi
-"$zig" version | grep -q '^0\.17\.' || { echo "zig 0.17.x required (set ZIG)" >&2; exit 1; }
+"$zig" version 2>/dev/null | grep -q '^0\.17\.' || { echo "zig 0.17.x required: put it on PATH or set ZIG" >&2; exit 1; }
 
 mkdir -p "$out"
 src="$out/src"
