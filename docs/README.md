@@ -31,7 +31,7 @@ Current reference for the HRC runtime. Design records live in
 
 ## Build, install, operations
 
-- [operations-runbook.md](operations-runbook.md) — day-to-day operation: runtime locations, restart doctrine, dependency sync, aspd Codex route, event path, mail-kicker location.
+- [operations-runbook.md](operations-runbook.md) — day-to-day operation: native owner/log readback, restart authority, dependency sync, validation, and ACP sidecar ownership.
 - [fleet-deployment.md](fleet-deployment.md) — `just deploy-*` across svc/max3/hrcdev: node processes, targets, guards, supervisors, and the hrcdev Tart VM.
 - [development-workflow.md](development-workflow.md) — validation scope, dependency pin table, repo-split boundary, pull-deps extras, and cross-repo publishing.
 - [atomic-install.md](atomic-install.md) — how `just install` builds a release image and cuts over atomically.
@@ -45,7 +45,7 @@ Current reference for the HRC runtime. Design records live in
 - [proposals/install-publish-split.md](proposals/install-publish-split.md) — implemented design splitting local install selection from publication (T-08559).
 - [proposals/hrc-rust-parity.md](proposals/hrc-rust-parity.md) — native Rust parity r2: whole-node owner transfer, packages N0–N6 against current main, product-claim gates and explicitly unsupported cases (P-00866).
 - [proposals/hrc-rust-migration.md](proposals/hrc-rust-migration.md) — proposal: port HRC to Rust embedding cardo-runtime (delivered kernel/facades, isolated native parity, cohesive owner transfer; retirement separately gated); consolidation deferred (P-00862).
-- [proposals/viewer-sidecar-spec.md](proposals/viewer-sidecar-spec.md) — approved spec extracting Ghostty presentation from hrc-server into the viewer sidecar.
+- Viewer extraction design — historical approved rev 3 on completed T-07595 (sidecar build and production validation), attachment ATT-00414 (`wrkq attach get ATT-00414 -o <path>`); shipped authority lives in [the viewer invariant](../architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml).
 
 ## Policy and process
 

@@ -57,7 +57,7 @@ source:
   - hrcchat#21165
   - wrkq:T-07595
   - wrkq:T-07729
-  - docs/proposals/viewer-sidecar-spec.md
+  - wrkq:T-07595/attachments/ATT-00414
   - packages/hrc-server/src/runtime-io-handlers.ts
   - wrkq:T-08623
   - wrkq:T-09269

@@ -10,389 +10,218 @@ provenance: authored
 
 # HRC runtime operations runbook
 
-Operational procedures for the `hrc-server` daemon and its state: restart
-doctrine, log/state locations, dependency-sync flow, isolated-daemon
-smoke testing, and state retention. This runbook records current, shipped
-procedure — for architecture background see `hrc-runtime/architecture-overview`.
+Current operations for the native `rusthrc` daemon and `hrc` CLI. max3, svc
+(mini), and hrcdev use the native owner under the launchd label
+`com.praesidium.hrc-server`. The retained Bun implementation and its launchd
+template are not evidence of the running owner.
 
-## Canonical runtime locations
+## Runtime locations and owner readback
 
-- Socket: `/Users/lherron/praesidium/var/run/hrc/hrc.sock`
-- State DB: `/Users/lherron/praesidium/var/state/hrc/state.sqlite`
-- Logs: `/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-server.log` (one JSON object per line: `ts`, `level`, `component`, `event`, `data`; query with `jq`) and `hrc-server.err.log` (crash and runtime noise only)
-- Launchd label: `com.praesidium.hrc-server`
-  (plist: `launchd/com.praesidium.hrc-server.plist`, installed to
-  `~/Library/LaunchAgents/com.praesidium.hrc-server.plist`)
+Default roots on max3:
 
-## Container-local persona allowlist
+- Socket: `~/praesidium/var/run/hrc/hrc.sock`
+- State DB: `~/praesidium/var/state/hrc/state.sqlite`
+- Installed supervisor: `~/Library/LaunchAgents/com.praesidium.hrc-server.plist`
+- Owner executable: `~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc`
 
-A supervisor can bound which agent personas its daemon may execute locally:
+Read the installed plist and live status rather than assuming the checked-in
+Bun template describes the node:
 
 ```bash
-hrc server serve \
-  --allow-persona room-coordinator two-box-implementer daedalus
+bash scripts/hrc-owner.sh kind
+bash scripts/hrc-owner.sh log-path
+hrc server status --json
 ```
 
-The values are canonical `agent:<id>` persona IDs without the `agent:` prefix.
-When the option is omitted, historical unrestricted behavior is preserved. When
-configured, HRC rejects every other agent scope before local semantic delivery,
-session/claim birth, runtime start, or turn dispatch. The error names both the
-rejected agent and full scope. Project, task, role, and lane segments do not
-widen the policy: every scope for an admitted persona is allowed, and every
-scope for an omitted persona is denied.
+`kind` must report `rusthrc`. Status must name the owner executable in
+`binaryPath`; inspect `.release.hrcBuild.sourceCommit`,
+`.release.runningEqualsInstalled`, `.node.nodeId`, `.api.socketPath`, and
+`.api.listenSocketPath`. On the direct native owner the two API socket paths
+agree. These are nested fields; a missing field is not a successful check.
 
-This is a node-local execution trust boundary, not a federation bearer or an
-authorization credential. The allowlist is typed supervisor argv consumed by
-the daemon and is never copied into harness child environment. A federated DM
-that routes to a different authoritative node is not local execution and is
-therefore not constrained by the origin node's list; the receiving node applies
-its own list before delivery or birth. Configure the option on the supervisor's
-actual `server serve` command. For launchd that means changing
-`ProgramArguments` and reloading the job; `hrc server restart` alone does not
-re-read a plist.
+The owner log currently differs by node: max3 uses
+`~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log`; svc and hrcdev use
+`~/praesidium/var/logs/rusthrc-owner.log`. `hrc-owner.sh log-path` reads the
+node's installed plist. The structured log uses JSON lines with `ts`, `level`,
+`component`, `event`, and `data`. The old `hrc-server.log` path describes the
+Bun owner, not the native owner's current output.
+
+For routine seat/runtime inspection use the kernel projection, avoiding a
+whole-table daemon scan:
+
+```bash
+python3 -I crates/hrc-kernel/e2e/kq.py status
+python3 -I crates/hrc-kernel/e2e/kq.py seats
+python3 -I crates/hrc-kernel/e2e/kq.py busy
+```
+
+Check ingest lag in `status`. Seat active/inactive and runtime busy/ready are
+different facts. Do not restart the kernel to refresh a read: a cold bootstrap
+is expensive and blanks Loggia.
 
 ## Restart doctrine
 
-`hrc server restart` does **not** reload launchd plist
-`EnvironmentVariables`, and installation does not reload the daemon by
-itself. After a runtime-affecting source change, run all of these in
-order:
+### Install and deploy
+
+Build, install, publish, and activation are separate states. Follow
+[atomic-install.md](atomic-install.md) for local release selection and its
+pre-cutover checks, including the kernel bootstrap gate. A failed candidate
+must leave `current` unchanged. A local install does not activate the daemon.
+
+For fleet changes follow [fleet-deployment.md](fleet-deployment.md):
+`just deploy-max3` advances and publishes max3 first; `just deploy-svc` and
+`just deploy-hrcdev` consume `@max3` without publication. `just deploy-fleet`
+resolves targets from what max3 is running. Use `just fleet-status` for the
+HRC, aspd, and injector readbacks. Parity means matching source commits, not
+per-node set versions.
+
+**Restart authority.** Only `mable@<project>:primary` may restart shared
+services on any node. Mable's `minisvc` seat may restart its own svc HRC;
+`mable@hrc-runtime:hrcdev` may restart its own hrcdev HRC. Lance retains
+operator authority. Other agents request the exact action through `wrkc` to
+Mable's appropriate seat. A recipe or task brief grants no lifecycle authority.
+The daemon checks its minted lifecycle credential; a credential-less shell
+cannot substitute for the authorized seat. `--reason` is required.
+
+For an authorized activation after installation:
 
 ```bash
-just install
-hrc server restart
-hrc server status
+hrc server restart --force --reason 'activate the selected HRC release'
+hrc server status --json
 ```
 
-`just install` prepares an immutable local release image away from the checkout
-and atomically advances the shared HRC indirection only after dependency install,
-build, and entrypoint smoke checks succeed. The final `hrc server status`
-readback must name the newly installed release in `binaryPath` /
-`packagePath`. For a canonical package release, push the commit and then run
-`just publish`; publication reads the already selected release and is a
-separate state from installation and restart.
+Use `--node <id>` for a peer. Default stop/restart gates refuse in-flight work;
+`--wait` drains up to `--wait-timeout-ms` (default 300000), while `--force`
+skips that gate. Tmux runs are excluded from the restart gate. Brokers reattach
+across restart, so busy runtimes are not a reason to wait for a quiet window;
+a wait that includes the invoking turn cannot drain. Mable restarts at most
+once per validation cycle and continues validation afterward.
 
-**Who may restart (T-09861).** The daemon authorizes `hrc server
-stop|restart` itself, from the lifecycle credential it minted for the
-caller's runtime: `mable@<project>:primary` on any node (`--node <id>` for a
-peer), or on its own node only `mable@<project>:minisvc` (svc) /
-`mable@hrc-runtime:hrcdev` (hrcdev). `--reason` is required. Anyone else —
-including a credential-less shell — is refused and should ask
-`mable@<project>:primary`. Break-glass (wedged daemon, or a daemon that
-predates the contract): `launchctl kickstart -k
-gui/$UID/com.praesidium.hrc-server`, which the next boot records as
-`unattributed`. This stops accidental and doctrinal violations and makes
-deliberate ones detectable and attributable; it does not stop a determined
-same-uid actor.
+After restart require `.release.runningEqualsInstalled == true` and the
+expected source commit and owner `binaryPath`. Read `broker.warmup.complete`
+in the actual owner log: `data.attached` must equal `data.total`, with no
+failure categories. A healthy socket alone does not prove the intended build
+is running. An immediately missing pid can be pid-file lag; reread status.
 
-**In-flight gating.** After authorization, the daemon refuses stop/restart
-by default when runs are still in flight. Use `--wait` to drain (up to
-`--wait-timeout-ms`, default 300000) or `--force` to skip the gate.
-Tmux-transport runs are excluded from the restart gate (they survive a
-daemon restart); only headless/SDK runs block it.
+Restart/kickstart does not reload launchd plist environment or argv. A plist
+change requires an authorized bootout/bootstrap. Do not use direct launchctl
+commands to bypass the lifecycle authority rule.
 
-**Zombie sweeper threshold.** After 30 minutes of `hrc_events` silence
-(`HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800`) the sweeper marks a run zombie
-regardless of process liveness. Be aware of this when running long tool
-calls under a headless runtime (multi-minute `bun install`, `git filter-repo`, full test suites).
+## Persona allowlist: legacy Bun only
+
+The retained Bun `server serve --allow-persona ...` option is not a native
+execution boundary. The native summon implementation explicitly has no local
+persona allowlist (`crates/hrc-native/src/server/placement/federation/summon.rs`).
+Do not infer enforcement from generated CLI help or configure a native
+supervisor expecting that Bun option to protect it. A requirement for that
+boundary needs an owner decision before deployment.
 
 ## Dependency sync (ASP → HRC)
 
-HRC consumes agent-spaces (ASP) code only through published Verdaccio
-snapshots — editing `../agent-spaces` source has zero effect on HRC until
-published and pulled, and the running launchd daemon still needs an HRC
-install + restart after that.
+HRC consumes published ASP tuples through Verdaccio at `http://mini:4873/`.
+Editing `../agent-spaces` has no effect on an installed HRC release until the
+producer is published and the consumer lock advances.
 
-```bash
-# 1. edit ../agent-spaces source
-cd ../agent-spaces && just install no-sync=1  # build, link, publish one coherent producer set
-# then, with an explicit consumer owner:
-cd ../hrc-runtime && just pull-deps && just install
-hrc server restart && hrc server status
-```
+1. Publish the coherent ASP producer set through agent-spaces' supported
+   workflow, with its owner.
+2. In HRC run `just pull-deps`. It advances `bun.lock` coherently and creates a
+   lock-only commit. Read `git log -1 -- bun.lock` and run
+   `bun scripts/check-lock-coherence.ts`; a no-op pull does not prove freshness.
+3. Push the lock commit, then use the authorized install/deploy flow above.
+   Read back native HRC's `.release.aspContracts` and the independent aspd service release
+   at `.api.aspd.release`. Package consumption and aspd activation are separate.
 
-- `just pull-deps` (run in hrc-runtime) queries the configured Verdaccio
-  for the ASP and wrkq streams, verifies coherence, advances
-  **`hrc-runtime/bun.lock`** (resolved lockfile-only in a staging copy, so it
-  behaves the same under the `~/praesidium` dev workspace and standalone),
-  refuses if the lock did not reach registry latest or resolves a synced set to
-  more than one version, and creates one standard lockfile-only commit
-  (`chore: sync bun.lock (ASP@…)`). Read back `git log -1 -- bun.lock` before
-  installing. `just check-deps` is advisory/read-only;
-  `bun scripts/check-lock-coherence.ts` is the refusal `just install`,
-  `just check` and `just pull-deps` all apply.
-- **Coherence guard**: all ASP packages must share the same `latest`
-  version at publish time; a half-published snapshot errors with
-  `ASP Verdaccio latest set is incoherent`. Publish the whole ASP set from
-  agent-spaces, never one package in isolation.
-- Verdaccio must be reachable at the canonical `http://mini:4873/` endpoint or
-  both publish and sync fail. Mini is the sole registry store; consumers do not
-  mirror packages between node-local registries.
-- Pull != installed != live: `just pull-deps` advances the lock (and, on a
-  standalone checkout, node_modules — under the dev workspace node_modules is
-  the workspace's, linked from source); `just install` atomically selects the
-  HRC release; `hrc server restart` activates it in launchd.
-- Never `bun update <pkg>@<ver>` / `bun add` a synced package: it moves a
-  subset and nests fresh copies of its dependencies, so the lock carries two
-  ASP tuples at once. Repair: `git checkout <last-coherent> -- bun.lock`,
-  commit, `just pull-deps`.
-- A pure ASP compile-time change (new type/export) requires the sync
-  before HRC will typecheck. A pure ASP behavior/data change (e.g. a
-  capability flag flip) flows through existing contracts and only needs
-  the sync for runtime/e2e — decide parallel-vs-serialize by whether the
-  HRC diff names a new ASP symbol.
+`just check-deps` is read-only. Never use `bun update`, `bun add`, hand-edited
+manifests, or individual package publication to advance a synced set. The dev
+workspace's source links are for editing; release bytes come from the lock.
+ACP advances its own producer pins; an HRC install does not release ACP.
+See [development-workflow.md](development-workflow.md) for the cross-repo flow.
 
-## Isolated daemon smoke testing
+## Validation and isolation
 
-Use an isolated daemon only when **both** are true: the shared daemon
-predates your commit (its loaded worktree TypeScript is stale relative to
-the code under test), **and** a peer runtime is busy so you cannot safely
-restart the shared daemon. Otherwise, prefer restarting the shared daemon.
+`just verify` is the landing gate: architecture records, crate-edge checks,
+and the cargo leg when Rust inputs changed. It runs no Bun suites and does not
+provision a Bun daemon. Run `just verify-bun` by hand only for Bun/TypeScript
+changes; that recipe provisions its own ephemeral daemon and fixture homes.
+For TS project references, build before typecheck. Repo-owned `.githooks`
+apply path-scoped validation; do not substitute stale `.git/hooks` templates.
 
-```bash
-export HRC_RUNTIME_DIR="/tmp/hrc-isolated-T-XXXXX/run"
-export HRC_STATE_DIR="/tmp/hrc-isolated-T-XXXXX/state"
-export HRC_HEADLESS_CODEX_BROKER_ENABLED=1
-hrc server serve
-```
+A docs-only change needs its applicable structural checks and landing hooks,
+not an install or restart. A runtime change additionally needs validation of
+the installed native surface with real configuration. The justfile exposes
+`just e2e-native-full` for the native workflow; select the relevant driver
+under `crates/hrc-native/e2e/` or `crates/hrc-cli/e2e/` for narrower changes.
+Record the source commit, installed/running identity, commands, and artifacts.
 
-Export the same three variables in every shell that runs a probe against
-this instance. Do **not** use `hrc server start --daemon` for isolation —
-the start path delegates to launchd when its service is loaded, and the
-launchd-supervised daemon has a fixed environment that ignores runtime/state
-overrides, so isolation silently does not take effect. `hrc server serve`
-is the bare foreground process that actually inherits the overrides.
+An isolated daemon is appropriate for probes that write or need controlled
+state. Busy peers do not make a shared restart unsafe. Use a scratch copy of
+the installed release with fresh runtime/state roots and a clean supervisor
+shell; never start another daemon directly from an atomic installed release.
+Never copy the live multi-GB store to seed a probe. Keep non-production daemons
+viewer-free. Clean up every runtime, process, socket, and scratch root you
+create and disclose any remaining debris. The historical Bun smoke recipe
+[isolated-daemon-smoke-recipe.md](isolated-daemon-smoke-recipe.md) must not be
+counted as proof of native-owner behavior.
 
-Let the isolated daemon create a fresh store and seed only the rows your
-probe needs — do not clone the live store with SQLite `.backup` (a prior
-attempt produced a 9.2 GB partial copy and a database-locked failure).
-Before stopping the foreground server, terminate every probe runtime you
-spawned (`hrc runtime terminate <runtimeId>`), then `Ctrl-C` the server and
-remove the isolated runtime/state directories when safe. Disclose any
-runtime, process, socket, database, or directory debris left behind in your
-handoff/validation evidence.
+The native foreground path retains the harness guard against
+`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, and `CODEX_SANDBOX` inheritance
+(`crates/hrc-cli/src/server_start.rs`). Start an isolated native daemon in a
+clean external terminal, never by bypassing the guard in the agent turn.
+If running the Bun-only gate, inspect its ephemeral daemon log on startup
+failure; do not force-boot the production daemon under harness environment.
 
-## State retention
+## Retention and long-running turns
 
-`state.sqlite` retention policy (observation policy revised 2026-07-28):
+The native zombie sweeper defaults to 1800 seconds of event silence
+(`crates/hrc-native/src/server/broker/sweeps.rs`); process liveness alone does
+not protect a headless run. Account for this during long tool calls.
 
-- `events`, `hrc_events`, and `broker_invocation_events` observation history:
-  3 days by default. `runtime_buffers` for completed runs: 1 day by default.
-  Both TTLs are configurable by the nightly prune script's CLI flags or
-  environment variables.
-- Resume barriers and rows for active/nonterminal work are permanent
-  exemptions. Runtime buffers remain while their runtime is live.
-- The 3-day window also bounds monitor transcript, broker-forensics, capture
-  verification, and event-replay reach-back. `--previous` can select a retained
-  old runtime whose transcript has expired.
-- Imported federation observations use the same window; an offline source may
-  have an observation gap after 3 days. Federation outboxes, pending envelopes,
-  and unacknowledged deliveries are not eligible.
-- The database uses `auto_vacuum=INCREMENTAL`; the nightly job fails before
-  deletion unless mode `2` is active, then drains the freelist with
-  `incremental_vacuum`. Full `VACUUM` remains an offline coordinated operation.
-- Terminated `runtimes` rows are **keep-forever history**: no TTL, ever.
-  The controlling reason is resume-path integrity — terminated rows anchor
-  the `scope_ref` → `host_session_id` → `continuation_json` chain used
-  by `--resume`; deleting them could orphan resumable state.
-- Federation node-local retirement fences are keep-forever authority (no TTL).
-  The shared active binding is conditionally deleted only after that old-home
-  fence is durable.
-- Before any bulk prune, take a full backup of `state.sqlite`. If disk
-  cannot fit a full backup, defer the prune and surface that deferral —
-  never perform a bulk prune without its backup. Rolling nightly increments
-  are exempt from this precondition (C-10736).
-- Command split: the daemon's 300-second tmux-aging stage and manual
-  `runtime sweep` share the resolved stale threshold plus the same
-  fail-closed liveness gate, and only mark fully abandoned rows `stale`;
-  `runtime prune` (defaults to `stale`) is the only stale-row-reaping
-  surface.
+[state-retention.md](state-retention.md) owns the retention policy and
+exemptions. Observation history defaults to three days and completed runtime
+buffers to one day. Terminated runtime rows and retirement fences are permanent
+history, not TTL candidates. Before a bulk prune require a full backup; if it
+cannot fit, defer the prune. Rolling nightly increments are exempt (C-10736).
+Never take a torn filesystem copy of a live WAL database. Full VACUUM remains
+an offline coordinated operation.
 
-## Boundary / validation checks
+## Viewer and mail injector ownership
 
-Run before considering a runtime change complete:
+`hrc-viewer` ships and is supervised from **agent-control-plane**, not HRC.
+Its source is `agent-control-plane/packages/hrc-viewer`, its plist is
+`agent-control-plane/launchd/com.praesidium.hrc-viewer.plist`, and its
+`install-hrc-viewer-launchd` recipe belongs to that checkout. Ask the ACP
+service owner for activation or removal. HRC's `just install` does not install
+the viewer. Viewer logs are in
+`~/praesidium/var/logs/agent-control-plane/hrc-viewer.log`.
 
-```bash
-bun run build       # required before typecheck (TS project references)
-bun run typecheck
-bun run test
-bun run lint         # bun run lint:fix to autofix
-bun run check:boundaries
-bun run check:manifests
-```
+There is exactly one viewer per GUI user, bound to that user's production
+HRC. Non-production daemons never receive a viewer. HRC publishes durable
+presentation facts; the sidecar alone actuates Ghostty and must not mutate
+runtime lifecycle. The shipped boundary is recorded in
+[the active invariant](../architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml).
+The completed extraction's approved rev 3 design is preserved on T-07595
+(sidecar build and production validation), attachment ATT-00414; its phase
+plans and historical TS call sites are not current operating instructions.
+Retrieve it with `wrkq attach get ATT-00414 -o <path>`.
 
-Then the installed-binary bar: `just install`, restart the real launchd
-daemon, and smoke `hrc --help`, `hrc server status`, and at least one real
-read-only API/CLI command.
+The mail injector also belongs to ACP (`packages/hrc-mail-injector`,
+`com.praesidium.hrc-mail-injector`). Its log is
+`var/logs/hrc-runtime/hrc-mail-injector.log` and private state is
+`var/state/acp/hrc-mail-injector.sqlite` (`HRC_MAIL_INJECTOR_STATE_PATH`).
+Old `hrcmail_*` tables in HRC's state DB are pre-split leftovers, not current
+mail state. For deployment and supervision use
+[fleet-deployment.md](fleet-deployment.md).
 
-## Gate traps: correct guards that fail silently and report success
+## ASP preparation and runtime events
 
-Four traps on the `just verify` / `just install` / `git push` path. All four are
-working-as-intended guards, none prints the reason where the caller looks, and
-each has independently cost more than one agent a cycle. Documented here after
-three of them were rediscovered by three different agents in a single evening
-(T-07963 / T-07964 / T-07969, 2026-09-03).
+[aspd-headless-codex-integration.md](aspd-headless-codex-integration.md) records
+the ASP preparation integration; it does not make its original Codex opt-in
+rollout instructions a current native routing policy. The active producer
+chooses execution preparation. Read back `.api.aspd.release` independently
+of HRC's package tuple. Frozen workers/preparations retain their release
+binding across aspd activation; retain any release they still reference.
 
-### 1. The harness guard: `hrc server serve` refuses inside a coding agent
-
-`just verify` boots an ephemeral
-daemon through `scripts/dev-env.sh`, and `hrc server serve` REFUSES to start
-when it is a descendant of a coding-agent harness. The caller sees a bare
-`exit status 1`; the real message is only in
-`$TMPDIR/hrc-dev-env-<uid>-<n>/daemon.log`.
-
-The guard is right and has **no escape hatch by design** — see the docblock in
-`packages/hrc-cli/src/harness-guard.ts`. A daemon started under a harness
-inherits that harness's recursion-guard variables and leaks them into every
-child harness it launches, so every dispatched run dies silently.
-
-**The variables it actually checks are three** (`harness-guard.ts:17`):
-
-```ts
-const HARNESS_GUARD_VARS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX'] as const
-```
-
-Cite that line rather than a habit. Two agents independently arrived at a
-four-variable incantation including `CLAUDE_CODE_SSE_PORT` and
-`CLAUDECODE_SESSION_ID`, **neither of which is consulted anywhere**, while
-neither was stripping `CODEX_SANDBOX`, which is. Converging anecdotes are not
-evidence; the constant is.
-
-**Preferred remedy — a clean-env shell**, which carries none of the three:
-
-```bash
-ssh user@host 'cd ~/praesidium/hrc-runtime && just verify'
-```
-
-`env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CODEX_SANDBOX <cmd>` also works
-and genuinely removes the inheritance rather than merely silencing the check —
-but **only for the EPHEMERAL daemon**. Never use it to force-boot the real
-daemon: that process launches every agent on the node, so a leaked variable
-kills every dispatched run fleet-wide. The real daemon has a supported path that
-needs no override at all — `hrc server start` / `hrc server restart` delegate to
-launchd, which respawns with a clean environment. (A task-scoped runtime is not
-permitted to restart the daemon and must escalate to the project primary or an
-operator shell, which lands on that path automatically.)
-
-### 2. `HRC_EVENT_INGEST_TCP_PORT` collides across in-suite servers
-
-The user session exports it; the ephemeral daemon and every in-suite server
-inherit it and then collide on that port. `unset HRC_EVENT_INGEST_TCP_PORT`
-before running the gate — absent means no TCP listener, which is the tree
-default. This one presents as flaky test infrastructure rather than an
-environment problem, so it gets blamed on the suite.
-
-### 3. `just install` from a linked worktree does not activate anything
-
-Run from `~/praesidium/under-construction/*` it prints
-`NON_CANONICAL publication channel=worktree` and
-`linked-worktree install complete; global HRC wrappers unchanged`, publishes
-under the `worktree` npm tag, leaves both `~/.bun/bin/hrc` and the running
-daemon's atomic release untouched — and **exits 0**, so it reads as success.
-
-`scripts/install-policy.ts` decides this by comparing `git rev-parse --git-dir`
-against `--git-common-dir`; different means `linked-worktree`. There is no
-override, and there should not be — the guard is what stops a worktree build
-reaching the fleet. A canonical install must run from
-`~/praesidium/hrc-runtime` with a clean tree.
-
-**Prove activation from `hrc server status --json` → `release.hrcBuild.sourceCommit`,
-never from an install's exit code.**
-
-### 4. Two gates that need an explicit regeneration step
-
-Neither is breakage; both look like a red gate to someone who has not seen them.
-
-- Editing `architecture/records/**` fails `just architecture-records` until
-  `--write` regenerates the index.
-- A newly exported `hrc-core` symbol fails `check-public-surface` until
-  `bun scripts/check-public-surface.ts --update-baseline`.
-
-## Per-user hrc-viewer LaunchAgent
-
-`hrc-viewer` is the sole Ghostty presentation actuator. Run one LaunchAgent for
-each GUI user that should receive the consolidated Headless Sessions window, and
-bind it to that node's production HRC runtime directory. Do not install a viewer
-for headless placement users or development daemons.
-
-The tracked plist is `launchd/com.praesidium.hrc-viewer.plist`; the install recipe
-materializes the current user's home, writes
-`~/Library/LaunchAgents/com.praesidium.hrc-viewer.plist`, and reloads
-`com.praesidium.hrc-viewer` in the current `gui/<uid>` domain:
-
-```bash
-just install                         # install hrc-viewer with the HRC release
-just install-hrc-viewer-launchd      # bootstrap/reload the per-user viewer
-launchctl print gui/$(id -u)/com.praesidium.hrc-viewer
-pgrep -fal hrc-viewer                # exactly one process for this GUI user
-tail -f ~/praesidium/var/logs/agent-control-plane/hrc-viewer.log
-```
-
-The plist uses the signed `~/.local/bin/praesidium-launch` shim as
-`ProgramArguments[0]`, keeps the viewer alive, points `HRC_RUNTIME_DIR` at
-`~/praesidium/var/run/hrc`, and uses the default 300-second reap linger. Presence
-of this LaunchAgent is enablement; there is no daemon feature flag. Re-run the
-recipe after a plist change because `kickstart` does not reload plist content.
-
-To remove the viewer from a GUI user, unload the exact service before removing
-its installed plist:
-
-```bash
-launchctl bootout gui/$(id -u)/com.praesidium.hrc-viewer
-rm ~/Library/LaunchAgents/com.praesidium.hrc-viewer.plist
-```
-
-After activation, verify `ghostmux list-surfaces --json` has one pane for every
-attachable `/v1/presentation/runtimes` row whose `viewerRequested` is true. A
-viewer restart must adopt matching panes by their `hrc_runtime_id` metadata; it
-must not duplicate them. Viewer reconciliation events belong in
-`~/praesidium/var/logs/agent-control-plane/hrc-viewer.log`. New `broker_headless_viewer` events in
-`hrc-server.log` indicate that the retired in-daemon actuator is still active.
-
-## aspd-prepared Codex route
-
-Spec: `docs/aspd-headless-codex-integration.md`.
-With `HRC_ASPD_SOCKET` in the daemon's plist env, headless codex-app-server
-prepares through the node's persistent aspd (launchd `com.praesidium.aspd`, ns
-`~/praesidium/var/aspd`) and the worker runs from the frozen ASP release.
-
-- **Opt-in per request.** Only `hrc start … --no-viewer` (headless, no viewer) or
-  `--app-server-viewer` (headless with the attachable tmux renderer viewer) put a
-  Codex start on this route. An omitted flag keeps max3's default, the
-  interactive codex-tui redirect.
-- **Two activations, never confused.** An HRC release activates by
-  `just install` + `hrc server restart` (daemon-authorized, T-09861:
-  only `mable@<project>:primary` (any node), `mable@<project>:minisvc` (svc only), `mable@hrc-runtime:hrcdev` (hrcdev only) or Lance; everyone else asks `mable@<project>:primary`). An ASP preparation release activates by
-  `cd ~/praesidium/agent-spaces && just aspd-activate ~/praesidium/var/aspd <releaseId>`
-  — no HRC restart. Read back both: `hrc server status --json` →
-  `.api.aspd.release.releaseId`, and `just aspd-status ~/praesidium/var/aspd`
-  (one aspd process, running == selected).
-- **One active preparation release per node; bindings are permanent.** Live
-  workers and never-submitted preparations stay on the release they were frozen
-  to across activations. Retain retired releases; never GC a release a live
-  worker or prepared operation references. A/B activation is a finite acceptance
-  exercise, not a routing mode.
-- **Attach, don't restart, a viewer.** `hrc attach <scope>` on a live
-  `--app-server-viewer` runtime attaches to its `:tui` pane; detaching leaves the
-  worker and renderer running.
-
-## Runtimes and event path
-
-Runtimes run under the harness broker (from the active aspd release,
-`libexec/harness-broker`). Events reach HRC as broker envelopes. The native
-hook-ingest, launch-callback and OTLP :4318 routes are still registered, but
-nothing produces for them, so they are not an event path. Tmux runtimes drive a
-tmux pane and survive `hrc server restart`. For the zombie sweeper on long tool
-calls, see *Zombie sweeper threshold* under [Restart doctrine](#restart-doctrine).
-
-## Mail kicker (now in agent-control-plane)
-
-The mail kicker is no longer in this repo. It is now `hrc-mail-injector` in
-agent-control-plane (`packages/hrc-mail-injector`, `src/policy/`), running as its
-own launchd job (`com.praesidium.hrc-mail-injector`). Read its log in
-`var/logs/hrc-runtime/hrc-mail-injector.log` (`wrkq.kicker.*` events) and its private state,
-including `hrcmail_birth_refusals`, `hrcmail_delivery_intents`, `hrcmail_presentations`
-and `hrcmail_failure_notices`, in
-`var/state/acp/hrc-mail-injector.sqlite` (`HRC_MAIL_INJECTOR_STATE_PATH`). The
-`hrcmail_*` tables in HRC's `var/state/hrc/state.sqlite` are pre-split leftovers
-with no writes since 2026-09-18. Reading them for current kicker state finds nothing.
+Harness runtimes execute through the broker in the selected ASP preparation
+release. Native HRC owns execution/lifecycle and consumes broker events. Use
+`hrc monitor` and the durable `turn.message` / `turn.completed` events for
+turn evidence; an accepted start response does not prove completion.
