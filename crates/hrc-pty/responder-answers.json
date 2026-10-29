@@ -1,0 +1,115 @@
+{
+ "recordedAt": "2026-10-29T11:29:45-0500",
+ "terminal": "Ghostty 1.4.1-dev+scriptable.0.2.0 (/Users/lherron/Applications/ScriptableGhostty.app/Contents/MacOS/scriptable-ghostty)",
+ "method": "Claude Code 2.1.312's exact query bytes written one at a time by a pty child of hrc-pty serve, relayed by hrc-pty attach running in a Ghostty tab; each reply is every byte that came back within 600 ms. The child first pushed kitty keyboard flags 5 (CSI > 5 u), as Claude does.",
+ "childStatus": {
+  "pid": 85553,
+  "state": "exited",
+  "code": 0,
+  "signal": null
+ },
+ "batches": [
+  {
+   "name": "batch1",
+   "replyHex": "1b503e7c67686f7374747920312e342e312d6465762b73637269707461626c652e302e322e301b5c1b5b3f35751b5b3f36323b32323b353263",
+   "reply": "\u001bP>|ghostty 1.4.1-dev+scriptable.0.2.0\u001b\\\u001b[?5u\u001b[?62;22;52c",
+   "chunks": [
+    {
+     "atMs": 0.28,
+     "hex": "1b503e7c67686f7374747920312e342e312d6465762b73637269707461626c652e302e322e301b5c"
+    },
+    {
+     "atMs": 0.3,
+     "hex": "1b5b3f3575"
+    },
+    {
+     "atMs": 0.32,
+     "hex": "1b5b3f36323b32323b353263"
+    }
+   ]
+  },
+  {
+   "name": "batch2",
+   "replyHex": "1b5b3f323032363b3224791b5f47693d33313b4f4b1b5c1b5b363b33333b3136741b5b3f313031363b3224791b5b3f36323b32323b353263",
+   "reply": "\u001b[?2026;2$y\u001b_Gi=31;OK\u001b\\\u001b[6;33;16t\u001b[?1016;2$y\u001b[?62;22;52c",
+   "chunks": [
+    {
+     "atMs": 0.27,
+     "hex": "1b5b3f323032363b3224791b5f47693d33313b4f4b1b5c"
+    },
+    {
+     "atMs": 0.32,
+     "hex": "1b5b363b33333b313674"
+    },
+    {
+     "atMs": 0.33,
+     "hex": "1b5b3f313031363b322479"
+    },
+    {
+     "atMs": 0.36,
+     "hex": "1b5b3f36323b32323b353263"
+    }
+   ]
+  }
+ ],
+ "answers": [
+  {
+   "name": "xtversion",
+   "query": "\u001b[>0q",
+   "reply": "\u001bP>|ghostty 1.4.1-dev+scriptable.0.2.0\u001b\\",
+   "replyHex": "1b503e7c67686f7374747920312e342e312d6465762b73637269707461626c652e302e322e301b5c",
+   "firstByteMs": 0.24
+  },
+  {
+   "name": "kitty_keyboard_query",
+   "query": "\u001b[?u",
+   "reply": "\u001b[?5u",
+   "replyHex": "1b5b3f3575",
+   "firstByteMs": 0.28,
+   "template": "kitty_flags"
+  },
+  {
+   "name": "program_status_query",
+   "query": "\u001b]7501;?\u0007",
+   "reply": "",
+   "replyHex": "",
+   "firstByteMs": null
+  },
+  {
+   "name": "da1",
+   "query": "\u001b[c",
+   "reply": "\u001b[?62;22;52c",
+   "replyHex": "1b5b3f36323b32323b353263",
+   "firstByteMs": 0.39
+  },
+  {
+   "name": "decrqm_2026",
+   "query": "\u001b[?2026$p",
+   "reply": "\u001b[?2026;2$y",
+   "replyHex": "1b5b3f323032363b322479",
+   "firstByteMs": 0.41
+  },
+  {
+   "name": "kitty_graphics_query",
+   "query": "\u001b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\u001b\\",
+   "reply": "\u001b_Gi=31;OK\u001b\\",
+   "replyHex": "1b5f47693d33313b4f4b1b5c",
+   "firstByteMs": 0.28
+  },
+  {
+   "name": "cell_size",
+   "query": "\u001b[16t",
+   "reply": "\u001b[6;33;16t",
+   "replyHex": "1b5b363b33333b313674",
+   "firstByteMs": 0.24,
+   "template": "cell_size"
+  },
+  {
+   "name": "decrqm_1016",
+   "query": "\u001b[?1016$p",
+   "reply": "\u001b[?1016;2$y",
+   "replyHex": "1b5b3f313031363b322479",
+   "firstByteMs": 0.27
+  }
+ ]
+}

@@ -1,0 +1,23 @@
+[package]
+name = "hrc-pty"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+build = "build.rs"
+links = "ghostty-vt"
+
+[[bin]]
+name = "hrc-pty"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+base64.workspace = true
+anyhow.workspace = true
+# Kitty images arrive as PNG (f=100); libghostty-vt decodes through a host hook.
+png = "0.18"
+
+[lints]
+workspace = true

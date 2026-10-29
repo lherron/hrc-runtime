@@ -232,6 +232,26 @@ e2e:
     echo "[e2e] daemon ${HRC_RUNTIME_DIR}/hrc.sock, agents ${ASP_AGENTS_ROOT}"
     bun run test
     just test-federation-loopback
+    just e2e-hrc-pty
+
+# hrc-pty's spike e2e (T-12047): Claude Code under a bare `hrc-pty serve`,
+# attached from real Ghostty windows through ghostmux. Needs a logged-in
+# `claude`, a running Ghostty with ghostmux, and spends a few input tokens
+# (E3 submits 20 prompts and interrupts each at once). No HRC or tmux.
+
+# Run the hrc-pty e2e (E1-E5) against real Ghostty windows
+e2e-hrc-pty:
+    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
+    python3 crates/hrc-pty/e2e/hrc_pty_e2e.py --binary crates/target/debug/hrc-pty --artifacts "${HRC_PTY_E2E_ARTIFACTS:-/tmp/hrc-pty-e2e-$(date +%s)-$$}"
+
+# Re-record Ghostty's answers to Claude's startup queries into responder-answers.json
+hrc-pty-record-answers:
+    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
+    python3 crates/hrc-pty/e2e/record_answers.py --binary crates/target/debug/hrc-pty --out "${HRC_PTY_RECORD_ARTIFACTS:-/tmp/hrc-pty-record-$(date +%s)-$$}"
+
+# Build libghostty-vt at hrc-pty's pinned commit (cargo also builds it on demand)
+hrc-pty-lib:
+    bash crates/hrc-pty/scripts/build-libghostty-vt.sh "$(cat crates/hrc-pty/GHOSTTY_COMMIT)" "crates/target/libghostty-vt/$(cat crates/hrc-pty/GHOSTTY_COMMIT)"
 
 # Clean build artifacts
 clean:

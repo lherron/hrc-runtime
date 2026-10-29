@@ -14,6 +14,7 @@ allowed = {
     "hrc-domain": {"hrc-common", "hrc-store"}, "hrc-kernel": {"hrc-domain"},
     "hrc-cli": {"hrc-common", "hrc-store"},
     "hrc-native": {"hrc-common", "hrc-store", "hrc-cli"},  # CLI is binary-only below.
+    "hrc-pty": set(),  # Standalone per-seat supervisor; rusthrc speaks to it over its socket.
 }
 errors = []
 for package in metadata["packages"]:

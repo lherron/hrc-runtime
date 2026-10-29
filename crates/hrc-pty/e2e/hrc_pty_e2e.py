@@ -1,0 +1,514 @@
+#!/usr/bin/env python3
+"""hrc-pty spike e2e (T-12047 brief E1-E5): Claude Code as the child of a bare
+`hrc-pty serve`, attach clients in real Ghostty windows (ghostmux). No HRC,
+aspd, broker or tmux; the "broker" is `sleep`.
+
+  hrc_pty_e2e.py --binary crates/target/debug/hrc-pty --artifacts DIR [--scratch DIR]
+
+Every check writes its evidence under --artifacts and a line in summary.json.
+Exit status is non-zero if any check failed.
+"""
+import argparse
+import glob
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import hrcpty  # noqa: E402
+
+CLAUDE = "/Users/lherron/.local/bin/claude"
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROBE_D1 = os.path.expanduser("~/praesidium/var/scratch/hrc-runtime/tmuxless/runs/d1-answer.claude-debug.txt")
+ENV_KEYS = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "TMPDIR")
+
+
+class Run:
+    def __init__(self, args):
+        self.binary = os.path.abspath(args.binary)
+        self.art = os.path.abspath(args.artifacts)
+        self.scratch = os.path.abspath(args.scratch)
+        os.makedirs(self.art, exist_ok=True)
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        os.makedirs(self.scratch)
+        self.checks = []
+        self.windows = []
+        self.env = {k: os.environ[k] for k in ENV_KEYS if k in os.environ}
+
+    # -- evidence --------------------------------------------------------
+    def path(self, name):
+        return os.path.join(self.art, name)
+
+    def save(self, name, data):
+        with open(self.path(name), "w") as f:
+            if isinstance(data, str):
+                f.write(data)
+            else:
+                json.dump(data, f, indent=1, ensure_ascii=False)
+                f.write("\n")
+        return self.path(name)
+
+    def check(self, check_id, ok, detail, evidence):
+        line = {"check": check_id, "ok": bool(ok), "detail": detail, "evidence": evidence}
+        self.checks.append(line)
+        print(("PASS " if ok else "FAIL ") + check_id + ": " + detail, flush=True)
+
+    # -- ghostty ---------------------------------------------------------
+    def open_window(self, title, command):
+        created = json.loads(subprocess.check_output(
+            ["ghostmux", "new", "--title", title, "--command", command, "--json"], text=True))
+        surface = hrcpty.surface_id(created)
+        self.windows.append(surface)
+        return surface
+
+    def attach_window(self, sock, title, byte_log, exit_file=None):
+        cmd = f"{self.binary} attach --socket {sock} --byte-log {byte_log}"
+        if exit_file:
+            cmd = f"{cmd}; echo $? > {exit_file}; exit"
+        else:
+            cmd = f"exec {cmd}"
+        return self.open_window(title, cmd)
+
+    def close_window(self, surface):
+        subprocess.run(["ghostmux", "kill-surface", "-t", surface, "--force"], capture_output=True)
+        if surface in self.windows:
+            self.windows.remove(surface)
+
+    def ghostty_text(self, surface):
+        return subprocess.run(["ghostmux", "capture-pane", "-t", surface], capture_output=True, text=True).stdout
+
+    def screenshot(self, surface, name):
+        subprocess.run(["ghostmux", "focus", "-t", surface], capture_output=True)
+        time.sleep(0.8)
+        out = subprocess.run(["ghostmux", "screenshot", "-t", surface, "-o", self.path(name)],
+                             capture_output=True, text=True)
+        return self.path(name) if out.returncode == 0 and os.path.exists(self.path(name)) else None
+
+    def surface_exists(self, surface):
+        listed = subprocess.run(["ghostmux", "list-surfaces", "--json"], capture_output=True, text=True).stdout
+        return surface in listed
+
+    def cleanup(self):
+        for surface in list(self.windows):
+            self.close_window(surface)
+
+
+def norm(text):
+    lines = [line.rstrip() for line in text.replace("\r", "").split("\n")]
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
+
+
+def vt_capture(run, byte_log, cols, rows):
+    out = subprocess.check_output([run.binary, "vt-capture", "--cols", str(cols), "--rows", str(rows), byte_log], text=True)
+    return json.loads(out)
+
+
+def prompt_box(ops):
+    return [line for line in ops.call("capture")["text"].split("\n") if line.startswith("❯")]
+
+
+def box_empty(ops):
+    box = prompt_box(ops)
+    return bool(box) and box[0].strip("❯\xa0 ") == ""
+
+
+def transcript_users(cwd):
+    slug = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
+    files = sorted(glob.glob(os.path.expanduser(f"~/.claude/projects/{slug}/*.jsonl")), key=os.path.getmtime)
+    if not files:
+        return None, []
+    users = []
+    for line in open(files[-1]):
+        record = json.loads(line)
+        if record.get("type") != "user":
+            continue
+        content = record["message"]["content"]
+        if not isinstance(content, str):
+            continue
+        users.append({"timestamp": record.get("timestamp"), "content": content})
+    return files[-1], users
+
+
+def unwrap_pasted(content):
+    m = re.fullmatch(r'\s*<pasted_content id="([^"]+)">\n(.*)\n</pasted_content id="\1">\s*', content, re.S)
+    return (m.group(2), True) if m else (content, False)
+
+
+# -- E1 + E5(read-only birth) ---------------------------------------------
+def e1(run, ctx):
+    ipc = os.path.join(run.scratch, "claude-ipc")
+    cwd = os.path.join(run.scratch, "claude-cwd")
+    os.makedirs(cwd)
+    pid, token = hrcpty.serve(run.binary, ipc, cols=120, rows=40, broker_argv=["/bin/sleep", "3600"])
+    sock = os.path.join(ipc, "hrcpty.sock")
+    ctx.update(ipc=ipc, cwd=cwd, sock=sock, token=token, serve_pid=pid)
+    ctx["events"] = hrcpty.Events(sock, token, run.path("events.claude.ndjson"))
+    ops = ctx["ops"] = hrcpty.Ops(sock, token)
+    # A read-only observer with no tty logs Claude's raw output from byte 0.
+    observer_log = run.path("e1.claude-output.bin")
+    observer = subprocess.Popen([run.binary, "attach", "--socket", sock, "--read-only", "--byte-log", observer_log],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    hrcpty.wait_until(lambda: ops.call("status")["clients"]["readOnly"] == 1, 10)
+    before = ops.call("status")
+    debug = os.path.join(run.scratch, "claude-debug.txt")
+    spawned = ops.call("spawn", {"argv": [CLAUDE, "--permission-mode", "default", "--debug-file", debug],
+                                 "env": run.env, "cwd": cwd})
+    ctx["claude_pid"] = spawned["pid"]
+    hrcpty.wait_until(lambda: "❯" in ops.call("capture")["text"], 60)
+    time.sleep(3)
+    status = ops.call("status")
+    observer.terminate()
+    observer.wait()
+    shutil.copy(debug, run.path("e1.claude-debug.txt"))
+    log = open(debug).read()
+    caps = next((line for line in log.splitlines() if "Terminal capabilities:" in line), "")
+    decstbm = next((line for line in log.splitlines() if "DECSTBM:" in line), "")
+    d1 = open(PROBE_D1).read().splitlines() if os.path.exists(PROBE_D1) else []
+    out = open(observer_log, "rb").read()
+    wanted = ["kittyKeyboard=yes", "kittyGraphics=yes", "mousePixels=yes", "synchronizedOutput=yes"]
+    result = {
+        "spawn": spawned,
+        "statusBeforeSpawn": {"clients": before["clients"], "responderArmed": before["responderArmed"]},
+        "responderAnswered": status["responderAnswered"],
+        "capabilitiesLine": caps,
+        "decstbmLine": decstbm,
+        "probeD1": {"capabilities": next((x for x in d1 if "Terminal capabilities:" in x), ""),
+                    "decstbm": next((x for x in d1 if "DECSTBM:" in x), "")},
+        "output": {"bytes": len(out), "osc9_4": out.count(b"\x1b]9;4"), "sgr256": out.count(b"38;5;"),
+                   "truecolor": out.count(b"38;2;")},
+    }
+    run.save("e1.result.json", result)
+    ok = (all(w in caps for w in wanted) and "DECSTBM: enabled" in decstbm and result["output"]["osc9_4"] > 0
+          and result["output"]["sgr256"] == 0 and result["output"]["truecolor"] > 0)
+    run.check("E1", ok, f"{', '.join(w for w in wanted if w in caps)}; {decstbm.split('[DEBUG] ')[-1][:40]}; "
+              f"OSC 9;4 x{result['output']['osc9_4']}, 38;5; x{result['output']['sgr256']}, "
+              f"38;2; x{result['output']['truecolor']}", [run.path("e1.result.json"), run.path("e1.claude-debug.txt"),
+                                                            observer_log])
+    ro_ok = (before["clients"] == {"total": 1, "readWrite": 0, "readOnly": 1} and before["responderArmed"]
+             and "kittyGraphics=yes" in caps and len(status["responderAnswered"]) >= 8)
+    run.check("E5.read-only-birth", ro_ok, f"only a read-only client attached at spawn ({before['clients']}); "
+              f"responder answered {len(status['responderAnswered'])} queries; kittyGraphics=yes in debug log",
+              [run.path("e1.result.json")])
+
+
+# -- E2 + E4 ---------------------------------------------------------------
+def capture_parity(run, ops, surface, byte_log, label, attempts=6):
+    """Equal text and cursor between hrc-pty capture, a second libghostty-vt
+    over the client's byte log, and Ghostty's own screen text."""
+    last = None
+    for _ in range(attempts):
+        cap = ops.call("capture")
+        replayed = vt_capture(run, byte_log, cap["cols"], cap["rows"])
+        ghostty = run.ghostty_text(surface)
+        last = {"capture": cap, "clientByteLogVt": replayed, "ghosttyCapturePane": ghostty}
+        same_vt = norm(cap["text"]) == norm(replayed["text"]) and cap["cursor"] == replayed["cursor"]
+        same_ghostty = norm(cap["text"]) == norm(ghostty)
+        last["equal"] = {"textAndCursorVsClientVt": same_vt, "textVsGhostty": same_ghostty}
+        if same_vt and same_ghostty:
+            break
+        time.sleep(1)
+    run.save(f"{label}.json", last)
+    return last
+
+
+def e2_e4(run, ctx):
+    ops, sock = ctx["ops"], ctx["sock"]
+    log1 = run.path("e2.attach1.bytes.bin")
+    w1 = run.attach_window(sock, "hrc-pty e2 attach 1", log1)
+    assert hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 1, 20), "attach 1 never came"
+    time.sleep(2.5)
+    shot1 = run.screenshot(w1, "e2.attach1.png")
+    parity = capture_parity(run, ops, w1, log1, "e4.capture-parity")
+    run.check("E4", all(parity["equal"].values()),
+              f"capture vs client byte log through a second libghostty-vt (text+cursor {parity['capture']['cursor']}): "
+              f"{parity['equal']['textAndCursorVsClientVt']}; capture text vs Ghostty capture-pane: "
+              f"{parity['equal']['textVsGhostty']}", [run.path("e4.capture-parity.json")])
+    run.save("e2.ghostty-attach1.txt", run.ghostty_text(w1))
+    run.close_window(w1)
+    assert hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 0, 10), "detach not seen"
+    detached = ops.call("capture")
+    run.save("e2.capture-detached.json", detached)
+    log2 = run.path("e2.attach2.bytes.bin")
+    w2 = run.attach_window(sock, "hrc-pty e2 attach 2", log2)
+    assert hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 1, 20), "attach 2 never came"
+    time.sleep(2.5)
+    shot2 = run.screenshot(w2, "e2.attach2.png")
+    g2 = run.ghostty_text(w2)
+    run.save("e2.ghostty-attach2.txt", g2)
+    replay = vt_capture(run, log2, detached["cols"], detached["rows"])
+    run.close_window(w2)
+    hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 0, 10)
+    claude_screen = "❯" in detached["text"] and "Claude Code" in detached["text"]
+    same = norm(g2) == norm(detached["text"])
+    result = {"detachedCaptureHasTui": claude_screen, "reattachGhosttyEqualsDetachedCapture": same,
+              "reattachBytes": os.path.getsize(log2), "reattachVtCursor": replay["cursor"],
+              "detachedCursor": detached["cursor"], "screenshots": [shot1, shot2]}
+    run.save("e2.result.json", result)
+    run.check("E2.claude", claude_screen and same,
+              f"detached capture holds Claude's TUI; reattached Ghostty screen == detached capture: {same}; "
+              f"screenshots {'ok' if shot1 and shot2 else 'missing'}",
+              [run.path("e2.result.json"), run.path("e2.capture-detached.json"), run.path("e2.ghostty-attach2.txt"),
+               shot1, shot2])
+
+
+def e2_kitty(run):
+    ipc = os.path.join(run.scratch, "kitty-ipc")
+    pid, token = hrcpty.serve(run.binary, ipc, cols=120, rows=40)
+    sock = os.path.join(ipc, "hrcpty.sock")
+    ops = hrcpty.Ops(sock, token)
+    try:
+        ops.call("spawn", {"argv": [sys.executable, "-I", os.path.join(HERE, "kitty_fixture.py")],
+                           "env": run.env, "cwd": run.scratch})
+        hrcpty.wait_until(lambda: "fixture ready" in ops.call("capture")["text"], 10)
+        detached = ops.call("capture")
+        run.save("e2k.capture-detached.json", detached)
+        shots, models = [], []
+        for n in (1, 2):
+            log = run.path(f"e2k.attach{n}.bytes.bin")
+            w = run.attach_window(sock, f"hrc-pty e2 kitty attach {n}", log)
+            assert hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 1, 20), "attach never came"
+            time.sleep(2)
+            shots.append(run.screenshot(w, f"e2k.attach{n}.png"))
+            run.save(f"e2k.ghostty-attach{n}.txt", run.ghostty_text(w))
+            models.append(vt_capture(run, log, detached["cols"], detached["rows"]))
+            run.close_window(w)
+            hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 0, 10)
+        replay = open(run.path("e2k.attach2.bytes.bin"), "rb").read()
+        placeholder = "\U0010EEEE".encode()
+        row0 = ("\U0010EEEE̅̅").encode()
+        result = {
+            "detachedKittyPlacements": detached["kittyPlacements"],
+            "replayModelKitty": models[1]["kitty"],
+            "replayHas": {
+                "transmit7": b"a=t,f=32,s=64,v=32,i=7" in replay, "transmit8": b"a=t,f=32,s=48,v=24,i=8" in replay,
+                "positioned7": b"\x1b[3;5H\x1b_Ga=p,i=7,p=1,c=8,r=4,C=1,q=2" in replay,
+                "virtual8": b"\x1b_Ga=p,i=8,p=2,c=6,r=3,U=1,q=2" in replay,
+                "placeholderFg38_5_8": b"\x1b[38;5;8m" + placeholder in replay,
+                "placeholderRowColDiacritics": row0 in replay,
+                "orderCellsThenTransmitThenU1": 0 <= replay.find(placeholder) < replay.find(b"i=8,q=2") <
+                replay.find(b"\x1b_Ga=p,i=8,p=2,c=6,r=3,U=1"),
+            },
+            "screenshots": shots,
+        }
+        run.save("e2k.result.json", result)
+        placements = {(p["imageId"], p["virtual"], p["col"] if not p["virtual"] else None)
+                      for p in models[1]["kitty"]["placements"]}
+        ok = placements == {(7, False, 4), (8, True, None)} and all(result["replayHas"].values())
+        run.check("E2.kitty", ok, f"after reattach the client-side model holds {sorted(placements, key=str)}; "
+                  f"replay bytes {result['replayHas']}; screenshots {'ok' if all(shots) else 'missing'}",
+                  [run.path("e2k.result.json"), *[s for s in shots if s]])
+    finally:
+        ops.call("signal", {"signal": "KILL"})
+        ops.call("shutdown")
+
+
+def attach_sigwinch(run, ctx):
+    """`hrc-pty attach` turns SIGWINCH on its own tty into `resize`."""
+    import fcntl
+    import pty
+    import signal
+    import struct
+    import termios
+
+    ops = ctx["ops"]
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 1600, 990))
+    proc = subprocess.Popen([run.binary, "attach", "--socket", ctx["sock"]], stdin=slave, stdout=slave,
+                            stderr=slave, start_new_session=True)
+    os.close(slave)
+    sizes = []
+    try:
+        hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 1, 10)
+        sizes.append(ops.call("status")["size"])
+        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 45, 150, 2400, 1485))
+        os.kill(proc.pid, signal.SIGWINCH)
+        hrcpty.wait_until(lambda: ops.call("status")["size"]["cols"] == 150, 5)
+        sizes.append(ops.call("status")["size"])
+    finally:
+        proc.send_signal(signal.SIGHUP)
+        code = proc.wait(5)
+        os.close(master)
+    hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 0, 5)
+    run.save("attach.sigwinch.json", {"sizes": sizes, "exitOnSighup": code})
+    ok = (sizes[0]["cols"], sizes[0]["rows"]) == (100, 30) and (sizes[-1]["cols"], sizes[-1]["rows"]) == (150, 45)
+    run.check("attach.sigwinch", ok, f"pty size at attach {sizes[0]}, after SIGWINCH {sizes[-1]}; "
+              f"SIGHUP exit {code}", [run.path("attach.sigwinch.json")])
+
+
+# -- E3 --------------------------------------------------------------------
+def prompt_text(n):
+    size = 1024 + n * (3072 // 19)
+    head = f"E3-{n:02d} hrc-pty input check, line 1 of a multi-line prompt.\n"
+    body, i = "", 0
+    while len(head) + len(body) < size:
+        i += 1
+        body += f"line {i + 1}: the quick brown fox jumps over the lazy dog {n:02d}-{i:03d}\n"
+    return (head + body)[:size].rstrip("\n")
+
+
+def e3(run, ctx):
+    ops = ctx["ops"]
+    sent, rows = [], []
+    for n in range(20):
+        text = prompt_text(n)
+        sent.append(text)
+        ops.input(b"\x1b[200~" + text.encode() + b"\x1b[201~")
+        time.sleep(0.3)
+        ops.input(b"\r")
+        marker = f"E3-{n:02d} "
+        landed = hrcpty.wait_until(lambda: any(marker in u["content"] for u in transcript_users(ctx["cwd"])[1]), 30)
+        ops.call("interrupt")
+        # After an early interrupt Claude puts the prompt back in the box
+        # (§4.5); clear it so the next paste does not append to it. The
+        # first turn is cold and can take several seconds to give it back.
+        restored = hrcpty.wait_until(lambda: "Pasted" in "".join(prompt_box(ops)), 20)
+        cleared = False
+        for _ in range(3):
+            ops.input(b"\x15")
+            if hrcpty.wait_until(lambda: box_empty(ops), 3):
+                time.sleep(0.5)
+                cleared = box_empty(ops)
+                if cleared:
+                    break
+        rows.append({"n": n, "bytes": len(text.encode()), "landed": bool(landed), "restored": bool(restored),
+                     "cleared": cleared})
+    path, users = transcript_users(ctx["cwd"])
+    matched = []
+    for n, text in enumerate(sent):
+        marker = f"E3-{n:02d} "
+        hits = [u for u in users if marker in u["content"]]
+        inner, wrapped = unwrap_pasted(hits[0]["content"]) if len(hits) == 1 else ("", False)
+        matched.append({**rows[n], "records": len(hits), "fullText": inner.strip("\n") == text, "pastedContentWrap": wrapped})
+    shutil.copy(path, run.path("e3.transcript.jsonl"))
+    run.save("e3.result.json", {"transcript": path, "prompts": matched, "sent": sent})
+    ok = all(m["records"] == 1 and m["fullText"] for m in matched)
+    sizes = [m["bytes"] for m in matched]
+    run.check("E3", ok, f"{sum(m['records'] == 1 and m['fullText'] for m in matched)}/20 prompts "
+              f"({min(sizes)}-{max(sizes)} bytes) recorded once with full text; "
+              f"{sum(m['pastedContentWrap'] for m in matched)}/20 wrapped in <pasted_content>",
+              [run.path("e3.result.json"), run.path("e3.transcript.jsonl")])
+
+
+# -- E5 --------------------------------------------------------------------
+def e5(run, ctx):
+    ops, sock, events = ctx["ops"], ctx["sock"], ctx["events"]
+    claude = ctx["claude_pid"]
+    log = run.path("e5.attach-hup.bytes.bin")
+    w = run.attach_window(sock, "hrc-pty e5 attach", log)
+    assert hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 1, 20), "attach never came"
+    attach_pid = int(subprocess.check_output(["pgrep", "-f", f"attach --socket {sock} --byte-log {log}"],
+                                             text=True).split()[0])
+    mark = len(events.items)
+    os.kill(attach_pid, 1)
+    events.wait_for("client.detached", 10, after=mark)
+    after = ops.call("status")
+    hup = {"attachPid": attach_pid, "attachAlive": hrcpty.pid_alive(attach_pid), "claudePid": claude,
+           "status": after}
+    run.save("e5.sighup.json", hup)
+    run.close_window(w)
+    run.check("E5.sighup", after["child"]["pid"] == claude and after["child"]["state"] == "running"
+              and after["clients"]["total"] == 0 and not hup["attachAlive"],
+              f"attach pid {attach_pid} gone after SIGHUP; Claude pid {after['child']['pid']} running; "
+              f"clients {after['clients']}", [run.path("e5.sighup.json")])
+
+    broker = ops.call("status")["broker"]
+    mark = len(events.items)
+    os.kill(broker["pid"], 15)
+    exited = events.wait_for("broker.exited", 10, after=mark)
+    time.sleep(2)
+    after = ops.call("status")
+    cap = ops.call("capture")
+    result = {"brokerBefore": broker, "event": exited, "statusAfter2s": after, "captureStillWorks": "❯" in cap["text"]}
+    run.save("e5.broker.json", result)
+    run.check("E5.broker", after["broker"]["pid"] == broker["pid"] and after["broker"]["state"] == "exited"
+              and after["child"]["pid"] == claude and after["child"]["state"] == "running" and result["captureStillWorks"],
+              f"broker.exited {exited['params']}; no respawn (broker {after['broker']['state']}, pid "
+              f"{after['broker']['pid']}); Claude pid {claude} running; capture ok", [run.path("e5.broker.json")])
+
+    mark = len(events.items)
+    ops.input(b"/exit")
+    time.sleep(0.5)
+    ops.input(b"\r")
+    child = events.wait_for("child.exited", 30, after=mark)
+    final = ops.call("capture")
+    run.save("e5.final-capture.json", final)
+    log = run.path("e5.attach-after-exit.bytes.bin")
+    exit_file = os.path.join(run.scratch, "e5.attach-exit-code")
+    w = run.attach_window(sock, "hrc-pty e5 after exit", log, exit_file=exit_file)
+    assert hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 1, 20), "attach after exit failed"
+    time.sleep(2)
+    shot = run.screenshot(w, "e5.attach-after-exit.png")
+    ghostty = run.ghostty_text(w)
+    run.save("e5.ghostty-after-exit.txt", ghostty)
+    mark = len(events.items)
+    ops.call("shutdown")
+    hrcpty.wait_until(lambda: os.path.exists(exit_file) and open(exit_file).read().strip(), 15)
+    attach_exit = open(exit_file).read().strip() if os.path.exists(exit_file) else None
+    gone = hrcpty.wait_until(lambda: not hrcpty.pid_alive(ctx["serve_pid"]), 10)
+    absent = subprocess.run([run.binary, "attach", "--socket", sock], capture_output=True, text=True)
+    run.windows.remove(w) if not run.surface_exists(w) and w in run.windows else None
+    result = {"childExited": child, "finalCaptureNonEmpty": bool(norm(final["text"])),
+              "ghosttyAfterExitEqualsCapture": norm(ghostty) == norm(final["text"]),
+              "attachExitOnServerClose": attach_exit, "serveGone": bool(gone),
+              "attachWithSocketAbsent": {"code": absent.returncode, "stderr": absent.stderr.strip()},
+              "screenshot": shot}
+    run.save("e5.exit.json", result)
+    run.check("E5.exit", result["finalCaptureNonEmpty"] and result["ghosttyAfterExitEqualsCapture"]
+              and attach_exit == "0" and absent.returncode != 0,
+              f"child.exited {child['params']}; capture after exit kept the final screen; a new Ghostty attach shows "
+              f"it ({result['ghosttyAfterExitEqualsCapture']}); attach exit on server close = {attach_exit}; "
+              f"attach to an absent socket = {absent.returncode}", [run.path("e5.exit.json"),
+                                                                     run.path("e5.final-capture.json"), shot])
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--binary", required=True)
+    parser.add_argument("--artifacts", required=True)
+    parser.add_argument("--scratch", default=os.path.expanduser("~/praesidium/var/scratch/hrc-runtime/T-12047/e2e"))
+    parser.add_argument("--only", help="comma list of e1,e2,e2k,e3,e5 (e2/e3/e5 need e1)")
+    args = parser.parse_args()
+    run = Run(args)
+    only = set((args.only or "e1,e2,e2k,e3,e5").split(","))
+    ctx = {}
+    try:
+        subprocess.run(["ghostmux", "status"], check=True, capture_output=True)
+        if "e1" in only:
+            e1(run, ctx)
+        if "e2" in only:
+            e2_e4(run, ctx)
+        if "e2" in only:
+            attach_sigwinch(run, ctx)
+        if "e2k" in only:
+            e2_kitty(run)
+        if "e3" in only:
+            e3(run, ctx)
+        if "e5" in only:
+            e5(run, ctx)
+    except Exception as error:  # a crashed phase is a failed check, with its reason
+        run.check("harness", False, f"{type(error).__name__}: {error}", [])
+    finally:
+        run.cleanup()
+        if ctx.get("ops"):
+            try:
+                ctx["ops"].call("signal", {"signal": "KILL"})
+                ctx["ops"].call("shutdown")
+            except Exception:
+                pass
+    summary = {"binary": run.binary, "version": subprocess.check_output([run.binary, "version"], text=True).strip(),
+               "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "ok": all(c["ok"] for c in run.checks),
+               "checks": run.checks}
+    run.save("summary.json", summary)
+    print(f"{'PASS' if summary['ok'] else 'FAIL'}: {sum(c['ok'] for c in run.checks)}/{len(run.checks)} -> "
+          f"{run.path('summary.json')}")
+    sys.exit(0 if summary["ok"] else 1)
+
+
+if __name__ == "__main__":
+    main()
