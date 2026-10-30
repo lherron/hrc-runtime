@@ -51,7 +51,8 @@ def main():
     config = root / 'federation.json'
     config.write_text(json.dumps({'nodeId': 'n1-t11818', 'peers': {}}))
     config.chmod(0o600)
-    env = dict(os.environ, PATH=str(bin_dir)+os.pathsep+os.environ.get('PATH',''))
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+    env['PATH'] = str(bin_dir)+os.pathsep+os.environ.get('PATH','')
     assert Path(shutil.which('hrc',path=env['PATH'])).resolve()==cli.resolve()
     for k in ('HRC_SESSION_REF', 'HRC_RUNTIME_ID', 'HRC_RUN_ID', 'HRC_HOST_SESSION_ID',
               'HRC_EVENT_FORWARD_URL', 'HRC_EVENT_INGEST_TCP_PORT', 'HRC_EVENT_FORWARD_SOURCE_REF',

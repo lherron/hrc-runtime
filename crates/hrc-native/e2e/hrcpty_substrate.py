@@ -80,7 +80,7 @@ from n2_scratch import UnixHTTP
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 LIVE_HRC_SOCKET = Path.home() / 'praesidium/var/run/hrc/hrc.sock'
-LEAK = ('HRC_', 'ASP_', 'AGENT_', 'AGENTCHAT_', 'WRKQ', 'CLAUDE', 'CODEX', 'ACP_', 'HARNESS_', 'TMUX')
+LEAK = ('GIT_', 'HRC_', 'ASP_', 'AGENT_', 'AGENTCHAT_', 'WRKQ', 'CLAUDE', 'CODEX', 'ACP_', 'HARNESS_', 'TMUX')
 PROJECT = 't12049'
 T12163 = Path.home() / 'praesidium/var/wrkq-artifacts/T-12163'
 T12163_SCRATCH = '/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163'
@@ -634,7 +634,8 @@ def main():
                                                            'hostedDrivers': release['worker']['hostedDrivers']}))
     for d in ('run', 'state', PROJECT):
         (root / d).mkdir()
-    subprocess.run(['git', 'init', '-q'], cwd=root / PROJECT, check=True)
+    subprocess.run(['git', 'init', '-q'], cwd=root / PROJECT, check=True,
+                   env={k: v for k, v in os.environ.items() if not k.startswith(LEAK)})
     subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts";'
                     'openHrcDatabase(process.argv[1]).close()', str(r.db_path)],
                    cwd=REPO, check=True, capture_output=True, env={k: v for k, v in os.environ.items() if not k.startswith(LEAK)})

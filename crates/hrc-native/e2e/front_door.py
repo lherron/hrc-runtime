@@ -74,7 +74,7 @@ def main():
     config = root / 'federation.json'
     config.write_text(json.dumps({'nodeId': project_id, 'peers': {}}))
     config.chmod(0o600)
-    env = dict(os.environ)
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
     for k in ('HRC_SESSION_REF', 'HRC_RUNTIME_ID', 'HRC_RUN_ID', 'HRC_HOST_SESSION_ID',
               'HRC_EVENT_FORWARD_URL', 'HRC_EVENT_INGEST_TCP_PORT', 'HRC_EVENT_FORWARD_SOURCE_REF',
               'WRKQ_DB_PATH', 'WRKQ_DB_PATH_FILE', 'WRKQD_NODE_TOKENS', 'WRKQD_NODE_TOKENS_FILE',

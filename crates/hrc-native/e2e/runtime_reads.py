@@ -51,7 +51,8 @@ def main(case_factory=None, observe=None, paginate=True, before_subject=None, be
     (root / 'state').mkdir()
     config = root / 'federation.json'
     # An absent explicit config prevents fallback to production federation.
-    env = dict(os.environ, PATH=str(bin_dir)+os.pathsep+os.environ.get('PATH',''))
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+    env['PATH'] = str(bin_dir)+os.pathsep+os.environ.get('PATH','')
     assert Path(shutil.which('hrc',path=env['PATH'])).resolve()==cli.resolve()
     for k in ('HRC_SESSION_REF', 'HRC_RUNTIME_ID', 'HRC_RUN_ID', 'HRC_HOST_SESSION_ID',
               'HRC_EVENT_FORWARD_URL', 'HRC_EVENT_INGEST_TCP_PORT', 'HRC_EVENT_FORWARD_SOURCE_REF',
