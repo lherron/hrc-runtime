@@ -179,7 +179,18 @@ pub(crate) fn command(args: &Parsed<'_>) -> Result<()> {
     {
         body["requestedRunId"] = run.into();
     }
-    let response = client.post_headers("/v1/server/lifecycle",body,&crate::restartme::lifecycle_headers(status["runtimeRoot"].as_str().unwrap_or_default())).map_err(|error| {
+    // The daemon holds this request through the drain and the proof, so the
+    // client's default 30 s request timeout must not end it first.
+    let held_ms = proof
+        + if wait {
+            wait_timeout
+        } else if drain {
+            drain_timeout
+        } else {
+            0.0
+        };
+    let timeout = Duration::from_millis((held_ms.max(0.0) + 30_000.0) as u64);
+    let response = client.post_headers("/v1/server/lifecycle",body,&crate::restartme::lifecycle_headers(status["runtimeRoot"].as_str().unwrap_or_default()),Some(timeout)).map_err(|error| {
         let Some(domain) = error.domain.as_ref() else { return error };
         if domain["code"] == "server_lifecycle_refused" { return reported(format!("[server_lifecycle_refused] {}",error.message),1) }
         if domain["code"] == "server_lifecycle_in_flight" {

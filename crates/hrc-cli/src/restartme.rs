@@ -205,6 +205,7 @@ pub(crate) fn command(args: &Parsed<'_>) -> Result<()> {
             "/v1/runtimes/restart-self",
             body,
             &lifecycle_headers(status["runtimeRoot"].as_str().unwrap_or_default()),
+            None,
         )
         .map_err(|error| {
             if let Some(domain) = error.domain.as_ref() {

@@ -80,8 +80,9 @@ impl Daemon {
         path: &str,
         body: Value,
         headers: &[(String, String)],
+        timeout: Option<std::time::Duration>,
     ) -> Result<Value> {
-        self.request_with_timeout("POST", path, &[], Some(body), None, headers)
+        self.request_with_timeout("POST", path, &[], Some(body), timeout, headers)
             .map(|r| r.0)
     }
     fn request_with_timeout(
