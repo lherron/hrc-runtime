@@ -20,6 +20,9 @@ Failure modes, each a check below:
   6 a kernel that cannot start (its lock held) logs kernel.start_failed and
     HRC still serves
   7 a front-mode rusthrc starts no kernel
+  8 context usage readings commit once and project
+  9 clear-context publishes each ended runtime and wakes its projection,
+    without waiting for the ten-minute resync
 """
 import argparse
 import fcntl
@@ -359,8 +362,30 @@ def main():
             readings.append(dict(seq=seq, rows=new, projected=projected))
         r.check('8.turn-context-one-row-each', all(x['rows'] == [{'hrc_seq': x['seq'], 'event_kind': 'runtime.context.updated'}]
                                                    and x['projected']['usedTokens'] == 10 for x in readings), readings=readings)
+        # == 9. context rotation ends the old runtime in the ledger and kernel ==
+        before = next(x for x in rows(kernel, 'hrc.runtime') if x['payload'].get('runtimeId') == runtime)
+        r.check('9.old-runtime-ready', before['payload'].get('status') == 'ready', row=before)
+        head = r.rows('SELECT coalesce(max(hrc_seq),0) AS s FROM hrc_events')[0]['s']
+        t0 = time.time()
+        code, rotated = r.http('POST', '/v1/clear-context', {'hostSessionId': seat['payload']['hostSessionId']})
+        r.check('9.clear-context-ok', code == 200, status=code, body=rotated)
+        assert code == 200, rotated
+        r.wait(lambda: any(x['payload'].get('sessionRef') == ref
+                          and x['payload'].get('hostSessionId') == rotated['hostSessionId']
+                          for x in rows(kernel, 'hrc.seat')), 5, 'rotated seat via ledger wake')
+        after = [x for x in rows(kernel, 'hrc.runtime') if x['payload'].get('runtimeId') == runtime]
+        r.check('9.old-runtime-ended-without-resync', time.time() - t0 < 5
+                and (not after or all(x['payload'].get('status') == 'terminated' for x in after)),
+                seconds=round(time.time() - t0, 3), before=before, after=after)
+        ended = r.rows("SELECT runtime_id, host_session_id, event_kind, payload_json FROM hrc_events "
+                       "WHERE hrc_seq>? AND runtime_id=? AND event_kind='runtime.terminated'", (head, runtime))
+        r.check('9.runtime-end-published', len(ended) == 1
+                and ended[0]['host_session_id'] == seat['payload']['hostSessionId']
+                and json.loads(ended[0]['payload_json']).get('reason') == 'clear-context', rows=ended)
         code, term = r.http('POST', '/v1/terminate', {'runtimeId': runtime})
-        r.check('4.terminate', code == 200, status=code, body=term)
+        r.check('9.owner-confirms-terminated', code == 503 and term.get('error', {}).get('code') == 'runtime_unavailable'
+                and term['error'].get('detail', {}).get('status') == 'terminated',
+                status=code, body=term)
 
         # == 5. shutdown order =================================================
         rc = r.down(daemon)

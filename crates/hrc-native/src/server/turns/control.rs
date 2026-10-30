@@ -116,7 +116,11 @@ fn available(rt: db::Rt) -> Result<db::Rt, ApiError> {
     Ok(rt)
 }
 /// sessionEventBase over requireSession.
-fn session_event(db: &Connection, rt: &db::Rt, now: &str) -> Result<events::Ev, ApiError> {
+pub(super) fn session_event(
+    db: &Connection,
+    rt: &db::Rt,
+    now: &str,
+) -> Result<events::Ev, ApiError> {
     let row = db
         .query_row(
             "SELECT scope_ref, lane_ref, generation FROM sessions WHERE host_session_id=?",

@@ -165,7 +165,22 @@ async fn invalidate(server: &Shared, host: &str, reason: &str) -> Result<(i64, i
         let now = hrc_store::timestamp();
         {
             let db = server.store.lock().unwrap();
-            control::finalize(&db.sqlite, rt, &now)?;
+            let tx = db
+                .sqlite
+                .unchecked_transaction()
+                .map_err(anyhow::Error::from)?;
+            control::finalize(&tx, rt, &now)?;
+            // Publish the end with the state change, so ledger consumers can
+            // retire this runtime even after the host rotates to a successor.
+            let mut ev = control::session_event(&tx, rt, &now)?;
+            ev.transport = Some(rt.transport.clone());
+            events::append(
+                &tx,
+                "runtime.terminated",
+                &ev,
+                &json!({"transport":rt.transport,"reason":reason}),
+            )?;
+            tx.commit().map_err(anyhow::Error::from)?;
         }
         server.ledger_committed();
         terminated += 1;
