@@ -255,7 +255,7 @@ pub fn record(
             &json!({"runtimeStateJson":rt.state_object(),"generation":rt.generation}),
         )
         .map(|h| h["presentation"]["kind"].clone());
-        kind.is_some_and(|k| k == "tmux-tui" || k == "observer")
+        kind.is_some_and(|k| k == "tmux-tui" || k == "observer" || k == "hrcpty")
     });
     let origin = if run_id.is_some() {
         "hrc-dispatched"

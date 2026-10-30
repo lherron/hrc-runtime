@@ -33,6 +33,29 @@ Checks (spec T-12046 §4.2, §4.6, §5):
     hrcpty seat stays operatorAttachable with its hrcpty block, the tmux
     sibling's runtime.presentation keeps its tmux shape
 
+Codex leg (T-12167, spec T-12162 §4.2, §4.3, §5): scope `...:task:codex-*`
+compiles to the REAL codex-hrcpty aspc response captured from an isolated aspd
+(T-12163 hrcpty-{true,false}-response.json: jsonrpc-stdio, terminalRequired,
+terminalHost hrcpty, supervisor-process, attachable, websocket-unix surface),
+and `...:task:codextmux-*` to the real codex-tui response (after-true:
+terminalHost tmux, broker-process). Identities, paths and the start hash are
+substituted; hosting, presentation and driver blocks are the producer's bytes.
+  C1 both presentation variants admit; transport hrcpty, run transport
+     headless, leased-hrcpty substrate, the hrcpty lease reaches the broker as
+     runtime.terminalSurface (allowedOps.spawn), no child at birth, no tmux,
+     broker argv carries what a claude-hrcpty broker does (no observer socket),
+     operatorAttachable with the hrcpty attach surface from birth, a turn no
+     HRC input started (typed in the TUI) has origin local-interactive
+  C2 GET /v1/attach and the attached door serve the hrc-pty attach argv
+  C3 daemon restart: supervisor, broker and app-server pids unchanged,
+     broker-attached, a delivery after the restart completes
+  C4 terminate: supervisor, broker and app-server gone, socket removed
+  C5 broker SIGKILL with no lease end: runtime crash-marked, the app-server
+     gone within 6 s (hrc-pty's group signal), the lease kept
+  C6 codex (tmux) sibling: tui pane lease, tmux transport, observer socket
+     argv, as before
+Run on the pre-change binary, C1 records the admit refusal (discriminator).
+
 Never touches the live daemon (its socket is refused), the live aspd, or any
 shared service. Every process and root it creates is removed on exit.
 """
@@ -59,6 +82,14 @@ REPO = HERE.parents[2]
 LIVE_HRC_SOCKET = Path.home() / 'praesidium/var/run/hrc/hrc.sock'
 LEAK = ('HRC_', 'ASP_', 'AGENT_', 'AGENTCHAT_', 'WRKQ', 'CLAUDE', 'CODEX', 'ACP_', 'HARNESS_', 'TMUX')
 PROJECT = 't12049'
+T12163 = Path.home() / 'praesidium/var/wrkq-artifacts/T-12163'
+T12163_SCRATCH = '/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163'
+APP_SERVER = r'''
+import os, signal, sys, time
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+while True:
+    time.sleep(1)
+'''
 AGENT = 'hrcptye2e'
 CHILD = r'''
 import os, signal, sys
@@ -149,6 +180,8 @@ class FakeAspd:
     def compile(self, req):
         ident = req['identity']
         scope = req['correlation']['scopeRef']
+        if ':task:codex' in scope:
+            return self.codex(req, scope)
         tmux = ':task:tmux-' in scope
         driver, host = ('claude-code-tmux', 'tmux') if tmux else ('claude-code-hrcpty', 'hrcpty')
         hosting = {'executionTransport': 'pty', 'terminalRequired': True, 'terminalHost': host,
@@ -183,6 +216,36 @@ class FakeAspd:
                                              'model': 'compile-request', 'presentation': 'compile-request'}},
                 'execution': execution, 'diagnostics': []}
         plan['planHash'] = digest(canonical(plan))
+        return {'schemaVersion': 'aspc-compile-harness-invocation-response/v2', 'ok': True, 'plan': plan,
+                'diagnostics': [], 'executionRelease': self.release}
+
+    def codex(self, req, scope):
+        """A real aspc codex response (T-12163) re-addressed to this request."""
+        ident, cwd = req['identity'], req['placement']['cwd']
+        if ':task:codextmux-' in scope:
+            name = 'after-true-response.json'
+        else:
+            name = 'hrcpty-%s-response.json' % ('true' if req.get('requested', {}).get('presentation') is True else 'false')
+        raw = (T12163 / name).read_text()
+        raw = raw.replace(T12163_SCRATCH + '/project', cwd).replace(T12163_SCRATCH, str(Path(cwd).parent / 'codex-home'))
+        plan = json.loads(raw)['plan']
+        plan.update(identity=ident, agent={'id': req['agent']['id']}, placement=req['placement'],
+                    compileId='compile_' + uuid.uuid4().hex, createdAt=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+        start = plan['execution']['dispatchRequest']['startRequest']
+        spec = start['spec']
+        spec['invocationId'] = ident['invocationId']
+        spec['correlation'] = {**{k: ident[k] for k in ('requestId', 'hostSessionId', 'operationId', 'runtimeId', 'runId',
+                                                         'invocationId', 'traceId') if k in ident},
+                               'scopeRef': scope, 'laneRef': 'main'}
+        spec['process'].update(command=sys.executable, args=['-u', '-c', APP_SERVER, 'fake-app-server', cwd], cwd=cwd)
+        if 'initialInputId' in ident:
+            text = req['materialization'].get('initialPrompt', '')
+            start['initialInput'] = {'inputId': ident['initialInputId'], 'kind': 'user', 'content': [{'type': 'text', 'text': text}]}
+        else:
+            start.pop('initialInput', None)
+        plan['execution']['profile']['startRequestHash'] = start_hash(start)
+        plan.pop('planHash', None)
+        plan['planHash'] = hashlib.sha256(canonical(plan).encode()).hexdigest()
         return {'schemaVersion': 'aspc-compile-harness-invocation-response/v2', 'ok': True, 'plan': plan,
                 'diagnostics': [], 'executionRelease': self.release}
 
@@ -312,6 +375,231 @@ def descendants_of(pids):
     return [(int(l.split(None, 1)[0]), l.split(None, 1)[1]) for l in out.splitlines() if l.strip() and any(p in l for p in pids)]
 
 
+def broker_call(path, method, params=None):
+    """One harness-broker NDJSON request on its own connection (stub test controls)."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(10)
+    s.connect(str(path))
+    s.sendall((json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params or {}}) + '\n').encode())
+    reply = json.loads(s.makefile('r').readline())
+    s.close()
+    return reply.get('result', reply.get('error'))
+
+
+def pgid(pid):
+    try:
+        return os.getpgid(int(pid))
+    except (ProcessLookupError, TypeError, ValueError):
+        return None
+
+
+def command_of(pid):
+    return subprocess.run(['ps', '-o', 'command=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+
+
+def flags(command):
+    return sorted(t for t in command.split() if t.startswith('--'))
+
+
+class CodexLeg:
+    """codex-hrcpty seats on the same daemon (T-12167); see the module docstring."""
+    def __init__(self, r, root, binary, try_birth):
+        self.r, self.root, self.binary, self.try_birth = r, root, binary, try_birth
+        self.seats = {}
+
+    def stub_log(self, sock):
+        f = Path(sock).parent / 'stub.ndjson'
+        return [json.loads(l) for l in f.read_text().splitlines()] if f.exists() else []
+
+    def seat_info(self, name, rid):
+        r = self.r
+        row = r.runtime(rid)
+        sub = row['state'].get('broker', {}).get('substrate', {})
+        sock = Path(sub.get('socketPath', '') or '/nonexistent')
+        info = {'rt': rid, 'row': row, 'sub': sub, 'sock': sock, 'token': sock.parent / 'attach.token', 'pid': sub.get('pid')}
+        app = sock.parent / 'appserver.pid'
+        info['app'] = int(app.read_text()) if app.exists() else None
+        return info
+
+    def born(self, claude_broker_pid):
+        r = self.r
+        for name, extra in (('true', {'presentation': {'operator': 'tmux-tui'}}), ('false', {})):
+            ref, host, status, out = self.try_birth('codex-' + uuid.uuid4().hex[:8], f'codex-hrcpty {name} first turn', extra)
+            ok = r.check(f'C1.{name}.admitted', status in (200, 202) and out.get('status') == 'accepted', status=status, response=out)
+            if not ok:
+                continue
+            rid, run = out['runtimeId'], out['runId']
+            s = self.seat_info(name, rid)
+            s.update(ref=ref, host=host, run=run)
+            self.seats[name] = s
+            row, sub, sock = s['row'], s['sub'], s['sock']
+            r.check(f'C1.{name}.transport-hrcpty-leased-hrcpty', row['transport'] == 'hrcpty' and sub.get('kind') == 'leased-hrcpty'
+                    and sock.is_socket() and sock.parent.parent == self.root / 'run/bipc' and sock.name == 'hrcpty.sock',
+                    transport=row['transport'], substrate=sub)
+            runs = r.rows('SELECT transport FROM runs WHERE run_id=?', (run,))
+            r.check(f'C1.{name}.run-transport-headless', runs and runs[0]['transport'] == 'headless' and out.get('transport') == 'headless',
+                    runs=runs, responseTransport=out.get('transport'))
+            r.wait(lambda: r.rows("SELECT 1 FROM runs WHERE run_id=? AND status='completed'", (run,)), 60, f'codex {name} first turn')
+            r.check(f'C1.{name}.first-turn-completed', True, runId=run)
+            log = self.stub_log(sock)
+            starts = [e for e in log if e['kind'] == 'request' and e['method'] == 'invocation.start']
+            lease = ((starts[-1]['params'].get('runtime') or {}).get('terminalSurface') if starts else None) or {}
+            r.check(f'C1.{name}.hrcpty-lease-to-broker', lease.get('kind') == 'hrcpty' and lease.get('socketPath') == str(sock)
+                    and lease.get('ownership') == 'hrc' and (lease.get('allowedOps') or {}).get('spawn') is True
+                    and 'terminalSurfaceRequired' not in starts[-1]['params'].get('runtime', {})
+                    and 'HARNESS_BROKER_OBSERVER_SOCKET' not in starts[-1]['params'].get('dispatchEnv', {}),
+                    runtime=starts[-1]['params'].get('runtime') if starts else None)
+            st = ops(sock, s['token'], 'status')
+            child = (st['status'] or {}).get('child')
+            broker = (st['status'] or {}).get('broker') or {}
+            s['broker'] = broker.get('pid')
+            r.check(f'C1.{name}.no-child-at-birth', not (child or {}).get('pid') and broker.get('state') == 'running'
+                    and broker.get('pid') == row['state']['broker'].get('brokerPid')
+                    and not any(e['kind'] == 'lease.spawned' for e in log), status=st['status'])
+            r.check(f'C1.{name}.app-server-in-broker-group', alive(s['app']) and pgid(s['app']) == pgid(s['broker']) == s['broker']
+                    and pgid(s['broker']) != pgid(s['pid']), app=s['app'], appPgid=pgid(s['app']), broker=s['broker'],
+                    brokerPgid=pgid(s['broker']), supervisorPgid=pgid(s['pid']))
+            btmux = sorted(str(x) for x in (self.root / 'run/btmux').glob('*')) if (self.root / 'run/btmux').exists() else []
+            r.check(f'C1.{name}.no-tmux', not row['tmux_json'] and not row['state'].get('tmux')
+                    and not any(rid[:32].replace('-', '_') in x for x in btmux), tmuxJson=row['tmux_json'], btmux=btmux)
+            cmd, ref_cmd = command_of(s['broker']), command_of(claude_broker_pid)
+            r.check(f'C1.{name}.broker-argv-as-claude-hrcpty', '--experimental-observer-socket' not in cmd
+                    and flags(cmd) == flags(ref_cmd), codex=cmd, claude=ref_cmd)
+            pres = json.loads(row['presentation_json'] or 'null') or {}
+            evs = r.events(rid, 'runtime.presentation')
+            ev = evs[-1]['payload'] if evs else {}
+            r.check(f'C1.{name}.operator-attachable-from-birth', pres.get('operatorAttachable') is True
+                    and (ev.get('presentation') or {}).get('operatorAttachable') is True
+                    and (ev.get('hrcpty') or {}).get('socketPath') == str(sock)
+                    and (ev.get('hrcpty') or {}).get('attachCommand', '').endswith(f'attach --socket {sock}') and 'tmux' not in ev,
+                    presentationJson=pres, events=[e['payload'] for e in evs])
+            local = broker_call(sock.parent / 'b.sock', 'stub.localTurn')
+            origin = r.wait(lambda: [e['payload'] for e in r.events(rid, 'broker.turn.origin')
+                                     if e['payload'].get('turnId') == local.get('turnId')], 20, 'local turn origin')
+            r.check(f'C1.{name}.typed-turn-origin-local-interactive', origin[-1].get('origin') == 'local-interactive',
+                    origin=origin, local=local)
+            status, att = r.http('GET', f'/v1/attach?runtimeId={rid}')
+            argv = att.get('argv', []) if isinstance(att, dict) else []
+            s['attach'] = att
+            r.check(f'C2.{name}.attach-descriptor', status == 200 and att.get('transport') == 'hrcpty'
+                    and argv == [str(self.binary.parent / 'hrc-pty'), 'attach', '--socket', str(sock)]
+                    and att.get('bindingFence', {}).get('supervisorPid') == s['pid'], status=status, response=att)
+
+    def tmux_sibling(self):
+        r = self.r
+        ref, host, status, out = self.try_birth('codextmux-' + uuid.uuid4().hex[:8], 'codex tmux sibling first turn',
+                                                {'presentation': {'operator': 'tmux-tui'}})
+        if not r.check('C6.codex-tmux-admitted', status in (200, 202), status=status, response=out):
+            return
+        rid = out['runtimeId']
+        row = r.runtime(rid)
+        b = row['state']['broker']
+        sock = (row['state'].get('tmux') or {}).get('socketPath') or json.loads(row['tmux_json'] or '{}').get('socketPath')
+        ipc = Path(b.get('endpoint', {}).get('socketPath', '') or '/nonexistent').parent
+        log = self.stub_log(ipc / 'b.sock')
+        starts = [e for e in log if e['kind'] == 'request' and e['method'] == 'invocation.start']
+        params = starts[-1]['params'] if starts else {}
+        lease = (params.get('runtime') or {}).get('terminalSurface') or {}
+        cmd = command_of(b.get('brokerPid'))
+        pres = json.loads(row['presentation_json'] or 'null') or {}
+        self.seats['tmux'] = {'rt': rid, 'tmux': sock, 'host': host}
+        r.check('C6.codex-tmux-shape', row['transport'] == 'tmux' and (b.get('tuiWindow') or {}).get('socketPath') == sock
+                and lease.get('kind') == 'tmux-pane' and lease.get('windowName') == 'tui'
+                and '--experimental-observer-socket' in cmd and pres.get('operatorAttachable') is True
+                and (params.get('runtime') or {}).get('terminalSurfaceRequired') is True,
+                transport=row['transport'], tuiWindow=b.get('tuiWindow'), lease=lease, argv=cmd, presentationJson=pres,
+                runtime=params.get('runtime'))
+        norm = lambda v: json.loads(json.dumps(v).replace(str(self.root), '<root>').replace(rid, '<rt>'))
+        (self.r.artifacts / 'codex-tmux-shape.json').write_text(json.dumps(norm(
+            {'transport': row['transport'], 'leaseKeys': sorted(lease), 'leaseKind': lease.get('kind'), 'argvFlags': flags(cmd),
+             'runtimeKeys': sorted(params.get('runtime') or {}), 'presentationJson': pres,
+             'hostingKeys': sorted(k for k in b if not k.endswith('At'))}), indent=1, sort_keys=True) + '\n')
+
+    def door(self, intent):
+        r, s = self.r, self.seats.get('true')
+        if not s:
+            return
+        before = len(r.events(s['rt'], 'runtime.presentation'))
+        status, out = r.http('POST', '/v1/runs/prepare-attached', {'hostSessionId': s['host'], 'intent': intent})
+        evs = [e['payload'] for e in r.events(s['rt'], 'runtime.presentation')[before:]]
+        ev = evs[-1] if evs else {}
+        r.check('C2.true.attached-door', status == 200 and out.get('status') == 'started'
+                and out.get('result', {}).get('runtimeId') == s['rt'] and out.get('attach', {}).get('transport') == 'hrcpty'
+                and (ev.get('presentation') or {}).get('operatorAttachable') is True
+                and (ev.get('hrcpty') or {}).get('socketPath') == str(s['sock']) and 'tmux' not in ev,
+                status=status, response=out, events=evs)
+
+    def after_restart(self, per_rt):
+        r = self.r
+        for name, s in self.seats.items():
+            if name == 'tmux':
+                r.check('C6.codex-tmux-survives-restart', per_rt.get(s['rt'], {}).get('state') == 'broker-attached',
+                        warmup=per_rt.get(s['rt']))
+                continue
+            st = ops(s['sock'], s['token'], 'status')
+            row = r.runtime(s['rt'])
+            r.check(f'C3.{name}.pids-unchanged', st['hello'].get('pid') == s['pid'] and (st['status']['broker'] or {}).get('pid') == s['broker']
+                    and alive(s['app']) and not (st['status'].get('child') or {}).get('pid'),
+                    before={'supervisor': s['pid'], 'broker': s['broker'], 'app': s['app']},
+                    after={'hello': st['hello'], 'status': st['status'], 'appAlive': alive(s['app'])})
+            r.check(f'C3.{name}.rediscovered-broker-attached', per_rt.get(s['rt'], {}).get('state') == 'broker-attached'
+                    and row['status'] not in ('stale', 'dead', 'terminated', 'crashed')
+                    and json.loads(row['presentation_json'] or '{}').get('operatorAttachable') is True,
+                    warmup=per_rt.get(s['rt']), status=row['status'])
+            status, out = r.http('POST', '/v1/turns', {'hostSessionId': s['host'], 'prompt': f'codex {name} after restart'})
+            run = out.get('runId') if isinstance(out, dict) else None
+            done = run and r.wait(lambda: r.rows("SELECT status,transport,runtime_id FROM runs WHERE run_id=? AND status='completed'", (run,)),
+                                  60, f'codex {name} post-restart turn')
+            r.check(f'C3.{name}.delivery-after-restart', status in (200, 202) and done and done[0]['runtime_id'] == s['rt'],
+                    status=status, response=out, run=done)
+            status, att = r.http('GET', f'/v1/attach?runtimeId={s["rt"]}')
+            r.check(f'C3.{name}.attach-descriptor-after-restart', status == 200 and att == s['attach'], response=att)
+
+    def terminate(self):
+        r = self.r
+        s = self.seats.get('true')
+        if s:
+            status, term = r.http('POST', '/v1/terminate', {'runtimeId': s['rt']})
+            gone = status == 200 and r.wait(lambda: not alive(s['pid']) and not alive(s['broker']) and not alive(s['app']), 20, 'codex lease end')
+            row = r.runtime(s['rt'])
+            r.check('C4.true.terminate-ends-lease', status == 200 and gone and not s['sock'].exists()
+                    and not (s['sock'].parent / 'hrcpty.pid').exists() and row['status'] == 'terminated',
+                    status=status, response=term, supervisor=s['pid'], broker=s['broker'], app=s['app'], rowStatus=row['status'],
+                    socketExists=s['sock'].exists())
+        t = self.seats.get('tmux')
+        if t:
+            status, _ = r.http('POST', '/v1/terminate', {'runtimeId': t['rt']})
+            r.wait(lambda: subprocess.run(['tmux', '-S', str(t['tmux']), 'has-session'], capture_output=True).returncode != 0, 20, 'codex tmux gone')
+            r.check('C6.codex-tmux-terminated', status == 200 and r.runtime(t['rt'])['status'] == 'terminated')
+
+    def crash(self):
+        r = self.r
+        s = self.seats.get('false')
+        if not s:
+            return
+        st = ops(s['sock'], s['token'], 'status')
+        broker = (st['status']['broker'] or {}).get('pid')
+        os.kill(broker, signal.SIGKILL)
+        killed = time.time()
+        app_gone = None
+        while time.time() - killed < 6:
+            if not alive(s['app']):
+                app_gone = round(time.time() - killed, 2)
+                break
+            time.sleep(.1)
+        row = r.wait(lambda: (lambda x: x if x['status'] == 'crashed' else None)(r.runtime(s['rt'])), 20, 'crash mark')
+        after = ops(s['sock'], s['token'], 'status')
+        r.check('C5.false.broker-kill-app-server-gone-within-6s', app_gone is not None, app=s['app'], goneAfterS=app_gone)
+        r.check('C5.false.runtime-crash-marked', row['status'] == 'crashed', status=row['status'], state=row['state'].get('status'))
+        r.check('C5.false.lease-kept', alive(s['pid']) and s['sock'].is_socket() and (after['status']['broker'] or {}).get('state') != 'running',
+                supervisorAlive=alive(s['pid']), status=after['status'])
+        status, term = r.http('POST', '/v1/terminate', {'runtimeId': s['rt']})
+        r.notes.append({'crashedTerminate': {'status': status, 'response': term, 'supervisorAliveAfter': alive(s['pid'])}})
+
+    def pids(self):
+        return [p for s in self.seats.values() for p in (s.get('pid'), s.get('broker'), s.get('app')) if p]
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, default=REPO / 'crates/target/debug/rusthrc')
@@ -327,7 +615,7 @@ def main():
     root.mkdir(parents=True)
     args.artifacts.mkdir(parents=True, exist_ok=True)
     for stale in [*args.artifacts.glob('bipc-*'), *args.artifacts.glob('daemon-*.log'),
-                  *(args.artifacts / n for n in ('summary.json', 'fake-aspd.ndjson', 'rows.json'))]:
+                  *(args.artifacts / n for n in ('summary.json', 'fake-aspd.ndjson', 'rows.json', 'codex-tmux-shape.json', 'attached-door.json'))]:
         stale.unlink(missing_ok=True)
     r = Run(root, args.artifacts, binary)
 
@@ -340,7 +628,7 @@ def main():
     release = {'releaseId': 'stub-broker-t12049', 'sourceCommit': '1' * 40, 'builtAt': '2026-10-29T00:00:00.000Z',
                'releaseRoot': str(release_root),
                'worker': {'protocol': 'harness-broker/0.2', 'executable': str(stub), 'argvPrefix': [],
-                          'hostedDrivers': ['claude-code-hrcpty', 'claude-code-tmux']}}
+                          'hostedDrivers': ['claude-code-hrcpty', 'claude-code-tmux', 'codex-app-server']}}
     (release_root / 'release.json').write_text(json.dumps({**{k: release[k] for k in ('releaseId', 'sourceCommit', 'builtAt')},
                                                            'protocol': 'harness-broker/0.2',
                                                            'hostedDrivers': release['worker']['hostedDrivers']}))
@@ -378,14 +666,19 @@ def main():
             assert status == 200, (status, out)
             return ref, out['hostSessionId']
 
-        def birth(task, prompt):
+        def try_birth(task, prompt, extra=None):
             ref, host = session(task)
             intent = {'placement': {'agentRoot': str(root / PROJECT), 'projectRoot': str(root / PROJECT), 'cwd': str(root / PROJECT),
                                     'runMode': 'task', 'bundle': {'kind': 'compose', 'compose': []}, 'dryRun': False},
-                      'harness': {'provider': 'anthropic', 'interactive': True}}
+                      'harness': {'provider': 'anthropic', 'interactive': True}, **(extra or {})}
             status, out = r.http('POST', '/v1/turns', {'hostSessionId': host, 'prompt': prompt, 'runtimeIntent': intent})
+            return ref, host, status, out
+
+        def birth(task, prompt):
+            ref, host, status, out = try_birth(task, prompt)
             assert status in (200, 202), ('birth', task, status, out)
             return ref, host, out
+        codex = CodexLeg(r, root, binary, try_birth)
 
         # == 1. hrcpty birth ===================================================
         pty_ref, pty_host, born = birth('pty-' + uuid.uuid4().hex[:8], 'hrcpty e2e first turn')
@@ -432,6 +725,10 @@ def main():
         r.wait(lambda: r.rows("SELECT 1 FROM runs WHERE run_id=? AND status='completed'", (tborn['runId'],)), 60, 'tmux first turn')
         tmux_server_pid = subprocess.run(['tmux', '-S', str(tmux_sock), 'display-message', '-p', '#{pid}'],
                                          capture_output=True, text=True).stdout.strip()
+
+        # == C1/C2/C6. codex-hrcpty seats and the codex (tmux) sibling ========
+        codex.born(hello['status']['broker'].get('pid'))
+        codex.tmux_sibling()
 
         # == 2. daemon writes reach the pty =====================================
         r.wait(lambda: r.rows("SELECT 1 FROM hrc_events WHERE run_id=? AND event_kind='turn.tool_call'", (pty_run,)), 60, 'ask tool call')
@@ -494,6 +791,7 @@ def main():
             row = r.runtime(rid)
             door[name] = {'status': status, 'response': out, 'newEvents': [e['payload'] for e in evs[before:]],
                           'presentationJson': json.loads(row['presentation_json'] or 'null')}
+        codex.door(door_intent)
         hd, td = door['hrcpty'], door['tmux']
         hev = hd['newEvents'][-1] if hd['newEvents'] else {}
         r.check('8.hrcpty-door-selects-live-seat', hd['status'] == 200 and hd['response'].get('status') == 'started'
@@ -556,6 +854,8 @@ def main():
                 and trow2['status'] not in ('stale', 'dead', 'terminated', 'crashed'),
                 warmup=per_rt.get(tmux_rt), serverPidBefore=tmux_server_pid, serverPidAfter=tserver2, status=trow2['status'])
 
+        codex.after_restart(per_rt)
+
         # == 5 (post-restart). attach descriptor still served =================
         status, att2 = r.http('GET', f'/v1/attach?runtimeId={pty_rt}')
         r.check('5.attach-descriptor-after-restart', status == 200 and att2 == att, status=status, response=att2)
@@ -585,6 +885,8 @@ def main():
                                                                         capture_output=True).returncode != 0,
                 status=status, response=tterm, rowStatus=trow3['status'], serverPid=tmux_server_pid,
                 serverAlive=alive(int(tmux_server_pid)))
+        codex.terminate()
+        codex.crash()
         r.check('0.pty-rt-tmux-rt-coexisted', pty_rt != tmux_rt and r.runtime(pty_rt)['transport'] == 'hrcpty'
                 and trow['transport'] == 'tmux', hrcpty=pty_rt, tmux=tmux_rt)
         r.down(daemon)
@@ -602,7 +904,7 @@ def main():
                     proc.wait(timeout=20)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-        for pid in (pty_pid, child_pid):
+        for pid in (pty_pid, child_pid, *(codex.pids() if 'codex' in locals() else [])):
             if pid and alive(pid):
                 os.kill(pid, signal.SIGKILL)
         if tmux_sock:
@@ -628,8 +930,7 @@ def main():
             for leaf, text in by_leaf.items():
                 (args.artifacts / f'bipc-{leaf}-{name}').write_text(text)
         if r.db_path.exists():
-            dump = {t: r.rows(f'SELECT * FROM {t} WHERE runtime_id IN (?,?)', (pty_rt or '', tmux_rt or ''))
-                    for t in ('runtimes', 'runs', 'broker_invocations')}
+            dump = {t: r.rows(f'SELECT * FROM {t}') for t in ('runtimes', 'runs', 'broker_invocations')}
             dump['hrc_events'] = r.rows('SELECT hrc_seq,ts,event_kind,runtime_id,run_id,transport,payload_json FROM hrc_events ORDER BY hrc_seq')
             (args.artifacts / 'rows.json').write_text(json.dumps(dump, indent=1, default=str) + '\n')
         remaining = [l for _, l in descendants_of([str(root), root.name])]
@@ -637,7 +938,8 @@ def main():
         if not args.keep:
             shutil.rmtree(root, ignore_errors=True)
         summary = {'pass': all(c['pass'] for c in r.checks), 'root': str(root), 'binary': str(binary),
-                   'hrcptyRuntimeId': pty_rt, 'tmuxRuntimeId': tmux_rt, 'checks': r.checks, 'notes': r.notes,
+                   'hrcptyRuntimeId': pty_rt, 'tmuxRuntimeId': tmux_rt,
+                   'codexRuntimeIds': {k: v['rt'] for k, v in codex.seats.items()} if 'codex' in locals() else {}, 'checks': r.checks, 'notes': r.notes,
                    'failure': failure}
         (args.artifacts / 'summary.json').write_text(json.dumps(summary, indent=1, default=str) + '\n')
         print('\n'.join(f"{'PASS' if c['pass'] else 'FAIL'}  {c['check']}" for c in r.checks))

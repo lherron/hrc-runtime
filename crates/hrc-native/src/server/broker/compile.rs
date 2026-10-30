@@ -318,7 +318,8 @@ pub(super) fn admit(response: &Value, request: &Value, operator: Option<&str>) -
     let terminal = hosting["terminalRequired"]
         .as_bool()
         .context("execution-hosting-invalid: terminalRequired")?;
-    // T-12046 §5: hrcpty is the supervisor-process terminal host beside tmux.
+    // T-12046 §5: hrcpty is the supervisor-process terminal host beside tmux,
+    // for pty harnesses and, T-12162 §4.3, jsonrpc-stdio ones (codex-hrcpty).
     let host = hosting["terminalHost"].as_str();
     ensure!(
         matches!(host, None | Some("tmux" | "hrcpty")),
@@ -330,10 +331,10 @@ pub(super) fn admit(response: &Value, request: &Value, operator: Option<&str>) -
     );
     ensure!(
         match hosting["executionTransport"].as_str() {
-            Some("jsonrpc-stdio") => hosting["processExecution"] == "broker-process",
-            Some("pty") if host == Some("hrcpty") => {
+            Some("jsonrpc-stdio" | "pty") if host == Some("hrcpty") => {
                 hosting["processExecution"] == "supervisor-process"
             }
+            Some("jsonrpc-stdio") => hosting["processExecution"] == "broker-process",
             Some("pty") => hosting["processExecution"] == "broker-process" && terminal,
             Some("native-worker") => hosting["processExecution"] == "native-worker",
             _ => false,

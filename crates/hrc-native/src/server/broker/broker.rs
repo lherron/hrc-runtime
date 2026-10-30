@@ -673,7 +673,10 @@ fn preparation(
         paths["hrcptyPidPath"] = json!(ipc.join("hrcpty.pid"));
     }
     // describeAspdHostingPaths: a viewer serves ONE observer socket beside b.sock.
-    if presentation == "attachable" {
+    // An hrcpty viewer attaches to its supervisor instead (T-12162 §7: the
+    // observer-renderer variant is not ported), so its broker argv matches a
+    // claude-hrcpty broker's.
+    if presentation == "attachable" && paths.get("hrcptySocketPath").is_none() {
         paths["observerSocketPath"] = json!(ipc.join("observer.sock"));
     }
     let mut argv = compiled.response["executionRelease"]["worker"]["argvPrefix"]

@@ -16,6 +16,13 @@ until the child prints `GOT#n[<answer>]` (polled through the lease's
 `capture`), so the daemon's question-answer door has a live ask to answer.
 With a tmux lease the turn completes at once.
 
+Driver `codex-app-server` (T-12167) stands in for the codex-hrcpty driver:
+it spawns spec.process as the app-server, a child in the broker's own process
+group (never a pty child), writes its pid to <ipcDir>/appserver.pid, and on
+an hrcpty lease only says `hello` and reads `status`: no TUI at birth. Its
+turns, initial and `submission.*`, complete at once as RPC evidence.
+
+`stub.localTurn` emits a turn no HRC input started (a prompt typed in a TUI).
 `stub.usage` {turnId, usedTokens, windowTokens}, sent on its own connection,
 emits one usage.updated for that turn (kernel_fold.py --serve's turnContext).
 
@@ -46,7 +53,7 @@ DRIVERS = RELEASE['hostedDrivers']
 
 lock = threading.RLock()
 state = {'invocation': None, 'events': [], 'acked': 0, 'controller': None, 'lease': None,
-         'child': None, 'state': 'ready', 'start': None, 'snapshotSeen': threading.Event()}
+         'child': None, 'state': 'ready', 'start': None, 'snapshotSeen': threading.Event(), 'driver': None}
 
 
 def now():
@@ -138,6 +145,21 @@ def take_lease(lease, start):
     raise RuntimeError('unsupported lease ' + lease['kind'])
 
 
+def start_app_server(lease, start):
+    """codex-app-server: the broker spawns the app-server itself, in its own group."""
+    if lease and lease['kind'] == 'hrcpty':
+        ops = Ops(lease['socketPath'])
+        log('lease.hello', hello=ops.hello, status=ops.call('status', {}), lease=lease)
+        ops.close()
+    argv, env, cwd = child_spec(start)
+    env.update(start['spec']['process'].get('lockedEnv') or {})
+    proc = subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    (IPC / 'appserver.pid').write_text(str(proc.pid))
+    log('appserver.spawned', pid=proc.pid, pgid=os.getpgid(proc.pid), brokerPgid=os.getpgid(0))
+    return proc.pid
+
+
 def run_turn(input_id, prompt):
     state['snapshotSeen'].wait(30)
     time.sleep(.3)
@@ -146,7 +168,7 @@ def run_turn(input_id, prompt):
     with lock:
         state['state'] = 'running'
     lease = state['lease']
-    if not lease or lease['kind'] != 'hrcpty':
+    if not lease or lease['kind'] != 'hrcpty' or state['driver'] == 'codex-app-server':
         emit('assistant.message.completed', {'content': [{'type': 'text', 'text': 'stub ok'}], 'final': True}, input_id)
         emit('turn.completed', {}, input_id)
         with lock:
@@ -199,7 +221,11 @@ def handle(conn, method, params):
             state['controller'] = conn
             state['lease'] = lease
             state['start'] = params
-        child = take_lease(lease, start) if lease else None
+            state['driver'] = start['spec']['driver']['kind']
+        if state['driver'] == 'codex-app-server':
+            child = start_app_server(lease, start)
+        else:
+            child = take_lease(lease, start) if lease else None
         with lock:
             state['child'] = child
         initial = start.get('initialInput')
@@ -226,6 +252,12 @@ def handle(conn, method, params):
         with lock:
             state['acked'] = max(state['acked'], params.get('throughSeq', 0))
             return {'ackedThroughSeq': state['acked']}
+    if method in ('submission.invoke', 'submission.enqueue', 'submission.steer') and state['driver'] == 'codex-app-server':
+        submission = 'sub-' + os.urandom(6).hex()
+        body = params.get('body') or {}
+        text = json.dumps(body)[:200]
+        threading.Thread(target=run_turn, args=(submission, text), daemon=True).start()
+        return {'submissionId': submission, 'admission': 'admitted', 'inputId': submission}
     if method == 'invocation.interrupt':
         return {'ok': True}
     if method == 'invocation.stop':
@@ -239,6 +271,13 @@ def handle(conn, method, params):
             raise RuntimeError('no invocation has started')
         context = {'usedTokens': params['usedTokens'], 'windowTokens': params['windowTokens']}
         return {'seq': emit('usage.updated', {'context': context}, turn_id=params['turnId'])}
+    if method == 'stub.localTurn':
+        # A test control: a turn no HRC input started, as a prompt typed in a
+        # TUI arrives (observe.rs origin local-interactive, T-12167).
+        turn = 'turn-local-' + os.urandom(4).hex()
+        emit('turn.started', {'turnId': turn}, turn_id=turn)
+        emit('turn.completed', {'turnId': turn}, turn_id=turn)
+        return {'turnId': turn}
     if method == 'invocation.dispose':
         threading.Timer(1.0, lambda: os._exit(0)).start()
         return {'ok': True, 'disposed': True}
