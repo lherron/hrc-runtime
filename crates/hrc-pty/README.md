@@ -14,7 +14,12 @@ hrc-pty version
 
 `serve` double-forks, prints its pid and exits 0 once the socket (mode 0600) is
 bound; startup errors come back on stderr with exit 1. The token defaults to
-`<ipcDir>/attach.token`, the log to `<ipcDir>/hrcpty.log`.
+`<ipcDir>/attach.token`, the standalone log to `<ipcDir>/hrcpty.log` (0600).
+HRC passes `--log` explicitly: `~/praesidium/var/logs/hrc-runtime/hrcpty/<runtime-id>.log`
+for the default runtime root, or `<runtime-root>/logs/hrcpty/<runtime-id>.log`
+for isolated daemons. The `hrcpty/` log directory is 0700. Startup prunes regular
+`rt-*.log` files older than seven days unless a non-terminal runtime row still
+claims the id; symlinks and legacy IPC logs are untouched.
 
 ## Clients and the child env
 

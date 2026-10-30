@@ -838,7 +838,7 @@ async fn launch(
             .map(|v| v.as_str().unwrap().to_owned()),
     );
     if let Some(socket) = hrcpty_socket {
-        let allocation = allocate_hrcpty(record, Path::new(socket), &argv).await?;
+        let allocation = allocate_hrcpty(server, record, Path::new(socket), &argv).await?;
         let (client, events, hello) = connect(server, paths, release).await?;
         return Ok((client, events, hello, allocation));
     }
@@ -916,10 +916,22 @@ async fn launch(
 }
 /// T-12046 §5 steps 2-3: `hrc-pty serve` owns the broker (and later Claude);
 /// the broker's lease is the supervisor's ops socket. No tmux call.
-async fn allocate_hrcpty(record: &Value, socket: &Path, argv: &[String]) -> Result<Value> {
+async fn allocate_hrcpty(
+    server: &Shared,
+    record: &Value,
+    socket: &Path,
+    argv: &[String],
+) -> Result<Value> {
     let paths = &record["hosting"]["paths"];
     let runtime_id = string(&record["admission"]["identity"], "runtimeId")?;
-    let pid = hrcpty::serve(socket, argv, string(paths, "brokerStderrPath")?, runtime_id).await?;
+    let pid = hrcpty::serve(
+        &server.runtime,
+        socket,
+        argv,
+        string(paths, "brokerStderrPath")?,
+        runtime_id,
+    )
+    .await?;
     let status = hrcpty::Ops::connect(socket)
         .await?
         .call("status", json!({}))

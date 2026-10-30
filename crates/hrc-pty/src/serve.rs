@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
@@ -238,6 +238,7 @@ fn daemonize(log_path: &Path) -> anyhow::Result<File> {
     let log = OpenOptions::new()
         .create(true)
         .append(true)
+        .mode(0o600)
         .open(log_path)?;
     let null = File::open("/dev/null")?;
     // SAFETY: dup2 onto the standard fds.

@@ -884,6 +884,59 @@ pub(super) async fn gc_once(server: &Shared) {
     }
 }
 
+/// Prune diagnostics only; legacy bipc logs belong to the IPC orphan sweep.
+pub(super) fn hrcpty_log_sweep(server: &Server) -> Result<()> {
+    let dir = crate::server::log_root(&server.runtime)?.join("hrcpty");
+    let mut removed = 0;
+    let mut kept_live = 0;
+    let mut skipped = 0;
+    let read = match std::fs::read_dir(&dir) {
+        Ok(read) => Some(read),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    let now = SystemTime::now();
+    for entry in read.into_iter().flatten() {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let id = name.to_str().and_then(|n| n.strip_suffix(".log"));
+        let Some(id) = id.filter(|id| {
+            id.strip_prefix("rt-").is_some_and(|tail| {
+                !tail.is_empty()
+                    && tail
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            })
+        }) else {
+            skipped += 1;
+            continue;
+        };
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if !metadata.is_file()
+            || now.duration_since(metadata.modified()?).unwrap_or_default()
+                <= Duration::from_secs(7 * 24 * 60 * 60)
+        {
+            skipped += 1;
+            continue;
+        }
+        // Fail closed on store errors: an unproven row must never lose its log.
+        let db = server.store.lock().unwrap();
+        if db::runtime(&db.sqlite, id)?.is_some_and(|rt| !lease::unavailable(&rt.status)) {
+            kept_live += 1;
+            continue;
+        }
+        std::fs::remove_file(&path)?;
+        removed += 1;
+    }
+    log(
+        "info",
+        "broker.hrcpty_log_sweep",
+        json!({"removed":removed,"keptLive":kept_live,"skipped":skipped}),
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

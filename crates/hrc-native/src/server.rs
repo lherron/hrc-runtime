@@ -216,6 +216,16 @@ pub fn runtime_root() -> Result<PathBuf> {
     )))
 }
 
+/// Keep isolated daemons' diagnostics under their own runtime root.
+fn log_root(runtime: &std::path::Path) -> Result<PathBuf> {
+    let home = PathBuf::from(env::var("HOME").context("HOME is required")?);
+    Ok(if runtime == home.join("praesidium/var/run/hrc") {
+        home.join("praesidium/var/logs/hrc-runtime")
+    } else {
+        runtime.join("logs")
+    })
+}
+
 /// Recognize an explicit daemon role argv; see front::invocation.
 pub fn front_invocation(args: &[String]) -> Result<Option<Role>> {
     front::invocation(args, &runtime_root()?)

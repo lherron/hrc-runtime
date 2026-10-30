@@ -711,6 +711,9 @@ fn terminal_active_runs(server: &Server) -> Result<()> {
 /// terminal rows, classify every broker row without attaching, sweep orphans
 /// and legacy rows, then attach the durable survivors. Never fails the boot.
 pub async fn reconcile(server: &Shared) -> Result<()> {
+    if let Err(e) = hrcpty_log_sweep(server) {
+        startup_issue("hrcpty log sweep failed", json!({}), &e);
+    }
     if let Err(e) = terminal_active_runs(server) {
         startup_issue("terminal runtime run repair failed", json!({}), &e);
     }

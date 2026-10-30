@@ -112,17 +112,28 @@ pub async fn hello(socket: &Path) -> Option<Value> {
 /// §4.1: start the supervisor with the broker argv; `serve` daemonizes and
 /// prints its pid once the socket is bound. Returns that pid after `hello`.
 pub async fn serve(
+    runtime: &Path,
     socket: &Path,
     broker_argv: &[String],
     broker_stderr: &str,
     runtime_id: &str,
 ) -> Result<i64> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    let log_dir = crate::server::log_root(runtime)?.join("hrcpty");
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&log_dir)?;
+    std::fs::set_permissions(&log_dir, std::fs::Permissions::from_mode(0o700))?;
+    let log_path = log_dir.join(format!("{runtime_id}.log"));
     let bin = binary();
     let (cols, rows) = INITIAL_SIZE;
     let out = Command::new(&bin)
         .arg("serve")
         .arg("--socket")
         .arg(socket)
+        .arg("--log")
+        .arg(&log_path)
         .args(["--broker-stderr", broker_stderr])
         .args(["--cols", &cols.to_string(), "--rows", &rows.to_string()])
         .args(["--runtime-id", runtime_id])
