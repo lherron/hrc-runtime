@@ -112,9 +112,12 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 
 ## Embedded kernel (T-12141)
 
-`kernel_fold.py` and `kernel_projection.py` run in `just cargo-check` against
-rusthrc's own socket. The latter verifies ingest errors/recovery for an
-unrepresentable activity expiry and drives the moved wire probe.
+`kernel_fold.py`, `kernel_projection.py` and `kernel_fd_cost.py` run in
+`just cargo-check` against rusthrc's own socket. `kernel_projection.py`
+verifies ingest errors/recovery for an unrepresentable activity expiry and
+drives the moved wire probe. `kernel_fd_cost.py` (T-12168) holds plain,
+events.subscribe and query.subscribe connections and requires one daemon fd
+each, released on close without a further accept.
 `kq.py` and `live_probe.py` are the read-only inspection and wire smoke tools.
 The latter accepts `--socket <runtimeRoot>/hrc-kernel.sock --artifacts <dir>`.
 

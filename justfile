@@ -182,6 +182,7 @@ cargo-check:
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
     python3 crates/hrc-native/e2e/kernel_fold.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fold"
     python3 crates/hrc-native/e2e/kernel_projection.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-projection"
+    python3 crates/hrc-native/e2e/kernel_fd_cost.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fd-cost"
     python3 crates/hrc-native/e2e/foundation.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
     python3 crates/hrc-native/e2e/command_runs.py --binary crates/target/debug/rusthrc --scratch-root "/tmp/hrc-command-runs-$(date +%s)-$$" --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/command-runs"
 
