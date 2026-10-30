@@ -78,8 +78,44 @@ fn install_panic_hook() {
     }));
 }
 
+/// launchd starts the daemon at a 256 soft open-file limit. Every runtime holds
+/// broker and kernel sockets, so ~80 runtimes exhausted it and SQLite opens
+/// failed with CANTOPEN, condemning live runtimes as crashed. Raise the soft
+/// limit toward the hard one; macOS refuses values above kern.maxfilesperproc,
+/// so step down until one is accepted.
+fn raise_open_file_limit() {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return;
+    }
+    let before = limit.rlim_cur;
+    for target in [65536, 10240] {
+        let target = target.min(limit.rlim_max);
+        if target <= before {
+            break;
+        }
+        let raised = libc::rlimit {
+            rlim_cur: target,
+            rlim_max: limit.rlim_max,
+        };
+        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) } == 0 {
+            stderr_json(
+                "info",
+                "server",
+                "server.nofile_raised",
+                json!({"from":before,"to":target}),
+            );
+            return;
+        }
+    }
+}
+
 pub async fn serve(role: Role) -> Result<()> {
     install_panic_hook();
+    raise_open_file_limit();
     let started_at = timestamp();
     let release = release::Release::capture(&started_at)?;
     let home = env::var("HOME").context("HOME is required")?;
