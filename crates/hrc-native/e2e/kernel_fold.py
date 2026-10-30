@@ -263,7 +263,9 @@ def serve(r, aspd, root, kernel):
                     proc.wait(timeout=30)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-        subprocess.run(['pkill', '-f', str(root)], check=False)
+        # The root plus its separator: a bare prefix would also match a sibling
+        # path such as <work>/red.sock when the root is <work>/r.
+        subprocess.run(['pkill', '-f', str(root) + '/'], check=False)
         aspd.close()
         for log in r.logs:
             log.close()
@@ -404,7 +406,9 @@ def main():
                     proc.wait(timeout=30)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-        subprocess.run(['pkill', '-f', str(root)], check=False)
+        # The root plus its separator: a bare prefix would also match a sibling
+        # path such as <work>/red.sock when the root is <work>/r.
+        subprocess.run(['pkill', '-f', str(root) + '/'], check=False)
         aspd.close()
         for log in r.logs:
             log.close()
