@@ -147,7 +147,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "cardo-core"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd#1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd"
+source = "git+https://github.com/lherron/cardo?rev=12bd05d758a936d12288bc0f102bb2833ecfa924#12bd05d758a936d12288bc0f102bb2833ecfa924"
 dependencies = [
  "im",
  "regex",
@@ -158,7 +158,7 @@ dependencies = [
 [[package]]
 name = "cardo-execution"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd#1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd"
+source = "git+https://github.com/lherron/cardo?rev=12bd05d758a936d12288bc0f102bb2833ecfa924#12bd05d758a936d12288bc0f102bb2833ecfa924"
 dependencies = [
  "cardo-core",
  "serde_json",
@@ -167,12 +167,13 @@ dependencies = [
 [[package]]
 name = "cardo-runtime"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd#1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd"
+source = "git+https://github.com/lherron/cardo?rev=12bd05d758a936d12288bc0f102bb2833ecfa924#12bd05d758a936d12288bc0f102bb2833ecfa924"
 dependencies = [
  "cardo-core",
  "cardo-execution",
  "cardo-store",
  "crossbeam-channel",
+ "libc",
  "serde",
  "serde_json",
  "uuid",
@@ -181,7 +182,7 @@ dependencies = [
 [[package]]
 name = "cardo-store"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd#1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd"
+source = "git+https://github.com/lherron/cardo?rev=12bd05d758a936d12288bc0f102bb2833ecfa924#12bd05d758a936d12288bc0f102bb2833ecfa924"
 dependencies = [
  "crossbeam-channel",
  "rusqlite",

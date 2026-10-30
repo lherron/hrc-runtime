@@ -7,7 +7,7 @@ Status: proposal r3.2, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `
 r3 replaces r2.2's stage 1 and adds the repository rules:
 - **One stage 1.** It merges clod@loggia's stage 0 (R-00448, EN-32603) into stage 1. The kernel reads HRC through its HTTP API through cardo's own ingest machinery, not through a read-only open of `state.sqlite` (§4).
 - **One repository**, with independent native development and both-implementation compatibility qualification (§2).
-- **Cardo prerequisites:** all of them are on cardo main at 1796e1c (§3).
+- **Cardo prerequisites:** all of them are on cardo main at 12bd05d (§3).
 
 This page owns the HRC side of the port: the repository layout, the stages, independent native development in stage 2, the compatibility contract, install and fleet, and the process budget. The cardo work lives in cardo's `docs/explorations/pre-hrc-cardo-gaps.md`, which this page cites by item number (`cardo B6`) and does not restate.
 
@@ -71,7 +71,7 @@ Production migrations stay Bun-owned. Rust refuses unknown/incomplete schemas an
 
 ## 3. Prerequisites from cardo
 
-All of them are on cardo main at **1796e1c** (`pre-hrc` fast-forwarded and deleted, 2026-10-20, R-00450). Pin cardo from main revisions only.
+All of them are on cardo main at **12bd05d** (current pin; `pre-hrc` fast-forwarded and deleted, 2026-10-20, R-00450). Pin cardo from main revisions only.
 
 | used by | cardo items |
 |---|---|
@@ -366,7 +366,7 @@ The kernel never delays daemon readiness. The ready condition is the wire accept
 
 There is no skew gate. The release-skew class (a producer shipping a field an older kernel had not declared, T-12017) is gone by construction: the producer and the declarations ship in one binary. A same-commit omission is caught by the existing cargo tests that project fixtures through the declarations (`every_projected_seat_field_is_declared_including_attention`, `hrcpty_attach_surface_projects_onto_seat_and_runtime_declared`). The T-12019 install stage retires.
 
-**Cardo revision.** The hrc-runtime pin moves 1796e1c → 12bd05d (collective rev: `cardo-host`, T-12068; per-connection owner routing, T-12069, unused by HRC) inside this task, together with the `rusqlite` line (embedding guide §1, §8).
+**Cardo revision.** The hrc-runtime pin advances to 12bd05d (collective rev: `cardo-host`, T-12068; per-connection owner routing, T-12069, unused by HRC) inside this task; `rusqlite` remains at `0.39` with `bundled` (embedding guide §1, §8).
 
 **Explicitly unsupported:**
 - brokers or harness pipes in-process (Track G);

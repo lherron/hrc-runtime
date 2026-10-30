@@ -18,7 +18,7 @@ approved_source:
   proposal: docs/proposals/hrc-rust-migration.md
   task: T-11441
   task_slug: rust-stage1-kernel-projector
-  cardo_revision: 1796e1c7e3b6bcfdcfea54cebf1788386a8b46dd
+  cardo_revision: 12bd05d758a936d12288bc0f102bb2833ecfa924
   prior_full_approval: e159381c1524a40921893601f9e858fc8645843e (r3.2)
   amendment_task: T-11452
   amendment_task_slug: hrc-kernel-seat-summon
@@ -511,8 +511,8 @@ last_verified: >
   architecture/contracts/turn-attention.yaml. No implementation or live
   acceptance is established by this design review.
   2026-10-20 design approval by source and contract reading against HRC
-  e159381c and cardo main 1796e1c. Reviewed page coverage, presentation and
-  session reads, attach resolvers, persisted context ownership, and cardo
+  e159381c and the then-pinned cardo main revision. Reviewed page coverage,
+  presentation and session reads, attach resolvers, persisted context ownership, and cardo
   subscriptions/projections contracts. No builds, tests, installs, service
   operations or implementation grades were performed for this ruling.
   2026-10-20 r3.3 scoped amendment approved by reading HRC d04a6f9d's
