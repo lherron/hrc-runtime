@@ -1,7 +1,7 @@
 # 4. HTTP API on the daemon socket
 
 The daemon's HTTP surface on its unix socket. Every `hrc` verb and the SDK (`HrcClient`, package
-`hrc-sdk`) ride it; ACP, the viewer and `hrc-kernel` are its other clients. About 99 `/v1/*` routes on
+`hrc-sdk`) ride it; ACP and the viewer are its other clients; the embedded kernel enters the owner dispatcher in-process. About 99 `/v1/*` routes on
 2026-10-26 (about 119 before the T-11542/T-11566..T-11569/T-11711 retirements); this feature drives the
 observation routes a consumer pages. Code: `packages/hrc-server/src/server-exact-routes.ts`,
 `server-request-methods.ts` (pattern routes), `bounded-event-stream.ts`, `event-handlers.ts`,

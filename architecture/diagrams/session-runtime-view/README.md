@@ -1,5 +1,9 @@
 # Session runtime view: an HRC Claude seat end to end
 
+> **Historical snapshot before T-12067/T-12141.** The separate kernel process
+> depicted in this README and its Arris/PNG assets has retired. rusthrc now
+> embeds the kernel; Loggia attaches to its socket. Keep this view as history.
+
 ![Session runtime view](session-runtime-view.png)
 
 > **Superseded for Claude seats on 2026-10-29 (T-12046, hrc-pty).** Claude seats

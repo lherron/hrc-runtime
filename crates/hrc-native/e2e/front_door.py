@@ -44,7 +44,6 @@ PROMPT = 'Reply with exactly the word OK and nothing else. No tools.'
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--rusthrc', type=Path, required=True)
-    p.add_argument('--kernel', type=Path, required=True)
     p.add_argument('--bun-release', type=Path, required=True)
     p.add_argument('--installed-hrc', type=Path, default=Path.home() / '.bun/bin/hrc')
     p.add_argument('--injector', default='', help='hrc-mail-injector version; empty skips')
@@ -54,7 +53,7 @@ def main():
     p.add_argument('--pending', action='append', default=[],
                    help='check-name prefix recorded but not asserted (work owned elsewhere, not landed)')
     args = p.parse_args()
-    args.rusthrc, args.kernel = args.rusthrc.resolve(), args.kernel.resolve()
+    args.rusthrc = args.rusthrc.resolve()
     if any(os.environ.get(k) for k in ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX')):
         raise RuntimeError('run this workflow from a clean ghostmux terminal')
     root = args.scratch_root.absolute()
@@ -310,28 +309,9 @@ def main():
               and rows('SELECT count(*) AS n FROM sessions')[0]['n'] == sessions_before + 1, front=native_write)
         gates['1-routes'] = {'pass': True}
 
-        # Kernel through the front.
-        kroot = root / 'k'
-        kroot.mkdir()
-        kernel = spawn('kernel', [args.kernel.resolve(), '--runtime-root', kroot, '--hrc-socket', public])
-        ksock = kroot / 'hrc-kernel.sock'
-        seats = []
-        for _ in range(300):
-            assert kernel.poll() is None, (art / 'kernel.log').read_text()[-3000:]
-            if responsive(ksock):
-                w = socket.socket(socket.AF_UNIX)
-                w.settimeout(10)
-                w.connect(str(ksock))
-                fh = w.makefile('rwb', buffering=0)
-                fh.write((json.dumps({'id': 'q', 'op': 'document.query',
-                                      'args': {'document_id': 'hrc', 'type': 'hrc.seat'}}) + '\n').encode())
-                reply = json.loads(fh.readline())
-                w.close()
-                seats = json.dumps(reply)
-                if scope in seats:
-                    break
-            time.sleep(.2)
-        check('kernel-projects-seat-through-front', scope in seats)
+        # Front mode has no embedded kernel (T-12067). Owner-mode wire
+        # projection and operations are exercised by kernel_fold.py.
+        check('front-has-no-kernel', not (run_dir / 'hrc-kernel.sock').exists())
 
         # Mail injector (scratch instance) through the front.
         if args.injector:
@@ -368,9 +348,6 @@ def main():
             check('injector-delivers-through-front', delivered, envelope=said.get('envelopes', [{}])[0].get('id'))
 
         # Gate 2: low-rate log reconciliation (<=10/route/minute, so every record is weight 1).
-        # Only this workflow's requests may land in the window: stop the kernel's
-        # polling, then start on a fresh minute.
-        stop('kernel')
         time.sleep(61 - time.time() % 60)
         window = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
         marks = {'native': [], 'bun': []}

@@ -25,7 +25,7 @@ and `packages/hrc-cli/src/metrics-report.ts`, `broker-verify/`, `worktree-prune.
   unnamed Bun caller), else `unknown`; federation records also carry `peer` (the authenticated node). Records
   from before T-11541 read as `unattributed`. Rows on `L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES` carry
   `suppressedPoll: true`.
-- On live on 2026-10-26 the busiest `metrics routes --by client` callers were `hrc-mail-injector`, `hrc-kernel`,
+- Historical, before the fold: on live on 2026-10-26 the busiest `metrics routes --by client` callers were `hrc-mail-injector`, `hrc-kernel`,
   `harness-broker`, `Bun`, `acp-server`; `rusthrc/0.1.0` appears as a client too (2 requests in the hour).
 - L3 request line (T-11541): every listener (main, ingest, peer, registry) writes one `component: http`,
   `event: http.request` line per request to the hrc-server log, with `{listener, method, route, path, status,

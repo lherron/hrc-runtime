@@ -72,7 +72,7 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `n3_events.py` | Compare native event history to the named Bun copy on one scratch ledger. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n3_handoff.py` | Semantic handoff's refusal order, before any durable target/message write. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n3_injector.py` | Unchanged injector + wrkc reply, with the Rust owner replaced mid-delivery. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_kernel_volume.py` | Real multi-turn ledger coverage by an unchanged kernel over owner restart. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n3_kernel_volume.py` | Historical independent-kernel survival workflow; superseded by embedded kernel checks (T-12141). | delete |
 | `n3_mail.py` | Stop gate on real private wrkc obligations, with identical Bun/native drives. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n3_messages.py` | Message filters/row shape against real Bun repo inserts and HTTP responses. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n3_presentation.py` | Compare the two real kernel presentation routes on one real-born seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
@@ -108,3 +108,21 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `target_placement.py` | Real target-session intent and placement reads, on an existing ready scratch seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `transcript_index.py` | T-12013: transcript follower resume from Bun's cursor, late-prose/inversion repair, search, status and rebuild against Bun on one snapshot. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `turn_no_intent.py` | T-11928: the real `hrc turn` births a session that never applied an intent. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+
+## Embedded kernel (T-12141)
+
+`kernel_fold.py` and `kernel_projection.py` run in `just cargo-check` against
+rusthrc's own socket. The latter verifies ingest errors/recovery for an
+unrepresentable activity expiry and drives the moved wire probe.
+`kq.py` and `live_probe.py` are the read-only inspection and wire smoke tools.
+The latter accepts `--socket <runtimeRoot>/hrc-kernel.sock --artifacts <dir>`.
+
+The historical standalone kernel fixture suites (bootstrap, surrogate, summon,
+restart, send) retired with the binary. Their HTTP fake-owner seam and
+survival across owner shutdown are superseded by the in-process fold.
+Projection shape, malformed JSON, sparse ledger and operation mapping are
+covered by hrc-domain's existing tests; `kernel_fold.py` covers real owner
+summon/attach, ledger wake, startup and shutdown. The historical N3 volume
+and N4 kernel-vs-Bun parity drivers retired too: a Bun owner has no kernel.
+N3 stream transport parity remains in `n3_streams.py`; `front_door.py` asserts
+that front mode hosts no kernel. See migration §8.1 for activation gates.

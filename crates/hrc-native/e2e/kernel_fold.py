@@ -14,7 +14,7 @@ Failure modes, each a check below:
   3 wake: a seat written over HTTP projects well inside the 10 s backstop
   4 seat.summon through the wire births an hrcpty seat; its row projects and
     resource.attach answers (the owner's in-process GET /v1/attach); every
-    owner call is metered as client hrc-kernel/<version>
+    owner call keeps the historical client identity hrc-kernel/<version>
   5 shutdown order: SIGTERM stops the kernel after the listener and before
     the federation step; the daemon exits 0 and the socket is gone
   6 a kernel that cannot start (its lock held) logs kernel.start_failed and
@@ -342,6 +342,7 @@ def main():
         metered = [e['data'] for e in events(r, '1') if e.get('event') == 'http.request'
                    and e['data'].get('path') in ('/v1/declarations/resolve', '/v1/runtimes/start', '/v1/attach')]
         r.check('4.owner-calls-metered-as-kernel', {m['path'] for m in metered} == {'/v1/declarations/resolve', '/v1/runtimes/start', '/v1/attach'}
+                # Preserve the historical accounting identity across the fold.
                 and all(m['client'].startswith('hrc-kernel/') for m in metered), metered=metered)
         # == 8. a context reading: one usage.updated, one committed row ======
         readings = []

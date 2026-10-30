@@ -165,11 +165,17 @@ pub fn project_with_context(
         let until = if rt.is_some() {
             Value::Null
         } else {
-            json!((at + Duration::hours(24)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+            let expiry = at.checked_add_signed(Duration::hours(24)).ok_or_else(|| {
+                ProjectorError::new(
+                    "hrc_response_invalid",
+                    format!("lastActivityAt expiry is out of range: {activity}"),
+                )
+            })?;
+            if expiry <= now {
+                continue;
+            }
+            json!(expiry.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
         };
-        if rt.is_none() && at + Duration::hours(24) <= now {
-            continue;
-        }
         let identity = &s["identity"];
         let mut seat = json!({"sessionRef":key,"scopeRef":s["scopeRef"],"laneRef":s["laneRef"],"displayRef":key,"hostSessionId":s["hostSessionId"],"generation":s["generation"],"status":mobile_status(s,rt),"summaryStatus":mobile_status(s,rt),"sessionStatus":s["status"],"lastActivityAt":activity,"lastHrcSeq":event.map(|e| &e["hrcSeq"]).cloned().unwrap_or(json!(0))});
         for field in ["agentId", "projectId", "taskId"] {

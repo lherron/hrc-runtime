@@ -613,9 +613,6 @@ def compare_values(args, checks):
     if getattr(args, 'suite', None) == 'n4-sqlite-telemetry':
         from n4_telemetry import compare as compare_telemetry
         return compare_telemetry(args, checks)
-    if getattr(args, 'suite', None) == 'n4-kernel':
-        from n4_kernel import compare as compare_kernel
-        return compare_kernel(args, checks)
     if getattr(args, 'suite', None) == 'n4-status':
         from n4_status import compare as compare_status
         return compare_status(args, checks)
@@ -1078,7 +1075,7 @@ def run_suite(args, checks):
                               'dbOwnerStderr': db_owners.stderr, 'dbOwnerExit': db_owners.returncode,
                               'scratchPids': sorted({profile['ownerPid']} | {int(line.split()[0]) for line in scratch}),
                               'processes': scratch, 'rustOwners': [line for line in scratch
-                                  if any(name in line for name in ('rusthrc', 'hrc-kernel'))]}
+                                  if any(name in line for name in ('rusthrc',))]}
                 elif kind == 'server-log':
                     path = Path(profile['serveLog']).resolve()
                     if not path.is_relative_to(Path(profile['scratchRoot']).resolve()):

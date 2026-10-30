@@ -44,7 +44,7 @@ describe('pruneReleaseDirs', () => {
     const f = await fixture([A, B, C], C)
     const bin = join(f.path(B), 'bin')
     await mkdir(bin)
-    const executable = join(bin, 'hrc-kernel')
+    const executable = join(bin, 'rusthrc')
     await copyFile(process.execPath, executable)
     await chmod(executable, 0o755)
     const child = Bun.spawn(

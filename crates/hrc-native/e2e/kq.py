@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Inspect HRC through Loggia's hrc-kernel (the same wire Loggia mounts).
+"""Inspect HRC through rusthrc's embedded kernel (the same wire Loggia mounts).
 
-Reads the kernel's own projection, so it adds no load to the HRC daemon: no
+Reads the kernel's own projection, so it uses its own read-only connection: no
 whole-table scans, no store lock. Prefer it to `hrc runtime list` / `/v1/status`
 for read-only inspection. Socket: $HRC_KERNEL_SOCKET, else the default below.
   kq.py status                      ingest binding: caught_up, cursor, resync

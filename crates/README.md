@@ -13,26 +13,28 @@ Its build script derives schema admission from the Bun migration graph; it does
 not execute those migrations.
 
 `hrc-domain` implements the HRC document and operations consumed by cardo. It
-reads the owner API and opens the store for native reads. It may depend on
+opens its own read-only store connection and uses an injected in-process owner
+binding. It may depend on
 `hrc-store`, `hrc-common`, cardo, and external libraries; it must not depend on
 the CLI, native daemon, or kernel.
 
-`hrc-kernel` hosts the rebuildable HRC projection over cardo and exposes its
-Unix socket for Loggia. It may depend on `hrc-domain`, shared leaf utilities,
-cardo, and external libraries, never the CLI or native daemon.
+The native daemon library embeds the rebuildable cardo projection and exposes
+`<runtimeRoot>/hrc-kernel.sock` for Loggia and `hrc-native/e2e/kq.py`.
+The historical standalone kernel crate retired in T-12141 (§8.1).
 
 `hrc-cli` implements the command surface. It may depend on `hrc-store`,
 `hrc-common`, and external libraries, never the native daemon, domain, or kernel.
 
 `hrc-native` owns the native daemon library and the `rusthrc` executable. The
-library may depend on `hrc-store`, `hrc-common`, and external libraries. The
+library may depend on `hrc-store`, `hrc-common`, `hrc-domain`, cardo, and external
+libraries. The
 `rusthrc` binary composes the native library and `hrc-cli`; the library must not
 import the CLI. The sibling `crate-graph-hrc-common` task establishes this split.
 
 Allowed workspace edges:
 
 - `hrc-common ← hrc-store ← {hrc-domain, hrc-cli, hrc-native lib}`
-- `hrc-domain ← hrc-kernel`
+- `hrc-domain ← hrc-native lib`
 - `rusthrc bin ← {hrc-native lib, hrc-cli}`
 
 Here `A ← B` means B may depend on A. Shared leaf dependencies may also be
@@ -40,12 +42,12 @@ used directly where needed. External libraries are centrally declared in
 `Cargo.toml`; member manifests inherit dependencies and the workspace lints.
 
 Run `just cargo-check` from the repository root. It checks formatting, runs
-Clippy with `-D warnings`, runs workspace tests, builds the kernel and native
-binary, and drives the CLI differential, native foundation, and kernel socket
+Clippy with `-D warnings`, runs workspace tests, builds rusthrc and hrc-pty, and
+drives the CLI differential, native foundation, and kernel socket
 E2E scripts against those binaries. Scripts create isolated scratch roots;
 these checks do not install or restart shared services. Set
-`HRC_CLI_E2E_ARTIFACTS`, `HRC_NATIVE_E2E_ARTIFACTS`, and
-`HRC_KERNEL_E2E_ARTIFACTS` to retain their reports at chosen paths.
+`HRC_CLI_E2E_ARTIFACTS` and `HRC_NATIVE_E2E_ARTIFACTS` to retain their reports at
+chosen paths.
 
 The sibling `tests-and-e2e-triage` task owns the promoted E2E set and its
 [script map](hrc-native/e2e/README.md). Consult that map for which additional

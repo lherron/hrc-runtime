@@ -27,8 +27,8 @@ Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-1
   command`, and their routes answer 404; 2026-10-26, T-11864.)
 - `hrc index status|rebuild`: the transcript search index behind feature 3's `monitor search`; rebuild rewrites
   the live index.
-- `rusthrc` and `hrc-kernel` (each release's `bin/`, `~/.bun/bin/rusthrc`): the native port (P-00866) and the
-  kernel the Bun daemon runs. On max3 on 2026-10-26 the front door was `direct` (no `rusthrc` daemon) and
+- `rusthrc` (including the embedded kernel) and `hrc-pty` (each release's `bin/`, `~/.bun/bin/rusthrc`): the native port (P-00866) and the
+  native seat supervisor. Historical readback: on max3 on 2026-10-26 the front door was `direct` (no `rusthrc` daemon) and
   `rusthrc --help` printed the same agent view as `hrc`. This skill drives the Bun daemon and CLI; features 1
   and 6 only read the front-door mode and `rusthrc`'s argument refusal.
 - `admin runtime ensure|prune` (prune deletes keep-forever ledgers by exact manifest), `admin events drain`

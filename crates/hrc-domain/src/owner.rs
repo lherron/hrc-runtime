@@ -1,6 +1,6 @@
 //! Owner operations enter HRC through one seam: method, route and body in,
-//! status and JSON body out. The hrc-kernel binary implements it over HTTP for
-//! now; rusthrc implements it in-process through its own dispatch (§8.1 item 4).
+//! status and JSON body out. rusthrc implements it in-process through its
+//! own dispatch (§8.1 item 4).
 use crate::HrcError;
 use serde_json::Value;
 

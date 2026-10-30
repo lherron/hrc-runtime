@@ -256,7 +256,7 @@ fn awaiting_input_projects_tool_attention_without_jev_fields() {
     assert!(seat_with_events(&[ask]).get("attention").is_none());
 }
 
-// The hrc-kernel document rejects a seat whose payload carries an undeclared
+// The embedded HRC document rejects a seat whose payload carries an undeclared
 // field, and bootstrap then never catches up (Loggia lost every seat when
 // seat.attention shipped without its declaration).
 #[test]
@@ -314,4 +314,16 @@ fn hrcpty_attach_surface_projects_onto_seat_and_runtime_declared() {
             );
         }
     }
+}
+
+// Persisted activity can parse as a valid date while its 24h expiry overflows.
+// Ingest must report that row as an error rather than killing the owner.
+#[test]
+fn unrepresentable_live_until_is_a_projector_error() {
+    let sessions = [
+        json!({"scopeRef":"scope", "laneRef":"main", "hostSessionId":"hs",
+        "generation":1, "status":"active", "updatedAt":"+262142-12-31"}),
+    ];
+    let result = project(&sessions, &[], &[], Utc::now());
+    assert!(result.is_err(), "overflowing expiry must be rejected");
 }

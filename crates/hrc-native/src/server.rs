@@ -403,7 +403,8 @@ async fn dispatch_local(server: &Shared, request: Request) -> Response {
 /// The kernel's owner seam (T-12067 §8.1 item 4): one request through
 /// `dispatch`, the function the listener calls, so the route table, accounting,
 /// federation forwarding and the ledger wake treat it as an HTTP request from
-/// `hrc-kernel`. No socket and no framing; the reply is its status and JSON.
+/// the historical client name `hrc-kernel`. No socket and no framing; the reply
+/// is its status and JSON.
 async fn call_local(
     server: &Shared,
     method: &str,

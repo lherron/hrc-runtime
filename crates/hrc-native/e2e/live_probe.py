@@ -5,7 +5,14 @@ import datetime
 import json
 import pathlib
 import time
-from kernel_e2e import Wire
+from kernel_fold import Wire as FoldWire
+
+
+class Wire(FoldWire):
+    def call(self, op, args=None):
+        reply = self.raw(op, args)
+        assert reply.get("ok"), reply
+        return reply["result"]
 
 
 def main():
@@ -39,7 +46,7 @@ def main():
     unavailable = []
     ended = []
     for row in query['rows']:
-        if row['payload'].get('tmux'):
+        if row['payload'].get('tmux') or row['payload'].get('hrcpty'):
             wire.file.write((json.dumps(dict(id='attach', op='resource.attach', args=dict(document_id='hrc', id=row['id'])))+'\n').encode())
             reply = json.loads(wire.file.readline())
             if not reply['ok']:
@@ -49,7 +56,8 @@ def main():
             answer = reply['result']
             assert answer['transport'] == 'tmux-attach'
             assert answer['descriptor']['mode'] == 'read-only'
-            assert '-r' in answer['descriptor']['argv']
+            flag = '--read-only' if row['payload'].get('hrcpty') else '-r'
+            assert flag in answer['descriptor']['argv']
             attached.append(dict(id=row['id'], sessionRef=row['payload']['sessionRef'], attach=answer))
         else:
             wire.file.write((json.dumps(dict(id='absent', op='resource.attach', args=dict(document_id='hrc', id=row['id'])))+'\n').encode())

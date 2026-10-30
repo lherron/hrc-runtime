@@ -22,6 +22,7 @@ use std::{
 use tokio::task::JoinHandle;
 
 /// User-Agent of every kernel request, so accounting meters it (T-11541).
+// Historical client identity retained for accounting continuity across the fold.
 pub(super) const CLIENT: &str = concat!("hrc-kernel/", env!("CARGO_PKG_VERSION"));
 /// The ledger watch wakes ingest; the interval is only a backstop.
 const INGEST_INTERVAL_MS: u64 = 10_000;

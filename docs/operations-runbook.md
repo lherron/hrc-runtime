@@ -50,14 +50,14 @@ For routine seat/runtime inspection use the kernel projection, avoiding a
 whole-table daemon scan:
 
 ```bash
-python3 -I crates/hrc-kernel/e2e/kq.py status
-python3 -I crates/hrc-kernel/e2e/kq.py seats
-python3 -I crates/hrc-kernel/e2e/kq.py busy
+python3 -I crates/hrc-native/e2e/kq.py status
+python3 -I crates/hrc-native/e2e/kq.py seats
+python3 -I crates/hrc-native/e2e/kq.py busy
 ```
 
 Check ingest lag in `status`. Seat active/inactive and runtime busy/ready are
-different facts. Do not restart the kernel to refresh a read: a cold bootstrap
-is expensive and blanks Loggia.
+different facts. The kernel shares rusthrc’s lifetime; a daemon restart rebuilds the projection
+and blanks Loggia until catch-up. Follow service restart authority.
 
 ## Restart doctrine
 
@@ -65,7 +65,8 @@ is expensive and blanks Loggia.
 
 Build, install, publish, and activation are separate states. Follow
 [atomic-install.md](atomic-install.md) for local release selection and its
-pre-cutover checks, including the kernel bootstrap gate. A failed candidate
+pre-cutover entrypoint checks. The historical standalone-kernel bootstrap
+gate retired in T-12141: rusthrc embeds the projection. A failed candidate
 must leave `current` unchanged. A local install does not activate the daemon.
 
 For fleet changes follow [fleet-deployment.md](fleet-deployment.md):

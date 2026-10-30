@@ -1,4 +1,4 @@
-//! Store-only presentation routes for unchanged hrc-kernel bootstrap and keyed
+//! Store-only presentation routes for embedded kernel bootstrap and keyed
 //! updates. No probe, reconciliation, attach or lifecycle write happens here.
 use super::{ApiError, Server, parse_body, parse_session_ref};
 use axum::{

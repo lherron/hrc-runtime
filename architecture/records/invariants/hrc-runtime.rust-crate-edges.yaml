@@ -11,8 +11,8 @@ predicate: >
   and the rusthrc binary to hrc-native library and hrc-cli. The hrc-native
   library hosts the kernel (T-12067 L2b) and also depends on the cardo crates
   cardo-runtime, cardo-runtime-tokio and cardo-host. hrc-domain has no
-  HTTP-client dependency. The legacy hrc-kernel crate and its edge to
-  hrc-domain remain permitted only until T-12141 deletes them (L2c).
+  HTTP-client dependency. The standalone kernel crate and edge were removed
+  by T-12141 (L2c).
   Projection stays in hrc-domain, which cannot
   depend on hrc-native; its reader takes a state path, not the daemon's
   Server or store mutex. Only

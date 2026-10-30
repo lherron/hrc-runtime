@@ -33,7 +33,7 @@ cargo leg only when Rust inputs changed (`scripts/validation-scope.ts`,
 | No credential-class key in an auto-loaded `.env*` | `scripts/check-env-hygiene.ts` | check |
 | Test files stay under 1000 lines | `scripts/check-test-source-size.ts --enforce` | verify |
 | Architecture records are well-formed and projections current | `scripts/check-architecture-records.ts` | pre-commit, pre-push, verify |
-| Rust crates are rustfmt- and clippy-clean (`-D warnings`), their tests pass, and the `hrc-kernel` E2Es pass | `just cargo-check`, run by `scripts/pre-push-validation.ts` when a push touches Rust or shared inputs (or its scope is ambiguous) | pre-push, verify |
+| Rust crates are rustfmt- and clippy-clean (`-D warnings`), their tests pass, and the embedded kernel E2Es pass | `just cargo-check`, run by `scripts/pre-push-validation.ts` when a push touches Rust or shared inputs (or its scope is ambiguous) | pre-push, verify |
 | `just install` refuses tracked modifications | `scripts/install-dirty-guard.ts` | install |
 | Only a canonical, pushed release is published | `scripts/publish-local-verdaccio.ts` containment proof | publish |
 | A deploy target is contained by origin/main, ahead of the checkout, and reported back by the running process | `_deploy-node` (justfile) | deploy |

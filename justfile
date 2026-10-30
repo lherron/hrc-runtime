@@ -12,7 +12,7 @@ default:
 # Project information
 info:
     @echo "Current Project: hrc-runtime"
-    @echo "Description: HRC runtime: rusthrc daemon + hrc CLI (Rust), hrc-kernel, TS client packages"
+    @echo "Description: HRC runtime: rusthrc daemon with embedded kernel + hrc CLI (Rust), TS client packages"
     @echo "Stack:       Rust (cargo workspace, crates/) + TypeScript (Bun workspace, packages/)"
     @echo ""
     @echo "Key commands:"
@@ -177,23 +177,20 @@ cargo-check:
     cargo fmt --manifest-path crates/Cargo.toml --all -- --check
     cargo clippy --manifest-path crates/Cargo.toml --workspace --all-targets --locked -- -D warnings
     cargo test --manifest-path crates/Cargo.toml --workspace --locked
-    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-kernel
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native
     python3 crates/hrc-cli/e2e/differential.py --binary crates/target/debug/rusthrc --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
+    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
+    python3 crates/hrc-native/e2e/kernel_fold.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fold"
+    python3 crates/hrc-native/e2e/kernel_projection.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-projection"
     python3 crates/hrc-native/e2e/foundation.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
     python3 crates/hrc-native/e2e/command_runs.py --binary crates/target/debug/rusthrc --scratch-root "/tmp/hrc-command-runs-$(date +%s)-$$" --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/command-runs"
-    python3 crates/hrc-kernel/e2e/kernel_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-e2e-$(date +%s)-$$}"
-    python3 crates/hrc-kernel/e2e/surrogate_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-surrogate-e2e-$(date +%s)-$$}/surrogate"
-    python3 crates/hrc-kernel/e2e/summon_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-summon-e2e-$(date +%s)-$$}/summon"
-    python3 crates/hrc-kernel/e2e/restart_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-restart-e2e-$(date +%s)-$$}/restart"
-    python3 crates/hrc-kernel/e2e/send_e2e.py --binary crates/target/debug/hrc-kernel --artifacts "${HRC_KERNEL_E2E_ARTIFACTS:-/tmp/hrc-kernel-send-e2e-$(date +%s)-$$}/send"
 
 # Standing native workflows, run by hand only. They compare native against a
 # named installed Bun baseline with live model turns (aspd, tmux and model
 # credentials required), so they stay off the post-push runner under the
 # 2026-10-26 no-Bun-in-the-gate ruling.
 e2e-native-full:
-    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-kernel
+    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
     python3 crates/hrc-native/e2e/full.py --artifacts "${HRC_NATIVE_FULL_ARTIFACTS:-${FOUNDRY_ARTIFACTS:-/tmp}/hrc-native-full-$(date +%s)-$$}"
 
 # -- Ephemeral development environment (T-06896) -----------------------------
@@ -1045,7 +1042,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     # ~/.zshenv. svc's does not add ~/.bun/bin or Homebrew, so `hrc` and `just`
     # are both MISSING over ssh there while they resolve fine on hrcdev.
     # Prepend the canonical locations rather than requiring every node's dotfiles
-    # to agree. `just install` builds hrc-kernel and rusthrc, so cargo is required too:
+    # to agree. `just install` builds rusthrc and hrc-pty, so cargo is required too:
     # rustup-init puts it in ~/.cargo/bin, Homebrew's keg-only rustup (hrcdev)
     # in /opt/homebrew/opt/rustup/bin.
     export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
@@ -1067,7 +1064,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     command -v jq >/dev/null 2>&1 || fail 'jq is not available'
     command -v just >/dev/null 2>&1 || fail 'just is not available'
     command -v bun >/dev/null 2>&1 || fail 'bun is not available'
-    command -v cargo >/dev/null 2>&1 || fail 'cargo is not available (install builds hrc-kernel and rusthrc)'
+    command -v cargo >/dev/null 2>&1 || fail 'cargo is not available (install builds rusthrc and hrc-pty)'
     [[ -d "$repo/.git" ]] || fail "checkout not found at $repo"
     [[ -d "$asp_repo/.git" ]] || fail "agent-spaces checkout not found at $asp_repo"
     [[ -f "$aspd_ns/service/config.json" ]] ||

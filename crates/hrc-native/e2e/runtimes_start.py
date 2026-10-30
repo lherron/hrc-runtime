@@ -6,9 +6,9 @@ release, a private wrkqd, and a peerless federation.json with the gate in
 enforce mode (the exact and implicit-suffix branches refuse without one). The
 cases are the request shapes live callers send:
 
-  exact   hrc-kernel seat.summon, iOS new-session, force-primary create
+  exact   kernel seat.summon, iOS new-session, force-primary create
           ({sessionRef, conflictPolicy:"reject", summonIntent:"implicit"})
-  suffix  hrc-kernel --fresh and iOS roster (implicit), `hrc start
+  suffix  kernel fresh summon and iOS roster (implicit), `hrc start
           --on-conflict suffix` (explicit_local)
   ensure  workflow interact runs, force-primary launch successor, `hrc start`
           without a prompt, `hrc resume --no-attach` ({hostSessionId, intent})

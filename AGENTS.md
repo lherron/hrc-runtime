@@ -68,12 +68,12 @@ must not assert the other repo's behavior; shared render semantics live in
 
 ## Inspecting live HRC through the kernel
 
-For read-only inspection of live seats and runtimes, mount Loggia's hrc-kernel
+For read-only inspection of live seats and runtimes, query rusthrc's embedded cardo kernel
 the way Loggia does, rather than polling the daemon:
-`python3 -I crates/hrc-kernel/e2e/kq.py status|seats [re]|runtimes [re]|busy|raw <op> '<json>'`
+`python3 -I crates/hrc-native/e2e/kq.py status|seats [re]|runtimes [re]|busy|raw <op> '<json>'`
 (socket `~/praesidium/var/run/hrc/hrc-kernel.sock`, override with
-`HRC_KERNEL_SOCKET`). The kernel answers from its own projection, so it costs
-the daemon nothing. `hrc runtime list`, `/v1/status`, `/v1/runtimes` and
+`HRC_KERNEL_SOCKET`). The kernel answers from its own projection, so it avoids
+the daemon’s store mutex. `hrc runtime list`, `/v1/status`, `/v1/runtimes` and
 `runtimes/inspect` are whole-table scans, which under the native owner run
 under the single store mutex and delay mail and turns for everyone.
 
@@ -82,8 +82,9 @@ under the single store mutex and delay mail and turns for everyone.
 - Seat rows report `active`/`inactive`; busy/ready lives on `hrc.runtime` rows.
 - `seat.summon`, `seat.restart` and `seat.send` are write ops on the same wire;
   `kq.py raw` reaches them. Use them only when you mean to act.
-- Restarting the kernel costs a cold bootstrap (minutes, several GB on max3's
-  ledger) and blanks Loggia while it runs. Read from it; don't bounce it.
+- Restarting rusthrc also rebuilds the embedded projection and blanks Loggia
+  until catch-up (3–4 s on max3 since T-11919). Check `ingest.status`; service
+  restarts follow Mable’s restart authority.
 
 ## Runtime gotchas
 

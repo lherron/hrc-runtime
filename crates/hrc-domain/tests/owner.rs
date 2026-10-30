@@ -78,6 +78,7 @@ fn summon_resolves_then_starts_through_the_seam() {
     );
     let start = calls[1].2.as_ref().unwrap();
     assert_eq!(start["sessionRef"], SEAT);
+    // Historical idempotency prefix is a compatibility contract.
     assert_eq!(start["idempotencyKey"], "hrc-kernel-summon-r1");
     assert_eq!(
         start["runtimeIntent"]["placement"]["correlation"]["sessionRef"],

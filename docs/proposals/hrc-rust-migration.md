@@ -31,6 +31,11 @@ The cardo wire is an additional socket, the mount surface for Loggia and agents.
 
 ## 1. Stages
 
+Historical stages below retain their original crate names; §8.1 is the current
+owner/embedded-kernel design. The standalone crate and install gate retired in
+T-12141. Client-accounting and summon-idempotency prefixes keep their historical
+spelling for continuity.
+
 Delivered stages are preserved. Native development is incremental; production transfer and retirement have separate gates.
 
 | stage | what runs | writes `state.sqlite` | reversible by |

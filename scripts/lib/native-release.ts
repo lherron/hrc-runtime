@@ -3,7 +3,7 @@ import { chmod, copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node
 import { join, relative } from 'node:path'
 
 // Reuse only when source identity, Rust/shared bytes, and target match. A TS-only
-// atomic release still receives the binary; it never silently omits the kernel.
+// atomic release still receives both native binaries.
 async function inputDigest(root: string): Promise<string> {
   const manifest = JSON.parse(await readFile(join(root, 'praesidium-release.json'), 'utf8'))
   const sourceCommit: unknown = manifest.hrcBuild?.sourceCommit
@@ -51,7 +51,7 @@ async function inputDigest(root: string): Promise<string> {
   return hash.digest('hex')
 }
 
-export async function prepareKernelRelease(
+export async function prepareNativeRelease(
   sourceRoot: string,
   releasePath: string,
   previousRelease: string,
@@ -60,7 +60,6 @@ export async function prepareKernelRelease(
   const digest = await inputDigest(releasePath)
   // hrc-pty is the per-seat supervisor rusthrc starts from beside itself (T-12046).
   for (const [binary, crate, probe] of [
-    ['hrc-kernel', 'hrc-kernel', '--help'],
     ['rusthrc', 'hrc-native', '--help'],
     ['hrc-pty', 'hrc-pty', 'version'],
   ] as const) {

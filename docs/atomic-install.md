@@ -130,14 +130,15 @@ release.
 - `hrc --help`, `hrcchat --help`, and `hrcmail --help` run from the prepared image before cutover.
 - Old releases are not retained (T-10024). After the cutover, install deletes
   every `release-*` directory except the new current one and the one the
-  running daemon reports in `hrc server status`, plus any release containing the
-  live owner of `<runtimeRoot>/hrc-kernel.sock`. Both install and daemon-startup
-  pruning resolve that process's mapped executable with `lsof`, independently of
-  the current symlink; unavailable socket-owner evidence prevents pruning.
-  A daemon that is not running keeps no daemon release; a status that gives no
-  answer prunes nothing. Startup from current deletes older releases except a
-  live kernel's release. Once both processes use current, the next prune returns
-  to one directory. Rollback is a reinstall of a known-good commit.
+  running daemon reports in `hrc server status`, plus every release held by a
+  live process (cwd, open manifest/binary, or argv). Both install and startup
+  pruning use the generic live-holder probe; unavailable evidence prevents
+  pruning. The embedded kernel shares rusthrc's lifetime and release.
+  Rollback is a reinstall of a known-good commit.
+- Rust staging builds `rusthrc` and `hrc-pty` through `scripts/lib/native-release.ts`.
+  The historical T-12019 separate-kernel bootstrap gate retired with T-12141:
+  projection and owner now ship in one binary. Startup catch-up is visible in
+  `ingest.status`, not an install gate.
 - A daemon restart is still required after `just install` when server code has
   changed; the running process does not reload merely because the CLI link moved.
 

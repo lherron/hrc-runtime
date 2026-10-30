@@ -50,7 +50,7 @@ Scratch or live:
   `needs operator`, and drive what you can around it.
 - Test **what is installed.** `hv` runs the installed `hrc` CLI (`~/.bun/bin/hrc` → the current atomic
   release) and a byte copy of that release as the scratch daemon, not the checkout. A change is not testable
-  here until it is installed; until then say so. The release also ships `rusthrc` and `hrc-kernel`
+  here until it is installed; until then say so. The release also ships `rusthrc` (with its embedded kernel) and `hrc-pty`
   (`bin/`): this skill grades the Bun daemon and the Bun `hrc` CLI. The native port (P-00866) proves itself
   through its own conformance; don't count a native feature as driven here unless you drove `rusthrc`
   itself, and check `.api.listenSocketPath == .api.socketPath` (or `just front-door-status` says `direct`)

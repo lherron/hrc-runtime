@@ -191,13 +191,13 @@ access metrics stay in
 `e2e/front_door.py` is the scratch workflow for gates 1-3: Bun on the private
 socket, front refusals, the installed `hrc` CLI and a real model turn through
 the front, front-safe native reads against Bun, verbatim forwarding and live
-streams, the kernel and a scratch mail injector through the front, the
+streams and a scratch mail injector through the front (front mode hosts no kernel), the
 low-rate log reconciliation, SIGKILL recovery, and rollback with the broker
 reattached. Run it from a clean ghostmux terminal:
 
 ```
 python3 crates/hrc-native/e2e/front_door.py --rusthrc crates/target/debug/rusthrc \
-  --kernel crates/target/debug/hrc-kernel --bun-release /tmp/hrcf-rel-T11822 \
+  --bun-release /tmp/hrcf-rel-T11822 \
   --aspd-socket /Users/lherron/praesidium/var/aspd/run/aspd.sock \
   --injector 0.1.0-dev.20261023155744 --scratch-root /tmp/hrcf/1 --artifacts /tmp/hrcf-results
 ```

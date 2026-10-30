@@ -9,13 +9,13 @@
  *
  *   R1        daemon A serves runtime root X from it      -> kept
  *   R_UNREF   nothing references it                      -> removed (control)
- *   R_KERNEL  a kernel executes R_KERNEL/bin/hrc-kernel   -> kept
+ *   R_NATIVE  a native holder executes R_NATIVE/bin/rusthrc   -> kept
  *   R_HELPER  a process was started as `bun R_HELPER/…`   -> kept
  *   R2        current; daemon B starts from it at root Y  -> kept (current)
  *
- * The kernel and daemon A start through the current link, as production does
+ * The native holder and daemon A start through the current link, as production does
  * (`bun ~/.bun/bin/hrc server serve`), so neither argv names its release: the
- * kernel is visible only by its executable image, A only by what it holds open.
+ * native holder is visible only by its executable image, A only by what it holds open.
  *
  * The 2026-10-26 incident is R1: B, a scratch daemon on another root, deleted
  * the release max3's production daemon (A) was running from. Once every holder
@@ -32,7 +32,7 @@ const CHECKOUT = join(import.meta.dir, '..')
 // than its current go, so A must leave the rest of the fixture alone.
 const R1 = 'release-20261020000000000-1'
 const R_UNREF = 'release-20261021000000000-2'
-const R_KERNEL = 'release-20261022000000000-3'
+const R_NATIVE = 'release-20261022000000000-3'
 const R_HELPER = 'release-20261023000000000-4'
 const R2 = 'release-20261024000000000-5'
 
@@ -178,15 +178,11 @@ async function waitForPrune(daemon: Daemon): Promise<Record<string, unknown>> {
   throw new Error(`timed out waiting for the startup prune:\n${readFileSync(daemon.log, 'utf8')}`)
 }
 
-/** A stand-in kernel: a real process whose executable image is the release's bin/hrc-kernel. */
-async function startKernel(release: string, currentLink: string): Promise<Proc> {
-  await run(['cp', '-c', process.execPath, join(release, 'bin', 'hrc-kernel')])
+/** A stand-in native holder: a real process whose executable image is the release's bin/rusthrc. */
+async function startNative(release: string, currentLink: string): Promise<Proc> {
+  await run(['cp', '-c', process.execPath, join(release, 'bin', 'rusthrc')])
   const child = Bun.spawn(
-    [
-      join(currentLink, 'bin', 'hrc-kernel'),
-      '-e',
-      'console.log("ready"); setInterval(() => {}, 1e9)',
-    ],
+    [join(currentLink, 'bin', 'rusthrc'), '-e', 'console.log("ready"); setInterval(() => {}, 1e9)'],
     {
       stdout: 'pipe',
       stderr: 'ignore',
@@ -219,7 +215,7 @@ describe('T-11830 startup release prune vs live holders', () => {
     const installRoot = join(scratch, 'install')
     const releaseRoot = join(installRoot, 'hrc-runtime-releases')
     const release: Record<string, string> = {}
-    for (const id of [R1, R_UNREF, R_KERNEL, R_HELPER, R2]) {
+    for (const id of [R1, R_UNREF, R_NATIVE, R_HELPER, R2]) {
       release[id] = await makeRelease(releaseRoot, id)
     }
     const list = async () => (await readdir(releaseRoot)).sort()
@@ -230,8 +226,8 @@ describe('T-11830 startup release prune vs live holders', () => {
     await setCurrent(installRoot, R1)
     const daemonA = await startDaemon(currentLink, join(scratch, 'X'))
     expect(await waitForPrune(daemonA)).toMatchObject({ removed: [] })
-    await setCurrent(installRoot, R_KERNEL)
-    const kernel = await startKernel(release[R_KERNEL] as string, currentLink)
+    await setCurrent(installRoot, R_NATIVE)
+    const native = await startNative(release[R_NATIVE] as string, currentLink)
     const helper = await startHelper(release[R_HELPER] as string)
 
     // Install R2. Daemon B starts from the installed tree at runtime root Y.
@@ -240,16 +236,16 @@ describe('T-11830 startup release prune vs live holders', () => {
     const prune = await waitForPrune(daemonB)
     console.log(`daemon B startup prune: ${JSON.stringify(prune)}`)
 
-    expect(await list()).toEqual([R1, R_KERNEL, R_HELPER, R2])
+    expect(await list()).toEqual([R1, R_NATIVE, R_HELPER, R2])
     expect(prune).toMatchObject({ pruned: true, current: R2, removed: [R_UNREF], failed: [] })
     expect(prune['heldBy']).toMatchObject({
-      [R_KERNEL]: [kernel.pid],
+      [R_NATIVE]: [native.pid],
       [R_HELPER]: [helper.pid],
       [R1]: [daemonA.pid],
     })
 
     // Every holder exits; a fresh daemon from current removes all of it.
-    for (const proc of [daemonA, kernel, helper, daemonB]) await proc.kill()
+    for (const proc of [daemonA, native, helper, daemonB]) await proc.kill()
     const daemonC = await startDaemon(release[R2] as string, join(scratch, 'Z'))
     const cleanup = await waitForPrune(daemonC)
     console.log(`daemon C startup prune: ${JSON.stringify(cleanup)}`)

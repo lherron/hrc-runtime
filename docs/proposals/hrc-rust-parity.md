@@ -37,7 +37,7 @@ Lance ruling, 2026-10-25: this campaign implements only routes and CLI commands 
 
 ## Both on every node: Rust front door
 
-Lance ruling 2026-10-25: during the transition Bun and Rust both run on each node, as Bun and hrc-kernel do today. One process owns execution at a time. Bun's claims, broker control and event wakeups live in process-local state, so two owners on one store would race.
+Lance ruling 2026-10-25: during the transition Bun and Rust both run on each node, as Bun and the historical standalone kernel did at that ruling. One process owns execution at a time. Bun's claims, broker control and event wakeups live in process-local state, so two owners on one store would race.
 
 **Topology.** `rusthrc server` binds the node's public `hrc.sock`. Bun binds a private socket (`hrc-bun.sock`) in the same runtime dir and uses the same state root. Every client (CLI, kernel, mail injector, ACP, broker callbacks) reaches Rust. Rust answers what it may serve and forwards everything else verbatim, streams included. Execution owners connect to brokers directly over the brokers' own sockets, so broker IPC does not pass through the front.
 

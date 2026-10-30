@@ -92,6 +92,7 @@ impl Summon {
             .as_object_mut()
             .ok_or_else(invalid)?
             .insert("sessionRef".into(), json!(self.session_ref));
+        // Historical idempotency prefix is retained across the fold.
         let mut request = json!({"runtimeIntent":intent,"conflictPolicy":if self.fresh {"suffix"} else {"reject"},
             "summonIntent":"implicit","idempotencyKey":format!("hrc-kernel-summon-{}",self.request_id),"restartStyle":"reuse_pty"});
         request[if self.fresh {

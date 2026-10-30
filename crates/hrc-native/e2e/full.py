@@ -22,7 +22,6 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--artifacts', type=Path, required=True)
     p.add_argument('--binary', type=Path, default=Path('crates/target/debug/rusthrc'))
-    p.add_argument('--kernel', type=Path, default=Path('crates/target/debug/hrc-kernel'))
     p.add_argument('--bun-release', type=Path, default=Path.home()/'.bun/install/hrc-runtime-current')
     p.add_argument('--aspd-socket', type=Path, default=Path.home()/'praesidium/var/aspd/run/aspd.sock')
     args = p.parse_args()
@@ -60,7 +59,7 @@ def main():
                 if name in ('front_door', 'cold_birth', 'n2_restart', 'n3_submissions', 'maintenance'):
                     argv += ['--aspd-socket', str(args.aspd_socket.resolve())]
                 if name == 'front_door':
-                    argv += ['--kernel', str(args.kernel.resolve()), '--installed-hrc', str(oracle)]
+                    argv += ['--installed-hrc', str(oracle)]
             print('RUN', name, flush=True)
             with (dest/'driver.log').open('w') as log:
                 child = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT)

@@ -520,18 +520,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hrc-kernel"
-version = "0.1.0"
-dependencies = [
- "cardo-core",
- "cardo-runtime",
- "crossbeam-channel",
- "hrc-domain",
- "reqwest",
- "serde_json",
-]
-
-[[package]]
 name = "hrc-native"
 version = "0.1.0"
 dependencies = [

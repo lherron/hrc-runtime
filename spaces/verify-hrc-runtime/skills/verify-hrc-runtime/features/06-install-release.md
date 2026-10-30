@@ -4,9 +4,9 @@ How a build becomes the installed `hrc`: `just install` builds an immutable rele
 away from the checkout, smokes its entrypoints and atomically repoints `~/.bun/install/hrc-runtime-current`;
 the daemon runs that release only after a restart. Code: `scripts/atomic-install.ts`,
 `scripts/install-dirty-guard.ts`, `scripts/install-policy.ts`, `scripts/lib/install-source-scope.ts`,
-`scripts/lib/kernel-release.ts` (cargo builds of `hrc-kernel` and `rusthrc`), `scripts/front-door.ts`,
+`scripts/lib/native-release.ts` (cargo builds of `rusthrc` and `hrc-pty`), `scripts/front-door.ts`,
 `packages/hrc-core/src/release-prune.ts`, `packages/hrc-server/src/release-provenance.ts`.
-Docs: `docs/atomic-install.md` (its kernel-socket paragraph, :128-137, predates 02661aeb; T-11871),
+Docs: `docs/atomic-install.md`,
 `~/praesidium/build_deploy_guide.md`, `justfile` (`install`, `publish`, `deploy-*`, `fleet-status`,
 `front-door-*`).
 
@@ -15,9 +15,9 @@ Docs: `docs/atomic-install.md` (its kernel-socket paragraph, :128-137, predates 
 - The installed surface: `~/.bun/install/hrc-runtime-current` → `hrc-runtime-releases/release-<stamp>-<pid>`;
   `~/.bun/bin/hrc` → the global `hrc-cli` entrypoint; `praesidium-release.json` in each release (releaseId,
   `hrcBuild.sourceCommit`, `setVersion`, `aspContracts`, `installedAt`). Each release also carries
-  `bin/hrc-kernel` and `bin/rusthrc` with their `.inputs` digests (install needs cargo), and
-  `~/.bun/bin/rusthrc` → `hrc-runtime-current/bin/rusthrc`. The running `hrc-kernel` is a child of the Bun
-  daemon, started from current.
+  `bin/hrc-pty` and `bin/rusthrc` with their `.inputs` digests (install needs cargo), and
+  `~/.bun/bin/rusthrc` → `hrc-runtime-current/bin/rusthrc`. The embedded kernel runs inside the owner rusthrc and shares its release and lifetime.
+  The historical T-12019 separate-kernel install gate retired in T-12141.
 - The daemon's view: `hrc server status --json` `.release` (mode atomic, releaseId, sourceCommit,
   `runningEqualsInstalled`). Install changes "installed"; only `hrc server restart` changes "running".
 - The dirty guard: `bun scripts/install-dirty-guard.ts --source-root=$PWD` refuses tracked source
