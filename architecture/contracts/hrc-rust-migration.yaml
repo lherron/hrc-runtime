@@ -51,14 +51,22 @@ front_door_amendment:
   status: design approved by Daedalus 2026-10-25 on EN-35519; closes F1 and F2 from EN-35517
   authority: Lance's 2026-10-25 both-processes and Rust access-logging direction, submitted by Mable in EN-35516
   boundary: both processes on each node with one execution owner; front-safe native reads before flip and front-safe Bun reads after flip
+kernel_fold_amendment:
+  task: T-12067
+  task_slug: hrc-kernel-fold
+  proposal: docs/proposals/hrc-rust-migration.md section 8.1
+  status: pending Daedalus review on daedalus@hrc-runtime:T-12067
+  authority: Lance's 2026-10-29 ruling that HRC embeds its kernel (no single-process cardo platform)
+  boundary: kernel runs inside the owner rusthrc; hrc-kernel process, crate and install gate retire; brokers, aspc and injector unmoved
 predicate: >
   HRC embeds cardo-runtime as a library and retains ownership of its durable
   store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
   crates and TypeScript packages share one repository and release identity;
   they meet through explicit API, wire and store contracts, not cross-imports.
-  Stage 1 adds a Rust kernel reading only HRC's pinned side-effect-free HTTP
-  read set. It never opens state.sqlite, reconciles substrate liveness or
-  writes HRC state. Its single hrc document is rebuildable, durability none
+  Stage 1 adds a Rust kernel. Since f99c8878 it projects from HRC's native
+  ledger through its own read-only state.sqlite connection and sends owner
+  operations to the daemon over HTTP. It never reconciles substrate liveness
+  or writes HRC state. Its single hrc document is rebuildable, durability none
   and ingest_only, with seat, runtime and project observation nodes. Seats
   are keyed by scope and lane, take the latest selected generation, and
   follow the live-runtime-or-24-hour-activity membership rule. Runtime fields
