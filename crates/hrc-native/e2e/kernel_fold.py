@@ -31,13 +31,14 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
 from hrcpty_substrate import FakeAspd, Run, AGENT, PROJECT, LEAK, HERE, REPO
 from n4_federation import TAILNET, free_port
 
-KQ = REPO / 'crates/hrc-kernel/e2e/kq.py'
+KQ = HERE / 'kq.py'
 LIVE_KERNEL = Path.home() / 'praesidium/var/run/hrc/hrc-kernel.sock'
 
 
@@ -185,16 +186,72 @@ def placement_hint(root):
                           'dryRun': False}, 'harness': {'interactive': True}}
 
 
+def turn_context(r, request, window):
+    """One context reading on a stub-broker runtime: the stub emits one
+    usage.updated for the named turn, which rusthrc projects in one
+    transaction as one runtime.context.updated. `window` must differ from the
+    stored reading's windowTokens: HRC skips a reading whose usedTokens and
+    windowTokens both equal the stored one, whatever its turnId. Returns the
+    committed row's hrc_seq."""
+    runtime, turn, used = request.get('runtimeId'), request.get('turnId'), request.get('usedTokens')
+    if not (isinstance(runtime, str) and runtime and isinstance(turn, str) and turn.strip()
+            and isinstance(used, int) and not isinstance(used, bool) and used >= 0):
+        raise ValueError('turnContext needs runtimeId, a non-empty turnId and an integer usedTokens >= 0')
+    found = r.rows('SELECT runtime_state_json FROM runtimes WHERE runtime_id=?', (runtime,))
+    if not found:
+        raise ValueError(f'unknown runtime {runtime}')
+    endpoint = (json.loads(found[0]['runtime_state_json'] or '{}').get('broker') or {}).get('endpoint') or {}
+    if not endpoint.get('socketPath'):
+        raise ValueError(f'runtime {runtime} has no broker endpoint')
+    kind = 'runtime.context.updated'
+    before = r.rows('SELECT coalesce(max(hrc_seq),0) AS s FROM hrc_events')[0]['s']
+    with socket.socket(socket.AF_UNIX) as s:
+        s.settimeout(10)
+        s.connect(endpoint['socketPath'])
+        s.sendall((json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'stub.usage', 'params':
+                               {'turnId': turn, 'usedTokens': used, 'windowTokens': window}}) + '\n').encode())
+        reply = json.loads(s.makefile('r').readline())
+    if 'error' in reply:
+        raise ValueError(f"stub broker refused: {reply['error'].get('message')}")
+    sql = ("SELECT hrc_seq FROM hrc_events WHERE hrc_seq>? AND runtime_id=? AND event_kind=? "
+           "AND json_extract(payload_json,'$.turnId')=? AND json_extract(payload_json,'$.usedTokens')=?")
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        row = r.rows(sql, (before, runtime, kind, turn, used))
+        if row:
+            return row[0]['hrc_seq']
+        time.sleep(0.02)
+    raise ValueError(f'no {kind} committed within 10 s')
+
+
 def serve(r, aspd, root, kernel):
     """--serve: one scratch daemon for another suite (cardo's HrcProfile). The
     first stdout line is the ready line, cardo-host's shape plus HRC's own
-    socket; SIGTERM or SIGINT tears every process and the root down."""
+    socket. Each stdin line {"turnContext":{runtimeId,turnId,usedTokens}} is
+    answered by one stdout line once HRC has committed it. SIGTERM, SIGINT or
+    stdin EOF (the suite is gone) tears every process and the root down."""
     stop = []
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.append(True))
     daemon = r.up('serve')
     print(json.dumps({'status': 'serving', 'socket': str(kernel), 'pid': daemon.pid, 'hrcSocket': str(r.socket),
                       'root': str(root), 'agent': AGENT, 'project': PROJECT, 'runtimeIntent': placement_hint(root)}), flush=True)
+
+    def control():
+        window = 200_000
+        for line in sys.stdin:
+            if not line.strip():
+                continue
+            try:
+                request = json.loads(line)['turnContext']
+                window += 1
+                seq = turn_context(r, request, window)
+                answer = {'ok': True, 'runtimeId': request['runtimeId'], 'hrcSeq': seq}
+            except Exception as error:  # noqa: BLE001 - every failure is answered
+                answer = {'ok': False, 'error': f'{type(error).__name__}: {error}'}
+            print(json.dumps({'turnContext': answer}), flush=True)
+        stop.append(True)
+    threading.Thread(target=control, daemon=True).start()
     try:
         while not stop and daemon.poll() is None:
             time.sleep(0.2)
@@ -284,6 +341,20 @@ def main():
                    and e['data'].get('path') in ('/v1/declarations/resolve', '/v1/runtimes/start', '/v1/attach')]
         r.check('4.owner-calls-metered-as-kernel', {m['path'] for m in metered} == {'/v1/declarations/resolve', '/v1/runtimes/start', '/v1/attach'}
                 and all(m['client'].startswith('hrc-kernel/') for m in metered), metered=metered)
+        # == 8. a context reading: one usage.updated, one committed row ======
+        readings = []
+        for n, (turn, used) in enumerate((('ctx-loc', 10), ('ctx-gone', 10)), 1):
+            head = r.rows('SELECT coalesce(max(hrc_seq),0) AS s FROM hrc_events')[0]['s']
+            seq = turn_context(r, dict(runtimeId=runtime, turnId=turn, usedTokens=used), 200_000 + n)
+            time.sleep(0.5)
+            new = r.rows('SELECT hrc_seq, event_kind FROM hrc_events WHERE hrc_seq>?', (head,))
+            projected = r.wait(lambda: next((x['payload'].get('contextReading') for x in rows(kernel, 'hrc.runtime')
+                                             if x['payload'].get('runtimeId') == runtime
+                                             and (x['payload'].get('contextReading') or {}).get('turnId') == turn), None),
+                               5, 'projected reading')
+            readings.append(dict(seq=seq, rows=new, projected=projected))
+        r.check('8.turn-context-one-row-each', all(x['rows'] == [{'hrc_seq': x['seq'], 'event_kind': 'runtime.context.updated'}]
+                                                   and x['projected']['usedTokens'] == 10 for x in readings), readings=readings)
         code, term = r.http('POST', '/v1/terminate', {'runtimeId': runtime})
         r.check('4.terminate', code == 200, status=code, body=term)
 

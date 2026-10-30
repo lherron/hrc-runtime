@@ -16,6 +16,9 @@ until the child prints `GOT#n[<answer>]` (polled through the lease's
 `capture`), so the daemon's question-answer door has a live ask to answer.
 With a tmux lease the turn completes at once.
 
+`stub.usage` {turnId, usedTokens, windowTokens}, sent on its own connection,
+emits one usage.updated for that turn (kernel_fold.py --serve's turnContext).
+
 Every request and emitted event is appended to <ipcDir>/stub.ndjson.
 Release identity comes from release.json two directories above this file.
 """
@@ -64,12 +67,14 @@ def send(conn, frame):
             pass
 
 
-def emit(kind, payload, input_id=None):
+def emit(kind, payload, input_id=None, turn_id=None):
     with lock:
         seq = len(state['events']) + 1
         envelope = {'invocationId': state['invocation'], 'seq': seq, 'type': kind, 'time': now(), 'payload': payload}
         if input_id:
             envelope['inputId'] = input_id
+        if turn_id:
+            envelope['turnId'] = turn_id
         state['events'].append(envelope)
         with open(ARGS['event-ledger'], 'a') as f:
             f.write(json.dumps(envelope) + '\n')
@@ -77,6 +82,7 @@ def emit(kind, payload, input_id=None):
         conn = state['controller']
     if conn is not None:
         send(conn, {'jsonrpc': '2.0', 'method': 'invocation.event', 'params': envelope})
+    return seq
 
 
 # -- the lease ---------------------------------------------------------------
@@ -226,6 +232,13 @@ def handle(conn, method, params):
         with lock:
             state['state'] = 'stopped'
         return {'ok': True}
+    if method == 'stub.usage':
+        # A test control, not harness-broker/0.2: one usage.updated carrying a
+        # context reading for an explicit turn (kernel_fold.py --serve, T-12140).
+        if not state['invocation']:
+            raise RuntimeError('no invocation has started')
+        context = {'usedTokens': params['usedTokens'], 'windowTokens': params['windowTokens']}
+        return {'seq': emit('usage.updated', {'context': context}, turn_id=params['turnId'])}
     if method == 'invocation.dispose':
         threading.Timer(1.0, lambda: os._exit(0)).start()
         return {'ok': True, 'disposed': True}
