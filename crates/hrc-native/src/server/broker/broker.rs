@@ -184,6 +184,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         attach,
         ..
     } = birth;
+    let mut attach = attach;
     let host = string(&session, "hostSessionId")?.to_owned();
     let run = (!prompt.is_empty()).then_some(run_id);
     let mut attempt = StartAttempt::default();
@@ -216,7 +217,12 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         }
         server.ledger_committed();
         let attach_pending = attach.is_some() && allocation.get("lease").is_some();
-        if let Some(gate) = attach
+        // A tmux client attaches before invocation.start. An hrcpty supervisor
+        // keeps the screen itself, and its attach descriptor exists only once
+        // finish_broker_start records the leased-hrcpty hosting, so its gate
+        // fires after the committed start, below.
+        if allocation.get("hrcpty").is_none()
+            && let Some(gate) = attach.take()
             && let Some(lease) = allocation.get("lease").cloned()
         {
             let _ = gate.ready.send(string(&identity, "runtimeId")?.to_owned());
@@ -304,6 +310,19 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     controller::consume(server, &runtime_id, events, client);
     if let Some(socket) = allocation["hrcpty"]["socketPath"].as_str() {
         hrcpty::watch(server, &runtime_id, Path::new(socket));
+    }
+    // The invocation is already running, so an attach that never resumes
+    // leaves the seat running unattached rather than failing the start.
+    if let Some(gate) = attach.take() {
+        let _ = gate.ready.send(runtime_id.clone());
+        let resumed = tokio::time::timeout(ATTACHED_RESUME_TIMEOUT, gate.resume).await;
+        if !matches!(resumed, Ok(Ok(Ok(())))) {
+            controller::log(
+                "warn",
+                "hrcpty attached run not resumed; the seat runs unattached",
+                json!({"runtimeId":runtime_id,"pendingStartId":gate.pending_start_id,"outcome":format!("{resumed:?}")}),
+            );
+        }
     }
     if let Some(run_id) = run
         && submission.is_none()
