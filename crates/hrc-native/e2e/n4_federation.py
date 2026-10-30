@@ -15,6 +15,7 @@ order or values; and a scratch node reaching the real federation.json,
 registry or peers (every config, token and port here is private).
 """
 import argparse
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -35,9 +36,25 @@ AGENT = 'tabularasa'
 DYNAMIC = {'checkedAt', 'answeredAt', 'latencyMs'}
 
 
-def free_port():
+def local_tailnet_address():
+    """Use this node's assigned IPv4 address; registry binds require tailnet.
+
+    Inspect interfaces, not a named peer or default route. Missing tailnet is
+    a setup failure, never a reason to skip the registry-backed assertions.
+    """
+    interfaces = subprocess.run(['/sbin/ifconfig'], check=True, capture_output=True, text=True).stdout
+    for line in interfaces.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == 'inet':
+            address = ipaddress.IPv4Address(parts[1])
+            if address in ipaddress.IPv4Network('100.64.0.0/10'):
+                return str(address)
+    raise RuntimeError('native federation E2E requires a node-local tailnet IPv4 interface')
+
+
+def free_port(host=TAILNET):
     with socket.socket() as s:
-        s.bind((TAILNET, 0))
+        s.bind((host, 0))
         return s.getsockname()[1]
 
 

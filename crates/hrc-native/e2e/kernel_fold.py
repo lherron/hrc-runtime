@@ -36,7 +36,7 @@ import time
 import uuid
 
 from hrcpty_substrate import FakeAspd, Run, AGENT, PROJECT, LEAK, HERE, REPO
-from n4_federation import TAILNET, free_port
+from n4_federation import local_tailnet_address, free_port
 
 KQ = HERE / 'kq.py'
 LIVE_KERNEL = Path.home() / 'praesidium/var/run/hrc/hrc-kernel.sock'
@@ -134,8 +134,9 @@ def substrate(root, artifacts, binary):
     # seat.summon is an implicit exact-scope start: it needs an enforced gate.
     # A peerless node hosting its own registry on a private port is home for
     # every scope it births (runtimes_start.py's shape).
+    tailnet = local_tailnet_address()
     config.write_text(json.dumps({'nodeId': 'hkf', 'peers': {},
-                                  'registry': {'bind': f'http://{TAILNET}:{free_port()}'},
+                                  'registry': {'bind': f'http://{tailnet}:{free_port(tailnet)}'},
                                   'gate': {'mode': 'enforce', 'registryHost': 'hkf'}}))
     config.chmod(0o600)
     aspd_socket = root / 'aspd.sock'
@@ -161,7 +162,7 @@ def substrate(root, artifacts, binary):
     token_file = root / 'wrkqd-token'
     token_file.write_text(token + '\n')
     token_file.chmod(0o600)
-    port = free_port()
+    port = free_port('127.0.0.1')
     wrkqd_log = (artifacts / 'wrkqd.log').open('w')
     r.logs.append(wrkqd_log)
     r.owners.append(subprocess.Popen(['wrkqd', '-addr', f'127.0.0.1:{port}', '-db', str(root / 'wrkq.db')],
