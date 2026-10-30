@@ -2,7 +2,7 @@ id: hrc-runtime.rust-migration
 kind: contract
 status: active
 owner_project: hrc-runtime
-scope: Rust migration, delivered API-fed kernel/facades, isolated native parity, Rust front door and cohesive per-node owner transfer
+scope: Rust migration, delivered kernel/facades, approved kernel fold, isolated native parity, Rust front door and cohesive per-node owner transfer
 explicitly_unsupported_routes:
   - "POST /v1/runtimes/capture/release: operator-only CLI; the installed broker unconditionally rejects release because capture no longer blocks (raw_record_not_blocked, T-07883; confirmed T-12065)."
   - "POST /v1/in-flight-input: runtime send reaches the Bun handler, but semantic SDK in-flight delivery unconditionally fails closed with inflight_unsupported because the SDK harness path is retired (T-12065)."
@@ -54,8 +54,9 @@ front_door_amendment:
 kernel_fold_amendment:
   task: T-12067
   task_slug: hrc-kernel-fold
+  revision: 1e5109af
   proposal: docs/proposals/hrc-rust-migration.md section 8.1
-  status: pending Daedalus review on daedalus@hrc-runtime:T-12067
+  status: design approved by Daedalus 2026-10-29 in EN-38698; implementation and activation unverified
   authority: Lance's 2026-10-29 ruling that HRC embeds its kernel (no single-process cardo platform)
   boundary: kernel runs inside the owner rusthrc; hrc-kernel process, crate and install gate retire; brokers, aspc and injector unmoved
 predicate: >
@@ -63,7 +64,31 @@ predicate: >
   store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
   crates and TypeScript packages share one repository and release identity;
   they meet through explicit API, wire and store contracts, not cross-imports.
-  Stage 1 adds a Rust kernel. Since f99c8878 it projects from HRC's native
+  T-12067 adopts migration section 8.1's folded kernel as the target:
+  only an execution-owner rusthrc hosts the kernel at hrc-kernel.sock;
+  front-mode rusthrc starts none. The hrc-kernel process, crate and candidate
+  kernel install gate retire. Projector reads use their own process-lifetime
+  read-only state.sqlite connection, with one read transaction per ingest
+  step, never the daemon's Mutex<Store>, and shared hrc-store mappers.
+  The daemon's ledger watch supplies non-blocking wake hints, with a
+  ten-second ingest backstop and ten-minute resync. Owner operations enter
+  the existing dispatch route table through call_local on tokio tasks,
+  preserving accounting, federation and ledger-commit wake behavior;
+  hrcpty resource.attach uses that same dispatch. The owner may wait on
+  daemon code; daemon code never calls the kernel synchronously while
+  serving. Startup and shutdown use cardo-runtime-tokio; wire acceptance
+  is readiness and bootstrapping reports projection catch-up. A startup
+  error logs kernel.start_failed and HRC serves without a kernel. Owner,
+  ingest and worker panic policy is process-fatal, exit 101; the kernel
+  shares rusthrc's restart and rebuilds under a new host_incarnation.
+  Per-node first activation sets Loggia to attach-only and stops the legacy
+  kernel with process absence readback before installing and restarting
+  rusthrc. Legacy and folded lock filenames differ; folded startup does
+  not detect a running legacy holder. That overlap is unsupported, as are
+  a second kernel process, independent kernel restart and a kernel on a
+  Bun-owned node. Brokers, aspc and injector remain external.
+  Before this fold lands, stage 1's separate kernel remains the delivered
+  implementation. Since f99c8878 it projects from HRC's native
   ledger through its own read-only state.sqlite connection and sends owner
   operations to the daemon over HTTP. It never reconciles substrate liveness
   or writes HRC state. Its single hrc document is rebuildable, durability none
@@ -75,8 +100,9 @@ predicate: >
   LedgerIngest and SeatProjector re-read current state for event-named keys;
   events are not folded into a second record. The ten-minute resync repairs
   keys whose events were deleted unread; live_until handles time expiry.
-  HRC restart resumes the surviving kernel's document cursor within the same
-  ledger incarnation. Kernel restart opens empty and bootstraps. Incarnation
+  Before the fold, HRC restart resumes the surviving kernel's document cursor
+  within the same ledger incarnation. After the fold, HRC restart is also
+  kernel restart: it opens empty and bootstraps. Incarnation
   replacement resets and rebuilds through cardo ingest. The bounded event
   stream supplies wake hints only, never ledger content or scan coverage.
   The additive GET /v1/events/page route requires afterSeq and limit and
@@ -321,7 +347,15 @@ authority: >
   of the revised front-door amendment at 13bdbdc6 submitted in EN-35519.
   The revision closes EN-35517 F1's second authority writer and F2's
   impossible universal log-join guarantee. Activation remains separate.
+  Lance's 2026-10-29 embedded-kernel ruling; Daedalus approval EN-38698
+  of T-12067 section 8.1 at 1e5109af, closing EN-38696 F1 through explicit
+  per-node activation order, not a legacy-lock compatibility mechanism.
 source:
+  - commit:1e5109af
+  - wrkq:T-12067
+  - wrkc:EN-38696
+  - wrkc:EN-38698
+  - architecture/records/invariants/hrc-runtime.rust-crate-edges.yaml
   - docs/proposals/hrc-rust-parity.md
   - commit:13bdbdc6
   - wrkq:T-11822
@@ -384,9 +418,23 @@ source:
   - packages/hrc-server/src/session-restart.ts
   - packages/hrc-server/src/runtime-control-handlers/session-rotation.ts
   - packages/hrc-core/src/http-contracts-runtime.ts
-  - crates/hrc-kernel/src/adapter.rs
+  - crates/hrc-native/src/server.rs
   - crates/hrc-domain/src/declarations.rs
 validation_scope: >
+  T-12067's folded implementation supplies section 8.1 item 10's four
+  product gates: Loggia attach and cold summon without an hrc-kernel
+  process on max3; wire_suite.py against a scratch daemon's kernel socket;
+  kq.py status on svc and hrcdev without Loggia; and max3 restart recovery
+  with a new host_incarnation and recorded rebuild time. Before landing,
+  item 7's x1 open-100/close/open-100/close measurement resolves T-11449:
+  second-cycle growth blocks the fold pending a cardo fix; measured
+  subscriber memory is recorded, not assumed established by this review.
+  Item 6's runtime panic audit covers hrc-domain and called presentation
+  mappers, converting data-dependent panics to projector errors. Existing
+  declaration/fixture tests cover same-commit omissions; there is no
+  separate release-skew gate. Folded restart replaces the historical
+  surviving-kernel cursor-resume gate below. Independent kernel-only
+  activation descriptions below apply to the pre-fold implementation.
   The requester supplies section 4.8 gates: side-effect-free read-set tests
   against a dead-substrate seed with the mutating runtime-list control;
   ascending page coverage through holes and spill stubs with incarnation
@@ -449,6 +497,13 @@ validation_scope: >
   N6 inherits the serve-only boundary and pre-mutation refusal contract.
   Design approval authorizes none of these installs or activations.
 last_verified: >
+  2026-10-29 T-12067 section 8.1 at 1e5109af approved in EN-38698 by
+  reading the revision, crate boundaries, daemon dispatch and lifecycle,
+  cardo 12bd05d owner/wire/host/tokio code, legacy kernel startup and
+  Loggia attach-only supervision. F1 from EN-38696 is resolved in the
+  design by ordered cutover. No builds, tests, installs or service commands
+  were run; the memory measurement and implementation/activation gates
+  remain unverified.
   2026-10-28 T-12015 turn-attention-jev etag 6, submitted in EN-38019,
   approved by reading projector selection/bootstrap/apply, keyed event reads,
   presentation-runtime filtering, event categories and preview code. The
@@ -528,3 +583,6 @@ reopen_when: >
   eligibility, serve-only effects, postponed-route refusal, forwarded stream
   semantics, access-log ownership, sampling, joins or audit population change;
   or selected-event attention semantics or its append-order fence change.
+  Reopen also when folded kernel process ownership, read-connection or
+  lock-order boundaries, operation dispatch, panic policy, memory finding,
+  startup degradation, cutover order or restart coupling changes.

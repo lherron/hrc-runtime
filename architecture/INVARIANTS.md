@@ -92,7 +92,7 @@ HRC owns protocol registration, addresses, sessions, attempt identity and activa
 
 ## hrc-runtime.rust-crate-edges
 
-hrc-common owns leaf scope, federation-config and JavaScript utilities and has no HRC, database, HTTP-client or async-runtime dependency. Allowed HRC edges are hrc-store to hrc-common; hrc-domain and hrc-cli to hrc-common and hrc-store; hrc-kernel to hrc-domain; hrc-native library to hrc-common and hrc-store; and the rusthrc binary to hrc-native library and hrc-cli. Only main.rs may use hrc-cli in hrc-native. The check derives package edges from cargo metadata --no-deps --offline and checks the binary-only CLI usage separately because Cargo dependencies are declared at package granularity.
+hrc-common owns leaf scope, federation-config and JavaScript utilities and has no HRC, database, HTTP-client or async-runtime dependency. Allowed HRC edges are hrc-store to hrc-common; hrc-domain and hrc-cli to hrc-common and hrc-store; hrc-native library to hrc-common, hrc-store and hrc-domain; and the rusthrc binary to hrc-native library and hrc-cli. The T-12067 fold retires the hrc-kernel crate and its edge to hrc-domain. Until that implementation lands, the legacy hrc-kernel to hrc-domain edge and hrc-domain HTTP client remain permitted; after it lands, hrc-domain has no HTTP-client dependency. Projection stays in hrc-domain, which cannot depend on hrc-native; its reader takes a state path, not the daemon's Server or store mutex. Only main.rs may use hrc-cli in hrc-native. The check derives package edges from cargo metadata --no-deps --offline and checks the binary-only CLI usage separately because Cargo dependencies are declared at package granularity.
 
 ## hrc-runtime.self-restart-turn-boundary
 
