@@ -169,9 +169,8 @@ def substrate(root, artifacts, binary):
     r.wait(lambda: socket.socket().connect_ex(('127.0.0.1', port)) == 0, 10, 'private wrkqd')
     env.update(HRC_WRKQ_DB=f'rpc://127.0.0.1:{port}', WRKQ_DB=f'rpc://127.0.0.1:{port}',
                HRC_WRKQD_TOKEN_FILE=str(token_file), WRKQD_TOKEN_FILE=str(token_file), WRKQD_TOKEN='')
-    # wrkqd admits RPC only after a client's rpc.initialize, which rusthrc's
-    # stdio client never sends; the wrkq CLI does (n3_scratch.py does the same).
-    subprocess.run(['wrkq', 'projects', '--json'], env=env, cwd=root / PROJECT, check=True, capture_output=True, timeout=60)
+    # No client pre-warms this fresh wrkqd: rusthrc's own wrkq client must send
+    # rpc.initialize before its first call (T-12140).
     (artifacts / 'launch.json').write_text(json.dumps(
         {'argv': [str(binary), 'server'], 'cwd': str(root / PROJECT),
          'env': {k: v for k, v in env.items() if k.startswith(('HRC_', 'ASP_', 'WRKQ'))}}, indent=2) + '\n')
