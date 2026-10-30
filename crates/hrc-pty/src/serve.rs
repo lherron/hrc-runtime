@@ -97,6 +97,7 @@ struct State {
     bytes_out: u64,
     bytes_in: u64,
     started: Instant,
+    last_human_input: Option<Instant>,
     shutting_down: bool,
 }
 
@@ -358,6 +359,7 @@ fn start(args: &ServeArgs, socket: PathBuf, ipc_dir: &Path) -> anyhow::Result<Ar
             bytes_out: 0,
             bytes_in: 0,
             started: Instant::now(),
+            last_human_input: None,
             shutting_down: false,
         }),
         child_exit: Condvar::new(),
@@ -602,6 +604,7 @@ fn hello(shared: &Shared, params: &Value) -> anyhow::Result<Value> {
     let st = shared.state.lock().unwrap();
     Ok(json!({
         "protocol": PROTOCOL,
+        "capabilities": ["inputIfIdle"],
         "pid": std::process::id(),
         "child": st.child.json(),
         "size": {"cols": st.size.0, "rows": st.size.1},
@@ -615,9 +618,17 @@ fn dispatch(shared: &Arc<Shared>, method: &str, params: &Value) -> anyhow::Resul
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(params["bytes"].as_str().unwrap_or(""))
                 .context("bad_request: bytes is not base64")?;
-            input(shared, &bytes)
+            let if_idle_ms = match params.get("ifIdleMs") {
+                None => None,
+                Some(value) => Some(
+                    value
+                        .as_u64()
+                        .context("bad_request: ifIdleMs must be a non-negative integer")?,
+                ),
+            };
+            input(shared, &bytes, if_idle_ms)
         }
-        "interrupt" => input(shared, &[0x03]),
+        "interrupt" => input(shared, &[0x03], None),
         "signal" => {
             let sig = match params["signal"].as_str().unwrap_or("") {
                 "TERM" => libc::SIGTERM,
@@ -684,10 +695,22 @@ fn cell_px_param(params: &Value, cols: u16, rows: u16) -> Option<(u32, u32)> {
     (x > 0 && y > 0).then(|| (x / u32::from(cols.max(1)), y / u32::from(rows.max(1))))
 }
 
-fn input(shared: &Shared, bytes: &[u8]) -> anyhow::Result<Value> {
+fn input(shared: &Shared, bytes: &[u8], if_idle_ms: Option<u64>) -> anyhow::Result<Value> {
+    // Keep state through the master write: attached input takes these locks in
+    // the same order, so no keystroke can race the check and the write.
+    let mut st = shared.state.lock().unwrap();
+    let human_idle_ms = st
+        .last_human_input
+        .map(|stamp| stamp.elapsed().as_millis() as u64);
+    if if_idle_ms
+        .zip(human_idle_ms)
+        .is_some_and(|(required, idle)| idle < required)
+    {
+        return Ok(json!({"written": 0, "humanIdleMs": human_idle_ms}));
+    }
     anyhow::ensure!(shared.write_master(bytes), "no_child: no pty");
-    shared.state.lock().unwrap().bytes_in += bytes.len() as u64;
-    Ok(json!({"written": bytes.len()}))
+    st.bytes_in += bytes.len() as u64;
+    Ok(json!({"written": bytes.len(), "humanIdleMs": human_idle_ms}))
 }
 
 fn status(shared: &Shared) -> Value {
@@ -704,6 +727,7 @@ fn status(shared: &Shared) -> Value {
             "remote": st.clients.values().filter(|c| c.remote).count(),
             "focused": st.clients.values().filter(|c| !c.read_only && c.focused).count(),
         },
+        "humanIdleMs": st.last_human_input.map(|stamp| stamp.elapsed().as_millis() as u64),
         "responderArmed": st.read_write_clients() == 0,
         "responderAnswered": st.answered,
         "size": {"cols": st.size.0, "rows": st.size.1, "cellPx": st.cell_px.map(|(w, h)| json!({"w": w, "h": h}))},
@@ -1032,13 +1056,17 @@ fn data_connection(
         if read_only {
             continue;
         }
+        let mut st = shared.state.lock().unwrap();
         if let Some(focused) = focus_report(&buf[..n])
-            && let Some(client) = shared.state.lock().unwrap().clients.get_mut(&attach_id)
+            && let Some(client) = st.clients.get_mut(&attach_id)
         {
             client.focused = focused;
         }
+        if is_human_input(&buf[..n]) {
+            st.last_human_input = Some(Instant::now());
+        }
         if shared.write_master(&buf[..n]) {
-            shared.state.lock().unwrap().bytes_in += n as u64;
+            st.bytes_in += n as u64;
         }
     }
     let _ = stream.shutdown(std::net::Shutdown::Both);
@@ -1055,6 +1083,71 @@ fn data_connection(
             json!({"attachId": attach_id, "readOnly": read_only}),
         );
     }
+}
+
+/// Only complete replies from the frozen terminal-noise list are ignored.
+/// Unknown or split sequences count as keys; no state spans relay reads.
+fn is_human_input(mut bytes: &[u8]) -> bool {
+    while !bytes.is_empty() {
+        if bytes.starts_with(b"\x1b[") {
+            let Some(end) = bytes[2..]
+                .iter()
+                .position(|b| (0x40..=0x7e).contains(b))
+                .map(|n| n + 2)
+            else {
+                return true;
+            };
+            let params = &bytes[2..end];
+            let numbers = |p: &[u8]| {
+                !p.is_empty()
+                    && p.split(|b| *b == b';')
+                        .all(|n| !n.is_empty() && n.iter().all(u8::is_ascii_digit))
+            };
+            let reply = match bytes[end] {
+                b'I' | b'O' => params.is_empty(),
+                b'R' => numbers(params) && params.split(|b| *b == b';').count() == 2,
+                b'c' => matches!(params.first(), Some(b'?' | b'>')) && numbers(&params[1..]),
+                b'y' => {
+                    params.starts_with(b"?")
+                        && params.ends_with(b"$")
+                        && numbers(&params[1..params.len() - 1])
+                }
+                b'u' => {
+                    params.starts_with(b"?")
+                        && !params[1..].is_empty()
+                        && params[1..].iter().all(u8::is_ascii_digit)
+                }
+                _ => false,
+            };
+            if !reply {
+                return true;
+            }
+            bytes = &bytes[end + 1..];
+        } else if bytes.starts_with(b"\x1b]") {
+            let Some(end) = bytes[2..]
+                .iter()
+                .position(|b| *b == 7 || *b == 0x1b)
+                .map(|n| n + 2)
+            else {
+                return true;
+            };
+            let body = &bytes[2..end];
+            if !(body.starts_with(b"10;") || body.starts_with(b"11;") || body.starts_with(b"4;")) {
+                return true;
+            }
+            let skip = if bytes[end] == 7 {
+                1
+            } else if bytes.get(end + 1) == Some(&b'\\') {
+                2
+            } else {
+                return true;
+            };
+            bytes = &bytes[end + skip..];
+        } else {
+            return true;
+        }
+    }
+    false
 }
 
 /// The last focus report in one read (`CSI I` focused, `CSI O` not). The bytes
@@ -1162,4 +1255,93 @@ pub(crate) fn kitty_replay(placements: &[KittyPlacement], images: &[KittyImage])
         );
     }
     out
+}
+
+#[cfg(test)]
+mod human_input_tests {
+    use super::*;
+
+    #[test]
+    fn only_complete_listed_terminal_replies_are_noise() {
+        let noise: &[&[u8]] = &[
+            b"",
+            b"\x1b[I\x1b[O",
+            b"\x1b[12;34R",
+            b"\x1b[?1;2c",
+            b"\x1b[>0;95;0c",
+            b"\x1b[?2004;1$y",
+            b"\x1b[?7u",
+            b"\x1b]10;rgb:ffff/ffff/ffff\x07",
+            b"\x1b]11;rgb:0000/0000/0000\x1b\\",
+            b"\x1b]4;0;rgb:0000/0000/0000\x07\x1b[I",
+        ];
+        for bytes in noise {
+            assert!(!is_human_input(bytes), "{bytes:?}");
+        }
+        let human: &[&[u8]] = &[
+            b"a",
+            b"\r",
+            b"\x1b[A",
+            b"\x1b[<0;2;3M",
+            b"\x1b[200~paste\x1b[201~",
+            b"\x1b[Ia",
+            b"\x1b[12;",
+            b"34R",
+            b"\x1b]10;rgb:ffff",
+            b"\x1b[1u",
+        ];
+        for bytes in human {
+            assert!(is_human_input(bytes), "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn conditional_write_refuses_without_writing_and_does_not_stamp() {
+        let (writer, mut reader) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let shared = Shared {
+            state: Mutex::new(State {
+                vt: None,
+                master_fd: None,
+                child: ProcInfo::default(),
+                broker: ProcInfo::default(),
+                size: (80, 24),
+                cell_px: None,
+                clients: HashMap::new(),
+                pending: HashMap::new(),
+                responder: Responder::load(RECORDED).unwrap(),
+                answered: vec![],
+                bytes_out: 0,
+                bytes_in: 0,
+                started: Instant::now(),
+                last_human_input: None,
+                shutting_down: false,
+            }),
+            child_exit: Condvar::new(),
+            master: Mutex::new(Some(File::from(OwnedFd::from(writer)))),
+            subscribers: Mutex::new(vec![]),
+            socket: PathBuf::new(),
+            pid_file: PathBuf::new(),
+            token_file: PathBuf::new(),
+        };
+        assert_eq!(
+            input(&shared, b"first", Some(3000)).unwrap(),
+            json!({"written":5,"humanIdleMs":null})
+        );
+        let mut buf = [0; 16];
+        assert_eq!(reader.read(&mut buf).unwrap(), 5);
+        shared.state.lock().unwrap().last_human_input = Some(Instant::now());
+        assert_eq!(input(&shared, b"held", Some(3000)).unwrap()["written"], 0);
+        assert_eq!(
+            reader.read(&mut buf).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        let stamp = Instant::now() - Duration::from_secs(31);
+        shared.state.lock().unwrap().last_human_input = Some(stamp);
+        assert_eq!(input(&shared, b"draft", Some(30000)).unwrap()["written"], 5);
+        assert_eq!(reader.read(&mut buf).unwrap(), 5);
+        assert_eq!(shared.state.lock().unwrap().last_human_input, Some(stamp));
+        assert!(status(&shared)["humanIdleMs"].as_u64().unwrap() >= 31000);
+        assert_eq!(input(&shared, b"enter", None).unwrap()["written"], 5);
+    }
 }
