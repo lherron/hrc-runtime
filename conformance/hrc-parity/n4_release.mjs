@@ -2,7 +2,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 const [builderPath, sourceRoot, first, second, artifacts] = process.argv.slice(2)
-const { prepareKernelRelease } = await import(builderPath)
+const { prepareNativeRelease } = await import(builderPath)
 const drive = []
 const run = async (command, args, cwd, overrides = {}) => {
   const env = Object.fromEntries(
@@ -26,15 +26,15 @@ const run = async (command, args, cwd, overrides = {}) => {
     throw new Error(`release command failed (${exit}): ${command}; see release-drive.json #${n}`)
 }
 const cargoCount = () => drive.filter((v) => v.command === 'cargo').length
-await prepareKernelRelease(sourceRoot, first, join(artifacts, 'absent'), run)
+await prepareNativeRelease(sourceRoot, first, join(artifacts, 'absent'), run)
 if (cargoCount() !== 2) throw new Error('first release did not build both native binaries')
-await prepareKernelRelease(sourceRoot, second, first, run)
+await prepareNativeRelease(sourceRoot, second, first, run)
 if (cargoCount() !== 2) throw new Error('same-source release did not reuse its binaries')
 const manifestPath = join(second, 'praesidium-release.json')
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
 manifest.hrcBuild.sourceCommit = 'f'.repeat(40)
 await writeFile(manifestPath, JSON.stringify(manifest))
-await prepareKernelRelease(sourceRoot, second, first, run)
+await prepareNativeRelease(sourceRoot, second, first, run)
 if (cargoCount() !== 4) throw new Error('sourceCommit-only change reused an older executable')
 const child = Bun.spawn([join(second, 'bin/rusthrc'), '--build-info'], {
   stdout: 'pipe',
@@ -55,7 +55,7 @@ manifest.hrcBuild.sourceCommit = 'invalid'
 await writeFile(manifestPath, JSON.stringify(manifest))
 let invalidRefused = false
 try {
-  await prepareKernelRelease(sourceRoot, second, first, run)
+  await prepareNativeRelease(sourceRoot, second, first, run)
 } catch (error) {
   invalidRefused = String(error).includes('valid selected sourceCommit')
 }

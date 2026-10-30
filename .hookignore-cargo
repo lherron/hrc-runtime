@@ -10,7 +10,7 @@
 !.githooks/
 !.hookignore*
 !scripts/lib/language-scope*
-!scripts/lib/kernel-release*
+!scripts/lib/native-release*
 !scripts/validation-scope.ts
 !scripts/pre-push-validation.ts
 !scripts/atomic-install.ts
