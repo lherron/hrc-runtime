@@ -64,6 +64,11 @@ pub fn attach(
         if node.payload["hrcpty"].is_object() {
             return hrcpty(owner, node, mode);
         }
+        // A terminated seat keeps its row with no runtime: it ended, and no
+        // terminal is coming. `no_tty` would read as a seat still starting.
+        if text(&node.payload, "runtimeId").is_empty() {
+            return Err(unavailable("ended", "the seat has no runtime"));
+        }
         return Err(unavailable(
             "no_tty",
             "HRC presentation row has neither a tmux nor an hrc-pty attach surface",

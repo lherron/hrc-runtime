@@ -183,3 +183,34 @@ fn hrcpty_attach_reads_the_attach_route_through_the_seam() {
     };
     assert_eq!(gone.details["reason"], "ended");
 }
+
+fn seat(payload: Value) -> Node {
+    serde_json::from_value(
+        json!({"id":"n2","type":"hrc.seat","schema_version":1,"provider":"hrc",
+        "created_revision":1,"updated_revision":1,"domain_attributes":{},
+        "payload":payload}),
+    )
+    .unwrap()
+}
+
+// A seat whose runtime was terminated keeps no runtime and no surface. Attach
+// must say the seat ended, not that its terminal is unavailable: Loggia reads
+// `no_tty` as a seat still coming up and waits on it.
+#[test]
+fn attach_to_a_seat_without_a_runtime_reports_ended() {
+    let owner = Scripted::new(vec![]);
+    let Err(ended) = attach(&owner, &seat(json!({"status":"inactive"})), "interactive") else {
+        panic!("a seat without a runtime attached")
+    };
+    assert_eq!(ended.details["reason"], "ended");
+    assert!(owner.calls().is_empty());
+
+    let Err(no_tty) = attach(
+        &owner,
+        &seat(json!({"status":"active","runtimeId":"rt"})),
+        "interactive",
+    ) else {
+        panic!("a surfaceless live seat attached")
+    };
+    assert_eq!(no_tty.details["reason"], "no_tty");
+}
