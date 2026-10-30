@@ -303,16 +303,17 @@ pub fn mark_crash_terminal(
     Ok(())
 }
 
-/// The leased tmux broker pane is still a live process (condemnation averted).
+/// The leased broker is still live (condemnation averted).
 pub(super) async fn broker_pane_alive(server: &Server, runtime_id: &str) -> bool {
     let state = {
         let db = server.store.lock().unwrap();
-        db::runtime(&db.sqlite, runtime_id)
-            .ok()
-            .flatten()
-            .map(|r| r.state_object())
+        db::runtime(&db.sqlite, runtime_id).ok().flatten()
     };
-    let Some(state) = state else { return false };
+    let Some(rt) = state else { return false };
+    if let Some((socket, pid)) = crate::server::hrcpty::substrate(&rt) {
+        return super::super::lease::hrcpty_broker_alive(&socket, pid).await;
+    }
+    let state = rt.state_object();
     let window = &state["broker"]["brokerWindow"];
     let (Some(socket), Some(pane)) = (window["socketPath"].as_str(), window["paneId"].as_str())
     else {

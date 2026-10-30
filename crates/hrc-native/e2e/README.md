@@ -44,6 +44,7 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | --- | --- | --- |
 | `accounting.py` | Real-owner accounting differential, with separate stores for proxy traffic. | promote |
 | `cold_birth.py` | N1 gates 1, 2 and 4 as one real workflow on fresh, isolated state. | promote |
+| `broker_projection_failure.py` | Owner projection failure preserves a live hrc-pty runtime and credential, reports degradation and recovers; real broker exit crash-marks; transport-only close with running broker averts condemnation (T-12169). | keep-manual |
 | `error_wire.py` | Internal error cause/request ID and real codex presentation broker capability refusal, with an unstructured turn control (T-12063). | keep-manual |
 | `ensure_archived_successor.py` | Archived ensure differential: real Bun repository snapshot, isolated owners. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `front_accounting.py` | Separate-state front accounting probe; real Bun behind a byte-forwarding tap. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |

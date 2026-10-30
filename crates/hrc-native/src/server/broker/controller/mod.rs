@@ -686,23 +686,56 @@ pub fn consume(
     let runtime_id = runtime_id.to_owned();
     tokio::spawn(async move {
         let mut last = None;
-        let mut failure = None;
-        while let Some(envelope) = events.recv().await {
+        'transport: while let Some(envelope) = events.recv().await {
             if shutting(&server) {
                 return;
             }
             last = envelope["invocationId"].as_str().map(str::to_owned);
-            if let Err(error) = project_live(&server, &runtime_id, &envelope).await {
-                failure = Some(error);
-                break;
+            // Projection belongs to HRC, not the broker. Keep this envelope
+            // unACKed and retry it in order; never turn an owner write failure
+            // into a broker death. Cap delay, not recovery attempts.
+            let mut attempt = 0u32;
+            loop {
+                if shutting(&server) {
+                    return;
+                }
+                match project_live(&server, &runtime_id, &envelope).await {
+                    Ok(()) => {
+                        if attempt > 0 {
+                            log(
+                                "info",
+                                "broker.projection.recovered",
+                                json!({"runtimeId":runtime_id,"eventType":envelope["type"],"seq":envelope["seq"],"attempts":attempt}),
+                            );
+                        }
+                        break;
+                    }
+                    Err(error) => {
+                        // An actual transport close still takes the existing
+                        // broker-death path, including while projection retries.
+                        if client.is_closed() {
+                            break 'transport;
+                        }
+                        attempt = attempt.saturating_add(1);
+                        let delay_ms = (100u64 << attempt.min(5)).min(2000);
+                        log(
+                            if attempt >= 5 { "error" } else { "warn" },
+                            if attempt >= 5 {
+                                "broker.projection.degraded"
+                            } else {
+                                "broker.projection.failed"
+                            },
+                            json!({"runtimeId":runtime_id,"eventType":envelope["type"],"seq":envelope["seq"],"error":format!("{error:#}"),"attempt":attempt,"retryMs":delay_ms}),
+                        );
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    }
+                }
             }
         }
         if shutting(&server) {
             return;
         }
-        if failure.is_none()
-            && let Some(invocation) = &last
-        {
+        if let Some(invocation) = &last {
             {
                 let Some(_write) = server.owner_writes.enter() else {
                     return;
@@ -716,10 +749,7 @@ pub fn consume(
         if current.is_some_and(|c| !c.same(&client)) {
             return;
         }
-        let error = failure.map_or_else(
-            || "broker transport closed".to_owned(),
-            |e| format!("{e:#}"),
-        );
+        let error = "broker transport closed".to_owned();
         if let Some(reason) = intentional_close_reason(&server, &runtime_id) {
             log(
                 "info",

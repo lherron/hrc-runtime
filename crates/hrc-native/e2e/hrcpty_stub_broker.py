@@ -264,6 +264,13 @@ def handle(conn, method, params):
         with lock:
             state['state'] = 'stopped'
         return {'ok': True}
+    if method == 'stub.closeController':
+        # Transport-only fault: the broker and supervisor remain running.
+        with lock:
+            controller = state['controller']
+        if controller is not None:
+            controller.shutdown(socket.SHUT_RDWR)
+        return {'ok': True}
     if method == 'stub.usage':
         # A test control, not harness-broker/0.2: one usage.updated carrying a
         # context reading for an explicit turn (kernel_fold.py --serve, T-12140).

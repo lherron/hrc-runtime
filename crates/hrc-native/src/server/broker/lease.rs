@@ -384,6 +384,21 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
     Ok(())
 }
 
+/// The existing supervisor identity + running broker signal, shared by
+/// lease reconciliation and the broker-close condemnation guard.
+pub(crate) async fn hrcpty_broker_alive(socket: &std::path::Path, pid: Option<i64>) -> bool {
+    hrcpty_status(socket, pid)
+        .await
+        .is_some_and(|s| s["broker"]["state"] == "running")
+}
+
+async fn hrcpty_status(socket: &std::path::Path, pid: Option<i64>) -> Option<Value> {
+    match hrcpty::Ops::connect(socket).await {
+        Ok(ops) if ops.hello["pid"].as_i64() == pid => ops.call("status", json!({})).await.ok(),
+        _ => None,
+    }
+}
+
 /// An hrcpty seat is live while its supervisor answers `hello` as the
 /// recorded pid and still runs the broker; otherwise it is stale and its
 /// lease ends (§4.6).
@@ -393,16 +408,10 @@ async fn hrcpty_liveness(
     socket: &std::path::Path,
     pid: Option<i64>,
 ) -> Result<()> {
-    let status = match hrcpty::Ops::connect(socket).await {
-        Ok(ops) if ops.hello["pid"].as_i64() == pid => ops.call("status", json!({})).await.ok(),
-        _ => None,
-    };
-    if status
-        .as_ref()
-        .is_some_and(|s| s["broker"]["state"] == "running")
-    {
+    if hrcpty_broker_alive(socket, pid).await {
         return Ok(());
     }
+    let status = hrcpty_status(socket, pid).await;
     let payload = json!({"runtimeId":rt.runtime_id,"socketPath":socket,"supervisorPid":pid,"supervisorLive":status.is_some(),"child":status.as_ref().map(|s| s["child"].clone()),"reason":if status.is_some(){"broker_hrcpty_broker_exited"}else{"broker_hrcpty_supervisor_missing"}});
     not_live(server, &rt.runtime_id, payload.clone())?;
     if let Err(error) = hrcpty::end_lease(socket, pid).await {
