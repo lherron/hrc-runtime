@@ -7,7 +7,10 @@ use axum::{
 };
 use serde_json::{Map, Value, json};
 use std::{
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -82,6 +85,30 @@ enum Refused {
     Gate(ApiError),
 }
 
+/// The in-progress claim. Dropping it before `keep` releases the flag, so a
+/// gate refusal or a caller that disconnects during `--wait` (which drops this
+/// future mid-drain) cannot leave every later lifecycle action refused.
+struct Claim<'a>(Option<&'a AtomicBool>);
+
+impl<'a> Claim<'a> {
+    fn take(flag: &'a AtomicBool) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| Self(Some(flag)))
+    }
+    fn keep(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        if let Some(flag) = self.0 {
+            flag.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
 /// executeLocally: one action at a time, gated on in-flight work, actuated
 /// after the acknowledgement has been answered.
 async fn execute(
@@ -91,23 +118,15 @@ async fn execute(
     context: Value,
 ) -> Result<Value, Refused> {
     let node = server.federation.node_id();
-    if server
-        .lifecycle
-        .in_progress
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
+    let Some(claim) = Claim::take(&server.lifecycle.in_progress) else {
         return Err(Refused::InProgress(format!(
             "a lifecycle action is already in progress on {node}"
         )));
-    }
-    let notes = match gates::check(server, request, &grant).await {
-        Ok(notes) => notes,
-        Err(error) => {
-            server.lifecycle.in_progress.store(false, Ordering::SeqCst);
-            return Err(Refused::Gate(error));
-        }
     };
+    let notes = gates::check(server, request, &grant)
+        .await
+        .map_err(Refused::Gate)?;
+    claim.keep();
     let mut log = grant.clone();
     log.as_object_mut()
         .unwrap()

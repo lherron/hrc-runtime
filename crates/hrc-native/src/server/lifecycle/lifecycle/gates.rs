@@ -47,6 +47,25 @@ async fn wait(
     }
     Ok(rows)
 }
+/// Reopens this drain's admission closure unless the drain hands off to the
+/// restart. A caller that disconnects mid-drain drops the future, and without
+/// this the node would refuse every turn until its next restart.
+struct Reopen<'a>(&'a Server, Option<String>);
+
+impl Reopen<'_> {
+    fn keep_closed(mut self) {
+        self.1 = None;
+    }
+}
+
+impl Drop for Reopen<'_> {
+    fn drop(&mut self) {
+        if let Some(operation) = self.1.take() {
+            let _ = self.0.lifecycle.admission.reopen(Some(&operation));
+        }
+    }
+}
+
 pub async fn check(
     server: &Server,
     request: &Request,
@@ -54,9 +73,11 @@ pub async fn check(
 ) -> Result<Vec<String>, ApiError> {
     if request.drain {
         let operation = format!("restart-drain-{}", uuid::Uuid::new_v4());
+        let reopen = Reopen(server, Some(operation.clone()));
         server.lifecycle.admission.close(&json!({"operationId":operation,"requestedBy":grant["requestedBy"],"requestedRunId":request.requested_run_id,"reason":request.reason})).await?;
         wait(server, request, true, request.drain_timeout_ms).await?;
         let remaining = in_flight(server, request, true)?;
+        reopen.keep_closed();
         return Ok(vec![
             format!("turn admission closed ({operation})"),
             if remaining.is_empty() {
