@@ -103,7 +103,7 @@ One document, `hrc`: `rebuildable: true`, durability `none`, `ingest_only: true`
 
 ### 4.2 Source: `HrcApiLedger`, a `LedgerSource` over the HTTP API
 
-The kernel is an ordinary `hrc.sock` client. It never opens `state.sqlite`.
+The kernel is an ordinary `hrc.sock` client. It never opens `state.sqlite`. *(Superseded: since f99c8878 the kernel reads the native ledger read-only, and under §8.1 it runs inside rusthrc on its own read-only connection. This section records the stage-1 design.)*
 
 **One new HRC read route: `GET /v1/events/page`.** Today's API has no read that can back a `LedgerSource`:
 - `/v1/events/bounded-stream` requires `follow=true` and an expected `ledgerIncarnationId`. It replays newest-first, keeping only a bounded suffix and reporting the omitted prefix (and oversize or overflow events) as gaps. Those gaps can drop retained rows, not just deleted ones.
@@ -244,7 +244,7 @@ Only the Loggia-supervised kernel is stopped for activation; HRC is not restarte
 
 ### 4.7 Lifecycle and scope
 
-- Loggia starts the kernel if none is running and supervises it, the cardo-ui pattern. The socket is at a fixed path under HRC's `runtimeRoot`, so a launchd resident can replace Loggia later without changing a mount. There is no new launchd service and no change to restart authority.
+- *(Superseded by §8.1: the kernel runs inside rusthrc, Loggia's `hrc` entry is attach-only, and a rusthrc restart is a kernel restart.)* Loggia starts the kernel if none is running and supervises it, the cardo-ui pattern. The socket is at a fixed path under HRC's `runtimeRoot`, so a launchd resident can replace Loggia later without changing a mount. There is no new launchd service and no change to restart authority.
 - **An HRC restart** keeps the ledger incarnation. The follow reconnects and ingest resumes from the document's cursor with no rebuild.
 - **A kernel restart** opens empty and bootstraps, under cardo P1. Loggia's mounts resync on the kernel incarnation change (loggia T-11429, 08584ec).
 - Local node only. Remote nodes wait for cardo G12, which is unsupported. Transcripts and history stay out of documents. A per-seat timeline document waits for the concierge design.
@@ -293,7 +293,7 @@ All exact, computed and pattern routes on `hrc.sock`, as listed by the coverage 
 - `hrc-sdk` and the `hrc` CLI; hcs (Go); ACP (gateway, dashboard, injector); agent-loop;
 - the hook bridges shipped in ASP releases;
 - federation peers;
-- **the stage-1 kernel** (§4.2).
+- **the stage-1 kernel** (§4.2), until §8.1 lands; the folded kernel enters owner routes through rusthrc's in-process dispatch, not the socket.
 
 Cases live in `contract/hrc-parity/cases.json` and the external runner in `conformance/hrc-parity/`; N0 replaces the frozen inventory with a generated coverage report. Federation runs mixed-version during cutover, so the peer protocol (`docs/federation-peer-protocol.md`) is unchanged until stage 3.
 
@@ -301,7 +301,7 @@ Cases live in `contract/hrc-parity/cases.json` and the external runner in `confo
 
 Bun owns production migrations. Rust supports the exact compatible migration set, refuses unknown/incomplete stores and cannot initialize or migrate production by accident. Canonical Bun migrations initialize scratch during coexistence. P7 may qualify a Rust runner for canonical migration history as test-only tooling; production migration transfer and Bun retirement require separate authorization.
 
-The contract inventories all schema/repositories and direct consumers/writers, including monitor, export/annotation, capture verifier, maintenance/archive/rebuild tools and release/schema inspection. ACP call sites remain ACP-owned compatibility/coordination obligations; no historical direct-read count is exhaustive. The stage-1 kernel adds no direct store read. Same-release fallback must reopen and continue native-written state; broader historical compatibility is not implied.
+The contract inventories all schema/repositories and direct consumers/writers, including monitor, export/annotation, capture verifier, maintenance/archive/rebuild tools and release/schema inspection. ACP call sites remain ACP-owned compatibility/coordination obligations; no historical direct-read count is exhaustive. The folded kernel (§8.1) is an in-process reader of `state.sqlite` on its own read-only connection; it writes nothing. Same-release fallback must reopen and continue native-written state; broader historical compatibility is not implied.
 
 ### 6.3 `hrc_events` as a `LedgerSource` (stage 2)
 
@@ -324,7 +324,57 @@ Build, commit/push, install, activation and promotion are distinct states. Workt
 
 ## 8. Process budget
 
-Production keeps one execution owner per node/state/substrate throughout. Isolated development may run separate Bun/native subjects with disjoint substrates; this is not a production dual-daemon topology. The API-fed hrc-kernel remains separate until P6 native ledger integration preserves its document and mount contracts. ASP/brokers stay external; ACP owns the injector and gateways. The port claims no process reduction and does not authorize consolidation or ACP changes.
+Production keeps one execution owner per node/state/substrate throughout. Isolated development may run separate Bun/native subjects with disjoint substrates; this is not a production dual-daemon topology. ASP/brokers stay external; ACP owns the injector and gateways. The port does not authorize broker consolidation (§9) or ACP changes.
+
+### 8.1 The kernel runs inside rusthrc (T-12067)
+
+**RULED** (Lance, 2026-10-29): no single-process cardo platform; HRC embeds its kernel. Finding: cardo `docs/explorations/platform-vs-library.md` §3 (ad757ac). This replaces the separate `hrc-kernel` process, whose costs are recorded there: release skew between producer and kernel (T-12017, `hrcpty` from 7ee9b501 to 4fc4b10f), two release links, a 1 s poll instead of the daemon's ledger wake, route emulation behind an HTTP-shaped trait, writes as HTTP to the same daemon (`hrc_unavailable` across every restart), and a kernel only where Loggia runs.
+
+**Outcome.** `rusthrc server` serves the cardo wire on `<runtimeRoot>/hrc-kernel.sock` from its own process, on every node it owns. The `hrc-kernel` binary and crate, Loggia's `kernels.hrc.binary` entry and the T-12019 candidate-kernel install gate (`scripts/lib/kernel-bootstrap-gate.ts`) retire. The document, its node types, natural keys, membership, `live_until`, latest-event selection and preview rules (§4.1, §4.3) do not change. Brokers, aspc and the injector do not move (§9, Track G and G0 untouched).
+
+**1. Crate edges.** `hrc-runtime.rust-crate-edges` (T-11941) is amended, not bypassed. `hrc-domain` stays its own crate: projector, declarations, attach builder, and the op argument and receipt mapping. The `hrc-native` library gains the edge `hrc-native → hrc-domain` and the cardo crates `cardo-runtime`, `cardo-runtime-tokio` and `cardo-host`. `hrc-domain` loses `reqwest` (its HTTP client, `api.rs`, retires) and keeps `hrc-common`, `hrc-store` and the cardo crates. The `hrc-kernel` crate is deleted, with its edge. The new predicate: *hrc-domain to hrc-common and hrc-store; hrc-cli to hrc-common and hrc-store; hrc-native library to hrc-common, hrc-store and hrc-domain; the rusthrc binary to the hrc-native library and hrc-cli; hrc-domain has no HTTP-client dependency.* `check-rust-crate-edges.py` enforces it from `cargo metadata`, with the existing forbidden-edge negative control.
+
+**2. The projector reads on its own connection.** It never touches the daemon's `Mutex<Store>` (CLAUDE.md, "Inspecting live HRC through the kernel": whole-table reads under that mutex delay mail and turns). The kernel opens one `hrc_store::Store::open_readonly(<stateRoot>/state.sqlite)` connection at startup. Each ingest step (bootstrap, apply, resync) runs in one read transaction on it, as `NativeRead::snapshot` does today. The connection is held for the process's life: rusthrc owns the file, so the inode cannot be replaced under it, and the per-step reopen in `native.rs` goes away. **The check is the crate graph:** projection code lives in `hrc-domain`, which cannot depend on `hrc-native`, so it cannot name the daemon's `Server` or its store. Its constructor takes a state path and nothing else. A long bootstrap read holds a WAL snapshot for its duration (3–4 s on max3 since T-11919). It never blocks a writer, and checkpoints wait at most that long.
+
+**3. Ingest is a Rust binding over the in-process ledger** (cardo B1/S5, embedding guide §9). `LedgerIngest<HrcLedger, SeatProjector>` keeps its shape. `LedgerReader::page` reads `Store::event_page` on the kernel's connection (today's `NativeRead::page`). The `hrc_seq` hole rules of §6.3 stand, with floor 0 and no must-see retention authority. **Wake** comes from rusthrc's existing `ledger: watch::Sender<u64>`, which is bumped after every committed ledger write (`server.rs`). A tokio task holds a receiver and calls the ingest waker on each change, a non-blocking hint. The ingest interval stays as a backstop at 10 s (today 1 s). `resync_every` stays at 10 min. **Reads go through the same `hrc_store` mappers the routes use:** `presentation::runtimes`, `presentation::seats`, `sessions_for_projection`, `latest_per_session` and `event_history`, called as typed functions. The route-string `ProjectionReader` trait (`get(route, query)`), `NativeRead::get_value`'s re-implementation of `/v1/sessions` dedup, `/v1/events/tail` and seat-ref parsing, and the `HrcApi` reader retire. `display_payloads` (the UTF-16 display recovery through `projection_json`) is kept.
+
+**4. Ops are bindings, off the owner thread.** `seat.summon`, `seat.restart` and `seat.send` keep their declarations, argument validation, fences, receipts and the no-Cardo-idempotency rule (§4.6; the adapter's `idempotency` returns `None` for them). Each dispatch is admitted on the owner and handed to a tokio task, which completes through the adapter's completion channel, as the HTTP thread does today. The task enters rusthrc's own request dispatch in-process: `server::call_local(method, route, body)`, which runs the same route table, accounting (client `hrc-kernel`), federation forwarding and post-mutation `ledger_committed` bump as an HTTP request, with no socket and no HTTP framing. The existing receipt mappers (`summon.rs`, `restart.rs`, `send.rs`) read its response unchanged. They enter through the router rather than the handler functions, so the route table stays the only place a request becomes behaviour, and a summon homed on another node forwards exactly as an HTTP summon does. `hrc_unavailable` across a daemon restart is gone: the op and the daemon live and die together. `resource.attach` on an hrcpty seat calls the same `call_local("GET", "/v1/attach")` (it reconciles that one runtime, as today), blocking the owner for that call (measured 0.7–1.2 ms). Other seats attach from the projected row with no call.
+
+**Lock order.** The owner may wait on daemon code (attach, op admission). Daemon code never calls the kernel synchronously: its only edges into cardo are the non-blocking wake, `spawn_wire` and the startup commands below. So an owner waiting on the store mutex cannot deadlock against a thread that holds it.
+
+**5. Async seam: `cardo-runtime-tokio`, its first user.** The owner thread runs beside tokio. Startup order inside `rusthrc server`, after the store opens and before the HTTP listener accepts:
+1. `cardo_host::SingleInstance::acquire(hrc-kernel.sock)`;
+2. `RuntimeOwner::start` with `cardo_host::NoWork`/`Idle` and `RuntimeConfig::host_default()` (overriding `ring_events`/`ring_bytes` to today's 4096 / 32 MiB);
+3. `registry.enable`, `document.open` and `ingest.attach` through the blocking client inside `spawn_blocking`;
+4. `wire::bind` inside `spawn_blocking`, then `cardo_runtime_tokio::spawn_wire`.
+
+The kernel never delays daemon readiness. The ready condition is the wire accepting (R1), and the document's `bootstrapping` flag says when the projection has caught up. Today's 20 s wait-for-catch-up loop retires. The ingest-error watcher becomes daemon log events (`kernel.ingest.error` / `kernel.ingest.recovered` through `stderr_json`). Shutdown: after the HTTP listener stops, `WireTask::stop().await`, then `cardo_runtime_tokio::join(owner)`. Inside the daemon there is no `Shutdown::on_signal` or `cardo_host::run`: rusthrc's own shutdown drives it. **If another process holds the kernel lock** (an old Loggia-supervised `hrc-kernel` during cutover), rusthrc logs `kernel.socket_held` and serves HRC without a kernel. HRC execution never depends on the kernel. Stopping the holder and restarting rusthrc is the recovery, and there is no takeover.
+
+**6. Panic policy.** cardo runs the owner, ingest runs and worker calls under `fatal_on_panic` (A2, `OWNER_PANIC_EXIT` 101), so a panic in projector, attach or op-admission code exits rusthrc. launchd restarts it, brokers reattach (39/39, 50/50 measured under the restart doctrine), and the kernel rebuilds. That is the policy, stated, not a defect. The A2 audit is re-run over `hrc-domain` and over the `hrc_store::presentation` mappers the projector calls. Every panic site reachable at runtime is listed. Data-dependent ones (the `as_i64().unwrap()` on a row's generation in today's `native.rs`, for example) become projector errors, which `ingest.status` reports, and invariant ones keep a one-line justification. The list is a landing artifact.
+
+**7. Memory bound (cardo T-11449).** The kernel's memory becomes the daemon's: today's separate kernel holds 344 MiB RSS on max3 (2026-10-30). T-11449 measured 2.5–3.4 MB per idle subscriber at the live set and 85–90 % of it retained after close, but did not say whether that is allocator high-water (bounded by peak concurrent subscribers) or a per-subscription leak (unbounded over a daemon's life). One measurement settles it before the fold lands: cardo's A5 `subscriber_memory` leg at x1, run as open 100 / close / open 100 / close. If the second cycle's peak does not exceed the first's, the bound is peak concurrent subscribers × 3.4 MB. Loggia holds about two and agents query without subscribing (`kq.py`), so the bound is under 50 MB, and the spec records the measured figure. If the second cycle grows, the fold waits on a cardo fix of T-11449. No subscriber cap is added.
+
+**8. Loggia.** The `kernels.hrc` entry becomes attach-only: the `binary` key is removed and `socket` stays (`KernelSupervisor.attachOnly`, already supported; jobhunt and signal-pipeline are configured this way). Loggia mounts the socket while it answers and shows `waiting` while it does not. A rusthrc restart now restarts the kernel. It opens empty under a new `host_incarnation`, the mount resyncs (K1–K5, T-11428/T-11429), and the document shows `bootstrapping` until it catches up. The rebuild time is recorded at activation (3–4 s on max3 since T-11919), measured, not gated. §4.7's HRC-restart behaviour (the kernel resumes from its cursor with no rebuild) no longer holds, because there is no surviving kernel.
+
+**9. Contract drift.** `hrc-rust-migration.yaml`'s predicate says the stage-1 kernel "never opens state.sqlite". That has been false since f99c8878 (the kernel projects from the native ledger read-only). The predicate is rewritten on this thread to the folded kernel: it runs inside rusthrc, reads `state.sqlite` only through its own read-only connection and never through the daemon's store mutex, never writes HRC state, is woken by the daemon's ledger watch, and enters owner operations through the daemon's in-process dispatch. §4.2, §4.7, §6.1, §6.2, §11 and §12 are amended with it (the dependents list is in the landing brief).
+
+**10. Gates.** These are product claims, graded from durable readback:
+1. **Loggia through the folded kernel** (N4 gate 4). On max3, with no `hrc-kernel` process running, Loggia attaches a leaf to a live seat and summons a cold seat to attachable. Two screenshots and the `ps` readback.
+2. **Wire conformance.** cardo's `wire_suite.py --target hrc` is green against rusthrc's `hrc-kernel.sock` on a scratch daemon.
+3. **Present without Loggia.** `kq.py status` answers from rusthrc's socket on svc and on hrcdev.
+4. **Restart.** After `hrc server restart` on max3, Loggia shows the current live set again on the new `host_incarnation`. The rebuild time is recorded.
+
+There is no skew gate. The release-skew class (a producer shipping a field an older kernel had not declared, T-12017) is gone by construction: the producer and the declarations ship in one binary. A same-commit omission is caught by the existing cargo tests that project fixtures through the declarations (`every_projected_seat_field_is_declared_including_attention`, `hrcpty_attach_surface_projects_onto_seat_and_runtime_declared`). The T-12019 install stage retires.
+
+**Cardo revision.** The hrc-runtime pin moves 1796e1c → 12bd05d (collective rev: `cardo-host`, T-12068; per-connection owner routing, T-12069, unused by HRC) inside this task, together with the `rusqlite` line (embedding guide §1, §8).
+
+**Explicitly unsupported:**
+- brokers or harness pipes in-process (Track G);
+- a second kernel process alongside rusthrc, including a Loggia-supervised one;
+- a kernel on a Bun-owned node. Bun stays a complete daemon (§0), but a node rolled back to Bun has no kernel and no Loggia HRC mount. max3 is forward-fix only (2026-10-26 ruling);
+- restarting the kernel without restarting rusthrc, or taking over a held kernel lock while running;
+- rows for other nodes, and remote attach (unchanged from §4.7);
+- feature flags.
 
 ## 9. Consolidation (Track G): deferred, with a trigger
 
@@ -358,14 +408,14 @@ The ACP port is ACP's own document. What this page fixes:
 | HRC's wrkq client in Rust | wrkq/HRC | external authority contract before N3 |
 | `contract/` format | T-11527 P0 | neutral manifest and external runner approved EN-33680; behavior evidence required |
 | Stage 1b ops | Lance | include, after the read-only gates pass |
-| Kernel supervision: Loggia or launchd | Lance | Loggia, until a second consumer exists |
+| Kernel supervision: Loggia or launchd | Lance | resolved by §8.1: rusthrc hosts the kernel, under rusthrc's launchd service |
 
 ## 12. Explicitly unsupported
 
 - Calling unimplemented native behavior qualified, or accepting native drift without requalification.
 - Transcripts and history in cardo documents.
 - Rows for other nodes, and remote attach, in stage 1.
-- The stage-1 kernel opening `state.sqlite`, or calling a route outside its pinned read set (§4.3).
+- The kernel reading `state.sqlite` through the daemon's store mutex, or writing HRC state (§8.1). A second kernel process alongside rusthrc.
 - Production Rust migration authority or Bun retirement without separate authorization.
 - Two execution owners controlling one node/state/substrate, including alternate ingress, controllers, recovery, timers and publishers.
 - A double `seat.reset`. Raw keystroke input as a wire op.
