@@ -21,6 +21,17 @@ for isolated daemons. The `hrcpty/` log directory is 0700. Startup prunes regula
 `rt-*.log` files older than seven days unless a non-terminal runtime row still
 claims the id; symlinks and legacy IPC logs are untouched.
 
+## Broker and child lifecycle
+
+The broker runs in its own process group (T-12162 §4.1). Whenever the broker
+exits, for any reason, hrc-pty TERMs that group, KILLs it if a member is still
+alive 5 s later, and only then emits `broker.exited`; the pty child is its own
+session and keeps running. `shutdown` ends the same group the same way, whether
+or not the broker is still alive. A `spawn` after a child has exited opens a
+fresh pty and a fresh model, and sends RIS to clients still attached so they
+drop the last child's screen and modes. An attach while no child exists gets
+RIS; a read-only attach never spawns.
+
 ## Clients and the child env
 
 The child's env carries `HRC_PTY_SOCKET=<ops socket>`, so a program in the
@@ -56,3 +67,6 @@ overrides it.
 `just e2e-hrc-pty` (also run by `just e2e`): Claude Code under a bare serve,
 attach clients in real Ghostty windows through ghostmux. Needs a logged-in
 `claude` and a running Ghostty; E3 submits 20 prompts and interrupts each.
+The G legs (broker group, no-child attach, respawn) need neither; X spawns
+the real Codex TUI under a read-write Ghostty client and sends no prompt.
+`--only` picks legs.

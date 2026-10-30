@@ -87,7 +87,12 @@ struct State {
     vt: Option<Vt>,
     master_fd: Option<RawFd>,
     child: ProcInfo,
+    /// Bumped by every spawn; an output loop of an earlier pty stops feeding
+    /// the model when it sees a newer one.
+    child_gen: u64,
     broker: ProcInfo,
+    /// The broker's process group, until a waiter has seen it empty.
+    broker_group: Option<u32>,
     size: (u16, u16),
     cell_px: Option<(u32, u32)>,
     clients: HashMap<String, AttachedClient>,
@@ -364,7 +369,9 @@ fn start(args: &ServeArgs, socket: PathBuf, ipc_dir: &Path) -> anyhow::Result<Ar
             vt: None,
             master_fd: None,
             child: ProcInfo::default(),
+            child_gen: 0,
             broker: ProcInfo::default(),
+            broker_group: None,
             size: (args.cols.max(1), args.rows.max(1)),
             cell_px,
             clients: HashMap::new(),
@@ -440,7 +447,10 @@ fn spawn_broker(
             Ok(())
         });
     }
+    // Its own process group: whatever the broker starts (Codex's app-server)
+    // is signalled with it, and the pty child, its own session, is not.
     let mut child = cmd
+        .process_group(0)
         .args(&argv[1..])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -448,13 +458,17 @@ fn spawn_broker(
         .spawn()
         .with_context(|| format!("spawn broker {}", argv[0]))?;
     let pid = child.id();
-    shared.state.lock().unwrap().broker = ProcInfo {
-        pid: Some(pid),
-        running: true,
-        code: None,
-        signal: None,
-    };
-    log(&format!("broker pid {pid}"));
+    {
+        let mut st = shared.state.lock().unwrap();
+        st.broker = ProcInfo {
+            pid: Some(pid),
+            running: true,
+            code: None,
+            signal: None,
+        };
+        st.broker_group = Some(pid);
+    }
+    log(&format!("broker pid {pid} (own process group)"));
     let shared = shared.clone();
     std::thread::spawn(move || {
         let status = child.wait();
@@ -467,6 +481,11 @@ fn spawn_broker(
             st.broker.code = code;
             st.broker.signal = signal;
         }
+        // Any broker exit ends what it started (T-12162 §4.2 step 7): rusthrc
+        // crash-marks the runtime without ending the lease, so nothing else
+        // would stop an app-server the broker leaves behind.
+        end_group(pid, Duration::from_secs(5));
+        shared.state.lock().unwrap().broker_group = None;
         // REV 4: no respawn. rusthrc treats the b.sock close as the runtime's
         // crash; Claude, attach and capture are untouched.
         shared.emit(
@@ -475,6 +494,36 @@ fn spawn_broker(
         );
     });
     Ok(())
+}
+
+fn group_alive(pgid: u32) -> bool {
+    // SAFETY: signal 0 only probes for the group's existence.
+    let probed = unsafe { libc::killpg(pgid as i32, 0) };
+    probed == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// TERM a process group, then KILL it if any member outlives `grace`.
+fn end_group(pgid: u32, grace: Duration) {
+    // SAFETY: killpg on a group this process created.
+    if unsafe { libc::killpg(pgid as i32, libc::SIGTERM) } != 0 {
+        return;
+    }
+    let deadline = Instant::now() + grace;
+    while group_alive(pgid) {
+        if Instant::now() >= deadline {
+            log(&format!(
+                "broker group {pgid} outlived {grace:?} after TERM; KILL"
+            ));
+            // SAFETY: as above.
+            unsafe { libc::killpg(pgid as i32, libc::SIGKILL) };
+            let killed = Instant::now() + Duration::from_secs(1);
+            while group_alive(pgid) && Instant::now() < killed {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn signal_child(shared: &Shared, sig: i32) -> bool {
@@ -487,25 +536,33 @@ fn signal_child(shared: &Shared, sig: i32) -> bool {
 }
 
 /// End of lease (§4.6): the child gets 5 s after its TERM, then KILL; the
-/// broker is TERMed; clients see the socket close and exit 0.
+/// broker's process group is TERMed, and KILLed if a member outlives the same
+/// 5 s, whether or not the broker itself is still alive (T-12162 §4.2 step 9);
+/// clients see the socket close and exit 0.
 fn shutdown(shared: &Arc<Shared>) {
-    let broker = {
+    let group = {
         let mut st = shared.state.lock().unwrap();
         if st.shutting_down {
             return;
         }
         st.shutting_down = true;
-        st.broker.clone()
+        st.broker_group
     };
     log("shutdown");
-    if let (Some(pid), true) = (broker.pid, broker.running) {
-        // SAFETY: plain kill of our own child.
-        unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let broker = group.map(|pgid| {
+        std::thread::spawn(move || {
+            end_group(pgid, deadline.saturating_duration_since(Instant::now()))
+        })
+    });
     let st = shared.state.lock().unwrap();
     let (st, timeout) = shared
         .child_exit
-        .wait_timeout_while(st, Duration::from_secs(5), |s| s.child.running)
+        .wait_timeout_while(
+            st,
+            deadline.saturating_duration_since(Instant::now()),
+            |s| s.child.running,
+        )
         .unwrap();
     drop(st);
     if timeout.timed_out() {
@@ -515,6 +572,9 @@ fn shutdown(shared: &Arc<Shared>) {
         let _ = shared
             .child_exit
             .wait_timeout_while(st, Duration::from_secs(1), |s| s.child.running);
+    }
+    if let Some(broker) = broker {
+        let _ = broker.join();
     }
     let st = shared.state.lock().unwrap();
     for client in st.clients.values() {
@@ -910,6 +970,16 @@ fn spawn(shared: &Arc<Shared>, params: &Value) -> anyhow::Result<Value> {
     let master_fd = master.as_raw_fd();
     let reader = File::from(master.try_clone()?);
     shared.master.lock().unwrap().file = Some(File::from(master));
+    // A new pty and model replace the last child's (§4.2 step 6): clients
+    // still showing its final screen reset, as a fresh attach would.
+    if st.vt.is_some() {
+        let ris: Arc<[u8]> = Arc::from(&b"\x1bc"[..]);
+        for client in st.clients.values() {
+            let _ = client.tx.try_send(ris.clone());
+        }
+    }
+    st.child_gen += 1;
+    let generation = st.child_gen;
     st.vt = Some(vt);
     st.master_fd = Some(master_fd);
     st.child = ProcInfo {
@@ -927,7 +997,7 @@ fn spawn(shared: &Arc<Shared>, params: &Value) -> anyhow::Result<Value> {
     ));
 
     let out = shared.clone();
-    std::thread::spawn(move || output_loop(out, reader));
+    std::thread::spawn(move || output_loop(out, reader, generation));
     let waiter = shared.clone();
     std::thread::spawn(move || {
         let status = child.wait();
@@ -951,7 +1021,7 @@ fn spawn(shared: &Arc<Shared>, params: &Value) -> anyhow::Result<Value> {
 }
 
 /// Master → model (+ responder while detached) → every client.
-fn output_loop(shared: Arc<Shared>, mut master: File) {
+fn output_loop(shared: Arc<Shared>, mut master: File, generation: u64) {
     let mut buf = vec![0u8; 64 * 1024];
     loop {
         let n = match master.read(&mut buf) {
@@ -962,6 +1032,9 @@ fn output_loop(shared: Arc<Shared>, mut master: File) {
         let replies = {
             let mut guard = shared.state.lock().unwrap();
             let st = &mut *guard;
+            if st.child_gen != generation {
+                break;
+            }
             st.bytes_out += n as u64;
             if let Some(vt) = st.vt.as_mut() {
                 vt.write(&chunk);
@@ -1287,7 +1360,9 @@ mod human_input_tests {
                 vt: None,
                 master_fd: None,
                 child: ProcInfo::default(),
+                child_gen: 0,
                 broker: ProcInfo::default(),
+                broker_group: None,
                 size: (80, 24),
                 cell_px: None,
                 clients: HashMap::new(),

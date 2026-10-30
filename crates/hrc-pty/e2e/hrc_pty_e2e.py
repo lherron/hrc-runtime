@@ -5,6 +5,11 @@ aspd, broker or tmux; the "broker" is `sleep`. E6 (T-12053) needs neither
 Claude nor Ghostty: the child's HRC_PTY_SOCKET, clients.remote from an
 SSH_CONNECTION client, clients.focused across CSI O / CSI I.
 
+T-12162 (codex-hrcpty) legs: G (no Ghostty) the broker's process group ends
+with the broker and at shutdown, attach and spawn with no child, a second
+spawn on a fresh pty; X the real Codex TUI spawned under a live read-write
+Ghostty client.
+
   hrc_pty_e2e.py --binary crates/target/debug/hrc-pty --artifacts DIR [--scratch DIR]
 
 Every check writes its evidence under --artifacts and a line in summary.json.
@@ -192,7 +197,8 @@ def e1(run, ctx):
               f"OSC 9;4 x{result['output']['osc9_4']}, 38;5; x{result['output']['sgr256']}, "
               f"38;2; x{result['output']['truecolor']}", [run.path("e1.result.json"), run.path("e1.claude-debug.txt"),
                                                             observer_log])
-    ro_ok = (before["clients"] == {"total": 1, "readWrite": 0, "readOnly": 1} and before["responderArmed"]
+    counts = {k: before["clients"][k] for k in ("total", "readWrite", "readOnly")}
+    ro_ok = (counts == {"total": 1, "readWrite": 0, "readOnly": 1} and before["responderArmed"]
              and "kittyGraphics=yes" in caps and len(status["responderAnswered"]) >= 8)
     run.check("E5.read-only-birth", ro_ok, f"only a read-only client attached at spawn ({before['clients']}); "
               f"responder answered {len(status['responderAnswered'])} queries; kittyGraphics=yes in debug log",
@@ -529,18 +535,328 @@ def e6(run):
             pass
 
 
+# -- G: broker process group, no-child attach, respawn (T-12162 §4.2) --------
+def pgid(pid):
+    out = subprocess.run(["ps", "-o", "pgid=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return int(out) if out else None
+
+
+def read_pid(path, timeout=10):
+    hrcpty.wait_until(lambda: os.path.exists(path) and open(path).read().strip(), timeout)
+    return int(open(path).read().strip())
+
+
+def watch_deaths(pids, t0, timeout):
+    """Seconds after t0 at which each pid stopped existing (None if it never did)."""
+    died = {name: None for name in pids}
+    deadline = time.time() + timeout
+    while time.time() < deadline and any(v is None for v in died.values()):
+        for name, pid in pids.items():
+            if died[name] is None and not hrcpty.pid_alive(pid):
+                died[name] = round(time.time() - t0, 3)
+        time.sleep(0.02)
+    return died
+
+
+def stop(ops):
+    for method, params in (("signal", {"signal": "KILL"}), ("shutdown", {})):
+        try:
+            ops.call(method, params)
+        except Exception:
+            pass
+
+
+def g_broker_crash(run):
+    """A SIGKILLed broker takes its group (a TERM-honouring and a TERM-ignoring
+    grandchild) with it before broker.exited; the pty child survives."""
+    ipc = os.path.join(run.scratch, "g-crash-ipc")
+    os.makedirs(ipc)
+    soft, stubborn = os.path.join(ipc, "soft.pid"), os.path.join(ipc, "stubborn.pid")
+    broker = ["/bin/sh", "-c", f'(exec /bin/sleep 3600) & echo $! > {soft}; '
+              f'(trap "" TERM; exec /bin/sleep 3600) & echo $! > {stubborn}; wait']
+    serve_pid, token = hrcpty.serve(run.binary, ipc, cols=80, rows=24, broker_argv=broker)
+    sock = os.path.join(ipc, "hrcpty.sock")
+    events = hrcpty.Events(sock, token, run.path("g-crash.events.ndjson"))
+    ops = hrcpty.Ops(sock, token)
+    try:
+        pids = {"soft": read_pid(soft), "stubborn": read_pid(stubborn)}
+        child = ops.call("spawn", {"argv": ["/bin/sleep", "3600"], "env": run.env})
+        before = ops.call("status")
+        bpid = before["broker"]["pid"]
+        groups = {"serve": pgid(serve_pid), "broker": pgid(bpid), "soft": pgid(pids["soft"]),
+                  "stubborn": pgid(pids["stubborn"]), "child": pgid(child["pid"])}
+        mark = len(events.items)
+        t0 = time.time()
+        os.kill(bpid, 9)
+        died = watch_deaths(pids, t0, 8)
+        exited = events.wait_for("broker.exited", 10, after=mark)
+        after = ops.call("status")
+        result = {"groups": groups, "grandchildren": pids, "diedAfterKillS": died,
+                  "brokerExitedAfterS": round(exited["receivedAt"] - t0, 3), "event": exited["params"],
+                  "childAfter": after["child"], "childAlive": hrcpty.pid_alive(child["pid"]),
+                  "brokerAfter": after["broker"]}
+        run.save("g-crash.result.json", result)
+        shutil.copy(os.path.join(ipc, "hrcpty.log"), run.path("g-crash.hrcpty.log"))
+        lines = open(run.path("g-crash.hrcpty.log")).read().splitlines()
+        kill_at = next((i for i, line in enumerate(lines) if f"broker group {bpid} outlived" in line), None)
+        event_at = next((i for i, line in enumerate(lines) if "event broker.exited" in line), None)
+        result["logOrder"] = {"groupKillLine": kill_at, "brokerExitedLine": event_at}
+        run.save("g-crash.result.json", result)
+        # pid_alive sees a KILLed grandchild until launchd reaps the zombie, so
+        # the order comes from the log and the timing gets 0.1 s of slack.
+        ok = (groups["broker"] == bpid and groups["serve"] != bpid and groups["soft"] == bpid
+              and groups["stubborn"] == bpid and groups["child"] == child["pid"]
+              and died["soft"] is not None and died["soft"] < 1
+              and died["stubborn"] is not None and 4.5 <= died["stubborn"] <= 6
+              and kill_at is not None and event_at is not None and kill_at < event_at
+              and result["brokerExitedAfterS"] >= died["stubborn"] - 0.1 and exited["params"]["signal"] == 9
+              and after["child"]["state"] == "running" and result["childAlive"])
+        run.check("G.broker-crash", ok, f"broker {bpid} in its own group {groups['broker']} (serve group "
+                  f"{groups['serve']}); after SIGKILL: TERM grandchild gone at {died['soft']}s, TERM-ignoring "
+                  f"grandchild at {died['stubborn']}s, broker.exited at {result['brokerExitedAfterS']}s; pty child "
+                  f"{child['pid']} {after['child']['state']}",
+                  [run.path("g-crash.result.json"), run.path("g-crash.events.ndjson"), run.path("g-crash.hrcpty.log")])
+    finally:
+        stop(ops)
+
+
+def g_shutdown(run):
+    """Shutdown ends the broker's group whether the broker is dead (its
+    TERM-ignoring grandchild alive) or alive (lease end)."""
+    rows = {}
+    for label, broker_exits in (("dead-broker", True), ("live-broker", False)):
+        ipc = os.path.join(run.scratch, f"g-shutdown-{label}-ipc")
+        os.makedirs(ipc)
+        stubborn, trigger = os.path.join(ipc, "stubborn.pid"), os.path.join(ipc, "trigger")
+        tail = f"while [ ! -e {trigger} ]; do /bin/sleep 0.1; done; exit 0" if broker_exits else "wait"
+        broker = ["/bin/sh", "-c", f'(trap "" TERM; exec /bin/sleep 3600) & echo $! > {stubborn}; {tail}']
+        serve_pid, token = hrcpty.serve(run.binary, ipc, cols=80, rows=24, broker_argv=broker)
+        ops = hrcpty.Ops(os.path.join(ipc, "hrcpty.sock"), token)
+        grandchild = read_pid(stubborn)
+        if broker_exits:
+            open(trigger, "w").close()
+            hrcpty.wait_until(lambda: ops.call("status")["broker"]["state"] == "exited", 5, 0.02)
+        before = ops.call("status")["broker"]
+        alive_before = hrcpty.pid_alive(grandchild)
+        t0 = time.time()
+        ops.call("shutdown")
+        died = watch_deaths({"grandchild": grandchild, "serve": serve_pid}, t0, 10)
+        shutil.copy(os.path.join(ipc, "hrcpty.log"), run.path(f"g-shutdown-{label}.hrcpty.log"))
+        rows[label] = {"brokerAtShutdown": before, "grandchild": grandchild, "grandchildAliveAtShutdown": alive_before,
+                       "diedAfterShutdownS": died}
+    run.save("g-shutdown.result.json", rows)
+    ok = all(r["grandchildAliveAtShutdown"] and r["diedAfterShutdownS"]["grandchild"] is not None
+             and r["diedAfterShutdownS"]["serve"] is not None
+             and r["diedAfterShutdownS"]["grandchild"] <= r["diedAfterShutdownS"]["serve"] <= 6.5
+             for r in rows.values())
+    ok = ok and rows["dead-broker"]["brokerAtShutdown"]["state"] == "exited"
+    run.check("G.shutdown", ok, "; ".join(
+        f"{k}: broker {r['brokerAtShutdown']['state']}, TERM-ignoring grandchild gone {r['diedAfterShutdownS']['grandchild']}s"
+        f" after shutdown, serve gone {r['diedAfterShutdownS']['serve']}s" for k, r in rows.items()),
+        [run.path("g-shutdown.result.json"), *[run.path(f"g-shutdown-{k}.hrcpty.log") for k in rows]])
+
+
+def pty_attach(run, sock, cols, rows, extra=()):
+    """`hrc-pty attach` on a pty of a given size; its output is drained."""
+    import fcntl
+    import pty
+    import struct
+    import termios
+    import threading
+
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    proc = subprocess.Popen([run.binary, "attach", "--socket", sock, *extra], stdin=slave, stdout=slave,
+                            stderr=slave, start_new_session=True)
+    os.close(slave)
+
+    def drain():
+        try:
+            while os.read(master, 65536):
+                pass
+        except OSError:
+            pass
+    threading.Thread(target=drain, daemon=True).start()
+    return proc, master
+
+
+def g_no_child(run):
+    """No child: a read-only attach gets RIS and spawns nothing; spawn without
+    cols/rows after a read-write attach starts at that client's size."""
+    ipc = os.path.join(run.scratch, "g-nochild-ipc")
+    serve_pid, token = hrcpty.serve(run.binary, ipc, cols=120, rows=40)
+    sock = os.path.join(ipc, "hrcpty.sock")
+    ops = hrcpty.Ops(sock, token)
+    observer_log = run.path("g-nochild.read-only.bytes.bin")
+    observer = subprocess.Popen([run.binary, "attach", "--socket", sock, "--read-only", "--byte-log", observer_log],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    rw = None
+    try:
+        hrcpty.wait_until(lambda: ops.call("status")["clients"]["readOnly"] == 1, 10)
+        time.sleep(1)
+        ro = ops.call("status")
+        ro_bytes = open(observer_log, "rb").read()
+        rw, master = pty_attach(run, sock, 111, 33)
+        hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 1, 10)
+        rw_status = ops.call("status")
+        spawned = ops.call("spawn", {"argv": ["/bin/sh", "-c", "stty size; exec /bin/sleep 3600"], "env": run.env})
+        hrcpty.wait_until(lambda: "33 111" in ops.call("capture")["text"], 10)
+        cap = ops.call("capture")
+        result = {"readOnly": {"child": ro["child"], "clients": ro["clients"], "bytes": ro_bytes.decode("latin-1")},
+                  "readWriteAttach": {"child": rw_status["child"], "size": rw_status["size"]},
+                  "spawn": spawned, "capture": {"text": norm(cap["text"]), "cols": cap["cols"], "rows": cap["rows"]}}
+        run.save("g-nochild.result.json", result)
+        ok = (ro["child"]["state"] == "none" and ro_bytes == b"\x1bc" and rw_status["child"]["state"] == "none"
+              and (spawned["cols"], spawned["rows"]) == (111, 33) and "33 111" in cap["text"])
+        run.check("G.no-child", ok, f"read-only attach: child {ro['child']['state']}, bytes {ro_bytes!r}; read-write "
+                  f"attach 111x33 then spawn without size -> {spawned['cols']}x{spawned['rows']}, child's stty size "
+                  f"{'33 111' if '33 111' in cap['text'] else cap['text'][:20]!r}",
+                  [run.path("g-nochild.result.json"), observer_log])
+    finally:
+        observer.terminate()
+        if rw:
+            rw.terminate()
+        stop(ops)
+
+
+def g_respawn(run):
+    """A child exits nonzero; the next spawn runs on a fresh pty and model, and
+    attached clients are reset first."""
+    ipc = os.path.join(run.scratch, "g-respawn-ipc")
+    serve_pid, token = hrcpty.serve(run.binary, ipc, cols=100, rows=30)
+    sock = os.path.join(ipc, "hrcpty.sock")
+    events = hrcpty.Events(sock, token, run.path("g-respawn.events.ndjson"))
+    ops = hrcpty.Ops(sock, token)
+    observer_log = run.path("g-respawn.read-only.bytes.bin")
+    observer = subprocess.Popen([run.binary, "attach", "--socket", sock, "--read-only", "--byte-log", observer_log],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    try:
+        hrcpty.wait_until(lambda: ops.call("status")["clients"]["readOnly"] == 1, 10)
+        mark = len(events.items)
+        first = ops.call("spawn", {"argv": ["/bin/sh", "-c", "echo FIRST-CHILD; printf '\\033[?1049h\\033[?2004h'; "
+                                            "echo FIRST-ALT; /bin/sleep 0.3; exit 3"], "env": run.env})
+        exited = events.wait_for("child.exited", 10, after=mark)
+        time.sleep(0.3)
+        cap1 = ops.call("capture")
+        offset = os.path.getsize(observer_log)
+        second = ops.call("spawn", {"argv": ["/bin/sh", "-c", "echo SECOND-CHILD; exec /bin/sleep 3600"], "env": run.env})
+        hrcpty.wait_until(lambda: "SECOND-CHILD" in ops.call("capture")["text"], 10)
+        cap2 = ops.call("capture")
+        styled = ops.call("capture", {"styled": True})["text"]
+        status = ops.call("status")
+        tail = open(observer_log, "rb").read()[offset:]
+        result = {"first": first, "firstExited": exited["params"],
+                  "captureAfterFirst": {"text": norm(cap1["text"]), "screen": cap1["screen"]},
+                  "second": second, "captureAfterSecond": {"text": norm(cap2["text"]), "screen": cap2["screen"],
+                                                           "styledHasBracketedPaste": "?2004h" in styled},
+                  "child": status["child"], "observerBytesAfterSecondSpawn": tail.decode("latin-1")}
+        run.save("g-respawn.result.json", result)
+        ok = (exited["params"]["code"] == 3 and "FIRST-ALT" in cap1["text"] and cap1["screen"] == "alternate"
+              and norm(cap2["text"]) == "SECOND-CHILD" and cap2["screen"] == "primary"
+              and not result["captureAfterSecond"]["styledHasBracketedPaste"]
+              and status["child"]["pid"] == second["pid"] and status["child"]["state"] == "running"
+              and tail.startswith(b"\x1bc") and b"SECOND-CHILD" in tail)
+        run.check("G.respawn", ok, f"first child exit {exited['params']['code']} on the {cap1['screen']} screen; second "
+                  f"spawn's capture {norm(cap2['text'])!r} on the {cap2['screen']} screen, no leftover modes; attached "
+                  f"client got RIS first ({tail[:2]!r})", [run.path("g-respawn.result.json"), observer_log])
+    finally:
+        observer.terminate()
+        stop(ops)
+
+
+# -- X: the real Codex TUI under a live read-write Ghostty client ----------------
+CODEX = os.path.expanduser("~/.local/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/"
+                           "vendor/aarch64-apple-darwin/bin/codex")
+QUERIES = {"CPR": b"\x1b[6n", "OSC10": b"\x1b]10;?", "OSC11": b"\x1b]11;?", "kittyKeyboard": b"\x1b[?u",
+           "DA1": b"\x1b[c"}
+
+
+def x_codex(run):
+    ipc = os.path.join(run.scratch, "codex-ipc")
+    cwd = os.path.join(run.scratch, "codex-cwd")
+    os.makedirs(cwd)
+    serve_pid, token = hrcpty.serve(run.binary, ipc, cols=120, rows=40, broker_argv=["/bin/sleep", "3600"])
+    sock = os.path.join(ipc, "hrcpty.sock")
+    events = hrcpty.Events(sock, token, run.path("x-codex.events.ndjson"))
+    ops = hrcpty.Ops(sock, token)
+    hrcpty_log = os.path.join(ipc, "hrcpty.log")
+    try:
+        log1 = run.path("x-codex.attach1.bytes.bin")
+        w1 = run.attach_window(sock, "hrc-pty codex attach 1", log1)
+        assert hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 1, 20), "attach 1 never came"
+        attached = ops.call("status")
+        spawned = ops.call("spawn", {"argv": [CODEX], "env": run.env, "cwd": cwd})
+        t0 = time.time()
+        main_screen = hrcpty.wait_until(
+            lambda: (lambda t: "OpenAI Codex (v" in t and "\n› " in t)(ops.call("capture")["text"]), 60)
+        reached = round(time.time() - t0, 2)
+        time.sleep(1.5)
+        status = ops.call("status")
+        log_lines = open(hrcpty_log).read().splitlines()
+        since_spawn = log_lines[next(i for i, line in enumerate(log_lines) if "spawned child" in line):]
+        answered = [line for line in since_spawn if "responder answered" in line]
+        out = open(log1, "rb").read()
+        queries = {name: out.count(q) for name, q in QUERIES.items()}
+        shot1 = run.screenshot(w1, "x-codex.attach1.png")
+        parity = capture_parity(run, ops, w1, log1, "x-codex.capture-parity")
+        run.close_window(w1)
+        assert hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 0, 10), "detach not seen"
+        time.sleep(1)
+        detached = ops.call("capture")
+        log2 = run.path("x-codex.attach2.bytes.bin")
+        w2 = run.attach_window(sock, "hrc-pty codex attach 2", log2)
+        assert hrcpty.wait_until(lambda: ops.call("status")["clients"]["readWrite"] == 1, 20), "attach 2 never came"
+        time.sleep(2)
+        shot2 = run.screenshot(w2, "x-codex.attach2.png")
+        g2 = run.ghostty_text(w2)
+        run.save("x-codex.ghostty-attach2.txt", g2)
+        # Ctrl-C on an empty composer quits Codex 0.163; a second one only if
+        # it is still up (an older TUI asks for it).
+        mark = len(events.items)
+        ops.input(b"\x03")
+        try:
+            exited = events.wait_for("child.exited", 3, after=mark)
+        except TimeoutError:
+            ops.input(b"\x03")
+            exited = events.wait_for("child.exited", 15, after=mark)
+        run.close_window(w2)
+        shutil.copy(hrcpty_log, run.path("x-codex.hrcpty.log"))
+        result = {"attachedBeforeSpawn": {"clients": attached["clients"], "child": attached["child"],
+                                          "size": attached["size"]},
+                  "spawn": spawned, "mainScreenAfterS": reached if main_screen else None,
+                  "responderAnsweredSinceSpawn": answered, "statusResponderAnswered": status["responderAnswered"],
+                  "bytesIn": status["bytesRelayed"]["in"], "queriesSeenByClient": queries,
+                  "attach1Parity": parity["equal"], "detachedCapture": norm(detached["text"]),
+                  "reattachGhosttyEqualsDetachedCapture": norm(g2) == norm(detached["text"]),
+                  "childExited": exited["params"], "screenshots": [shot1, shot2]}
+        run.save("x-codex.result.json", result)
+        size_ok = (spawned["cols"], spawned["rows"]) == (attached["size"]["cols"], attached["size"]["rows"])
+        ok = (attached["child"]["state"] == "none" and size_ok and main_screen and not answered
+              and not status["responderAnswered"] and all(queries.values()) and status["bytesRelayed"]["in"] > 0
+              and all(parity["equal"].values()) and result["reattachGhosttyEqualsDetachedCapture"])
+        run.check("X.codex", ok, f"Codex spawned at the attaching Ghostty's size {spawned['cols']}x{spawned['rows']} "
+                  f"({size_ok}); main screen in {reached}s; responder answers since spawn: {len(answered)}; startup "
+                  f"queries at the client {queries}, {status['bytesRelayed']['in']} bytes answered by Ghostty; attach "
+                  f"parity {parity['equal']}; reattach replay == detached capture: "
+                  f"{result['reattachGhosttyEqualsDetachedCapture']}; TUI exit {exited['params']}",
+                  [run.path("x-codex.result.json"), run.path("x-codex.hrcpty.log"), log1, log2,
+                   run.path("x-codex.capture-parity.json"), shot1, shot2])
+    finally:
+        stop(ops)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True)
     parser.add_argument("--artifacts", required=True)
     parser.add_argument("--scratch", default=os.path.expanduser("~/praesidium/var/scratch/hrc-runtime/T-12047/e2e"))
-    parser.add_argument("--only", help="comma list of e1,e2,e2k,e3,e5,e6 (e2/e3/e5 need e1)")
+    parser.add_argument("--only", help="comma list of e1,e2,e2k,e3,e5,e6,g,x (e2/e3/e5 need e1)")
     args = parser.parse_args()
     run = Run(args)
-    only = set((args.only or "e1,e2,e2k,e3,e5,e6").split(","))
+    only = set((args.only or "e1,e2,e2k,e3,e5,e6,g,x").split(","))
     ctx = {}
     try:
-        if only - {"e6"}:
+        if only - {"e6", "g"}:
             subprocess.run(["ghostmux", "status"], check=True, capture_output=True)
         if "e1" in only:
             e1(run, ctx)
@@ -556,6 +872,14 @@ def main():
             e5(run, ctx)
         if "e6" in only:
             e6(run)
+        if "g" in only:
+            for leg in (g_broker_crash, g_shutdown, g_no_child, g_respawn):
+                try:
+                    leg(run)
+                except Exception as error:
+                    run.check(leg.__name__, False, f"{type(error).__name__}: {error}", [])
+        if "x" in only:
+            x_codex(run)
     except Exception as error:  # a crashed phase is a failed check, with its reason
         run.check("harness", False, f"{type(error).__name__}: {error}", [])
     finally:
