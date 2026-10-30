@@ -178,6 +178,13 @@ pub async fn serve(role: Role) -> Result<()> {
     });
     status_runtime::start(&server);
     start_owner_services(&server).await?;
+    // §8.1 item 5: the owner's kernel, after the store and before the listener
+    // accepts. A front starts none; a failed start is logged, never fatal.
+    let kernel = if server.front {
+        None
+    } else {
+        kernel::start(&server).await
+    };
     let role = if server.front { "front" } else { "native" };
     let bun_socket = server.bun_passthrough.clone();
     let owned = server.clone();
@@ -243,6 +250,7 @@ pub async fn serve(role: Role) -> Result<()> {
             &owner,
             &deadline,
             drained,
+            kernel,
             stop_writer,
             writer_task,
         )

@@ -83,6 +83,12 @@ impl Accounting {
         s.eligible += 1;
         if s.eligible.is_multiple_of(20) { 20 } else { 0 }
     }
+    /// The lines waiting for the writer, for tests that read what was metered.
+    #[cfg(test)]
+    pub(super) fn queued(&self) -> Vec<String> {
+        let q = self.queue.lock().unwrap();
+        q.lines.iter().map(|(_, line)| line.clone()).collect()
+    }
     pub fn writer(self: &Arc<Self>, root: PathBuf) -> Writer {
         Writer {
             accounting: self.clone(),

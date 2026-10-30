@@ -67,6 +67,8 @@ mod events;
 mod evidence;
 #[path = "server/projection/forensics.rs"]
 mod forensics;
+#[path = "server/projection/kernel/mod.rs"]
+mod kernel;
 #[path = "server/projection/ledger.rs"]
 mod ledger;
 #[path = "server/projection/messages.rs"]
@@ -397,6 +399,27 @@ async fn dispatch_local(server: &Shared, request: Request) -> Response {
     let response = dispatch_inner(server, request, true).await;
     server.ledger_committed();
     response
+}
+/// The kernel's owner seam (T-12067 §8.1 item 4): one request through
+/// `dispatch`, the function the listener calls, so the route table, accounting,
+/// federation forwarding and the ledger wake treat it as an HTTP request from
+/// `hrc-kernel`. No socket and no framing; the reply is its status and JSON.
+async fn call_local(
+    server: &Shared,
+    method: &str,
+    route: &str,
+    body: Option<&Value>,
+) -> Result<(u16, Value)> {
+    let request = Request::builder()
+        .method(method)
+        .uri(route)
+        .header("user-agent", kernel::CLIENT)
+        .header("content-type", "application/json")
+        .body(body.map_or_else(axum::body::Body::empty, |b| b.to_string().into()))?;
+    let response = dispatch(State(server.clone()), request).await;
+    let status = response.status().as_u16();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?;
+    Ok((status, serde_json::from_slice(&bytes)?))
 }
 // Keep the HTTP route table together so route order and fallthrough remain auditable.
 #[allow(clippy::too_many_lines)]

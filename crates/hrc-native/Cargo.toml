@@ -12,6 +12,11 @@ path = "src/main.rs"
 hrc-common = { path = "../hrc-common" }
 hrc-cli = { path = "../hrc-cli" }
 hrc-store = { path = "../hrc-store" }
+hrc-domain = { path = "../hrc-domain" }
+cardo-runtime.workspace = true
+cardo-runtime-tokio.workspace = true
+cardo-host.workspace = true
+crossbeam-channel.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
 chrono.workspace = true

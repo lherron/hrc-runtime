@@ -61,8 +61,9 @@ impl LedgerReader for HrcRead {
             serde_json::from_value(page).map_err(HrcError::read)
         })
     }
-    // Native SQLite commits are read on the ingest interval. A wake is only a
-    // hint; it cannot certify coverage and no daemon or stream is required.
+    // The reader has no wake of its own: rusthrc wakes ingest from its ledger
+    // watch after each commit (§8.1 item 3), and the ingest interval is the
+    // backstop. A wake is only a hint; it cannot certify coverage.
     fn wake(&self) -> Wake {
         Wake::never()
     }

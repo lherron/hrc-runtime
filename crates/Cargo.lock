@@ -165,6 +165,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cardo-host"
+version = "0.1.0"
+source = "git+https://github.com/lherron/cardo?rev=12bd05d758a936d12288bc0f102bb2833ecfa924#12bd05d758a936d12288bc0f102bb2833ecfa924"
+dependencies = [
+ "cardo-runtime",
+ "crossbeam-channel",
+ "libc",
+ "serde_json",
+]
+
+[[package]]
 name = "cardo-runtime"
 version = "0.1.0"
 source = "git+https://github.com/lherron/cardo?rev=12bd05d758a936d12288bc0f102bb2833ecfa924#12bd05d758a936d12288bc0f102bb2833ecfa924"
@@ -177,6 +188,17 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "cardo-runtime-tokio"
+version = "0.1.0"
+source = "git+https://github.com/lherron/cardo?rev=12bd05d758a936d12288bc0f102bb2833ecfa924#12bd05d758a936d12288bc0f102bb2833ecfa924"
+dependencies = [
+ "cardo-runtime",
+ "cardo-store",
+ "futures-core",
+ "tokio",
 ]
 
 [[package]]
@@ -516,11 +538,16 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
+ "cardo-host",
+ "cardo-runtime",
+ "cardo-runtime-tokio",
  "chrono",
+ "crossbeam-channel",
  "form_urlencoded",
  "futures-util",
  "hrc-cli",
  "hrc-common",
+ "hrc-domain",
  "hrc-store",
  "http-body",
  "hyper",

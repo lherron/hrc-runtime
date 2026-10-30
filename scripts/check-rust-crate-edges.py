@@ -11,9 +11,11 @@ metadata = json.loads(subprocess.check_output([
 ], text=True))
 allowed = {
     "hrc-common": set(), "hrc-store": {"hrc-common"},
-    "hrc-domain": {"hrc-common", "hrc-store"}, "hrc-kernel": {"hrc-domain"},
+    "hrc-domain": {"hrc-common", "hrc-store"},
+    "hrc-kernel": {"hrc-domain"},  # Legacy kernel binary; T-12141 deletes the crate and this edge.
     "hrc-cli": {"hrc-common", "hrc-store"},
-    "hrc-native": {"hrc-common", "hrc-store", "hrc-cli"},  # CLI is binary-only below.
+    # The library hosts the kernel (T-12067 §8.1 item 1); CLI is binary-only below.
+    "hrc-native": {"hrc-common", "hrc-store", "hrc-domain", "hrc-cli"},
     "hrc-pty": set(),  # Standalone per-seat supervisor; rusthrc speaks to it over its socket.
 }
 errors = []

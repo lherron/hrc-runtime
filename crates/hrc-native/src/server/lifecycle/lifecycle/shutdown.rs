@@ -1,5 +1,5 @@
 //! Bounded native teardown and its clean-stop attestation. No publication ACK.
-use crate::server::{Owner, Shared, publication, stderr_json};
+use crate::server::{Owner, Shared, kernel::Kernel, publication, stderr_json};
 use anyhow::Result;
 use serde_json::json;
 use std::{
@@ -93,6 +93,7 @@ pub async fn finish(
     owner: &Owner,
     deadline: &Deadline,
     requests_drained: bool,
+    kernel: Option<Kernel>,
     stop_writer: tokio::sync::oneshot::Sender<()>,
     writer: tokio::task::JoinHandle<()>,
 ) -> Result<()> {
@@ -100,6 +101,17 @@ pub async fn finish(
     let mut reasons = Vec::new();
     if !requests_drained {
         incomplete(&mut reasons, "request_drain_timeout");
+    }
+    // The listener has stopped: the kernel's wire, then its owner (§8.1 item 5).
+    if let Some(kernel) = kernel {
+        step(
+            &mut reasons,
+            "kernel",
+            "kernel_stop_timeout",
+            "kernel_stop_failed",
+            kernel.stop(),
+        )
+        .await;
     }
     stderr_json(
         "info",

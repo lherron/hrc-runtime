@@ -8,11 +8,12 @@ predicate: >
   has no HRC, database, HTTP-client or async-runtime dependency. Allowed HRC
   edges are hrc-store to hrc-common; hrc-domain and hrc-cli to hrc-common and
   hrc-store; hrc-native library to hrc-common, hrc-store and hrc-domain;
-  and the rusthrc binary to hrc-native library and hrc-cli. The T-12067 fold
-  retires the hrc-kernel crate and its edge to hrc-domain. Until that
-  implementation lands, the legacy hrc-kernel to hrc-domain edge and
-  hrc-domain HTTP client remain permitted; after it lands, hrc-domain has
-  no HTTP-client dependency. Projection stays in hrc-domain, which cannot
+  and the rusthrc binary to hrc-native library and hrc-cli. The hrc-native
+  library hosts the kernel (T-12067 L2b) and also depends on the cardo crates
+  cardo-runtime, cardo-runtime-tokio and cardo-host. hrc-domain has no
+  HTTP-client dependency. The legacy hrc-kernel crate and its edge to
+  hrc-domain remain permitted only until T-12141 deletes them (L2c).
+  Projection stays in hrc-domain, which cannot
   depend on hrc-native; its reader takes a state path, not the daemon's
   Server or store mutex. Only
   main.rs may use hrc-cli in hrc-native. The check derives package edges from
@@ -21,7 +22,7 @@ predicate: >
 authority: wrkq:T-11941; T-12067 section 8.1 at 1e5109af, Daedalus approval EN-38698, 2026-10-29
 design_approval:
   revision: 1e5109af
-  evidence: EN-38698 source review; implementation and amended checker not yet verified
+  evidence: EN-38698 source review; amended checker verified with its forbidden-edge negative control (T-12140)
 source:
   - crates/Cargo.toml
   - crates/hrc-common/Cargo.toml
@@ -35,8 +36,8 @@ required_tests:
   - just cargo-check
   - just verify
 last_verified:
-  date: 2026-10-26
-  evidence: T-11941 gate log and forbidden-edge negative control
+  date: 2026-10-29
+  evidence: T-12140 crate-edges log and forbidden-edge negative control (wrkq-artifacts/T-12140)
 reopen_when: A Rust workspace crate or allowed dependency edge changes.
 supersedes: []
 superseded_by: []
