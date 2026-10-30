@@ -1178,8 +1178,9 @@ fn data_connection(
     }
 }
 
-/// Only complete replies from the frozen terminal-noise list are ignored.
-/// Unknown or split sequences count as keys; no state spans relay reads.
+/// Only complete replies from the frozen terminal-noise list, and complete SGR
+/// mouse reports, are ignored. Unknown or split sequences count as keys; no
+/// state spans relay reads.
 fn is_human_input(mut bytes: &[u8]) -> bool {
     while !bytes.is_empty() {
         if bytes.starts_with(b"\x1b[") {
@@ -1198,6 +1199,13 @@ fn is_human_input(mut bytes: &[u8]) -> bool {
             };
             let reply = match bytes[end] {
                 b'I' | b'O' => params.is_empty(),
+                // SGR mouse (`?1006h`): the gate is keystroke idle time, and
+                // Claude's `?1003h` reports every pointer motion over the leaf.
+                b'M' | b'm' => {
+                    params.starts_with(b"<")
+                        && numbers(&params[1..])
+                        && params.split(|b| *b == b';').count() == 3
+                }
                 b'R' => numbers(params) && params.split(|b| *b == b';').count() == 2,
                 b'c' => matches!(params.first(), Some(b'?' | b'>')) && numbers(&params[1..]),
                 b'y' => {
@@ -1399,6 +1407,11 @@ mod human_input_tests {
             b"\x1b]10;rgb:ffff/ffff/ffff\x07",
             b"\x1b]11;rgb:0000/0000/0000\x1b\\",
             b"\x1b]4;0;rgb:0000/0000/0000\x07\x1b[I",
+            // SGR mouse reports (Claude enables ?1003h): motion, press, release, wheel.
+            b"\x1b[<35;10;5M",
+            b"\x1b[<0;2;3M\x1b[<0;2;3m",
+            b"\x1b[<64;5;5M",
+            b"\x1b[I\x1b[<35;1;1M\x1b[<35;2;1M",
         ];
         for bytes in noise {
             assert!(!is_human_input(bytes), "{bytes:?}");
@@ -1407,7 +1420,9 @@ mod human_input_tests {
             b"a",
             b"\r",
             b"\x1b[A",
-            b"\x1b[<0;2;3M",
+            b"\x1b[<35;1;1Ma",
+            b"\x1b[<35;1;",
+            b"\x1b[<35;1M",
             b"\x1b[200~paste\x1b[201~",
             b"\x1b[Ia",
             b"\x1b[12;",
