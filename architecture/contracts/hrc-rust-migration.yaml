@@ -405,7 +405,8 @@ source:
   - packages/hrc-server/src/federation/scope-read-routing.ts
   - packages/hrc-store-sqlite/src/repositories/event-repositories.ts
   - packages/hrc-store-sqlite/src/repositories/shared.ts
-  - crates/hrc-domain/src/api.rs
+  - crates/hrc-domain/src/owner.rs
+  - crates/hrc-domain/src/reader.rs
   - crates/hrc-domain/src/projector.rs
   - crates/hrc-domain/src/projection.rs
   - crates/hrc-domain/src/preview.rs

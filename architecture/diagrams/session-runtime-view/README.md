@@ -86,10 +86,11 @@ These are the ids used in the native, so a script can address them by id.
   projects seats and answers `resource.attach` with the tmux descriptor.
 - **`cardo` cardo-core / cardo-runtime.** The cardo kernel framework, a
   workspace dependency.
-- **`hrcdomain` hrc-domain.** `crates/hrc-domain`. It provides `HrcApi` (owner
-  operations over `hrc.sock`), `HrcLedger` and `SeatProjector`. Reads project
-  straight from rusthrc's native SQLite rather than through HTTP; the read
-  allowlist excludes reconciling GETs.
+- **`hrcdomain` hrc-domain.** `crates/hrc-domain`. It provides `HrcRead` (one
+  held read-only connection on rusthrc's native SQLite, read through the
+  hrc_store mappers the routes use), `HrcLedger`, `SeatProjector`, and the
+  owner-call seam the ops and hrc-pty attach go through. It has no HTTP
+  client; hrc-kernel implements the seam over `hrc.sock` until the fold.
 
 ### Between Loggia and tmux
 

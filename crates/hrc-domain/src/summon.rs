@@ -1,5 +1,8 @@
 //! seat.summon delegates declaration, placement, claims and replay to HRC.
-use crate::api::{ApiError, HrcApi};
+use crate::{
+    HrcError,
+    owner::{self, OwnerCall},
+};
 use cardo_runtime::service::DispatchFailure;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -51,29 +54,25 @@ impl Summon {
         Ok(args)
     }
 
-    pub fn run(self, api: &HrcApi) -> Result<Value, DispatchFailure> {
-        self.start(api).map_err(|e| DispatchFailure {
-            code: e.code.clone(),
-            message: e.message.clone(),
-            details: json!({"hrc_code":e.code,"message":e.message}),
-        })
+    pub fn run(self, owner: &dyn OwnerCall) -> Result<Value, DispatchFailure> {
+        Ok(self.start(owner)?)
     }
 
-    fn start(self, api: &HrcApi) -> Result<Value, ApiError> {
-        let invalid = || ApiError {
-            code: "hrc_response_invalid".into(),
-            message: "HRC omitted required summon response fields".into(),
+    fn start(self, owner: &dyn OwnerCall) -> Result<Value, HrcError> {
+        let invalid = || {
+            HrcError::new(
+                "hrc_response_invalid",
+                "HRC omitted required summon response fields",
+            )
         };
         // parse() refuses this already; a directly deserialized Summon must not
         // reach HRC with an unqualified scope.
         let scope = self
             .session_ref
             .strip_suffix("/lane:main")
-            .ok_or_else(|| ApiError {
-                code: "invalid_input".into(),
-                message: UNQUALIFIED.into(),
-            })?;
-        let resolved = api.post_owner(
+            .ok_or_else(|| HrcError::new("invalid_input", UNQUALIFIED))?;
+        let resolved = owner::post(
+            owner,
             "/v1/declarations/resolve",
             &json!({
                 "scopeRef":scope,"runMode":"task","interactive":true,"preferredMode":"headless"
@@ -100,7 +99,7 @@ impl Summon {
         } else {
             "sessionRef"
         }] = json!(self.session_ref);
-        let response = api.post_owner("/v1/runtimes/start", &request)?;
+        let response = owner::post(owner, "/v1/runtimes/start", &request)?;
         let string = |v: &Value| {
             v.as_str()
                 .filter(|s| !s.is_empty())

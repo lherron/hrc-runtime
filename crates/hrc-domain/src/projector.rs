@@ -1,100 +1,52 @@
 use crate::{
-    api::HrcApi,
     projection::{project_with_context, remove, session_ref, text},
+    reader::{HrcRead, display_payloads, tail},
 };
 use cardo_runtime::ingest::{Applied, BootstrapPage, Projector, ProjectorError};
 use cardo_store::ledger::{Cursor, LedgerRow};
 use chrono::{Duration, Utc};
+use hrc_store::{Store, presentation as mappers};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-pub trait ProjectionReader: crate::ledger::LedgerReader {
-    fn get(&self, route: &str, query: &[(String, String)]) -> Result<Value, crate::api::ApiError>;
-    fn seats(
-        &self,
-        session_refs: &Value,
-        runtime_ids: &Value,
-    ) -> Result<Value, crate::api::ApiError>;
-    fn snapshot(&self) -> Result<Box<dyn Send>, crate::api::ApiError> {
-        Ok(Box::new(()))
+/// Projects HRC's seats from typed in-process reads, each ingest step in one
+/// read transaction on the kernel's own connection.
+pub struct SeatProjector {
+    read: HrcRead,
+}
+fn error(e: impl std::fmt::Display) -> ProjectorError {
+    ProjectorError::new("hrc_read_failed", e.to_string())
+}
+fn array(v: Value) -> Result<Vec<Value>, ProjectorError> {
+    match v {
+        Value::Array(items) => Ok(items),
+        _ => Err(error("expected array")),
     }
 }
-impl ProjectionReader for HrcApi {
-    fn get(&self, route: &str, query: &[(String, String)]) -> Result<Value, crate::api::ApiError> {
-        HrcApi::get(self, route, query)
+impl SeatProjector {
+    pub fn new(read: HrcRead) -> Self {
+        Self { read }
     }
-    fn seats(&self, refs: &Value, ids: &Value) -> Result<Value, crate::api::ApiError> {
-        HrcApi::seats(self, refs, ids)
-    }
-}
-pub struct SeatProjector<R: ProjectionReader = HrcApi> {
-    pub api: R,
-}
-impl<R: ProjectionReader> SeatProjector<R> {
-    fn error(e: impl std::fmt::Display) -> ProjectorError {
-        ProjectorError::new("hrc_read_failed", e.to_string())
-    }
-    fn array(v: Value) -> Result<Vec<Value>, ProjectorError> {
-        v.as_array()
-            .cloned()
-            .ok_or_else(|| Self::error("expected array"))
-    }
-    /// Recover a display turn without treating category=turn as eventKind=turn.*.
-    /// Owner pagination is incarnation-fenced and strictly decreases.
-    fn latest_turn(&self, raw: &Value) -> Result<Option<Value>, ProjectorError> {
+    /// Recover a display turn without treating category=turn as eventKind=turn.*,
+    /// paging back ten rows at a time through the seat generation's turn rows.
+    fn latest_turn(db: &Store, raw: &Value) -> Result<Option<Value>, ProjectorError> {
         if text(raw, "eventKind").starts_with("turn.") {
             return Ok(Some(raw.clone()));
         }
         let upper = raw["hrcSeq"]
             .as_i64()
-            .ok_or_else(|| Self::error("latest event lacks hrcSeq"))?;
-        let query = vec![
-            (
-                "hostSessionId".into(),
-                text(raw, "hostSessionId").to_owned(),
-            ),
-            ("generation".into(), raw["generation"].to_string()),
-            ("category".into(), "turn".into()),
-            ("limit".into(), "10".into()),
-        ];
+            .ok_or_else(|| error("latest event lacks hrcSeq"))?;
+        let host = text(raw, "hostSessionId");
         let mut before = None;
-        let mut incarnation: Option<String> = None;
         loop {
-            let mut page_query = query.clone();
-            if let Some(seq) = before {
-                page_query.push(("beforeHrcSeq".into(), format!("{seq}")));
-            }
-            if let Some(ref id) = incarnation {
-                page_query.push(("ledgerIncarnationId".into(), id.clone()));
-            }
-            let page = self
-                .api
-                .get("/v1/events/tail", &page_query)
-                .map_err(Self::error)?;
-            let id = page["ledgerIncarnationId"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| Self::error("tail lacks ledger incarnation"))?;
-            if incarnation.as_deref().is_some_and(|old| old != id) {
-                return Err(Self::error("tail ledger incarnation changed"));
-            }
-            incarnation = Some(id.to_owned());
-            let events = Self::array(page["events"].clone())?;
-            if events.len() > 10 {
-                return Err(Self::error("tail exceeds requested limit"));
-            }
+            let (events, truncated) =
+                tail(db, host, &raw["generation"], Some("turn"), before, 10).map_err(error)?;
             let mut minimum = None;
             for e in &events {
                 let seq = e["hrcSeq"]
                     .as_i64()
                     .filter(|seq| *seq > 0)
-                    .ok_or_else(|| Self::error("tail event lacks positive hrcSeq"))?;
-                if before.is_some_and(|before| seq >= before)
-                    || e["hostSessionId"] != raw["hostSessionId"]
-                    || e["generation"] != raw["generation"]
-                {
-                    return Err(Self::error("tail event outside scoped reverse page"));
-                }
+                    .ok_or_else(|| error("tail event lacks positive hrcSeq"))?;
                 minimum = Some(minimum.map_or(seq, |old: i64| old.min(seq)));
             }
             if let Some(turn) = events
@@ -107,19 +59,14 @@ impl<R: ProjectionReader> SeatProjector<R> {
             {
                 return Ok(Some(turn.clone()));
             }
-            match page["truncated"].as_bool() {
-                Some(false) => return Ok(None),
-                Some(true) => {
-                    before = Some(
-                        minimum.ok_or_else(|| Self::error("truncated tail made no progress"))?,
-                    )
-                }
-                None => return Err(Self::error("tail lacks truncated flag")),
+            if !truncated {
+                return Ok(None);
             }
+            before = Some(minimum.ok_or_else(|| error("truncated tail made no progress"))?);
         }
     }
     fn project_state(
-        &self,
+        db: &Store,
         sessions: &[Value],
         runtimes: &[Value],
         events: &[Value],
@@ -143,51 +90,50 @@ impl<R: ProjectionReader> SeatProjector<R> {
                     e["hostSessionId"] == s["hostSessionId"] && e["generation"] == s["generation"]
                 })
                 .max_by_key(|e| e["hrcSeq"].as_i64());
-            let turn = latest.map(|e| self.latest_turn(e)).transpose()?.flatten();
+            let turn = latest
+                .map(|e| Self::latest_turn(db, e))
+                .transpose()?
+                .flatten();
             if let Some(e) = turn.as_ref().filter(|e| crate::preview::is_result(e)) {
-                let tail = self
-                    .api
-                    .get(
-                        "/v1/events/tail",
-                        &[
-                            ("hostSessionId".into(), text(s, "hostSessionId").to_owned()),
-                            ("generation".into(), s["generation"].to_string()),
-                            ("limit".into(), "10".into()),
-                        ],
-                    )
-                    .map_err(Self::error)?;
-                // The owner may advance between reads. No future context may
-                // supply a command to the already selected result.
-                context.extend(Self::array(tail["events"].clone())?.into_iter().filter(
-                    |candidate| {
-                        candidate["hostSessionId"] == e["hostSessionId"]
-                            && candidate["generation"] == e["generation"]
-                            && candidate["hrcSeq"].as_i64() <= e["hrcSeq"].as_i64()
-                    },
-                ));
+                let (tail, _) = tail(
+                    db,
+                    text(s, "hostSessionId"),
+                    &s["generation"],
+                    None,
+                    None,
+                    10,
+                )
+                .map_err(error)?;
+                // No later context may supply a command to the selected result.
+                context.extend(tail.into_iter().filter(|candidate| {
+                    candidate["hostSessionId"] == e["hostSessionId"]
+                        && candidate["generation"] == e["generation"]
+                        && candidate["hrcSeq"].as_i64() <= e["hrcSeq"].as_i64()
+                }));
             }
             turns.extend(turn);
         }
         project_with_context(sessions, runtimes, events, &turns, &context, Utc::now())
     }
-    fn state(&self) -> Result<Vec<Value>, ProjectorError> {
+    /// `/v1/sessions` for the projector: latest generation, identity, title.
+    fn sessions(
+        db: &Store,
+        seat: Option<(&str, &str)>,
+        since: Option<&str>,
+    ) -> anyhow::Result<Vec<Value>> {
+        let (scope, lane) = seat.unzip();
+        let mut rows =
+            db.sessions_for_projection(scope, lane.map(hrc_store::storage_lane), since)?;
+        hrc_store::retain_latest_generation(&mut rows)?;
+        for s in &mut rows {
+            db.annotate_session(s, scope.is_some())?;
+        }
+        Ok(rows)
+    }
+    fn state(db: &Store) -> Result<Vec<Value>, ProjectorError> {
         let since = (Utc::now() - Duration::hours(24)).to_rfc3339();
-        let mut sessions = Self::array(
-            self.api
-                .get(
-                    "/v1/sessions",
-                    &[
-                        ("updatedSince".into(), since),
-                        ("latestGeneration".into(), "true".into()),
-                    ],
-                )
-                .map_err(Self::error)?,
-        )?;
-        let r = self
-            .api
-            .get("/v1/presentation/runtimes", &[])
-            .map_err(Self::error)?;
-        let runtimes = Self::array(r["runtimes"].clone())?;
+        let mut sessions = Self::sessions(db, None, Some(&since)).map_err(error)?;
+        let runtimes = array(mappers::runtimes(db).map_err(error)?["runtimes"].take())?;
         // Presentation is the other arm of live-set membership. A live seat
         // must survive even if its session's activity predates the window.
         let mut wanted = BTreeSet::new();
@@ -196,53 +142,66 @@ impl<R: ProjectionReader> SeatProjector<R> {
                 s["hostSessionId"] == runtime["hostSessionId"]
                     && s["generation"] == runtime["generation"]
             }) {
-                wanted.insert((
-                    text(runtime, "scopeRef").to_owned(),
-                    text(runtime, "laneRef").to_owned(),
-                ));
+                wanted.insert((text(runtime, "scopeRef"), text(runtime, "laneRef")));
             }
         }
         for (scope, lane) in wanted {
-            sessions.extend(Self::array(
-                self.api
-                    .get(
-                        "/v1/sessions",
-                        &[
-                            ("scopeRef".into(), scope),
-                            ("laneRef".into(), lane),
-                            ("latestGeneration".into(), "true".into()),
-                        ],
-                    )
-                    .map_err(Self::error)?,
-            )?);
+            sessions.extend(Self::sessions(db, Some((scope, lane)), None).map_err(error)?);
         }
-
-        let events = Self::array(
-            self.api
-                .get("/v1/events/latest-by-session", &[])
-                .map_err(Self::error)?,
-        )?;
-        self.project_state(&sessions, &runtimes, &events)
+        // The owner's covering-index query; hydrating and deduping the whole
+        // ledger held ~15 GB per bootstrap on max3 (T-11919).
+        let mut events = db.latest_per_session(&HashMap::new()).map_err(error)?;
+        display_payloads(db, &mut events).map_err(error)?;
+        Self::project_state(db, &sessions, &runtimes, &events)
+    }
+    /// The seats an ingest batch touches: its session keys in first-seen
+    /// order, then the seats of its runtimes, as `/v1/presentation/seats/read`.
+    fn seats(
+        db: &Store,
+        keys: BTreeSet<(String, String)>,
+        runtime_ids: BTreeSet<String>,
+    ) -> anyhow::Result<Value> {
+        let mut seen = HashSet::new();
+        let mut seats = Vec::new();
+        for (scope, lane) in keys {
+            let lane = hrc_store::storage_lane(&lane).to_owned();
+            if seen.insert(format!("{scope}/lane:{}", hrc_store::canonical_lane(&lane))) {
+                seats.push((scope, lane));
+            }
+        }
+        for id in runtime_ids {
+            if let Some((scope, lane)) = db.presentation_runtime_seat(&id)?
+                && seen.insert(format!("{scope}/lane:{}", hrc_store::canonical_lane(&lane)))
+            {
+                seats.push((scope, lane));
+            }
+        }
+        let mut value = mappers::seats(db, seats)?;
+        if let Some(events) = value["events"].as_array_mut() {
+            display_payloads(db, events)?;
+        }
+        Ok(value)
     }
 }
 fn edit_id(e: &Value) -> String {
     format!("{}:{}", text(e, "type"), e["key"])
 }
-impl<R: ProjectionReader> Projector for SeatProjector<R> {
+impl Projector for SeatProjector {
     fn bootstrap(
         &mut self,
         page: Option<Value>,
         limit: usize,
     ) -> Result<BootstrapPage, ProjectorError> {
         if limit == 0 {
-            return Err(Self::error("zero bootstrap limit"));
+            return Err(error("zero bootstrap limit"));
         }
-        let _snapshot = self.api.snapshot().map_err(Self::error)?;
-        // Capture at BEFORE reading state; any race is replayed after bootstrap.
-        let p = self.api.page(0, 1, None).map_err(Self::error)?;
-        let at = Cursor::new(p.ledger_incarnation_id, p.head);
         let after = page.as_ref().and_then(Value::as_str).unwrap_or("");
-        let mut edits = self.state()?;
+        let (at, mut edits) = self.read.read(|db| {
+            // One transaction: the cursor and the state it covers agree.
+            let head = db.allocated_hrc_seq().map_err(error)?;
+            let incarnation = db.ledger_incarnation().map_err(error)?;
+            Ok::<_, ProjectorError>((Cursor::new(incarnation, head), Self::state(db)?))
+        })?;
         edits.sort_by_key(edit_id);
         edits.retain(|e| edit_id(e).as_str() > after);
         let next = (edits.len() > limit).then(|| json!(edit_id(&edits[limit - 1])));
@@ -256,27 +215,29 @@ impl<R: ProjectionReader> Projector for SeatProjector<R> {
                 handled: 0,
             });
         }
-        let _snapshot = self.api.snapshot().map_err(Self::error)?;
         let mut keys = BTreeSet::new();
         let mut runtime_ids = BTreeSet::new();
         for row in rows {
             let e = Value::Object(row.identity.clone());
             if !text(&e, "scopeRef").is_empty() {
-                keys.insert(session_ref(&e));
+                keys.insert((
+                    text(&e, "scopeRef").to_owned(),
+                    e["laneRef"].as_str().unwrap_or("main").to_owned(),
+                ));
             }
             if !text(&e, "runtimeId").is_empty() {
                 runtime_ids.insert(text(&e, "runtimeId").to_owned());
             }
         }
-        let batch = self
-            .api
-            .seats(&json!(keys), &json!(runtime_ids))
-            .map_err(Self::error)?;
-        let state = self.project_state(
-            &Self::array(batch["sessions"].clone())?,
-            &Self::array(batch["runtimes"].clone())?,
-            &Self::array(batch["events"].clone())?,
-        )?;
+        let state = self.read.read(|db| {
+            let mut batch = Self::seats(db, keys, runtime_ids).map_err(error)?;
+            Self::project_state(
+                db,
+                &array(batch["sessions"].take())?,
+                &array(batch["runtimes"].take())?,
+                &array(batch["events"].take())?,
+            )
+        })?;
         apply_indexed(state, rows, limit)
     }
 }

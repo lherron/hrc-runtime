@@ -12,6 +12,7 @@ mod broker;
 mod broker_reads;
 mod events;
 mod index;
+pub use index::retain_latest_generation;
 mod maintenance;
 pub use maintenance::fail_unresolved_absorbed;
 pub mod collective_history;
@@ -128,6 +129,12 @@ impl Store {
             observe,
         )?);
         Ok(())
+    }
+
+    /// The migration set this build understands. A reader that holds its
+    /// connection re-checks per read, since the file outlives one open.
+    pub fn assert_schema(&self) -> Result<()> {
+        assert_schema(&self.sqlite)
     }
 
     /// Direct-store clients must never take schema or journal ownership.

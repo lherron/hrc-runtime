@@ -13,9 +13,11 @@ cardo-runtime.workspace = true
 cardo-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-reqwest.workspace = true
 chrono.workspace = true
 unicode-segmentation.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
 
 [lints]
 workspace = true

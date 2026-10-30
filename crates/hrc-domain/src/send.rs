@@ -1,6 +1,9 @@
 //! seat.send is a single fenced literal-input call, the same delivery as
 //! `hrc send`. HRC owns the host-session/generation fence and the runtime pick.
-use crate::{api::HrcApi, summon::invalid};
+use crate::{
+    owner::{self, OwnerCall},
+    summon::invalid,
+};
 use cardo_runtime::service::DispatchFailure;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -49,15 +52,12 @@ impl SeatSend {
             "fences":{"expectedHostSessionId":self.host_session_id,"expectedGeneration":self.expected_generation}})
     }
 
-    pub fn run(self, api: &HrcApi) -> Result<Value, DispatchFailure> {
-        let response = api
-            .post_owner("/v1/literal-input/by-selector", &self.request())
-            .map_err(|e| DispatchFailure {
-                code: e.code.clone(),
-                message: e.message.clone(),
-                details: json!({"hrc_code":e.code,"message":e.message}),
-            })?;
-        Self::receipt(response)
+    pub fn run(self, owner: &dyn OwnerCall) -> Result<Value, DispatchFailure> {
+        Self::receipt(owner::post(
+            owner,
+            "/v1/literal-input/by-selector",
+            &self.request(),
+        )?)
     }
 
     pub fn receipt(response: Value) -> Result<Value, DispatchFailure> {

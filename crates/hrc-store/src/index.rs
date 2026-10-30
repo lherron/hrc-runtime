@@ -44,7 +44,50 @@ fn filters(input: &HashMap<String, String>, excluded: &str) -> (String, Vec<SqlV
     }
     (format!("WHERE {}", predicates.join(" AND ")), values)
 }
+/// `/v1/sessions?latestGeneration=true`: only each seat's newest generation.
+pub fn retain_latest_generation(sessions: &mut Vec<Value>) -> Result<()> {
+    let generation = |s: &Value| {
+        s["generation"]
+            .as_i64()
+            .ok_or_else(|| anyhow::anyhow!("session row lacks an integer generation"))
+    };
+    let seat = |s: &Value| (s["scopeRef"].to_string(), s["laneRef"].to_string());
+    let mut latest = HashMap::<(String, String), i64>::new();
+    for s in sessions.iter() {
+        let g = generation(s)?;
+        latest
+            .entry(seat(s))
+            .and_modify(|v| *v = (*v).max(g))
+            .or_insert(g);
+    }
+    sessions.retain(|s| generation(s).is_ok_and(|g| latest[&seat(s)] == g));
+    Ok(())
+}
+
 impl Store {
+    /// A `/v1/sessions` row's identity and title. Bun's scoped list maps
+    /// through the store repository (identity last); the unscoped projection
+    /// maps through mapSessionRow(row, db).
+    pub fn annotate_session(&self, s: &mut Value, scoped: bool) -> Result<()> {
+        let (Some(scope), Some(lane)) = (s["scopeRef"].as_str(), s["laneRef"].as_str()) else {
+            anyhow::bail!("session row lacks scopeRef or laneRef");
+        };
+        let (scope, lane) = (scope.to_owned(), super::storage_lane(lane).to_owned());
+        let identity = self.optional_identity(&scope, &lane)?;
+        let metadata = self.metadata(&scope, &lane)?;
+        if let Some(identity) = identity {
+            if scoped {
+                s["identity"] = identity;
+            } else {
+                *s = super::with_session_identity(s.take(), identity);
+            }
+        }
+        if let Some(title) = metadata["metadata"].get("title").filter(|v| v.is_string()) {
+            s["title"] = title.clone();
+        }
+        Ok(())
+    }
+
     /// Bun's bounded session projection. Scope reads retain all history;
     /// callers pass no cutoff for those and for explicit all=true reads.
     pub fn sessions_for_projection(

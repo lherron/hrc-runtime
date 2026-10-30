@@ -491,10 +491,10 @@ dependencies = [
  "chrono",
  "hrc-common",
  "hrc-store",
- "reqwest",
  "serde",
  "serde_json",
  "unicode-segmentation",
+ "uuid",
 ]
 
 [[package]]
@@ -505,6 +505,7 @@ dependencies = [
  "cardo-runtime",
  "crossbeam-channel",
  "hrc-domain",
+ "reqwest",
  "serde_json",
 ]
 

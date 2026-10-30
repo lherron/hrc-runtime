@@ -25,6 +25,10 @@ for package in metadata["packages"]:
     for dep in package["dependencies"]:
         if dep["name"].startswith("hrc-") and dep["name"] not in allowed[name]:
             errors.append(f"forbidden crate edge: {name} -> {dep['name']}")
+        # T-12067 §8.1 item 1: projection and ops reach HRC in-process or through
+        # the owner seam, never over an HTTP client of their own.
+        if name == "hrc-domain" and dep["name"] in {"reqwest", "hyper", "hyper-util", "ureq"}:
+            errors.append(f"forbidden HTTP-client dependency: {name} -> {dep['name']}")
         if name == "hrc-common" and dep["name"] not in {"serde", "serde_json", "chrono", "toml", "url", "libc"}:
             errors.append(f"forbidden leaf dependency: {name} -> {dep['name']}")
 # Cargo metadata declares dependencies at package granularity. Inspect every

@@ -1,5 +1,6 @@
 //! HRC observation and owner-API facade kernel. Loggia owns supervision; no resident is added.
 mod adapter;
+mod http;
 
 use cardo_core::{Format, document::CoreDomain};
 use cardo_runtime::{
@@ -9,7 +10,7 @@ use cardo_runtime::{
     wire,
 };
 use crossbeam_channel::Sender;
-use hrc_domain::{api::HrcApi, ledger::HrcLedger, native::NativeRead, projector::SeatProjector};
+use hrc_domain::{ledger::HrcLedger, projector::SeatProjector, reader::HrcRead};
 use serde_json::{Value, json};
 use std::{
     fs::{File, OpenOptions},
@@ -187,7 +188,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("a server is already listening on {}", socket.display()).into());
     }
 
-    let api = HrcApi::new(&hrc_socket.unwrap_or_else(|| root.join("hrc.sock")))?;
+    let owner: Arc<dyn hrc_domain::owner::OwnerCall> = Arc::new(http::HttpOwner::new(
+        &hrc_socket.unwrap_or_else(|| root.join("hrc.sock")),
+    )?);
     let ledger_path = ledger_path
         .or_else(|| {
             std::env::var_os("HRC_STATE_DIR").map(|p| PathBuf::from(p).join("state.sqlite"))
@@ -197,28 +200,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|home| PathBuf::from(home).join("praesidium/var/state/hrc/state.sqlite"))
         })
         .ok_or("set --ledger-path or HRC_STATE_DIR when HOME is unset")?;
-    let native = NativeRead::new(&ledger_path);
-    let source = Arc::new(HrcLedger::new(native.clone()));
+    let read = HrcRead::open(&ledger_path)?;
+    let source = Arc::new(HrcLedger::new(read.clone()));
     let mut adapter = CoreAdapter::<CoreDomain>::new(
         || CoreDomain,
         hrc_domain::decode_edits,
         Duration::from_secs(60),
     )
     .with_format(Format::new("hrc", 1));
-    let owner_api = api.clone();
     let worker_source = source.clone();
     adapter.in_process_worker("hrc", move || {
         Box::new(LedgerIngest::new(
             "hrc.project",
             worker_source.clone(),
-            SeatProjector {
-                api: native.clone(),
-            },
+            SeatProjector::new(read.clone()),
         ))
     });
-    let attach_api = api.clone();
+    let attach_owner = owner.clone();
     adapter.attacher("hrc.seat", move |node, mode| {
-        hrc_domain::attach::attach(&attach_api, node, mode)
+        hrc_domain::attach::attach(attach_owner.as_ref(), node, mode)
     });
     forward_wake(
         source.as_ref(),
@@ -228,7 +228,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let owner = RuntimeOwner::start(
         adapter::HrcAdapter {
             core: adapter,
-            api: owner_api,
+            owner,
             pending: Default::default(),
         },
         Arc::new(NoWork),

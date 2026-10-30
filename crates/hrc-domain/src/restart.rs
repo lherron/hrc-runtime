@@ -1,6 +1,9 @@
 //! seat.restart is a single owner-API call. HRC owns the generation fence,
 //! idle check and rotation; a committed launch failure is still a receipt.
-use crate::{api::HrcApi, summon::invalid};
+use crate::{
+    owner::{self, OwnerCall},
+    summon::invalid,
+};
 use cardo_runtime::service::DispatchFailure;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -34,15 +37,8 @@ impl Restart {
         json!({"hostSessionId":self.host_session_id,"expectedGeneration":self.expected_generation})
     }
 
-    pub fn run(self, api: &HrcApi) -> Result<Value, DispatchFailure> {
-        let response = api
-            .post_owner("/v1/sessions/restart", &self.request())
-            .map_err(|e| DispatchFailure {
-                code: e.code.clone(),
-                message: e.message.clone(),
-                details: json!({"hrc_code":e.code,"message":e.message}),
-            })?;
-        Self::receipt(response)
+    pub fn run(self, owner: &dyn OwnerCall) -> Result<Value, DispatchFailure> {
+        Self::receipt(owner::post(owner, "/v1/sessions/restart", &self.request())?)
     }
 
     pub fn receipt(response: Value) -> Result<Value, DispatchFailure> {

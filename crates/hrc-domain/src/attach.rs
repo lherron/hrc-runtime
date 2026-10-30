@@ -1,4 +1,7 @@
-use crate::{api::HrcApi, projection::text};
+use crate::{
+    owner::{self, OwnerCall},
+    projection::text,
+};
 use cardo_core::doms::Node;
 use cardo_runtime::{
     core_adapter::resources::{Attachment, unavailable},
@@ -49,13 +52,17 @@ fn window_is_live(tmux: &Path, socket: &str, target: &str) -> bool {
     }
 }
 
-pub fn attach(api: &HrcApi, node: &Node, mode: &str) -> Result<Attachment, DispatchFailure> {
+pub fn attach(
+    owner: &dyn OwnerCall,
+    node: &Node,
+    mode: &str,
+) -> Result<Attachment, DispatchFailure> {
     let tmux = &node.payload["tmux"];
     let socket = text(tmux, "socketPath");
     let target = text(tmux, "attachTarget");
     if socket.is_empty() || target.is_empty() {
         if node.payload["hrcpty"].is_object() {
-            return hrcpty(api, node, mode);
+            return hrcpty(owner, node, mode);
         }
         return Err(unavailable(
             "no_tty",
@@ -95,12 +102,12 @@ pub fn attach(api: &HrcApi, node: &Node, mode: &str) -> Result<Attachment, Dispa
 /// passed through as issued. The one edit is `--read-only` for a read-only
 /// mode, where the tmux branch adds `-r`. cardo frames the outer transport
 /// from the type (`tmux-attach`); the descriptor names its own.
-fn hrcpty(api: &HrcApi, node: &Node, mode: &str) -> Result<Attachment, DispatchFailure> {
+fn hrcpty(owner: &dyn OwnerCall, node: &Node, mode: &str) -> Result<Attachment, DispatchFailure> {
     let runtime = text(&node.payload, "runtimeId");
     if runtime.is_empty() {
         return Err(unavailable("ended", "hrc-pty seat has no runtime"));
     }
-    let surface = api.attach_surface(runtime).map_err(|e| {
+    let surface = owner::attach_surface(owner, runtime).map_err(|e| {
         // hrc down is not the seat ending; a refusal of this runtime is.
         let reason = if e.code == "hrc_unavailable" {
             "no_tty"

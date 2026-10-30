@@ -1,23 +1,33 @@
-use crate::api::HrcApi;
+use crate::HrcError;
 use cardo_store::ledger::{LedgerRow, LedgerSource, ReadBatch, SourceError, Wake};
+use serde::Deserialize;
 use serde_json::Value;
 use std::{
-    io::{BufRead, BufReader, Read},
     path::PathBuf,
     sync::{Mutex, MutexGuard, PoisonError},
-    time::Duration,
 };
 
+/// One `Store::event_page`: the ledger incarnation, its allocated head, and
+/// rows after a cursor up to `scannedThrough`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventPage {
+    pub ledger_incarnation_id: String,
+    pub head: i64,
+    pub rows: Vec<Value>,
+    pub scanned_through: i64,
+}
+
 pub trait LedgerReader: Clone + Send + Sync + 'static {
+    /// `cursor_invalid` when `incarnation` is no longer the ledger's.
     fn page(
         &self,
         after: i64,
         limit: usize,
         incarnation: Option<&str>,
-    ) -> Result<crate::api::EventPage, crate::api::ApiError>;
+    ) -> Result<EventPage, HrcError>;
     fn wake(&self) -> Wake;
 }
-pub type HrcApiLedger = HrcLedger<HrcApi>;
 pub struct HrcLedger<R: LedgerReader> {
     pub api: R,
     expected: Mutex<Option<String>>,
@@ -130,81 +140,26 @@ impl<R: LedgerReader> LedgerSource for HrcLedger<R> {
     }
 }
 
-impl LedgerReader for HrcApi {
-    fn page(
-        &self,
-        after: i64,
-        limit: usize,
-        incarnation: Option<&str>,
-    ) -> Result<crate::api::EventPage, crate::api::ApiError> {
-        HrcApi::page(self, after, limit, incarnation)
-    }
-    fn wake(&self) -> Wake {
-        let (waker, wake) = Wake::pair();
-        let api = self.clone();
-        let spawned = std::thread::Builder::new()
-            .name("hrc-wake".into())
-            .spawn(move || {
-                while waker.is_alive() {
-                    let result = (|| -> Result<(), crate::api::ApiError> {
-                        let p = api.page(0, 1, None)?;
-                        let q = vec![
-                            ("follow".into(), "true".into()),
-                            ("ledgerIncarnationId".into(), p.ledger_incarnation_id),
-                            ("afterSeq".into(), p.head.to_string()),
-                        ];
-                        let response =
-                            api.response("/v1/events/bounded-stream", &q, Duration::from_secs(30))?;
-                        // Content is deliberately ignored. Any line is only a wake;
-                        // reconnect re-discovers incarnation/head through page.
-                        let mut reader = BufReader::new(response);
-                        let mut buf = Vec::new();
-                        while waker.is_alive() {
-                            buf.clear();
-                            match reader.by_ref().take(1_048_576).read_until(b'\n', &mut buf) {
-                                Ok(0) | Err(_) => break,
-                                Ok(_) => {
-                                    if !waker.notify(p.head) {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        Ok(())
-                    })();
-                    let _ = result;
-                    // Wake the scheduler even on refusal/replacement/EOF. It owns
-                    // cursor validation and retry; a stream never certifies a scan.
-                    if !waker.notify(0) {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_secs(1));
-                }
-            });
-        match spawned {
-            Ok(_) => wake,
-            // Wake is only a hint; the subscription's interval poll still
-            // carries every row (LedgerSource::wake contract).
-            Err(e) => {
-                eprintln!("hrc-kernel: HRC wake thread unavailable, polling only: {e}");
-                Wake::never()
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+
+    #[derive(Clone)]
+    struct Down;
+    impl LedgerReader for Down {
+        fn page(&self, _: i64, _: usize, _: Option<&str>) -> Result<EventPage, HrcError> {
+            Err(HrcError::new("hrc_read_failed", "ledger unreadable"))
+        }
+        fn wake(&self) -> Wake {
+            Wake::never()
+        }
+    }
 
     // Failure case: a panic while the incarnation lock is held must not turn
     // every later read into a panic; reads keep reporting source errors.
     #[test]
-    fn poisoned_incarnation_lock_still_reads() -> Result<(), crate::api::ApiError> {
-        let ledger = HrcApiLedger::new(HrcApi::new(Path::new(
-            "/nonexistent/hrc-kernel-test/hrc.sock",
-        ))?);
+    fn poisoned_incarnation_lock_still_reads() {
+        let ledger = HrcLedger::new(Down);
         let poisoned = std::thread::scope(|s| {
             s.spawn(|| {
                 let _held = ledger.expected.lock();
@@ -216,6 +171,5 @@ mod tests {
         assert!(ledger.expected.is_poisoned());
         let read = ledger.read_after(0, &serde_json::json!({}), 1);
         assert_eq!(read.err().map(|e| e.code()), Some("source_unavailable"));
-        Ok(())
     }
 }

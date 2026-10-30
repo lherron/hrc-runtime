@@ -9437,7 +9437,7 @@
         "provider_version": "0.1.0"
       },
       "payload": {
-        "body": "HrcApi, HrcLedger, SeatProjector",
+        "body": "HrcRead, HrcLedger, SeatProjector",
         "bullets": [],
         "emphasis": false,
         "icon": "package",
@@ -9557,7 +9557,7 @@
           }
         ],
         "size": 11.5,
-        "text": " LIBRARY · HRC\nhrc-domain\nHrcApi, HrcLedger, SeatProjector",
+        "text": " LIBRARY · HRC\nhrc-domain\nHrcRead, HrcLedger, SeatProjector",
         "tracking": 0.0,
         "vertical_align": "center"
       }
