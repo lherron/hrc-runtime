@@ -97,7 +97,6 @@ struct State {
     bytes_out: u64,
     bytes_in: u64,
     started: Instant,
-    last_human_input: Option<Instant>,
     shutting_down: bool,
 }
 
@@ -124,10 +123,30 @@ impl State {
     }
 }
 
+#[derive(Default)]
+struct Master {
+    file: Option<File>,
+    last_human_input: Option<Instant>,
+}
+
+impl Master {
+    fn human_idle_ms(&self) -> Option<u64> {
+        self.last_human_input
+            .map(|stamp| stamp.elapsed().as_millis() as u64)
+    }
+
+    fn write(&mut self, bytes: &[u8]) -> bool {
+        match self.file.as_mut() {
+            Some(file) => file.write_all(bytes).is_ok(),
+            None => false,
+        }
+    }
+}
+
 struct Shared {
     state: Mutex<State>,
     child_exit: Condvar,
-    master: Mutex<Option<File>>,
+    master: Mutex<Master>,
     subscribers: Mutex<Vec<SyncSender<Value>>>,
     socket: PathBuf,
     pid_file: PathBuf,
@@ -145,11 +164,7 @@ impl Shared {
     }
 
     fn write_master(&self, bytes: &[u8]) -> bool {
-        let mut master = self.master.lock().unwrap();
-        match master.as_mut() {
-            Some(file) => file.write_all(bytes).is_ok(),
-            None => false,
-        }
+        self.master.lock().unwrap().write(bytes)
     }
 }
 
@@ -359,11 +374,10 @@ fn start(args: &ServeArgs, socket: PathBuf, ipc_dir: &Path) -> anyhow::Result<Ar
             bytes_out: 0,
             bytes_in: 0,
             started: Instant::now(),
-            last_human_input: None,
             shutting_down: false,
         }),
         child_exit: Condvar::new(),
-        master: Mutex::new(None),
+        master: Mutex::new(Master::default()),
         subscribers: Mutex::new(Vec::new()),
         socket,
         pid_file,
@@ -696,24 +710,26 @@ fn cell_px_param(params: &Value, cols: u16, rows: u16) -> Option<(u32, u32)> {
 }
 
 fn input(shared: &Shared, bytes: &[u8], if_idle_ms: Option<u64>) -> anyhow::Result<Value> {
-    // Keep state through the master write: attached input takes these locks in
-    // the same order, so no keystroke can race the check and the write.
-    let mut st = shared.state.lock().unwrap();
-    let human_idle_ms = st
-        .last_human_input
-        .map(|stamp| stamp.elapsed().as_millis() as u64);
-    if if_idle_ms
-        .zip(human_idle_ms)
-        .is_some_and(|(required, idle)| idle < required)
-    {
-        return Ok(json!({"written": 0, "humanIdleMs": human_idle_ms}));
-    }
-    anyhow::ensure!(shared.write_master(bytes), "no_child: no pty");
-    st.bytes_in += bytes.len() as u64;
+    // Only the master lock spans a blocking write. The output drainer must
+    // remain free to take state while the child makes room in its input queue.
+    let (written, human_idle_ms) = {
+        let mut master = shared.master.lock().unwrap();
+        let human_idle_ms = master.human_idle_ms();
+        if if_idle_ms
+            .zip(human_idle_ms)
+            .is_some_and(|(required, idle)| idle < required)
+        {
+            return Ok(json!({"written": 0, "humanIdleMs": human_idle_ms}));
+        }
+        (master.write(bytes), human_idle_ms)
+    };
+    anyhow::ensure!(written, "no_child: no pty");
+    shared.state.lock().unwrap().bytes_in += bytes.len() as u64;
     Ok(json!({"written": bytes.len(), "humanIdleMs": human_idle_ms}))
 }
 
 fn status(shared: &Shared) -> Value {
+    let human_idle_ms = shared.master.lock().unwrap().human_idle_ms();
     let st = shared.state.lock().unwrap();
     json!({
         "protocol": PROTOCOL,
@@ -727,7 +743,7 @@ fn status(shared: &Shared) -> Value {
             "remote": st.clients.values().filter(|c| c.remote).count(),
             "focused": st.clients.values().filter(|c| !c.read_only && c.focused).count(),
         },
-        "humanIdleMs": st.last_human_input.map(|stamp| stamp.elapsed().as_millis() as u64),
+        "humanIdleMs": human_idle_ms,
         "responderArmed": st.read_write_clients() == 0,
         "responderAnswered": st.answered,
         "size": {"cols": st.size.0, "rows": st.size.1, "cellPx": st.cell_px.map(|(w, h)| json!({"w": w, "h": h}))},
@@ -893,7 +909,7 @@ fn spawn(shared: &Arc<Shared>, params: &Value) -> anyhow::Result<Value> {
     vt.enable_kitty_graphics(KITTY_STORAGE_LIMIT)?;
     let master_fd = master.as_raw_fd();
     let reader = File::from(master.try_clone()?);
-    *shared.master.lock().unwrap() = Some(File::from(master));
+    shared.master.lock().unwrap().file = Some(File::from(master));
     st.vt = Some(vt);
     st.master_fd = Some(master_fd);
     st.child = ProcInfo {
@@ -1056,16 +1072,20 @@ fn data_connection(
         if read_only {
             continue;
         }
+        let written = {
+            let mut master = shared.master.lock().unwrap();
+            if is_human_input(&buf[..n]) {
+                master.last_human_input = Some(Instant::now());
+            }
+            master.write(&buf[..n])
+        };
         let mut st = shared.state.lock().unwrap();
         if let Some(focused) = focus_report(&buf[..n])
             && let Some(client) = st.clients.get_mut(&attach_id)
         {
             client.focused = focused;
         }
-        if is_human_input(&buf[..n]) {
-            st.last_human_input = Some(Instant::now());
-        }
-        if shared.write_master(&buf[..n]) {
+        if written {
             st.bytes_in += n as u64;
         }
     }
@@ -1261,6 +1281,36 @@ pub(crate) fn kitty_replay(placements: &[KittyPlacement], images: &[KittyImage])
 mod human_input_tests {
     use super::*;
 
+    fn shared_with_master(writer: UnixStream) -> Arc<Shared> {
+        Arc::new(Shared {
+            state: Mutex::new(State {
+                vt: None,
+                master_fd: None,
+                child: ProcInfo::default(),
+                broker: ProcInfo::default(),
+                size: (80, 24),
+                cell_px: None,
+                clients: HashMap::new(),
+                pending: HashMap::new(),
+                responder: Responder::load(RECORDED).unwrap(),
+                answered: vec![],
+                bytes_out: 0,
+                bytes_in: 0,
+                started: Instant::now(),
+                shutting_down: false,
+            }),
+            child_exit: Condvar::new(),
+            master: Mutex::new(Master {
+                file: Some(File::from(OwnedFd::from(writer))),
+                last_human_input: None,
+            }),
+            subscribers: Mutex::new(vec![]),
+            socket: PathBuf::new(),
+            pid_file: PathBuf::new(),
+            token_file: PathBuf::new(),
+        })
+    }
+
     #[test]
     fn only_complete_listed_terminal_replies_are_noise() {
         let noise: &[&[u8]] = &[
@@ -1299,49 +1349,45 @@ mod human_input_tests {
     fn conditional_write_refuses_without_writing_and_does_not_stamp() {
         let (writer, mut reader) = UnixStream::pair().unwrap();
         reader.set_nonblocking(true).unwrap();
-        let shared = Shared {
-            state: Mutex::new(State {
-                vt: None,
-                master_fd: None,
-                child: ProcInfo::default(),
-                broker: ProcInfo::default(),
-                size: (80, 24),
-                cell_px: None,
-                clients: HashMap::new(),
-                pending: HashMap::new(),
-                responder: Responder::load(RECORDED).unwrap(),
-                answered: vec![],
-                bytes_out: 0,
-                bytes_in: 0,
-                started: Instant::now(),
-                last_human_input: None,
-                shutting_down: false,
-            }),
-            child_exit: Condvar::new(),
-            master: Mutex::new(Some(File::from(OwnedFd::from(writer)))),
-            subscribers: Mutex::new(vec![]),
-            socket: PathBuf::new(),
-            pid_file: PathBuf::new(),
-            token_file: PathBuf::new(),
-        };
+        let shared = shared_with_master(writer);
         assert_eq!(
             input(&shared, b"first", Some(3000)).unwrap(),
             json!({"written":5,"humanIdleMs":null})
         );
         let mut buf = [0; 16];
         assert_eq!(reader.read(&mut buf).unwrap(), 5);
-        shared.state.lock().unwrap().last_human_input = Some(Instant::now());
+        shared.master.lock().unwrap().last_human_input = Some(Instant::now());
         assert_eq!(input(&shared, b"held", Some(3000)).unwrap()["written"], 0);
         assert_eq!(
             reader.read(&mut buf).unwrap_err().kind(),
             std::io::ErrorKind::WouldBlock
         );
         let stamp = Instant::now() - Duration::from_secs(31);
-        shared.state.lock().unwrap().last_human_input = Some(stamp);
+        shared.master.lock().unwrap().last_human_input = Some(stamp);
         assert_eq!(input(&shared, b"draft", Some(30000)).unwrap()["written"], 5);
         assert_eq!(reader.read(&mut buf).unwrap(), 5);
-        assert_eq!(shared.state.lock().unwrap().last_human_input, Some(stamp));
+        assert_eq!(shared.master.lock().unwrap().last_human_input, Some(stamp));
         assert!(status(&shared)["humanIdleMs"].as_u64().unwrap() >= 31000);
         assert_eq!(input(&shared, b"enter", None).unwrap()["written"], 5);
+    }
+
+    #[test]
+    fn blocked_pty_write_does_not_hold_output_state() {
+        let (writer, mut reader) = UnixStream::pair().unwrap();
+        let shared = shared_with_master(writer);
+        let writing = shared.clone();
+        let worker = std::thread::spawn(move || input(&writing, &vec![b'x'; 1024 * 1024], None));
+        // Receiving the first byte proves the write has entered the kernel.
+        // The unread megabyte keeps it blocked, just like a full PTY queue.
+        let mut first = [0];
+        reader.read_exact(&mut first).unwrap();
+        let output_state_available = shared.state.try_lock().is_ok();
+        // Always release the writer before asserting, including on the red run.
+        reader.read_exact(&mut vec![0; 1024 * 1024 - 1]).unwrap();
+        worker.join().unwrap().unwrap();
+        assert!(
+            output_state_available,
+            "a blocking input write held the output drainer's state lock"
+        );
     }
 }
