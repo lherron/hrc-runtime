@@ -120,68 +120,19 @@ pub fn project_with_context(
     let mut out = Vec::new();
     let mut projects = BTreeMap::new();
     for (key, s) in selected {
-        let rt = runtimes
-            .iter()
-            .filter(|r| {
-                r["hostSessionId"] == s["hostSessionId"] && r["generation"] == s["generation"]
-            })
-            .max_by_key(|r| text(r, "runtimeId"));
-        let event = events
-            .iter()
-            .filter(|e| {
-                e["hostSessionId"] == s["hostSessionId"] && e["generation"] == s["generation"]
-            })
-            .max_by_key(|e| e["hrcSeq"].as_i64());
-        // Retained evidence advances the ledger but cannot set current freshness.
-        let activity = event
-            .filter(|e| e.get("evidenceOrigin").is_none())
-            .map(|e| text(e, "ts"))
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                rt.map(|r| text(r, "lastActivityAt"))
-                    .filter(|s| !s.is_empty())
-            })
-            .unwrap_or_else(|| text(s, "updatedAt"));
-        let at = date(activity).ok_or_else(|| {
-            ProjectorError::new(
-                "hrc_response_invalid",
-                format!("invalid lastActivityAt: {activity}"),
-            )
-        })?;
-        let until = if rt.is_some() {
-            Value::Null
-        } else {
-            let expiry = at.checked_add_signed(Duration::hours(24)).ok_or_else(|| {
-                ProjectorError::new(
-                    "hrc_response_invalid",
-                    format!("lastActivityAt expiry is out of range: {activity}"),
-                )
-            })?;
-            if expiry <= now {
-                continue;
-            }
-            json!(expiry.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        let (rt, event) = generation_inputs(s, runtimes, events);
+        let activity = activity(s, rt, event);
+        let Some(until) = live_until(activity, rt.is_some(), now)? else {
+            continue;
         };
         let identity = &s["identity"];
-        let mut seat = json!({"sessionRef":key,"scopeRef":s["scopeRef"],"laneRef":s["laneRef"],"displayRef":key,"hostSessionId":s["hostSessionId"],"generation":s["generation"],"status":mobile_status(s,rt),"summaryStatus":mobile_status(s,rt),"sessionStatus":s["status"],"lastActivityAt":activity,"lastHrcSeq":event.map(|e| &e["hrcSeq"]).cloned().unwrap_or(json!(0))});
+        let mut seat = json!({"sessionRef":key,"scopeRef":s["scopeRef"],"laneRef":s["laneRef"],"displayRef":key,"hostSessionId":s["hostSessionId"],"generation":s["generation"],"activeGeneration":s["generation"],"status":mobile_status(s,rt),"summaryStatus":mobile_status(s,rt),"sessionStatus":s["status"],"lastActivityAt":activity,"lastHrcSeq":event.map(|e| &e["hrcSeq"]).cloned().unwrap_or(json!(0))});
         for field in ["agentId", "projectId", "taskId"] {
             if let Some(v) = identity.get(field) {
                 seat[field] = v.clone();
             }
         }
-        // hrc-runtime.turn-attention: selection and fold live in hrc-store,
-        // shared with the annotation stale_attention fence.
-        let display =
-            attention::select_display(turns, &s["hostSessionId"], &s["generation"], event);
-        if let Some(e) = display {
-            seat["latestEvent"] = json!({"kind":e["eventKind"],"time":e["ts"]});
-            if let Some(preview) = crate::preview::preview(e, context) {
-                seat["latestEvent"]["preview"] = json!(preview);
-            }
-            if let Some(a) = attention::fold_attention(e, rt.is_some()) {
-                seat["attention"] = a;
-            }
-        }
+        display(&mut seat, s, rt.is_some(), event, turns, context);
         if let Some(r) = rt {
             seat["runtimeId"] = r["runtimeId"].clone();
             for field in ["tmux", "hrcpty", "title", "metadata"] {
@@ -215,4 +166,173 @@ pub fn project_with_context(
         ));
     }
     Ok(out)
+}
+
+/// One generation's live runtime (the presentation row with the greatest id)
+/// and its newest raw ledger event.
+fn generation_inputs<'a>(
+    s: &Value,
+    runtimes: &'a [Value],
+    events: &'a [Value],
+) -> (Option<&'a Value>, Option<&'a Value>) {
+    let rt = runtimes
+        .iter()
+        .filter(|r| r["hostSessionId"] == s["hostSessionId"] && r["generation"] == s["generation"])
+        .max_by_key(|r| text(r, "runtimeId"));
+    let event = events
+        .iter()
+        .filter(|e| e["hostSessionId"] == s["hostSessionId"] && e["generation"] == s["generation"])
+        .max_by_key(|e| e["hrcSeq"].as_i64());
+    (rt, event)
+}
+/// Retained evidence advances the ledger but cannot set current freshness.
+fn activity<'a>(s: &'a Value, rt: Option<&'a Value>, event: Option<&'a Value>) -> &'a str {
+    event
+        .filter(|e| e.get("evidenceOrigin").is_none())
+        .map(|e| text(e, "ts"))
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            rt.map(|r| text(r, "lastActivityAt"))
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| text(s, "updatedAt"))
+}
+/// The seat rule, per generation: null while a runtime is live, else
+/// `activity + 24 h`; `None` once that has passed.
+fn live_until(
+    activity: &str,
+    runtime_live: bool,
+    now: DateTime<Utc>,
+) -> Result<Option<Value>, ProjectorError> {
+    let at = date(activity).ok_or_else(|| {
+        ProjectorError::new(
+            "hrc_response_invalid",
+            format!("invalid lastActivityAt: {activity}"),
+        )
+    })?;
+    if runtime_live {
+        return Ok(Some(Value::Null));
+    }
+    let expiry = at.checked_add_signed(Duration::hours(24)).ok_or_else(|| {
+        ProjectorError::new(
+            "hrc_response_invalid",
+            format!("lastActivityAt expiry is out of range: {activity}"),
+        )
+    })?;
+    Ok((expiry > now).then(|| json!(expiry.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))))
+}
+/// `latestEvent` and `attention` from the selected display event.
+/// hrc-runtime.turn-attention: selection and fold live in hrc-store, shared
+/// with the annotation stale_attention fence.
+fn display(
+    node: &mut Value,
+    s: &Value,
+    runtime_live: bool,
+    event: Option<&Value>,
+    turns: &[Value],
+    context: &[Value],
+) {
+    if let Some(e) = attention::select_display(turns, &s["hostSessionId"], &s["generation"], event)
+    {
+        node["latestEvent"] = json!({"kind":e["eventKind"],"time":e["ts"]});
+        if let Some(preview) = crate::preview::preview(e, context) {
+            node["latestEvent"]["preview"] = json!(preview);
+        }
+        if let Some(a) = attention::fold_attention(e, runtime_live) {
+            node["attention"] = a;
+        }
+    }
+}
+
+/// seat-annotations r1.1 §5: an `hrc.generation` for every generation inside
+/// the live-runtime-or-24 h window (archived ones included; `sessions` may
+/// repeat a generation), then each `hrc.annotation` whose subject is
+/// projected, living as long as it: a seat subject follows the `hrc.seat`
+/// upsert in `projected`, a generation subject its `hrc.generation`.
+/// Display turns and their formatting context, as `project_with_context`.
+#[derive(Clone, Copy)]
+pub struct Display<'a> {
+    pub turns: &'a [Value],
+    pub context: &'a [Value],
+}
+pub fn project_lineage(
+    sessions: &[Value],
+    runtimes: &[Value],
+    events: &[Value],
+    shown: Display<'_>,
+    annotations: &[Value],
+    projected: &[Value],
+    now: DateTime<Utc>,
+) -> Result<Vec<Value>, ProjectorError> {
+    let mut generations = BTreeMap::new();
+    for s in sessions {
+        if text(s, "scopeRef").is_empty() || !s["generation"].is_u64() {
+            return Err(ProjectorError::new(
+                "hrc_response_invalid",
+                "session lacks scope/generation",
+            ));
+        }
+        generations.entry(text(s, "hostSessionId")).or_insert(s);
+    }
+    let mut out = Vec::new();
+    let mut until_of = BTreeMap::new();
+    for (host, s) in generations {
+        let (rt, event) = generation_inputs(s, runtimes, events);
+        let activity = activity(s, rt, event);
+        let Some(until) = live_until(activity, rt.is_some(), now)? else {
+            continue;
+        };
+        let status = if text(s, "status") == "archived" {
+            "archived"
+        } else {
+            "active"
+        };
+        let mut node = json!({"sessionRef":session_ref(s),"scopeRef":s["scopeRef"],"laneRef":s["laneRef"],"hostSessionId":host,"generation":s["generation"],"status":status,"lastActivityAt":activity});
+        if let Some(created) = s["createdAt"].as_str() {
+            node["createdAt"] = json!(created);
+        }
+        display(
+            &mut node,
+            s,
+            rt.is_some(),
+            event,
+            shown.turns,
+            shown.context,
+        );
+        until_of.insert(("generation", host.to_owned()), until.clone());
+        out.push(upsert(
+            "hrc.generation",
+            json!({"hostSessionId":host}),
+            node,
+            until,
+        ));
+    }
+    for seat in projected
+        .iter()
+        .filter(|e| e["kind"] == "upsert" && e["type"] == "hrc.seat")
+    {
+        until_of.insert(
+            ("seat", text(&seat["key"], "sessionRef").to_owned()),
+            seat["domain"]["live_until"].clone(),
+        );
+    }
+    for a in annotations {
+        let session = session_ref(a);
+        let subject = match text(a, "subject") {
+            "seat" => ("seat", session.clone()),
+            _ => ("generation", text(a, "hostSessionId").to_owned()),
+        };
+        let Some(until) = until_of.get(&subject) else {
+            continue;
+        };
+        let key = annotation_key(&session, a);
+        let mut payload = a.clone();
+        payload["sessionRef"] = json!(session);
+        out.push(upsert("hrc.annotation", key, payload, until.clone()));
+    }
+    Ok(out)
+}
+/// `hrc.annotation`'s natural key; a seat subject's `hostSessionId` is ''.
+pub fn annotation_key(session_ref: &str, a: &Value) -> Value {
+    json!({"sessionRef":session_ref,"hostSessionId":text(a, "hostSessionId"),"ns":a["ns"],"kind":a["kind"],"id":a["id"]})
 }

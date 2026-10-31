@@ -1,5 +1,7 @@
 use crate::{
-    projection::{project_with_context, remove, session_ref, text},
+    projection::{
+        Display, annotation_key, project_lineage, project_with_context, remove, session_ref, text,
+    },
     reader::{HrcRead, display_payloads, tail},
 };
 use cardo_runtime::ingest::{Applied, BootstrapPage, Projector, ProjectorError};
@@ -36,25 +38,29 @@ impl SeatProjector {
         }
         Ok(turn)
     }
+    /// `sessions` select each `hrc.seat` (its newest generation); `lineage`
+    /// holds every candidate generation for `hrc.generation`. Display turns,
+    /// formatting context and annotations are read for both, on the caller's
+    /// read transaction.
     fn project_state(
         db: &Store,
         sessions: &[Value],
+        lineage: &[Value],
         runtimes: &[Value],
         events: &[Value],
     ) -> Result<Vec<Value>, ProjectorError> {
-        let mut selected = BTreeMap::new();
-        for s in sessions {
-            let key = session_ref(s);
-            if selected
-                .get(&key)
-                .is_none_or(|old: &&Value| old["generation"].as_u64() < s["generation"].as_u64())
-            {
-                selected.insert(key, s);
-            }
+        let mut generations = BTreeMap::new();
+        for s in sessions.iter().chain(lineage) {
+            generations
+                .entry((
+                    text(s, "hostSessionId").to_owned(),
+                    s["generation"].as_u64(),
+                ))
+                .or_insert(s);
         }
         let mut context = Vec::new();
         let mut turns = Vec::new();
-        for s in selected.values() {
+        for s in generations.values() {
             let latest = events
                 .iter()
                 .filter(|e| {
@@ -84,26 +90,62 @@ impl SeatProjector {
             }
             turns.extend(turn);
         }
-        project_with_context(sessions, runtimes, events, &turns, &context, Utc::now())
+        let now = Utc::now();
+        let mut out = project_with_context(sessions, runtimes, events, &turns, &context, now)?;
+        let annotations = Self::annotations(db, generations.values().copied()).map_err(error)?;
+        let generations: Vec<Value> = generations.into_values().cloned().collect();
+        let lineage = project_lineage(
+            &generations,
+            runtimes,
+            events,
+            Display {
+                turns: &turns,
+                context: &context,
+            },
+            &annotations,
+            &out,
+            now,
+        )?;
+        out.extend(lineage);
+        Ok(out)
     }
-    /// `/v1/sessions` for the projector: latest generation, identity, title.
+    /// Every stored annotation of the seats `sessions` name.
+    fn annotations<'a>(
+        db: &Store,
+        sessions: impl Iterator<Item = &'a Value>,
+    ) -> anyhow::Result<Vec<Value>> {
+        let seats: BTreeSet<(&str, &str)> = sessions
+            .map(|s| (text(s, "scopeRef"), text(s, "laneRef")))
+            .collect();
+        let mut out = Vec::new();
+        for (scope, lane) in seats {
+            // A refusal is a continuity this read cannot see: no annotations.
+            if let Ok(rows) = db.list_annotations(scope, lane, Default::default())? {
+                out.extend(rows);
+            }
+        }
+        Ok(out)
+    }
+    /// `/v1/sessions` for the projector: latest generation, identity, title;
+    /// then every generation the read returned, for `hrc.generation`.
     fn sessions(
         db: &Store,
         seat: Option<(&str, &str)>,
         since: Option<&str>,
-    ) -> anyhow::Result<Vec<Value>> {
+    ) -> anyhow::Result<(Vec<Value>, Vec<Value>)> {
         let (scope, lane) = seat.unzip();
-        let mut rows =
+        let lineage =
             db.sessions_for_projection(scope, lane.map(hrc_store::storage_lane), since)?;
+        let mut rows = lineage.clone();
         hrc_store::retain_latest_generation(&mut rows)?;
         for s in &mut rows {
             db.annotate_session(s, scope.is_some())?;
         }
-        Ok(rows)
+        Ok((rows, lineage))
     }
     fn state(db: &Store) -> Result<Vec<Value>, ProjectorError> {
         let since = (Utc::now() - Duration::hours(24)).to_rfc3339();
-        let mut sessions = Self::sessions(db, None, Some(&since)).map_err(error)?;
+        let (mut sessions, mut lineage) = Self::sessions(db, None, Some(&since)).map_err(error)?;
         let runtimes = array(mappers::runtimes(db).map_err(error)?["runtimes"].take())?;
         // Presentation is the other arm of live-set membership. A live seat
         // must survive even if its session's activity predates the window.
@@ -117,13 +159,16 @@ impl SeatProjector {
             }
         }
         for (scope, lane) in wanted {
-            sessions.extend(Self::sessions(db, Some((scope, lane)), None).map_err(error)?);
+            let (seat, generations) =
+                Self::sessions(db, Some((scope, lane)), None).map_err(error)?;
+            sessions.extend(seat);
+            lineage.extend(generations);
         }
         // The owner's covering-index query; hydrating and deduping the whole
         // ledger held ~15 GB per bootstrap on max3 (T-11919).
         let mut events = db.latest_per_session(&HashMap::new()).map_err(error)?;
         display_payloads(db, &mut events).map_err(error)?;
-        Self::project_state(db, &sessions, &runtimes, &events)
+        Self::project_state(db, &sessions, &lineage, &runtimes, &events)
     }
     /// The seats an ingest batch touches: its session keys in first-seen
     /// order, then the seats of its runtimes, as `/v1/presentation/seats/read`.
@@ -147,7 +192,38 @@ impl SeatProjector {
                 seats.push((scope, lane));
             }
         }
-        let mut value = mappers::seats(db, seats)?;
+        let mut value = mappers::seats(db, seats.clone())?;
+        // hrc.generation: every generation of these seats inside the window
+        // (bootstrap's session_recency predicate), each with its newest event.
+        let since =
+            (Utc::now() - Duration::hours(24)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let mut lineage = Vec::new();
+        for (scope, lane) in &seats {
+            for s in db.sessions_for_projection(Some(scope), Some(lane), None)? {
+                let host = text(&s, "hostSessionId");
+                if !db.presentation_session_recent(host, &since)? {
+                    continue;
+                }
+                let query = HashMap::from([
+                    ("hostSessionId".to_owned(), host.to_owned()),
+                    ("generation".to_owned(), s["generation"].to_string()),
+                ]);
+                let events = value["events"]
+                    .as_array_mut()
+                    .ok_or_else(|| anyhow::anyhow!("seats lack events"))?;
+                if !events.iter().any(|e| {
+                    e["hostSessionId"] == s["hostSessionId"] && e["generation"] == s["generation"]
+                }) && let Some(event) = db
+                    .event_history(&query, 0, None, Some(1), true, true)?
+                    .into_iter()
+                    .next()
+                {
+                    events.push(event);
+                }
+                lineage.push(s);
+            }
+        }
+        value["lineage"] = Value::Array(lineage);
         if let Some(events) = value["events"].as_array_mut() {
             display_payloads(db, events)?;
         }
@@ -205,6 +281,7 @@ impl Projector for SeatProjector {
             Self::project_state(
                 db,
                 &array(batch["sessions"].take())?,
+                &array(batch["lineage"].take())?,
                 &array(batch["runtimes"].take())?,
                 &array(batch["events"].take())?,
             )
@@ -224,8 +301,26 @@ fn apply_indexed(
     let mut runtimes = BTreeMap::new();
     let mut seat_runtimes: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     let mut projects = BTreeMap::new();
+    // seat-annotations r1.1 §5: a seat's lineage travels with the seat.
+    let mut lineage: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut generations = BTreeSet::new();
+    let mut annotations = BTreeSet::new();
     for e in state {
         match text(&e, "type") {
+            "hrc.generation" => {
+                generations.insert(text(&e["key"], "hostSessionId").to_owned());
+                lineage
+                    .entry(text(&e["payload"], "sessionRef").to_owned())
+                    .or_default()
+                    .push(e);
+            }
+            "hrc.annotation" => {
+                annotations.insert(e["key"].to_string());
+                lineage
+                    .entry(text(&e["key"], "sessionRef").to_owned())
+                    .or_default()
+                    .push(e);
+            }
             "hrc.seat" => {
                 seats.insert(text(&e["key"], "sessionRef").to_owned(), e);
             }
@@ -247,10 +342,33 @@ fn apply_indexed(
     for row in rows {
         let e = Value::Object(row.identity.clone());
         let mut keys = BTreeSet::new();
-        if !text(&e, "scopeRef").is_empty() {
-            keys.insert(session_ref(&e));
-        }
         let mut candidate = edits.clone();
+        if !text(&e, "scopeRef").is_empty() {
+            let seat = session_ref(&e);
+            // The batch read every in-window generation of this seat, so a
+            // generation it names that did not project has left the window.
+            let host = text(&e, "hostSessionId");
+            if !host.is_empty() && !generations.contains(host) {
+                let r = remove("hrc.generation", json!({"hostSessionId":host}));
+                candidate.insert(edit_id(&r), r);
+            }
+            // A deleted row (or one whose subject is gone) is absent from the
+            // store, so only the ledger row can name its key.
+            if row.kind == "session.annotation.changed" {
+                let mut named = row.payload.clone();
+                if named["subject"] == "seat" {
+                    named["hostSessionId"] = json!("");
+                } else {
+                    named["hostSessionId"] = json!(host);
+                }
+                let key = annotation_key(&seat, &named);
+                if !annotations.contains(&key.to_string()) {
+                    let r = remove("hrc.annotation", key);
+                    candidate.insert(edit_id(&r), r);
+                }
+            }
+            keys.insert(seat);
+        }
         let runtime_id = text(&e, "runtimeId");
         if !runtime_id.is_empty() {
             let r = runtimes
@@ -276,6 +394,9 @@ fn apply_indexed(
             } else {
                 let r = remove("hrc.seat", json!({"sessionRef":key}));
                 candidate.insert(edit_id(&r), r);
+            }
+            for n in lineage.get(&key).into_iter().flatten() {
+                candidate.insert(edit_id(n), n.clone());
             }
         }
         if candidate.len() > limit {

@@ -277,6 +277,112 @@ fn every_projected_seat_field_is_declared_including_attention() {
             "hrc.seat field {key} is not declared"
         );
     }
+    // T-12187: the seat's lineage nodes, lit, with both annotation subjects
+    // (a seat subject's generation and an unfenced fence are null).
+    let event = attention_event(11, true);
+    let session = json!({"scopeRef":"scope","laneRef":"main","hostSessionId":"h","generation":1,"status":"active","createdAt":"2026-10-28T13:00:00.000Z","updatedAt":"2026-10-28T13:50:01.000Z"});
+    let runtime = json!({"hostSessionId":"h","generation":1,"runtimeId":"rt","status":"ready"});
+    let row = |subject: &str,
+               host: &str,
+               generation: serde_json::Value,
+               fence: serde_json::Value| {
+        json!({"scopeRef":"scope","laneRef":"main","subject":subject,"hostSessionId":host,"generation":generation,"ns":"c2","kind":"card","id":subject,"body":{"x":1},"fence":fence,"createdAt":"2026-10-28T13:00:00.000Z","updatedAt":"2026-10-28T13:00:00.000Z","updatedBy":"agent:clod"})
+    };
+    let annotations = [
+        row("seat", "", json!(null), json!(null)),
+        row(
+            "generation",
+            "h",
+            json!(1),
+            json!({"attentionAt":"2026-10-28T13:50:01.000Z"}),
+        ),
+    ];
+    let now = Utc.with_ymd_and_hms(2026, 10, 28, 14, 0, 0).unwrap();
+    let seats = project(
+        std::slice::from_ref(&session),
+        std::slice::from_ref(&runtime),
+        std::slice::from_ref(&event),
+        now,
+    )
+    .unwrap();
+    let events = std::slice::from_ref(&event);
+    let lineage = hrc_domain::projection::project_lineage(
+        std::slice::from_ref(&session),
+        std::slice::from_ref(&runtime),
+        events,
+        hrc_domain::projection::Display {
+            turns: events,
+            context: events,
+        },
+        &annotations,
+        &seats,
+        now,
+    )
+    .unwrap();
+    let writes = declarations["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["name"] == "hrc.project")
+        .unwrap()["writes"]
+        .clone();
+    for (name, count) in [("hrc.generation", 1), ("hrc.annotation", 2)] {
+        assert!(
+            writes.as_array().unwrap().contains(&json!(name)),
+            "hrc.project ingest does not write {name}"
+        );
+        let typ = declarations["node_types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is not declared"));
+        let schema = &typ["payload"];
+        let fields = schema["fields"].as_object().unwrap();
+        let nodes: Vec<_> = lineage.iter().filter(|e| e["type"] == name).collect();
+        assert_eq!(nodes.len(), count, "{name}");
+        for node in nodes {
+            for (key, value) in node["payload"].as_object().unwrap() {
+                let field = fields
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{name} field {key} is not declared"));
+                if value.is_null() {
+                    assert!(
+                        schema["nullable"]
+                            .as_array()
+                            .is_some_and(|n| n.contains(&json!(key))),
+                        "{name} field {key} is null but not nullable"
+                    );
+                } else if field["kind"] == "enum" {
+                    assert!(
+                        field["values"].as_array().unwrap().contains(value),
+                        "{name} field {key} = {value} is outside its enum"
+                    );
+                }
+            }
+            for key in schema["required"].as_array().unwrap() {
+                assert!(
+                    node["payload"].get(key.as_str().unwrap()).is_some(),
+                    "{name} lacks required {key}"
+                );
+            }
+            for key in typ["natural_key"].as_array().unwrap() {
+                assert_eq!(
+                    node["key"][key.as_str().unwrap()],
+                    node["payload"][key.as_str().unwrap()],
+                    "{name} key {key}"
+                );
+            }
+        }
+    }
+    let generation = lineage
+        .iter()
+        .find(|e| e["type"] == "hrc.generation")
+        .unwrap();
+    assert!(
+        generation["payload"].get("attention").is_some(),
+        "lit generation"
+    );
 }
 
 // T-12051: an hrc-pty seat's attach surface reaches the hrc.seat node beside
