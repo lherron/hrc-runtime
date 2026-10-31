@@ -1052,4 +1052,43 @@ pub(crate) mod tests {
         }
         Ok(())
     }
+
+    /// A generation past the stale threshold stays put while a live
+    /// interactive runtime holds it, whether that seat is tmux or hrcpty
+    /// (T-12174: a card answer to a day-old hrcpty seat disposed the live seat).
+    #[tokio::test]
+    async fn auto_rotate_spares_a_live_interactive_seat() -> anyhow::Result<()> {
+        for transport in ["tmux", "hrcpty"] {
+            let (_scratch, server) = server("off", false)?;
+            let host = {
+                let mut store = server.store.lock().expect("test store lock");
+                let session = store
+                    .create_session("agent:test:project:fixture", "main")?
+                    .0;
+                let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
+                store.sqlite.execute("UPDATE sessions SET created_at='2026-01-01T00:00:00.000Z' WHERE host_session_id=?", [&host])?;
+                store.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,created_at,updated_at) VALUES('rt',?,?,'main',1,?,'ready',0,'harness-broker','now','now')", rusqlite::params![host, session["scopeRef"].as_str(), transport])?;
+                host
+            };
+            let aged = server
+                .store
+                .lock()
+                .expect("test store lock")
+                .session(&host)?
+                .expect("session");
+            assert!(
+                stale_age(&aged, false).is_some(),
+                "{transport}: fixture must be past the threshold"
+            );
+            let out = crate::server::context::auto_rotate(&server, aged, false, "test")
+                .await
+                .map_err(|e| anyhow::anyhow!("{transport}: {}", e.message))?;
+            assert_eq!(
+                out["hostSessionId"].as_str(),
+                Some(host.as_str()),
+                "{transport}: live seat rotated"
+            );
+        }
+        Ok(())
+    }
 }

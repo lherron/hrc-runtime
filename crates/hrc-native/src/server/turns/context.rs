@@ -336,7 +336,8 @@ pub fn session(server: &Shared, rotation: &Value) -> Result<Value, ApiError> {
 }
 
 /// maybeAutoRotateStaleSession: a generation past the stale threshold rotates
-/// into a successor, unless a live interactive runtime still holds it.
+/// into a successor, unless a live interactive runtime (tmux or hrcpty) still
+/// holds it.
 pub async fn auto_rotate(
     server: &Shared,
     session: Value,
@@ -347,11 +348,11 @@ pub async fn auto_rotate(
         return Ok(session);
     };
     let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
-    let live_tmux: Option<String> = {
+    let live_interactive: Option<String> = {
         let db = server.store.lock().unwrap();
         db.sqlite
             .query_row(
-                "SELECT runtime_id, status FROM runtimes WHERE host_session_id=? AND transport='tmux' ORDER BY created_at DESC, runtime_id DESC LIMIT 1",
+                "SELECT runtime_id, status FROM runtimes WHERE host_session_id=? AND transport IN ('tmux','hrcpty') ORDER BY created_at DESC, runtime_id DESC LIMIT 1",
                 [&host],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
             )
@@ -361,9 +362,9 @@ pub async fn auto_rotate(
             .map(|(id, _)| id)
     };
     let fields = json!({"scopeRef":session["scopeRef"],"laneRef":session["laneRef"],"hostSessionId":host,"generation":session["generation"],"ageSec":age,"thresholdSec":threshold,"trigger":trigger});
-    if let Some(runtime) = live_tmux {
+    if let Some(runtime) = live_interactive {
         let mut data = fields;
-        data["reason"] = "live-tmux-runtime".into();
+        data["reason"] = "live-interactive-runtime".into();
         data["runtimeId"] = runtime.into();
         super::stderr_json(
             "info",
