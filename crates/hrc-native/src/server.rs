@@ -876,6 +876,7 @@ fn implemented(method: &Method, path: &str) -> bool {
             ]
             .contains(&path))
         || (*method == Method::PATCH && path == "/v1/sessions/metadata")
+        || sessions::is_annotation_route(method.as_str(), path)
 }
 fn parse_body(body: &[u8]) -> std::result::Result<Value, ApiError> {
     serde_json::from_slice(body).map_err(|_| ApiError::bad("request body must be valid JSON", None))

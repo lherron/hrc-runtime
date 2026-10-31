@@ -34,6 +34,26 @@
     {
       "listener": "main",
       "method": "GET",
+      "route": "/v1/sessions/annotations"
+    },
+    {
+      "listener": "main",
+      "method": "PUT",
+      "route": "/v1/sessions/annotations"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/sessions/annotations/delete"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/sessions/annotations/act"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
       "route": "/v1/sessions"
     },
     {
@@ -515,6 +535,26 @@
       "listener": "peer",
       "method": "PATCH",
       "route": "/v1/sessions/metadata"
+    },
+    {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/sessions/annotations"
+    },
+    {
+      "listener": "peer",
+      "method": "PUT",
+      "route": "/v1/sessions/annotations"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/sessions/annotations/delete"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
+      "route": "/v1/sessions/annotations/act"
     },
     {
       "listener": "peer",

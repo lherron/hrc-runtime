@@ -19,6 +19,9 @@ pub fn handle(
     if *method == Method::GET && path == "/v1/sessions" {
         return list(server, query).map(Some);
     }
+    if is_annotation_route(method.as_str(), path) {
+        return annotations(server, method, path, query, body, headers).map(Some);
+    }
     let metadata = path == "/v1/sessions/metadata";
     if !(metadata && (*method == Method::GET || *method == Method::PATCH)
         || path == "/v1/sessions/get" && *method == Method::GET)
@@ -82,10 +85,7 @@ pub fn handle(
             set: &set,
             clear: &clear,
             replace: false,
-            updated_by: headers
-                .get("x-hrc-principal-ref")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("unknown"),
+            updated_by: principal(headers),
         })?;
         result.as_object_mut().unwrap().remove("rejected");
         return Ok(Some(Json(result).into_response()));
@@ -286,4 +286,146 @@ pub async fn resolve(server: &Shared, body: &[u8]) -> Result<Response, ApiError>
     let identity = server.store.lock().unwrap().identity(scope, lane)?;
     session["identity"] = identity.clone();
     Ok(Json(json!({"found":true,"hostSessionId":session["hostSessionId"],"generation":session["generation"],"created":created,"session":session,"identity":identity})).into_response())
+}
+
+/// The request principal, as every session write records it (`updatedBy`).
+fn principal(headers: &HeaderMap) -> &str {
+    headers
+        .get("x-hrc-principal-ref")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+}
+
+/// The seat-annotation routes (seat-annotations r1.1 §4), as `METHOD path`.
+/// Federation routing and the peer allowlist name the same four.
+pub const ANNOTATION_ROUTES: [(&str, &str); 4] = [
+    ("GET", "/v1/sessions/annotations"),
+    ("PUT", "/v1/sessions/annotations"),
+    ("POST", "/v1/sessions/annotations/delete"),
+    ("POST", "/v1/sessions/annotations/act"),
+];
+pub fn is_annotation_route(method: &str, path: &str) -> bool {
+    ANNOTATION_ROUTES.contains(&(method, path))
+}
+
+fn annotation_refusal(refusal: &hrc_store::AnnotationRefusal, detail: Value) -> ApiError {
+    use hrc_store::AnnotationRefusal as R;
+    let status = match refusal {
+        R::Invalid(_) => StatusCode::BAD_REQUEST,
+        R::UnknownGeneration | R::UnknownHostSession | R::UnknownAnnotation => {
+            StatusCode::NOT_FOUND
+        }
+        R::Quota | R::StaleGeneration | R::StaleAttention | R::StaleAnnotation => {
+            StatusCode::CONFLICT
+        }
+    };
+    ApiError::domain(status, refusal.code(), refusal.to_string(), Some(detail))
+}
+
+/// A text field of the request: absent is `""` (the store names it), any other
+/// non-string is refused here so a typed mistake is never read as absent.
+fn text_field<'a>(input: &'a Value, field: &str) -> Result<&'a str, String> {
+    match input.get(field) {
+        None | Some(Value::Null) => Ok(""),
+        Some(Value::String(s)) => Ok(s),
+        Some(_) => Err(format!("{field} must be a string")),
+    }
+}
+/// `generation`: a JSON integer in a body; text only in a GET query.
+fn generation_field(input: &Value, from_query: bool) -> Result<Option<i64>, String> {
+    let refused = || "generation must be an integer".to_owned();
+    match input.get("generation") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => n.as_i64().map(Some).ok_or_else(refused),
+        Some(Value::String(s)) if from_query && s.trim().is_empty() => Ok(None),
+        Some(Value::String(s)) if from_query => {
+            s.trim().parse::<i64>().map(Some).map_err(|_| refused())
+        }
+        Some(_) => Err(refused()),
+    }
+}
+
+/// `GET|PUT /v1/sessions/annotations`, `POST /v1/sessions/annotations/delete`
+/// and `/act`. Admission and refusal codes are `hrc_store::annotations`'.
+fn annotations(
+    server: &Server,
+    method: &Method,
+    path: &str,
+    query: &HashMap<String, String>,
+    body: &[u8],
+    headers: &HeaderMap,
+) -> Result<Response, ApiError> {
+    use hrc_store::{AnnotationFilter, AnnotationKey, AnnotationPut, AnnotationRefusal};
+    let input = if *method == Method::GET {
+        json!(query)
+    } else {
+        parse_body(body)?
+    };
+    if !input.is_object() {
+        return Err(ApiError::bad("body must be an object", Some(json!({}))));
+    }
+    let scope = input["scopeRef"].as_str();
+    if scope.is_none() || input.get("laneRef").is_some_and(|v| !v.is_string()) {
+        return Err(ApiError::bad(
+            "scopeRef and optional laneRef must be strings",
+            Some(json!({})),
+        ));
+    }
+    let lane = input["laneRef"].as_str().unwrap_or("main");
+    let ref_string = format!("{}/lane:{}", scope.unwrap(), hrc_store::storage_lane(lane));
+    let (scope, lane) = parse_session_ref(&ref_string)?;
+    let detail = json!({"scopeRef":scope,"laneRef":hrc_store::canonical_lane(lane)});
+    let invalid =
+        |reason: String| annotation_refusal(&AnnotationRefusal::Invalid(reason), detail.clone());
+    let refused = |refusal: AnnotationRefusal| annotation_refusal(&refusal, detail.clone());
+    let generation = generation_field(&input, *method == Method::GET).map_err(invalid)?;
+    let mut db = server.store.lock().unwrap();
+    if *method == Method::GET {
+        let filter = AnnotationFilter {
+            subject: optional(query, "subject"),
+            generation,
+            ns: optional(query, "ns"),
+            kind: optional(query, "kind"),
+        };
+        let rows = db.list_annotations(scope, lane, filter)?.map_err(refused)?;
+        return Ok(Json(json!({"annotations":rows})).into_response());
+    }
+    let field = |name: &str| text_field(&input, name).map_err(invalid);
+    let key = AnnotationKey {
+        scope,
+        lane,
+        subject: field("subject")?,
+        generation,
+        ns: field("ns")?,
+        kind: field("kind")?,
+        id: field("id")?,
+    };
+    let expect = input.get("expect").filter(|v| !v.is_null());
+    let answer = match path {
+        "/v1/sessions/annotations" => {
+            let (annotation, created) = db
+                .put_annotation(AnnotationPut {
+                    key,
+                    body: input.get("body").unwrap_or(&Value::Null),
+                    expect,
+                    updated_by: principal(headers),
+                })?
+                .map_err(refused)?;
+            json!({"annotation":annotation,"created":created})
+        }
+        "/v1/sessions/annotations/delete" => {
+            let deleted = db
+                .delete_annotation(key, expect, principal(headers))?
+                .map_err(refused)?;
+            json!({"deleted":deleted})
+        }
+        _ => {
+            let attributes = input.get("attributes").filter(|v| !v.is_null());
+            let seq = db
+                .act_annotation(key, field("action")?, attributes)?
+                .map_err(refused)?;
+            json!({"hrcSeq":seq})
+        }
+    };
+    Ok(Json(answer).into_response())
 }

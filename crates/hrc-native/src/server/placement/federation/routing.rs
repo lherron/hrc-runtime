@@ -70,6 +70,27 @@ pub fn scope_of(
                 ..scoped(value.as_object()?.get("scopeRef")?.as_str()?, Method::PATCH)
             })
         }
+        (Method::GET, "/v1/sessions/annotations") => {
+            Some(scoped(query.get("scopeRef")?, Method::GET))
+        }
+        // The three annotation writes forward their body verbatim with the
+        // principal, as the metadata PATCH does (seat-annotations r1.1 §4).
+        (
+            Method::PUT | Method::POST,
+            "/v1/sessions/annotations"
+            | "/v1/sessions/annotations/delete"
+            | "/v1/sessions/annotations/act",
+        ) if crate::server::sessions::is_annotation_route(method.as_str(), path) => {
+            let value: Value = serde_json::from_slice(body).ok()?;
+            Some(Scoped {
+                body: Some(String::from_utf8_lossy(body).into_owned()),
+                principal: true,
+                ..scoped(
+                    value.as_object()?.get("scopeRef")?.as_str()?,
+                    method.clone(),
+                )
+            })
+        }
         (Method::POST, "/v1/sessions/resolve") => {
             let value: Value = serde_json::from_slice(body).ok()?;
             let raw = value.as_object()?.get("sessionRef")?.as_str()?;
@@ -407,5 +428,95 @@ impl http_body::Body for Relay {
         self.0
             .poll_recv(cx)
             .map(|next| next.map(|bytes| Ok(http_body::Frame::data(bytes))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::sessions::ANNOTATION_ROUTES;
+
+    const SCOPE: &str = "agent:clod:project:hrc-runtime";
+
+    fn route(method: &str, path: &str, query: &[(&str, &str)], body: &Value) -> Option<Scoped> {
+        let query = query
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        let bytes = if body.is_null() {
+            Vec::new()
+        } else {
+            body.to_string().into_bytes()
+        };
+        scope_of(&method.parse().unwrap(), path, &query, &bytes)
+    }
+
+    /// The metadata pair: a scoped GET and a principal-forwarding PATCH.
+    #[test]
+    fn metadata_pair_routes_by_scope() {
+        let get = route(
+            "GET",
+            "/v1/sessions/metadata",
+            &[("scopeRef", SCOPE)],
+            &Value::Null,
+        )
+        .expect("metadata GET is scope-routed");
+        assert_eq!(
+            (get.scope.as_str(), get.method.clone(), get.principal),
+            (SCOPE, Method::GET, false)
+        );
+        assert!(get.body.is_none());
+        let body = json!({"scopeRef": SCOPE, "set": {"title": "x"}});
+        let patch = route("PATCH", "/v1/sessions/metadata", &[], &body).expect("PATCH routed");
+        assert_eq!(
+            (patch.scope.as_str(), patch.method.clone(), patch.principal),
+            (SCOPE, Method::PATCH, true)
+        );
+        assert_eq!(patch.body.as_deref(), Some(body.to_string().as_str()));
+    }
+
+    /// seat-annotations r1.1 §4: all four annotation routes are scope-routed;
+    /// the three writes forward their body verbatim with the principal.
+    #[test]
+    fn annotation_routes_by_scope_with_principal_on_writes() {
+        for (method, path) in ANNOTATION_ROUTES {
+            let body = json!({"scopeRef": SCOPE, "subject": "seat", "ns": "c2", "kind": "card", "id": "a", "body": {}, "expect": {"updatedAt": null}});
+            let scoped = if method == "GET" {
+                route(method, path, &[("scopeRef", SCOPE)], &Value::Null)
+            } else {
+                route(method, path, &[], &body)
+            }
+            .unwrap_or_else(|| panic!("{method} {path} is not scope-routed"));
+            assert_eq!(scoped.scope, SCOPE, "{method} {path}");
+            assert_eq!(scoped.method.as_str(), method, "{method} {path}");
+            assert_eq!(
+                scoped.principal,
+                method != "GET",
+                "{method} {path} principal"
+            );
+            assert!(!scoped.stream && !scoped.resolve);
+            if method == "GET" {
+                assert!(scoped.body.is_none());
+            } else {
+                assert_eq!(
+                    scoped.body.as_deref(),
+                    Some(body.to_string().as_str()),
+                    "{method} {path} body"
+                );
+            }
+        }
+    }
+
+    /// Wrong methods and unscoped bodies serve locally, where the handler refuses.
+    #[test]
+    fn annotation_routing_declines_what_it_cannot_scope() {
+        let body = json!({"scopeRef": SCOPE});
+        assert!(route("GET", "/v1/sessions/annotations", &[], &Value::Null).is_none());
+        assert!(route("PUT", "/v1/sessions/annotations", &[], &json!({"id": "a"})).is_none());
+        assert!(route("PUT", "/v1/sessions/annotations", &[], &json!([])).is_none());
+        assert!(route("POST", "/v1/sessions/annotations", &[], &body).is_none());
+        assert!(route("PUT", "/v1/sessions/annotations/delete", &[], &body).is_none());
+        assert!(route("DELETE", "/v1/sessions/annotations", &[], &body).is_none());
+        assert!(route("PATCH", "/v1/sessions/annotations/act", &[], &body).is_none());
     }
 }

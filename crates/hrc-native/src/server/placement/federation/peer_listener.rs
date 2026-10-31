@@ -16,10 +16,14 @@ use axum::{
 use hrc_store::timestamp;
 use serde_json::{Map, Value, json};
 
-pub const ROUTE_KEYS: [&str; 19] = [
+pub const ROUTE_KEYS: [&str; 23] = [
     "GET /v1/federation/health",
     "GET /v1/sessions/metadata",
     "PATCH /v1/sessions/metadata",
+    "GET /v1/sessions/annotations",
+    "PUT /v1/sessions/annotations",
+    "POST /v1/sessions/annotations/delete",
+    "POST /v1/sessions/annotations/act",
     "GET /v1/sessions/get",
     "GET /v1/sessions/page",
     "GET /v1/sessions/facets",
@@ -239,6 +243,9 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
         ("GET" | "PATCH", "/v1/sessions/metadata") | ("GET", "/v1/sessions/get") => {
             Ok(local(server, method, uri, &headers, Body::from(body)).await)
         }
+        (m, p) if crate::server::sessions::is_annotation_route(m, p) => {
+            Ok(local(server, method, uri, &headers, Body::from(body)).await)
+        }
         ("GET", "/v1/sessions/page" | "/v1/sessions/facets") => {
             Ok(local(server, method, local_nodes(&uri), &headers, Body::empty()).await)
         }
@@ -397,5 +404,46 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
             })
         }
         _ => Ok(refusal(StatusCode::NOT_FOUND, "not_found", json!({}))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ROUTE_KEYS;
+    use crate::server::sessions::{ANNOTATION_ROUTES, is_annotation_route};
+    use std::collections::HashSet;
+
+    #[test]
+    fn allowlist_names_the_session_writes_once() {
+        assert_eq!(ROUTE_KEYS.len(), 23);
+        assert_eq!(
+            ROUTE_KEYS.iter().collect::<HashSet<_>>().len(),
+            ROUTE_KEYS.len()
+        );
+        for key in ["GET /v1/sessions/metadata", "PATCH /v1/sessions/metadata"] {
+            assert!(ROUTE_KEYS.contains(&key), "{key}");
+        }
+        for (method, path) in ANNOTATION_ROUTES {
+            assert!(
+                ROUTE_KEYS.contains(&format!("{method} {path}").as_str()),
+                "{method} {path}"
+            );
+        }
+    }
+
+    /// The peer dispatch arm admits exactly the four annotation keys.
+    #[test]
+    fn peer_dispatch_admits_only_annotation_keys() {
+        for key in ROUTE_KEYS {
+            let (method, path) = key.split_once(' ').unwrap();
+            assert_eq!(
+                is_annotation_route(method, path),
+                path.starts_with("/v1/sessions/annotations"),
+                "{key}"
+            );
+        }
+        assert!(!is_annotation_route("DELETE", "/v1/sessions/annotations"));
+        assert!(!is_annotation_route("POST", "/v1/sessions/annotations"));
+        assert!(!is_annotation_route("GET", "/v1/sessions/annotations/act"));
     }
 }
